@@ -11,7 +11,7 @@ import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, nullAsAbsent } from '../support/inputNormalization';
+import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, nullAsAbsent, repairArrayBoundaryArtifacts } from '../support/inputNormalization';
 import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
@@ -889,22 +889,38 @@ const PresentResultVisualPreviewModelSchema = PresentResultModelSchema.omit({
 }).strict();
 
 /**
+ * Runs every parse-time boundary recovery `present_result` payloads share, in the order each needs
+ * the last one to have already run.
+ *
+ * @remarks
+ * {@link repairArrayBoundaryArtifacts} rejoins a broken array-element boundary first (so a
+ * `sections` entry recovered from a corrupted tail is a real section before anything inspects it),
+ * then {@link hoistSectionNotes} relocates any section-nested `notes` — including on a
+ * just-recovered section — onto the top-level `notes[]` array. Both are no-ops (return the input
+ * unchanged) on a payload that carries neither defect shape.
+ */
+function recoverPresentResultPayload(value: unknown): unknown {
+  return hoistSectionNotes(repairArrayBoundaryArtifacts(value));
+}
+
+/**
  * Selects the model-facing `present_result` schema from the phase and held-draft authorization.
  * Preview omits AI-authored wrapper prose; synthesis uses the full new-render contract; either
  * phase projects the existing strict patch schema while a repairable draft is held.
  *
  * @remarks
  * Every branch here declares both `sections` and top-level `notes` (optional), so
- * {@link hoistSectionNotes} is unconditionally safe to run ahead of the chosen schema's own parse —
- * see its doc comment for the measured defect this closes.
+ * {@link recoverPresentResultPayload} is unconditionally safe to run ahead of the chosen schema's
+ * own parse — see {@link hoistSectionNotes} and {@link repairArrayBoundaryArtifacts} for the
+ * measured defects this closes.
  */
 export function presentResultSchemaForPhase(
   phase?: string,
   repairFields: readonly PresentResultRepairField[] | null = null,
 ): z.ZodType {
   if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields);
-  if (phase === 'visual_preview') return z.preprocess(hoistSectionNotes, PresentResultVisualPreviewModelSchema);
-  return z.preprocess(hoistSectionNotes, phase === 'synthesis' ? PresentResultSynthesisModelSchema : PresentResultModelSchema);
+  if (phase === 'visual_preview') return z.preprocess(recoverPresentResultPayload, PresentResultVisualPreviewModelSchema);
+  return z.preprocess(recoverPresentResultPayload, phase === 'synthesis' ? PresentResultSynthesisModelSchema : PresentResultModelSchema);
 }
 
 /**
@@ -1058,13 +1074,17 @@ export function presentResultRepairPatchSchemaForFields(
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
     }
   });
-  // Only when both fields are authorized together does the picked shape declare a top-level
-  // `notes` key for a hoisted entry to land on — see {@link hoistSectionNotes}. Authorized without
-  // `notes` (or without `sections`), the wrap would inject a key this narrower patch never declares
-  // and reject it as unrecognized, so it is skipped rather than applied unconditionally.
-  const schema = (keys.includes('sections') && keys.includes('notes')
-    ? z.preprocess(hoistSectionNotes, picked)
-    : picked) as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
+  // repairArrayBoundaryArtifacts never introduces a key the picked shape doesn't already declare —
+  // it only rejoins or drops content inside an array the payload already carries — so it runs
+  // unconditionally. hoistSectionNotes DOES add a top-level `notes` key, which only the picked shape
+  // declaring both `sections` and `notes` together can accept; authorized without `notes` (or
+  // without `sections`), the hoist would inject a key this narrower patch never declares and reject
+  // it as unrecognized, so it is skipped rather than applied unconditionally — see
+  // {@link hoistSectionNotes}.
+  const preprocess = keys.includes('sections') && keys.includes('notes')
+    ? recoverPresentResultPayload
+    : repairArrayBoundaryArtifacts;
+  const schema = z.preprocess(preprocess, picked) as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   repairPatchSchemaCache.set(cacheKey, schema);
   return schema;
 }

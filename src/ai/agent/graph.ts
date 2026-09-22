@@ -20,6 +20,7 @@ import {
   StartExplorationRefineProviderInputSchema,
   StartExplorationSupplementProviderInputSchema,
   SubmitFindingsModelSchema,
+  type PresentResultRepairField,
 } from '../tools/toolSchemas';
 import {
   buildActiveContinuationAnchor,
@@ -582,12 +583,16 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const result = await withLmStage(draft.stage, () => runToolAttempt(plan, priorAttempt));
     if (result.stop === 'cancelled') {
       const terminal: AgentStateUpdate = { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-      return { terminal };
+      return { terminal, nextAttempt: priorAttempt };
     }
     const nextAttempt = recordAttempt(priorAttempt, result, phaseLabel, startedAt);
     const terminal = attemptFailure(result, nextAttempt, ...failure);
     if (!terminal && result.stop === 'continue') emitRepairProgress(phaseLabel, failure[1], priorAttempt, nextAttempt);
-    return terminal ? { terminal } : { result, nextAttempt };
+    // nextAttempt rides both branches (cleanly typed, unlike the LangGraph Update-channel
+    // `toolAttempt` field on `terminal`) so a caller can read the stop reason a breaker trip chose
+    // without narrowing `AgentStateUpdate`'s `OverwriteValue<ToolPhaseAttemptState | null>` union —
+    // see synthesisNode's salvage check.
+    return terminal ? { terminal, nextAttempt } : { result, nextAttempt };
   };
 
   const detectEntryNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
@@ -1430,10 +1435,18 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       requiredTerminalTool: 'lineage_present_result',
       proseGate: 'buffer-until-tool',
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
-    }, ['Synthesis failed', 'Synthesis', 'without rendering a result', () => sess.presentResultRepairDraft.clear()]);
-    if (attempt.terminal) return attempt.terminal;
-    const { result: res, nextAttempt } = attempt;
-    if (!sess.presentResultCalledThisTurn) {
+    }, ['Synthesis failed', 'Synthesis', 'without rendering a result']);
+    if (attempt.terminal) {
+      // A breaker trip is not automatically a lost turn: a held, notes-only-repairable draft is
+      // salvaged through the existing rendering path (trySalvageSynthesisDraft) before the draft is
+      // discarded — see that function's doc for why this is scoped and safe. Any other stop reason
+      // (or a salvage that itself fails validation) falls straight through to the original failure.
+      const salvaged = attempt.nextAttempt.stopReason === 'semantic_failures'
+        && await trySalvageSynthesisDraft(deps, sess);
+      sess.presentResultRepairDraft.clear();
+      if (!salvaged) return attempt.terminal;
+    } else if (!sess.presentResultCalledThisTurn) {
+      const { result: res, nextAttempt } = attempt;
       if (res.stop === 'continue') {
         return { engineSnapshot: engine.toJSON(), toolAttempt: nextAttempt, phase: 'synthesis' };
       }
@@ -1938,4 +1951,61 @@ export function tryAbandonStuckFocus(engine: NavigationEngine, focusId: string, 
     }
   }
   return true;
+}
+
+/**
+ * Whether a synthesis breaker trip can be salvaged by rendering the already-held
+ * `lineage_present_result` draft instead of discarding it.
+ *
+ * @remarks
+ * Mirrors {@link shouldSalvageActiveStop}'s "committed partial work survives a breaker trip"
+ * disposition, applied to the one committed-artifact shape synthesis produces: a full draft
+ * {@link RepairDraftStore.hold | held} after a narrow, repairable `validatePresentResult` failure.
+ * Scoped to the one authorization shape verified safe to auto-repair — `notes` is the draft's
+ * ONLY outstanding field. Dropping it can only narrow what renders (`sections[]` /
+ * `highlight_groups[]`, the structurally required fields, are untouched), so this never trades one
+ * discarded turn for a differently-invalid one. A wider authorization (e.g. `sections`) is not
+ * salvaged: emptying a required field is not evidenced safe and stays out of this repair's scope.
+ *
+ * @param repairFields - The held draft's authorized repair fields, or `null` when none is held.
+ */
+export function canSalvageSynthesisDraft(repairFields: readonly PresentResultRepairField[] | null): boolean {
+  return repairFields !== null && repairFields.length === 1 && repairFields[0] === 'notes';
+}
+
+/**
+ * Renders the synthesis phase's held `lineage_present_result` draft one last time, through the
+ * SAME repair-patch path a model's own `is_update:true` resend would take — `deps.registry`'s
+ * canonical dispatch surface (`dispatchRegistryTool`, `toolAttempt.ts`, is literally
+ * `registry.invoke(name, input)`), the handler's existing hold-and-amend branch
+ * (`presentResult.ts`), and the existing `validatePresentResult` pipeline. No new rendering path,
+ * no new tool, no second validation — mirrors {@link tryAbandonStuckFocus}'s "call the existing
+ * mechanism directly instead of through another model round" shape for the active phase.
+ *
+ * Dispatched only when {@link canSalvageSynthesisDraft} allows it, so the one patch sent is always
+ * `{ is_update: true, notes: [] }`: the held draft's sole outstanding repair field, resent empty.
+ * The result graph, sections, badges, and highlight groups the model already authored render
+ * unchanged; only the unlinkable note caption is dropped, and this is logged, never silent (the
+ * repo's normalize-with-log contract, `.claude/rules/ai-surface.md`).
+ *
+ * @param deps - Graph dependencies (registry dispatch surface, logger).
+ * @param sess - The live session, read for the held draft's authorization.
+ * @returns Whether the salvage patch was accepted — `sess.presentResultCalledThisTurn` flips true.
+ */
+async function trySalvageSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): Promise<boolean> {
+  if (!canSalvageSynthesisDraft(sess.presentResultRepairDraft.getAuthorization())) return false;
+  deps.logger?.debug(
+    '[AI] [Repair] synthesis breaker tripped with a held, notes-only-repairable draft — salvaging '
+    + 'via one deterministic notes:[] patch through the existing repair-patch path instead of discarding the render.',
+  );
+  let resultText: string;
+  try {
+    resultText = await deps.registry.invoke('lineage_present_result', { is_update: true, notes: [] });
+  } catch (error) {
+    deps.logger?.debug(`[AI] [Repair] synthesis salvage dispatch threw — ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+  const salvaged = sess.presentResultCalledThisTurn;
+  deps.logger?.debug(`[AI] [Repair] synthesis salvage ${salvaged ? 'accepted' : 'still rejected'} — ${trunc(resultText, 200)}`);
+  return salvaged;
 }

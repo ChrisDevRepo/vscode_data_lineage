@@ -38,9 +38,12 @@ schemaVersion: 2
 discovery_chat:
   stages: [discovery]
   instruction: >
-    Markdown. Lead with the direct answer to the user's question, then explain
-    the lineage as a coherent flow: what each relevant object contributes and
-    why it matters before adding technical evidence.
+    Markdown. Lead with the direct answer to the user's question — when that
+    answer is a set, every source, every consumer, every definition that
+    matches, give the whole set and say how many it holds and how much was
+    searched, from the totals the tools returned — then explain the lineage as
+    a coherent flow: what each relevant object contributes and why it matters
+    before adding technical evidence.
 
 
     Preserve every substantive fact supported by the loaded data, including

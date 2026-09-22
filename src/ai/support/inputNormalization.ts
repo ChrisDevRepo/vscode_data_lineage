@@ -305,6 +305,164 @@ function isRecordWithNotes(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value) && 'notes' in value;
 }
 
+/** Plain (non-array, non-null) object. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * A key built entirely from JSON's own structural punctuation (`{ } [ ] , :`) and nothing else.
+ *
+ * @remarks
+ * No field any `present_result`-family (or other tool) schema declares is spelled this way — every
+ * real key is a word. A key matching this is never authored content; it is where a tokenizer landed
+ * after a raw array-element boundary token (the `},{` that should close one element and open the
+ * next, or a bare separator `,`) got swept into a quoted key instead of staying unquoted JSON
+ * structure, with whatever followed swallowed into that key's string value.
+ */
+const ARRAY_BOUNDARY_ARTIFACT_KEY = /^[{}[\],:]+$/;
+
+/**
+ * Finds the end index (inclusive) of the balanced `{...}` object literal starting at `text[start]`,
+ * treating quoted-string content (respecting backslash escapes) as opaque so a brace appearing
+ * inside a string value never perturbs the depth count.
+ *
+ * @returns The index of the matching closing `}`, or -1 when the text runs out unbalanced.
+ */
+function findBalancedObjectEnd(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Extracts every top-level `{...}` JSON object literal out of `text`, in encounter order,
+ * tolerating only structural glue (whitespace, and stray `, [ ] }` characters) between and around
+ * them.
+ *
+ * @returns The recovered objects (possibly empty), or `null` the instant anything besides a
+ * balanced object literal or glue is encountered — the signal that the text is not a clean rejoin
+ * of sibling elements and recovery must not guess at it.
+ */
+function extractBalancedJsonObjects(text: string): Record<string, unknown>[] | null {
+  const objects: Record<string, unknown>[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (/[\s,[\]}]/.test(ch)) { i++; continue; }
+    if (ch !== '{') return null;
+    const end = findBalancedObjectEnd(text, i);
+    if (end === -1) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text.slice(i, end + 1));
+    } catch {
+      return null;
+    }
+    if (!isPlainObject(parsed)) return null;
+    objects.push(parsed);
+    i = end + 1;
+  }
+  return objects;
+}
+
+/**
+ * Repairs a broken array-element boundary in an already-JSON-parsed tool payload: an array element
+ * (a plain object) that carries a key made solely of JSON structural punctuation is not a field the
+ * model authored — it is the element-boundary token itself, misrouted into a quoted key/value pair
+ * by a transport-side serialization defect, with everything that followed (up to and including
+ * further sibling elements) swept into that key's string value.
+ *
+ * @remarks
+ * Measured 2026-09-16 on `m18-close-azure-foundry` run-T8S
+ * (`run-T8S/lm-trace/trace-2026-09-16T17-57-31-092Z.ndjson`, provider-raw lines 56 and 64): Azure's
+ * own non-streaming `lineage_present_result` tool-call body arrived with `sections[0]` carrying an
+ * extra key spelled only with structural characters, whose value was the raw (already
+ * JSON-escaped-and-recoverable) text of the sibling elements that should have followed. Both calls
+ * are one signature — the boundary token that should have stayed raw JSON structure was quoted and
+ * swept a tail of real content into one key's value — but the two payloads differ in what is
+ * recoverable: one artifact's value decodes back into further complete elements (rejoined onto the
+ * array, nothing lost); the other's value is a bare fragment with nothing inside it to recover (the
+ * key is dropped, the element's own real fields are untouched). `PresentResultSectionSchema` is
+ * `.strict()` (this module's caller declares the array shape), so an unrepaired artifact key spent
+ * two of the run's three synthesis semantic-failure strikes on `invalid_tool_input` and the third
+ * strike ended the turn with a 0-byte answer.
+ *
+ * This is the general defect class, not a fix keyed to one literal boundary token, one field name,
+ * or one provider: {@link ARRAY_BOUNDARY_ARTIFACT_KEY} matches any key built solely from JSON's own
+ * structural characters, on any array of plain objects found anywhere in the payload (a full deep
+ * walk, not a `sections`-only check). Recovery rejoins the artifact key's own text with its value
+ * (reconstructing what the boundary token plus swallowed tail would have read as raw JSON) and
+ * extracts every complete, balanced object literal it contains via
+ * {@link extractBalancedJsonObjects}; those elements are spliced back into the array immediately
+ * after the element that carried the artifact, in order, so nothing recoverable is dropped. When
+ * nothing balanced can be extracted (the value carries no further object content), only the
+ * artifact key is removed — never the element's own real fields, and the element itself is never
+ * evicted from the array. Either way, the vacated key surfaces to the caller's `droppedKeyPaths`
+ * diff exactly as {@link hoistSectionNotes}'s relocations do, so neither the recovery nor the drop is
+ * silent. A key whose text is not solely structural punctuation, or a value that cannot be rejoined
+ * into balanced object literals, passes through untouched so `.strict()`'s own
+ * `Unrecognized key` rejection still applies — this never widens what an unknown key is allowed to
+ * mean. Transparent to `z.toJSONSchema` (`io: 'input'`): this operates on the parsed JS value before
+ * Zod runs, so the model-facing tool schema is unchanged.
+ *
+ * @param value - Raw model payload (or a nested value reached while walking it) before Zod
+ * validation; anything that is not a plain object or array passes through untouched.
+ * @returns The payload with every recoverable array-boundary artifact rejoined and every
+ * unrecoverable one dropped, or `value` unchanged when nothing in it matches the defect shape.
+ */
+export function repairArrayBoundaryArtifacts(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const walked = value.map(repairArrayBoundaryArtifacts);
+    let changed = false;
+    const rebuilt: unknown[] = [];
+    for (const item of walked) {
+      const artifactKey = isPlainObject(item)
+        ? Object.keys(item).find((key) => ARRAY_BOUNDARY_ARTIFACT_KEY.test(key))
+        : undefined;
+      if (!artifactKey || !isPlainObject(item)) {
+        rebuilt.push(item);
+        continue;
+      }
+      changed = true;
+      const { [artifactKey]: rawValue, ...rest } = item;
+      rebuilt.push(rest);
+      const recovered = typeof rawValue === 'string'
+        ? extractBalancedJsonObjects(`${artifactKey}"${rawValue}`)
+        : null;
+      if (recovered) rebuilt.push(...recovered.map(repairArrayBoundaryArtifacts));
+    }
+    return changed ? rebuilt : value;
+  }
+  if (isPlainObject(value)) {
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, entryValue] of Object.entries(value)) {
+      const repaired = repairArrayBoundaryArtifacts(entryValue);
+      if (repaired !== entryValue) changed = true;
+      next[key] = repaired;
+    }
+    return changed ? next : value;
+  }
+  return value;
+}
+
 /** Result of cloning and normalizing a raw start-exploration payload. */
 export interface StartExplorationNormalizationResult {
   /** Cloned payload passed to strict semantic validation. */
