@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { AI_MAX_SCOPE_NODE_IDS, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
+  ExplorationDepthLimitSchema,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
 import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, nullAsAbsent, repairArrayBoundaryArtifacts } from '../support/inputNormalization';
@@ -51,8 +52,25 @@ const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
 const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(AI_MAX_SCOPE_NODE_IDS).describe(
   'Resolved object IDs that require new per-node analysis in the completed exploration; use present_result add_node_ids for presentation-only additions.',
 );
+/**
+ * Chain extension of a supplement: the named objects plus everything reachable from them.
+ *
+ * @remarks
+ * The approve gate covers the first run up to its presented result; a later request is the user's
+ * own and is not bounded by that contract (PM 2026-09-21). A chain is walked from each named id in
+ * the one stated direction; only the user's own exclusions stay a wall.
+ */
+const SupplementChainSchema = z.object({
+  direction: z.enum(['upstream', 'downstream']).describe('"upstream" walks toward the sources, "downstream" toward the consumers.'),
+  depth: ExplorationDepthLimitSchema.describe('Steps to walk from each named object; "all" follows the chain to its end.'),
+}).strict();
+
 const SupplementSchema = z.object({
   nodeIds: SupplementNodeIdsSchema,
+  chain: SupplementChainSchema.optional().describe(
+    'Set when the user asks to follow the named objects further, e.g. "all the way to the source": every object '
+    + 'reachable in that direction is analysed and joins the same graph. Omit to add the named objects only.',
+  ),
 }).strict().describe('Completed-session analysis extension; valid only after the prior exploration has completed.');
 
 /**
@@ -574,8 +592,9 @@ const ColumnFlowEntryObject = z.object({
   writes_to: nullAsAbsent(declaredKeysOnly(ColumnFlowWritesToObject).optional()).describe('Optional downstream write destination observed in the current node.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
     'Two states by focus: at a bodied focus, the real upstream columns the node READS that contribute to out_col ' +
-    '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the nodes ' +
-    'that write this focus, carrying the tracked column unchanged; use [] only when out_col terminates here.',
+    '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the neighbours ' +
+    'on this focus\'s carrier side (the nodes that write it on an upstream trace, the nodes that read it on a downstream ' +
+    'trace), carrying the tracked column unchanged; use [] only when out_col terminates here.',
   ),
 }).strict();
 
@@ -604,7 +623,7 @@ const hopVerdictSchema = (mode: 'bb' | 'ct') =>
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_IDS).describe(
   'CT mode only: structural provenance for active tracked columns. Use column_flow: [] only when the focus has no active tracked-column interaction. ' +
   'When a tracked output exists but has no upstream real column, emit its entry with upstream_columns: []. ' +
-  'A focus with no body of its own applies no logic: declare continuation at its writers.',
+  'A focus with no body of its own applies no logic: declare continuation on its carrier side.',
 );
 
 /**

@@ -262,7 +262,7 @@ answers from the run record persisted with the applied bookmark:
 | --- | --- | --- |
 | `ids` | 1–20 canonical object ids | Per id: the run's decision and its reason, the neighbor it was reached through and at which hop, the stored summary and section text, whether the object's DDL changed since the run, and whether the object still exists in the loaded model. An id the run never saw answers `not_in_run` rather than rejecting. |
 | `filter` | `pruned` | Every object the run removed, with the reason, the neighbor it was reached through, and the hop. |
-| `filter` | `open_leads` | Every question the run left open, with the object it points at, the object it was raised from, and its value to the user. |
+| `filter` | `open_leads` | Every question the run left open, with the object it points at, whether that object is already on the graph (`on_graph`), the object it was raised from, and its value to the user. |
 | `filter` | `stale` | Every in-scope object whose DDL no longer hashes to the value stored at save time. |
 
 Staleness is a content hash comparison against the DDL recorded when the
@@ -300,7 +300,9 @@ search objects to resolve a typo, pattern, ambiguity, or newly named object, but
 does not re-resolve the unchanged origin or rerun discovery;
 completed-session supplements carry explicit node IDs and reuse the existing
 archive. A supplement ID needs no lead behind it and no second approval — the
-user's request is the consent — but an ID the user excluded is still refused,
+user's request is the consent, and `supplement.chain` follows the named objects
+upstream or downstream to a depth or to the end — but an ID the user excluded
+is still refused,
 and a rejection that has no corrective call tells the model to answer rather
 than to resend.
 

@@ -97,6 +97,10 @@ describe('executePresentResult — add_node_ids is bounded by the analysed scope
     expect(result.success).toBe(false);
     expect(result.errors?.join(' ')).toContain(OUT_OF_SCOPE);
     expect(result.errors?.join(' ')).toContain('supplement');
+    // The supplement is the repair only for an add the user asked for; a "what next" question is
+    // answered in chat and the user picks — the refusal must not prescribe an unrequested analysis.
+    expect(result.errors?.join(' ')).toContain('If the user asked to add these objects');
+    expect(result.errors?.join(' ')).toContain('ask which to add');
     expect(session.resultGraph?.nodeIds).toEqual([ORIGIN]);
   });
 

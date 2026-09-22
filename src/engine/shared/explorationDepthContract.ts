@@ -52,7 +52,7 @@ function numericStringDepth<T extends z.ZodType>(schema: T) {
  * therefore accept the identical encoding — one union, one policy. The wrapped bounds still decide
  * the value: a quoted `"0"` stays rejected here by `.min(1)`.
  */
-const ExplorationDepthLimitSchema = z.union([numericStringDepth(z.number().int().min(1)), z.literal('all')]);
+export const ExplorationDepthLimitSchema = z.union([numericStringDepth(z.number().int().min(1)), z.literal('all')]);
 
 /**
  * One side of an asymmetric depth pair. Unlike {@link ExplorationDepthLimitSchema}, 0 is a

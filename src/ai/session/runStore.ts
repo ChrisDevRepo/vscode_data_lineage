@@ -158,6 +158,30 @@ export function buildStoredRun(
 }
 
 /**
+ * Wraps the session's presented run as an unsaved record for recall.
+ *
+ * @remarks
+ * A completed run on screen has the same checkpoint a bookmark save would persist, so recall reads
+ * it the same way. The DDL cannot have moved within the session, so no hashes are recorded and no
+ * object reads as stale.
+ *
+ * @param artifact - The session's latest presentation.
+ * @returns The live run, or `undefined` when the presentation carries no run or checkpoint.
+ */
+export function buildLiveRun(artifact: PresentationArtifact | null): StoredAiRun | undefined {
+  const checkpoint = artifact?.checkpoint;
+  if (!artifact?.runId || !checkpoint) return undefined;
+  return {
+    schemaVersion: 1,
+    runId: artifact.runId,
+    savedAt: new Date().toISOString(),
+    origin: checkpoint.engineInternals?.initSnapshot?.origin ?? null,
+    ddlHashes: {},
+    snapshot: checkpoint,
+  };
+}
+
+/**
  * Persists one run record under its bookmark key.
  *
  * @remarks

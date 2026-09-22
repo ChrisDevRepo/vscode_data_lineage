@@ -371,13 +371,44 @@ describe('stored-run recall', () => {
   it('lists the open leads with their value to the user', () => {
     const result = presentRunRecall(recallInput({ filter: 'open_leads' }));
     expect(result.open_leads).toEqual([
-      { id: '[ai].[lead]', from: '[ai].[a]', reason: 'schema_boundary', value: 'Confirms where regions come from.' },
+      { id: '[ai].[lead]', on_graph: false, from: '[ai].[a]', reason: 'schema_boundary', value: 'Confirms where regions come from.' },
+    ]);
+  });
+
+  it('marks a lead on an object already on the graph and drops leads that are no longer open', () => {
+    const run = recallRun();
+    const snapshot = run.snapshot as unknown as Record<string, unknown>;
+    snapshot.scopeNodeIds = ['[ai].[root]', '[ai].[a]', '[ai].[shown]'];
+    (snapshot.engineInternals as Record<string, unknown>).pendingLeads = [
+      { id: 'lead_1', nodeId: '[ai].[shown]', fromNodeId: '[ai].[a]', reason: 'contracted_scope', valueToUser: 'Deeper look.', status: 'pending' },
+      { id: 'lead_2', nodeId: '[ai].[new]', fromNodeId: '[ai].[a]', reason: 'depth_boundary', valueToUser: 'Next step.', status: 'pending' },
+      { id: 'lead_3', nodeId: '[ai].[done]', fromNodeId: '[ai].[a]', reason: 'depth_boundary', valueToUser: 'Answered.', status: 'resolved' },
+      { id: 'lead_4', nodeId: '[ai].[queued]', fromNodeId: '[ai].[a]', reason: 'depth_boundary', valueToUser: 'Queued.', status: 'scheduled' },
+    ];
+    const result = presentRunRecall(recallInput({ uiState: null, liveRun: run, filter: 'open_leads' }));
+    expect(result.open_leads).toEqual([
+      { id: '[ai].[shown]', on_graph: true, from: '[ai].[a]', reason: 'contracted_scope', value: 'Deeper look.' },
+      { id: '[ai].[new]', on_graph: false, from: '[ai].[a]', reason: 'depth_boundary', value: 'Next step.' },
     ]);
   });
 
   it('lists only the changed objects under the stale filter', () => {
     const result = presentRunRecall(recallInput({ filter: 'stale' }));
     expect(result.stale).toEqual([{ id: '[ai].[b]', stored_hash_known: true }]);
+  });
+
+  it('recalls the open leads of the live completed run when no bookmark is applied', () => {
+    const result = presentRunRecall(recallInput({ uiState: null, liveRun: recallRun(), filter: 'open_leads' }));
+    expect(result.run_id).toBe('run-42');
+    expect(result.open_leads).toEqual([
+      { id: '[ai].[lead]', on_graph: false, from: '[ai].[a]', reason: 'schema_boundary', value: 'Confirms where regions come from.' },
+    ]);
+  });
+
+  it('prefers the applied bookmark run over the live run', () => {
+    const live = { ...recallRun(), runId: 'run-live' };
+    const result = presentRunRecall(recallInput({ liveRun: live, filter: 'open_leads' }));
+    expect(result.run_id).toBe('run-42');
   });
 
   it.each([

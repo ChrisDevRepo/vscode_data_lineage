@@ -1,5 +1,5 @@
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
-import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
+import type { DatabaseModel } from '../../../src/engine/types';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';

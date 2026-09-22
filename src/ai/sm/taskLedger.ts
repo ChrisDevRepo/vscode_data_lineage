@@ -219,6 +219,24 @@ export class TaskLedger {
   }
 
   /**
+   * Resolves every scheduled lead on a node whose hop completed, with its task.
+   *
+   * @remarks
+   * A follow-up add names an object, not a lead, so the leads it schedules on that object are owned
+   * by other tasks; the analysed object answers them all.
+   * @param nodeId - Node whose hop completed.
+   * @param hop - Resolution hop.
+   */
+  public resolveNodeLeads(nodeId: string, hop: number): void {
+    const key = nodeId.toLowerCase();
+    for (const lead of this.leads.values()) {
+      if (lead.status !== 'scheduled' || lead.nodeId.toLowerCase() !== key) continue;
+      lead.status = 'resolved';
+      this.setTaskStatus(lead.taskId, 'resolved', hop);
+    }
+  }
+
+  /**
    * Restores a validated current-format checkpoint ledger without recomputing identifiers.
    * @param tasks - Validated persisted task records.
    * @param leads - Validated persisted follow-up records.

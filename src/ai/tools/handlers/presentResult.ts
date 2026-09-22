@@ -425,7 +425,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             success: false,
             errors: [
               `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope, 5)}.`,
-              'Rendering reveals analysed objects only. Add them with lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses and records them — then render.',
+              'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
             ],
           }, { clearDraft: true });
         }

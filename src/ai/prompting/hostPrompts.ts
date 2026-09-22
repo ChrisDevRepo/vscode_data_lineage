@@ -249,7 +249,7 @@ export function buildGateRefinePrompt(
     refine.instruction ? `- instruction: "${refine.instruction}"` : '',
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
-    'Omitted proposal fields are preserved mechanically. Preserve unchanged origin, question, mission brief, direction, depth, filters, mode, classification, and columns by omitting them.',
+    'Omitted proposal fields are preserved mechanically. Preserve unchanged origin, question, mission brief, direction, depth, filters, mode, classification, and columns by omitting them. An analysis constraint in the instruction that no field above expresses goes in `scopeNotes`.',
     'Use `lineage_search_objects` only when the requested edit needs resolution, such as a typo, ambiguous name, name pattern, or newly named object.',
     'Reuse canonical IDs already present in the current proposal context. Do not search for or re-resolve the unchanged origin.',
     'Do not repeat entry detection, discovery, scope-bundle retrieval, or the original origin search.',

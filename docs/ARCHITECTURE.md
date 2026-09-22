@@ -278,8 +278,13 @@ Completed follow-ups can update presentation, supplement the existing
 exploration with explicit nodes, begin a fresh exploration, or answer
 directly. Supplements retain the existing archive and return through the
 active loop, so a named object is analyzed as a hop in the same engine,
-against the same origin, with no second approval; only the ids named are
-added, and each object beyond them defers as its own follow-up. Fresh
+against the same origin, with no second approval. The approval covers the
+first run up to its presented result; a later request is the user's own and
+is not bounded by it. A plain supplement adds only the ids named, and each
+object beyond them defers as its own follow-up; a supplement with `chain`
+(`upstream`/`downstream`, a depth or `all`) also adds every object reached from
+them, stopping only at objects the user removed. Analysing an object resolves
+the open leads that pointed at it. Fresh
 exploration follows the consent path and establishes new state.
 
 A follow-up that exhausts its correction budget still delivers the answer it

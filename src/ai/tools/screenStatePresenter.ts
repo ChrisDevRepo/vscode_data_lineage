@@ -41,6 +41,8 @@ export interface RunRecallInput {
   readonly uiState: unknown;
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
   readonly getStoredRun?: StoredRunReader;
+  /** The session's completed run, recalled when no AI bookmark is applied. */
+  readonly liveRun?: StoredAiRun;
   /** The calling turn's budget, which the recall payload is measured against. */
   readonly budget: TurnTokenBudget;
   /** Canonical object ids to recall; mutually exclusive with {@link RunRecallInput.filter}. */
@@ -297,8 +299,8 @@ function optionalNumber(value: unknown): number | undefined {
 function resolveAppliedRun(input: RunRecallInput): StoredAiRun | undefined {
   const entry = asRecord(screenStateParts(input.uiState).extras?.bookmark);
   const id = asString(entry?.id);
-  if (!entry || id === null || asString(entry.source) !== 'ai') return undefined;
-  const run = input.getStoredRun?.(id);
+  const bookmarked = entry && id !== null && asString(entry.source) === 'ai' ? input.getStoredRun?.(id) : undefined;
+  const run = bookmarked ?? input.liveRun;
   return run && asRecord(run.snapshot) ? run : undefined;
 }
 
@@ -351,14 +353,30 @@ function recallPruned(run: StoredAiRun): Record<string, unknown>[] {
     }));
 }
 
+/**
+ * Unresolved leads of the run, each marked with whether its object is already on the graph.
+ *
+ * @remarks
+ * A lead on an object the graph already shows is a deeper look, not an addition; `on_graph` lets
+ * the answer tell the two apart. Resolved, scheduled and dismissed leads are history, not open.
+ */
 function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
-  const internals = asRecord(asRecord(run.snapshot)?.engineInternals);
+  const snapshot = asRecord(run.snapshot);
+  const internals = asRecord(snapshot?.engineInternals);
   const leads = Array.isArray(internals?.pendingLeads) ? internals.pendingLeads : [];
+  const idSet = (value: unknown): Set<string> =>
+    new Set((Array.isArray(value) ? value : []).flatMap(item => typeof item === 'string' ? [item.toLowerCase()] : []));
+  const scope = idSet(snapshot?.scopeNodeIds);
+  const offGraph = new Set([...idSet(snapshot?.removedSet), ...idSet(snapshot?.renderDroppedNodeIds)]);
   return leads.flatMap(raw => {
     const lead = asRecord(raw);
     const id = asString(lead?.nodeId);
-    return id === null ? [] : [definedOnly({
+    const status = optionalString(lead?.status);
+    if (id === null || (status !== undefined && status !== 'pending')) return [];
+    const key = id.toLowerCase();
+    return [definedOnly({
       id,
+      on_graph: scope.has(key) && !offGraph.has(key),
       from: optionalString(lead?.fromNodeId),
       reason: optionalString(lead?.reason),
       value: optionalString(lead?.valueToUser),
@@ -384,7 +402,8 @@ function overBudgetHint(input: RunRecallInput, chars: number, tokenBudget: numbe
  *
  * @remarks
  * Over-budget responses hard-reject with the discovery over-budget envelope and a narrowing hint;
- * nothing is truncated. An absent, non-AI, or unstored bookmark answers `no_run_memory`.
+ * nothing is truncated. An applied AI bookmark's run wins; without one the session's completed run
+ * answers, and only when neither exists does the call answer `no_run_memory`.
  *
  * @param input - The resolved query and the session's read-only resolvers.
  * @returns The recall payload, or a rejection envelope, with its token estimate.

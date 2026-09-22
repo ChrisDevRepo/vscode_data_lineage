@@ -33,7 +33,7 @@ import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, ColumnCarry, RouteColumns, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, ScopeSummary, ScopeSummaryLeaf, ColumnCarry, RouteColumns, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens } from '../support/tokenBudget';
 import { ColumnTracer } from "./columnTracer";
 import { AgendaManager, type AgendaEntry } from './agendaManager';
@@ -198,7 +198,7 @@ export interface IHopStateMachine {
    * @returns Counts of ids that were agendaed, contracted, or skipped (unknown / duplicate),
    *   plus `skippedDetails` naming which id was dropped and why.
    */
-  supplementAgenda(nodeIds: string[], leadIds?: string[]): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | { error: string; hint?: string };
+  supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | { error: string; hint?: string };
 }
 
 /**
@@ -724,6 +724,8 @@ export class NavigationEngine implements IHopStateMachine {
     for (const taskId of taskIds) {
       this.taskLedger.setTaskStatus(taskId, 'resolved', this.hopCount);
       this.taskLedger.resolveTaskLeads(taskId);
+      const nodeId = this.taskLedger.getTask(taskId)?.nodeId;
+      if (nodeId) this.taskLedger.resolveNodeLeads(nodeId, this.hopCount);
     }
   }
 
@@ -1824,9 +1826,11 @@ export class NavigationEngine implements IHopStateMachine {
    * follow-up is a new, user-initiated addition on top of that graph, so the request itself is the
    * consent and no second approval is sought.
    *
-   * The bound is the id list: only ids named here are admitted, and each node beyond an admitted
-   * target defers as its own lead rather than riding along ({@link checkBorder} carries no depth
-   * axis), so a named add cannot pull a subtree in behind it.
+   * The bound is the id list: only ids passed here are admitted. A plain add names its targets, and
+   * each node beyond them defers as its own lead rather than riding along ({@link checkBorder}
+   * carries no depth axis). A chain add passes the walked chain as that list — see
+   * {@link expandSupplementChain} — because the approval covers only the first run up to its
+   * presented result, and a later request is not bounded by it (PM 2026-09-21).
    *
    * Id-scoped, never schema-scoped — admitting a schema would open every sibling on one request.
    * Admission is monotonic, so repeated follow-ups can only widen.
@@ -1882,6 +1886,42 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Walks a chain add from each named id and returns the named ids followed by every object reached.
+   *
+   * @remarks
+   * The walk stops at a user-excluded object, so what the user removed and the branch reachable
+   * only through it stay out; the exclusion itself is still reported by the supplement's border
+   * check for a named id. Objects this exploration already analysed are not queued again — only the
+   * named ids are re-analysed on request. The expansion is logged (NORMALIZE-WITH-LOG).
+   *
+   * @param nodeIds - Named follow-up targets, canonical or free-cased.
+   * @param chain - Direction and depth of the walk.
+   * @returns Named ids first, then reached ids in breadth-first order, without duplicates.
+   */
+  private expandSupplementChain(nodeIds: readonly string[], chain: SupplementChain): string[] {
+    const maxDepth = chain.depth === 'all' ? Number.POSITIVE_INFINITY : chain.depth;
+    const mode = chain.direction === 'upstream' ? 'inbound' : 'outbound';
+    const result: string[] = [...nodeIds];
+    const seen = new Set(nodeIds.map(id => id.toLowerCase()));
+    for (const raw of nodeIds) {
+      const start = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      if (!start || !this.graph.hasNode(start)) continue;
+      bfsFromNode(this.graph, start, (key, _attr, depth) => {
+        if (key === start) return false;
+        const node = this.nodeMap.get(key);
+        if (!node || this.checkBorder(key, node, 'supplement').kind === 'excluded') return true;
+        if (!seen.has(key.toLowerCase()) && !this.visited.has(key)) {
+          seen.add(key.toLowerCase());
+          result.push(key);
+        }
+        return depth >= maxDepth;
+      }, { mode });
+    }
+    this.log('info', `[Supplement] chain dir=${chain.direction} depth=${String(chain.depth)} named=${nodeIds.length} → added=${result.length - nodeIds.length}`);
+    return result;
+  }
+
+  /**
    * Extends a completed exploration with additional nodes for analysis.
    *
    * @remarks
@@ -1900,10 +1940,11 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param nodeIds - Node ids to append to the agenda or contract through.
    * @param leadIds - Host-selected pending leads; never accepted from a model tool payload.
+   * @param chain - Optional walk from each named id; every reached object is added too.
    * @returns Counts for agendaed, contracted, and skipped ids, plus per-node `skippedDetails`
    *   naming which id was dropped and why (`excluded` | `unresolved`), or a structured error.
    */
-  public supplementAgenda(nodeIds: string[], leadIds: string[] = []): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | { error: string; hint?: string } {
+  public supplementAgenda(nodeIds: string[], leadIds: string[] = [], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | { error: string; hint?: string } {
     if (this._status !== 'complete') {
       return {
         error: REJECTION_CODES.supplementRequiresCompleteEngine,
@@ -1933,6 +1974,7 @@ export class NavigationEngine implements IHopStateMachine {
       };
     }
 
+    if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
     const requested = [
       ...nodeIds.map(nodeId => ({ nodeId, question: `Supplement: investigate ${nodeId} on user follow-up`, taskId: undefined as string | undefined, leadId: undefined as string | undefined })),
       ...leadEntries.map(entry => ({ nodeId: entry!.lead.nodeId, question: entry!.task.question, taskId: entry!.task.id, leadId: entry!.lead.id })),
@@ -1986,6 +2028,11 @@ export class NavigationEngine implements IHopStateMachine {
       // CT: pass target columns so supplemented nodes are analyzed with column context.
       const supplementColumns = this.tracer?.targetColumns;
       if (request.leadId) this.taskLedger.scheduleLead(request.leadId);
+      // Every open lead on the named object is answered by its hop, so each is scheduled here and
+      // resolved when that hop completes — the next "what next" list no longer offers it.
+      for (const lead of this.taskLedger.pendingLeads) {
+        if (lead.status === 'pending' && lead.nodeId.toLowerCase() === id.toLowerCase()) this.taskLedger.scheduleLead(lead.id);
+      }
       this.enqueueHop(id, request.question, depth, 3, {
         carry: { kind: 'carry', columns: supplementColumns ?? [] },
         freshScopeExpansion: wasNewToScope,

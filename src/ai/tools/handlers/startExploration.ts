@@ -137,7 +137,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         const supplementIds = data.supplement.nodeIds ?? [];
         // Admission happens inside `supplementAgenda`, past its last reject — the one ordering that
         // keeps the reject side-effect-free.
-        const res = priorEngine.supplementAgenda(supplementIds);
+        const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
         if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
         const admittedIds = supplementIds.filter(
           id => !res.skippedDetails.some(skip => skip.nodeId.toLowerCase() === id.toLowerCase()),

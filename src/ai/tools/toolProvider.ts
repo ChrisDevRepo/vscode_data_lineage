@@ -44,7 +44,7 @@ import { readToolError, rejectionIssuePaths, isConsentGateRejection } from '../s
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
-import type { StoredRunReader } from '../session/runStore';
+import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
 import { resolveModelNodeId } from '../support/inputNormalization';
@@ -296,6 +296,7 @@ class ToolHandler implements ToolServices {
         return this.logAndReturn('get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
+          liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
           budget: this.budget,
           ids: ids?.map(id => resolveModelNodeId(id, nodeMap) ?? id),
           filter,

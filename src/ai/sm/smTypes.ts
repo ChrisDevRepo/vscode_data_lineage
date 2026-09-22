@@ -418,6 +418,15 @@ export interface RouteOutcome {
 }
 
 /**
+ * Chain extension of a supplement: walk from each named id in one direction, `depth` steps or to
+ * the end (`'all'`).
+ */
+export interface SupplementChain {
+  direction: 'upstream' | 'downstream';
+  depth: number | 'all';
+}
+
+/**
  * Per-node drop notice from `supplementAgenda`.
  *
  * @remarks
