@@ -567,25 +567,39 @@ export function getScopeBundle(
   }
 
   const scopeIds = new Set<string>([origin]);
+  // Per-side hop distance from the origin, keyed by the same lowercased id as `scopeIds`. The BFS
+  // below already computes this `depth` to enforce the cap; retained here instead of discarded so
+  // the response can state "how far upstream/downstream" directly instead of making the model
+  // re-derive it by walking the flat positional `edges[]` itself.
+  const upstreamDistance = new Map<string, number>();
+  const downstreamDistance = new Map<string, number>();
   let nodeBudgetExceeded = false;
-  const walkWithCap = (mode: 'inbound' | 'outbound' | 'directed', depthIntent: number | 'all'): void => {
+  const walkWithCap = (
+    mode: 'inbound' | 'outbound' | 'directed',
+    depthIntent: number | 'all',
+    distance?: Map<string, number>,
+  ): void => {
     const maxDepth = depthIntent === 'all' ? Number.POSITIVE_INFINITY : depthIntent;
     if (maxDepth <= 0) return;
     bfsFromNode(graph, origin, (key, _attr, depth) => {
       if (nodeBudgetExceeded || depth > maxDepth) return true;
-      scopeIds.add(String(key).toLowerCase());
+      const id = String(key).toLowerCase();
+      scopeIds.add(id);
+      // BFS never revisits a node, so the first (and only) callback for `id` already carries its
+      // shortest depth on this side.
+      distance?.set(id, depth);
       if (!checkScopeBudget(budget, scopeIds.size, 0).ok) nodeBudgetExceeded = true;
       return false;
     }, { mode });
   };
 
   if (direction === 'upstream') {
-    walkWithCap('inbound', singleDepth);
+    walkWithCap('inbound', singleDepth, upstreamDistance);
   } else if (direction === 'downstream') {
-    walkWithCap('outbound', singleDepth);
+    walkWithCap('outbound', singleDepth, downstreamDistance);
   } else {
-    walkWithCap('inbound', upstreamDepth!);
-    walkWithCap('outbound', downstreamDepth!);
+    walkWithCap('inbound', upstreamDepth!, upstreamDistance);
+    walkWithCap('outbound', downstreamDepth!, downstreamDistance);
   }
 
   // The origin's in/out split needs the edge-type map here already (hoisted from the node loop
@@ -662,6 +676,11 @@ export function getScopeBundle(
   // in/out split explicitly, in the same shape buildHopFocusNode already emits for hop_context, so
   // direction is never inferred from tuple position. Scoped to the origin only — every other node
   // keeps the scalar `deg` it always had; this is not a payload grown for the whole scope.
+  //
+  // `uh`/`dh` (upstream/downstream hop distance from the origin) are the one addition that is
+  // whole-scope: every node carries the scalar hop count(s) for the side(s) it was reached on
+  // (never both unless reached on both sides), read straight off the BFS `depth` that already
+  // enforces the walk's cap above — no second traversal, no array, no re-derivation from `edges[]`.
   const nodes = [...scopeIds]
     .map(id => nodeMap.get(id))
     .filter((n): n is LineageNode => !!n)
@@ -671,7 +690,11 @@ export function getScopeBundle(
         model.neighborIndex,
         n.id === origin ? { nodeMap, edgeTypeMap } : undefined,
       );
-      const payload: Record<string, unknown> = { ...base };
+      const payload: Record<string, unknown> = {
+        ...base,
+        uh: upstreamDistance.get(n.id),
+        dh: downstreamDistance.get(n.id),
+      };
       if (effectiveIncludeDdl && SCRIPT_TYPES.has(n.type)) {
         payload.ddl = getNodeDdl(n.id, nodeMap, store) ?? null;
       } else if (effectiveIncludeDdl) {
