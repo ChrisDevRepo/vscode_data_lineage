@@ -328,10 +328,14 @@ export function searchObjects(
     : [];
   const seenIds = new Set(nameHits.map(n => n.id));
 
+  // A list-all enumeration hit matched no name fragment — the query was empty by definition
+  // (listAllInSchemas, above) — so it is labelled `schema`, not `name`; a real substring/regex
+  // hit against the object's own name or id keeps `name`. One label per cause, no false positive.
+  const nameMatchLabel: 'name' | 'schema' = listAllInSchemas ? 'schema' : 'name';
   const results = [
     ...nameHits.map(n => ({
       ...presentNode(n, model.neighborIndex),
-      match: 'name' as const,
+      match: nameMatchLabel,
     })),
     ...columnHits
       .filter(h => !seenIds.has(h.node.id))

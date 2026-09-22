@@ -29,7 +29,7 @@ import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
 import { toJsonSchema } from '@langchain/core/utils/json_schema';
 import { isHostCancellationError, ModelPortError, type ModelPortErrorCode } from './modelPort';
-import type { WireEvent } from '../observability/wireLog';
+import { systemPromptHash, type WireEvent } from '../observability/wireLog';
 import { toWireMessage } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
 
@@ -161,7 +161,11 @@ export class VscodeLangChainBridge extends BaseChatModel<
       this.wire?.({
         type: 'wire-request',
         messages: nativeMessages.map(toWireMessage),
-        tools: tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema })),
+        tools: tools.map((tool) => ({
+          name: tool.name,
+          descriptionHash: systemPromptHash(tool.description),
+          inputSchema: tool.inputSchema,
+        })),
         toolMode: tools.length > 0 ? toolMode : undefined,
       });
       const response = await this.model.sendRequest(

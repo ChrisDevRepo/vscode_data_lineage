@@ -75,8 +75,11 @@ export type WireEvent =
   | {
       readonly type: 'wire-request';
       readonly messages: readonly WireMessage[];
-      /** The tool input schema is the field no other capture surface exposes. */
-      readonly tools: ReadonlyArray<{ readonly name: string; readonly inputSchema: unknown }>;
+      /**
+       * The tool input schema is the field no other capture surface exposes; the description rides
+       * as its {@link systemPromptHash} digest, so a trace proves which revision the model received.
+       */
+      readonly tools: ReadonlyArray<{ readonly name: string; readonly descriptionHash: string; readonly inputSchema: unknown }>;
       /** `LanguageModelChatToolMode` integer, absent when the request carries no tools. */
       readonly toolMode?: number;
       /**
