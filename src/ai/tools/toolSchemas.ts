@@ -604,7 +604,7 @@ const hopVerdictSchema = (mode: 'bb' | 'ct') =>
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_IDS).describe(
   'CT mode only: structural provenance for active tracked columns. Use column_flow: [] only when the focus has no active tracked-column interaction. ' +
   'When a tracked output exists but has no upstream real column, emit its entry with upstream_columns: []. ' +
-  'A focus with no body of its own applies no logic: declare continuation at its writers, not attribution.',
+  'A focus with no body of its own applies no logic: declare continuation at its writers.',
 );
 
 /**

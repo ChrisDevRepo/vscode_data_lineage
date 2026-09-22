@@ -1020,6 +1020,49 @@ describe('executeToolAttempt — bounded rejection replay', () => {
     expect(() => assertToolPairingWellFormed(replayed)).not.toThrow();
   });
 
+  it('replays every pending correction on retry, oldest first, behind one trailing note', async () => {
+    // Measured 2026-09-20, m30 T24: the output-limit correction replaced the column correction —
+    // its available-column list and hold order vanished from the request and the model resent the
+    // identical rejected payload. A later correction must never evict an earlier one's repair data:
+    // "act on the correction above" requires all of it to be above. Bounded by construction (at
+    // most MAX_TOOL_PROVIDER_CALLS rejections per hop state), so replaying the stack needs no
+    // further shrink ladder.
+    const toolName = 'lineage_submit_findings';
+    const reasonA = 'FIRST-CORRECTION-ALPHA: column_flow names an untracked out_col.';
+    const reasonB = 'SECOND-CORRECTION-BETA: route_requests misses a required neighbor.';
+    const { registry } = scriptedRegistry([{
+      name: toolName,
+      result: (input: unknown) => rejectionEnvelope({
+        reason: (input as { marker?: string })?.marker === 'B' ? reasonB : reasonA,
+      }),
+    }]);
+    const plan = conversePlan(registry);
+
+    const firstPort = new ScriptedModelPort([{
+      toolCalls: [validCall('call-A', toolName, { marker: 'A' })],
+    }]);
+    const first = await executeToolAttempt(firstPort, plan);
+    expect(first.rejections).toHaveLength(1);
+    const state1 = recordToolAttempt(initialToolPhaseAttemptState('active'), first);
+
+    const secondPort = new ScriptedModelPort([{
+      toolCalls: [validCall('call-B', toolName, { marker: 'B' })],
+    }]);
+    const second = await executeToolAttempt(secondPort, plan, { priorState: state1 });
+    expect(second.rejections).toHaveLength(1);
+    const state2 = recordToolAttempt(state1, second);
+    expect(state2.rejections).toHaveLength(2);
+
+    const thirdPort = new ScriptedModelPort([{ text: 'Acknowledged.' }]);
+    await executeToolAttempt(thirdPort, plan, { priorState: state2 });
+    const sent = JSON.stringify(thirdPort.requests[0].messages.map((m) => String((m as { content?: unknown }).content ?? '')));
+    expect(sent).toContain(reasonA);
+    expect(sent).toContain(reasonB);
+    expect(sent.indexOf(reasonA) < sent.indexOf(reasonB), 'oldest correction first').toBe(true);
+    expect(sent.split('Continue the current task').length - 1, 'exactly one trailing continuation note').toBe(1);
+    expect(() => assertToolPairingWellFormed(thirdPort.requests[0].messages)).not.toThrow();
+  });
+
   it('closes a rejection that has no corrective call with a stop note, not a resend order', async () => {
     // UAT sess_1789702959746_3m3q1: a hint reading "do not resend" arrived beside the standing note
     // "resend the corrected tool call". With no legal move the model improvised, and each
