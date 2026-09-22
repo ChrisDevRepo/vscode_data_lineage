@@ -2173,6 +2173,34 @@ describe('executeToolGenerationAttempt / executeToolAttempt — unproductive-res
     expect(state.stopReason).toBe('semantic_failures');
   });
 
+  it('bounds the free absorption under interleave: alternating two different-hash no-op resends still charges past the allowance', async () => {
+    // Neither identity may reset the other's bound: each no-op touches no repair field, so the
+    // consecutive streak chains across the alternation while each identity's whole-history count
+    // grows underneath it — the phase must close instead of spinning.
+    const envelope = presentResultRejectionEnvelope({
+      reason: 'notes[].text must be non-empty.',
+      hint: 'Fix notes only.',
+      repairFields: ['notes'],
+      issuePath: 'notes.0',
+    });
+    const noOpA = { is_update: true, filter: 'stale' };
+    const noOpB = { is_update: true, filter: 'fresh' };
+    const { state, results } = await runAttemptSequence(
+      [
+        { toolCalls: [validCall('call-1', 'lineage_present_result', { sections: [{ label: 'Source', text: 'Detail.' }], notes: [{ text: '' }] })] },
+        { toolCalls: [validCall('call-2', 'lineage_present_result', noOpA)] },
+        { toolCalls: [validCall('call-3', 'lineage_present_result', noOpB)] },
+        { toolCalls: [validCall('call-4', 'lineage_present_result', noOpA)] },
+        { toolCalls: [validCall('call-5', 'lineage_present_result', noOpB)] },
+      ],
+      [{ name: 'lineage_present_result', result: envelope }],
+    );
+
+    expect(results.map((result) => result.semanticFailures)).toEqual([1, 0, 0, 1, 1]);
+    expect(state.semanticFailures).toBe(3);
+    expect(state.stopReason).toBe('semantic_failures');
+  });
+
   it('exempts a single attempt whose input touches none of a directly supplied prior rejection\'s repairFields', async () => {
     const priorRejection = {
       callId: 'call-1',
