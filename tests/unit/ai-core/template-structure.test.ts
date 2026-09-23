@@ -1,3 +1,7 @@
+/**
+ * Pins the structure fingerprint behind the output-template schema-version gate: wording never
+ * changes it, and only removals, renames and retypes count as breaking.
+ */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {

@@ -202,16 +202,11 @@ describe('BB <-> CT node-set parity: two columns, one literal, bidirectional', (
 });
 
 /**
- * Third shape: an explicit AI prune — `verdict: 'end_branch'` on the pruned node's own hop, tallied
- * `verdict: 'prune'` in `getHopProgress()` (`hopProgress.pruned` counts `nodeStates` entries with
- * `action === 'prune'`, `smBase.ts`). The engine pre-seeds the whole approved-depth scope into the
- * agenda at `init()` — `prune_neighbors` named from a DIFFERENT node's hop refuses a target that is
- * already queued for its own hop (`prune_noop_queued`, `currentHopActionPolicy.ts`) — so an
- * already-scoped node is cut on ITS OWN hop, the file's existing `driveEngine` `prune` option's
- * mechanism. `root` keeps `keep` (continues `amount`); `pruned` is column-less for `amount`
- * (row-shaping only, like `side` in the first fixture) and cuts itself on its own hop.
- * `behindPruned` is reachable only through `pruned`, so the cut cascade (`cutUnreachable`) drops it
- * from the agenda before it is ever dispatched, identically in both arms.
+ * Third shape: an explicit AI prune — `verdict: 'end_branch'` on the pruned node's own hop, or the
+ * origin's `prune_neighbors` naming it. `root` keeps `keep` (continues `amount`); `pruned` is
+ * column-less for `amount` (row-shaping only, like `side` in the first fixture). `behindPruned` is reachable only
+ * through `pruned`, so the cut cascade (`cutUnreachable`) drops it before it is ever dispatched,
+ * identically in both arms.
  */
 describe('BB <-> CT node-set parity: explicit prune (end_branch) cut', () => {
   const nodes: LineageNode[] = [
@@ -226,9 +221,10 @@ describe('BB <-> CT node-set parity: explicit prune (end_branch) cut', () => {
   const EXPECTED_KEPT = ['keep', 'root'];
   const EXPECTED_PRUNED = ['behindPruned', 'pruned'];
 
-  function run(mode: 'bb' | 'ct'): string[] {
+  function run(mode: 'bb' | 'ct', via: 'end_branch' | 'prune_neighbors' = 'end_branch'): string[] {
     const engine = new NavigationEngine(model, makeGraph(nodes, edges), () => {}, {});
     const ct = mode === 'ct';
+    const originPrune = via === 'prune_neighbors' ? { prune_neighbors: [{ id: 'pruned', reason: 'root\'s SQL shows pruned never feeds amount' }] } : {};
     const init = engine.init({
       origin: 'root', question: 'trace amount', direction: 'upstream',
       depthIntent: { kind: 'explicit', levels: 3 },
@@ -240,6 +236,7 @@ describe('BB <-> CT node-set parity: explicit prune (end_branch) cut', () => {
       if (ctx.done || !ctx.focus_node) break;
       const id = ctx.focus_node.id;
       if (id === 'pruned') {
+        if (via === 'prune_neighbors') throw new Error(`unexpected ${mode} focus ${id}: the origin's prune_neighbors must remove it before dispatch`);
         const outcome = engine.submitFindings({ focus_node_id: id, verdict: 'end_branch', reason: 'pruned\'s SQL shows it never feeds amount' });
         expect((outcome as { error?: string }).error, `${mode} end_branch on ${id} must commit`).toBeUndefined();
         continue;
@@ -248,6 +245,7 @@ describe('BB <-> CT node-set parity: explicit prune (end_branch) cut', () => {
       const outcome = id === 'root'
         ? engine.submitFindings({
           ...base,
+          ...originPrune,
           ...(ct ? { column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'keep', col: 'amount' }] }] } : {}),
         })
         : id === 'keep'
@@ -275,6 +273,12 @@ describe('BB <-> CT node-set parity: explicit prune (end_branch) cut', () => {
         expect(EXPECTED_KEPT.includes(id) || EXPECTED_PRUNED.includes(id), `fixture id ${id} must be classified kept or pruned`).toBe(true);
       }
     }
+  });
+
+  it('the origin prunes its neighbour through prune_neighbors with the same node set in BB and CT', () => {
+    const bb = run('bb', 'prune_neighbors');
+    expect(bb, 'BB keeps only the un-pruned branch').toEqual(EXPECTED_KEPT);
+    expect(run('ct', 'prune_neighbors'), 'CT node set equals BB').toEqual(bb);
   });
 });
 
@@ -423,13 +427,12 @@ describe('BB <-> CT node-set parity: asymmetric per-side depth border', () => {
 });
 
 /**
- * Sixth shape: a fixed-direction `out_of_direction` disclosure (`smBase.ts` `buildNeighborList`
- * ~3317-3345; commit 11c3ae9b1). `direction: 'upstream'` approves only `up`; `down` is a genuine
- * graph neighbor of `root` on the disapproved side. In CT, `buildNeighborList` discloses `down` as
- * `out_of_direction: true` in the hop context — informational only, derived from the same
- * `isReachableInApprovedDirection` predicate `checkBorder`'s `route` purpose already uses to refuse
- * the route in BOTH arms. The disclosure must never change what gets routed: `down` is absent from
- * `fullNodes` in BB (which never computes the flag at all) exactly as in CT.
+ * Sixth shape: a fixed-direction `out_of_direction` disclosure (`buildNeighborList`).
+ * `direction: 'upstream'` approves only `up`; `down` is a genuine graph neighbor of `root` on the
+ * disapproved side. Both arms disclose `down` as `out_of_direction: true` in the hop context —
+ * informational only, derived from the same `isReachableInApprovedDirection` predicate
+ * `checkBorder`'s `route` purpose already uses to refuse the route in both arms. The disclosure
+ * must never change what gets routed: `down` is absent from `fullNodes` in BB exactly as in CT.
  */
 describe('BB <-> CT node-set parity: fixed-direction out_of_direction disclosure', () => {
   const amountCol = { name: 'amount', type: 'int', nullable: 'NOT NULL', extra: '' };
@@ -462,12 +465,8 @@ describe('BB <-> CT node-set parity: fixed-direction out_of_direction disclosure
       const id = ctx.focus_node.id;
       if (id === 'root') {
         const downNeighbor = (ctx.neighbors ?? []).find(n => n.id === 'down');
-        if (ct) {
-          expect(downNeighbor?.out_of_direction, 'CT must disclose the disapproved-direction neighbor').toBe(true);
-          sawDisclosure = true;
-        } else {
-          expect(downNeighbor?.out_of_direction, 'BB never sets the CT-only disclosure flag').toBeUndefined();
-        }
+        expect(downNeighbor?.out_of_direction, `${mode} must disclose the disapproved-direction neighbor`).toBe(true);
+        sawDisclosure = true;
       }
       const base = { focus_node_id: id, sections: [{ angle: 'business' as const, text: id }], summary: id, verdict: 'analyze' as const };
       const outcome = id === 'root'
@@ -491,10 +490,10 @@ describe('BB <-> CT node-set parity: fixed-direction out_of_direction disclosure
     return { ids: engine.getResult().fullNodes.map(n => n.id).sort(), sawDisclosure };
   }
 
-  it('the disclosure fires in CT but never adds or removes a node versus BB', () => {
+  it('the disclosure fires in both arms and never adds or removes a node', () => {
     const bb = run('bb');
     const ct = run('ct');
-    expect(ct.sawDisclosure, 'CT arm must actually exercise the disclosure branch').toBe(true);
+    expect(bb.sawDisclosure && ct.sawDisclosure, 'both arms must actually exercise the disclosure branch').toBe(true);
     expect(bb.ids, 'BB approves only the upstream side').toEqual(EXPECTED_KEPT);
     expect(ct.ids, 'CT node set equals BB — the disclosure changed nothing').toEqual(bb.ids);
     for (const arm of [{ label: 'BB', ids: bb.ids }, { label: 'CT', ids: ct.ids }]) {

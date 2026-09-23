@@ -8,14 +8,12 @@ import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
  * Executable form of three written architecture rules.
  *
  * @remarks
- * Each rule below exists in prose (`docs/ARCHITECTURE.md`, `.github/copilot-instructions.md`,
- * `CLAUDE.md`) and was previously enforced by review alone. The scans here run inside the normal
- * unit suite — and therefore inside `npm run gate` — so a regression fails a build instead of
- * surviving until someone re-reads the document.
+ * Each rule below is stated in prose (`docs/ARCHITECTURE.md`, `.github/copilot-instructions.md`).
+ * The scans run inside the normal unit suite — and therefore inside `npm run gate` — so a
+ * violation fails the build.
  *
- * The scan primitives are plain functions over source text and are exercised against inline
- * fixtures as well as against the tree, because a scan that silently matches nothing would
- * otherwise "prove" every absence.
+ * The scans run over the source tree behind a file-count floor and a positive-control token per
+ * tree, because a scan that silently matches nothing would otherwise "prove" every absence.
  */
 
 const srcRoot = fileURLToPath(new URL('../../../src', import.meta.url));

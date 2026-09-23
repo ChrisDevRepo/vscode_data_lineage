@@ -16,7 +16,7 @@ export interface CurrentHopActionPolicyInput {
   originId: string;
   /** Explicit prune_neighbors targets. */
   pruneTargets: CurrentHopActionTarget[];
-  /** Nodes already processed or removed. */
+  /** Nodes already processed: analyzed on a hop of their own, or the carrier the engine passed through into the current focus. */
   visitedIds: ReadonlySet<string>;
   /** Nodes already removed by an earlier accepted prune. */
   removedIds: ReadonlySet<string>;
@@ -63,7 +63,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       continue;
     }
     if (input.visitedIds.has(id)) {
-      notices.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` was already analyzed on an earlier hop.` });
+      notices.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` was already visited on an earlier hop and stays on the answer path.` });
       continue;
     }
     if (input.notedIds.has(id)) {

@@ -37,6 +37,8 @@ import {
   readToolError,
   rejectionEntryIds,
   rejectionIssuePaths,
+  rejectionLengthOverruns,
+  type RejectionLengthOverrun,
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -90,7 +92,10 @@ const NO_RETRY_REJECTION_CODES: ReadonlySet<string> = new Set([
  * host's own session, turn lease or focus has moved — the engine is in the wrong status, the focus
  * is not the one dispatched, the run memory or the turn epoch is gone. No correction the model
  * could write would change any of them, so charging a strike for one would spend the budget for
- * real semantic repairs on the host's bookkeeping instead.
+ * real semantic repairs on the host's bookkeeping instead. The engine's status and focus failures
+ * are listed by the wire code `mapSubmitFindingsEngineGuard` returns, the only form this set is
+ * matched against; an unknown focus id is the model's own payload and reaches the wire as
+ * {@link REJECTION_CODES.invalidInput}, which stays chargeable.
  */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
@@ -104,9 +109,9 @@ const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.staleProposalRevision,
   REJECTION_CODES.alreadyStarted,
   REJECTION_CODES.supplementRequiresCompleteEngine,
-  'invalid_status',
-  'invalid_focus_node',
-  'focus_mismatch',
+  REJECTION_CODES.invalidStatus,
+  REJECTION_CODES.explorationComplete,
+  REJECTION_CODES.focusNodeIdMismatch,
 ]);
 
 /**
@@ -253,8 +258,7 @@ function boundStructuredValue(value: unknown, maxBytes: number): unknown | Omitt
  * @remarks
  * `'length'` (output token limit) and `'content-filter'` (provider content filter). Surfaced so a
  * truncated non-terminal generation is neither silently accepted as complete nor blind-retried at
- * identical settings. The `vscode.lm` lane only ever synthesizes `'stop'`/`'tool-calls'`, so this
- * is naturally unreachable there.
+ * identical settings.
  */
 export type ToolFinishAnomaly = 'length' | 'content-filter';
 
@@ -273,6 +277,12 @@ interface ToolAttemptRejection {
    * {@link issuePaths} when present, since an id survives a repair unlike a fixed structural path.
    */
   readonly entryIds?: readonly string[];
+  /**
+   * Length offenders the rejection carries ({@link rejectionLengthOverruns}'s mining of the
+   * unbounded `detail`), read by {@link heldDraftLengthOverruns} so every flagged value in the held
+   * draft renders as its rewrite marker, not only the one the capped `reason` states.
+   */
+  readonly lengthOverruns?: readonly RejectionLengthOverrun[];
   readonly correctionFragments?: readonly ToolCorrectionFragment[];
   /**
    * The model's own buffered turn text for a synthesized (`callId`-less) rejection, capped by
@@ -320,6 +330,7 @@ type ToolOutcomeData =
       readonly hint?: string;
       readonly issuePaths?: readonly string[];
       readonly entryIds?: readonly string[];
+      readonly lengthOverruns?: readonly RejectionLengthOverrun[];
       readonly fragments?: readonly ToolCorrectionFragment[];
     };
     readonly detail?: unknown;
@@ -943,18 +954,15 @@ function truncateHeldDraftSection(section: unknown, targetBytes: number): unknow
  * The held draft tells the model to repeat unflagged elements exactly; showing the over-long value
  * there verbatim invites the model to copy it back unchanged (measured: six identical resends of a
  * 62-char label against a 60-char cap). The marker keeps the path's slot and its measured length and
- * limit, never the text to copy.
+ * limit, never the text to copy. Read from the structured {@link ToolAttemptRejection.lengthOverruns},
+ * so every offender the rejection names is marked.
  */
 function heldDraftLengthOverruns(state: ToolPhaseAttemptState | undefined): Map<string, string> {
-  const overruns = new Map<string, string>();
   const latest = state?.rejections.filter((rejection) => rejection.toolName === PRESENT_RESULT_TOOL && !rejection.preDispatch).at(-1);
-  if (!latest?.issuePaths) return overruns;
-  for (const path of latest.issuePaths) {
-    const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = new RegExp(`${escapedPath} is over its length limit: (\\d+) chars, limit (\\d+)`).exec(latest.reason);
-    if (match) overruns.set(path, `[rewrite: was ${match[1]} chars, limit ${match[2]}]`);
-  }
-  return overruns;
+  return new Map((latest?.lengthOverruns ?? []).map(({ path, length, limit }) => [
+    path,
+    `[rewrite: was ${length} chars, limit ${limit}]`,
+  ]));
 }
 
 /** Replaces each overrun string leaf `<root>.<index>.<field>` of one held-draft list with its rewrite marker. */
@@ -1263,6 +1271,7 @@ function essentialCurrentRejection(rejection: ToolAttemptRejection): ToolAttempt
     reason: capUtf8Text(rejection.reason, MAX_REJECTION_TEXT_CHARS * 4),
     ...(rejection.hint !== undefined ? { hint: rejection.hint } : {}),
     ...(rejection.issuePaths !== undefined ? { issuePaths: rejection.issuePaths } : {}),
+    ...(rejection.lengthOverruns !== undefined ? { lengthOverruns: rejection.lengthOverruns } : {}),
     ...(rejection.correctionFragments && rejection.correctionFragments.length > 0
       ? { correctionFragments: [collapsedCorrectionFragment(rejection.correctionFragments)] }
       : {}),
@@ -1297,13 +1306,13 @@ function rejectionFromInvalid(
     code: call.code,
     message: capRejectionText(call.reason),
     correction: {
-      ...(call.code === 'invalid_tool_input' ? { hint: call.hint ?? INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
-      ...(call.code === 'unknown_tool' ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
+      ...(call.code === REJECTION_CODES.invalidToolInput ? { hint: call.hint ?? INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
+      ...(call.code === REJECTION_CODES.unknownTool ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
       ...(fragments.length > 0 ? { fragments } : {}),
     },
-    ...(call.code === 'unknown_tool'
+    ...(call.code === REJECTION_CODES.unknownTool
       ? { detail: { allowedTools: registry.getTools().map((tool) => tool.name) } }
       : {}),
   };
@@ -1439,6 +1448,7 @@ function rejectionFromResult(
     if (!rejection) return null;
     const issuePaths = rejectionIssuePaths(rejection.detail);
     const entryIds = rejectionEntryIds(rejection.detail);
+    const lengthOverruns = rejectionLengthOverruns(rejection.detail);
     const fragments = replayFragments(call.input, issuePaths);
     return {
       status: 'rejected',
@@ -1451,6 +1461,7 @@ function rejectionFromResult(
         ...(rejection.hint ? { hint: capUtf8Text(rejection.hint, MAX_REJECTION_HINT_BYTES) } : {}),
         ...(issuePaths.length > 0 ? { issuePaths } : {}),
         ...(entryIds.length > 0 ? { entryIds } : {}),
+        ...(lengthOverruns.length > 0 ? { lengthOverruns } : {}),
         ...(fragments.length > 0 ? { fragments } : {}),
       },
     };
@@ -1490,6 +1501,7 @@ function recordToolOutcome(
       ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
       ...(outcome.correction.issuePaths ? { issuePaths: outcome.correction.issuePaths } : {}),
       ...(outcome.correction.entryIds ? { entryIds: outcome.correction.entryIds } : {}),
+      ...(outcome.correction.lengthOverruns ? { lengthOverruns: outcome.correction.lengthOverruns } : {}),
       ...(outcome.correction.fragments ? { correctionFragments: outcome.correction.fragments } : {}),
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
@@ -1801,19 +1813,19 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     }
     if (!call.valid) {
       const rejection = recordToolOutcome(call, rejectionFromInvalid(call, input.registry), calls, observations, rejections, input.traceSyntheticRejection)!;
-      const isRepairTurnPresentResultPrevalidation = call.code === 'invalid_tool_input'
+      const isRepairTurnPresentResultPrevalidation = call.code === REJECTION_CODES.invalidToolInput
         && call.toolName === PRESENT_RESULT_TOOL
         && input.presentResultRepairDraftHeld === true;
       const candidateHash = acceptedCallKey(call.toolName, call.input);
       const shrinkingRepair = isShrinkingViolationRepair(input.priorRejection, call.toolName, rejection.issuePaths, rejection.entryIds);
-      const unproductiveStreak = call.code === 'invalid_tool_input'
+      const unproductiveStreak = call.code === REJECTION_CODES.invalidToolInput
         ? unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, candidateHash)
         : 0;
       const repairResendBeyondAbsorption = isRepairTurnPresentResultPrevalidation
         && unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS;
       const freeBoundedRepairResend = isRepairTurnPresentResultPrevalidation && !repairResendBeyondAbsorption;
       input.debugLog?.(
-        `[Reject] source=${call.code === 'invalid_tool_input' ? 'provider_prevalidation' : 'provider_generation'}`
+        `[Reject] source=${call.code === REJECTION_CODES.invalidToolInput ? 'provider_prevalidation' : 'provider_generation'}`
         + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
         + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
         + ` callId=${safeCallId(call.callId)}`
@@ -1833,7 +1845,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       rejections[rejections.length - 1] = {
         ...rejection,
         preDispatch: true,
-        ...(call.code === 'invalid_tool_input' ? { inputHash: candidateHash } : {}),
+        ...(call.code === REJECTION_CODES.invalidToolInput ? { inputHash: candidateHash } : {}),
         ...(unproductiveStreak > 0 ? { unproductiveStreak } : {}),
       };
       continue;
@@ -1978,12 +1990,14 @@ export async function executeToolGenerationAttempt(
 ): Promise<ToolAttemptResult> {
   const beforeCalls = model.modelCalls;
   const streamText = input.proseGate !== 'buffer-until-tool';
+  const requiresToolCall = input.requiredTerminalTool !== undefined || input.requiresToolEvidence === true;
   assertToolPairingWellFormed(input.messages);
   const generated = await model.generateToolTurn({
     messages: input.messages,
     system: input.system,
     tools: modelToolDefinitions(input.registry),
     toolChoice: input.toolChoice,
+    requiresToolCall,
     signal: input.signal,
     phase: input.phase,
     instructionContext: input.instructionContext,
@@ -2019,7 +2033,7 @@ export async function executeToolGenerationAttempt(
         : null;
   const truncatedBeforeRequiredCall = finishAnomaly === 'length'
     && generated.toolCalls.length === 0
-    && (input.requiredTerminalTool !== undefined || input.requiresToolEvidence === true);
+    && requiresToolCall;
   if (finishAnomaly && !truncatedBeforeRequiredCall) {
     return {
       stop: 'output_limit',

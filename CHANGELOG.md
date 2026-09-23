@@ -3,20 +3,22 @@
 ## [1.2.0] - 2026-09-21
 
 ### Added
-- **Column Detail** — column-level findings of an AI analysis, shown as a second rendering of the same objects; procedures and scalar functions appear as compact hubs. Replaces the always-on column-flow tooltip on objects.
-- The assistant reads what is on screen, recalls a saved AI view's findings and open questions in later chats.
-- Improved column tracing in GUI and backend: CT prompts compose as BB plus a column rider with full-depth synthesis in both modes; a body-less CT focus grows continuation edges instead of stalling; every CT route states its column decision.
-- Follow-ups add the requested object into the graph already presented — or its whole chain up to the source or down to the end — and render amendments patch the committed report instead of re-authoring it. "Explore related objects" suggests candidates, marking those already on the graph, and asks before adding.
+- **Detail view** (Objects / Detail switch on AI previews and AI bookmarks): column-level findings of an AI analysis, rendered on the same objects; procedures and scalar functions render as compact hubs. The column-flow tooltip on objects is removed.
+- The assistant reads the current screen state and recalls a saved AI view's findings and open questions in later chats.
+- Column trace runs the same exploration as an object trace plus column findings, synthesizes at full depth, continues past objects without a SQL body, and records a column decision for every route.
+- A follow-up adds the requested object, or its chain to the source or to the end, to the presented graph; a render amendment patches the committed report. "Explore related objects" lists candidates, marks those already on the graph, and asks before adding.
 
 ### Changed
-- Rejection and repair handling unified: one repeated-error guard, self-repair for array-boundary breaks, one home for every rejection code; over-long names become single-field repairs; callouts delivered as a sidecar; remaining silent drops log instead of vanishing.
-- An explicit graph/render request is answered in discovery
+- Rejection and repair handling: one guard stops repeated errors, broken array boundaries are repaired, over-long names are repaired per field, and every dropped value is logged.
+- An explicit graph/render request is answered in discovery.
+- `@lineage` SQL code search reports the governing IF/WHILE condition of each hit.
+- In an untrusted workspace, workspace values for `dataLineageViz.parseRulesFile`, `dmvQueriesFile`, `excludePatterns` and `ai.outputTemplateFile` are ignored until the workspace is trusted.
 
 ### Fixed
-- Parser and trace fixes: bracketed `]]` escapes, comments inside identifiers.
+- Parser and trace: bracketed `]]` escapes, comments inside identifiers.
 - Display: large graphs stay responsive while dragging, over-limit views report it, saved views fit the graph on restore, and the collapsed report rail stays docked.
-- Assistant robustness: XML/unfenced tool calls read without stalling the turn, bookmarks recall their AI run, formula notes reach the report, and a very broad SQL code search no longer exhausts memory or hangs the extension host.
-- Webview: search hits keep their pending zoom and report the enclosing predicate; the AI description overlay is simplified.
+- Assistant: XML/unfenced tool calls are read without stalling the turn, bookmarks recall their AI run, formula notes reach the report, and a broad SQL code search stays within memory and time limits.
+- Webview: search hits keep their pending zoom; the AI description overlay is simplified.
 
 ## [1.1.0] - 2026-08-20
 

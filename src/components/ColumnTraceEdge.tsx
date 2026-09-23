@@ -23,8 +23,7 @@ const DIM_STROKE_WIDTH = 1;
  * The one drawing convention column-lineage tools actually share: OpenLineage splits every column
  * relation into DIRECT and INDIRECT, and a lineage viewer draws the indirect one broken — a column
  * used in a WHERE or a JOIN predicate reaches the output without its value ever landing in it. The
- * `COLUMN_TRANSFORM_DIRECTION` map has classified this since the classes existed; only the line
- * had not said so.
+ * `COLUMN_TRANSFORM_DIRECTION` map classifies each class; an INDIRECT-only edge is drawn dashed.
  */
 const INDIRECT_DASH_PATTERN = '5 4';
 
@@ -63,8 +62,7 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
  * Display name of one transform class, as the tooltip's first line spells it.
  *
  * @remarks
- * The legend row for column flow was removed: the chip's tooltip is now the only surface that
- * names the class, so these strings are load-bearing on hover alone.
+ * The chip's tooltip is the only surface that names the class, so these strings are user-facing.
  */
 const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
   pass_through: 'Pass through',

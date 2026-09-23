@@ -313,7 +313,7 @@ body.vscode-reduce-motion *::after {
 .ln-ai-badge-lit {
   background: var(--ln-ai-bg);
   border-color: var(--ln-ai-border);
-  box-shadow: 0 0 0 1px var(--ln-ai-border), 0 1px 4px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 0 0 1px var(--ln-ai-border), var(--ln-node-shadow);
 }
 
 .ln-ai-badge-dim {
@@ -329,7 +329,7 @@ body.vscode-reduce-motion *::after {
   background: var(--ln-bg-elevated);
   color: var(--ln-ai-or);
   border: 1px solid var(--ln-border-light);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--ln-node-shadow);
   cursor: help;
 }
 
@@ -397,7 +397,7 @@ body.vscode-reduce-motion *::after {
   max-height: 75vh;
   resize: vertical;
 }
-/* Maximized keeps its historic full-window overlay form — it covers the dock, not the layout */
+/* Maximized is a full-window overlay — it covers the dock, not the layout */
 .ln-ai-description-anchor-maximized {
   position: fixed;
   inset: 0;

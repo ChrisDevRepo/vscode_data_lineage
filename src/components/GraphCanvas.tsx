@@ -56,7 +56,7 @@ import {
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
-import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes, resolveBaseSelectionState, isTraceOriginNode } from '../engine/nodeDecoration';
+import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes, computeNodeDecoration } from '../engine/nodeDecoration';
 import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
@@ -1202,10 +1202,12 @@ export function GraphCanvas({
   useEffect(() => {
     if (!pinnedColumn) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPinnedColumn(null);
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setPinnedColumn(null);
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [pinnedColumn]);
 
   const columnHover = useMemo((): ColumnHoverState => ({
@@ -1280,26 +1282,38 @@ export function GraphCanvas({
     const byNode = new Map<string, ColumnTraceNodeData>();
     if (!columnTraceView) return byNode;
     const statesByRow = resolveRowLineStates(columnTraceView.edges);
+    const decorationInputs = {
+      highlightedNodeId,
+      level1Neighbors,
+      traceMode: trace.mode,
+      traceSelectedNodeId: trace.selectedNodeId,
+      isBookmarkMode,
+      canRemoveNodeFromScopedView,
+      notesVisible,
+      onRemoveFromView,
+      traceControlsByNode,
+      aiHighlightMap,
+      aiBadgeMap,
+      aiNoteMap,
+    };
     for (const view of columnTraceView.nodes) {
       const rowLineStates: Record<string, ColumnLineState> = {};
       for (const row of view.rows) {
         const state = statesByRow.get(columnRowKey(view.id, row.name));
         if (state) rowLineStates[row.name] = state;
       }
-      const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
-      const isTraceOrigin = isTraceOriginNode(view.id, { traceSelectedNodeId: trace.selectedNodeId, traceMode: trace.mode });
-      const removable = isBookmarkMode && canRemoveNodeFromScopedView;
+      const d = computeNodeDecoration(view.id, undefined, decorationInputs);
       byNode.set(view.id, {
         view,
         rowLineStates,
-        highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : undefined,
-        dimmed: dimmed && !isTraceOrigin,
-        aiHighlight: aiHighlightMap.get(view.id),
-        aiBadge: aiBadgeMap.get(view.id),
-        aiNote: notesVisible ? aiNoteMap.get(view.id) : undefined,
-        showRemoveButton: removable,
-        onRemoveFromView: removable ? onRemoveFromView : undefined,
-        traceControls: traceControlsByNode.get(view.id),
+        highlighted: d.highlighted,
+        dimmed: d.dimmed,
+        aiHighlight: d.aiHighlight,
+        aiBadge: d.aiBadge,
+        aiNote: d.aiNote,
+        showRemoveButton: d.removable,
+        onRemoveFromView: d.onRemoveFromView,
+        traceControls: d.traceControls,
       });
     }
     return byNode;
@@ -1747,7 +1761,7 @@ export function GraphCanvas({
             staleNodeNames={[]}
           />
         )}
-        {/* AI report column — docked right, collapsible to a slim rail; section chips scroll and highlight that section's nodes */}
+        {/* AI report column — docked to the chosen edge, collapsible to a slim rail; section chips scroll and highlight that section's nodes */}
         {activeAiMetadata?.description && (
           <Suspense fallback={null}>
             <AiDescriptionOverlay

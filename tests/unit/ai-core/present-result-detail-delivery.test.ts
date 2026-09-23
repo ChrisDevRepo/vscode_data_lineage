@@ -1,3 +1,7 @@
+/**
+ * Pins detail-callout delivery in `orderAndAssemble`: every captured ⚠️ callout of a section-linked
+ * slot reaches the preview description exactly once; unlinked slots stay on the rejection path.
+ */
 import { describe, expect, it } from 'vitest';
 import { orderAndAssemble } from '../../../src/ai/tools/presentResult';
 import type { DetailSlot } from '../../../src/ai/session/memoryManager';

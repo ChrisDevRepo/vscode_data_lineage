@@ -24,6 +24,7 @@ export function buildWebviewCsp({ nonce, cspSource }: CspOptions): string {
     `style-src ${cspSource} 'unsafe-inline'`,
     `script-src 'nonce-${nonce}' ${cspSource}`,
     `img-src ${cspSource} data:`,
-    `font-src ${cspSource}`
+    `font-src ${cspSource}`,
+    "form-action 'none'"
   ].join('; ') + ';';
 }

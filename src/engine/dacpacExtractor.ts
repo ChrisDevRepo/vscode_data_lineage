@@ -428,21 +428,39 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
   return objects;
 }
 
+/** A computed-column expression that is one column reference, bracketed or not, under optional parentheses. */
+const BARE_COLUMN_REFERENCE = /^\s*(?:\[((?:[^\]]|\]\])+)\]|([A-Za-z_@#][\w@#$]*))\s*$/;
+
 /**
- * Gives a computed column the declared type of the single column it reads.
+ * Names the column a computed-column expression passes through unchanged.
+ *
+ * @param script - The column's `ExpressionScript`, if the model records one.
+ * @returns The referenced column name when the whole expression is a bare column reference such as
+ *   `([Qty])` or `Qty`; `null` for any other expression, and for a column with no script.
+ */
+function bareColumnReference(script: string | undefined): string | null {
+  if (script === undefined) return null;
+  let body = script.trim();
+  while (body.startsWith('(') && body.endsWith(')')) body = body.slice(1, -1).trim();
+  const match = BARE_COLUMN_REFERENCE.exec(body);
+  if (!match) return null;
+  return match[1] !== undefined ? match[1].replace(/\]\]/g, ']') : match[2];
+}
+
+/**
+ * Gives a computed column the declared type of the column its expression passes through unchanged.
  *
  * @remarks
- * A DACPAC declares no type for a view's columns: they are `SqlComputedColumn` elements with no
- * `TypeSpecifier`, which is why an unresolved one renders as `—`. Where the model does name the one
- * source column the value comes from, that column's declared type is this column's type — this
- * borrows it rather than inferring anything. A column reading zero columns or several is an
- * expression with no type to borrow and keeps the `—`.
+ * A computed column carries no `TypeSpecifier`, which is why an unresolved one renders as `—`. Only
+ * a column whose `ExpressionScript` is a bare column reference has the referenced column's declared
+ * type; any other expression (arithmetic, `CONVERT`, a function call) produces a type the model does
+ * not state, and a view or function column has no `ExpressionScript` at all — both keep the `—`.
  *
- * Iterated to a fixpoint because a view can read a view: the first pass types the columns fed by
- * tables, the next the ones fed by those views. Bounded so a circular model cannot spin.
+ * Iterated to a fixpoint so a reference to a column resolved in an earlier pass is typed in the next.
+ * Terminates because each pass only replaces `—` and a pass that resolves nothing ends the loop.
  *
  * @param objects - Extracted objects, mutated in place.
- * @param computedSources - Computed column key → the source column name the model recorded.
+ * @param computedSources - Computed column key → the column its bare-reference expression names.
  */
 function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources: Map<string, string>): void {
   if (computedSources.size === 0) return;
@@ -531,13 +549,16 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
         let scale: string | undefined;
 
         if (isComputed && computedSources) {
-          const refs = asArray(colEl.Relationship)
+          const scriptProp = props.find(p => p['@_Name'] === 'ExpressionScript');
+          const bareName = bareColumnReference(scriptProp ? extractPropertyValue(scriptProp) : undefined);
+          const source = bareName === null ? undefined : asArray(colEl.Relationship)
             .filter(r => r['@_Name'] === 'ExpressionDependencies')
             .flatMap(r => asArray(r.Entry))
             .flatMap(entry => asArray(entry.References))
             .map(ref => ref['@_Name'])
-            .filter((n): n is string => !!n);
-          if (refs.length === 1) computedSources.set(`${objectId}::${normalizeColName(colName)}`, refs[0]);
+            .find((n): n is string => !!n
+              && normalizeColName(stripBrackets(splitSqlName(n).pop() ?? '')) === normalizeColName(bareName));
+          if (source) computedSources.set(`${objectId}::${normalizeColName(colName)}`, source);
         }
 
         if (!isComputed) {

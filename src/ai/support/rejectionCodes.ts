@@ -53,7 +53,7 @@ export const REJECTION_CODES = {
   pruneOriginForbidden: 'prune_origin_forbidden',
   /** `proposalRevision` no longer matches the pending approval gate under refine. */
   staleProposalRevision: 'stale_proposal_revision',
-  /** Prune/column structural fault whose kind carries no specific code, or ≥2 distinct kinds in one submission (`ROUTE_REJECTION_CODE` fallback, `smRouteValidation.ts`). */
+  /** Prune/column/question structural fault whose kind carries no specific code, or ≥2 distinct kinds in one submission (`ROUTE_REJECTION_CODE` fallback, `smRouteValidation.ts`). */
   routeValidationFailed: 'route_validation_failed',
   /** `column_flow[].out_col` names a column this focus node does not carry (`bad_out_col` kind, `smRouteValidation.ts`). */
   outColNotOnNode: 'out_col_not_on_node',
@@ -83,4 +83,20 @@ export const REJECTION_CODES = {
   toolExecutionError: 'tool_execution_error',
   /** `readToolError`'s synthesized code for the `{success:false,errors:[]}` shape when no `error` field is present (`toolErrorEnvelope.ts`). */
   validation: 'validation',
+  /** `submit_findings` reached an engine not in `awaiting_findings`; the rule mapper passes it through for every status but `complete` (`smBase.ts`, `submitFindingsRules.ts`). */
+  invalidStatus: 'invalid_status',
+  /** `submit_findings` reached an engine whose exploration is already `complete`; the mapped wire form of {@link REJECTION_CODES.invalidStatus} (`submitFindingsRules.ts`). */
+  explorationComplete: 'exploration_complete',
+  /** Engine-internal: `submit_findings.focus_node_id` resolves to no loaded node; mapped to {@link REJECTION_CODES.invalidInput} on the wire (`smBase.ts`, `submitFindingsRules.ts`). */
+  invalidFocusNode: 'invalid_focus_node',
+  /** Engine-internal: `submit_findings.focus_node_id` is a real node other than the current focus; mapped to {@link REJECTION_CODES.focusNodeIdMismatch} (`smBase.ts`, `submitFindingsRules.ts`). */
+  focusMismatch: 'focus_mismatch',
+  /** `submit_findings.focus_node_id` is not the current hop focus; the wire form of {@link REJECTION_CODES.focusMismatch} (`submitFindingsRules.ts`). */
+  focusNodeIdMismatch: 'focus_node_id_mismatch',
+  /** A provider tool call failed its tool's input schema before dispatch (`vscodeModelPort.ts`, `toolAttempt.ts`, `toolErrorEnvelope.ts`). */
+  invalidToolInput: 'invalid_tool_input',
+  /** A provider tool call named a tool the phase does not expose (`vscodeModelPort.ts`, `toolAttempt.ts`). */
+  unknownTool: 'unknown_tool',
+  /** The synthetic structured-output call was missing, duplicated or schema-invalid (`structuredOutput.ts`, `vscodeModelPort.ts`). */
+  invalidStructuredOutput: 'invalid_structured_output',
 } as const;

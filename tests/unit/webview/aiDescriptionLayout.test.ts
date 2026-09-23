@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+//
+// Pins the AI report layout helpers: `sectionsForNode` section badges and the `aiLayoutCacheKey`
+// per-origin, per-view cache key.
 import { describe, expect, it } from 'vitest';
 import { aiLayoutCacheKey, sectionsForNode } from '../../../src/components/GraphCanvas';
 import type { AiReportSection } from '../../../src/components/AiDescriptionOverlay';

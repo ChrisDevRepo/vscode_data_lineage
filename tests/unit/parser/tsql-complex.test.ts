@@ -12,9 +12,6 @@
  *   exec:     schema.object names the parser must find in result.execCalls
  *   absent:   names that must NOT appear in any result (verifies comments/strings are cleaned)
  *
- * A file with no `-- EXPECT` line is a stability case: the parser must not crash or run away,
- * and nothing is asserted about its content.
- *
  * @remarks
  * This is the cheapest place to add a parser case — one .sql file, no TypeScript — and each
  * fixture reports as its own named test. `assert-core-cases-complete.mjs` requires every rule
@@ -86,8 +83,7 @@ describe('SQL fixture corpus', () => {
     expect(result.sources.length, `${fileName}: source count ran away`).toBeLessThan(MAX_SOURCES);
     expect(result.targets.length, `${fileName}: target count ran away`).toBeLessThan(MAX_TARGETS);
 
-    const expectation = parseExpectation(sql);
-    if (!expectation) return; // Stability-only fixture: parsing without crashing is the assertion.
+    const expectation = parseExpectation(sql)!;
 
     const misses: string[] = [];
     for (const name of expectation.sources) {

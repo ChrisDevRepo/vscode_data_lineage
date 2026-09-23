@@ -361,11 +361,11 @@ export type SmNodeColumnRole = 'carrier' | 'row_role_only';
  * Per-route outcome in a successful `submitFindings` return.
  *
  * @remarks
- * Reported to the AI so it can distinguish accepted routes (added to agenda)
- * from deferred routes (queued for post-synthesis follow-up offer). The AI
- * should only reference `accepted: true` nodes inside captured section text;
- * deferred nodes are surfaced exclusively via the post-synthesis follow-up
- * pill — the report should not enumerate them.
+ * Engine-side record only: the `lineage_submit_findings` tool returns the ack and the next focus,
+ * never this array, so the model does not see it. The engine writes one debug host-log line per
+ * non-accepted outcome where the hop's outcomes are finalized. Every deferred route is also recorded as a
+ * {@link DeferredQuestion}, which reaches the synthesis completion envelope and, unless its reason
+ * is `excluded`, the post-synthesis follow-up offers.
  */
 export interface RouteOutcome {
   /** Node id of the route request (verbatim from submission, not lowercased). */
@@ -450,7 +450,7 @@ export type SubmitResult =
   | {
       /** Indicates the submission was accepted (the `ack` side of the ack/reject contract). */
       ok: true;
-      /** Per-neighbor disposition for every neighbor this hop enqueued, deferred or found already settled. */
+      /** Per-neighbor disposition for every neighbor this hop enqueued, deferred or found already settled; engine-side, never returned to the model. */
       route_outcomes?: RouteOutcome[];
       /** Set only on the supplement path when the supplemented agenda was already drained. */
       done?: true;
@@ -759,8 +759,8 @@ export interface EngineInitSnapshot {
   targetColumns?: [string, ...string[]];
   /** Exploration direction. */
   direction: 'upstream' | 'downstream' | 'bidirectional';
-  /** AI-owned depth verdict that seeded the scope; refine re-runs init from this. */
-  depthIntent: DepthIntent;
+  /** AI-owned depth verdict that seeded the scope, each unstated side at its seed. */
+  depthIntent: SeededDepthIntent;
   /** Sanitized mission brief. */
   mission_brief?: string;
 }
@@ -780,12 +780,30 @@ export const DEFAULT_SM_START_DEPTH = 3;
  * `explicit` when the user literally named a level count; `full_frontier` when the user
  * asked for the whole chain ("all sources"); `default_start` when the user said nothing —
  * the engine seeds {@link DEFAULT_SM_START_DEPTH}, freely adjusted by prune/auto-add.
+ * `asymmetric` carries each side on its own terms ({@link DepthSide}): a stated side binds, an
+ * unstated side is the same soft seed as `default_start`, for that side only.
  */
 export type DepthIntent =
   | { kind: 'explicit'; levels: number }
   | { kind: 'full_frontier' }
-  | { kind: 'asymmetric'; upstream: number | 'all'; downstream: number | 'all' }
+  | { kind: 'asymmetric'; upstream: DepthSide; downstream: DepthSide }
   | { kind: 'default_start' };
+
+/**
+ * One side of an asymmetric {@link DepthIntent}: a user-stated level count (a hard border; `0`
+ * closes the side), `'all'`, or `null` when the user left the side unstated — seeded at
+ * {@link DEFAULT_SM_START_DEPTH} with no ceiling, so it grows exactly like `default_start`.
+ */
+export type DepthSide = number | 'all' | null;
+
+/**
+ * {@link DepthIntent} as recorded on {@link EngineInitSnapshot}: every unstated asymmetric side
+ * carries its seed. Which side binds is read from the engine's per-side ceilings, never from
+ * this record.
+ */
+export type SeededDepthIntent =
+  | Exclude<DepthIntent, { kind: 'asymmetric' }>
+  | { kind: 'asymmetric'; upstream: number | 'all'; downstream: number | 'all' };
 
 /**
  * Maps the entry-detector's depth verdict to a {@link DepthIntent}: a positive number is an
@@ -794,10 +812,10 @@ export type DepthIntent =
  *
  * @remarks
  * Per-side `null`/omitted inside an asymmetric object is the identical "unstated" signal as the
- * top-level scalar and independently resolves to {@link DEFAULT_SM_START_DEPTH} for that side —
- * an explicit per-side `0` is preserved verbatim (never defaulted) because it carries the
- * distinct, permanent direction-disable meaning enforced later by `isReachableInApprovedDirection`
- * in `smBase.ts`.
+ * top-level scalar and stays `null` for that side — the soft default seed, never a border — and an
+ * object with both sides unstated is `default_start`. An explicit per-side `0` is preserved verbatim
+ * (never defaulted) because it carries the distinct, permanent direction-disable meaning enforced
+ * later by `isReachableInApprovedDirection` in `smBase.ts`.
  *
  * @param verdict - Discrete depth value produced by the validated mission boundary.
  * @returns The exhaustive engine-owned depth intent.
@@ -815,11 +833,10 @@ export function resolveDepthIntent(
 ): DepthIntent {
   if (verdict == null) return { kind: 'default_start' };
   if (verdict && typeof verdict === 'object') {
-    return {
-      kind: 'asymmetric',
-      upstream: verdict.upstream ?? DEFAULT_SM_START_DEPTH,
-      downstream: verdict.downstream ?? DEFAULT_SM_START_DEPTH,
-    };
+    const upstream = verdict.upstream ?? null;
+    const downstream = verdict.downstream ?? null;
+    if (upstream === null && downstream === null) return { kind: 'default_start' };
+    return { kind: 'asymmetric', upstream, downstream };
   }
   if (verdict === 'all') return { kind: 'full_frontier' };
   if (typeof verdict === 'number' && verdict > 0) return { kind: 'explicit', levels: verdict };
@@ -871,40 +888,91 @@ export function gateDepthSide(
  * flag at the top level either — it can only ever grow the scope, never truncate it, so an unstated
  * `'all'` is already safe under the per-side gate.
  *
- * When gating leaves BOTH sides `undefined` — no side carried `'all'`, the direction-disabling `0`,
- * or a `depthStated` finite count — the whole payload collapses to the same `default_start` kind as
- * an omitted `depth`, not an `'asymmetric'` intent with two engine-defaulted sides: `smBase.ts`'s
- * `'asymmetric'` branch always binds `depthEnforcement = 'strict'` (a hard border), so two sides that
- * are really "the model invented these" would silently truncate a chain that only grows
- * past the default seed — a model-chosen `{upstream:3,downstream:3}` collapsing to a hard
- * border. An object keeping `'all'` or `0` on either side
- * never collapses: `effectiveDirection()` (`smBase.ts`) only narrows the live traversal direction
- * when `depthIntent.kind === 'asymmetric'`, so a genuine per-side `0` needs that kind to reach its
- * own permanent-disable effect regardless of `depthStated`.
+ * A demoted side becomes the unstated `null` side ({@link DepthSide}) — the soft seed that grows,
+ * never a border — and when neither side keeps a value the payload is `default_start`. An object
+ * keeping `'all'` or `0` on either side stays `'asymmetric'`: `effectiveDirection()` (`smBase.ts`)
+ * only narrows the live traversal direction for that kind, so a genuine per-side `0` needs it to
+ * reach its own permanent-disable effect regardless of `depthStated`.
  *
  * A demotion is logged by the caller (`startExploration.ts`), never silent.
  *
  * @param verdict - The Zod-validated `depth` field, before provenance gating.
  * @param depthStated - The Zod-validated `depthStated` companion field.
- * @returns The engine-owned depth intent, hard only when a finite value is user-stated or a side
- * carries `'all'`/the direction-disabling `0`.
+ * @returns The engine-owned depth intent; a side binds only when its finite value is user-stated
+ * or it is the direction-disabling `0`.
  */
 export function resolveDepthIntentForBoundary(
-  verdict:
-    | number
-    | 'all'
-    | { upstream?: number | 'all' | null; downstream?: number | 'all' | null }
-    | null
-    | undefined,
+  verdict: RawDepthVerdict,
   depthStated: boolean | undefined,
 ): DepthIntent {
   if (verdict && typeof verdict === 'object') {
-    const upstream = gateDepthSide(verdict.upstream, depthStated);
-    const downstream = gateDepthSide(verdict.downstream, depthStated);
-    if (upstream === undefined && downstream === undefined) return resolveDepthIntent(undefined);
-    return resolveDepthIntent({ upstream, downstream });
+    return resolveDepthIntent({
+      upstream: gateDepthSide(verdict.upstream, depthStated),
+      downstream: gateDepthSide(verdict.downstream, depthStated),
+    });
   }
   return resolveDepthIntent(gateDepthSide(verdict, depthStated));
+}
+
+/** The Zod-validated `lineage_start_exploration` `depth` field, before provenance gating. */
+type RawDepthVerdict =
+  | number
+  | 'all'
+  | { upstream?: number | 'all' | null; downstream?: number | 'all' | null }
+  | null
+  | undefined;
+
+/**
+ * Per-side view of a {@link DepthIntent}: every finite side is user-stated, `null` is unstated.
+ *
+ * @param intent - The engine-owned depth intent.
+ * @returns Each side's {@link DepthSide}.
+ */
+export function depthSidesOf(intent: DepthIntent): { upstream: DepthSide; downstream: DepthSide } {
+  switch (intent.kind) {
+    case 'explicit': return { upstream: intent.levels, downstream: intent.levels };
+    case 'full_frontier': return { upstream: 'all', downstream: 'all' };
+    case 'default_start': return { upstream: null, downstream: null };
+    case 'asymmetric': return { upstream: intent.upstream, downstream: intent.downstream };
+  }
+}
+
+/**
+ * Resolves a gate-refine `depth` patch against the reviewed proposal's intent, per side.
+ *
+ * @remarks
+ * A refine is a patch on the reviewed contract, like every other refine field: an omitted `depth`
+ * keeps the reviewed intent, an asymmetric side the payload omits keeps the reviewed side, and a
+ * side the payload sends is provenance-gated exactly as on a fresh proposal
+ * ({@link resolveDepthIntentForBoundary}). One inheritance: with `depthStated` omitted, a finite
+ * count equal to the reviewed stated count on that side keeps its binding, so re-sending an
+ * unchanged depth never demotes what the user already stated. A scalar `depth` restates both sides.
+ *
+ * @param pending - The reviewed proposal's depth intent.
+ * @param verdict - The refine's Zod-validated `depth` field, before provenance gating.
+ * @param depthStated - The refine's Zod-validated `depthStated` companion field.
+ * @returns The merged engine-owned depth intent.
+ */
+export function mergeRefineDepthIntent(
+  pending: DepthIntent,
+  verdict: RawDepthVerdict,
+  depthStated: boolean | undefined,
+): DepthIntent {
+  if (verdict === undefined) return pending;
+  const reviewed = depthSidesOf(pending);
+  const statedFor = (side: 'upstream' | 'downstream', raw: unknown): boolean | undefined =>
+    depthStated === undefined && typeof raw === 'number' && raw > 0 && raw === reviewed[side]
+      ? true
+      : depthStated;
+  if (verdict && typeof verdict === 'object') {
+    const side = (name: 'upstream' | 'downstream'): DepthSide | undefined => {
+      const raw = verdict[name];
+      return raw === undefined ? reviewed[name] : gateDepthSide(raw, statedFor(name, raw));
+    };
+    return resolveDepthIntent({ upstream: side('upstream'), downstream: side('downstream') });
+  }
+  const bothReviewed = statedFor('upstream', verdict) === true && statedFor('downstream', verdict) === true;
+  return resolveDepthIntentForBoundary(verdict, bothReviewed ? true : depthStated);
 }
 
 /**
@@ -1141,7 +1209,9 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_queued'
       | 'prune_noop_out_of_scope'
       | 'prune_origin_forbidden'
-      | 'prune_carries_tracked_column';
+      | 'prune_carries_tracked_column'
+      | 'question_not_neighbor'
+      | 'question_on_pruned_neighbor';
 
 /**
  * Represents an invalid route returned during validation.

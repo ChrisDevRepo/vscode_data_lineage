@@ -1,6 +1,6 @@
 /**
- * Pins that deleting a project clears the AI run memory of every filter profile it carried, and
- * that deleting one project never disturbs the run memory of a profile belonging to another.
+ * Pins that deleting a project or a view clears the AI run memory it owned, that deleting one
+ * project never disturbs another's, and that updating a bookmark keeps its stored run.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -167,12 +167,11 @@ describe('delete-project run memory cleanup', () => {
 });
 
 /**
- * A save under an existing profile id replaces that profile in place, so writing the run record
- * without clearing it would leave a record filed under an id whose view has since changed — and
- * `lineage_get_screen_state` would recall it as if it still described the applied bookmark.
+ * Updating a bookmark keeps the AI run stored under its id: a save that resolves to no presented
+ * run never clears the record, and only deleting the view or its project removes it.
  */
 describe('save-view run memory', () => {
-  it('clears the stale record when the saved profile no longer resolves to a captured run', async () => {
+  it('keeps the stored run when the updated profile no longer resolves to a captured run', async () => {
     const store = seededStore();
     const globalState = fakeMemento(['bm-1', 'bm-2']);
     const host = fakeHost();
@@ -184,11 +183,11 @@ describe('save-view run memory', () => {
       profile: filterProfile('bm-1'),
     } as never);
 
-    expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(false);
+    expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(true);
     expect(globalState.values.has(aiRunStorageKey('bm-2'))).toBe(true);
   });
 
-  it('leaves every other profile\'s run memory untouched', async () => {
+  it('leaves every profile\'s run memory untouched, the updated one included', async () => {
     const store = seededStore();
     const globalState = fakeMemento(['bm-1', 'bm-2', 'bm-3']);
     const host = fakeHost();
@@ -201,8 +200,25 @@ describe('save-view run memory', () => {
     } as never);
 
     expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(true);
-    expect(globalState.values.has(aiRunStorageKey('bm-2'))).toBe(false);
+    expect(globalState.values.has(aiRunStorageKey('bm-2'))).toBe(true);
     expect(globalState.values.has(aiRunStorageKey('bm-3'))).toBe(true);
+  });
+
+  it('still clears the kept record when the bookmark is deleted after the update', async () => {
+    const store = seededStore();
+    const globalState = fakeMemento(['bm-1', 'bm-2']);
+    const host = fakeHost();
+    const { handlers } = buildHandlers(store, globalState, host);
+
+    await handlers['save-view']({
+      type: 'save-view',
+      projectId: 'p1',
+      profile: filterProfile('bm-1'),
+    } as never);
+    await handlers['delete-view']({ type: 'delete-view', projectId: 'p1', profileId: 'bm-1' } as never);
+
+    expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(false);
+    expect(globalState.values.has(aiRunStorageKey('bm-2'))).toBe(true);
   });
 
   it('is a no-op for a profile id that never carried a run record', async () => {
@@ -222,9 +238,10 @@ describe('save-view run memory', () => {
     expect(saveProjectStore).toHaveBeenCalledTimes(1);
   });
 
-  it('does not fail the save when clearing the record rejects', async () => {
+  it('never writes to the run store when the updated profile resolves to no presented run', async () => {
     const store = seededStore();
-    const globalState = fakeMemento(['bm-1'], ['bm-1']);
+    const globalState = fakeMemento(['bm-1']);
+    const update = vi.spyOn(globalState, 'update');
     const host = fakeHost();
     const { handlers, saveProjectStore } = buildHandlers(store, globalState, host);
 
@@ -234,6 +251,7 @@ describe('save-view run memory', () => {
       profile: filterProfile('bm-1'),
     } as never)).resolves.toBeUndefined();
 
+    expect(update).not.toHaveBeenCalled();
     expect(globalState.values.has(aiRunStorageKey('bm-1'))).toBe(true);
     expect(saveProjectStore).toHaveBeenCalledTimes(1);
   });

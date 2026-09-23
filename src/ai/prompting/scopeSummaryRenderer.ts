@@ -6,7 +6,7 @@
  * the VS Code module surface. Single source of truth for the native gate markdown.
  */
 
-import type { ScopeSummary } from '../sm/smTypes';
+import { DEFAULT_SM_START_DEPTH, type ScopeSummary } from '../sm/smTypes';
 import { CLASSIFICATION_LABEL, type ClassificationValue } from '../session/classification';
 import { pluralize } from '../support/text';
 
@@ -26,7 +26,8 @@ function typeLabel(type: string, count: number): string {
  *
  * @remarks
  * Placement already says who bound the value (`From your question` vs `My plan`). An assistant-
- * chosen depth is marked `≈`; a user-stated one is exact. No parenthetical about engine behaviour
+ * chosen depth is marked `≈`; a user-stated one is exact. Each asymmetric side is placed on its own
+ * binding, so an unstated side is the `≈` seed under `My plan` beside a stated one. No parenthetical about engine behaviour
  * — that copy is not hop context and is not served after approval.
  */
 function depthLine(levels: number | 'all', side: string, binding: boolean): string {
@@ -59,14 +60,17 @@ export function renderScopeSummaryMd(
   const tracing = summary.analysisMode === 'ct' ? `Column-Trace${columns}` : 'Blackboard';
 
   const intent = summary.depthIntent;
-  const depthIsBinding = intent.kind === 'explicit' || intent.kind === 'asymmetric';
+  const depthIsBinding = intent.kind === 'explicit';
   const stated: string[] = [];
   const chosen: string[] = [];
   const depthTarget = depthIsBinding ? stated : chosen;
   const depthSide = direction === 'bidirectional' ? 'each way' : direction;
   if (intent.kind === 'asymmetric') {
-    depthTarget.push(depthLine(intent.upstream, 'upstream', true));
-    depthTarget.push(depthLine(intent.downstream, 'downstream', true));
+    for (const side of ['upstream', 'downstream'] as const) {
+      const value = intent[side];
+      if (value === null) chosen.push(depthLine(DEFAULT_SM_START_DEPTH, side, false));
+      else stated.push(depthLine(value, side, true));
+    }
   } else if (intent.kind === 'full_frontier') {
     depthTarget.push(depthLine('all', depthSide, false));
   } else if (summary.depth !== null) {

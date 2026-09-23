@@ -17,6 +17,7 @@ import {
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
 import { quoteIds } from '../support/text';
+import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
 
@@ -215,6 +216,10 @@ export type PresentResultError = {
     readonly accepted_node_ids?: readonly string[];
     /** See {@link PresentResultViolation.entryIds} — carried through verbatim, id offenders only. */
     readonly entry_ids?: readonly string[];
+    /** Measured character length of a label over its hard cap; present with `limit`, length offenders only. */
+    readonly length?: number;
+    /** The hard cap `length` exceeds; present with `length`, length offenders only. */
+    readonly limit?: number;
   }>;
 };
 
@@ -467,6 +472,226 @@ function encodeFocusNodeId(id: string): string {
   return encodeURIComponent(id).replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
+/** Minimum normalized length for a backtick-quoted fragment to fingerprint a captured callout. */
+const DETAIL_CALLOUT_FINGERPRINT_MIN = 8;
+
+/**
+ * Normalizes text for captured-item presence matching: case, quote/emphasis markers, and
+ * whitespace — including spacing around operators and punctuation — never distinguish two
+ * renderings of the same captured statement or formula.
+ */
+function normalizeCalloutFingerprint(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/⚠️/g, '')
+    .replace(/[`*_#]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([=(),<>+\-\/|])\s*/g, '$1')
+    .trim();
+}
+
+/** A ```sql fence opening on the first line of the text it is matched against. */
+const LEADING_SQL_FENCE = /^[ \t]*(```sql[^\n]*\n[\s\S]*?\n)[ \t]*```/i;
+
+/**
+ * Returns the ```sql fence that opens on the line right after `lineEnd`, if any.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @param lineEnd - Offset of the newline ending the line the fence must follow, or -1.
+ * @returns The fence, left-trimmed and closed; `undefined` when none follows.
+ */
+function sqlFenceAfter(text: string, lineEnd: number): string | undefined {
+  if (lineEnd === -1) return undefined;
+  const match = LEADING_SQL_FENCE.exec(text.slice(lineEnd + 1));
+  return match ? `${match[1]}\`\`\`` : undefined;
+}
+
+/** A line opening a new block: list item, heading, fence, or another callout. */
+const BLOCK_START_LINE = /^\s*(?:[-*+]\s|\d+[.)]\s|#|```|⚠️)/;
+
+/**
+ * Extracts the ⚠️ callouts from captured section text, each in its full extent.
+ *
+ * @remarks
+ * A callout runs from its ⚠️ line, stripped of any list marker, through every following line
+ * that continues it — a line inside a backtick span the callout opened, or a non-blank line
+ * indented deeper than the callout's own line that opens no new block — and then takes the
+ * ```sql fence that immediately follows, by the same boundary rule a formula uses.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @returns Per callout, the prose (fence excluded, for fingerprints) and the verbatim block, in authored order.
+ */
+function extractCapturedCallouts(text: string): Array<{ line: string; block: string }> {
+  const callouts: Array<{ line: string; block: string }> = [];
+  const lines = text.split('\n');
+  const indentOf = (line: string) => line.length - line.trimStart().length;
+  let lineEnd = -1;
+  for (let i = 0; i < lines.length; i++) {
+    lineEnd += lines[i].length + 1;
+    const head = lines[i].trim().replace(/^[-*]\s+/, '');
+    if (!head.startsWith('⚠️')) continue;
+    const indent = indentOf(lines[i]);
+    const extent = [head];
+    while (i + 1 < lines.length) {
+      const next = lines[i + 1];
+      const spanOpen = (extent.join('\n').match(/`/g)?.length ?? 0) % 2 === 1;
+      const continues = next.trim() !== '' && (spanOpen || (indentOf(next) > indent && !BLOCK_START_LINE.test(next)));
+      if (!continues) break;
+      extent.push(next.trim());
+      i++;
+      lineEnd += next.length + 1;
+    }
+    const line = extent.join('\n');
+    const fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
+    callouts.push({ line, block: fence ? `${line}\n${fence}` : line });
+  }
+  return callouts;
+}
+
+/** Display-math span as the capture templates author a formula. */
+const DISPLAY_MATH_SPAN = /\$\$([^$]+?)\$\$/g;
+
+/**
+ * Extracts the display-math formulas from captured section text, each with the SQL fence that
+ * immediately follows its line, if any.
+ *
+ * @remarks
+ * The fence is attached only to the last formula on its line, so a line listing several formulas
+ * never repeats one fence under each.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @returns Normalized formula bodies with their restorable block (`$$ … $$` plus fence), in order.
+ */
+function extractCapturedFormulas(text: string): Array<{ body: string; block: string }> {
+  const formulas: Array<{ body: string; block: string }> = [];
+  for (const match of text.matchAll(DISPLAY_MATH_SPAN)) {
+    const body = match[1].trim();
+    if (body.length === 0) continue;
+    const spanEnd = (match.index ?? 0) + match[0].length;
+    const lineEnd = text.indexOf('\n', spanEnd);
+    const restOfLine = lineEnd === -1 ? text.slice(spanEnd) : text.slice(spanEnd, lineEnd);
+    const fence = restOfLine.includes('$$') ? undefined : sqlFenceAfter(text, lineEnd);
+    const formula = `$$ ${body} $$`;
+    formulas.push({ body, block: fence ? `${formula}\n${fence}` : formula });
+  }
+  return formulas;
+}
+
+/**
+ * Derives presence fingerprints for one captured callout.
+ *
+ * @remarks
+ * The capture contract quotes the row-losing statement in backticks, so each quoted fragment long
+ * enough to be distinctive is a fingerprint: a section that re-quotes every quoted statement counts
+ * as carrying the callout even when the surrounding prose is reworded. A callout with no usable
+ * quote falls back to its own normalized line.
+ *
+ * @param callout - One ⚠️ callout's prose from {@link extractCapturedCallouts}, fence excluded.
+ * @returns Normalized fingerprints; empty only when the line carries no matchable text.
+ */
+function calloutFingerprints(callout: string): string[] {
+  const quoted: string[] = [];
+  for (const match of callout.matchAll(/`([^`]+)`/g)) {
+    const fingerprint = normalizeCalloutFingerprint(match[1]);
+    if (fingerprint.length >= DETAIL_CALLOUT_FINGERPRINT_MIN) quoted.push(fingerprint);
+  }
+  if (quoted.length > 0) return quoted;
+  const whole = normalizeCalloutFingerprint(callout);
+  return whole.length > 0 ? [whole] : [];
+}
+
+/** Kind of captured detail content the assembler guarantees a place in the preview. */
+export type CapturedDetailKind = 'callout' | 'formula';
+
+/** One captured item restored into a section because the authored text omitted it. */
+export type RestoredDetailItem = {
+  /** Rendered section label the item was appended to. */
+  label: string;
+  /** Captured content kind. */
+  kind: CapturedDetailKind;
+  /** Verbatim restored text: the ⚠️ callout in its full extent or the `$$ … $$` formula, each with its SQL fence. */
+  text: string;
+};
+
+/**
+ * Lists the restorable captured items of one section body with their presence fingerprints.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @returns Callouts and formulas, each with its dedup key and the fingerprints that prove presence.
+ */
+function extractCapturedDetailItems(
+  text: string,
+): Array<{ kind: CapturedDetailKind; text: string; key: string; fingerprints: string[] }> {
+  const callouts = extractCapturedCallouts(text).map(({ line, block }) => ({
+    kind: 'callout' as const,
+    text: block,
+    key: normalizeCalloutFingerprint(line),
+    fingerprints: calloutFingerprints(line),
+  }));
+  const formulas = extractCapturedFormulas(text).map(({ body, block }) => {
+    const fingerprint = normalizeCalloutFingerprint(body);
+    return {
+      kind: 'formula' as const,
+      text: block,
+      key: fingerprint,
+      fingerprints: fingerprint.length > 0 ? [fingerprint] : [],
+    };
+  });
+  return [...callouts, ...formulas];
+}
+
+/**
+ * Lists captured ⚠️ callouts and `$$ … $$` formulas absent from the assembled text, per owning
+ * section.
+ *
+ * @remarks
+ * Presence is tested against the whole document, not just the owning section: synthesis may
+ * legitimately group sibling findings across nodes, and an item discussed under another section
+ * is delivered, not dropped. A callout counts as present when every quoted statement is present;
+ * a formula when its body is present in any normalized form. An absent item is restored,
+ * verbatim, to its own node's section — a formula together with the SQL fence that followed it.
+ * A paraphrase that never re-quotes the captured statement is restored alongside
+ * it — completeness over brevity, since the engine cannot prove the paraphrase covers the quoted
+ * statement and the no-drop ruling collapses only true duplication. Slots with no linked section
+ * are ignored: the caller's unlinked-slot rejection owns that case.
+ *
+ * @param labelToNodeIds - Section-linked node ids per rendered label, first-wins as for badges.
+ * @param haystack - Normalized full-document text used for presence matching.
+ * @param detailSlots - Captured slots for the rendered nodes, if any.
+ * @returns Missing items in capture order; empty when everything is already present.
+ */
+function findMissingDetailItems(
+  labelToNodeIds: ReadonlyMap<string, readonly string[]>,
+  haystack: string,
+  detailSlots: readonly DetailSlot[] | undefined,
+): RestoredDetailItem[] {
+  const missing: RestoredDetailItem[] = [];
+  if (!detailSlots || detailSlots.length === 0) return missing;
+  const nodeToLabel = new Map<string, string>();
+  for (const [label, ids] of labelToNodeIds) {
+    for (const id of ids) {
+      const key = id.toLowerCase();
+      if (!nodeToLabel.has(key)) nodeToLabel.set(key, label);
+    }
+  }
+  const seen = new Set<string>();
+  for (const slot of detailSlots) {
+    const label = nodeToLabel.get(slot.nodeId.toLowerCase());
+    if (label === undefined) continue;
+    for (const section of slot.sections ?? []) {
+      for (const item of extractCapturedDetailItems(section.text)) {
+        if (item.fingerprints.length === 0) continue;
+        if (item.fingerprints.every(fingerprint => haystack.includes(fingerprint))) continue;
+        const dedupKey = `${label}\n${item.kind}\n${item.key}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        missing.push({ label, kind: item.kind, text: item.text });
+      }
+    }
+  }
+  return missing;
+}
+
 /**
  * Builds the rendered description markdown from the AI's structured input parts.
  *
@@ -492,125 +717,19 @@ function encodeFocusNodeId(id: string): string {
  * transport line into a small muted paragraph, so the link list reads as a
  * side note at body-small size instead of competing with the section heading.
  *
- * Captured detail-slot callouts (`opts.detailSlots`) are delivered here for the same reason
- * badges and numbering are engine-owned: the node-level link check accepts a section that names
- * the node while omitting individual captured findings, so the assembler restores every absent
- * callout verbatim into its node's section. The rendered preview then drops no captured
- * information regardless of how the model phrased the section.
+ * Captured detail-slot callouts and formulas (`opts.detailSlots`) are delivered here for the same
+ * reason badges and numbering are engine-owned: the node-level link check accepts a section that
+ * names the node while omitting individual captured findings, so the assembler restores every
+ * absent ⚠️ callout and `$$ … $$` formula (with its SQL fence) verbatim into its node's section.
+ * The rendered preview then drops no captured information regardless of how the model phrased
+ * the section.
  *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
- * @returns The numbered badges for the graph, the fully assembled markdown description, and any
- *   duplicate section links first-wins dropped while assembling them.
+ * @returns The numbered badges for the graph, the fully assembled markdown description, any
+ *   duplicate section links first-wins dropped while assembling them, and every captured callout
+ *   or formula restored into a section.
  */
-
-/** Minimum normalized length for a backtick-quoted fragment to fingerprint a captured callout. */
-const DETAIL_CALLOUT_FINGERPRINT_MIN = 8;
-
-/**
- * Normalizes text for callout-presence matching: case, quote/emphasis markers, and whitespace
- * never distinguish two renderings of the same captured statement.
- */
-function normalizeCalloutFingerprint(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/⚠️/g, '')
-    .replace(/[`*_#]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Extracts the ⚠️ callout lines from captured section text, stripped of any leading list marker.
- *
- * @param text - One captured `DetailSlot` section body.
- * @returns The verbatim callout lines, in authored order.
- */
-function extractCapturedCallouts(text: string): string[] {
-  const callouts: string[] = [];
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.trim().replace(/^[-*]\s+/, '');
-    if (line.startsWith('⚠️')) callouts.push(line);
-  }
-  return callouts;
-}
-
-/**
- * Derives presence fingerprints for one captured callout line.
- *
- * @remarks
- * The capture contract quotes the row-losing statement in backticks, so each quoted fragment long
- * enough to be distinctive is a fingerprint: a section that re-quotes every quoted statement counts
- * as carrying the callout even when the surrounding prose is reworded. A callout with no usable
- * quote falls back to its own normalized line.
- *
- * @param callout - One verbatim ⚠️ line from {@link extractCapturedCallouts}.
- * @returns Normalized fingerprints; empty only when the line carries no matchable text.
- */
-function calloutFingerprints(callout: string): string[] {
-  const quoted: string[] = [];
-  for (const match of callout.matchAll(/`([^`]+)`/g)) {
-    const fingerprint = normalizeCalloutFingerprint(match[1]);
-    if (fingerprint.length >= DETAIL_CALLOUT_FINGERPRINT_MIN) quoted.push(fingerprint);
-  }
-  if (quoted.length > 0) return quoted;
-  const whole = normalizeCalloutFingerprint(callout);
-  return whole.length > 0 ? [whole] : [];
-}
-
-/**
- * Groups captured ⚠️ callouts absent from the assembled text by their owning section.
- *
- * @remarks
- * Presence is tested against the whole document, not just the owning section: synthesis may
- * legitimately group sibling findings across nodes, and a callout discussed under another section
- * is delivered, not dropped. Only a callout with at least one quoted statement absent everywhere
- * is restored, verbatim, to its own node's section. A paraphrase that never re-quotes the captured
- * statement is restored alongside
- * it — completeness over brevity, since the engine cannot prove the paraphrase covers the quoted
- * statement and the no-drop ruling collapses only true duplication. Slots with no linked section
- * are ignored: the caller's unlinked-slot rejection owns that case.
- *
- * @param labelToNodeIds - Section-linked node ids per rendered label, first-wins as for badges.
- * @param haystack - Normalized full-document text used for presence matching.
- * @param detailSlots - Captured slots for the rendered nodes, if any.
- * @returns Missing callout lines per rendered label; empty when everything is already present.
- */
-function findMissingDetailCallouts(
-  labelToNodeIds: ReadonlyMap<string, readonly string[]>,
-  haystack: string,
-  detailSlots: readonly DetailSlot[] | undefined,
-): Map<string, string[]> {
-  const missing = new Map<string, string[]>();
-  if (!detailSlots || detailSlots.length === 0) return missing;
-  const nodeToLabel = new Map<string, string>();
-  for (const [label, ids] of labelToNodeIds) {
-    for (const id of ids) {
-      const key = id.toLowerCase();
-      if (!nodeToLabel.has(key)) nodeToLabel.set(key, label);
-    }
-  }
-  const seen = new Set<string>();
-  for (const slot of detailSlots) {
-    const label = nodeToLabel.get(slot.nodeId.toLowerCase());
-    if (label === undefined) continue;
-    for (const section of slot.sections ?? []) {
-      for (const callout of extractCapturedCallouts(section.text)) {
-        const fingerprints = calloutFingerprints(callout);
-        if (fingerprints.length === 0) continue;
-        if (fingerprints.every(fingerprint => haystack.includes(fingerprint))) continue;
-        const dedupKey = `${label}\n${normalizeCalloutFingerprint(callout)}`;
-        if (seen.has(dedupKey)) continue;
-        seen.add(dedupKey);
-        const lines = missing.get(label);
-        if (lines) lines.push(callout);
-        else missing.set(label, [callout]);
-      }
-    }
-  }
-  return missing;
-}
-
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
   opts?: {
@@ -622,11 +741,11 @@ export function orderAndAssemble(
     /** Optional node lookup for injecting clickable object-link footnotes per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
     /**
-     * Captured detail slots for the rendered nodes. Every ⚠️ callout a section-linked slot
-     * carries is guaranteed a place in the assembled description: callouts whose quoted
-     * statements are all present are left alone, the rest are appended verbatim to the owning
-     * section under a `Captured callouts` marker. Slots with no linked section are ignored
-     * here — the caller's unlinked-slot rejection owns that case.
+     * Captured detail slots for the rendered nodes. Every ⚠️ callout and `$$ … $$` formula a
+     * section-linked slot carries is guaranteed a place in the assembled description: items
+     * already present are left alone, the rest are appended verbatim to the owning section under
+     * a `Captured callouts` / `Captured formulas` marker. Slots with no linked section are
+     * ignored here — the caller's unlinked-slot rejection owns that case.
      */
     detailSlots?: readonly DetailSlot[];
   },
@@ -634,6 +753,7 @@ export function orderAndAssemble(
   badges: Array<{ node_id: string; text: string }>;
   description: string;
   droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }>;
+  restoredDetailItems: RestoredDetailItem[];
 } {
   const stripLeadingNumber = (s: string) => (typeof s === 'string' ? s : '').replace(/^\d+[\.]?\s+/, '').trim();
 
@@ -683,10 +803,16 @@ export function orderAndAssemble(
       .filter((part): part is string => typeof part === 'string')
       .join('\n'),
   );
-  const missingCallouts = findMissingDetailCallouts(labelToNodeIds, detailHaystack, opts?.detailSlots);
-  for (const [label, lines] of missingCallouts) {
-    const body = sectionMap.get(label) ?? '';
-    sectionMap.set(label, `${body}\n\n**Captured callouts:**\n${lines.map(line => `- ${line}`).join('\n')}`);
+  const restoredDetailItems = findMissingDetailItems(labelToNodeIds, detailHaystack, opts?.detailSlots);
+  for (const label of new Set(restoredDetailItems.map(item => item.label))) {
+    const ofLabel = (kind: CapturedDetailKind) =>
+      restoredDetailItems.filter(item => item.label === label && item.kind === kind).map(item => item.text);
+    const callouts = ofLabel('callout');
+    const formulas = ofLabel('formula');
+    let body = sectionMap.get(label) ?? '';
+    if (callouts.length > 0) body += `\n\n**Captured callouts:**\n${callouts.map(block => `- ${block.replace(/\n/g, '\n  ')}`).join('\n')}`;
+    if (formulas.length > 0) body += `\n\n**Captured formulas:**\n${formulas.join('\n')}`;
+    sectionMap.set(label, body);
   }
 
   const parts: string[] = [];
@@ -702,7 +828,7 @@ export function orderAndAssemble(
       const links = nodeIds
         .map(id => opts.nodeMap!.get(id))
         .filter((node): node is { id: string; name: string } => !!node)
-        .map(node => `[${node.name}](#focus-node:${encodeFocusNodeId(node.id)})`);
+        .map(node => `[${node.name}](${FOCUS_NODE_HREF_PREFIX}${encodeFocusNodeId(node.id)})`);
       if (links.length > 0) objectFootnote = `### Objects ${links.join(', ')}`;
     }
     let section = `## ${n} ${label}`;
@@ -712,7 +838,7 @@ export function orderAndAssemble(
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
-  return { badges: numberedBadges, description: parts.join('\n\n'), droppedSectionLinks };
+  return { badges: numberedBadges, description: parts.join('\n\n'), droppedSectionLinks, restoredDetailItems };
 }
 
 /**
@@ -774,8 +900,7 @@ export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): stri
  * this function does not inspect, or a gap that note-coverage contract was meant to close. Either
  * way the engine has no authority to re-link it: a tool boundary accepts, rejects with a structural
  * hint, or mechanically normalizes with a log — it never silently rewrites an AI presentation
- * decision (the predecessor of this function injected these ids into `sections[].node_ids`, which
- * badge-labeled every non-pruned node in the rendered view). Only `prune` removes a node from the
+ * decision. Only `prune` removes a node from the
  * view; an unlinked node still renders via `resolvedNodeIds`, just without a badge or highlight
  * color.
  *
@@ -895,6 +1020,7 @@ export function validatePresentResult(
   const issuePaths = new Set<string>();
   const pathUnlinkableIds = new Map<string, readonly string[]>();
   const pathEntryIds = new Map<string, readonly string[]>();
+  const pathLengthOverruns = new Map<string, { readonly length: number; readonly limit: number }>();
   const addError = (
     field: PresentResultFailedField,
     message: string,
@@ -943,6 +1069,7 @@ export function validatePresentResult(
   ): void => {
     if (value.length <= limit) return;
     addError(field, `${path} is over its length limit: ${value.length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`, [field], [path]);
+    pathLengthOverruns.set(path, { length: value.length, limit });
   };
 
   if (!input.name || input.name.trim().length === 0) addError('name', 'name is required');
@@ -1084,12 +1211,14 @@ export function validatePresentResult(
     return [...issuePaths].map(path => {
       const ids = pathUnlinkableIds.get(path);
       const entryIds = pathEntryIds.get(path);
-      if (!ids && !entryIds) return { path };
+      const overrun = pathLengthOverruns.get(path);
+      if (!ids && !entryIds && !overrun) return { path };
       const entry = {
         path,
         ...(ids ? { unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })) } : {}),
         ...(ids && !acceptedStated ? { accepted_node_ids: [...resolvedNodeIds] } : {}),
         ...(entryIds ? { entry_ids: entryIds } : {}),
+        ...(overrun ?? {}),
       };
       if (ids) acceptedStated = true;
       return entry;

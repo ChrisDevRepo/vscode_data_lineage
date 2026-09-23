@@ -1,3 +1,7 @@
+/**
+ * Pins `markGitIgnored`: an output directory gets an ignore-everything `.gitignore` once, and an
+ * existing one is never overwritten.
+ */
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -3,9 +3,9 @@
  * Lane for the drag re-render storm.
  *
  * React Flow emits a position change per drag frame, so `applyNodeChanges` hands back a new object
- * for the dragged node and keeps every other node's reference. The canvas previously rebuilt a fresh
- * `data` object for *every* node on that array change, breaking the `React.memo` on the node
- * renderers — dragging one node re-rendered all of them, at 1000 nodes, every frame.
+ * for the dragged node and keeps every other node's reference. A fresh `data` object for *every*
+ * node on that array change would break the `React.memo` on the node renderers — dragging one node
+ * would re-render all of them, at 1000 nodes, every frame.
  *
  * The counting assertions below are the lock: a position-only change must leave every other node's
  * `data` reference untouched. The React Flow helpers used here expect a DOM, so this runs under
@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { applyNodeChanges, type Node as FlowNode, type NodeChange } from '@xyflow/react';
 import { buildGraphNoLayout } from '../../../src/engine/graphBuilder';
 import {
+  computeNodeDecoration,
   createNodeDecorationCache,
   decorateFlowNodes,
   createColumnNodeCache,
@@ -160,10 +161,10 @@ describe('decorateFlowNodes — decoration correctness', () => {
  * Lane for the column view's measurement loop.
  *
  * React Flow adopts any node whose object identity changed: it clears that node's handle bounds and
- * re-measures it. The column branch used to rebuild the whole array on every render, so a hover or a
- * drag frame re-measured the entire canvas — which is what the ResizeObserver loop, the hover
- * flicker, and the blank minimap all came from. Declared dimensions close the same loop from the
- * other side: without them a node is never "initialized" and the minimap skips it.
+ * re-measures it. The column branch keeps node identity stable across renders, because rebuilding
+ * the whole array would make every hover or drag frame re-measure the entire canvas — a
+ * ResizeObserver loop, hover flicker and a blank minimap. Declared dimensions close the same loop
+ * from the other side: without them a node is never "initialized" and the minimap skips it.
  */
 /**
  * Lane for the decoration itself.
@@ -423,6 +424,34 @@ describe('decorateFlowNodes — emitted data matrix', () => {
     expect(decorated[6].data.traceControls).toBe(traceControls);
     expect(decorated[7].data.onExpandSchema).toBe(onExpandSchema);
     expect(decorated[7].data.onMakeSchemaCenter).toBe(onMakeSchemaCenter);
+  });
+});
+
+describe('computeNodeDecoration — the one per-id rule both canvas views read', () => {
+  it('applies the trace-origin override, the click highlight and the node\'s own fallback', () => {
+    const inputs = baseInputs({ highlightedNodeId: 'clicked', traceMode: 'applied', traceSelectedNodeId: 'origin' });
+    expect(computeNodeDecoration('origin', undefined, inputs)).toMatchObject({ highlighted: true, dimmed: false });
+    expect(computeNodeDecoration('clicked', undefined, inputs)).toMatchObject({ highlighted: 'yellow', dimmed: false });
+    expect(computeNodeDecoration('other', undefined, inputs)).toMatchObject({ highlighted: undefined, dimmed: true });
+    expect(computeNodeDecoration('other', true, inputs).highlighted).toBe(true);
+  });
+
+  it('attaches the remove control and the AI overlay by id, dropping notes while hidden', () => {
+    const onRemoveFromView = (): void => {};
+    const aiHighlight = { color: 'c', glow: 'g', shadow: 's' };
+    const aiBadge = { label: 'B', color: 'c' } as never;
+    const inputs = baseInputs({
+      isBookmarkMode: true,
+      canRemoveNodeFromScopedView: true,
+      onRemoveFromView,
+      aiHighlightMap: new Map([['n', aiHighlight]]),
+      aiBadgeMap: new Map([['n', aiBadge]]),
+      aiNoteMap: new Map([['n', { text: 'note' }]]),
+    });
+    expect(computeNodeDecoration('n', undefined, inputs)).toMatchObject({
+      removable: true, onRemoveFromView, aiHighlight, aiBadge, aiNote: { text: 'note' },
+    });
+    expect(computeNodeDecoration('n', undefined, { ...inputs, notesVisible: false }).aiNote).toBeUndefined();
   });
 });
 

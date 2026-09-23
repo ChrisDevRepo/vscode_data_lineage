@@ -112,7 +112,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'lineage_get_neighbor_columns', inputSchema: GetNeighborColumnsInputSchema, tags: ['lineage'], effect: 'read',
-    userDescription: 'Inspect a neighbor\'s columns for pruning decisions during active SM exploration.',
+    userDescription: 'Inspect a neighbor\'s columns for pruning decisions during an approved deep analysis.',
     modelDescription: 'Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.',
     progressLabel: 'Inspecting neighbor columns…',
   },

@@ -31,6 +31,7 @@ Include:
   not modify database objects or user source code
 - Strict Content Security Policy on the webview
 - Custom YAML DMV queries, AI templates, and parse-rule regexes are trusted local configuration; avoid loading untrusted YAML files
+- In an untrusted workspace (Restricted Mode), workspace values for `dataLineageViz.parseRulesFile`, `dmvQueriesFile`, `excludePatterns` and `ai.outputTemplateFile` are ignored until the workspace is trusted; user-level values still apply.
 - `@lineage` uses the model selected in VS Code. When invoked, the selected
   model receives the user's prompt, native `@lineage` chat history, and lineage
   metadata or DDL returned by local snapshot tools. The AI runtime cannot

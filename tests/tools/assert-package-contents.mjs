@@ -7,16 +7,12 @@ import path from 'node:path';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const vsceCli = path.join(repoRoot, 'node_modules', '@vscode', 'vsce', 'vsce');
 
-function runVsce(extraArgs = []) {
-  return spawnSync(process.execPath, [vsceCli, 'ls', ...extraArgs], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-    shell: false,
-  });
-}
-
-const result = runVsce(['--no-dependencies']);
+const result = spawnSync(process.execPath, [vsceCli, 'ls', '--no-dependencies'], {
+  cwd: repoRoot,
+  encoding: 'utf8',
+  maxBuffer: 16 * 1024 * 1024,
+  shell: false,
+});
 if (result.error) {
   console.error(`FATAL: could not run the local @vscode/vsce CLI: ${result.error.message}`);
   process.exit(2);
@@ -46,6 +42,7 @@ const required = [
   'assets/defaultParseRules.yaml',
   'assets/dmvQueries.yaml',
   'assets/aiOutputTemplates.yaml',
+  'THIRD_PARTY_NOTICES.md',
 ];
 
 const forbidden = [

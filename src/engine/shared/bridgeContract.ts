@@ -29,6 +29,25 @@ export const AI_MAX_SCOPE_NODE_IDS = 500;
 export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
 
 /**
+ * Link destination scheme of the engine-assembled object links in AI report markdown:
+ * `[label](#focus-node:<encoded id>)`. It resolves only inside the graph webview's click handler.
+ */
+export const FOCUS_NODE_HREF_PREFIX = '#focus-node:';
+
+const FOCUS_NODE_LINK_RE = new RegExp(String.raw`\[([^\]]*)\]\(${FOCUS_NODE_HREF_PREFIX}[^)]*\)`, 'g');
+
+/**
+ * Rewrites every `[label](#focus-node:<id>)` to plain `label`, for a surface outside the graph
+ * webview where the scheme has no target.
+ *
+ * @param markdown - AI report markdown.
+ * @returns The markdown with every focus-node link reduced to its label; other links untouched.
+ */
+export function stripFocusNodeLinks(markdown: string): string {
+  return markdown.replace(FOCUS_NODE_LINK_RE, '$1');
+}
+
+/**
  * Maximum object ids one screen-state list carries: the cap the presenter applies when it renders
  * a screen-fact id list (the overflow is reported as a count) and, identically, the cap on the ids
  * a `lineage_get_screen_state` recall may name — a recall reads back what the screen card listed,
@@ -556,51 +575,107 @@ export function validateBridgeFrame<S extends z.ZodTypeAny>(
   return { ok: true, data: parsed.data, msgType };
 }
 
-/**
- * Reader's view of the `render-state` passthrough buffer.
- *
- * @remarks
- * `render-state` crosses the bridge as `z.unknown()` — the webview owns the buffer's shape — so
- * this is a projection its readers agree on, not a validated message schema; every read of it is
- * defensive.
- */
-export interface RenderStateSnapshot {
-  /** Node currently selected or highlighted on the canvas. */
-  highlightedNodeId?: string | null;
-  /** Serialized add/prune affordances for the highlighted trace node. */
-  affordances?: TraceAffordanceSnapshot | null;
-  /** Active trace scope mirrored from the graph renderer. */
-  traceScope?: {
-    /** Current trace mode used by the renderer. */
-    mode: string;
-    /** Starting node for the trace, when one has been selected. */
-    origin: string | null;
-    /** Original BFS node scope before manual trace edits. */
-    baseNodeIds: string[];
-    /** Direct-neighbor nodes manually added to the trace. */
-    manualAddedNodeIds: string[];
-    /** Nodes manually removed from the trace. */
-    manualPrunedNodeIds: string[];
-    /** Node IDs currently rendered as part of the trace. */
-    tracedNodeIds: string[];
-  } | null;
-}
+const TraceAffordanceSideSnapshotSchema = z.looseObject({
+  add: z.array(z.string()),
+  prune: z.array(z.string()),
+  addDisabledReason: z.string(),
+  pruneDisabledReason: z.string(),
+  neighborCount: z.number(),
+  visibleNeighborCount: z.number(),
+});
+
+const TraceAffordanceSnapshotSchema: z.ZodType<TraceAffordanceSnapshot> = z.looseObject({
+  nodeId: z.string(),
+  in: TraceAffordanceSideSnapshotSchema,
+  out: TraceAffordanceSideSnapshotSchema,
+});
+
+const RenderConnectivitySchema = z.looseObject({
+  nodeCount: z.number(),
+  edgeCount: z.number(),
+  componentCount: z.number(),
+  components: z.array(z.looseObject({ size: z.number(), nodes: z.array(z.string()) })),
+  isolatedNodes: z.array(z.string()),
+});
+
+const RenderTraceScopeSchema = z.looseObject({
+  mode: z.string(),
+  origin: z.string().nullable(),
+  baseNodeIds: z.array(z.string()),
+  manualAddedNodeIds: z.array(z.string()),
+  manualPrunedNodeIds: z.array(z.string()),
+  tracedNodeIds: z.array(z.string()),
+});
 
 /**
- * Analytics/bookmark mode state carried on `uiState.screenState`, not in `render-state`.
+ * Zod schema of the `render-state` buffer the main webview mirrors to the host after each render.
  *
  * @remarks
- * A reader's view of the `filter-changed` passthrough buffer, on the same terms as
- * {@link RenderStateSnapshot}.
+ * Validated at the bridge like every other frame. Fields a host reader walks structurally — the
+ * highlighted node, its add/prune affordances, the trace scope id lists, the rendered connectivity —
+ * are typed; every other key the webview adds (graph error context) is kept literally, so an
+ * unrecognized field never fails the frame. A frame whose walked fields are malformed is rejected
+ * and logged at the receive site and never reaches a reader.
  */
-export interface ScreenStateExtras {
-  /** Active graph-analysis panel state used to explain scoped analysis views. */
-  analytics?: { type: string; activeGroupId: string | null; groups: { id: string; label: string; nodeIds: string[] }[] } | null;
-  /** Active saved view or AI-authored view used to explain allowlist rendering. */
-  bookmark?: { id: string; name: string; source: string | null; allowlistNodeIds: string[] } | null;
-  /** Whether the selected node detail panel is open in the webview. */
-  detailOpen?: boolean;
-}
+export const RenderStateSnapshotSchema = z.looseObject({
+  highlightedNodeId: z.string().nullable().optional(),
+  affordances: TraceAffordanceSnapshotSchema.nullable().optional(),
+  traceScope: RenderTraceScopeSchema.nullable().optional(),
+  connectivity: RenderConnectivitySchema.optional(),
+});
+
+/** Validated `render-state` buffer: highlighted node, affordances, trace scope and connectivity. */
+export type RenderStateSnapshot = z.infer<typeof RenderStateSnapshotSchema>;
+
+/**
+ * Zod schema of the analytics/bookmark extras carried on `uiState.screenState`, not in `render-state`.
+ *
+ * @remarks
+ * Same tolerance terms as {@link RenderStateSnapshotSchema}: walked fields typed, extras kept.
+ */
+export const ScreenStateExtrasSchema = z.looseObject({
+  analytics: z.looseObject({
+    type: z.string(),
+    activeGroupId: z.string().nullable(),
+    groups: z.array(z.looseObject({ id: z.string(), label: z.string(), nodeIds: z.array(z.string()) })),
+  }).nullable().optional(),
+  bookmark: z.looseObject({
+    id: z.string(),
+    name: z.string(),
+    source: z.string().nullable(),
+    allowlistNodeIds: z.array(z.string()),
+  }).nullable().optional(),
+  detailOpen: z.boolean().optional(),
+});
+
+/** Validated analytics panel, applied bookmark and detail-panel flag of the current screen. */
+export type ScreenStateExtras = z.infer<typeof ScreenStateExtrasSchema>;
+
+/**
+ * Zod schema of the `filter-changed` ui-state buffer the main webview posts on every view change.
+ *
+ * @remarks
+ * The host lifts `filter`, `graphMode`, `filteredCount` and `renderLimitHit` onto typed session
+ * fields, and the screen-state readers walk `trace` and `screenState`, so those are typed; the filter
+ * reuses the persisted {@link SerializedFilterState} contract. Unknown keys are kept literally.
+ */
+export const UiStateSnapshotSchema = z.looseObject({
+  filter: SerializedFilterStateSchema,
+  expandedSchemaView: ExpandedSchemaViewSchema.nullable().optional(),
+  trace: z.looseObject({
+    mode: z.string(),
+    selectedNodeId: z.string().nullable(),
+    upstreamLevels: z.number(),
+    downstreamLevels: z.number(),
+  }),
+  graphMode: z.enum(['overview', 'full']),
+  filteredCount: z.number(),
+  renderLimitHit: z.number(),
+  screenState: ScreenStateExtrasSchema.optional(),
+});
+
+/** Validated `filter-changed` ui-state buffer. */
+export type UiStateSnapshot = z.infer<typeof UiStateSnapshotSchema>;
 
 /**
  * Zod schema representing the complete discriminated union of message types
@@ -677,8 +752,8 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('load-demo') }),
   z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
   z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
-  z.object({ type: z.literal('filter-changed'), uiState: z.any() }),
-  z.object({ type: z.literal('render-state'), renderState: z.unknown() }),
+  z.object({ type: z.literal('filter-changed'), uiState: UiStateSnapshotSchema }),
+  z.object({ type: z.literal('render-state'), renderState: RenderStateSnapshotSchema }),
   z.object({ type: z.literal('db-connect') }),
   z.object({ type: z.literal('check-mssql') }),
   z.object({

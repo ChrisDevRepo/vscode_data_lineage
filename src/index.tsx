@@ -108,7 +108,7 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     createRoot(root).render(
       <ErrorBoundary
         onError={() => {
-          // The error toast + Output log are emitted by ErrorBoundary; here we only auto-reopen the panel.
+          // ErrorBoundary emits the error toast and Output log; this handler only auto-reopens the panel.
           // 800 ms delay lets the fallback render before the panel is recycled.
           setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
         }}

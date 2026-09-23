@@ -18,7 +18,7 @@ import {
 import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
-import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, scanBodyMatches, type SearchableNode } from '../../utils/modelSearch';
+import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, scanBodyMatches, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import {
@@ -790,6 +790,13 @@ const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({ id: '', name: '', type: '', li
  * rows. `objects` is this list's length, so the count and the
  * breakdown cannot disagree. Additive: every hit stays in `results` with its own flag.
  *
+ * Matching is per line, over at most `SEARCH_LINE_MAX_CHARS` characters of each line, which bounds
+ * what one regex execution can cost. A line past that cap is named in `searched.truncated_lines`
+ * — object id and line ranges — in every result shape, empty and over-budget included, since a
+ * hit past the cap is exactly the one the result cannot show. Omitted when no line is cut. The list
+ * is measured with the reply it ships in; where it would push that reply past the discovery budget
+ * it is stated as counts (`object_count`, `line_count`, `objects_omitted`) with a hint instead.
+ *
  * @param model - The database model.
  * @param query - The regex pattern.
  * @param budget - The calling turn's budget, which the discovery guard is measured against.
@@ -825,16 +832,50 @@ export function searchDdl(
     ...n,
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
-  const searched = {
-    bodies: searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length,
-    types:  ddlTypes,
+  const rowAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_ROW_CHARS);
+  const scanned = scanBodyMatches(searchableNodes, compiled.regex, typeSet, count => rowAdmission(count).ok);
+
+  const bodies = searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length;
+  const cutLineCount = scanned.truncated.reduce((sum, t) => sum + t.lines.length, 0);
+  if (cutLineCount > 0) {
+    onDebug?.(`searchDdl: ${cutLineCount} lines in ${scanned.truncated.length} objects exceed ${SEARCH_LINE_MAX_CHARS} characters — searched up to that cap, stated as searched.truncated_lines, pattern="${query}"`);
+  }
+  const searchedListing = {
+    bodies,
+    types: ddlTypes,
+    ...(cutLineCount > 0
+      ? {
+        truncated_lines: {
+          max_chars: SEARCH_LINE_MAX_CHARS,
+          objects:   scanned.truncated.map(t => ({ id: t.node.id, lines: toLineRanges(t.lines) })),
+        },
+      }
+      : {}),
+  };
+  const searchedCounted = {
+    bodies,
+    types: ddlTypes,
+    truncated_lines: {
+      max_chars:       SEARCH_LINE_MAX_CHARS,
+      object_count:    scanned.truncated.length,
+      line_count:      cutLineCount,
+      objects_omitted: true as const,
+      hint: 'The objects with cut lines exceed the discovery token budget and were not listed. Restrict types[] to list them.',
+    },
+  };
+  const fitsBudget = (reply: object) => checkScopeBudget(budget, 0, JSON.stringify(reply).length).ok;
+  const withSearched = <T extends object>(build: (searched: typeof searchedListing | typeof searchedCounted) => T): T => {
+    const listed = build(searchedListing);
+    if (cutLineCount === 0 || fitsBudget(listed)) return listed;
+    onDebug?.(`searchDdl: the ${scanned.truncated.length} objects with cut lines exceed the discovery token budget — stated as counts, pattern="${query}"`);
+    return build(searchedCounted);
   };
 
   const overBudget = (
     admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
     total: number,
     objects: number,
-  ) => ({
+  ) => withSearched(searched => ({
     reason:          admission.reason,
     counts:          admission.counts,
     limits:          admission.limits,
@@ -843,10 +884,8 @@ export function searchDdl(
     searched,
     results_omitted: true as const,
     hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
-  });
+  }));
 
-  const rowAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_ROW_CHARS);
-  const scanned = scanBodyMatches(searchableNodes, compiled.regex, typeSet, count => rowAdmission(count).ok);
   const countAdmission = rowAdmission(scanned.total);
   if (!countAdmission.ok) {
     onDebug?.(`searchDdl: ${scanned.total} matches in ${scanned.objects} objects exceed the discovery token budget before every row is built — matches omitted, pattern="${query}"`);
@@ -865,7 +904,7 @@ export function searchDdl(
     ...(m.enclosingPredicate ? { enclosing_predicate: m.enclosingPredicate } : {}),
   }));
 
-  if (results.length === 0) return { results, total: 0, objects: 0, searched };
+  if (results.length === 0) return withSearched(searched => ({ results, total: 0, objects: 0, searched }));
 
   const hitsByObject = new Map<string, { id: string; name: string; type: string; hits: number; commentedLines: number[] }>();
   for (const m of matches) {
@@ -885,13 +924,13 @@ export function searchDdl(
   }));
   const objects = byObject.length;
 
-  const payload = {
+  const payload = withSearched(searched => ({
     results,
     total: results.length,
     objects,
     by_object: byObject,
     searched,
-  };
+  }));
   const resultChars = JSON.stringify(payload).length;
   const admission = checkScopeBudget(budget, 0, resultChars);
   if (!admission.ok) {

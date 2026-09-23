@@ -174,29 +174,61 @@ export function makeRejection(input: { code: string; reason: string; hint?: stri
  */
 export function rejectionIssuePaths(detail: unknown): string[] {
   const paths: string[] = [];
-  const queue: unknown[] = [detail];
-  let visited = 0;
-  while (queue.length > 0 && visited < 64 && paths.length < 16) {
-    const value = queue.shift();
-    visited++;
-    if (!value || typeof value !== 'object') continue;
-    if (Array.isArray(value)) {
-      queue.push(...value.slice(0, 32));
-      continue;
-    }
-    const record = value as Record<string, unknown>;
+  walkRejectionDetail(detail, 'path', (record) => {
     if (
       typeof record.path === 'string'
-      && record.path.length <= 512
+      && record.path.length <= MAX_ISSUE_PATH_CHARS
       && /^(?:[A-Za-z_][A-Za-z0-9_-]{0,99}|\d+)(?:\.(?:[A-Za-z_][A-Za-z0-9_-]{0,99}|\d+))*$/.test(record.path)
     ) {
       paths.push(record.path);
     }
+    return paths.length >= MAX_ISSUE_PATHS;
+  });
+  return [...new Set(paths)];
+}
+
+/** Records the rejection-detail walk inspects before it stops, arrays and objects alike. */
+const MAX_DETAIL_NODES = 64;
+/** Elements of one detail array the walk enqueues; the rest are never read. */
+const MAX_DETAIL_ARRAY_FANOUT = 32;
+/** Collected `path` values, counted before dedupe, at which {@link rejectionIssuePaths} stops. */
+const MAX_ISSUE_PATHS = 16;
+/** Longest `path` string {@link rejectionIssuePaths} will test against the dotted grammar. */
+const MAX_ISSUE_PATH_CHARS = 512;
+/** Distinct ids at which {@link rejectionEntryIds} stops. */
+const MAX_ENTRY_IDS = 64;
+/** Longest id {@link rejectionEntryIds} keeps; a longer one is skipped. */
+const MAX_ENTRY_ID_CHARS = 200;
+
+/**
+ * Bounded breadth-first walk over a rejection's `detail`, shared by every collector that mines it.
+ *
+ * @param detail - The rejection's `detail` field, in any nesting.
+ * @param collectedKey - The key the collector reads; its value is never descended into.
+ * @param visit - Called once per non-array object record; returns true once the collector is full,
+ *   which ends the walk.
+ */
+function walkRejectionDetail(
+  detail: unknown,
+  collectedKey: string,
+  visit: (record: Record<string, unknown>) => boolean,
+): void {
+  const queue: unknown[] = [detail];
+  let visited = 0;
+  while (queue.length > 0 && visited < MAX_DETAIL_NODES) {
+    const value = queue.shift();
+    visited++;
+    if (!value || typeof value !== 'object') continue;
+    if (Array.isArray(value)) {
+      queue.push(...value.slice(0, MAX_DETAIL_ARRAY_FANOUT));
+      continue;
+    }
+    const record = value as Record<string, unknown>;
+    if (visit(record)) return;
     for (const [key, child] of Object.entries(record)) {
-      if (key !== 'path' && child && typeof child === 'object') queue.push(child);
+      if (key !== collectedKey && child && typeof child === 'object') queue.push(child);
     }
   }
-  return [...new Set(paths)];
 }
 
 /**
@@ -214,31 +246,58 @@ export function rejectionIssuePaths(detail: unknown): string[] {
 export function rejectionEntryIds(detail: unknown): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
-  const queue: unknown[] = [detail];
-  let visited = 0;
-  while (queue.length > 0 && visited < 64 && ids.length < 64) {
-    const value = queue.shift();
-    visited++;
-    if (!value || typeof value !== 'object') continue;
-    if (Array.isArray(value)) {
-      queue.push(...value.slice(0, 32));
-      continue;
-    }
-    const record = value as Record<string, unknown>;
+  walkRejectionDetail(detail, 'entry_ids', (record) => {
     if (Array.isArray(record.entry_ids)) {
       for (const id of record.entry_ids) {
-        if (ids.length >= 64) break;
-        if (typeof id === 'string' && id.length <= 200 && !seen.has(id)) {
+        if (ids.length >= MAX_ENTRY_IDS) break;
+        if (typeof id === 'string' && id.length <= MAX_ENTRY_ID_CHARS && !seen.has(id)) {
           seen.add(id);
           ids.push(id);
         }
       }
     }
-    for (const [key, child] of Object.entries(record)) {
-      if (key !== 'entry_ids' && child && typeof child === 'object') queue.push(child);
-    }
-  }
+    return ids.length >= MAX_ENTRY_IDS;
+  });
   return ids;
+}
+
+/** One length offender a rejection's `detail` names: the field path, its measured length, and its cap. */
+export interface RejectionLengthOverrun {
+  /** Dotted field path of the over-long value. */
+  readonly path: string;
+  /** Measured character length of the rejected value. */
+  readonly length: number;
+  /** The hard cap `length` exceeds. */
+  readonly limit: number;
+}
+
+/**
+ * Extracts length offenders from structured rejection detail without interpreting reason prose —
+ * the sibling of {@link rejectionIssuePaths} for a violation that carries its measured size. A
+ * record contributes when it names a string `path` together with integer `length` and `limit`,
+ * `length > limit`, at any nesting, so a producer opts in by emitting those two fields beside the path.
+ *
+ * @param detail - The rejection's `detail` field, in any nesting the producing tool chose.
+ * @returns Offenders keyed by path in first-seen order; bounded like {@link rejectionIssuePaths};
+ *   empty when the detail names none.
+ */
+export function rejectionLengthOverruns(detail: unknown): RejectionLengthOverrun[] {
+  const overruns = new Map<string, RejectionLengthOverrun>();
+  walkRejectionDetail(detail, 'path', (record) => {
+    const { path, length, limit } = record;
+    if (
+      typeof path === 'string'
+      && path.length <= MAX_ISSUE_PATH_CHARS
+      && Number.isInteger(length)
+      && Number.isInteger(limit)
+      && (length as number) > (limit as number)
+      && !overruns.has(path)
+    ) {
+      overruns.set(path, { path, length: length as number, limit: limit as number });
+    }
+    return overruns.size >= MAX_ISSUE_PATHS;
+  });
+  return [...overruns.values()];
 }
 
 /**
@@ -543,7 +602,7 @@ export function rejectionFromZodError(
     }
     return path ? `${path}: ${message}` : message;
   });
-  const hint = opts.code === 'invalid_tool_input'
+  const hint = opts.code === REJECTION_CODES.invalidToolInput
     ? (opts.hint ?? zodFieldRepairHint(error, opts.input) ?? INVALID_TOOL_INPUT_REPAIR_HINT)
     : opts.hint;
   return makeRejection({

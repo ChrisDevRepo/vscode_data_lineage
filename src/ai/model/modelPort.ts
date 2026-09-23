@@ -200,6 +200,13 @@ export interface ToolGenerationInput {
   readonly tools: readonly ModelToolDefinition[];
   /** Optional policy narrowing which tools the model may call. */
   readonly toolChoice?: ModelToolChoice;
+  /**
+   * `true` when this generation must end in a tool call, so its streamed text is never the
+   * deliverable; only then may the port cut the stream on degenerate repetition
+   * ({@link createStreamRepetitionObserver}). Absent or `false`, text may be the answer and is
+   * bounded by the size ceiling alone.
+   */
+  readonly requiresToolCall?: boolean;
   /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
   /** Graph phase label carried into diagnostics and trace records. */
@@ -239,8 +246,8 @@ export interface InvalidGeneratedToolCall {
   readonly input?: unknown;
   /** Rejection category — schema-invalid input, unknown tool, or a duplicate call id. */
   readonly code:
-    | 'invalid_tool_input'
-    | 'unknown_tool'
+    | typeof REJECTION_CODES.invalidToolInput
+    | typeof REJECTION_CODES.unknownTool
     | typeof REJECTION_CODES.duplicateCallId;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
@@ -505,8 +512,9 @@ const REPETITION_MAX_BUFFERED_LINE_CHARS = 8192;
  * This counter fires when one substantial line reaches its 3rd identical occurrence, which on
  * every recorded loop body lands at 3-17% of the wasted characters. It observes text deltas as
  * they stream, normalizes whitespace (chunk boundaries never split a comparison), and returns the
- * strike exactly once; the caller applies the same protections as its phase ceiling — never after
- * a tool-call delta, per-generation state, and no cut where text is the deliverable. Exported
+ * strike exactly once; the caller applies it only to a generation that must end in a tool call
+ * ({@link ToolGenerationInput.requiresToolCall}), never after a tool-call delta, with
+ * per-generation state, and never where text is the deliverable. Exported
  * beside {@link matchProseToolCall} so any port, production or harness, stops on the same bytes.
  *
  * @returns An observer whose `observe` returns the first {@link RepetitionStrike}, or `null`.

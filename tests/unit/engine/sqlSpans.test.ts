@@ -1,3 +1,7 @@
+/**
+ * Pins `sqlCommentMask`: quoted spans stay code, block comments nest, and line comments end at the
+ * newline.
+ */
 import { describe, expect, it } from 'vitest';
 import { SQL_BLOCK_COMMENT, SQL_CODE, SQL_LINE_COMMENT, sqlCommentMask } from '../../../src/engine/shared/sqlSpans';
 

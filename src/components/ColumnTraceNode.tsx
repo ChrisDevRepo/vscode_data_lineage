@@ -211,7 +211,7 @@ function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
   nodeTitle: string;
   /** Circle stroke — the schema colour, or the highlight colour while the node is selected. */
   strokeColor: string;
-  /** Selection glow, on the circle rather than on a box that is no longer drawn. */
+  /** Selection glow, drawn on the circle; no card box surrounds it. */
   boxShadow: string | undefined;
 }) {
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;

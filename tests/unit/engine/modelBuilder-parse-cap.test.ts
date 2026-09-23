@@ -1,3 +1,7 @@
+/**
+ * Pins the parser match cap: a body that exceeds it is reported in parse stats and model warnings,
+ * and an ordinary model carries neither.
+ */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { loadParseRules } from '../helpers/testUtils';

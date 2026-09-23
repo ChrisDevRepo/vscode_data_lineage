@@ -46,7 +46,7 @@ const IMPORT_SPECIFIER_RE = /(?:import|export)(?:[^'";]*?\bfrom\s*)?\s*['"]([^'"
  *
  * @param {string} fromFile - Path (repo-root-relative) of the file containing the import.
  * @param {string} specifier - The quoted import path.
- * @returns {boolean} True when the specifier resolves into, or literally names, the forbidden layer.
+ * @returns {boolean} True when the specifier resolves into the forbidden layer.
  */
 function resolvesIntoComponents(fromFile, specifier) {
   if (!specifier.startsWith('.')) return false;
@@ -54,8 +54,7 @@ function resolvesIntoComponents(fromFile, specifier) {
     .normalize(path.join(path.dirname(fromFile), specifier))
     .split(path.sep)
     .join('/');
-  if (resolved === FORBIDDEN_ROOT || resolved.startsWith(`${FORBIDDEN_ROOT}/`)) return true;
-  return specifier.includes('../components') || specifier.includes('../../components');
+  return resolved === FORBIDDEN_ROOT || resolved.startsWith(`${FORBIDDEN_ROOT}/`);
 }
 
 const offenders = [];
@@ -76,7 +75,7 @@ for (const file of listSourceFiles(ENGINE_ROOT)) {
 if (offenders.length > 0) {
   console.error(`FAIL  src/engine/** imports from ${FORBIDDEN_ROOT}/** — the engine layer must stay independent of the webview layer:\n`);
   for (const offender of offenders) console.error(`  - ${offender}`);
-  console.error('\nMove the shared type or helper the import needs out of src/components (see X1 in the remediation plan).');
+  console.error('\nMove the shared type or helper the import needs out of src/components.');
   process.exit(1);
 }
 

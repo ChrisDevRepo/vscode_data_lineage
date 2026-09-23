@@ -178,7 +178,8 @@ export function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
  * recovered elements a re-derivation of that same rejoin produces (a pure, deterministic replay of
  * the repair's own extraction, not a second source of truth for what was recovered), and reports the
  * rejoin itself as a distinct entry — `NORMALIZE-WITH-LOG`'s "add" half, alongside the vacated
- * artifact key the object-level walk already reports as a drop.
+ * artifact key the object-level walk already reports as a drop. A whitespace-only key that
+ * {@link rejoinSectionTextBoundaryArtifacts} folded back into `text` is named as a rejoin, not a drop.
  */
 export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): string[] {
   const at = (key: string | number) => (path ? `${path}.${key}` : String(key));
@@ -208,7 +209,11 @@ export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): strin
     return paths;
   }
   if (!raw || typeof raw !== 'object' || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
-  return Object.entries(raw as Record<string, unknown>).flatMap(([key, value]) => {
+  const record = raw as Record<string, unknown>;
+  return Object.entries(record).flatMap(([key, value]) => {
+    if (!(key in parsed) && isTextBoundaryArtifact(record, key)) {
+      return [`${path ? `${path}.` : ''}${JSON.stringify(key)} (rejoined into text)`];
+    }
     if (!(key in parsed)) return value === null ? [] : [at(key)];
     return droppedKeyPaths(value, (parsed as Record<string, unknown>)[key], at(key));
   });
@@ -377,7 +382,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * between the structural characters is tolerated (`}, {`, `},\n{`) — a provider that pretty-prints
  * tool-call arguments emits the identical defect with insignificant whitespace inside the swept
  * key, and this is the general defect class, not one compact-JSON provider's spacing; at least one
- * structural character is still required, so a whitespace-only key never matches.
+ * structural character is still required, so a whitespace-only key never matches: it marks a string
+ * that closed early inside one element, not an element boundary ({@link WHITESPACE_ONLY_KEY}).
  */
 const ARRAY_BOUNDARY_ARTIFACT_KEY = /^[{}[\],:\s]*[{}[\],:][{}[\],:\s]*$/;
 
@@ -511,15 +517,58 @@ export function repairArrayBoundaryArtifacts(value: unknown): unknown {
   }
   if (isPlainObject(value)) {
     let changed = false;
-    const next: Record<string, unknown> = {};
-    for (const [key, entryValue] of Object.entries(value)) {
+    const next = Object.fromEntries(Object.entries(value).map(([key, entryValue]) => {
       const repaired = repairArrayBoundaryArtifacts(entryValue);
       if (repaired !== entryValue) changed = true;
-      next[key] = repaired;
-    }
+      return [key, repaired];
+    }));
     return changed ? next : value;
   }
   return value;
+}
+
+/**
+ * A key made only of whitespace. No declared field is spelled this way; on a section that carries
+ * `text`, it is where a `text` string closed early and its continuation was read as a new key.
+ */
+const WHITESPACE_ONLY_KEY = /^\s+$/;
+
+/** Whether `key` on `record` is a string-boundary artifact of `record.text`. */
+function isTextBoundaryArtifact(record: Record<string, unknown>, key: string): boolean {
+  return WHITESPACE_ONLY_KEY.test(key) && typeof record[key] === 'string' && typeof record.text === 'string';
+}
+
+/**
+ * Rejoins a top-level `sections[]` entry whose `text` closed early: each whitespace-only key with a
+ * string value is appended back onto `text` as `text + key + value`, in key order, and removed.
+ *
+ * @remarks
+ * Sibling of {@link repairArrayBoundaryArtifacts} for the string boundary inside one element rather
+ * than the boundary between elements. Lossless — the key and its value are both kept in `text`.
+ * `droppedKeyPaths` names each rejoin, so this is NORMALIZE-WITH-LOG. A whitespace-only key with a
+ * non-string value, or on a section without a string `text`, passes through so `.strict()` still
+ * rejects it; every other unknown key is untouched.
+ *
+ * @param value - Raw model payload before Zod validation.
+ * @returns The payload with each such section's continuation rejoined, or `value` unchanged.
+ */
+export function rejoinSectionTextBoundaryArtifacts(value: unknown): unknown {
+  if (!isPlainObject(value) || !Array.isArray(value.sections)) return value;
+  let changed = false;
+  const sections = value.sections.map((section) => {
+    if (!isPlainObject(section)) return section;
+    const keys = Object.keys(section).filter(key => isTextBoundaryArtifact(section, key));
+    if (keys.length === 0) return section;
+    changed = true;
+    const rest: Record<string, unknown> = { ...section };
+    let text = section.text as string;
+    for (const key of keys) {
+      text += key + (section[key] as string);
+      delete rest[key];
+    }
+    return { ...rest, text };
+  });
+  return changed ? { ...value, sections } : value;
 }
 
 /** Result of cloning and normalizing a raw start-exploration payload. */

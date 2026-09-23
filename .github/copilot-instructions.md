@@ -103,9 +103,8 @@ caller in Copilot agent mode cannot reach a mutating tool at all.
 Within one phase the retry context re-projects accepted observations and the
 newest rejection. An accepted call retires every earlier rejection of the same
 tool, and a resend byte-identical to a read accepted in an earlier attempt is
-answered with a `duplicate_read` envelope naming the accepted call — a silent
-replay left the model with no response to act on and it repeated the call until
-the provider-call stop. The envelope is free while the model may still act on the
+answered with a `duplicate_read` envelope naming the accepted call, so the model
+always has a response to act on. The envelope is free while the model may still act on the
 answer it holds; past the shared unproductive-resend allowance each further
 identical resend charges a semantic strike, so a model that keeps replaying the
 read closes the phase instead of spinning to the provider-call cap.
@@ -132,7 +131,7 @@ Depth follows that rule and splits on who chose it — never on the shape of the
 Only a level count the user literally stated (a bare count, "one level down", "two levels up"),
 or an explicit unbounded ask ("all the way to the source"), binds; any other wording — including
 "back to its original sources" or "where does X come from", which name no count — starts at the
-soft default seed that grows (PM ruling `depth-soft-default`, 2026-09-22). Because the host never
+soft default seed that grows. Because the host never
 parses the user's sentence, provenance cannot be inferred from `depth`'s shape alone: a bare
 finite number the model invents to fill the field would be indistinguishable, at the schema
 boundary, from one it copied off the user's words. The tool contract therefore carries provenance
@@ -146,12 +145,14 @@ to the same `default_start` seed as an omitted `depth`, never the hard `explicit
 kind. `"all"` is exempt from the pairing: it can only ever grow the scope, never truncate it, so
 an unstated `"all"` is already safe.
 
-A hard depth (`depthIntent.kind` of `explicit` or `asymmetric`, both requiring `depthStated:
-true`) is a **hard border**: the engine refuses admission past it, per direction, and records the
+A hard depth (an `explicit` count, or an `asymmetric` side carrying a user-stated count or `0`)
+is a **hard border**: the engine refuses admission past it, per direction, and records the
 frontier through the same `deferQuestion` path a schema breach uses. A node reachable on both
 sides of the origin is judged against each side's own ceiling — admitted when either side's
 distance fits, refused only when neither does. A depth the model did not mark as user-stated
-(`default_start`) stays a **soft seed** the model may grow, exactly as before. The engine, never
+(`default_start`, or an unstated `null` side of an `asymmetric` depth) stays a **soft seed** the
+model may grow, per side, and a gate refine merges a depth change per side with the reviewed
+proposal. The engine, never
 the prompt, enforces the result either way.
 
 That split generalizes past depth. Every scope rule reaching the engine — depth, direction, the
@@ -297,6 +298,9 @@ schema-version gate, the prompt-golden-sync check, the honest-test-label scan, t
 check, the unit-project coverage check that makes the two unit steps add up to
 the whole suite, the `src/engine` → `src/components` layer-direction guard, the
 packaged-VSIX contents check, and the `assert-no-langsmith` bundle check.
+After an intended edit to a prompt surface (`assets/aiOutputTemplates.yaml`,
+`src/ai/prompting/`, `src/ai/agent/stagePrompts.ts`), refresh the manifest with
+`node tests/tools/assert-golden-sync.mjs --update`.
 
 `npm run test:edh` runs the extended VS Code Electron lanes outside the gate,
 against a scripted provider registered through the real `vscode.lm` API — it
@@ -313,10 +317,9 @@ place their defects can surface; everything it adds beyond that is deterministic
 translation that does not care whether the text came from inference. Model
 behaviour is measured internally, headless, never through this repository's
 tracked suite, and the Electron fixture stays scripted-only — it must not grow a
-live-provider mode. The internal model-port contract suite is a
-port-agnostic acceptance suite proving the real `vscode.lm` transport
-(`VscodeModelPort`) satisfies the model-port contract; a new guarantee about that
-boundary belongs in that suite, never in a credentialed host lane.
+live-provider mode. A new guarantee about the model-port boundary
+(`VscodeModelPort`) belongs in a port-level unit test, never in a credentialed
+host lane.
 
 The suites prove the deterministic core: SQL parsing and dependency extraction,
 graph construction and traversal, schemas, and state transitions. How good a

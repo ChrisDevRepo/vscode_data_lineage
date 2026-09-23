@@ -5,12 +5,10 @@
  * line.
  *
  * @remarks
- * Regression coverage for `requiredNeighborIds` (src/ai/sm/smBase.ts): its per-neighbour budget
- * filter drops an over-budget neighbour from the auto-enqueue pool by design, but it used to be
- * the only place that neighbour was ever considered — nothing downstream ever saw it again. The
- * fix adds `budgetDeferredNeighborIds`, which the route loop treats exactly like a depth-border
- * deferral: a `DeferredQuestion`/`PendingLead` with `reason: 'budget'`, plus a `[Budget]` debug
- * log line.
+ * `requiredNeighborIds` (src/ai/sm/smBase.ts) is budget-blind; the accumulating budget pass in
+ * `submitFindings`' route loop defers an auto-opened neighbour the staged scope has no room for
+ * exactly like a depth-border deferral: a `DeferredQuestion`/`PendingLead` with `reason: 'budget'`,
+ * plus a `[Budget]` debug log line.
  */
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
@@ -19,7 +17,7 @@ import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 
-describe('Over-budget neighbour deferral (src/ai/sm/smBase.ts requiredNeighborIds)', () => {
+describe('Over-budget neighbour deferral (src/ai/sm/smBase.ts submitFindings route loop)', () => {
   const nodes: LineageNode[] = ['n0', 'n1', 'n2', 'n3', 'n4'].map(id =>
     makeNode({ id, schema: 'dbo', name: id, type: 'view' }),
   );

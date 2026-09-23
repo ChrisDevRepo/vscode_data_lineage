@@ -38,7 +38,7 @@ function traceActionTooltip(
 }
 
 /** One add/prune control on a trace node; hidden when that side has no neighbors at all. */
-export function TraceActionButton({
+function TraceActionButton({
   action,
   side,
   options,

@@ -8,6 +8,10 @@
  * a cycle exit. The 13-node value was validated hop by hop against the graph — every consecutive
  * pair is a real edge and no node repeats — rather than against the previous implementation.
  *
+ * The baseline carries no write edge `[ai].[spImportOrders] → [ai].[ActiveRegions]`: the procedure
+ * only reads that table, inside `IN (SELECT …)` and `NOT EXISTS (SELECT …)` subqueries, so the two
+ * objects form no cycle.
+ *
  * @remarks
  * One test per baseline dimension, deliberately. These assertions are not independent
  * observations of one fact — a node-count drift and a BFS reachability drift are

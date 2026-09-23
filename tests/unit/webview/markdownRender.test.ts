@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+//
+// Pins `renderAiMarkdown`: math delimiter rules, block structure, link sanitization, and a full
+// reported document.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -96,6 +99,19 @@ describe('renderAiMarkdown — links and sanitization', () => {
     const host = render('<script>alert(1)</script>\n\n<img src="x" onerror="alert(1)">');
     expect(host.querySelector('script')).toBeNull();
     expect(host.querySelector('img')?.getAttribute('onerror') ?? null).toBeNull();
+  });
+
+  it('renders raw HTML from the description as literal text', () => {
+    const host = render('<a href="https://example.com" style="position:fixed;inset:0">x</a>\n\ninline <form><input></form> tag');
+    expect(host.querySelector('a, form, input, [style]')).toBeNull();
+    expect(host.textContent).toContain('<a href="https://example.com"');
+    expect(host.textContent).toContain('<form><input></form>');
+  });
+
+  it('renders raw HTML inside object-link text as literal text', () => {
+    const host = render('### Objects [<style>*{display:none}</style>](#focus-node:x)');
+    expect(host.querySelector('style')).toBeNull();
+    expect(host.textContent).toContain('<style>');
   });
 
   it('drops javascript: hrefs', () => {

@@ -60,8 +60,8 @@ export const ExplorationDepthLimitSchema = z.union([numericStringDepth(z.number(
  * (no starting seed, and every later route/contraction admission in that direction is rejected
  * at {@link BorderPurpose} `'route'`/`'contraction'` — see `isReachableInApprovedDirection` in
  * `smBase.ts`), the mechanism for a lopsided proposal (e.g. `{upstream: 2, downstream: 0}`).
- * Omitted/`null` is a distinct "unstated" signal — it resolves to the reviewed default of 3,
- * independently per side, exactly like the top-level {@link ExplorationDepthSelectionSchema}.
+ * Omitted/`null` is a distinct "unstated" signal — that side alone starts at the soft default seed
+ * of 3 and grows, with no border, exactly like an omitted top-level {@link ExplorationDepthSelectionSchema}.
  * {@link numericStringDepth} on the numeric branch for the same reason as
  * {@link ExplorationDepthLimitSchema}.
  */
@@ -70,7 +70,7 @@ const ExplorationDepthSideSchema = z.union([numericStringDepth(z.number().int().
 /**
  * Independent starting depths for a bidirectional exploration proposal. Each side independently
  * accepts a positive integer, `"all"`, `0` (permanently disables that direction), or omitted/
- * `null` (defaults to 3 — see {@link resolveDepthIntent} in `smTypes.ts`). Both sides `0` is
+ * `null` (the soft default seed of 3 — see `resolveDepthIntent` in `smTypes.ts`). Both sides `0` is
  * structurally rejected — that combination seeds an empty scope, which is never intentional.
  */
 const AsymmetricExplorationDepthSchema = z.object({

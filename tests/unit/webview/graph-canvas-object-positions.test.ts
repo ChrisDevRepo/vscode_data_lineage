@@ -1,3 +1,7 @@
+/**
+ * Pins GraphCanvas contracts read from its source: bookmarks and exports read object-space node
+ * positions, the column-view flag comes from state, and view or relation changes reset stale state.
+ */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';

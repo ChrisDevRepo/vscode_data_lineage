@@ -78,8 +78,11 @@ function pruneStaleEntries<K, V>(cache: Map<K, V>, present: ReadonlySet<K>): voi
   }
 }
 
+/** Decoration inputs a single node reads; the Schema View callbacks and graph mode are cluster-only. */
+export type NodeSelectionInputs = Omit<NodeDecorationInputs, 'graphMode' | 'onExpandSchema' | 'onMakeSchemaCenter'>;
+
 /** Selection, trace, and AI state derived for one non-schema node. */
-interface NodeDecoration {
+export interface NodeDecoration {
   /** Highlight state: `true` for the trace origin, `'yellow'` for the clicked node, else the node's own. */
   highlighted: boolean | 'yellow' | undefined;
   /** Whether the node is de-emphasised because another node is focused. */
@@ -107,15 +110,8 @@ function schemaCallbacks(inputs: NodeDecorationInputs): { onExpandSchema?: (sche
   };
 }
 
-/**
- * Base click-selection highlight/dim state, shared by object view and column view.
- *
- * @remarks
- * Object view layers a trace-origin override on top ({@link isTraceOriginNode}); column view has no
- * trace concept and uses this result unmodified — one rule for "is this the selected node", read by
- * both callers instead of restated in each.
- */
-export function resolveBaseSelectionState(
+/** Base click-selection highlight/dim state, before the trace-origin override. */
+function resolveBaseSelectionState(
   nodeId: string,
   highlightedNodeId: string | null | undefined,
   level1Neighbors: ReadonlySet<string>,
@@ -125,8 +121,8 @@ export function resolveBaseSelectionState(
   return { highlighted, dimmed };
 }
 
-/** Whether `nodeId` is the origin of an applied, filtered, or path trace — shared by both canvas views. */
-export function isTraceOriginNode(
+/** Whether `nodeId` is the origin of an applied, filtered, or path trace. */
+function isTraceOriginNode(
   nodeId: string,
   inputs: Pick<NodeDecorationInputs, 'traceSelectedNodeId' | 'traceMode'>,
 ): boolean {
@@ -136,25 +132,37 @@ export function isTraceOriginNode(
 }
 
 /**
- * Selection, trace, and AI decoration for one non-schema node.
+ * Selection, trace, and AI decoration for one non-schema node — the one rule both canvas views
+ * (object view through {@link decorateFlowNodes}, column view per column node) apply.
  *
  * @remarks
- * Computed once per node per pass; the retention key and the emitted `data` are both derived from
- * this one result, so the key cannot describe a decoration other than the one that was applied.
+ * The trace origin is highlighted and never dimmed; otherwise the clicked node is `'yellow'` and
+ * any other node keeps `ownHighlight`. Object view computes this once per node per pass and derives
+ * both the retention key and the emitted `data` from the one result, so the key cannot describe a
+ * decoration other than the one that was applied.
+ *
+ * @param nodeId - Id of the node being decorated.
+ * @param ownHighlight - The node's own highlight state, kept when neither selection rule applies.
+ * @param inputs - Position-independent decoration state.
+ * @returns The node's decoration.
  */
-function computeNodeDecoration(node: FlowNode, inputs: NodeDecorationInputs): NodeDecoration {
-  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(node.id, inputs.highlightedNodeId, inputs.level1Neighbors);
-  const isTraceOrigin = isTraceOriginNode(node.id, inputs);
+export function computeNodeDecoration(
+  nodeId: string,
+  ownHighlight: boolean | 'yellow' | undefined,
+  inputs: NodeSelectionInputs,
+): NodeDecoration {
+  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(nodeId, inputs.highlightedNodeId, inputs.level1Neighbors);
+  const isTraceOrigin = isTraceOriginNode(nodeId, inputs);
   const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
   return {
-    highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
+    highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : ownHighlight,
     dimmed: baseDimmed && !isTraceOrigin,
     removable,
     onRemoveFromView: removable ? inputs.onRemoveFromView : undefined,
-    traceControls: inputs.traceControlsByNode.get(node.id),
-    aiHighlight: inputs.aiHighlightMap.get(node.id),
-    aiBadge: inputs.aiBadgeMap.get(node.id),
-    aiNote: inputs.notesVisible ? inputs.aiNoteMap.get(node.id) : undefined,
+    traceControls: inputs.traceControlsByNode.get(nodeId),
+    aiHighlight: inputs.aiHighlightMap.get(nodeId),
+    aiBadge: inputs.aiBadgeMap.get(nodeId),
+    aiNote: inputs.notesVisible ? inputs.aiNoteMap.get(nodeId) : undefined,
   };
 }
 
@@ -240,7 +248,7 @@ export function decorateFlowNodes(
         () => ({ ...node, data: { ...node.data, ...callbacks } }),
       );
     }
-    const decoration = computeNodeDecoration(node, inputs);
+    const decoration = computeNodeDecoration(node.id, (node.data as CustomNodeData).highlighted, inputs);
     return reuseOrBuild(
       node,
       [decoration.highlighted, decoration.dimmed, decoration.removable, decoration.onRemoveFromView, decoration.traceControls, decoration.aiHighlight, decoration.aiBadge, decoration.aiNote],

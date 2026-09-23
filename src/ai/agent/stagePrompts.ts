@@ -84,11 +84,11 @@ function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, re
  * The template keys a render dropped because the locked classification did not request them.
  *
  * @remarks
- * The drop is deterministic and by design, but it is the one filter in the chain that leaves no
- * trace of its own: `gatedOut` was computed for diagnostics and had no consumer, so a run in which
- * `business_capture` — sole owner of the decision-impacting data-quality capture instruction — was
- * never issued reads identically to one in which the model was asked and found nothing. Lifted onto
- * the builder result so the graph can log it.
+ * The drop is deterministic and by design, and it is the one filter in the chain that leaves no
+ * trace of its own: without this list a run in which `business_capture` — sole owner of the
+ * decision-impacting data-quality capture instruction — was never issued reads identically to one
+ * in which the model was asked and found nothing. The builder result carries it so the graph can
+ * log it.
  */
 function classificationGatedKeys(result: StagePromptResult): string[] {
   return result.gatedOut.filter(entry => entry.reason === 'classification').map(entry => entry.key);
@@ -149,7 +149,8 @@ export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptConte
  * @param sess - Active exploration session with a locked classification.
  * @param ctx - Grounded database/filter context.
  * @param hopMode - The contract this hop is dispatched under.
- * @returns The stable prompt and its hop-invariant template keys.
+ * @returns The system prompt for `hopMode` and the YAML keys that rendered it; both are identical
+ *   for every hop dispatched under the same mode.
  */
 export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext, hopMode: 'bb' | 'ct'): StageSystemInstruction {
   const engine = sess.stateMachine as NavigationEngine;

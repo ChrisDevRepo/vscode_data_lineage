@@ -168,11 +168,10 @@ describe('ColumnTraceEdge', () => {
     expect(glyph.querySelectorAll('circle'), 'two circles — one is the unclassified ring').toHaveLength(2);
   });
 
-  it('draws the unclassified mark as an open ring, never the arrow pair it replaced', () => {
-    // Two opposed arrows used to mark a transform; on a canvas where edge direction is already the
-    // primary signal they read as bidirectional, which is backwards. A ring carries no direction,
-    // so this pins the shape that fixed the misreading rather than just the fact that something
-    // still renders.
+  it('draws the unclassified mark as an open ring, never an arrow pair', () => {
+    // Edge direction is the canvas's primary signal, so a transform mark carries no direction of
+    // its own: opposed arrows would read as bidirectional. This pins the ring shape rather than
+    // just the fact that something renders.
     mount(<ColumnTransformGlyph />);
     const svg = host.querySelector('svg')!;
     expect(svg.getAttribute('fill'), 'unfilled — a filled dot is the object-type legend mark').toBe('none');
@@ -180,9 +179,8 @@ describe('ColumnTraceEdge', () => {
     expect(svg.querySelectorAll('path'), 'no leftover arrowhead geometry').toHaveLength(0);
   });
 
-  // The tooltip is the only surface left that names the class — the column-flow legend row was
-  // removed — so the enum text leads and the model's own clause, or a structural fallback when it
-  // offered none, follows.
+  // The tooltip is the only surface that names the class, so the enum text leads and the model's
+  // own clause, or a structural fallback when it offered none, follows.
   it.each<[string, Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>, string]>([
     ['names the class first, then the model note, when one was given',
       { sourceColumn: 'A', targetColumn: 'B', transforms: ['combine'], note: 'JOIN on ProductId' },

@@ -2,9 +2,10 @@
  * Projection of the user's current screen into the `lineage_get_screen_state` payload.
  *
  * @remarks
- * Pure and VS Code-free. The webview posts `uiState` and `render-state` as opaque passthrough
- * buffers, so every read here is defensive: a missing, malformed, or foreign-shaped field omits its
- * section instead of throwing. The payload answers "what is on screen", never "what is in the
+ * Pure and VS Code-free. The bridge validates `uiState` and `render-state` against their
+ * `bridgeContract` schemas, but the session buffers can also be seeded by non-bridge writers, so
+ * every read here stays defensive: a missing, malformed, or foreign-shaped field omits its section
+ * instead of throwing. The payload answers "what is on screen", never "what is in the
  * model" — the catalog, statistics, and filters stay with `lineage_get_context`.
  */
 import {
@@ -125,7 +126,19 @@ function asTraceLevel(value: unknown): number | 'all' {
   return level === TRACE_ALL_LEVELS ? 'all' : level;
 }
 
-function presentDepth(init: Record<string, unknown> | null): { upstream: number | 'all' | null; downstream: number | 'all' | null } {
+/**
+ * Reports a stored run's depth per side as the run bound it.
+ *
+ * @remarks
+ * The init record keeps an unstated asymmetric side at its seed count; the persisted per-side
+ * ceiling is what bound it, so a finite seed whose `depthLimits` side is `null` reads back as the
+ * unstated `null` side — the rule `NavigationEngine.currentDepthIntent` applies. A record with no
+ * `depthLimits` reports the seed as stored.
+ */
+function presentDepth(
+  init: Record<string, unknown> | null,
+  internals: Record<string, unknown> | null,
+): { upstream: number | 'all' | null; downstream: number | 'all' | null } {
   const intent = asRecord(init?.depthIntent);
   let upstream: number | 'all' | null = null;
   let downstream: number | 'all' | null = null;
@@ -133,8 +146,13 @@ function presentDepth(init: Record<string, unknown> | null): { upstream: number 
     upstream = asLevel(intent.levels);
     downstream = upstream;
   } else if (intent?.kind === 'asymmetric') {
-    upstream = asLevel(intent.upstream);
-    downstream = asLevel(intent.downstream);
+    const limits = asRecord(internals?.depthLimits);
+    const bound = (side: 'upstream' | 'downstream'): number | 'all' | null => {
+      const level = asLevel(intent[side]);
+      return typeof level === 'number' && limits !== null && limits[side] === null ? null : level;
+    };
+    upstream = bound('upstream');
+    downstream = bound('downstream');
   } else if (intent?.kind === 'full_frontier') {
     upstream = 'all';
     downstream = 'all';
@@ -174,12 +192,12 @@ function presentAiRun(
     run_id: run.runId,
     question: asString(init?.question),
     origin: asString(init?.origin) ?? run.origin,
-    depth: presentDepth(init),
+    depth: presentDepth(init, internals),
     scope: asStringList(snapshot.scopeNodeIds).length,
     analyzed: countAction('analyze'),
     pruned: countAction('prune'),
     stale_objects: staleIds(run, getDdl).length,
-    open_questions: Array.isArray(internals?.pendingLeads) ? internals.pendingLeads.length : 0,
+    open_questions: recallOpenLeads(run).length,
   };
 }
 
@@ -432,7 +450,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
  * Grounds the stage prompts so a bare "explain this" can reach `lineage_get_screen_state`; the
  * phrase names the surfaces present, never their contents, which stay behind the tool call.
  *
- * @param uiState - Latest `filter-changed` ui-state buffer, unvalidated.
+ * @param uiState - Latest `filter-changed` ui-state buffer, read defensively.
  * @returns The raw phrase — the prompt slot builder escapes it — or `null` when no trace, analysis, or bookmark is applied.
  */
 export function describeScreen(uiState: unknown): string | null {

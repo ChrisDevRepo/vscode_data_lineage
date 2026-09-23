@@ -27,6 +27,7 @@ function baselineRef() {
     const tag = git(['tag', '--list', 'v*', '--sort=-v:refname']).split('\n')[0].trim();
     if (tag) return { ref: tag, label: tag };
   } catch {
+    // A failed tag lookup falls through to the origin/main baseline below.
   }
   try {
     git(['rev-parse', '--verify', '--quiet', 'origin/main']);

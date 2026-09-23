@@ -254,9 +254,10 @@ own tool:
   `lineage_detect_graph_patterns` query it. Schemas, statistics, and the active
   filter stay here, not on the screen-state tool.
 
-Screen state is read-only and derives entirely from the passthrough `uiState`
-and `render-state` buffers the webview posts, so a malformed or absent buffer
-omits its section rather than failing the call.
+Screen state is read-only and derives entirely from the `uiState` and
+`render-state` buffers the webview posts. The bridge validates both against
+their `bridgeContract` schemas and rejects a malformed frame with a logged
+warning; an absent buffer omits its section rather than failing the call.
 
 ### Recalling the run behind an applied AI bookmark
 
@@ -334,8 +335,8 @@ node a committed `column_flow` has already named for a tracked column
   node's SQL alone) and `questions` (`[{nodeId, question}]`, a specific check
   attached to that neighbor's queued hop). There is no separate routing field —
   every remaining open in-scope neighbor not named in `prune_neighbors` is
-  enqueued and visited once, automatically, through the same border checks a
-  route request used to trigger. A prune removes any open neighbor and every
+  enqueued and visited once, automatically, through the standard border
+  checks. A prune removes any open neighbor and every
   node reachable only through it; naming a neighbor already visited, analyzed,
   queued or removed is a no-op (`prune_noop_visited`, `prune_noop_analyzed`,
   `prune_noop_queued`, `prune_noop_removed`) and changes nothing.
@@ -403,8 +404,8 @@ depth and heading rules that license only the text-authoring stages — lives wi
 its stage. A stage that reaches the tool without that contract is a stage judged
 by rules it was never given. The contract also states the enforced mechanical
 checks upfront — unique section labels, highlight legend labels, the 1-5
-highlight-group cap, and the held-draft repair convention — so a first rejection
-is no longer how a model discovers a rule. The CT terminal-source mandate
+highlight-group cap, and the held-draft repair convention — so a model learns
+each rule before its first call rather than from a rejection. The CT terminal-source mandate
 (terminal sources must appear in a section's node ids or a source highlight
 group) is stated in the synthesis prompt; no validator rejects its absence —
 the engine-owned Column Trace Chain block carries the terminal-source facts the

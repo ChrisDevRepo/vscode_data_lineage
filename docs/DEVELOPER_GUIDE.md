@@ -211,7 +211,7 @@ shrink. GitHub does not run this test framework.
 
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, output-template schema version, layer-direction, unit tests, builds, and package checks. Run before push. |
+| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, output-template schema version, prompt golden sync, honest test labels, core case completeness, unit-project coverage, layer-direction, core coverage floors, unit tests, builds, and package checks. Run before push. |
 | **Unit suite** | `npm test` | Every maintained unit test. |
 | **Protected core** | `npm run test:core` | Parser, engine, and webview unit projects. |
 | **Core coverage floors** | `npm run coverage:core` | Per-file thresholds on `sqlBodyParser.ts`, `graphAnalysis.ts`, `graphBuilder.ts`, `shared/sqlRegex.ts`, `shared/nodeIdResolution.ts`. |
@@ -223,7 +223,7 @@ shrink. GitHub does not run this test framework.
 Assert with vitest `expect`, and give each case its own `it` (or an `it.each`
 table).
 
-What earns a test outside the protected core (`sm/`, `ai-core/`, `webview/`):
+What earns a test outside the protected core (`sm/`, `ai-core/`):
 one decisive assertion per behaviour, placed in the file that owns the module,
 not a new file per fix. These do not earn one: a duplicate of a path another
 test already asserts, a value-only variant (use `it.each`), a pin on prompt,

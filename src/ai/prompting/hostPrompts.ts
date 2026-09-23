@@ -23,6 +23,7 @@ import { UNKNOWN_DB_PLATFORM, type DatabaseModel } from '../../engine/types';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { describeScreen } from '../tools/screenStatePresenter';
+import { escapePromptText } from '../support/text';
 
 /**
  * The grounding context surfaced in the system prompt's `## Context` block.
@@ -228,7 +229,7 @@ export function buildGateRefinePrompt(
     'The user is refining the pending exploration scope. Do not start a new exploration or answer in prose.',
     '',
     'Current candidate scope (post-filter):',
-    scopeSummaryMd,
+    escapePromptText(scopeSummaryMd),
     '',
     'Requested scope edits:',
     `- excludeTypes: ${fmt(refine.excludeTypes)}`,
@@ -237,7 +238,7 @@ export function buildGateRefinePrompt(
     `- passNodeIds: ${fmt(refine.passNodeIds)}`,
     `- analysisMode: ${refine.analysisMode ?? '(unchanged)'}`,
     targetLine,
-    refine.instruction ? `- instruction: "${refine.instruction}"` : '',
+    refine.instruction ? `- instruction: "${escapePromptText(refine.instruction)}"` : '',
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
     'Omitted proposal fields are preserved mechanically. Preserve unchanged origin, question, mission brief, direction, depth, filters, mode, classification, and columns by omitting them. An analysis constraint in the instruction that no field above expresses goes in `scopeNotes`.',

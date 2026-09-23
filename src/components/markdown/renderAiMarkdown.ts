@@ -3,22 +3,23 @@ import katex from 'katex';
 import { Marked, type Tokens } from 'marked';
 import { markedKatexExtension } from './markedKatexExtension';
 
-/**
- * The `#focus-node:` scheme used by engine-assembled object links. These resolve only inside the
- * graph webview, so the click handler intercepts them rather than letting the browser navigate.
- */
-export const FOCUS_NODE_HREF_PREFIX = '#focus-node:';
-
 /** Leading text of the engine-assembled `### Objects <links>` footnote line. */
 const OBJECTS_HEADING_PREFIX = 'Objects ';
 
 /** `id` prefix the section-chip navigation scrolls to; the engine numbers `## N` sections. */
 export const AI_SECTION_ID_PREFIX = 'ln-ai-sec-';
 
+const HTML_ESCAPES: Readonly<Record<string, string>> = {
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+};
+
 const marked = new Marked({ gfm: true, breaks: false })
   .use(markedKatexExtension(katex))
   .use({
     renderer: {
+      html(token: Tokens.HTML | Tokens.Tag): string {
+        return token.text.replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
+      },
       heading(token: Tokens.Heading): string {
         const body = this.parser.parseInline(token.tokens);
         if (token.depth === 3 && body.startsWith(OBJECTS_HEADING_PREFIX)) {

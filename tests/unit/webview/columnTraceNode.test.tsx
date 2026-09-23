@@ -5,9 +5,9 @@
 // real here, unlike `GraphCanvas` (107 props behind two providers), whose contract is asserted from
 // source in `graph-canvas-object-positions.test.ts`.
 //
-// The keyboard case is the reason this file exists: every row used to be `tabIndex={0}`, so a
-// forty-column table put forty stops in the page order and a trace holds many such nodes. The node
-// is now one stop with the arrow keys moving inside it, and that is only observable by mounting.
+// The keyboard case is the reason this file exists: a node is one tab stop with the arrow keys
+// moving between its rows, so a forty-column table never puts forty stops in the page order, and
+// that is only observable by mounting.
 import { StrictMode, act, useState, type ReactElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ReactFlowProvider } from '@xyflow/react';
@@ -132,8 +132,8 @@ describe('ColumnTraceNode', () => {
   });
 
   it('shows the declared backend data type beside the column name, and no shape annotation', () => {
-    // The type comes from the extracted model, never from the AI; the structural shape annotation
-    // it replaced ("incoming (2)") is gone from the row entirely.
+    // The type comes from the extracted model, never from the AI; the row carries no structural
+    // shape annotation such as "incoming (2)".
     mount(
       <ReactFlowProvider>
         <HoverHarness>

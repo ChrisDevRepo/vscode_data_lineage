@@ -102,34 +102,34 @@ export function extractRawSectionAngles(rawSections: unknown): CapturedSection[]
 export function mapSubmitFindingsEngineGuard(
   failure: { error: string; [key: string]: unknown },
 ): InteractionRuleResult {
-  if (failure.error === 'invalid_status') {
+  if (failure.error === REJECTION_CODES.invalidStatus) {
     const status = String(failure.current_status ?? 'unknown');
     if (status === 'complete') {
       return {
-        error: 'exploration_complete',
+        error: REJECTION_CODES.explorationComplete,
         hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
         next_action: 'present_result',
       };
     }
     return {
-      error: 'invalid_status',
+      error: REJECTION_CODES.invalidStatus,
       current_status: status,
       hint: typeof failure.hint === 'string'
         ? failure.hint
         : `Engine is in status '${status}'. Expected 'awaiting_findings'.`,
     };
   }
-  if (failure.error === 'focus_mismatch') {
+  if (failure.error === REJECTION_CODES.focusMismatch) {
     const expected = typeof failure.expected === 'string' ? failure.expected : '';
     const got = typeof failure.got === 'string' ? failure.got : '';
     return {
-      error: 'focus_node_id_mismatch',
+      error: REJECTION_CODES.focusNodeIdMismatch,
       expected,
       got,
       hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${expected}. Resubmit with the correct focus_node_id.`,
     };
   }
-  if (failure.error === 'invalid_focus_node') {
+  if (failure.error === REJECTION_CODES.invalidFocusNode) {
     const got = typeof failure.got === 'string' ? failure.got : '';
     const expected = typeof failure.expected === 'string' ? failure.expected : undefined;
     return {

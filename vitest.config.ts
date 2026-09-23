@@ -35,8 +35,6 @@ export default defineConfig({
         'src/engine/shared/sqlRegex.ts',
         'src/engine/shared/nodeIdResolution.ts',
       ],
-      // Counts modules with no test at all, rather than reporting only what was imported.
-      all: true,
       reporter: ['text', 'json-summary'],
       reportsDirectory: 'test-results/coverage-core',
       // Per-file floors, measured from an observed run and raised only when a later run

@@ -30,11 +30,15 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   rules and never authors content, infers intent, guesses what a node needs,
   defers on speculation, judges relevance, or rewrites the model's findings.
   Content judgement belongs to the model alone: a node's status and findings at
-  its own visit, and one note per not-yet-visited neighbor (prune or add, an
-  optional sub-question, columns). Every backend response to model output is
-  ACCEPT, REJECT (code plus recovery hint), or NORMALIZE-WITH-LOG, and the
-  model sees the outcome. This is the standard split of agent frameworks: the
-  application owns control flow and validation, the model owns decisions.
+  its own visit, and an optional note per not-yet-visited neighbor (a prune or
+  a question, plus columns in CT). Every backend response to model output is
+  ACCEPT, REJECT (code plus recovery hint), or NORMALIZE-WITH-LOG; a rejection
+  reaches the model with its hint, a normalization is written to the host log,
+  and each non-accepted per-route outcome is written to the host log as one
+  line: the hop ack returns none of them to the model, and a deferred route
+  reaches the final report as a follow-up lead. This is the standard split of agent
+  frameworks: the application owns control flow and validation, the model owns
+  decisions.
 - **Instructions.** Each stage prompt states the task, the deliverable, the
   tools, and only the invariants the tool schemas cannot express. Each rule has
   one home; a field's meaning lives in its Zod `.describe()`, which ships with
@@ -150,9 +154,11 @@ answered there from the snapshot with no provider call. Unless that fast path,
 a slash command, or a UI trigger fixes the route, entry detection is a model
 call whose answer must satisfy `EntryDetectionSchema` — one of `column_trace`,
 `visual_render`, or `discovery`, with explicitly named columns required for a
-trace and forbidden otherwise. `selectInitialAgentStage` then combines that
-semantic route with the mechanical execution trigger; an explicit trigger
-always outranks the model's classification.
+trace and forbidden otherwise. That semantic route never selects the stage:
+`selectInitialAgentStage` reads only the turn's mechanical execution trigger.
+`preview_button` opens the visual preview; `/trace`, the SM-offer pill and the
+discovery budget guard open SM entry; every free-text turn, a `column_trace`
+verdict included, starts in discovery.
 
 Discovery is the default chat state: it answers bounded catalog or lineage
 questions with snapshot tools and does not publish a `NavigationEngine`.
@@ -231,8 +237,7 @@ field the model sets alongside `depth`, never inferred from whether `depth`
 carries a number — a finite `depth` without `depthStated: true` resolves to
 the same soft, growing default as an omitted one
 (`resolveDepthIntentForBoundary`, `smTypes.ts`), so a level count the model
-picks on its own can never bind as a hard border (PM ruling
-`depth-soft-default`, 2026-09-22). Once approved, the border a rule carries
+picks on its own can never bind as a hard border. Once approved, the border a rule carries
 holds for the whole hop-by-hop run; the model may extend a hard value only
 after synthesis, as a deferred lead or `supplement` follow-up, or through a
 fresh refine at this same gate carrying the user's own correction — never by
@@ -310,21 +315,30 @@ the queue is non-empty; no stalemate fallback exists or is needed.
 **Message passing.** At each hop the model records the focus node's findings
 and, for not-yet-visited neighbors only, a note: a prune (`prune_neighbors`,
 with a reason) or a question (`questions`, one specific check). It never sends
-a route. Every open neighbor the hop does not prune is enqueued by the
-backend and visited exactly once, through the same border checks
-(`admitsRoute`: exclusion, direction, schema allowlist, depth) that defer an
-out-of-scope neighbor as a lead; a question shapes what that hop is asked,
-never whether it happens. In CT, what a kept neighbor carries comes from the
+a route. Every open neighbor the hop does not prune, and that `admitsRoute`
+admits (inside the exclusion, direction and schema-allowlist borders and the
+depth border), is enqueued by the backend and visited exactly once. An open
+neighbor the hop does not name is deferred as a lead on two axes only: past
+the depth border (`depth`), or admitted but over the active scope budget
+(`budget`); one outside the exclusion, direction or schema-allowlist border is
+neither visited nor deferred. A neighbor the hop names in a question or in
+`column_flow` is deferred on every axis `admitsRoute` fails: `excluded`,
+`direction`, `schema`, `depth`, or `schema_and_depth`. A question shapes what
+that hop is asked, never whether it happens. In CT, what a kept neighbor carries comes from the
 hop's `column_flow` — the columns `upstream_columns` names on it (and, on the
 downstream side, what the focus writes to its readers); a kept neighbor named
 in none is visited row-role-only. A node's inbox — every
 note on its incoming edges — is rendered as one templated block built only from
 recorded facts: the sender, the carrier, the columns, and the sender's verbatim
 question. The backend writes no summary, paraphrase, or question of its own
-into it. A note on a visited, removed, or queued-for-prune neighbor gets a
-stated outcome (`already_visited`, `already_pruned`), never a revisit. A late
-note — possible only inside a loop — is reported back to the sender and listed
-in the final report as an open point for a follow-up.
+into it. A note never causes a second visit. A prune of a visited, removed,
+or queued neighbor is a no-op stated to the model in the next hop's
+`recent_rejections`, and so is a question on a neighbor the same submission
+also names in `prune_neighbors`, which drops that question. A question on a
+queued neighbor joins that neighbor's inbox for its one visit; a question on a
+visited or already pruned neighbor gets no hop and is recorded as the route
+outcome `already_visited` or `already_pruned`. Route outcomes are not returned
+to the model; every non-accepted one is written to the host log.
 
 **Node status** is decided at the node's own visit and recorded separately
 from prose:
@@ -374,8 +388,10 @@ archive, node lifecycle, deferred questions, and CT provenance when present.
 The AI authors structured presentation fields; the engine validates them,
 assembles the Markdown, derives badges, and commits the result graph.
 Contracted in-scope objects remain part of that graph and are labeled as
-retained supporting objects; only schema, depth, or budget boundaries are
-presented as deferred follow-up work.
+retained supporting objects. Deferred follow-up work carries one of six
+reasons: `schema`, `depth`, `schema_and_depth`, `budget`, `direction`, or
+`excluded`. Every deferred question reaches the completion envelope; an
+`excluded` one is not offered as a follow-up.
 
 Completed follow-ups can update presentation, supplement the existing
 exploration with explicit nodes, begin a fresh exploration, or answer
@@ -439,7 +455,8 @@ A focus with no body of its own (a storage table) declares continuation, not att
 its `column_flow` names the neighbours on its carrier side carrying the tracked column
 unchanged, and the column is attributed on the writer's own hop, where the body is in view.
 Continuation rides the existing route machinery — same routes, same prunes, same node set as
-BB — so the CT graph cannot diverge from the BB graph. Where the engine holds no carrier-side
+BB — so the CT graph cannot diverge from the BB graph beyond the one write-sink exception stated
+below. Where the engine holds no carrier-side
 neighbour data the edge is accepted unverified and logged, the same tolerance an unverifiable
 column already gets.
 
@@ -506,9 +523,26 @@ traced columns is still routable, dispatched under the whole-object contract.
 Neighbor prune is the same topology-safe engine path in both modes; CT adds
 column-flow verification on top of that path.
 
-Given identical routing decisions, the two modes reach an identical node set:
-nothing in CT's column handling can silently exclude a neighbor BB would
-keep, because every CT route now states an explicit column decision (`carry`
+One exception lets CT subtract a node BB would keep: the write-sink gate. It
+follows the output templates' sink policy — a sink that does not hold the
+traced column's values is operational, not lineage of that column. In the
+post-commit neighbor walk, a neighbor the engine opened automatically (no
+model-authored question) that has no body of its own, that the committing
+focus writes without reading back, and that no committed `column_flow` edge
+names with a tracked column ends the branch instead of being contracted
+through. It is recorded not-kept with the settled route reason
+`carries_no_tracked_column` and a rejection note telling the model to route
+beyond it explicitly if it answers the question; left undispositioned, it
+leaves the render as a side-effect sink. The gate keys on the column record's
+presence, never on a mode name, so BB — which has no column record — never
+applies it; a carrier the model routed explicitly is dispatched for the model
+to judge at its own focus, and the seed, supplement and user pass-through
+forwarding are never gated. The implementation is `columnFreeSinkVia` in
+[`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts).
+
+Given identical routing decisions, the two modes reach an identical node set,
+the write-sink gate above excepted: nothing else in CT's column handling can
+exclude a neighbor BB would keep, because every CT route now states an explicit column decision (`carry`
 or `row_role_only`) and no fallback exists to reinterpret a missing one. This
 is pinned by `tests/unit/sm/bb-ct-node-set-parity.test.ts`, which drives one
 fixture through independent BB and CT engine instances and asserts their

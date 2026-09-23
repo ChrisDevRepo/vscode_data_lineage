@@ -187,21 +187,20 @@ export class AiSession {
   /** The name or ID of the language model active for the current turn. */
   public modelName?: string;
   /**
-   * Unified GUI state snapshot — passthrough buffer from the webview's
-   * `filter-changed` message (declared as `z.any()` in
-   * [`bridgeContract.ts`](../engine/shared/bridgeContract.ts)).
-   * Treated as opaque inside the extension host; consumed only by the debug-dump renderer.
+   * Unified GUI state snapshot from the webview's `filter-changed` message, validated at the
+   * bridge against `UiStateSnapshotSchema` in
+   * [`bridgeContract.ts`](../engine/shared/bridgeContract.ts); readers stay defensive because
+   * non-bridge writers may seed it.
    */
   public uiState: unknown = null;
   /**
-   * Trace-mode snapshot lifted from `uiState.trace` — passthrough buffer with
-   * no extension-host consumer beyond debug dumps. Shape-validation is the
-   * webview's responsibility before it posts.
+   * Trace-mode snapshot lifted from `uiState.trace`, with no extension-host consumer beyond
+   * debug dumps.
    */
   public traceState: unknown = null;
   /**
-   * Render-state snapshot — passthrough buffer from the webview's `render-state` message,
-   * consumed by the screen-state presenter.
+   * Render-state snapshot from the webview's `render-state` message, validated at the bridge
+   * against `RenderStateSnapshotSchema` and consumed by the screen-state presenter.
    */
   public renderState: unknown = null;
   /** Current graph rendering mode: 'full' or 'overview'. */

@@ -17,7 +17,8 @@ import { buildIncompleteRejection } from './smCompleteness';
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
   return kind === 'absent_contributor'
     || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
-    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope';
+    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope'
+    || kind === 'question_on_pruned_neighbor';
 }
 
 /**
@@ -35,7 +36,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   untracked_out_col:
     'Set column_flow[].out_col to a tracked column from the `<column_trace> Active columns` list this hop was given, repeated in detail.available_columns — the named column exists on this node but the trace does not follow it — or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
-    'Set upstream_columns[].col to a real upstream column the contributor node itself READS — detail.available_columns lists them — never a column that node computes or writes out, even one named like out_col. Do not use literals, NULLs, parameters, generated values, or filter-only columns here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
+    'Set upstream_columns[].col to a real upstream column the contributor node itself READS — detail.available_columns lists them — never a column that node computes or writes out, even one named like out_col. Do not use literals, NULLs, parameters, or generated values here; explain those in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here.',
   non_writer_continuation:
     'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours on this focus\'s carrier side — detail.available_routes lists them — carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
   self_loop_column:
@@ -49,7 +50,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_removed:
     'This node was already pruned on an earlier hop. Remove it from prune_neighbors.',
   prune_noop_visited:
-    'This node was already analyzed on an earlier hop and is retained; a prune cannot remove committed analysis. Remove it from prune_neighbors.',
+    'This node was already visited on an earlier hop — analyzed, or passed through as the carrier that led to this focus — and is retained; a prune cannot remove it. Remove it from prune_neighbors.',
   prune_noop_analyzed:
     'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
   prune_noop_queued:
@@ -60,6 +61,10 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'The origin node anchors the lineage and cannot be pruned. Remove it from prune_neighbors.',
   prune_carries_tracked_column:
     'A committed column_flow names this node for the tracked columns in detail.available_columns, so it stays in the result for the rest of the run. Remove it from prune_neighbors; when it is this focus, submit analyze or passthrough with a column_flow entry for each of those columns (upstream_columns: [] where a column ends here) instead of end_branch.',
+  question_not_neighbor:
+    'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
+  question_on_pruned_neighbor:
+    'This node was named in both prune_neighbors and questions in one submission, so its question was dropped. Name a neighbor in one of the two, never both.',
 };
 
 /**
@@ -113,6 +118,8 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
   prune_origin_forbidden: REJECTION_CODES.pruneOriginForbidden,
   prune_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
+  question_not_neighbor: REJECTION_CODES.routeValidationFailed,
+  question_on_pruned_neighbor: REJECTION_CODES.routeValidationFailed,
 };
 
 /**

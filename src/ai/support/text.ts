@@ -7,6 +7,8 @@
  * Secret redaction lives here too so every provider-error path can sanitize before logging/emitting.
  */
 
+import { stripFocusNodeLinks } from '../../engine/shared/bridgeContract';
+
 /** Max characters retained from a provider error before truncation (avoid dumping a body). */
 const PROVIDER_ERROR_MAX = 300;
 const PROVIDER_ERROR_CAUSE_DEPTH = 3;
@@ -238,12 +240,8 @@ function safeDiagnosticToken(value: string, fallback: string): string {
  *   the Objects footnote rendered as `*Objects: …*`.
  */
 export function sanitizeDescriptionForChat(description: string): string {
-  return description
-    .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => {
-      const cleaned = tail.replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
-      return `*Objects: ${cleaned}*`;
-    })
-    .replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
+  return stripFocusNodeLinks(description)
+    .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => `*Objects: ${tail}*`);
 }
 
 /**

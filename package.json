@@ -447,14 +447,14 @@
             "default": 10,
             "minimum": 1,
             "maximum": 30,
-            "markdownDescription": "Maximum scope nodes the AI may pull during a single discovery-phase catalog request before the engine forces an SM escalation via the gate. Discovery answers small ad-hoc questions in chat; over-budget requests are rejected with a hint to call `lineage_start_exploration`."
+            "markdownDescription": "Maximum scope nodes the AI may pull during a single discovery-phase catalog request before the request is escalated to a deep analysis that needs your approval. Discovery answers small ad-hoc questions in chat; over-budget requests are rejected with a hint to call `lineage_start_exploration`."
           },
           "dataLineageViz.ai.discoveryTokenBudget": {
             "type": "integer",
             "default": 10000,
             "minimum": 1000,
             "maximum": 32000,
-            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request. Exceeding either this or the node cap forces an SM escalation via the consent gate."
+            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request. Exceeding either this or the node cap escalates to a deep analysis that needs your approval."
           },
           "dataLineageViz.ai.explorationNodeCap": {
             "type": "integer",
@@ -699,7 +699,7 @@
         "name": "lineage_get_neighbor_columns",
         "toolReferenceName": "lineage_get_neighbor_columns",
         "displayName": "Get Neighbor Columns",
-        "userDescription": "Inspect a neighbor's columns for pruning decisions during active SM exploration.",
+        "userDescription": "Inspect a neighbor's columns for pruning decisions during an approved deep analysis.",
         "modelDescription": "Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.",
         "canBeReferencedInPrompt": true,
         "tags": [

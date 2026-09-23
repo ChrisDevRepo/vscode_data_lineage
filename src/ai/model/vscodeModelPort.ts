@@ -193,6 +193,7 @@ export class VscodeModelPort implements ModelPort {
         input.signal,
         input.onTextDelta,
         input.phase,
+        input.requiresToolCall === true,
       );
       const content: ToolGenerationContent[] = [];
       const toolCalls: GeneratedToolCall[] = [];
@@ -224,7 +225,7 @@ export class VscodeModelPort implements ModelPort {
             callId: part.callId,
             toolName: part.toolName,
             input: part.input,
-            code: 'unknown_tool',
+            code: REJECTION_CODES.unknownTool,
             reason: 'Tool is not available in this phase.',
           };
         } else {
@@ -245,14 +246,14 @@ export class VscodeModelPort implements ModelPort {
           } else {
             const rejection = rejectionFromZodError(
               parsed.error,
-              { code: 'invalid_tool_input', input: part.input },
+              { code: REJECTION_CODES.invalidToolInput, input: part.input },
             );
             call = {
               valid: false,
               callId: part.callId,
               toolName: part.toolName,
               input: part.input,
-              code: 'invalid_tool_input',
+              code: REJECTION_CODES.invalidToolInput,
               reason: rejection.reason,
               hint: rejection.hint,
               issuePaths: parsed.error.issues.map((issue) => issue.path.join('.')),
@@ -313,6 +314,7 @@ export class VscodeModelPort implements ModelPort {
       input.signal,
       undefined,
       input.phase,
+      true,
     );
     const calls = response.filter(
       (part): part is Extract<PortGenerationPart, { type: 'tool-call' }> =>
@@ -330,7 +332,7 @@ export class VscodeModelPort implements ModelPort {
         : calls.length > 1
         ? `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`
         : structuredRejectReason(calls.length === 1, parsed?.error),
-      emptyRequiredPayload ? REJECTION_CODES.emptyStructuredOutput : 'invalid_structured_output',
+      emptyRequiredPayload ? REJECTION_CODES.emptyStructuredOutput : REJECTION_CODES.invalidStructuredOutput,
     );
   }
 
@@ -346,6 +348,7 @@ export class VscodeModelPort implements ModelPort {
       input.signal,
       undefined,
       input.phase,
+      false,
     );
     if (response.some((part) => part.type !== 'text')) {
       throw new ModelPortError(
@@ -369,6 +372,7 @@ export class VscodeModelPort implements ModelPort {
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
+    requiresToolCall = false,
   ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean; nonTextChars: number }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
@@ -424,7 +428,7 @@ export class VscodeModelPort implements ModelPort {
       let hitCeiling = false;
       let sawToolCallDelta = false;
       const textCeiling = streamTextCharCeiling(phase);
-      const repetition = phase === 'compose' ? undefined : createStreamRepetitionObserver();
+      const repetition = requiresToolCall ? createStreamRepetitionObserver() : undefined;
       let repetitionStrike: RepetitionStrike | null = null;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {

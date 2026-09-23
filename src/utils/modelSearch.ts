@@ -86,9 +86,10 @@ const REDOS_BUDGET_MS = 5;
  * @remarks
  * Catastrophic backtracking is triggered by the character class the nested quantifier consumes, so
  * a single letter run passes patterns such as `(\s+)+$` that blow up on whitespace-heavy SQL. Each
- * unit covers one class dense in DDL bodies: letters, whitespace, brackets, separators, digits.
+ * unit covers one class dense in DDL bodies: letters, whitespace, brackets, separators, digits,
+ * and the `-`, `=`, `*`, `_` runs of comment banners.
  */
-const REDOS_SAMPLE_UNITS: readonly string[] = ['a', ' \t', '[', 'a,', 'a]', '1'];
+const REDOS_SAMPLE_UNITS: readonly string[] = ['a', ' \t', '[', 'a,', 'a]', '1', '-', '=', '*', '_'];
 
 /** Longest probe input, in characters, the ReDoS guard runs a pattern against. */
 const REDOS_SAMPLE_MAX_CHARS = 200;
@@ -146,6 +147,19 @@ type SearchRegexResult =
   | { ok: false; reason: 'syntax'; error: SyntaxError }
   /** The pattern compiled but exceeded the ReDoS budget on the bounded sample. */
   | { ok: false; reason: 'redos' };
+
+/**
+ * Longest stretch of one body line, in characters, a search pattern is executed against.
+ *
+ * @remarks
+ * The ReDoS probe measures a pattern only up to {@link REDOS_SAMPLE_MAX_CHARS}, and a polynomial
+ * pattern it accepts (`a.*a.*x`) grows by a power of the input length past that point — seconds on
+ * one generated line of a few thousand characters. Matching runs per line and never past this cap,
+ * so one execution's cost stays bounded; the cap sits well above hand-written SQL line widths. A
+ * longer line is searched in its first this-many characters and reported as such by
+ * {@link scanBodyMatches}, never skipped silently.
+ */
+export const SEARCH_LINE_MAX_CHARS = 1000;
 
 /** Flags every search regex compiles with: grep's contract — case-insensitive, `^`/`$` per line. */
 const SEARCH_REGEX_FLAGS = 'im';
@@ -327,7 +341,9 @@ export function searchCatalog(
  * case-insensitive substring: one match per object, the panel's line width applied, and its own
  * display cap. A RegExp is the pattern `compileSearchRegex` accepted for `lineage_search_ddl`,
  * whose contract is grep's: every match in every body, with its line number, and no truncation —
- * neither a per-line window nor a result cap.
+ * neither a per-line window nor a result cap. A RegExp matches one line at a time, over at most
+ * {@link SEARCH_LINE_MAX_CHARS} characters of it; {@link scanBodyMatches} names the lines that cap
+ * cut.
  */
 export function searchBodyScripts(
   nodes: SearchableNode[],
@@ -361,8 +377,8 @@ export function searchBodyScripts(
     }
 
     let capped = false;
-    forEachNonEmptyMatch(scanner, body, hit => {
-      matches.push(matchAt(hit.index, hit[0]));
+    forEachLineMatch(scanner, body, (index, text) => {
+      matches.push(matchAt(index, text));
       capped = matches.length >= cap;
       return !capped;
     });
@@ -380,24 +396,27 @@ export function searchBodyScripts(
  * @param types - Optional set of allowed object types.
  * @param admits - Whether a given match count may still be built; once it returns `false` for a
  * count it must return `false` for every larger one.
- * @returns The rows, the total match count and how many objects produced at least one match.
- * `matches` holds every match exactly when `admits(total)` holds; otherwise it holds only the
- * rows built before the count first failed, which the caller must not serve.
+ * @returns The rows, the total match count, how many objects produced at least one match, and
+ * every searched body line longer than {@link SEARCH_LINE_MAX_CHARS} (1-based, per object, in
+ * body order). `matches` holds every match exactly when `admits(total)` holds; otherwise it holds
+ * only the rows built before the count first failed, which the caller must not serve.
  *
  * @remarks
  * Lets `lineage_search_ddl` answer an over-budget pattern from counts alone in the same regex pass
  * that builds a fitting result: a pattern that matches nearly every character would otherwise
  * allocate one row, snippet and mask set per character of every body, only for the budget check to
- * discard them all.
+ * discard them all. `truncated` is reported whether or not the pattern matched, since a hit past
+ * the cap is exactly the one the result cannot show.
  */
 export function scanBodyMatches(
   nodes: SearchableNode[],
   regex: RegExp,
   types: Set<ObjectType> | undefined,
   admits: (count: number) => boolean,
-): { matches: BodyMatch[]; total: number; objects: number } {
+): { matches: BodyMatch[]; total: number; objects: number; truncated: { node: SearchableNode; lines: number[] }[] } {
   const scanner = globalScanner(regex);
   const matches: BodyMatch[] = [];
+  const truncated: { node: SearchableNode; lines: number[] }[] = [];
   let building = true;
   let total = 0;
   let objects = 0;
@@ -406,14 +425,16 @@ export function scanBodyMatches(
     if (!body || (types && types.size > 0 && !types.has(node.type))) continue;
     const matchAt = bodyMatcher(node, body, DEFAULT_SNIPPET_CONTEXT_LINES, Number.POSITIVE_INFINITY);
     const before = total;
-    forEachNonEmptyMatch(scanner, body, hit => {
+    const cutLines: number[] = [];
+    forEachLineMatch(scanner, body, (index, text) => {
       total++;
       building &&= admits(total);
-      if (building) matches.push(matchAt(hit.index, hit[0]));
-    });
+      if (building) matches.push(matchAt(index, text));
+    }, line => cutLines.push(line));
     if (total > before) objects++;
+    if (cutLines.length > 0) truncated.push({ node, lines: cutLines });
   }
-  return { matches, total, objects };
+  return { matches, total, objects, truncated };
 }
 
 /**
@@ -441,7 +462,7 @@ function bodyMatcher(
       lineStarts = buildLineStarts(lines);
       commentMask = sqlCommentMask(body);
       deadMask = markDeadLines(lines, lineStarts, commentMask);
-      predicateMask = deriveEnclosingPredicates(lines, lineStarts, commentMask);
+      predicateMask = deriveEnclosingPredicates(lines, lineStarts, sqlCommentMask(body, { markLiterals: true }));
     }
     return makeMatch(node, lines, lineStarts, index, matchText, contextLines, lineCap, commentMask, deadMask, predicateMask);
   };
@@ -453,19 +474,38 @@ function globalScanner(regex: RegExp): RegExp {
 }
 
 /**
- * Visits every non-empty match of a `g`-flagged `scanner` in `body`, in order, until `visit`
- * returns `false`.
+ * Visits every non-empty match of a `g`-flagged `scanner` in `body`, one line at a time and in
+ * order, until `visit` returns `false`.
+ *
+ * @param visit - Receives the match's offset in `body` and the matched text.
+ * @param onTruncated - Receives the 1-based number of each line longer than
+ * {@link SEARCH_LINE_MAX_CHARS}, which is matched over its first that-many characters only.
  *
  * @remarks
- * A zero-length match (`x*`, `^`) advances nothing on its own: the position is skipped rather than
- * the body, or the first empty match would hide every real match later in the same body.
+ * Per line is grep's contract: no match spans a line break, and one execution never runs over more
+ * than the cap. A zero-length match (`x*`, `^`) advances nothing on its own: the position is skipped
+ * rather than the line, or the first empty match would hide every real match later on it.
  */
-function forEachNonEmptyMatch(scanner: RegExp, body: string, visit: (hit: RegExpExecArray) => boolean | void): void {
-  scanner.lastIndex = 0;
-  let hit: RegExpExecArray | null;
-  while ((hit = scanner.exec(body)) !== null) {
-    if (hit[0].length === 0) { scanner.lastIndex++; continue; }
-    if (visit(hit) === false) return;
+function forEachLineMatch(
+  scanner: RegExp,
+  body: string,
+  visit: (index: number, text: string) => boolean | void,
+  onTruncated?: (line: number) => void,
+): void {
+  let lineStart = 0;
+  for (let line = 1; ; line++) {
+    const newline = body.indexOf('\n', lineStart);
+    const lineEnd = newline < 0 ? body.length : newline;
+    if (lineEnd - lineStart > SEARCH_LINE_MAX_CHARS) onTruncated?.(line);
+    const segment = body.slice(lineStart, Math.min(lineEnd, lineStart + SEARCH_LINE_MAX_CHARS));
+    scanner.lastIndex = 0;
+    let hit: RegExpExecArray | null;
+    while ((hit = scanner.exec(segment)) !== null) {
+      if (hit[0].length === 0) { scanner.lastIndex++; continue; }
+      if (visit(lineStart + hit.index, hit[0]) === false) return;
+    }
+    if (newline < 0) return;
+    lineStart = newline + 1;
   }
 }
 

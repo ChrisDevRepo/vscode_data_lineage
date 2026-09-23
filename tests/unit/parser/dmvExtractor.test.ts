@@ -73,7 +73,6 @@ function buildSyntheticResults(): DmvResults {
 
 
 function testBuildModelFromDmv() {
-  console.log('\n── DMV Extractor: buildModelFromDmv ──');
   const results = buildSyntheticResults();
   const model = buildModelFromDmv(results);
 
@@ -176,7 +175,6 @@ function testBuildModelFromDmv() {
 }
 
 function testValidateQueryResult() {
-  console.log('\n── DMV Extractor: Column Validation ──');
 
   const validCases: [string, string[]][] = [
     ['nodes', ['schema_name', 'object_name', 'type_code', 'body_script']],
@@ -201,7 +199,6 @@ function testValidateQueryResult() {
 }
 
 function testFormatColumnType() {
-  console.log('\n── DMV Extractor: formatColumnType ──');
 
   const cases: [string, string, string, string, string][] = [
     ['int',       '4',   '10', '0', 'int'],
@@ -223,7 +220,6 @@ function testFormatColumnType() {
 }
 
 function testFallbackBodyDirection() {
-  console.log('\n── DMV Extractor: Fallback Body Direction ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
@@ -260,7 +256,6 @@ function testFallbackBodyDirection() {
 
 
 function testCrossSchemaUnresolved() {
-  console.log('\n── DMV: Cross-schema dependency → unresolved detail ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
@@ -294,7 +289,6 @@ function testCrossSchemaUnresolved() {
 
 
 function testCrossSchemaKnownViaCatalog() {
-  console.log('\n── DMV: Cross-schema dependency → known neighbor via catalog ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
@@ -339,7 +333,6 @@ function testCrossSchemaKnownViaCatalog() {
 
 
 function testExternalTableNodes() {
-  console.log('\n── DMV Extractor: External Table (ET) Nodes ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
@@ -406,7 +399,6 @@ function testExternalTableNodes() {
 }
 
 function testExternalTableWriteDirection() {
-  console.log('\n── DMV Extractor: External Table Write Direction (CETAS) ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
@@ -464,7 +456,6 @@ function buildConstraintsResult(): SimpleExecuteResult {
 }
 
 function testConstraintMapsEnrichColumns() {
-  console.log('\n── DMV Extractor: constraint enrichment ──');
 
   const baseResults = buildSyntheticResults();
   const resultsWithConstraints: DmvResults = {
@@ -501,7 +492,6 @@ function testConstraintMapsEnrichColumns() {
 
 
 function testCrossDbDepsFromDmv() {
-  console.log('\n── DMV Extractor: Cross-DB Dependencies (referenced_database) ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
@@ -547,7 +537,6 @@ function testCrossDbDepsFromDmv() {
 }
 
 function testCrossDbSameDbSuppression() {
-  console.log('\n── DMV Extractor: Cross-DB same-DB suppression via currentDatabase ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
@@ -591,7 +580,6 @@ it('enriches columns from constraint maps', testConstraintMapsEnrichColumns);
 
 
 function testExpandSchemaPlaceholder() {
-  console.log('\n── expandSchemaPlaceholder ──');
 
   const sql = `SELECT * FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nWHERE s.name IN ({{SCHEMAS}})`;
   const expanded = expandSchemaPlaceholder(sql, ['dbo', 'Sales']);
@@ -620,7 +608,6 @@ function testExpandSchemaPlaceholder() {
 }
 
 function testYamlQueriesHavePlaceholder() {
-  console.log('\n── YAML queries: Phase 2 placeholder validation ──');
 
   const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
   const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
@@ -643,7 +630,6 @@ function testYamlQueriesHavePlaceholder() {
 }
 
 function testPhase2QueryPredicate() {
-  console.log('\n── isPhase2Query: sweep membership and progress step count ──');
 
   const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
   const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
@@ -672,7 +658,6 @@ function testPhase2QueryPredicate() {
 }
 
 function testExpandedSqlStructure() {
-  console.log('\n── Expanded SQL structural validation ──');
 
   const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
   const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
@@ -709,7 +694,6 @@ function makePlatformInfo(engineEdition: number, majorVersion: number, edition: 
 }
 
 function testDbPlatformFromDmv() {
-  console.log('\n── DMV Bridge: dbPlatform via mapEnginePlatform ──');
 
   const emptyNodes = makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), []);
   const emptyCols = makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []);
@@ -775,7 +759,6 @@ function testDbPlatformFromDmv() {
 
 
 function testPkOrdinalFromDmv() {
-  console.log('\n── DMV Bridge: pkOrdinal in ColumnDef ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [

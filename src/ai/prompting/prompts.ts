@@ -145,7 +145,7 @@ export function buildPhasePrompt(
 }
 
 /** Markdown formatting rules for follow-up chat replies (discovery's home is the YAML `discovery_chat`). */
-export const CHAT_MARKDOWN_FORMAT = [
+const CHAT_MARKDOWN_FORMAT = [
   'User-facing chat text: Markdown only, no arbitrary HTML.',
   'Use short headings and bullets when they improve scanning; avoid wall-of-text paragraphs.',
   'SQL always goes in fenced ```sql blocks.',
@@ -608,11 +608,9 @@ export function buildOriginalQuestionBlock(question: string | null): string {
  * `targetColumns` are set.
  *
  * @remarks
- * Names the traced columns and disambiguates the two fields, so the misleading capture-rules
- * header ("submit these as sections[]") does not confuse the model into putting column_flow
- * entries into sections[]. What `column_flow` may hold has one home — the CT column-decision
- * addendum (`smPrompts.ts`); this block states only what that addendum does not: which
- * template writes which field, and the value classes that are not upstream columns at all.
+ * Names the traced columns only. What `column_flow` holds and how it differs from
+ * `sections[]` is owned by the `column_trace_capture` template and the `upstream_columns`
+ * schema description.
  *
  * @param targetColumns - The columns being traced, as confirmed at gate-approval.
  * @returns Stable-prefix markdown block anchoring the CT session contract.
@@ -621,9 +619,6 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
   return [
     '# Column Trace: active',
     `Target columns: [${targetColumns.join(', ')}]`,
-    '',
-    '`column_flow` and `sections[]` are separate fields: `column_trace_capture` writes `column_flow`, the business/technical captures write `sections[]` — the context explaining why the column flows this way.',
-    'Literals, NULLs, parameters, generated sequence values, audit/logging columns and filter-only columns are not `upstream_columns`; they belong in `sections[].text` when they matter.',
   ].join('\n');
 }
 
@@ -692,7 +687,8 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * @param currentTasks - Structured tasks assigned to the active node.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.
  * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
- * @returns Structured `<current_task>` XML block, or an empty string if `currentTask` is absent.
+ * @returns Structured `<current_task>` XML block; a task with a blank question renders no element,
+ *   and the result is an empty string when no element would render.
  */
 export function buildCurrentTaskBlock(
   currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question'>>,
@@ -702,8 +698,10 @@ export function buildCurrentTaskBlock(
   if (currentTasks.length === 0) return '';
   const lines = ['<current_task>'];
   for (const task of currentTasks) {
+    const question = task.question.trim();
+    if (!question) continue;
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
-    lines.push(`  <${tag}>${escapePromptText(task.question.trim())}</${tag}>`);
+    lines.push(`  <${tag}>${escapePromptText(question)}</${tag}>`);
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
@@ -721,6 +719,7 @@ export function buildCurrentTaskBlock(
       `  </lineage_questions>`,
     );
   }
+  if (lines.length === 1) return '';
   lines.push('</current_task>');
   return lines.join('\n');
 }

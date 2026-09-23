@@ -2,10 +2,9 @@
 //
 // Reduced motion has one owner: the stylesheet.
 //
-// `ColumnTraceNode` used to probe `matchMedia('(prefers-reduced-motion: reduce)')` on every render
-// — a media query read per node per frame, answering a question the stylesheet already answers, and
-// answering it differently: the CSS rule keyed only on VS Code's `workbench.reduceMotion` class, so
-// the two disagreed whenever the OS preference and the editor setting differed.
+// `ColumnTraceNode` never probes `matchMedia('(prefers-reduced-motion: reduce)')`: a media query
+// read per node per frame would answer a question the stylesheet already answers, and could answer
+// it differently from the stylesheet whenever the OS preference and the editor setting differ.
 //
 // Both halves of that are checked here against behaviour rather than source text. The component is
 // mounted with the preference mocked ON: it must never consult it, and the inline motion it does
@@ -25,7 +24,7 @@ import type { ColumnTraceNodeData } from '../../../src/engine/types';
 // React 19 reads this to decide whether `act` may drive updates; without it every act() warns.
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
-/** The query whose answer used to be read per render; `matches: true` is the reduced-motion user. */
+/** The reduced-motion media query the component must never read; `matches: true` is the reduced-motion user. */
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 let host: HTMLDivElement;

@@ -62,6 +62,9 @@ type NativeGateAction = 'approve' | 'change' | 'cancel';
  */
 const CHANGE_SCOPE_QUERY = '@lineage ';
 
+/** Most "Continue at" follow-up chips offered after a completed run, taken in lead order. */
+const MAX_DEFERRED_FOLLOWUPS = 2;
+
 /** Projects the shared lineage runtime onto VS Code's native chat participant API. */
 export class LineageParticipant {
   private readonly logger: Logger;
@@ -469,7 +472,8 @@ export class LineageParticipant {
         prompt: 'What related objects should I investigate next?',
         label: vscode.l10n.t('Explore related objects…'),
       });
-      for (const deferred of (session.stateMachine?.deferredQuestions ?? []).slice(0, 2)) {
+      const reachable = (session.stateMachine?.deferredQuestions ?? []).filter(deferred => deferred.reason !== 'excluded');
+      for (const deferred of reachable.slice(0, MAX_DEFERRED_FOLLOWUPS)) {
         followups.push({
           prompt: deferred.question
             ? `At ${deferred.nodeId}: ${deferred.question}`

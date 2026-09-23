@@ -81,11 +81,11 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
    *
    * @remarks
    * True for procedures and for functions that declare no columns (scalar UDFs). A table-valued
-   * function with extracted columns stays a column card. Hub rows carry borrowed names, show no
-   * data type, and are never dimmed against a declared set.
+   * function with extracted columns stays a column card. Hub rows carry borrowed names and show no
+   * data type.
    */
   isTransformNode: boolean;
-  /** Rows to render, in declared ordinal order where a declared order is known. */
+  /** Rows to render, in first-seen order. */
   rows: ColumnTraceRow[];
   /** Node width in canvas units. */
   width: number;
@@ -115,8 +115,8 @@ export interface ColumnTraceViewEdge {
   state: ColumnLineState;
   /**
    * Transform classes the model recorded for the relation, absent on an unclassified edge. The
-   * marker chip keys its per-class glyphs off this; the verdict-derived {@link state} alone no
-   * longer decides what the chip shows when a classification exists.
+   * marker chip keys its per-class glyphs off this; when a classification exists it, not the
+   * verdict-derived {@link state}, decides what the chip shows.
    */
   transforms?: ColumnTransformClass[];
   /**

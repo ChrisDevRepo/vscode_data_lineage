@@ -1377,13 +1377,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
     }, ['Synthesis failed', 'Synthesis', 'without rendering a result']);
     if (attempt.terminal) {
-      const lastRejection = attempt.nextAttempt.rejections[attempt.nextAttempt.rejections.length - 1];
       const salvaged = attempt.nextAttempt.stopReason === 'semantic_failures'
-        && (
-          await trySalvageSynthesisDraft(deps, sess)
-          || (canSalvageSynthesisSectionCoverage(sess.presentResultRepairDraft.getAuthorization(), lastRejection?.entryIds)
-            && await trySalvageSynthesisSectionCoverage(deps, sess, lastRejection!.entryIds!))
-        );
+        && await trySalvageSynthesisDraft(deps, sess);
       sess.presentResultRepairDraft.clear();
       if (!salvaged) return attempt.terminal;
     } else if (!sess.presentResultCalledThisTurn) {
@@ -1433,7 +1428,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }, ['Follow-up failed', 'Follow-up', 'without completing', () => sess.presentResultRepairDraft.clear()]);
     if (attempt.terminal) {
       const salvaged = sess.bufferedFollowUpProse;
-      if (salvaged) {
+      const budgetExhausted = attempt.terminal.activeStop === 'semantic_failures'
+        || attempt.terminal.activeStop === 'provider_calls';
+      if (salvaged && budgetExhausted) {
         deps.logger?.debug(`[AI] [Follow-up] breaker tripped with ${salvaged.length} chars of buffered prose — delivering it instead of the error`);
         const answer = `${salvaged}\n\n_The graph was not changed — that step did not complete._`;
         deps.sink.stream('\n\n' + answer);
@@ -1875,84 +1872,5 @@ async function trySalvageSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): 
   }
   const salvaged = sess.presentResultCalledThisTurn;
   deps.logger?.debug(`[AI] [Repair] synthesis salvage ${salvaged ? 'accepted' : 'still rejected'} — ${trunc(resultText, 200)}`);
-  return salvaged;
-}
-
-/**
- * Whether a synthesis breaker trip's held draft can be salvaged by linking uncovered detail-slot
- * node ids into an existing section, instead of discarding the draft.
- *
- * @remarks
- * Sibling of {@link canSalvageSynthesisDraft}, scoped to the one other repair shape verified safe
- * to auto-repair: the rejection that tripped the breaker is `findUnrenderedDetailSlotIds`
- * (`presentResult.ts`) naming the exact node id(s) missing from `sections[].node_ids` — the model's
- * own captured findings for a node the render already carries, simply not linked. This is
- * additive-only (every section's existing `label`/`text` is untouched; `node_ids` only grows), so it
- * cannot turn a valid draft into an invalid one the way emptying a required field could — the
- * concern {@link canSalvageSynthesisDraft}'s doc gives for why a `sections`-authorized repair is
- * otherwise out of scope. Requires the rejection to authorize `sections` alone (the exact single-field
- * shape the notes salvage also requires) and to name at least one offending id — a rejection whose
- * `entryIds` is empty carries no mechanical repair to apply.
- *
- * @param repairFields - The held draft's authorized repair fields, or `null` when none is held.
- * @param missingNodeIds - The tripping rejection's own `entryIds` — the uncovered detail-slot node
- *   ids the validator already computed and named in its hint.
- */
-export function canSalvageSynthesisSectionCoverage(
-  repairFields: readonly PresentResultRepairField[] | null,
-  missingNodeIds: readonly string[] | undefined,
-): boolean {
-  return repairFields !== null && repairFields.length === 1 && repairFields[0] === 'sections'
-    && !!missingNodeIds && missingNodeIds.length > 0;
-}
-
-/**
- * Renders the synthesis phase's held `lineage_present_result` draft one last time, through the SAME
- * repair-patch path a model's own `is_update:true` resend would take, after linking every id
- * {@link canSalvageSynthesisSectionCoverage} authorized into the held draft's last section.
- *
- * @remarks
- * `mergePresentResultRepairPatch` replaces `sections[]` wholesale (patch fields "replace whole
- * presentation collections by design" — see that function's doc), so the patch resends every held
- * section verbatim and only appends the missing ids to the last one's `node_ids` — no text is
- * authored, no section is dropped, no id already linked elsewhere is moved. Dispatched through
- * `deps.registry.invoke`, the same canonical surface `trySalvageSynthesisDraft` uses: no new
- * rendering path, no new tool, no second validation.
- *
- * @param deps - Graph dependencies (registry dispatch surface, logger).
- * @param sess - The live session, read for the held draft's sections.
- * @param missingNodeIds - The node ids to link — {@link canSalvageSynthesisSectionCoverage} already
- *   verified this is non-empty.
- * @returns Whether the salvage patch was accepted — `sess.presentResultCalledThisTurn` flips true.
- */
-async function trySalvageSynthesisSectionCoverage(
-  deps: AgentGraphDeps,
-  sess: AiSession,
-  missingNodeIds: readonly string[],
-): Promise<boolean> {
-  const heldSections = sess.presentResultRepairDraft.get()?.sections;
-  if (!heldSections || heldSections.length === 0) return false;
-  const lastIndex = heldSections.length - 1;
-  const patchedSections = heldSections.map((section, index) => {
-    if (index !== lastIndex) return section;
-    const linked = new Set(section.node_ids ?? []);
-    missingNodeIds.forEach(id => linked.add(id));
-    return { ...section, node_ids: [...linked] };
-  });
-  deps.logger?.debug(
-    '[AI] [Repair] synthesis breaker tripped with a held, sections-only-repairable draft — salvaging '
-    + `via one deterministic node_ids patch (linking ${missingNodeIds.join(', ')} into the held report's `
-    + 'last section, every section\'s existing text unchanged) through the existing repair-patch path '
-    + 'instead of discarding the render.',
-  );
-  let resultText: string;
-  try {
-    resultText = await deps.registry.invoke('lineage_present_result', { is_update: true, sections: patchedSections });
-  } catch (error) {
-    deps.logger?.debug(`[AI] [Repair] synthesis section-coverage salvage dispatch threw — ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  }
-  const salvaged = sess.presentResultCalledThisTurn;
-  deps.logger?.debug(`[AI] [Repair] synthesis section-coverage salvage ${salvaged ? 'accepted' : 'still rejected'} — ${trunc(resultText, 200)}`);
   return salvaged;
 }

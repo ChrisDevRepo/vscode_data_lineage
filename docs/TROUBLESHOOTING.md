@@ -22,7 +22,7 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **"Render limit reached".** `dataLineageViz.renderLimit` is the hard visual ceiling after load — raise it (default 750, maximum 1500). Raising `dataLineageViz.maxNodes` will not help: it already ships at its maximum of 2000. `dataLineageViz.overview.threshold` only dictates whether a new load defaults to Schema View or fully-expanded Object View.
 
-**Docking the graph or the AI report.** The graph webview is a normal VS Code editor tab: drag it to any editor group, split it, or right-click → **Move Editor into New Window**. Chat (including `@lineage`) docks the same way via its drag handle or **View: Move Chat**. Inside the graph, the AI report header buttons move that column to the left, bottom, or right edge.
+**Docking the graph or the AI report.** The graph webview is a normal VS Code editor tab: drag it to any editor group, split it, or right-click → **Move Editor into New Window**. Chat (including `@lineage`) docks the same way via its drag handle or **View: Move Chat**. Inside the graph, the dock menu in the AI report header moves that panel to the left, bottom, or right edge.
 
 ## `@lineage` chat participant
 
@@ -38,16 +38,9 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **Deep analysis stops before the whole scope is covered.** On reaching the hop cap the engine synthesizes what it already has, so the answer is a partial result rather than a failure. Narrow the scope or raise `dataLineageViz.ai.maxRounds`, then reload the window — the runtime reads that setting once at activation.
 
-**Model choice.** Per-hop latency and protocol compliance differ by model. Models running on Microsoft infrastructure — Copilot-native Anthropic Claude and OpenAI GPT, or an Azure AI Foundry deployment — gave the strongest results in testing. The figures below are ballparks from development on a mid-size sample database; they depend on model, region, load, reasoning settings, and database size. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete.
+**Model choice.** Per-hop latency and protocol compliance differ by model. Models running on Microsoft infrastructure — Copilot-native Anthropic Claude and OpenAI GPT, or an Azure AI Foundry deployment — gave the strongest results in testing. Larger hosted models finished discovery, object-trace and column-trace answers on a mid-size sample database in roughly 9–13 minutes; small local models took longer and left more omissions. These figures are ballparks; they depend on model, region, load, reasoning settings, and database size. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete.
 
-| Provider | Model | Reasoning | Quality | Duration | Tokens |
-|---|---|---|---|---|---|
-| GitHub Copilot | claude-sonnet-5 | high | good | ~9 min | not reported by the Copilot API |
-| Azure AI Foundry | gpt-5.4-mini | medium | good | ~9 min | ~310k |
-| Fireworks | deepseek-v4p1-flash | low | good | ~13 min | ~350k |
-| Local (oMLX on Apple silicon) | Qwen3.6-35B-A3B (8-bit) | off | okay | ~18 min | ~290k |
-
-*good* means discovery and object-trace answers were complete and the column-trace answer had minor omissions; *okay* means every answer was usable but each had omissions. Duration and tokens are totals for one discovery, one object trace, and one column trace on the sample database.
+**"The language model produced no output within 600s; the request was aborted (first-output timeout)."** The provider accepted the request and then streamed nothing at all for ten minutes, so the turn was cancelled rather than left hanging. The limit covers only the silence before the first output of any kind: once a model has emitted anything — text or a tool call — the rest of that generation is never interrupted, however long it takes. A model that hits this repeatedly is not usable for deep analysis; pick one from the Model choice guidance above and re-ask.
 
 ## Export and profiling
 

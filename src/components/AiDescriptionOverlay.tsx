@@ -4,7 +4,8 @@ import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 import { useVsCode } from '../contexts/VsCodeContext';
-import { AI_SECTION_ID_PREFIX, FOCUS_NODE_HREF_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
+import { AI_SECTION_ID_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
+import { FOCUS_NODE_HREF_PREFIX } from '../engine/shared/bridgeContract';
 
 /** Which edge of the canvas the report column is docked against. */
 export type AiDockPosition = 'right' | 'left' | 'bottom';
@@ -89,14 +90,14 @@ interface AiDescriptionOverlayProps {
   onFocusNode?: (nodeId: string) => void;
   /** Which edge the column is docked against — defaults to `'right'`. */
   dockPosition?: AiDockPosition;
-  /** Called when the dock button moves the column to the next edge. */
+  /** Called with the position picked from the dock menu. */
   onDockPositionChange?: (position: AiDockPosition) => void;
   /** Called with the panel's measured content-box size (a resize drag or dock switch changed it). */
   onPanelResize?: (width: number, height: number) => void;
 }
 
 /**
- * The AI report column: a docked right-hand pane for AI-generated descriptions and logic summaries.
+ * The AI report column: a pane docked to the chosen edge for AI-generated descriptions and logic summaries.
  *
  * @remarks
  * Renders GitHub Flavored Markdown and KaTeX math through the same `marked` extension VS Code

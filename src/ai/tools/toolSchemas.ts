@@ -12,7 +12,7 @@ import {
   ExplorationDepthLimitSchema,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, hoistSectionSummary, nullAsAbsent, repairArrayBoundaryArtifacts } from '../support/inputNormalization';
+import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, hoistSectionSummary, nullAsAbsent, rejoinSectionTextBoundaryArtifacts, repairArrayBoundaryArtifacts } from '../support/inputNormalization';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import type { CapturedSection } from '../session/memoryManager';
@@ -465,7 +465,7 @@ const PruneNeighborSchema = z.object({
  * Single source for the `questions` field describe text, shared by the strict per-mode schemas and
  * the permissive registered union.
  */
-export const QUESTIONS_DESCRIPTION =
+const QUESTIONS_DESCRIPTION =
   'Optional: a specific check for one neighbor (a rule, filter or calculation to establish there). '
   + 'Every open neighbor you do not prune is visited next.';
 
@@ -711,12 +711,17 @@ function toHopFinding(value: FlatSubmitFindings): HopFinding {
   return kept;
 }
 
+/** Boundary recoveries for `submit_findings`: element and string boundaries first, then the summary hoist. */
+function recoverSubmitFindingsPayload(value: unknown): unknown {
+  return hoistSectionSummary(recoverSectionBoundaries(value));
+}
+
 /** Applies the verdict-shape check and the union narrowing to one flat per-mode object. */
 function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
   mode: 'bb' | 'ct',
 ): z.ZodType<HopFinding> {
-  return z.preprocess(hoistSectionSummary, schema
+  return z.preprocess(recoverSubmitFindingsPayload, schema
     .superRefine((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode))
     .transform(value => toHopFinding(value as FlatSubmitFindings)));
 }
@@ -932,7 +937,7 @@ export const PresentResultModelSchema = z.object({
   summary: z.string().describe('One-line summary shown with the generated view.'),
   title: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_TITLE_MAX }).optional().describe('Optional report heading.'),
   intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
-  closing: z.string().optional().describe('Closing synthesis and grounded risks or recommendations. Length is never a rejection axis.'),
+  closing: z.string().optional().describe('Closing synthesis. Length is never a rejection axis.'),
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
@@ -1002,7 +1007,15 @@ const PresentResultVisualPreviewModelSchema = PresentResultModelSchema.omit({
  * unchanged) on a payload that carries neither defect shape.
  */
 function recoverPresentResultPayload(value: unknown): unknown {
-  return hoistSectionNotes(repairArrayBoundaryArtifacts(value));
+  return hoistSectionNotes(recoverSectionBoundaries(value));
+}
+
+/**
+ * {@link repairArrayBoundaryArtifacts} then {@link rejoinSectionTextBoundaryArtifacts}, so a section
+ * recovered from a swept tail is also checked for an early-closed `text`.
+ */
+function recoverSectionBoundaries(value: unknown): unknown {
+  return rejoinSectionTextBoundaryArtifacts(repairArrayBoundaryArtifacts(value));
 }
 
 /**
@@ -1194,7 +1207,7 @@ export function presentResultRepairPatchSchemaForFields(
   });
   const preprocess = keys.includes('sections') && keys.includes('notes')
     ? recoverPresentResultPayload
-    : repairArrayBoundaryArtifacts;
+    : recoverSectionBoundaries;
   const schema = z.preprocess(preprocess, picked) as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   repairPatchSchemaCache.set(cacheKey, schema);
   return schema;

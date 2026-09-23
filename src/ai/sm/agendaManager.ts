@@ -100,7 +100,7 @@ export interface WorklistRank {
 }
 
 /** The dispatch key of one agenda entry under `view`. */
-export function worklistRank(entry: AgendaEntry, view: WorklistView): WorklistRank {
+function worklistRank(entry: AgendaEntry, view: WorklistView): WorklistRank {
   return { tier: entry.priority === 3 ? 0 : 1, distance: view.distance(entry), nodeId: entry.nodeId };
 }
 

@@ -92,7 +92,8 @@ recalled finding describes the object as it was at run time, so an object whose 
 since is reported as stale and the assistant confirms it against the current definition before
 answering.
 
-The record lives with the bookmark: deleting the bookmark deletes it, and a bookmark saved by an
+The record lives with the bookmark: deleting the bookmark or its project deletes it, updating the
+bookmark keeps it (only a save from a newer AI view replaces it), and a bookmark saved by an
 earlier build simply has no run to recall. Each exploration approved in a chat keeps its own run, so
 a bookmark recalls the exploration it was saved from even after the same chat goes on to approve
 another; a damaged run record is treated the same as none and the recall falls back to repeating the

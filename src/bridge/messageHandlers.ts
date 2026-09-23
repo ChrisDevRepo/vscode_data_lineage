@@ -37,7 +37,7 @@ import { buildBareGraph } from '../ai/support/graphUtils';
 import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
-import { formatRenderConnectivity, type RenderConnectivity } from '../engine/renderConnectivity';
+import { formatRenderConnectivity } from '../engine/renderConnectivity';
 import { formatScreenStateSections } from './debugDumpScreenState';
 import {
   BRIDGE_PROTOCOL_VERSION,
@@ -48,6 +48,7 @@ import {
   type Project,
   type RenderStateSnapshot,
   type ScreenStateExtras,
+  stripFocusNodeLinks,
 } from '../engine/shared/bridgeContract';
 import { summarizeZodError, postToDetail } from './host';
 
@@ -182,7 +183,7 @@ interface WebviewErrorEntry {
 }
 
 interface UiDiagnosticsState {
-  renderState: unknown | null;
+  renderState: RenderStateSnapshot | null;
   lastUiSyncAt: number | null;
   lastErrors: WebviewErrorEntry[];
 }
@@ -220,18 +221,6 @@ export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
  */
 export function isMssqlAvailable(): boolean {
   return vscode.extensions.getExtension(MSSQL_EXTENSION_ID) !== undefined;
-}
-
-/**
- * Rewrites `[label](#focus-node:<id>)` to plain `label`.
- *
- * @remarks
- * The scheme (`FOCUS_NODE_HREF_PREFIX` in `components/markdown/renderAiMarkdown.ts`, restated
- * rather than imported across the webview/host bundle boundary) only resolves inside the lineage
- * webview's own click handler — dead elsewhere.
- */
-export function stripFocusNodeLinks(markdown: string): string {
-  return markdown.replace(/\[([^\]]*)\]\(#focus-node:[^)]*\)/g, '$1');
 }
 
 /**
@@ -709,27 +698,25 @@ export function createMessageHandlers(
     },
     'filter-changed': (msg) => {
       const sess = getSession();
-      if (msg.uiState) {
-        const prevCount = sess.filteredCount;
-        const prevHit = sess.renderLimitHit;
-        sess.uiState = msg.uiState;
-        sess.filter = msg.uiState.filter;
-        sess.traceState = msg.uiState.trace;
-        sess.graphMode = msg.uiState.graphMode;
-        sess.filteredCount = msg.uiState.filteredCount;
-        sess.renderLimitHit = msg.uiState.renderLimitHit;
-        getUiDiagnostics(sess).lastUiSyncAt = Date.now();
-        if (prevCount !== msg.uiState.filteredCount || prevHit !== msg.uiState.renderLimitHit) {
-          host.log('debug', 'Filter', `State sync — ${msg.uiState.filteredCount ?? '?'} nodes, renderLimitHit=${msg.uiState.renderLimitHit ?? 0}`);
-        }
+      const { uiState } = msg;
+      const prevCount = sess.filteredCount;
+      const prevHit = sess.renderLimitHit;
+      sess.uiState = uiState;
+      sess.filter = uiState.filter;
+      sess.traceState = uiState.trace;
+      sess.graphMode = uiState.graphMode;
+      sess.filteredCount = uiState.filteredCount;
+      sess.renderLimitHit = uiState.renderLimitHit;
+      getUiDiagnostics(sess).lastUiSyncAt = Date.now();
+      if (prevCount !== uiState.filteredCount || prevHit !== uiState.renderLimitHit) {
+        host.log('debug', 'Filter', `State sync — ${uiState.filteredCount} nodes, renderLimitHit=${uiState.renderLimitHit}`);
       }
     },
     'render-state': (msg) => {
       const sess = getSession();
       const state = getUiDiagnostics(sess);
-      const renderState = msg.renderState ?? null;
-      state.renderState = renderState;
-      sess.renderState = renderState;
+      state.renderState = msg.renderState;
+      sess.renderState = msg.renderState;
       state.lastUiSyncAt = Date.now();
     },
     'db-connect': () => {
@@ -758,7 +745,7 @@ export function createMessageHandlers(
             const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
             logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
           } else {
-            await clearStoredRun(context.globalState, msg.profile.id);
+            logger.debug(`AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`);
           }
         } catch (runErr) {
           logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);
@@ -1417,7 +1404,7 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
   add('');
 
-  const renderConnectivity = (uiDiagnostics.renderState as { connectivity?: RenderConnectivity } | undefined)?.connectivity;
+  const renderConnectivity = uiDiagnostics.renderState?.connectivity;
   if (renderConnectivity) {
     add('RENDERED CONNECTIVITY (current screen)');
     add(formatRenderConnectivity(renderConnectivity));
@@ -1425,7 +1412,7 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
 
   add(formatScreenStateSections(
-    uiDiagnostics.renderState as RenderStateSnapshot | null,
+    uiDiagnostics.renderState,
     (sess.uiState as { screenState?: ScreenStateExtras } | null)?.screenState ?? null,
     sess.model ?? null,
   ));

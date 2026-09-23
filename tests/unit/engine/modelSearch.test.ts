@@ -3,6 +3,7 @@ import {
   compileSearchRegex,
   regexRejectHint,
   scanBodyMatches,
+  SEARCH_LINE_MAX_CHARS,
   searchBodyScripts,
   searchCatalog,
   searchColumns,
@@ -188,7 +189,7 @@ describe('model search', () => {
     expect(searchBodyScripts(nodes, 'A')).toEqual([]);
   });
 
-  it('matches a compiled regex against bodies — the lineage_search_ddl contract (T3 loop, 2026-09-06)', () => {
+  it('matches a compiled regex against bodies — the lineage_search_ddl contract', () => {
     for (const pattern of ['(?i)totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
       const compiled = compileSearchRegex(pattern);
       expect(compiled.ok).toBe(true);
@@ -409,7 +410,7 @@ describe('model search — commented matches', () => {
 });
 
 /**
- * The innermost `IF`/`WHILE` predicate governing a hit is reported (IB3-T3-PREDICATE, D-049).
+ * The innermost `IF`/`WHILE` predicate governing a hit is reported.
  *
  * The reported context is a 3-line window, so a hit's controlling condition sits outside it
  * whenever it is more than a line or two away — the normal case in T-SQL. The marker is additive,
@@ -425,6 +426,19 @@ describe('model search — enclosing predicate', () => {
     }];
     return searchBodyScripts(body, compiled.regex).map(h => [h.line, h.enclosingPredicate]);
   }
+
+  it('ignores block keywords inside string literals', () => {
+    const hit = hits([
+      'CREATE PROCEDURE dbo.p',                    // 1
+      'AS',                                        // 2
+      'IF @Debug = 1',                             // 3
+      'BEGIN',                                     // 4
+      "    PRINT 'Begin step'",                    // 5
+      'END',                                       // 6
+      'DELETE FROM dbo.Target',                    // 7
+    ].join('\n'), 'DELETE FROM');
+    expect(hit).toEqual([[7, undefined]]);
+  });
 
   it('reports the IF predicate for a hit several lines inside its BEGIN…END block', () => {
     const hit = hits([
@@ -484,7 +498,7 @@ describe('model search — enclosing predicate', () => {
     expect(hit).toEqual([[4, undefined]]);
   });
 
-  it('leaves a hit before the governing IF unmarked — the exact D-049 shape', () => {
+  it('leaves a hit before the governing IF unmarked — a statement that precedes its condition', () => {
     const hit = hits([
       'BEGIN',                                          // 1
       '    SELECT @VerifyCount = COUNT(*)',              // 2
@@ -556,10 +570,73 @@ describe('compileSearchRegex — ReDoS guard', () => {
     }
   });
 
+  it('refuses exponential patterns over comment-banner characters', () => {
+    for (const pattern of ['(-+)+x', '(=+)+x', '(\\*+)+x', '(_+)+x']) {
+      const compiled = compileSearchRegex(pattern);
+      expect(compiled.ok, `${pattern} is refused`).toBe(false);
+      if (!compiled.ok) expect(compiled.reason).toBe('redos');
+    }
+  });
+
   it('accepts ordinary search patterns', () => {
     for (const pattern of ['total.*quantity', 'ON t\\.OrderDate', '\\bINSERT\\s+INTO\\b', '\\d{4}-\\d{2}']) {
       expect(compileSearchRegex(pattern).ok, pattern).toBe(true);
     }
+  });
+});
+
+describe('model search — per-line matching', () => {
+  /** Compiles `pattern`, failing the test when it is refused. */
+  function regexFor(pattern: string): RegExp {
+    const compiled = compileSearchRegex(pattern);
+    if (!compiled.ok) throw new Error(`${pattern} must compile`);
+    return compiled.regex;
+  }
+
+  it('never lets a pattern match across a line break', () => {
+    const procedure = new Set(['procedure'] as const);
+    expect(searchBodyScripts(nodes, regexFor('AS\\s+SELECT'), procedure), '\\s never consumes a newline').toEqual([]);
+    expect(scanBodyMatches(nodes, regexFor('AS[^x]*SELECT'), procedure, () => true).total, 'a negated class never spans lines').toBe(0);
+  });
+
+  it('reports an over-long line as searched only up to the cap, never silently skipped', () => {
+    const longLine = `SELECT ${'c,'.repeat(SEARCH_LINE_MAX_CHARS)} TailToken FROM dbo.T`;
+    const body: SearchableNode = {
+      id: 'dbo.vwlong', name: 'vwLong', schema: 'dbo', type: 'view',
+      bodyScript: ['CREATE VIEW dbo.vwLong AS', longLine, 'WHERE HeadToken = 1'].join('\n'),
+    };
+    const head = scanBodyMatches([body], regexFor('SELECT|HeadToken'), undefined, () => true);
+    expect(head.matches.map(m => m.line), 'hits inside the searched prefix and on ordinary lines are kept').toEqual([2, 3]);
+    expect(head.truncated, 'the over-long line is named with its object').toEqual([{ node: body, lines: [2] }]);
+
+    const tail = scanBodyMatches([body], regexFor('TailToken'), undefined, () => true);
+    expect(tail.total, 'a hit past the cap is not reported').toBe(0);
+    expect(tail.truncated, 'the truncation is stated even when nothing matched').toEqual([{ node: body, lines: [2] }]);
+  });
+
+  it('bounds a polynomial pattern to the line cap', () => {
+    const pattern = /a.*a.*x/im;
+    const body: SearchableNode = {
+      id: 'dbo.vwwide', name: 'vwWide', schema: 'dbo', type: 'view',
+      bodyScript: 'a '.repeat(3_000),
+    };
+    const start = performance.now();
+    const scanned = scanBodyMatches([body], pattern, undefined, () => true);
+    expect(performance.now() - start, 'one execution never runs past the cap').toBeLessThan(1_000);
+    expect(scanned.truncated).toHaveLength(1);
+  });
+
+  it('leaves ordinary results unchanged and reports no truncation', () => {
+    const scanned = scanBodyMatches(nodes, regexFor('OrderID|Customer'), undefined, () => true);
+    expect(scanned.matches.map(m => [m.node.id, m.line]), 'every ordinary hit keeps its object and line').toEqual([
+      ['dbo.getorderssummary', 3],
+      ['dbo.getorderssummary', 5],
+      ['dbo.getorderssummary', 5],
+      ['dbo.activecustomersview', 1],
+      ['dbo.activecustomersview', 2],
+      ['dbo.activecustomersview', 2],
+    ]);
+    expect(scanned.truncated, 'no line reaches the cap').toEqual([]);
   });
 });
 

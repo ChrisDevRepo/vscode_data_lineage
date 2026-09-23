@@ -137,8 +137,7 @@ export function buildStoredRun(
   const checkpoint = artifact.checkpoint;
   if (!checkpoint) return null;
   const scopeNodeIds = checkpoint.scopeNodeIds ?? profile.filter.allowlistNodeIds ?? [];
-  const ddlHashes: Record<string, string> = {};
-  for (const id of scopeNodeIds) ddlHashes[id] = hashDdl(getDdl(id));
+  const ddlHashes: Record<string, string> = Object.fromEntries(scopeNodeIds.map(id => [id, hashDdl(getDdl(id))]));
   return {
     schemaVersion: 1,
     runId,

@@ -9,7 +9,8 @@ import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
 import {
   DEFAULT_EXPLORATION_QUESTION,
-  gateDepthSide,
+  depthSidesOf,
+  mergeRefineDepthIntent,
   resolveDepthIntentForBoundary,
   type DepthIntent,
 } from '../../sm/smTypes';
@@ -94,8 +95,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         s.logger.debug(`[Mission] provenance=tool_payload len=${data.mission_brief.length}`);
       }
 
-      const applyFollowUpContext = (engine: NavigationEngine): void => {
-        if (data.analysisMode === 'ct' && data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
+      const applyFollowUpContext = (): void => {
         if (data.classification) sess.setClassification(data.classification);
         if (data.mission_brief !== undefined) sess.memory.setMissionBrief(data.mission_brief);
         const canonicalQuestion = resolveCanonicalQuestion({
@@ -116,17 +116,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         if (!priorEngine) {
           throw new Error('[start_exploration] supplement prerequisite passed without a prior engine');
         }
-        if (data.analysisMode === 'ct' && data.targetColumns?.length) {
-          const columnTargetReject = priorEngine.checkColumnTargets(data.targetColumns);
-          if (columnTargetReject) return s.logAndReturn('lineage_start_exploration', columnTargetReject, loggedInput);
-        }
         const supplementIds = data.supplement.nodeIds ?? [];
         const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
         if ('error' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
         const admittedIds = supplementIds.filter(
           id => !res.skippedDetails.some(skip => skip.nodeId.toLowerCase() === id.toLowerCase()),
         );
-        applyFollowUpContext(priorEngine);
+        applyFollowUpContext();
         sess.enterExploring(s.turnEpoch(sess));
         const skippedIdsSuffix = res.skippedDetails.length > 0
           ? ` skippedIds=[${res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(',')}]`
@@ -221,21 +217,27 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (refineAnalysisMode === 'bb' && isRefining && pendingInit?.targetColumns?.length) {
         s.logger.debug(`[AI] [StartExploration] refine to BB drops proposal targetColumns cols=[${trunc(pendingInit.targetColumns.join(','), 120)}] origin=${sanitizeForLog(refineOrigin)}`);
       }
-      if (!(data.depth === undefined && isRefining)) {
-        if (data.depth && typeof data.depth === 'object') {
-          for (const side of ['upstream', 'downstream'] as const) {
-            const raw = data.depth[side];
-            if (raw !== undefined && gateDepthSide(raw, data.depthStated) === undefined) {
-              s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth.${side} from=${sanitizeForLog(String(raw))} to=(unstated)`);
-            }
-          }
-        } else if (typeof data.depth === 'number' && gateDepthSide(data.depth, data.depthStated) === undefined) {
-          s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth from=${sanitizeForLog(String(data.depth))} to=(unstated)`);
-        }
+      if (isRefining && data.depth === undefined && data.depthStated !== undefined) {
+        s.logger.debug(`[AI] [Proposal] refine depthStated without depth rejected revision=${sess.pendingExploration!.revision}`);
+        return s.logAndReturn('lineage_start_exploration', {
+          error: REJECTION_CODES.missingField,
+          hint: 'depthStated qualifies only a depth sent in the same call: resend `depth` with the level count the user stated and depthStated: true.',
+        }, loggedInput);
       }
-      const depthIntent: DepthIntent = data.depth === undefined && isRefining
-        ? (pendingInit?.depthIntent ?? { kind: 'default_start' })
+      const depthIntent: DepthIntent = isRefining
+        ? mergeRefineDepthIntent(pendingInit?.depthIntent ?? { kind: 'default_start' }, data.depth, data.depthStated)
         : resolveDepthIntentForBoundary(data.depth, data.depthStated);
+      const boundSides = depthSidesOf(depthIntent);
+      if (data.depth && typeof data.depth === 'object') {
+        for (const side of ['upstream', 'downstream'] as const) {
+          const raw = data.depth[side];
+          if (typeof raw === 'number' && raw > 0 && boundSides[side] === null) {
+            s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth.${side} from=${sanitizeForLog(String(raw))} to=(unstated)`);
+          }
+        }
+      } else if (typeof data.depth === 'number' && boundSides.upstream === null) {
+        s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth from=${sanitizeForLog(String(data.depth))} to=(unstated)`);
+      }
 
       const proposalInit = {
         question: refineQuestion || DEFAULT_EXPLORATION_QUESTION,

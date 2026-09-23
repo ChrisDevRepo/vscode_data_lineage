@@ -107,7 +107,7 @@ const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business'
  */
 const CAPTURE_RECIPE_HEADER = [
   '### Capture recipe',
-  'Submit one `sections[]` entry per angle this mission fires, with that angle in `angle`, and put every bullet below — including the ⚠️ callout bullet — inside that entry. Markdown without headings. Back each grain predicate, formula and ⚠️ line with one short ```sql fence of its deciding expression, an exact substring of `bb_ddl`; what the SQL does not establish reads `not established from the available SQL`. Skip an item the SQL lacks.',
+  'Submit one `sections[]` entry per angle this mission fires, with that angle in `angle`, and put every bullet below — including the ⚠️ callout bullet — inside that entry\'s `text`. Markdown without headings. Back each grain predicate, formula and ⚠️ line with one short ```sql fence of its deciding expression, an exact substring of `bb_ddl`; what the SQL does not establish reads `not established from the available SQL`. Skip an item the SQL lacks.',
 ].join('\n\n');
 
 /**
@@ -118,12 +118,12 @@ const CAPTURE_RECIPE_HEADER = [
  * bullet names (`Purpose`, `Upstream sources`, …), which `lineage_submit_findings` rejects.
  *
  * @remarks
- * Unlocked (`classification` undefined) states every angle the mode ever accepts, unchanged from
- * before. A locked classification with one kept angle ({@link CLASSIFICATION_KEPT_ANGLES}) states
- * only that angle — offering the excluded one here was the CLASSLOCK regression: the per-dispatch
- * `submit_findings` schema (`toolSchemas.ts` `capturedSectionSchemaForClassification`) already
- * hard-rejects it, so naming it here only bought the model a rejection it could not act on. `both`
- * keeps every angle, same as unlocked.
+ * Unlocked (`classification` undefined) states every angle the mode ever accepts. A locked
+ * classification with one kept angle ({@link CLASSIFICATION_KEPT_ANGLES}) states only that angle:
+ * the per-dispatch `submit_findings` schema (`toolSchemas.ts`
+ * `capturedSectionSchemaForClassification`) hard-rejects the excluded one, so naming it here
+ * would only buy the model a rejection it cannot act on. `both` keeps every angle, same as
+ * unlocked.
  */
 const BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED =
   'Submit this as one `sections[]` entry per angle this mission keeps (`business`, `technical`, or both), with that literal — never a descriptive label — in `angle`.';

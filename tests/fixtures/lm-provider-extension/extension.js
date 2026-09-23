@@ -29,8 +29,7 @@ let hopSeq = 0;
 let ctColumnAssignment = new Map();
 
 /**
- * The S1-S7 scripted scenario matrix (donor: ai-embedded-chat-langgraph.test.ts,
- * `git show donor/testing13:tests/integration/ai-embedded-chat-langgraph.test.ts`).
+ * The S1-S7 scripted scenario matrix.
  *
  * @remarks
  * `entry`/`targetColumns` feed the `structured_output` entry-detector reply (src/ai/agent/state.ts
@@ -117,7 +116,7 @@ function normalizePart(part) {
  * An ACCEPTED tool observation carries back as a user-role `<runtime_tool_context>` text block
  * (see `renderObservationsContext`; the internal scripted lanes document the same check); a
  * REJECTED one carries as a native assistant tool-call + tool-result pair
- * (`renderRejectionExchange`, toolAttempt.ts:589). Checking only one shape lets a case's tool call
+ * (`renderRejectionExchange` in toolAttempt.ts). Checking only one shape lets a case's tool call
  * re-emit forever until the provider-call breaker trips.
  */
 function resultObservedFor(request, callId) {
@@ -186,7 +185,7 @@ function latestEnvelope(request) {
 
 /**
  * Parses every JSON object carried back to the model this turn, walking into native
- * `tool-result` parts (`renderRejectionExchange`, toolAttempt.ts:589) as well as top-level text.
+ * `tool-result` parts (`renderRejectionExchange` in toolAttempt.ts) as well as top-level text.
  * A REJECTED submit_findings rides as a native assistant tool-call + tool-result pair whose
  * result content is `JSON.stringify({code, reason, hint, detail, ...})` — this is how the
  * fixture reads that `detail` array back, rather than regexing the flattened prose (fragile:
@@ -240,7 +239,7 @@ function priorAvailableColumns(request, nodeId) {
  * Fallback only: the per-hop `<column_trace>` block (`readDeclaredActiveColumns`) is the primary
  * channel and normally makes this unnecessary. When a hop renders no such block, this rejection's
  * `detail.unaccounted` (`buildIncompleteRejection`, smCompleteness.ts) is the ground truth, IF it
- * rides back as a native tool-call/tool-result pair (`renderRejectionExchange`, toolAttempt.ts:589)
+ * rides back as a native tool-call/tool-result pair (`renderRejectionExchange` in toolAttempt.ts)
  * the way every other rejection this fixture reads (`priorAvailableColumns`) does.
  *
  * The key is `code`, not `error`: the engine emits `{error:'column_chain_incomplete', hint, detail}`

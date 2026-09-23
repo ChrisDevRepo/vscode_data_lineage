@@ -12,7 +12,7 @@ export const STRUCTURED_OUTPUT_TOOL_DESCRIPTION =
 
 /** Stable structured-output rejection classifications used by graph recovery policy. */
 export type StructuredOutputErrorCode =
-  | 'invalid_structured_output'
+  | typeof REJECTION_CODES.invalidStructuredOutput
   | typeof REJECTION_CODES.emptyStructuredOutput;
 
 /** Bounded semantic failure returned to LangGraph without retaining raw provider output. */
@@ -20,7 +20,7 @@ export class StructuredOutputError extends Error {
   constructor(
     public readonly reason: string,
     /** Stable classification used by graph retry policy. */
-    public readonly code: StructuredOutputErrorCode = 'invalid_structured_output',
+    public readonly code: StructuredOutputErrorCode = REJECTION_CODES.invalidStructuredOutput,
   ) {
     super(`Structured output was rejected: ${reason}.`);
     this.name = 'StructuredOutputError';
@@ -44,6 +44,6 @@ export function structuredRejectReason(
 ): string {
   if (!callPresent) return `missing ${STRUCTURED_OUTPUT_TOOL} tool call`;
   if (!error) return `invalid ${STRUCTURED_OUTPUT_TOOL} fields: schema mismatch`;
-  const { reason } = rejectionFromZodError(error, { code: 'invalid_structured_output' });
+  const { reason } = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput });
   return `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${reason}`;
 }

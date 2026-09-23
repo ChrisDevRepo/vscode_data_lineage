@@ -302,10 +302,17 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const supplied = input && typeof input === 'object' && !Array.isArray(input)
           ? input as Record<string, unknown>
           : {};
+        const capPreviewProse = (field: string, text: string | undefined, max: number): string | undefined => {
+          if (text === undefined || text.length <= max) return text;
+          s.logger.debug(
+            `[Normalize] tool=present_result field=${field} from=${text.length} chars to=${max} chars (cut to cap)`,
+          );
+          return text.slice(0, max);
+        };
         const previewProse: Record<string, string | undefined> = {
-          name: `${scope.origin} graph preview`.slice(0, PRESENT_RESULT_NAME_MAX),
+          name: capPreviewProse('name', `${scope.origin} graph preview`, PRESENT_RESULT_NAME_MAX),
           summary: previewNarrative.summary,
-          title: previewNarrative.title?.slice(0, PRESENT_RESULT_TITLE_MAX),
+          title: capPreviewProse('title', previewNarrative.title, PRESENT_RESULT_TITLE_MAX),
         };
         for (const [field, value] of Object.entries(previewProse)) {
           const prior = supplied[field];
@@ -504,7 +511,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ? buildColumnChainPreface(resultGraph.columnAspect.edges)
           : undefined;
         // Slots of rendered nodes ride into assembly so the engine restores any captured ⚠️
-        // callout the authored section text omits; unlinked slots stay on the rejection path below.
+        // callout or $$ formula the authored section text omits; unlinked slots stay on the
+        // rejection path below.
         const renderedDetailSlots = sess.memory.getResult().detail_slots.filter(slot => renderedNodeIds.has(slot.nodeId));
         const assembled = orderAndAssemble(
           presentInput.sections,
@@ -521,6 +529,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         assembledDescription = assembled.description;
         if (assembled.droppedSectionLinks.length > 0) {
           s.logger.debug(`[Presentation] ${assembled.droppedSectionLinks.length} duplicate section link(s) dropped (first section keeps the badge) — ${trunc(assembled.droppedSectionLinks.map(d => `${d.node_id}: "${d.dropped_from}" → kept in "${d.kept_in}"`).join(', '), 300)}`);
+        }
+        for (const item of assembled.restoredDetailItems) {
+          s.logger.debug(`[Presentation] captured ${item.kind} restored to section "${item.label}" — ${trunc(item.text.replace(/\s+/g, ' '), 200)}`);
         }
       }
 

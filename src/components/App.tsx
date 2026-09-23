@@ -607,7 +607,7 @@ export function App() {
   /** Drops the node selection without selecting another — the canvas's click-away reset. */
   const handleClearSelection = useCallback(() => {
     setHighlightedNodeId(null);
-    setInfoBarNodeId(prev => (prev !== null ? null : prev));
+    setInfoBarNodeId(null);
   }, []);
 
   const handleSchemaNodeSelect = useCallback(() => {

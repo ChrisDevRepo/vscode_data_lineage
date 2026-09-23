@@ -59,11 +59,6 @@ mkdirSync(LOG_DIR, { recursive: true });
 const results = [];
 for (const step of STEPS) {
   process.stdout.write(`\n──── ${step.name}\n`);
-  if (step.skip) {
-    process.stdout.write(`SKIP  ${step.name}  (${step.skip})\n`);
-    results.push({ name: step.name, skipped: true, reason: step.skip });
-    continue;
-  }
   const started = Date.now();
   const run = await runStep(step);
   const ok = run.status === 0;
@@ -74,7 +69,6 @@ for (const step of STEPS) {
   }
   results.push({
     name: step.name,
-    skipped: false,
     ok,
     logPath,
     note: run.error ? `did not start: ${run.error.message}`
@@ -88,20 +82,14 @@ for (const step of STEPS) {
 const width = Math.max(...results.map((r) => r.name.length));
 process.stdout.write(`\n${'='.repeat(width + 18)}\nGATE SUMMARY\n${'='.repeat(width + 18)}\n`);
 for (const r of results) {
-  if (r.skipped) {
-    process.stdout.write(`SKIP  ${r.name.padEnd(width)}  (${r.reason})\n`);
-    continue;
-  }
   const note = r.note ? `  (${r.note})` : '';
   const log = r.logPath ? `  → ${r.logPath}` : '';
   process.stdout.write(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name.padEnd(width)}  ${r.seconds}s${note}${log}\n`);
 }
 
-const judged = results.filter((r) => !r.skipped);
-const failed = judged.filter((r) => !r.ok);
-const skipped = results.filter((r) => r.skipped);
+const failed = results.filter((r) => !r.ok);
 process.stdout.write(`${'='.repeat(width + 18)}\n`);
-process.stdout.write(`${judged.length - failed.length}/${judged.length} green, ${skipped.length} skipped\n`);
+process.stdout.write(`${results.length - failed.length}/${results.length} green\n`);
 process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n');
 process.stdout.write(
   'NOT covered: extension-host behaviour (npm run test:edh — smoke lanes only, still 0 '

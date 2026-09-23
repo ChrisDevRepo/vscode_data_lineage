@@ -28,7 +28,6 @@ async function makeExternalRefDacpac(): Promise<Uint8Array> {
 
 
 async function testExtraction() {
-  console.log('\n── DACPAC Extraction ──');
   const model = await loadAdventureWorksModel();
 
   expect(model.nodes.length > 0, `Extracted ${model.nodes.length} nodes`).toBe(true);
@@ -58,7 +57,6 @@ async function testExtraction() {
  * body, and `EXEC` calls. A regression in any parse rule changes one of these sets.
  */
 async function testNamedProcedureEdges() {
-  console.log('\n── Named Procedure Edges ──');
   const model = await loadAdventureWorksModel();
 
   const edgesFor = (procId: string): string[] =>
@@ -85,7 +83,6 @@ async function testNamedProcedureEdges() {
 
 
 function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
-  console.log('\n── Edge Integrity ──');
 
   const nodeIds = new Set(model.nodes.map(n => n.id));
 
@@ -102,7 +99,6 @@ function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
 
 
 async function testFabricDacpac() {
-  console.log('\n── Fabric SDK Dacpac ──');
   const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
   const buffer = readFileSync(fabricPath);
   const model = await extractDacpac(buffer);
@@ -139,7 +135,6 @@ async function testFabricDacpac() {
 
 
 async function testNumericEntitySecurity() {
-  console.log('\n── Security: Numeric Entity DoS (CVE-2026-25128) ──');
 
   const { XMLParser } = await import('fast-xml-parser');
   const parser = new XMLParser({
@@ -213,7 +208,6 @@ async function testNumericEntitySecurity() {
 
 
 async function testImportErrorHandling() {
-  console.log('\n── Import Error Handling ──');
   const JSZip = (await import('jszip')).default;
 
   try {
@@ -263,7 +257,6 @@ async function testImportErrorHandling() {
 
 
 async function testConstraints() {
-  console.log('\n── Table Design Constraints (dacpac) ──');
   const model = await loadAdventureWorksModel();
 
   const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
@@ -300,7 +293,6 @@ async function testConstraints() {
 
 
 function testParseDspPlatform() {
-  console.log('\n── parseDspPlatform ──');
 
   expect(parseDspPlatform(''), 'Empty string returns empty').toBe('');
 
@@ -329,7 +321,6 @@ function testParseDspPlatform() {
 
 
 async function testDbPlatformInModel() {
-  console.log('\n── Bridge: dbPlatform in DatabaseModel ──');
 
   const awModel = await loadAdventureWorksModel();
   expect(awModel.dbPlatform, 'AdventureWorks dacpac: dbPlatform = SQL Server 2025').toBe('SQL Server 2025');
@@ -357,7 +348,6 @@ async function testDbPlatformInModel() {
 
 
 async function testPkOrdinalInModel() {
-  console.log('\n── Bridge: pkOrdinal in ColumnDef ──');
   const model = await loadAdventureWorksModel();
 
   const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
@@ -396,7 +386,6 @@ async function testPkOrdinalInModel() {
 
 
 async function testPhase1Phase2Bridge() {
-  console.log('\n── Bridge: Phase 1 → Phase 2 data flow ──');
 
   const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
   const { preview, elements, dspName } = await extractSchemaPreview(buf);
@@ -432,7 +421,6 @@ async function testPhase1Phase2Bridge() {
 
 
 async function testDacpacExtractionOptions() {
-  console.log('\n── DACPAC Extraction Options ──');
   const buffer = await makeExternalRefDacpac();
 
   const enabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true, maxNodes: 2 });
@@ -474,7 +462,6 @@ async function testDacpacExtractionOptions() {
  * through `neighborIndex`, without being rendered as a node.
  */
 async function testCrossSchemaCatalogUnderFilter() {
-  console.log('\n── Full catalog resolution under schema filter ──');
 
   const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
   const { elements } = await extractSchemaPreview(buf);
@@ -557,7 +544,75 @@ async function testPredefinedEntityDecoding() {
 }
 
 
+/** A declared-type column element for the computed-column fixture. */
+function simpleColumnXml(owner: string, name: string, type: string): string {
+  return `<Entry><Element Type="SqlSimpleColumn" Name="${owner}.[${name}]">
+    <Relationship Name="TypeSpecifier"><Entry><Element Type="SqlTypeSpecifier">
+      <Relationship Name="Type"><Entry><References ExternalSource="BuiltIns" Name="[${type}]" /></Entry></Relationship>
+    </Element></Entry></Relationship>
+  </Element></Entry>`;
+}
+
+/** A computed column element with an optional ExpressionScript and its ExpressionDependencies. */
+function computedColumnXml(owner: string, name: string, script: string | undefined, deps: string[]): string {
+  const scriptXml = script === undefined ? '' : `<Property Name="ExpressionScript"><Value><![CDATA[${script}]]></Value></Property>`;
+  const depsXml = deps.length === 0 ? '' : `<Relationship Name="ExpressionDependencies">${
+    deps.map(d => `<Entry><References Name="${d}" /></Entry>`).join('')}</Relationship>`;
+  return `<Entry><Element Type="SqlComputedColumn" Name="${owner}.[${name}]">${scriptXml}${depsXml}</Element></Entry>`;
+}
+
+/**
+ * Builds a dacpac with a table whose computed columns are bare references or expressions, and a
+ * view whose columns (no ExpressionScript, as DacFx emits them) each read one table column.
+ */
+async function makeComputedColumnDacpac(): Promise<Uint8Array> {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  const t = '[dbo].[OrderLine]';
+  const v = '[dbo].[vOrderLine]';
+  zip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
+      <Model>
+        <Element Type="SqlTable" Name="${t}">
+          <Relationship Name="Columns">
+            ${simpleColumnXml(t, 'Qty', 'int')}
+            ${simpleColumnXml(t, 'Price', 'money')}
+            ${computedColumnXml(t, 'QtyBracketed', '([Qty])', [`${t}.[Qty]`])}
+            ${computedColumnXml(t, 'QtyBare', 'Qty', [`${t}.[Qty]`])}
+            ${computedColumnXml(t, 'QtyNested', '(( [Price] ))', [`${t}.[Price]`])}
+            ${computedColumnXml(t, 'QtyDoubled', '([Qty]*(2))', [`${t}.[Qty]`])}
+            ${computedColumnXml(t, 'QtyText', '(CONVERT([varchar](10),[Qty]))', [`${t}.[Qty]`])}
+            ${computedColumnXml(t, 'LineTotal', '([Qty]*[Price])', [`${t}.[Qty]`, `${t}.[Price]`])}
+          </Relationship>
+        </Element>
+        <Element Type="SqlView" Name="${v}">
+          <Property Name="QueryScript"><Value><![CDATA[SELECT Qty, CAST(Price AS varchar(20)) AS PriceText FROM dbo.OrderLine]]></Value></Property>
+          <Relationship Name="Columns">
+            ${computedColumnXml(v, 'Qty', undefined, [`${t}.[Qty]`])}
+            ${computedColumnXml(v, 'PriceText', undefined, [`${t}.[Price]`])}
+          </Relationship>
+        </Element>
+      </Model>
+    </DataSchemaModel>`);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+async function testComputedColumnTypeBorrowing() {
+  const model = await extractDacpac(await makeComputedColumnDacpac());
+  const typeOf = (node: string, column: string) =>
+    model.nodes.find(n => n.name === node)?.columns?.find(c => c.name === column)?.type;
+  expect(typeOf('OrderLine', 'QtyBracketed'), 'bracketed bare reference borrows').toBe('int');
+  expect(typeOf('OrderLine', 'QtyBare'), 'unbracketed bare reference borrows').toBe('int');
+  expect(typeOf('OrderLine', 'QtyNested'), 'bare reference under nested parentheses borrows').toBe('money');
+  expect(typeOf('OrderLine', 'QtyDoubled'), 'arithmetic on one column does not borrow').toBe('—');
+  expect(typeOf('OrderLine', 'QtyText'), 'CONVERT of one column does not borrow').toBe('—');
+  expect(typeOf('OrderLine', 'LineTotal'), 'expression over two columns does not borrow').toBe('—');
+  expect(typeOf('vOrderLine', 'Qty'), 'view column with no ExpressionScript does not borrow').toBe('—');
+  expect(typeOf('vOrderLine', 'PriceText'), 'view expression column does not borrow').toBe('—');
+}
+
   it('extracts the AdventureWorks model', async () => { await testExtraction(); });
+  it('gives a computed column a type only when its expression is a bare column reference', testComputedColumnTypeBorrowing);
   it('derives the expected edges for named AdventureWorks procedures', async () => {
     await testNamedProcedureEdges();
   });
