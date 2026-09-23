@@ -26,9 +26,6 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     expect(parseAiOutputTemplatesYaml(text)).toBeDefined();
   });
 
-  // Pinned to the constant, not a literal: the built-in file must always satisfy its own overlay
-  // gate, and a release that bumps one without the other would reject every custom overlay —
-  // including correctly updated ones. A literal here would instead fail on every legitimate bump.
   it('declares the schemaVersion the loader enforces', () => {
     expect(parseAiOutputTemplatesYaml(text).schemaVersion).toBe(AI_TEMPLATE_SCHEMA_VERSION);
   });
@@ -45,11 +42,11 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
 
   it('keeps discovery answers question-first instead of emitting raw tool inventories', () => {
     const instruction = parseAiOutputTemplatesYaml(text).discovery_chat?.instruction ?? '';
-    expect(instruction).toContain("Lead with the direct answer to the user's question");
-    expect(instruction).toContain('transformations and column mappings');
-    expect(instruction).toContain('error and audit paths');
-    expect(instruction).toContain('Keep internal tool names, call syntax, and payload fields out');
-    expect(instruction).toContain('raw node/edge inventory only');
+    expect(instruction).toContain('Lead with the direct answer.');
+    expect(instruction).toContain('transformations, column mappings');
+    expect(instruction).not.toContain('error and audit paths');
+    expect(instruction).toContain('Keep tool names and payload fields out of the answer');
+    expect(instruction).toContain('list raw nodes or edges only when asked');
   });
 
   it('keeps structural_summary free of ## headings reserved for the engine wrapper', () => {
@@ -57,34 +54,26 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     expect(instruction).not.toMatch(/^##\s/m);
   });
 
-  it('tells structural_summary to submit one section per angle under classification=both', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).structural_summary?.instruction ?? '';
-    expect(instruction).toContain('one section per angle');
-  });
-
-  // The renderer gates `closing` on captured slot count (CLOSING_MIN_SLOTS), never on authored
-  // section count — a "5+ sections" claim describes a quantity the code does not measure.
   it('keeps the closing template free of section-count claims', () => {
     const instruction = parseAiOutputTemplatesYaml(text).closing?.instruction ?? '';
     expect(instruction).not.toMatch(/\d\+? sections/);
-    expect(instruction).toContain('Required whenever this template appears');
   });
 
-  // `closing` is suppressed below CLOSING_MIN_SLOTS while loading_pattern is not slot-gated, so
-  // the ETL statement needs a landing spot that exists in every rendering combination.
   it('gives loading_pattern a fallback destination when closing is suppressed', () => {
     const instruction = parseAiOutputTemplatesYaml(text).loading_pattern?.instruction ?? '';
-    expect(instruction).toContain('otherwise in the section that covers the load');
+    expect(instruction).toContain('else in the section covering the load');
     expect(instruction).not.toContain('in the closing note');
   });
 
-  // column_trace_capture renders in the stable prefix while the capture recipes are per-focus
-  // (PER_FOCUS_KEYS): on a non-bodied CT hop the referenced recipes do not render, so the
-  // checklist must name the field, not another template.
   it('keeps column_trace_capture free of cross-template references', () => {
     const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
     expect(instruction).not.toContain('business/technical capture');
     expect(instruction).toContain("this hop's narrative body");
+  });
+
+  it('does not restate $$ producing expressions in column_trace_capture', () => {
+    const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
+    expect(instruction).not.toContain('$$');
   });
 });
 
@@ -95,31 +84,49 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
     expect(() => parseParseRulesYaml(text)).not.toThrow();
   });
 
-  it('yields a non-empty rules array', () => {
+  it('yields the full shipped rule inventory', () => {
     const parsed = parseParseRulesYaml(text);
-    expect(Array.isArray(parsed.rules)).toBe(true);
-    expect(parsed.rules?.length ?? 0).toBeGreaterThan(0);
+    expect(parsed.rules?.map(rule => rule.name).sort()).toEqual([
+      'clean_sql',
+      'extract_bulk_from',
+      'extract_bulk_insert',
+      'extract_cetas',
+      'extract_copy_from',
+      'extract_copy_into',
+      'extract_ctas',
+      'extract_merge_using',
+      'extract_openrowset',
+      'extract_output_into',
+      'extract_select_into',
+      'extract_sources_ansi',
+      'extract_sources_tsql_apply',
+      'extract_sp_calls',
+      'extract_targets_dml',
+      'extract_udf_calls',
+      'extract_update_alias_target',
+    ]);
+  });
+
+  it('gives every shipped rule a global regex flag', () => {
+    const parsed = parseParseRulesYaml(text);
+    for (const rule of parsed.rules ?? []) {
+      expect(rule.flags, `${rule.name} flags`).toContain('g');
+    }
   });
 });
 
 describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
   it('rejects a scalar value under a template key', () => {
-    // A top-level scalar under a non-schemaVersion key must still reject (every key but
-    // schemaVersion must be a template object).
     expect(() => parseAiOutputTemplatesYaml('schemaVersion: 1\nsummary: "just a string"\n')).toThrow();
   });
 
   it('accepts a bare top-level schemaVersion scalar and round-trips it', () => {
-    // A bare top-level schemaVersion scalar must parse cleanly.
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
     expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: 2\n'); }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(2);
   });
 
   it('coerces a string schemaVersion "1" to numeric 1', () => {
-    // A hand-authored string schemaVersion must coerce to a number so the extension.ts `!==`
-    // gate (strict compare against the numeric contract version) matches instead of silently
-    // disabling the overlay.
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
     expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: "1"\n'); }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(1);

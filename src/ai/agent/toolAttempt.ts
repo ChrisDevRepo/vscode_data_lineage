@@ -9,6 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import {
+  modelAssistantMessage,
   modelToolCallMessage,
   modelToolResultMessage,
   modelUserMessage,
@@ -34,26 +35,138 @@ import {
   DUPLICATE_CALL_ID_REPAIR_HINT,
   INVALID_TOOL_INPUT_REPAIR_HINT,
   readToolError,
+  rejectionEntryIds,
   rejectionIssuePaths,
+  rejectionLengthOverruns,
+  type RejectionLengthOverrun,
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import {
+  attemptContextBytes,
+  DEFAULT_TURN_TOKEN_BUDGET,
+  storedEvidenceKindBytes,
+  type TurnTokenBudget,
+} from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { IToolRegistry } from '../tools/registry';
 import type { ConverseInstructionPlan, InstructionPhase } from './instructionPlan';
+import { classifyRejectionCode } from '../tools/toolProvider';
 import { sanitizeForLog } from '../../utils/log';
 import { isCancellationOutcome } from '../support/cancellation';
 import { safeIdentifier } from '../support/logIdentifier';
 import { longestPrefixFitting } from '../support/textTruncation';
+import { normalizeSearchQueryInput } from '../support/inputNormalization';
+import { compileSearchRegex } from '../../utils/modelSearch';
 
 /** Cumulative semantic failures allowed in one logical phase/hop before termination. */
 export const MAX_TOOL_SEMANTIC_FAILURES = 3;
 
-/** Rejection codes that are provider/transport artifacts, never charged to the model's semantic budget. */
+/**
+ * Rejection codes whose own hint tells the model to stop calling tools, so the continuation note
+ * must not ask for a resend.
+ *
+ * @remarks
+ * The note is a provider contract and always ships ({@link rejectionContinuationMessage}); only its
+ * wording varies. Where a hint says "do not resend" and the note says "resend the corrected tool
+ * call", the model has no legal move and improvises — each improvisation charging a strike against
+ * {@link MAX_TOOL_SEMANTIC_FAILURES} until the breaker ends the turn. A code belongs here only when
+ * no corrective call exists at all; a code whose repair is a *different* call does not.
+ */
+const NO_RETRY_REJECTION_CODES: ReadonlySet<string> = new Set([
+  REJECTION_CODES.supplementEmpty,
+]);
+
+/**
+ * Rejection codes exempt from the model's semantic budget: provider/transport artifacts
+ * ({@link REJECTION_CODES.duplicateCallId}, {@link REJECTION_CODES.emptyGeneration});
+ * {@link REJECTION_CODES.duplicateRead}, a deliberate policy exemption for a model resending a
+ * call it already has the answer to — not a transport artifact, bounded by the shared
+ * unproductive-resend absorption (past {@link MAX_FREE_UNPRODUCTIVE_RESENDS} consecutive identical
+ * resends the duplicate charges a strike); the budget guards
+ * ({@link REJECTION_CODES.overDiscoveryBudget}, {@link REJECTION_CODES.overActiveScopeBudget}),
+ * which refuse a well-formed request for its size alone and so say nothing about the model's
+ * semantic accuracy; and the session/state codes below.
+ *
+ * The session/state codes share the budget guards' exact justification. Each one reports that the
+ * host's own session, turn lease or focus has moved — the engine is in the wrong status, the focus
+ * is not the one dispatched, the run memory or the turn epoch is gone. No correction the model
+ * could write would change any of them, so charging a strike for one would spend the budget for
+ * real semantic repairs on the host's bookkeeping instead. The engine's status and focus failures
+ * are listed by the wire code `mapSubmitFindingsEngineGuard` returns, the only form this set is
+ * matched against; an unknown focus id is the model's own payload and reaches the wire as
+ * {@link REJECTION_CODES.invalidInput}, which stays chargeable.
+ */
 const NON_CHARGEABLE_REJECTION_CODES: ReadonlySet<string> = new Set([
   REJECTION_CODES.duplicateCallId,
   REJECTION_CODES.emptyGeneration,
+  REJECTION_CODES.duplicateRead,
+  REJECTION_CODES.overDiscoveryBudget,
+  REJECTION_CODES.overActiveScopeBudget,
+  REJECTION_CODES.noActiveSession,
+  REJECTION_CODES.noRunMemory,
+  REJECTION_CODES.staleTurn,
+  REJECTION_CODES.staleProposalRevision,
+  REJECTION_CODES.alreadyStarted,
+  REJECTION_CODES.supplementRequiresCompleteEngine,
+  REJECTION_CODES.invalidStatus,
+  REJECTION_CODES.explorationComplete,
+  REJECTION_CODES.focusNodeIdMismatch,
 ]);
+
+/**
+ * Hint paired with a `duplicate_read` rejection: the answer material is already in the observations.
+ * The held body stays stored for the whole attempt, so the hint is a true statement in every state
+ * it reaches the model in, except when the held body is itself an
+ * error envelope (e.g. a `result_too_large` reply), where
+ * {@link heldErrorEnvelopeDuplicateHint} restates that error instead — "answer from it" is false
+ * when the stored observation carries no answer material.
+ */
+const DUPLICATE_READ_HINT = 'You already ran this call this hop; its result is in your observations. Answer from it, or call a different tool.';
+
+/**
+ * Correction hint for a `duplicate_read` whose held observation is itself an error envelope: restates
+ * that held error (its code, then its hint or reason line) instead of {@link DUPLICATE_READ_HINT}.
+ * @param held - The observation the duplicate read would reuse.
+ * @returns The restatement hint, or `undefined` when the held body is not an error envelope.
+ */
+function heldErrorEnvelopeDuplicateHint(held: ToolAttemptObservation): string | undefined {
+  try {
+    const rejection = readToolError(JSON.parse(held.result));
+    if (!rejection) return undefined;
+    return `The held result for callId ${held.callId} is an error envelope (${rejection.code}): ${rejection.hint ?? rejection.reason}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Hand-off carried by a `result_too_large` reply — the same route `over_discovery_budget` names for
+ * an oversized scope, because a body larger than the evidence share is read one object per hop, not
+ * in one discovery answer.
+ */
+const RESULT_TOO_LARGE_HINT = 'This result is larger than the evidence one hop can hold, so none of it was stored. Stop this tool loop; narrow the request with lineage_get_scope_bundle, or take the consent-gated hop-by-hop path with lineage_start_exploration, which reads one object per hop.';
+
+/**
+ * The stored stand-in for an accepted result that does not fit the evidence share: a "too big"
+ * reply in the tool-error shape the model already repairs from, never a prefix of the body.
+ *
+ * @param toolName - Tool whose result was refused storage.
+ * @param bytes - Size of the refused result.
+ * @param heldBytes - Bytes of observation bodies already held for this phase/hop.
+ * @param budget - The evidence share both were measured against.
+ * @returns The JSON reply stored as this call's observation.
+ */
+function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number, budget: number): string {
+  return JSON.stringify({
+    error: 'result_too_large',
+    tool: toolName,
+    bytes,
+    held_bytes: heldBytes,
+    budget,
+    hint: RESULT_TOO_LARGE_HINT,
+  });
+}
 
 /** Reports whether a rejection code counts against {@link MAX_TOOL_SEMANTIC_FAILURES}. */
 function isChargeableRejection(code: string): boolean {
@@ -84,22 +197,18 @@ const MAX_CORRECTION_FRAGMENT_BYTES = 2_048;
 /** Maximum distinct structural entries retained by one rejection. */
 const MAX_CORRECTION_FRAGMENTS = 4;
 
-/**
- * Total byte budget for the rendered `<runtime_tool_context>` retry payload.
+/*
+ * The retry-context byte budget (`attemptContextBytes()`) and the per-kind stored-evidence share
+ * (`storedEvidenceKindBytes()`) are governed by `support/tokenBudget.ts`: a ceiling sized for a
+ * 128k window, scaled down with the selected model's input window.
  *
- * @remarks
- * A mechanical bound on the engine's re-projection of cumulative observations/rejections onto the
- * next attempt. It is NOT truncation of any delivered tool response (those already reached the model
- * when the call first ran) and never a rejection axis — an oversized payload is shrunk deterministically,
- * never refused.
- *
- * 48 KiB specifically: three quarters of the 64 KiB discovery ceiling, leaving the remaining quarter
- * of that budget for the instruction and question text the retry payload is appended to.
+ * The re-projection IS the delivery: every attempt is a fresh request, so a body the store shrinks
+ * is a body the model never receives. An accepted body is therefore stored whole or not at all —
+ * `executeToolGenerationAttempt` measures the held observations plus the candidate against the
+ * evidence share and, when the candidate does not fit, stores a `result_too_large` reply that hands
+ * the read to the hop-by-hop path. Held bodies are never shrunk and never dropped. The rejection
+ * ladder below bounds engine-produced correction text, which is not a tool result.
  */
-const MAX_ATTEMPT_CONTEXT_BYTES = 49_152;
-
-/** Checkpoint share for successful evidence; one admitted discovery bundle must fit losslessly. */
-const MAX_STORED_EVIDENCE_KIND_BYTES = MAX_ATTEMPT_CONTEXT_BYTES - 4_096;
 
 /** Hard-slices engine correction text to {@link MAX_REJECTION_TEXT_CHARS} with a plain ellipsis when over. */
 function capRejectionText(text: string): string {
@@ -121,14 +230,22 @@ interface OmittedStructuredValue {
   readonly bytes: number;
 }
 
+/**
+ * A value's JSON form, or `undefined` when it has none (a cyclic or BigInt value, or `undefined`
+ * itself). The single place a serialization failure is absorbed: callers turn `undefined` into
+ * the size-only stub that the replayed detail and the trace then carry.
+ */
+function serializedJson(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Clones a safe JSON value into retry state or replaces it atomically with a size-only stub. */
 function boundStructuredValue(value: unknown, maxBytes: number): unknown | OmittedStructuredValue {
-  let serialized: string | undefined;
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    return { omitted: true, bytes: 0 };
-  }
+  const serialized = serializedJson(value);
   if (serialized === undefined) return { omitted: true, bytes: 0 };
   const bytes = Buffer.byteLength(serialized);
   if (bytes > maxBytes || sensitiveTraceReason(value)) return { omitted: true, bytes };
@@ -141,8 +258,7 @@ function boundStructuredValue(value: unknown, maxBytes: number): unknown | Omitt
  * @remarks
  * `'length'` (output token limit) and `'content-filter'` (provider content filter). Surfaced so a
  * truncated non-terminal generation is neither silently accepted as complete nor blind-retried at
- * identical settings. The `vscode.lm` lane only ever synthesizes `'stop'`/`'tool-calls'`, so this
- * is naturally unreachable there.
+ * identical settings.
  */
 export type ToolFinishAnomaly = 'length' | 'content-filter';
 
@@ -155,7 +271,28 @@ interface ToolAttemptRejection {
   readonly hint?: string;
   readonly detail?: unknown;
   readonly issuePaths?: readonly string[];
+  /**
+   * Offending entry ids the rejection carries ({@link rejectionEntryIds}'s mining of `detail`'s
+   * `entry_ids`) — the sibling identity {@link isShrinkingViolationRepair} prefers over
+   * {@link issuePaths} when present, since an id survives a repair unlike a fixed structural path.
+   */
+  readonly entryIds?: readonly string[];
+  /**
+   * Length offenders the rejection carries ({@link rejectionLengthOverruns}'s mining of the
+   * unbounded `detail`), read by {@link heldDraftLengthOverruns} so every flagged value in the held
+   * draft renders as its rewrite marker, not only the one the capped `reason` states.
+   */
+  readonly lengthOverruns?: readonly RejectionLengthOverrun[];
   readonly correctionFragments?: readonly ToolCorrectionFragment[];
+  /**
+   * The model's own buffered turn text for a synthesized (`callId`-less) rejection, capped by
+   * {@link capRejectionText} at construction. Absent when the generation carried no text (a true
+   * empty completion) or when the rejection paired a real provider call ({@link callId} set), where
+   * the replayed assistant turn is the genuine tool call instead. This is what
+   * {@link renderRejectionExchange} echoes back as the synthesized assistant turn a callId-less
+   * rejection has no real one to replay.
+   */
+  readonly attemptedText?: string;
   /**
    * {@link acceptedCallKey} of the rejected call's own input — never the raw input itself. Set only
    * for a chargeable dispatched-tool rejection, so a following attempt can be checked (via
@@ -163,6 +300,12 @@ interface ToolAttemptRejection {
    * module ever retaining or re-projecting the rejected payload.
    */
   readonly inputHash?: string;
+  /**
+   * Set when the call was rejected before any handler ran (schema prevalidation, unknown tool,
+   * duplicate call id). Such a payload never reached a held `present_result` draft, so the draft
+   * block cannot stand in for it and {@link renderRejectionExchange} replays its fragments.
+   */
+  readonly preDispatch?: true;
   /**
    * Count of consecutive unproductive resends ending at this rejection (absent or 0 on a genuine
    * repair attempt). Carried on the recorded rejection so the next attempt can bound the streak:
@@ -186,6 +329,8 @@ type ToolOutcomeData =
     readonly correction: {
       readonly hint?: string;
       readonly issuePaths?: readonly string[];
+      readonly entryIds?: readonly string[];
+      readonly lengthOverruns?: readonly RejectionLengthOverrun[];
       readonly fragments?: readonly ToolCorrectionFragment[];
     };
     readonly detail?: unknown;
@@ -212,7 +357,7 @@ export interface ToolAttemptObservation {
   readonly callId: string;
   /** Accepted non-terminal tool name. */
   readonly toolName: string;
-  /** Canonical registry result safe to project into a later attempt. */
+  /** The canonical registry result, whole, or the `result_too_large` reply that replaced it. */
   readonly result: string;
   /** Private identity used to reuse an equivalent accepted read without dispatching it again. */
   readonly acceptedCallKey?: string;
@@ -274,6 +419,13 @@ interface ToolGenerationAttemptInput {
    * never mutated or replayed by this module beyond that check.
    */
   readonly priorRejection?: ToolAttemptRejection;
+  /**
+   * The phase's whole rejection history, when a prior attempt exists. Extends
+   * {@link priorRejection} for unproductive-resend accounting: an identity's repeat count is its
+   * whole history, so a model alternating between two duplicate reads cannot reset the bound by
+   * switching.
+   */
+  readonly priorRejections?: readonly ToolAttemptRejection[];
   /** Recognizes a successful registry result that opens consent. */
   readonly detectGate?: (toolName: string, resultText: string) => unknown | null;
   /** Recognizes a successful registry result that changes graph route. */
@@ -312,8 +464,8 @@ interface ToolGenerationAttemptInput {
  * Registry-dispatched rejections are captured by the observability decorator wrapping
  * `IToolRegistry.invoke`. A rejection raised here never reaches that decorator, so without this
  * hook the only failures the model was actually charged for would be invisible to a trace consumer.
- * Enumerated code and tool name only — the reason prose stays on {@link
- * ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
+ * Enumerated code and tool name only — the reason prose stays on
+ * {@link ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
  * observability import.
  */
 export type SyntheticRejectionTrace = (rejection: { toolName: string; code: string }) => void;
@@ -375,7 +527,58 @@ export function initialToolPhaseAttemptState(phase: InstructionPhase): ToolPhase
   };
 }
 
-function acceptedCallKey(toolName: string, input: unknown): string {
+/** The one tool whose `query` is a regular expression without an explicit `mode` (`lineage_search_ddl`). */
+const DDL_SEARCH_TOOL = 'lineage_search_ddl';
+
+/**
+ * Key form of an id-like field: brackets dropped, case folded.
+ *
+ * @remarks
+ * Exactly the two differences `resolveModelNodeId` (`support/inputNormalization`) already resolves
+ * onto one node, so an id the lookup cannot distinguish never earns a second dedupe key. Every
+ * dotted part is kept, so a three-part id never folds onto another database's object. The engine's
+ * own `normalizeName` is the canonical form but lives outside `src/engine/shared`, which `src/ai`
+ * may not import (rule gate: "adds no engine import outside src/engine/shared").
+ */
+function normalizedIdKey(raw: string): string {
+  return raw.replace(/[[\]]/g, '').trim().toLowerCase();
+}
+
+/**
+ * Projects a call's input through the same normalizers its handler applies before answering, so the
+ * dedupe key follows what the tool actually reads.
+ *
+ * @remarks
+ * The handler cannot tell `[dbo].[FactSales]` from `dbo.FactSales`, an omitted `mode` from
+ * `"substring"`, or a pattern from the same pattern carrying a redundant inline flag group — keying
+ * on the raw payload gave each of those its own key, dispatched the same read twice, and stored the
+ * same body twice. The query normalizers are the handlers' own ({@link normalizeSearchQueryInput},
+ * {@link compileSearchRegex}); ids fold through {@link normalizedIdKey}.
+ */
+function normalizedKeyInput(toolName: string, input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  const raw = input as Record<string, unknown>;
+  const normalized: Record<string, unknown> = { ...raw };
+  if (typeof raw.id === 'string') normalized.id = normalizedIdKey(raw.id);
+  if (typeof raw.origin === 'string') normalized.origin = normalizedIdKey(raw.origin);
+  if (Array.isArray(raw.ids)) normalized.ids = raw.ids.map((id) => typeof id === 'string' ? normalizedIdKey(id) : id);
+  if (typeof raw.query === 'string') {
+    if (raw.mode === 'regex' || toolName === DDL_SEARCH_TOOL) {
+      const compiled = compileSearchRegex(raw.query);
+      normalized.query = compiled.ok ? compiled.regex.source : raw.query;
+    } else {
+      const { query, schemaHint } = normalizeSearchQueryInput(raw.query);
+      normalized.query = query;
+      const sendsSchemas = Array.isArray(raw.schemas) && raw.schemas.length > 0;
+      if (schemaHint !== undefined && !sendsSchemas) normalized.schemas = [schemaHint];
+    }
+  }
+  if (raw.mode === 'substring') delete normalized.mode;
+  return normalized;
+}
+
+function acceptedCallKey(toolName: string, rawInput: unknown): string {
+  const input = normalizedKeyInput(toolName, rawInput);
   const sort = (value: unknown): unknown => Array.isArray(value)
     ? value.map(sort)
     : value && typeof value === 'object'
@@ -406,32 +609,131 @@ function repairFieldsFromDetail(detail: unknown): readonly string[] {
 function touchesNoRepairField(input: unknown, repairFields: readonly string[]): boolean {
   if (repairFields.length === 0) return false;
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
-  const keys = new Set(Object.keys(input as Record<string, unknown>));
+  const keys = new Set(Object.keys(input));
   return !repairFields.some(field => keys.has(field));
 }
 
 /**
  * Reports whether a chargeable dispatched-tool rejection about to be recorded is an unproductive
- * resend of `prior` — the correction just issued for the same tool: byte-identical to the rejected
- * payload (via {@link acceptedCallKey}, never the raw input), or touching none of the fields that
- * correction authorized for repair. Observed turns burned their entire semantic budget charging
- * exactly this pattern, never reaching a genuine repair.
+ * resend of `prior` — the correction just issued for the same tool, touching none of the fields
+ * that correction authorized for repair (a no-op ping, not an attempted fix). A byte-identical
+ * resend of real content is a *different* pattern — {@link isIdenticalResubmission} — and is never
+ * folded in here: per the no-progress-detection design (PM ruling rejection-state-of-art), an
+ * identical resubmission always charges, it is never free-absorbed.
  */
 function isUnproductiveResend(
   prior: ToolAttemptRejection | undefined,
   toolName: string,
   input: unknown,
-  candidateHash: string,
 ): boolean {
   if (!prior || prior.toolName !== toolName || prior.inputHash === undefined) return false;
-  return prior.inputHash === candidateHash || touchesNoRepairField(input, repairFieldsFromDetail(prior.detail));
+  return touchesNoRepairField(input, repairFieldsFromDetail(prior.detail));
+}
+
+/**
+ * Reports whether a rejection about to be recorded resends, byte-for-byte (via
+ * {@link acceptedCallKey}, never the raw input), the exact payload `prior` already rejected for the
+ * same tool. No-progress detection (PM ruling rejection-state-of-art, part d): unlike a no-op that
+ * touches no repair field, this is a real-content resend that changed nothing, so it always charges
+ * — the caller applies this as a hard override ahead of any free-resend exemption, on the existing
+ * semantic-failure budget ({@link MAX_TOOL_SEMANTIC_FAILURES}), never a second, parallel counter.
+ */
+function isIdenticalResubmission(
+  prior: ToolAttemptRejection | undefined,
+  toolName: string,
+  candidateHash: string,
+): boolean {
+  return !!prior && prior.toolName === toolName && prior.inputHash !== undefined && prior.inputHash === candidateHash;
+}
+
+/**
+ * Unproductive-resend streak for one call identity: the larger of (a) how many times this exact
+ * (tool, payload) was already rejected in this phase, and (b) the consecutive-only streak a
+ * last-rejection comparison yields. (b) alone resets when the model alternates between two
+ * non-converging identities, so (a) counts the identity's whole history and the bound holds under
+ * interleave.
+ */
+function unproductiveResendStreak(
+  priorRejections: readonly ToolAttemptRejection[] | undefined,
+  prior: ToolAttemptRejection | undefined,
+  toolName: string,
+  input: unknown,
+  candidateHash: string,
+): number {
+  let sameIdentity = 0;
+  for (const rejection of priorRejections ?? []) {
+    if (rejection.toolName === toolName && rejection.inputHash === candidateHash) sameIdentity++;
+  }
+  const consecutive = isUnproductiveResend(prior, toolName, input)
+    ? (prior?.unproductiveStreak ?? 0) + 1
+    : 0;
+  return Math.max(sameIdentity, consecutive);
+}
+
+/**
+ * Reports whether one candidate identity set is a non-empty strict subset of another — the shared
+ * comparison {@link isShrinkingViolationRepair} applies to whichever identity (entry ids or issue
+ * paths) both sides of a rejection pair actually carry.
+ */
+function isStrictNonEmptySubset(current: ReadonlySet<string>, prior: ReadonlySet<string>): boolean {
+  if (current.size === 0 || current.size >= prior.size) return false;
+  for (const value of current) {
+    if (!prior.has(value)) return false;
+  }
+  return true;
+}
+
+/**
+ * Reports whether a same-tool rejection about to be recorded is repair progress on the immediately
+ * prior rejection in this phase/hop, rather than a repeat of it: its violation identity is a
+ * non-empty strict subset of `prior`'s.
+ *
+ * @remarks
+ * Two identities a rejection may already carry are compared, in preference order, and never mixed
+ * across sides:
+ * - {@link ToolAttemptRejection.entryIds} ({@link rejectionEntryIds}'s mining of a dispatched
+ *   validator's `detail.entry_ids`) — the exact offending entries (e.g. an uncovered detail-slot or
+ *   CT-chain node id) when the producing tool named them. Preferred because a violation's `paths`
+ *   is often a fixed structural root shared by every offender (e.g. `sections`) and so never shrinks
+ *   as the model repairs individual entries, while the entries themselves do.
+ * - {@link ToolAttemptRejection.issuePaths} (a Zod issue path pre-dispatch, or
+ *   {@link rejectionIssuePaths}'s mining of `detail`) — used only when either side has no entry-id
+ *   set, so a genuinely id-less structural rejection (a route or prune refusal) still benefits.
+ *
+ * Both are read generically off whatever the rejection already carries; no new wire field is
+ * invented and no tool or violation kind is named here. A tool whose rejection carries neither
+ * identity is simply never exempted. Termination still holds: a strict, non-empty subset relation
+ * on a finite set can hold for at most that set's own size many consecutive steps before nothing is
+ * left to drop, so this exemption cannot extend a repair loop unboundedly — it only stops the budget
+ * from charging for the steps that were shrinking it anyway.
+ *
+ * @param prior - The phase's immediately preceding rejection, when one exists.
+ * @param toolName - The tool of the rejection about to be recorded.
+ * @param currentIssuePaths - The issue paths the about-to-be-recorded rejection carries.
+ * @param currentEntryIds - The entry ids the about-to-be-recorded rejection carries.
+ * @returns `true` only when both sides name the same tool and, for one shared identity, the current
+ *   set is strictly smaller than and fully contained in `prior`'s set.
+ */
+function isShrinkingViolationRepair(
+  prior: ToolAttemptRejection | undefined,
+  toolName: string,
+  currentIssuePaths: readonly string[] | undefined,
+  currentEntryIds: readonly string[] | undefined,
+): boolean {
+  if (!prior || prior.toolName !== toolName) return false;
+  if (prior.entryIds && prior.entryIds.length > 0 && currentEntryIds && currentEntryIds.length > 0) {
+    return isStrictNonEmptySubset(new Set(currentEntryIds), new Set(prior.entryIds));
+  }
+  if (prior.issuePaths && prior.issuePaths.length > 0 && currentIssuePaths && currentIssuePaths.length > 0) {
+    return isStrictNonEmptySubset(new Set(currentIssuePaths), new Set(prior.issuePaths));
+  }
+  return false;
 }
 
 /**
  * Consecutive unproductive resends absorbed without a semantic-failure strike. Beyond this streak
  * every further unproductive resend charges again, because a model that keeps resending the same
- * rejected payload is not converging — without the bound it spins to the provider-call cap
- * (a recorded 2026-08-19 turn resent one rejected payload 8 times until the user cancelled).
+ * rejected payload is not converging — without the bound it spins to the provider-call cap.
  */
 const MAX_FREE_UNPRODUCTIVE_RESENDS = 2;
 
@@ -444,46 +746,37 @@ function prependedArrayBytes(itemBytesSum: number, itemCount: number, newItemByt
   return 2 + itemBytesSum + newItemBytes + itemCount;
 }
 
-/** Retains the newest observations within a fixed checkpoint-memory share. */
-function boundStoredObservations(observations: readonly ToolAttemptObservation[]): ToolAttemptObservation[] {
-  const retained: ToolAttemptObservation[] = [];
-  let retainedBytesSum = 0;
-  for (let index = observations.length - 1; index >= 0; index--) {
-    const source = observations[index];
-    const cappedResult = capUtf8Text(source.result, MAX_STORED_EVIDENCE_KIND_BYTES);
-    // `acceptedCallKey` is carried through truncation: it is the read-dedupe identity, so dropping
-    // it here would silently re-dispatch an already-accepted read on exactly the over-budget hops
-    // that caused the truncation.
-    const bounded = cappedResult === source.result
-      ? source
-      : { ...source, result: cappedResult };
-    const boundedBytes = Buffer.byteLength(JSON.stringify(bounded));
-    if (prependedArrayBytes(retainedBytesSum, retained.length, boundedBytes) > MAX_STORED_EVIDENCE_KIND_BYTES) {
-      // The newest observation is never dropped outright: it is the evidence the next attempt needs.
-      if (retained.length === 0) {
-        const identityBytes = Buffer.byteLength(JSON.stringify({ ...source, result: '' }));
-        retained.push({
-          ...source,
-          result: capUtf8Text(source.result, Math.max(128, MAX_STORED_EVIDENCE_KIND_BYTES - identityBytes - 64)),
-        });
-      }
-      break;
-    }
-    retained.unshift(bounded);
-    retainedBytesSum += boundedBytes;
-  }
-  return retained;
-}
-
-/** Retains the newest corrections within a fixed checkpoint-memory share. */
-function boundStoredRejections(rejections: readonly ToolAttemptRejection[]): ToolAttemptRejection[] {
+/**
+ * Retains the newest corrections within a fixed checkpoint-memory share.
+ *
+ * @param phase - Logical phase label for the collapse log line; not otherwise used.
+ * @param debugLog - Secret-safe single-line diagnostic sink. Dropping a rejection to its newest
+ *   member's essential projection shrinks that single entry in place without changing the
+ *   retained count, so the caller's own length-delta log ({@link recordToolAttempt}) cannot see
+ *   it — this is the one place that in-place collapse is observable.
+ */
+function boundStoredRejections(
+  rejections: readonly ToolAttemptRejection[],
+  budget: TurnTokenBudget,
+  phase: string,
+  debugLog?: (message: string) => void,
+): ToolAttemptRejection[] {
   const retained: ToolAttemptRejection[] = [];
   let retainedBytesSum = 0;
   for (let index = rejections.length - 1; index >= 0; index--) {
     const rejection = rejections[index];
     const rejectionBytes = Buffer.byteLength(JSON.stringify(rejection));
-    if (prependedArrayBytes(retainedBytesSum, retained.length, rejectionBytes) > MAX_STORED_EVIDENCE_KIND_BYTES) {
-      if (retained.length === 0) retained.push(essentialCurrentRejection(rejection));
+    if (prependedArrayBytes(retainedBytesSum, retained.length, rejectionBytes) > storedEvidenceKindBytes(budget)) {
+      if (retained.length === 0) {
+        retained.push(essentialCurrentRejection(rejection));
+        debugLog?.(
+          `[AI] [Attempt] phase=${safeLogIdentifier(phase, 'unknown')} stored rejection collapsed by budget`
+          + ` tool=${safeLogIdentifier(rejection.toolName, 'unknown')}`
+          + ` callId=${safeCallId(rejection.callId)}`
+          + ` bytes=${rejectionBytes}`
+          + ` budget=${storedEvidenceKindBytes(budget)}`,
+        );
+      }
       break;
     }
     retained.unshift(rejection);
@@ -495,24 +788,43 @@ function boundStoredRejections(rejections: readonly ToolAttemptRejection[]): Too
 /**
  * Appends one attempt without resetting semantic failures after successful calls.
  *
+ * @remarks
+ * An accepted observation retires every rejection of the same tool recorded by an earlier attempt:
+ * the correction it carried has been applied, and replaying it as the standing exchange would
+ * instruct the model to resend a call it already repaired. A rejection from the same attempt as the
+ * accepted call is kept for one more generation.
+ *
  * @param state - Existing phase-local cumulative state.
  * @param attempt - Exactly one completed graph attempt.
+ * @param budget - The recording turn's budget, which sizes the retained-correction share; the
+ *   shipped defaults apply where a caller runs outside a turn.
+ * @param debugLog - Secret-safe single-line diagnostic sink, same convention as
+ *   {@link ToolGenerationAttemptInput.debugLog}. A correction the budget drops never reaches the
+ *   model again, so the drop is reported here rather than being invisible to a log reader.
  * @returns Updated state with independent semantic and physical-call hard stops.
  */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
   attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'semanticFailures' | 'observations' | 'rejections'>,
+  budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
+  debugLog?: (message: string) => void,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const semanticFailures = state.semanticFailures + attempt.semanticFailures;
-  const observations = boundStoredObservations([...state.observations, ...attempt.observations]);
-  const rejections = boundStoredRejections([...state.rejections, ...attempt.rejections]);
+  const observations = [...state.observations, ...attempt.observations];
+  const repairedTools = new Set(attempt.observations.map((observation) => observation.toolName));
+  const carried = [
+    ...state.rejections.filter((rejection) => !repairedTools.has(rejection.toolName)),
+    ...attempt.rejections,
+  ];
+  const rejections = boundStoredRejections(carried, budget, state.phase, debugLog);
+  if (rejections.length < carried.length) {
+    debugLog?.(`[AI] [Attempt] phase=${state.phase} stored corrections dropped by budget — dropped=${carried.length - rejections.length} carried=${carried.length} retained=${rejections.length}`);
+  }
   const acceptedTerminal = attempt.stop === 'final'
     || attempt.stop === 'gate'
     || attempt.stop === 'reroute'
     || attempt.stop === 'phase_complete';
-  // A truncation stop is phase-terminal on first occurrence: there is no settings ladder to retry
-  // at, so it takes priority over the cumulative-budget counters (which it never increments).
   const stopReason = acceptedTerminal
     ? null
     : attempt.stop === 'output_limit'
@@ -540,36 +852,25 @@ export function recordToolAttempt(
  * provider-native assistant/tool transcript. Angle brackets inside data are JSON escaped so DDL or
  * metadata cannot terminate the runtime delimiter. Invalid provider input is absent by type.
  * @param state - Cumulative typed state for the current logical phase or hop.
+ * @param budget - The rendering turn's budget, which sizes the block; the shipped defaults apply
+ *   where a caller runs outside a turn.
  * @returns Delimited engine-produced recovery data for one fresh model request.
  */
-export function renderToolAttemptContext(state: ToolPhaseAttemptState): string {
-  let observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
+export function renderToolAttemptContext(
+  state: ToolPhaseAttemptState,
+  budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
+): string {
+  const observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
   let rejections: readonly RenderedRejection[] = state.rejections;
   let rendered = renderAttemptContext(state, observations, rejections);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES;
-
-  if (overBudget() && state.observations.length > 0) {
-    const shrunk = shrinkObservationsByTruncateThenCollapse(
-      state,
-      (candidate) => renderAttemptContext(state, candidate, rejections),
-    );
-    observations = shrunk.observations;
-    rendered = shrunk.rendered;
-  }
+  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes(budget);
 
   if (overBudget() && state.rejections.length > 1) {
-    rejections = collapseOldestRejectionsToFit(state, observations);
-    rendered = renderAttemptContext(state, observations, rejections);
-  }
-
-  if (overBudget() && state.observations.length > 0) {
-    observations = collapseAllObservations(state);
+    rejections = collapseOldestRejectionsToFit(state, observations, budget);
     rendered = renderAttemptContext(state, observations, rejections);
   }
 
   if (overBudget() && state.rejections.length > 0) {
-    // Optional detail and structural fragments are the final shrink axis. The current rejection's
-    // complete correction hint and exact issue paths always survive for self-repair.
     const current = state.rejections[state.rejections.length - 1];
     rejections = [
       ...(state.rejections.length > 1 ? [rejectionSummary(state.rejections.length - 1)] : []),
@@ -581,43 +882,10 @@ export function renderToolAttemptContext(state: ToolPhaseAttemptState): string {
   return rendered;
 }
 
-type RenderedObservation = Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'> | {
-  readonly collapsed: true; readonly count: number; readonly bytes: number;
-};
+type RenderedObservation = Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'>;
 type RenderedRejection = ToolAttemptRejection | {
   readonly collapsed: true; readonly count: number; readonly reason: string;
 };
-
-/**
- * Truncates each observation over an equal per-item share, then collapses whichever remain
- * oversized oldest-first, re-invoking `render` after each step and measuring the serialized,
- * escaped, delimited bytes that will actually be sent to the model. Shared by
- * {@link renderToolAttemptContext} and {@link renderObservationsContext} so the shrink algorithm
- * exists once; `render` supplies the caller's own JSON envelope (with or without a `rejections`
- * field).
- */
-function shrinkObservationsByTruncateThenCollapse(
-  state: ToolPhaseAttemptState,
-  render: (observations: readonly RenderedObservation[]) => string,
-): { observations: RenderedObservation[]; rendered: string } {
-  const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / state.observations.length);
-  const truncated = state.observations.map((observation) => truncateObservationResult(observation, fairShare));
-  let rendered = render(truncated);
-  for (let i = 0; i < truncated.length && Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES; i++) {
-    truncated[i] = collapseObservation(state.observations[i]);
-    rendered = render(truncated);
-  }
-  return { observations: truncated, rendered };
-}
-
-/** Replaces every observation body with one count+byte-total summary, dropping all bodies entirely. */
-function collapseAllObservations(state: ToolPhaseAttemptState): RenderedObservation[] {
-  return [{
-    collapsed: true,
-    count: state.observations.length,
-    bytes: state.observations.reduce((total, observation) => total + Buffer.byteLength(observation.result), 0),
-  }];
-}
 
 /** Serializes and escapes an observations-only `<runtime_tool_context>` block (no rejections field). */
 function renderObservationsOnly(state: ToolPhaseAttemptState, observations: readonly RenderedObservation[]): string {
@@ -639,50 +907,32 @@ function renderObservationsOnly(state: ToolPhaseAttemptState, observations: read
  *
  * @remarks
  * Observations and rejections ride separate surfaces so accepted evidence is never re-read as part
- * of a correction (see {@link renderRejectionExchange}). The shrink ladder below shares
- * {@link shrinkObservationsByTruncateThenCollapse} with {@link renderToolAttemptContext} — only the
- * JSON payload's `rejections` field is absent.
+ * of a correction (see {@link renderRejectionExchange}). Every body here was measured against the
+ * evidence share before it was stored, so the block is rendered as held — no shrink step.
  * @param state - Cumulative typed state for the current logical phase or hop.
  * @returns Zero messages when there are no accepted observations, otherwise one delimited user-role
  * message.
  */
 function renderObservationsContext(state: ToolPhaseAttemptState): ModelMessage[] {
   if (state.observations.length === 0) return [];
-  let observations: readonly RenderedObservation[] = state.observations.map(observationForModel);
-  let rendered = renderObservationsOnly(state, observations);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES;
-
-  if (overBudget()) {
-    const shrunk = shrinkObservationsByTruncateThenCollapse(
-      state,
-      (candidate) => renderObservationsOnly(state, candidate),
-    );
-    observations = shrunk.observations;
-    rendered = shrunk.rendered;
-  }
-
-  if (overBudget()) {
-    observations = collapseAllObservations(state);
-    rendered = renderObservationsOnly(state, observations);
-  }
-
-  return [modelUserMessage(rendered)];
+  return [modelUserMessage(renderObservationsOnly(state, state.observations.map(observationForModel)))];
 }
 
 /** Structural shape of what {@link renderHeldDraftRepairContext} renders — never the full presentation envelope. */
 interface HeldDraftRepairContent {
   readonly sections?: unknown;
+  readonly notes?: unknown;
   readonly highlight_groups?: unknown;
 }
 
 const HELD_DRAFT_REPAIR_TAG = 'held_draft_repair_state';
 
-/** Serializes and escapes the held-draft repair block for one candidate `sections`/`highlight_groups` pair. */
-function renderHeldDraftRepairBlock(sections: unknown, highlightGroups: unknown): string {
-  const escaped = escapeDelimitedJson({ sections, highlight_groups: highlightGroups });
+/** Serializes and escapes the held-draft repair block for one candidate `sections`/`notes`/`highlight_groups` triple. */
+function renderHeldDraftRepairBlock(sections: unknown, notes: unknown, highlightGroups: unknown): string {
+  const escaped = escapeDelimitedJson({ sections, notes, highlight_groups: highlightGroups });
   return [
     `<${HELD_DRAFT_REPAIR_TAG}>`,
-    'This is your own currently held draft for this repair turn, not new database content. It shows exactly the sections and highlight_groups already on file — send only the authorized corrected fields; anything unchanged does not need to be resent.',
+    'This is your own currently held draft for this repair turn, not new database content. It shows exactly the sections, notes, and highlight_groups already on file — send only the authorized corrected fields; a resent list replaces the whole list, so repeat its unflagged elements exactly as they appear here.',
     escaped,
     `</${HELD_DRAFT_REPAIR_TAG}>`,
   ].join('\n');
@@ -697,6 +947,41 @@ function truncateHeldDraftSection(section: unknown, targetBytes: number): unknow
 }
 
 /**
+ * Length overruns named by the latest dispatched `present_result` rejection, keyed by issue path,
+ * each mapped to the rewrite marker that stands in for the rejected value in the held draft.
+ *
+ * @remarks
+ * The held draft tells the model to repeat unflagged elements exactly; showing the over-long value
+ * there verbatim invites the model to copy it back unchanged (measured: six identical resends of a
+ * 62-char label against a 60-char cap). The marker keeps the path's slot and its measured length and
+ * limit, never the text to copy. Read from the structured {@link ToolAttemptRejection.lengthOverruns},
+ * so every offender the rejection names is marked.
+ */
+function heldDraftLengthOverruns(state: ToolPhaseAttemptState | undefined): Map<string, string> {
+  const latest = state?.rejections.filter((rejection) => rejection.toolName === PRESENT_RESULT_TOOL && !rejection.preDispatch).at(-1);
+  return new Map((latest?.lengthOverruns ?? []).map(({ path, length, limit }) => [
+    path,
+    `[rewrite: was ${length} chars, limit ${limit}]`,
+  ]));
+}
+
+/** Replaces each overrun string leaf `<root>.<index>.<field>` of one held-draft list with its rewrite marker. */
+function markHeldDraftOverruns(root: string, list: unknown, overruns: ReadonlyMap<string, string>): unknown {
+  if (overruns.size === 0 || !Array.isArray(list)) return list;
+  return list.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    let marked: Record<string, unknown> | undefined;
+    for (const [field, value] of Object.entries(entry as Record<string, unknown>)) {
+      const marker = overruns.get(`${root}.${index}.${field}`);
+      if (marker === undefined || typeof value !== 'string') continue;
+      marked ??= { ...(entry as Record<string, unknown>) };
+      marked[field] = marker;
+    }
+    return marked ?? entry;
+  });
+}
+
+/**
  * Renders the session's held `present_result` repair draft as one explicitly labeled native
  * user-role message, distinct from both the untrusted-observations banner
  * ({@link renderObservationsContext}) and the current-rejection exchange
@@ -704,42 +989,51 @@ function truncateHeldDraftSection(section: unknown, targetBytes: number): unknow
  *
  * @remarks
  * The held draft gives the repair turn enough context to emit a scoped patch instead of
- * reconstructing the full envelope. It uses the same {@link MAX_ATTEMPT_CONTEXT_BYTES}
+ * reconstructing the full envelope. It uses the same {@link attemptContextBytes}
  * truncate-then-collapse policy as {@link renderObservationsContext}.
- * @param heldDraft - The exact `sections`/`highlight_groups` currently on hold, or `null`/`undefined`
+ * @param heldDraft - The exact `sections`/`notes`/`highlight_groups` currently on hold, or `null`/`undefined`
  * when no repairable draft is active for this call.
+ * @param budget - The rendering turn's budget, which sizes the block.
+ * @param overruns - {@link heldDraftLengthOverruns} of the prior state; each named value renders as its rewrite marker.
  * @returns Zero messages when nothing is held, otherwise one delimited user-role message.
  */
 function renderHeldDraftRepairContext(
   heldDraft: HeldDraftRepairContent | null | undefined,
+  budget: TurnTokenBudget,
+  overruns: ReadonlyMap<string, string> = new Map(),
 ): ModelMessage[] {
   if (!heldDraft) return [];
-  let sections = heldDraft.sections;
-  const highlightGroups = heldDraft.highlight_groups;
-  let rendered = renderHeldDraftRepairBlock(sections, highlightGroups);
-  const overBudget = (): boolean => Buffer.byteLength(rendered) > MAX_ATTEMPT_CONTEXT_BYTES;
+  let sections = markHeldDraftOverruns('sections', heldDraft.sections, overruns);
+  const notes = markHeldDraftOverruns('notes', heldDraft.notes, overruns);
+  const highlightGroups = markHeldDraftOverruns('highlight_groups', heldDraft.highlight_groups, overruns);
+  let rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
+  const overBudget = (): boolean => Buffer.byteLength(rendered) > attemptContextBytes(budget);
 
   if (overBudget() && Array.isArray(sections) && sections.length > 0) {
-    const fairShare = Math.floor(MAX_ATTEMPT_CONTEXT_BYTES / sections.length);
+    const fairShare = Math.floor(attemptContextBytes(budget) / sections.length);
     sections = sections.map((section) => truncateHeldDraftSection(section, fairShare));
-    rendered = renderHeldDraftRepairBlock(sections, highlightGroups);
+    rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
   }
 
   if (overBudget() && Array.isArray(sections) && sections.length > 0) {
     sections = { collapsed: true, count: sections.length };
-    rendered = renderHeldDraftRepairBlock(sections, highlightGroups);
+    rendered = renderHeldDraftRepairBlock(sections, notes, highlightGroups);
   }
 
   return [modelUserMessage(rendered)];
 }
 
-/** Reconstructs a bounded partial tool-call input from correction fragments only — never the raw rejected payload. */
+/**
+ * Reconstructs a bounded partial tool-call input from correction fragments only — never the raw
+ * rejected payload. Returns `{}` only when `fragments` is itself empty or absent, which — since
+ * every fragment producer ({@link correctionFragments}, {@link wholeCallFragments}) now emits at
+ * least one fragment for any non-`null`/`undefined` input, object or not — reflects a call whose own
+ * input was genuinely empty; it is never how a non-empty call collapses to nothing.
+ */
 function boundedCorrectionArgs(fragments: readonly ToolCorrectionFragment[] | undefined): Record<string, unknown> {
   if (!fragments || fragments.length === 0) return {};
   const result: Record<string, unknown> = {};
   for (const fragment of fragments) {
-    // correctionFragments() only ever emits `<root>.<index>` paths; anything else falls back to a
-    // flat key rather than dropping the correction silently.
     const match = /^([A-Za-z_][A-Za-z0-9_]*)\.(\d+)$/.exec(fragment.path);
     if (!match) {
       result[fragment.path] = fragment.value;
@@ -753,45 +1047,148 @@ function boundedCorrectionArgs(fragments: readonly ToolCorrectionFragment[] | un
 }
 
 /**
- * Renders the single most recent rejection as a native assistant tool-call + tool-result exchange.
+ * `present_result` fields {@link renderHeldDraftRepairContext} already renders in full whenever a
+ * draft is held for this same attempt.
+ */
+const HELD_DRAFT_DUPLICATE_ROOTS: ReadonlySet<string> = new Set(['sections', 'notes', 'highlight_groups']);
+
+/**
+ * Collapses every correction fragment rooted in a {@link HELD_DRAFT_DUPLICATE_ROOTS} field to one
+ * count-only placeholder per root, leaving every other fragment at its normal bound.
  *
  * @remarks
- * Only the newest rejection is actionable as a native exchange: it is the one the model must repair
- * next, and replaying superseded corrections re-instructs it toward attempts it has already
- * abandoned. The accumulated history stays available through
- * {@link renderToolAttemptContext}. Rejection fields are already byte-bounded at construction
- * ({@link capRejectionText}, {@link MAX_REJECTION_HINT_BYTES}, {@link MAX_REJECTION_DETAIL_BYTES},
- * {@link MAX_CORRECTION_FRAGMENT_BYTES}), so rendering exactly one rejection needs no further shrink
- * ladder. A synthetic `missing_required_tool_call` rejection carries no provider `callId` and cannot
- * form a valid assistant/tool pair — it falls back to one plain user-role note.
- * @param state - Cumulative typed state for the current logical phase or hop.
- * @returns Zero messages when there is no rejection, one fallback user note for a callId-less
- * rejection, or one assistant tool-call followed immediately by its paired tool result.
+ * Applied only when the rejected call's own tool matches the tool whose draft
+ * {@link renderHeldDraftRepairContext} rendered in full earlier in the same attempt: replaying one
+ * of these three fields here too would resend content already fully visible in the held-draft
+ * block, doubling the token cost of the exchange for no new information. Every other field
+ * (`name`, `summary`, `title`, `is_update`, ...) is not carried by that block, so it stays exactly
+ * what {@link boundedCorrectionArgs} would otherwise render — the model's own sent keys, never
+ * blanked to satisfy this collapse.
  */
-function renderRejectionExchange(state: ToolPhaseAttemptState): ModelMessage[] {
-  if (state.rejections.length === 0) return [];
-  const rejection = state.rejections[state.rejections.length - 1];
-  if (!rejection.callId) {
-    const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
-    return [modelUserMessage(note)];
+function collapseHeldDraftDuplicateFragments(
+  fragments: readonly ToolCorrectionFragment[] | undefined,
+): readonly ToolCorrectionFragment[] | undefined {
+  if (!fragments || fragments.length === 0) return fragments;
+  const rootCounts = new Map<string, number>();
+  for (const fragment of fragments) {
+    const root = fragment.path.split('.')[0];
+    if (HELD_DRAFT_DUPLICATE_ROOTS.has(root)) rootCounts.set(root, (rootCounts.get(root) ?? 0) + 1);
   }
-  const input = boundedCorrectionArgs(rejection.correctionFragments);
-  const output: Record<string, unknown> = { code: rejection.code, reason: rejection.reason };
-  if (rejection.hint !== undefined) output.hint = rejection.hint;
-  if (rejection.detail !== undefined) output.detail = rejection.detail;
-  if (rejection.issuePaths !== undefined) output.issuePaths = rejection.issuePaths;
-  return [
-    modelToolCallMessage([{
-      callId: rejection.callId,
-      toolName: rejection.toolName,
-      input,
-    }]),
-    modelToolResultMessage(
-      rejection.callId,
-      rejection.toolName,
-      JSON.stringify(output),
-    ),
-  ];
+  if (rootCounts.size === 0) return fragments;
+  const collapsedRoots = new Set<string>();
+  const collapsed: ToolCorrectionFragment[] = [];
+  for (const fragment of fragments) {
+    const root = fragment.path.split('.')[0];
+    if (!rootCounts.has(root)) {
+      collapsed.push(fragment);
+      continue;
+    }
+    if (collapsedRoots.has(root)) continue;
+    collapsedRoots.add(root);
+    collapsed.push({ path: root, value: { collapsed: true, count: rootCounts.get(root)! } });
+  }
+  return collapsed;
+}
+
+/**
+ * Renders every pending rejection as a native assistant tool-call + tool-result exchange, oldest first.
+ *
+ * @remarks
+ * A later correction must never evict an earlier one's repair data, because the continuation note
+ * tells the model to act on "the correction above" — all of it must be above. The byte-budgeted
+ * digest for the detect-entry phase remains
+ * {@link renderToolAttemptContext}. Rejection fields are already bounded at construction
+ * ({@link capRejectionText}, {@link MAX_REJECTION_HINT_BYTES}, {@link MAX_REJECTION_DETAIL_BYTES},
+ * {@link MAX_CORRECTION_FRAGMENT_BYTES}), so rendering the stack needs no further shrink ladder;
+ * at most {@link MAX_TOOL_PROVIDER_CALLS} rejections exist in one hop state. A synthetic
+ * `missing_required_tool_call` rejection carries no provider `callId` — nothing
+ * was ever dispatched, so there is no call to attribute an id to — and cannot form a genuine
+ * assistant-call/tool-result pair. It instead renders as a synthesized assistant turn (the model's
+ * own buffered {@link ToolAttemptRejection.attemptedText}, capped at construction, or
+ * empty when the generation carried no text at all)
+ * followed by one plain user-role correction note. Without that assistant turn the retry transcript
+ * carried no `assistant` message for this failure at all (roles `['system','user','user','user']`
+ * on the traced reference case) and the correction read as an unmotivated new instruction rather
+ * than feedback on the model's own prior turn.
+ *
+ * This is the one renderer of the replayed assistant tool call: every rejection source (dispatched
+ * or pre-dispatch, held draft or none, object or non-object original input) reaches the model
+ * through this same {@link boundedCorrectionArgs} projection, so a replayed call is never an empty
+ * object while the rejected call itself was not. A dispatched rejection on the tool whose draft was
+ * just rendered in full IS that draft's own held content (it is the historical rejection that put
+ * the draft on hold), so its duplicate-carried fields collapse via
+ * {@link collapseHeldDraftDuplicateFragments} instead of repeating text already on screen. A
+ * pre-dispatch rejection on that same tool never reached the draft — its payload may be new content
+ * the draft does not yet hold — and replays in full, uncollapsed.
+  * @returns Zero messages when there is no rejection; otherwise every pending rejection's exchange,
+  * oldest first — a synthesized assistant echo plus one user-role correction note for a callId-less
+  * rejection, one assistant tool-call and its paired tool result for a rejection with a real
+  * provider `callId` — with exactly one user-role continuation note (see
+  * {@link rejectionContinuationMessage}) after the newest exchange when it carries a `callId`.
+  * @param state - Cumulative typed state for the current logical phase or hop.
+  * @param draftHeldFor - Tool whose held repair draft is rendered in the same attempt; a dispatched
+  * rejection on this tool collapses the draft's own fields ({@link HELD_DRAFT_DUPLICATE_ROOTS})
+  * instead of repeating them.
+  */
+function renderRejectionExchange(state: ToolPhaseAttemptState, draftHeldFor?: string): ModelMessage[] {
+  if (state.rejections.length === 0) return [];
+  const messages: ModelMessage[] = [];
+  for (const rejection of state.rejections) {
+    if (!rejection.callId) {
+      const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
+      messages.push(modelAssistantMessage(rejection.attemptedText ?? ''), modelUserMessage(note));
+    } else {
+      const fragments = rejection.toolName === draftHeldFor && !rejection.preDispatch
+        ? collapseHeldDraftDuplicateFragments(rejection.correctionFragments)
+        : rejection.correctionFragments;
+      const input = boundedCorrectionArgs(fragments);
+      const output: Record<string, unknown> = { code: rejection.code, reason: rejection.reason };
+      if (rejection.hint !== undefined) output.hint = rejection.hint;
+      if (rejection.detail !== undefined) output.detail = rejection.detail;
+      if (rejection.issuePaths !== undefined) output.issuePaths = rejection.issuePaths;
+      messages.push(
+        modelToolCallMessage([{
+          callId: rejection.callId,
+          toolName: rejection.toolName,
+          input,
+        }]),
+        modelToolResultMessage(
+          rejection.callId,
+          rejection.toolName,
+          JSON.stringify(output),
+        ),
+      );
+    }
+  }
+  const newest = state.rejections[state.rejections.length - 1];
+  if (newest.callId) messages.push(rejectionContinuationMessage(newest.code));
+  return messages;
+}
+
+/**
+ * The user-role continuation note closing every replayed rejection exchange.
+ *
+ * @remarks
+ * Provider contract, not prose: a request whose history ends on a tool result keeps the replayed
+ * function call inside the provider's current turn, where Gemini 3 enforces thought-signature echo
+ * on every function call. The VS Code LM API's `LanguageModelToolCallPart` carries no signature
+ * field, so the signature can be neither stored nor re-sent, and the whole turn fails with an
+ * unrecoverable provider 400 ("Function call is missing a thought_signature"). Google's documented
+ * turn boundary is the most recent user text message — this note ends the turn the exchange
+ * belongs to, so the replayed call is no longer signature-validated. Every other provider accepts
+ * user content after a tool result unchanged; the rejection's own correction keeps riding the
+ * paired tool result, and the note only directs the model to act on it.
+ *
+ * The note always ships, for the reason above; what varies is whether it asks for a resend. For a
+ * {@link NO_RETRY_REJECTION_CODES} rejection there is no call to correct, and asking for one
+ * contradicts the hint the model just read.
+ *
+ * @param code - The rejection's code, which decides which of the two directions is given.
+ */
+function rejectionContinuationMessage(code: string): ModelMessage {
+  return modelUserMessage(NO_RETRY_REJECTION_CODES.has(code)
+    ? 'No corrective call is available. Answer the user from the completed exploration; do not call a tool again this turn.'
+    : 'Continue the current task: act on the correction above and resend the corrected tool call.');
 }
 
 /** Serializes and escapes the exact delimited message delivered to the model. */
@@ -819,13 +1216,14 @@ function renderAttemptContext(
 function collapseOldestRejectionsToFit(
   state: ToolPhaseAttemptState,
   observations: readonly RenderedObservation[],
+  budget: TurnTokenBudget,
 ): RenderedRejection[] {
   const project = (count: number): RenderedRejection[] => [rejectionSummary(count), ...state.rejections.slice(count)];
   let low = 1;
   let high = state.rejections.length - 1;
   while (low < high) {
     const count = Math.floor((low + high) / 2);
-    if (Buffer.byteLength(renderAttemptContext(state, observations, project(count))) <= MAX_ATTEMPT_CONTEXT_BYTES) high = count;
+    if (Buffer.byteLength(renderAttemptContext(state, observations, project(count))) <= attemptContextBytes(budget)) high = count;
     else low = count + 1;
   }
   return project(low);
@@ -839,6 +1237,32 @@ function rejectionSummary(count: number): RenderedRejection {
   };
 }
 
+/**
+ * Bounded stand-in for correction fragments a size collapse cannot retain in full: the same
+ * `raw_input` path {@link wholeCallFragments} already uses for a non-object payload, so
+ * {@link boundedCorrectionArgs} still projects a non-empty replayed call, carrying the
+ * {@link OmittedStructuredValue} shape so the size is visible instead of the field silently
+ * vanishing.
+ */
+function collapsedCorrectionFragment(fragments: readonly ToolCorrectionFragment[]): ToolCorrectionFragment {
+  return { path: 'raw_input', value: { omitted: true, bytes: Buffer.byteLength(serializedJson(fragments) ?? '') } };
+}
+
+/**
+ * Minimal projection of `rejection` retained when even one entry does not fit the stored-evidence
+ * share.
+ *
+ * @remarks
+ * `detail` is dropped — it is optional structural context, not required for a valid replay.
+ * Everything else survives: `correctionFragments` collapses to one bounded placeholder
+ * ({@link collapsedCorrectionFragment}) rather than disappearing, so
+ * {@link renderRejectionExchange}'s replayed tool call is never an empty object when the rejected
+ * call itself was not — the invariant that module states at its own top. `inputHash`,
+ * `preDispatch`, and `unproductiveStreak` are a hash, a boolean, and a small integer — fixed-size
+ * and bytes-negligible next to payload text — and are kept unconditionally so the next attempt's
+ * unproductive-resend absorption ({@link isUnproductiveResend}) and pre-dispatch/dispatched
+ * distinction still see the bookkeeping this same rejection would have carried uncollapsed.
+ */
 function essentialCurrentRejection(rejection: ToolAttemptRejection): ToolAttemptRejection {
   return {
     callId: capUtf8Text(rejection.callId, 128),
@@ -847,6 +1271,13 @@ function essentialCurrentRejection(rejection: ToolAttemptRejection): ToolAttempt
     reason: capUtf8Text(rejection.reason, MAX_REJECTION_TEXT_CHARS * 4),
     ...(rejection.hint !== undefined ? { hint: rejection.hint } : {}),
     ...(rejection.issuePaths !== undefined ? { issuePaths: rejection.issuePaths } : {}),
+    ...(rejection.lengthOverruns !== undefined ? { lengthOverruns: rejection.lengthOverruns } : {}),
+    ...(rejection.correctionFragments && rejection.correctionFragments.length > 0
+      ? { correctionFragments: [collapsedCorrectionFragment(rejection.correctionFragments)] }
+      : {}),
+    ...(rejection.inputHash !== undefined ? { inputHash: rejection.inputHash } : {}),
+    ...(rejection.preDispatch !== undefined ? { preDispatch: rejection.preDispatch } : {}),
+    ...(rejection.unproductiveStreak !== undefined ? { unproductiveStreak: rejection.unproductiveStreak } : {}),
   };
 }
 
@@ -854,27 +1285,6 @@ function observationForModel(
   observation: ToolAttemptObservation,
 ): Pick<ToolAttemptObservation, 'callId' | 'toolName' | 'result'> {
   return { callId: observation.callId, toolName: observation.toolName, result: observation.result };
-}
-
-/** Keeps a byte-bounded prefix of an observation body, appending the approved omission marker when it drops content. */
-function truncateObservationResult(observation: ToolAttemptObservation, targetBytes: number): RenderedObservation {
-  if (Buffer.byteLength(observation.result) <= targetBytes) return observationForModel(observation);
-  const kept = longestPrefixFitting(observation.result, candidate => Buffer.byteLength(candidate) <= targetBytes);
-  const dropped = Buffer.byteLength(observation.result) - Buffer.byteLength(kept);
-  return {
-    callId: observation.callId,
-    toolName: observation.toolName,
-    result: `${kept}…[+${dropped} bytes omitted from retry context — the full result was delivered when this call first ran]`,
-  };
-}
-
-/** Replaces an observation body with the approved identity+size stub, dropping the body entirely. */
-function collapseObservation(observation: ToolAttemptObservation): RenderedObservation {
-  return {
-    callId: observation.callId,
-    toolName: observation.toolName,
-    result: `{"callId":"…","toolName":"…","omitted":true,"bytes":${Buffer.byteLength(observation.result)}}`,
-  };
 }
 
 function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinition[] {
@@ -889,47 +1299,144 @@ function rejectionFromInvalid(
   call: Extract<GeneratedToolCall, { valid: false }>,
   registry: IToolRegistry<string>,
 ): ToolOutcomeData {
+  const issuePaths = call.issuePaths ?? [];
+  const fragments = replayFragments(call.input, issuePaths);
   return {
     status: 'rejected',
     code: call.code,
     message: capRejectionText(call.reason),
     correction: {
-      // Schema-invalid calls carry the standing repair instruction: the rejected call is replayed
-      // without arguments, so without an explicit directive the model regenerates blind instead of
-      // editing the one offending field.
-      ...(call.code === 'invalid_tool_input' ? { hint: INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
-      ...(call.code === 'unknown_tool' ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
+      ...(call.code === REJECTION_CODES.invalidToolInput ? { hint: call.hint ?? INVALID_TOOL_INPUT_REPAIR_HINT } : {}),
+      ...(call.code === REJECTION_CODES.unknownTool ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
-      ...(call.issuePaths && call.issuePaths.length > 0 ? { issuePaths: [...call.issuePaths] } : {}),
+      ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
+      ...(fragments.length > 0 ? { fragments } : {}),
     },
-    // The valid tool-name set is the fact a hallucinated tool name needs; kept as data alongside the
-    // fixed hint sentence rather than folded into it, so the sentence never grows with the catalog.
-    ...(call.code === 'unknown_tool'
+    ...(call.code === REJECTION_CODES.unknownTool
       ? { detail: { allowedTools: registry.getTools().map((tool) => tool.name) } }
       : {}),
   };
 }
 
-/** Selects only correction-relevant structural array entries; prose and result sections are excluded. */
+/** The one tool whose rejected draft the session holds for repair (`presentResultRepairDraft`). */
+const PRESENT_RESULT_TOOL = 'lineage_present_result';
+
+/**
+ * Issue-path roots whose resend replaces the entire list — every root here is rewritten whole by
+ * the model on a resend, never patched positionally.
+ *
+ * @remarks
+ * A `present_result` answer-body list (`sections`, `notes`, `highlight_groups`) and a
+ * `submit_findings` per-hop list (`column_flow`, `questions`, `prune_neighbors`) share the
+ * same resend shape: the model emits the full array again, not a patch at the flagged index, so a
+ * replay showing only the flagged element would leave every other element reconstructed from
+ * memory or dropped as a hole. Every root here replays complete, within
+ * {@link WHOLE_LIST_CORRECTION_BYTES} — an element that cannot fit its byte share collapses to the
+ * same size-only stub {@link boundListElementFragment} already uses, never a hole.
+ */
+const WHOLE_LIST_CORRECTION_ROOTS: ReadonlySet<string> = new Set([
+  'sections',
+  'notes',
+  'highlight_groups',
+  'column_flow',
+  'questions',
+  'prune_neighbors',
+]);
+
+/**
+ * Byte-bounds one whole-list element with the truncate-then-collapse policy
+ * {@link renderHeldDraftRepairContext} already applies to a held section: cap the element's `text`
+ * body to whatever {@link MAX_CORRECTION_FRAGMENT_BYTES} leaves after its other fields, then fall
+ * back to the shared size-only stub when even the truncated element does not fit. An element
+ * without a `text` body is bounded exactly as a `submit_findings` entry is.
+ */
+function boundListElementFragment(element: unknown, elementBytes: number): unknown {
+  const overhead = serializedJson(truncateHeldDraftSection(element, 0));
+  const overheadBytes = overhead === undefined ? elementBytes : Buffer.byteLength(overhead);
+  const textBudget = Math.max(0, elementBytes - overheadBytes);
+  return boundStructuredValue(truncateHeldDraftSection(element, textBudget), elementBytes);
+}
+
+/**
+ * Total byte budget one whole-list replay may spend — the same spend four full fragments cost, so a
+ * list is never cheaper to drop than to carry.
+ *
+ * @remarks
+ * A whole-list root is replayed complete or not at all, because its resend replaces the list and a
+ * partial replay would read back as a deletion of the elements left out. Completeness is therefore
+ * held by bytes, not by entry count: every element gets an equal share of this budget, an element
+ * over its share is truncated then stubbed by {@link boundListElementFragment}, and no list is ever
+ * silently skipped for being long.
+ */
+const WHOLE_LIST_CORRECTION_BYTES = MAX_CORRECTION_FRAGMENTS * MAX_CORRECTION_FRAGMENT_BYTES;
+
+/** Matches an issue path that flags one element of a {@link WHOLE_LIST_CORRECTION_ROOTS} list. */
+const WHOLE_LIST_ISSUE_PATH = new RegExp(`^(${[...WHOLE_LIST_CORRECTION_ROOTS].join('|')})\\.(\\d+)(?:\\.|$)`);
+
+/** Replays every list an issue path flags, each complete under the whole-list byte policy. */
 function correctionFragments(input: unknown, issuePaths: readonly string[]): ToolCorrectionFragment[] {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
   const record = input as Record<string, unknown>;
   const fragments: ToolCorrectionFragment[] = [];
-  const seen = new Set<string>();
+  const replayedRoots = new Set<string>();
   for (const issuePath of issuePaths) {
-    const match = /^(column_flow|route_requests|prune_neighbors)\.(\d+)(?:\.|$)/.exec(issuePath);
+    const match = WHOLE_LIST_ISSUE_PATH.exec(issuePath);
     if (!match) continue;
     const root = match[1];
     const index = Number(match[2]);
     const values = record[root];
-    if (!Array.isArray(values) || !Number.isSafeInteger(index) || index < 0 || index >= values.length) continue;
-    const path = `${root}.${index}`;
-    if (seen.has(path)) continue;
-    seen.add(path);
-    fragments.push({ path, value: boundStructuredValue(values[index], MAX_CORRECTION_FRAGMENT_BYTES) });
-    if (fragments.length >= MAX_CORRECTION_FRAGMENTS) break;
+    if (!Array.isArray(values) || !Number.isSafeInteger(index) || index >= values.length) continue;
+    if (replayedRoots.has(root)) continue;
+    replayedRoots.add(root);
+    const elementBytes = Math.floor(WHOLE_LIST_CORRECTION_BYTES / values.length);
+    values.forEach((element, position) => {
+      fragments.push({ path: `${root}.${position}`, value: boundListElementFragment(element, elementBytes) });
+    });
   }
   return fragments;
+}
+
+/**
+ * Projects a whole call for a rejection whose issue paths flag no list entry.
+ *
+ * @remarks
+ * A pathless rejection (a route or prune refusal) or one flagging a scalar field (an over-long
+ * `title`) orders a full resend with the untouched fields carried over, so the replay is the model's only view of what it sent: every list root is replayed
+ * complete under the whole-list byte policy, every other field bounded as one fragment. Replaying
+ * `{}` instead left the model rebuilding the call from memory and reintroducing repaired entries.
+ *
+ * A non-`null`/`undefined` input that is not a plain object — the raw unparsed `arguments` string a
+ * harness port carries on `argumentsIssue` (`openAiCompatiblePort.ts`), or any other scalar/array
+ * top-level payload — has no field names to project onto, but the call was not empty: it is bounded
+ * and replayed as one labeled fragment rather than silently dropped to `{}`.
+ */
+function wholeCallFragments(input: unknown): ToolCorrectionFragment[] {
+  if (input === undefined || input === null) return [];
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    return [{ path: 'raw_input', value: boundStructuredValue(input, MAX_CORRECTION_FRAGMENT_BYTES) }];
+  }
+  const fragments: ToolCorrectionFragment[] = [];
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (Array.isArray(value) && value.length > 0) {
+      const elementBytes = Math.floor(WHOLE_LIST_CORRECTION_BYTES / value.length);
+      value.forEach((element, position) => {
+        fragments.push({ path: `${key}.${position}`, value: boundListElementFragment(element, elementBytes) });
+      });
+      continue;
+    }
+    fragments.push({ path: key, value: boundStructuredValue(value, MAX_CORRECTION_FRAGMENT_BYTES) });
+  }
+  return fragments;
+}
+
+/**
+ * The fragments a rejected call is replayed with: the flagged list entries when the issue paths
+ * project onto any, otherwise the whole bounded call ({@link wholeCallFragments}) — a replay is
+ * never empty while the repair hint orders every other field kept unchanged.
+ */
+function replayFragments(input: unknown, issuePaths: readonly string[]): ToolCorrectionFragment[] {
+  const flagged = correctionFragments(input, issuePaths);
+  return flagged.length > 0 ? flagged : wholeCallFragments(input);
 }
 
 function rejectionFromResult(
@@ -940,7 +1447,9 @@ function rejectionFromResult(
     const rejection = readToolError(JSON.parse(resultText));
     if (!rejection) return null;
     const issuePaths = rejectionIssuePaths(rejection.detail);
-    const fragments = correctionFragments(call.input, issuePaths);
+    const entryIds = rejectionEntryIds(rejection.detail);
+    const lengthOverruns = rejectionLengthOverruns(rejection.detail);
+    const fragments = replayFragments(call.input, issuePaths);
     return {
       status: 'rejected',
       code: rejection.code,
@@ -951,6 +1460,8 @@ function rejectionFromResult(
       correction: {
         ...(rejection.hint ? { hint: capUtf8Text(rejection.hint, MAX_REJECTION_HINT_BYTES) } : {}),
         ...(issuePaths.length > 0 ? { issuePaths } : {}),
+        ...(entryIds.length > 0 ? { entryIds } : {}),
+        ...(lengthOverruns.length > 0 ? { lengthOverruns } : {}),
         ...(fragments.length > 0 ? { fragments } : {}),
       },
     };
@@ -965,9 +1476,6 @@ function recordToolOutcome(
   calls: ToolAttemptCall[],
   observations: ToolAttemptObservation[],
   rejections: ToolAttemptRejection[],
-  // Passed only by call sites the instrumented registry never sees (pre-dispatch invalid calls and
-  // batch-closed siblings) — dispatched outcomes are already traced by the registry decorator, so
-  // passing the hook there would duplicate their `tool` records.
   trace?: (rejection: { toolName: string; code: string }) => void,
 ): ToolAttemptRejection | undefined {
   const outcome = { callId: call.callId, toolName: call.toolName, ...data } as ToolOutcome;
@@ -992,6 +1500,8 @@ function recordToolOutcome(
       ...(outcome.correction.hint ? { hint: outcome.correction.hint } : {}),
       ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
       ...(outcome.correction.issuePaths ? { issuePaths: outcome.correction.issuePaths } : {}),
+      ...(outcome.correction.entryIds ? { entryIds: outcome.correction.entryIds } : {}),
+      ...(outcome.correction.lengthOverruns ? { lengthOverruns: outcome.correction.lengthOverruns } : {}),
       ...(outcome.correction.fragments ? { correctionFragments: outcome.correction.fragments } : {}),
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
@@ -1025,6 +1535,34 @@ function safeCallId(callId: string): string {
 /** Bounds a provider-controlled identifier for key=value debug fields. */
 function safeLogIdentifier(value: string, fallback: string): string {
   return safeIdentifier(value, { extraChars: '.:-', replacement: '_', maxLength: 100, fallback });
+}
+
+/**
+ * Writes the `[Reject]` log line for a rejection no tool dispatch stands behind.
+ *
+ * @remarks
+ * Dispatched rejections are logged by the registry's own result path; a rejection raised here
+ * reaches the trace through {@link SyntheticRejectionTrace} and would otherwise be counted by the
+ * trace and by no log line, leaving the two sources disagreeing on the run's rejection count.
+ */
+function logSyntheticRejection(
+  input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase'>,
+  source: string,
+  call: ToolOutcomeIdentity,
+  code: string,
+  reason: string,
+): void {
+  input.debugLog?.(
+    `[Reject] source=${source}`
+    + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
+    + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
+    + ` callId=${safeCallId(call.callId)}`
+    + ` code=${safeLogIdentifier(code, 'unknown')}`
+    + ` group=${classifyRejectionCode(code)}`
+    + ` reason=${sanitizeForLog(reason)}`
+    + ' issuePaths=none'
+    + ` charged=${isChargeableRejection(code)}`,
+  );
 }
 
 /** Renders provider validation paths without exposing any rejected payload values. */
@@ -1069,16 +1607,15 @@ export async function executeToolAttempt(
   options: ToolAttemptExecutionOptions = {},
 ): Promise<ToolAttemptResult> {
   const priorState = options.priorState;
-  // The engine appends the native retry exchange here so no converse call-site can forget or misplace it.
-  // Observations, the held present_result repair draft (when one is active), and the current
-  // rejection are three independent, conversation-native message groups — never the synthetic mixed
-  // digest {@link renderToolAttemptContext} still renders for detectEntryNode.
+  const heldDraftMessages = priorState && priorState.providerCalls > 0
+    ? renderHeldDraftRepairContext(options.presentResultRepairDraftContext?.(), model.budget, heldDraftLengthOverruns(priorState))
+    : [];
   const messages = priorState && priorState.providerCalls > 0
     ? [
         ...plan.input.messages,
         ...renderObservationsContext(priorState),
-        ...renderHeldDraftRepairContext(options.presentResultRepairDraftContext?.()),
-        ...renderRejectionExchange(priorState),
+        ...heldDraftMessages,
+        ...renderRejectionExchange(priorState, heldDraftMessages.length > 0 ? PRESENT_RESULT_TOOL : undefined),
       ]
     : plan.input.messages;
   return executeToolGenerationAttempt(model, {
@@ -1096,6 +1633,7 @@ export async function executeToolAttempt(
     priorRejection: priorState && priorState.rejections.length > 0
       ? priorState.rejections[priorState.rejections.length - 1]
       : undefined,
+    priorRejections: priorState?.rejections,
   });
 }
 
@@ -1115,6 +1653,25 @@ interface SynthesizedRejectionSpec {
   readonly emptyReason: string;
   readonly nonEmptyReason: string;
   readonly hint: string;
+  /**
+   * Whether this synthesized rejection counts against the semantic repair allowance.
+   *
+   * @remarks
+   * False only for the truncated-before-required-call class: an output-limit stop is a mechanical
+   * event that says nothing about the model's content accuracy, so it charges the physical
+   * provider-call budget alone ({@link MAX_TOOL_PROVIDER_CALLS} still bounds the retry loop) — the
+   * same precedent {@link REJECTION_CODES.emptyGeneration} already follows in
+   * {@link NON_CHARGEABLE_REJECTION_CODES}. A text-instead-of-call finish stays chargeable: that is
+   * an answer-format defect the correction exists to repair.
+   */
+  readonly chargeable: boolean;
+  /**
+   * The raw generation text this attempt produced instead of the required call, whitespace and
+   * all. Capped into {@link ToolAttemptRejection.attemptedText} via {@link capRejectionText}; never
+   * pre-trimmed here so an all-whitespace generation is correctly treated as having no echoable
+   * text.
+   */
+  readonly attemptedText: string;
 }
 
 /**
@@ -1139,6 +1696,7 @@ function emitSynthesizedRejection(
     code: spec.emptyGeneration ? spec.emptyCode : spec.nonEmptyCode,
     reason: capRejectionText(spec.emptyGeneration ? spec.emptyReason : spec.nonEmptyReason),
     hint: capRejectionText(spec.hint),
+    ...(spec.attemptedText.trim().length > 0 ? { attemptedText: capRejectionText(spec.attemptedText) } : {}),
   };
   rejections.push(rejection);
   input.debugLog?.(
@@ -1147,100 +1705,73 @@ function emitSynthesizedRejection(
     + ` tool=${safeLogIdentifier(rejection.toolName, 'unknown')}`
     + ' callId=none'
     + ` code=${rejection.code}`
+    + ` group=${classifyRejectionCode(rejection.code)}`
     + ` reason=${sanitizeForLog(rejection.reason)}`
-    + ' issuePaths=none',
+    + ' issuePaths=none'
+    + ` charged=${spec.chargeable && isChargeableRejection(rejection.code)}`,
   );
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
-  return isChargeableRejection(rejection.code) ? 1 : 0;
+  return spec.chargeable && isChargeableRejection(rejection.code) ? 1 : 0;
+}
+
+/** Everything {@link dispatchToolCallBatch} reads before its first call, held explicit rather than closed over. */
+interface ToolCallDispatchLoopInput {
+  readonly model: SingleGenerationModelPort;
+  readonly input: ToolGenerationAttemptInput;
+  /** One provider generation's ordered tool calls, dispatched in this same order. */
+  readonly toolCalls: readonly GeneratedToolCall[];
+  /** Remaining charges before this batch's own semantic-failure budget closes it. */
+  readonly semanticFailuresRemaining: number;
+  /**
+   * Earlier entries win on a duplicate key, mirroring the `[...priorObservations, ...observations].find(...)`
+   * scan order: earlier-attempt observations seed first, then this batch's own accepted reads fold in
+   * as they are recorded, and a key already present is never overwritten.
+   */
+  readonly reusableObservations: Map<string, ToolAttemptObservation>;
+  /**
+   * Keys already answered by an earlier generation: a resend of one of these is the model asking
+   * again for a result it holds, and is answered with a `duplicate_read` envelope instead of a
+   * silent replay it cannot see. Same-batch siblings stay silently reused.
+   */
+  readonly priorObservationKeys: ReadonlySet<string>;
+  /**
+   * Observation bytes already held for this phase/hop, before this batch's own accepted reads. An
+   * accepted body is stored whole or not at all, so this running total is what each candidate is
+   * measured against as the batch proceeds.
+   */
+  readonly heldObservationBytes: number;
+}
+
+/** Accumulated outcome of dispatching one provider batch of tool calls, in order, to completion. */
+interface ToolCallDispatchLoopResult {
+  readonly calls: ToolAttemptCall[];
+  readonly observations: ToolAttemptObservation[];
+  readonly rejections: ToolAttemptRejection[];
+  readonly gate: unknown | null;
+  readonly reroute: boolean;
+  readonly phaseComplete: boolean;
+  readonly cancelled: boolean;
+  /** Rejections charged to the phase's semantic-failure budget by this batch alone. */
+  readonly chargeableFailures: number;
 }
 
 /**
- * Runs exactly one provider tool-generation turn and classifies its outcome.
+ * Dispatches one provider-emitted batch of tool calls in order, closing the batch the moment a
+ * gate, reroute, phase completion or budget exhaustion makes every later sibling moot.
  *
  * @remarks
- * Enforces the single-generation model-port contract (exactly one provider call per attempt),
- * classifies a truncated or filtered generation as an `output_limit` stop before any tool or
- * session effect can commit from incomplete output, then dispatches the returned tool calls
- * against gate/reroute/phase-completion detection and the semantic-failure budget.
+ * A pure move of {@link executeToolGenerationAttempt}'s per-call loop: the strike count, the
+ * reusable-observation map and the prior-observation-key set are threaded through as explicit
+ * parameters and the accumulated result, never captured only as a closure the caller cannot see.
+ * Once `closedBy` or the budget closes the batch, every remaining sibling is recorded as
+ * `phase_closed` / `budget_closed` without dispatch — that closure state is internal to this one
+ * batch and does not survive past the return.
  *
- * @param model - Request-scoped model port; must record exactly one provider call.
- * @param input - Turn context: message history, registry, tool choice, and phase/gate detectors.
- * @returns The attempt's calls, observations, rejections, and terminal `stop` classification.
+ * @returns The batch's calls, observations, rejections and terminal-control signals; never a
+ *   provider transcript.
  */
-export async function executeToolGenerationAttempt(
-  model: SingleGenerationModelPort,
-  input: ToolGenerationAttemptInput,
-): Promise<ToolAttemptResult> {
-  const beforeCalls = model.modelCalls;
-  const streamText = input.proseGate !== 'buffer-until-tool';
-  // Full-array pairing assertion at the single tool-turn send chokepoint: a composition bug in
-  // any history-splicing site fails here as a diagnosable internal error instead of an opaque
-  // provider HTTP 400 raised deep in the transport stack.
-  assertToolPairingWellFormed(input.messages);
-  const generated = await model.generateToolTurn({
-    messages: input.messages,
-    system: input.system,
-    tools: modelToolDefinitions(input.registry),
-    toolChoice: input.toolChoice,
-    signal: input.signal,
-    phase: input.phase,
-    instructionContext: input.instructionContext,
-    ...(streamText ? { onTextDelta: (text: string) => input.sink.stream(text) } : {}),
-  });
-  const providerCalls = model.modelCalls - beforeCalls;
-  if (providerCalls > 1) {
-    throw new Error(`Single-generation model-port contract violated: ${providerCalls} provider calls in one graph attempt.`);
-  }
-  if (generated.status === 'cancelled') {
-    return { stop: 'cancelled', providerCalls, semanticFailures: 0, calls: [], observations: [], rejections: [], text: '' };
-  }
-  if (generated.status === 'error') {
-    return {
-      stop: 'error',
-      providerCalls,
-      semanticFailures: 0,
-      calls: [],
-      observations: [],
-      rejections: [],
-      text: '',
-      error: generated.error,
-      providerError: generated.providerError,
-    };
-  }
-  if (providerCalls !== 1) {
-    throw new Error(`Single-generation model-port contract violated: completed generation recorded ${providerCalls} provider calls.`);
-  }
-
-  // A truncated or filtered generation is not an atomic tool batch. Classify it before streaming
-  // buffered prose or dispatching even a nominally terminal call so no tool/session effects can
-  // commit from incomplete provider output.
-  const finishAnomaly: ToolFinishAnomaly | null =
-    generated.finishReason === 'length' ? 'length'
-      : generated.finishReason === 'content-filter' ? 'content-filter'
-        : null;
-  if (finishAnomaly) {
-    return {
-      stop: 'output_limit',
-      finishAnomaly,
-      providerCalls,
-      semanticFailures: 0,
-      calls: [],
-      observations: [],
-      rejections: [],
-      text: generated.text,
-    };
-  }
-  const missingRequiredEvidence = input.requiresToolEvidence === true
-    && generated.toolCalls.length === 0;
-  // A text-only finish in a phase with a required terminal tool is rejected below as
-  // missing_required_tool_call — its buffered prose is a failed submission, never user output.
-  const missingRequiredTool = input.requiredTerminalTool !== undefined
-    && generated.toolCalls.length === 0;
-  if (!streamText && generated.toolCalls.length === 0 && generated.text
-    && !missingRequiredEvidence && !missingRequiredTool) {
-    input.sink.stream(generated.text);
-  }
-
+async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<ToolCallDispatchLoopResult> {
+  const { model, input, toolCalls, semanticFailuresRemaining, reusableObservations, priorObservationKeys } = loop;
   const calls: ToolAttemptCall[] = [];
   const observations: ToolAttemptObservation[] = [];
   const rejections: ToolAttemptRejection[] = [];
@@ -1251,18 +1782,9 @@ export async function executeToolGenerationAttempt(
   let closedBy: { readonly callId: string; readonly toolName: string } | null = null;
   let budgetClosedByCallId: string | null = null;
   let chargeableFailures = 0;
-  const semanticFailuresRemaining = Math.max(0, input.semanticFailuresRemaining ?? MAX_TOOL_SEMANTIC_FAILURES);
-  // Earlier entries win on a duplicate key, matching the original `[...priorObservations, ...observations].find(...)`
-  // scan order: prior-attempt observations are seeded first, then this batch's own accepted reads are
-  // folded in as they are recorded, and a key already present is never overwritten.
-  const reusableObservations = new Map<string, ToolAttemptObservation>();
-  for (const observation of input.priorObservations ?? []) {
-    if (observation.acceptedCallKey !== undefined && !reusableObservations.has(observation.acceptedCallKey)) {
-      reusableObservations.set(observation.acceptedCallKey, observation);
-    }
-  }
+  let heldObservationBytes = loop.heldObservationBytes;
 
-  for (const call of generated.toolCalls) {
+  for (const call of toolCalls) {
     if (input.signal?.aborted) {
       cancelled = true;
       break;
@@ -1274,6 +1796,8 @@ export async function executeToolGenerationAttempt(
         message: 'This sibling was not executed because an earlier call in the same provider batch closed the phase. Do not retry it.',
         correction: { closedByCallId: closedBy.callId, closedByTool: closedBy.toolName },
       }, calls, observations, rejections, input.traceSyntheticRejection);
+      logSyntheticRejection(input, 'batch_phase_closed', call, 'phase_closed',
+        `closed by ${closedBy.toolName} callId ${closedBy.callId}`);
       continue;
     }
     if (budgetClosedByCallId) {
@@ -1283,32 +1807,47 @@ export async function executeToolGenerationAttempt(
         message: 'This sibling was not executed because the logical phase reached its semantic-failure budget.',
         correction: { closedByCallId: budgetClosedByCallId },
       }, calls, observations, rejections, input.traceSyntheticRejection);
+      logSyntheticRejection(input, 'batch_budget_closed', call, 'attempt_budget_exhausted',
+        `budget closed by callId ${budgetClosedByCallId}`);
       continue;
     }
     if (!call.valid) {
       const rejection = recordToolOutcome(call, rejectionFromInvalid(call, input.registry), calls, observations, rejections, input.traceSyntheticRejection)!;
-      // A repair-turn present_result SDK-prevalidation reject with a live held draft is the repair
-      // mechanism working as intended (the model is mid-correction against an already-diagnosed
-      // draft) — charging it would burn shared budget on a case the hold+authorization contract
-      // already governs. Initial (no held draft) present_result prevalidation rejects, and every
-      // other tool's invalid_tool_input, stay chargeable via the untouched shared guard below.
-      const isRepairTurnPresentResultPrevalidation = call.code === 'invalid_tool_input'
-        && call.toolName === 'lineage_present_result'
+      const isRepairTurnPresentResultPrevalidation = call.code === REJECTION_CODES.invalidToolInput
+        && call.toolName === PRESENT_RESULT_TOOL
         && input.presentResultRepairDraftHeld === true;
+      const candidateHash = acceptedCallKey(call.toolName, call.input);
+      const shrinkingRepair = isShrinkingViolationRepair(input.priorRejection, call.toolName, rejection.issuePaths, rejection.entryIds);
+      const unproductiveStreak = call.code === REJECTION_CODES.invalidToolInput
+        ? unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, candidateHash)
+        : 0;
+      const repairResendBeyondAbsorption = isRepairTurnPresentResultPrevalidation
+        && unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS;
+      const freeBoundedRepairResend = isRepairTurnPresentResultPrevalidation && !repairResendBeyondAbsorption;
       input.debugLog?.(
-        `[Reject] source=${call.code === 'invalid_tool_input' ? 'provider_prevalidation' : 'provider_generation'}`
+        `[Reject] source=${call.code === REJECTION_CODES.invalidToolInput ? 'provider_prevalidation' : 'provider_generation'}`
         + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
         + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
         + ` callId=${safeCallId(call.callId)}`
         + ` code=${safeLogIdentifier(call.code, 'unknown')}`
+        + ` group=${classifyRejectionCode(call.code)}`
         + ` reason=${sanitizeForLog(rejection.reason)}`
         + ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}`
-        + ` chargeable=${isChargeableRejection(call.code) && !isRepairTurnPresentResultPrevalidation}`,
+        + ` entryIds=${rejectionPathsForLog(rejection.entryIds)}`
+        + ` unproductiveStreak=${unproductiveStreak}`
+        + ` shrinkingRepair=${shrinkingRepair}`
+        + ` charged=${isChargeableRejection(call.code) && !freeBoundedRepairResend && !shrinkingRepair}`,
       );
-      if (isChargeableRejection(call.code) && !isRepairTurnPresentResultPrevalidation) {
+      if (isChargeableRejection(call.code) && !freeBoundedRepairResend && !shrinkingRepair) {
         chargeableFailures++;
         if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
       }
+      rejections[rejections.length - 1] = {
+        ...rejection,
+        preDispatch: true,
+        ...(call.code === REJECTION_CODES.invalidToolInput ? { inputHash: candidateHash } : {}),
+        ...(unproductiveStreak > 0 ? { unproductiveStreak } : {}),
+      };
       continue;
     }
 
@@ -1319,6 +1858,28 @@ export async function executeToolGenerationAttempt(
     const reused = reusableKey ? reusableObservations.get(reusableKey) : undefined;
     if (reused) {
       input.onToolResult?.(call.toolName, call.input, false, reused.result);
+      if (reusableKey && priorObservationKeys.has(reusableKey)) {
+        const rejection = recordToolOutcome(call, {
+          status: 'rejected',
+          code: REJECTION_CODES.duplicateRead,
+          message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
+          correction: { hint: heldErrorEnvelopeDuplicateHint(reused) ?? DUPLICATE_READ_HINT },
+          detail: { acceptedCallId: reused.callId },
+        }, calls, observations, rejections, input.traceSyntheticRejection)!;
+        const unproductiveStreak = unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, reusableKey);
+        if (unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS) {
+          chargeableFailures++;
+          if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
+        }
+        rejections[rejections.length - 1] = {
+          ...rejection,
+          inputHash: reusableKey,
+          ...(unproductiveStreak > 0 ? { unproductiveStreak } : {}),
+        };
+        logSyntheticRejection(input, 'duplicate_read', call, REJECTION_CODES.duplicateRead,
+          `repeats accepted callId ${reused.callId} unproductiveStreak=${unproductiveStreak}`);
+        continue;
+      }
       recordToolOutcome(call, {
         status: 'executed',
         detail: { result: reused.result, observe: false },
@@ -1350,21 +1911,15 @@ export async function executeToolGenerationAttempt(
       const rejection = recordToolOutcome(call, resultRejection, calls, observations, rejections)!;
       if (isChargeableRejection(rejection.code)) {
         const candidateHash = acceptedCallKey(call.toolName, call.input);
-        // A resend that changed nothing — byte-identical to the payload just rejected, or touching
-        // none of that rejection's own repairFields — spends no strike; the model already saw this
-        // correction and it is replayed unchanged on the next attempt via `renderRejectionExchange`.
-        // The absorption is bounded: past MAX_FREE_UNPRODUCTIVE_RESENDS consecutive no-ops the
-        // strike charges again, so a non-converging model closes the phase instead of spinning to
-        // the provider-call cap.
-        const unproductiveStreak = isUnproductiveResend(input.priorRejection, call.toolName, call.input, candidateHash)
-          ? (input.priorRejection?.unproductiveStreak ?? 0) + 1
-          : 0;
-        if (unproductiveStreak === 0 || unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS) {
+        const shrinkingRepair = isShrinkingViolationRepair(input.priorRejection, call.toolName, rejection.issuePaths, rejection.entryIds);
+        const unproductiveStreak = unproductiveResendStreak(input.priorRejections, input.priorRejection, call.toolName, call.input, candidateHash);
+        const identicalResubmission = isIdenticalResubmission(input.priorRejection, call.toolName, candidateHash)
+          && input.priorRejection?.preDispatch !== true
+          && !touchesNoRepairField(call.input, repairFieldsFromDetail(input.priorRejection?.detail));
+        if (identicalResubmission || (!shrinkingRepair && (unproductiveStreak === 0 || unproductiveStreak > MAX_FREE_UNPRODUCTIVE_RESENDS))) {
           chargeableFailures++;
           if (chargeableFailures >= semanticFailuresRemaining) budgetClosedByCallId = call.callId;
         }
-        // Retains only a hash of this call's input (never the input itself), so the following
-        // attempt can be checked against exactly this rejection.
         rejections[rejections.length - 1] = {
           ...rejection,
           inputHash: candidateHash,
@@ -1372,15 +1927,32 @@ export async function executeToolGenerationAttempt(
         };
       }
     } else {
+      const observe = !controlSuccess && !terminalSuccess;
+      let storedResult = resultText;
+      if (observe) {
+        const candidateBytes = Buffer.byteLength(resultText);
+        if (heldObservationBytes + candidateBytes > storedEvidenceKindBytes(model.budget)) {
+          storedResult = resultTooLargeReply(call.toolName, candidateBytes, heldObservationBytes, storedEvidenceKindBytes(model.budget));
+          input.debugLog?.(
+            `[Observation] result too big phase=${safeLogIdentifier(input.phase, 'unknown')}`
+            + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
+            + ` callId=${safeCallId(call.callId)}`
+            + ` bytes=${candidateBytes}`
+            + ` held=${heldObservationBytes}`
+            + ` budget=${storedEvidenceKindBytes(model.budget)}`,
+          );
+        }
+        heldObservationBytes += Buffer.byteLength(storedResult);
+      }
       recordToolOutcome(call, {
         status: 'executed',
         detail: {
-          result: resultText,
-          observe: !controlSuccess && !terminalSuccess,
-          ...(!controlSuccess && !terminalSuccess && reusableKey ? { acceptedCallKey: reusableKey } : {}),
+          result: storedResult,
+          observe,
+          ...(observe && reusableKey ? { acceptedCallKey: reusableKey } : {}),
         },
       }, calls, observations, rejections);
-      if (!controlSuccess && !terminalSuccess && reusableKey && !reusableObservations.has(reusableKey)) {
+      if (observe && reusableKey && !reusableObservations.has(reusableKey)) {
         reusableObservations.set(reusableKey, observations[observations.length - 1]);
       }
     }
@@ -1393,31 +1965,154 @@ export async function executeToolGenerationAttempt(
     }
   }
 
+  return { calls, observations, rejections, gate, reroute, phaseComplete, cancelled, chargeableFailures };
+}
+
+/**
+ * Runs exactly one provider tool-generation turn and classifies its outcome.
+ *
+ * @remarks
+ * Enforces the single-generation model-port contract (exactly one provider call per attempt),
+ * classifies a truncated or filtered generation as an `output_limit` stop before any tool or
+ * session effect can commit from incomplete output (a tool-less length cut in a phase that must
+ * call a tool is instead a chargeable missing-call rejection the repair ladder retries), then dispatches the returned tool calls
+ * against gate/reroute/phase-completion detection and the semantic-failure budget.
+ *
+ * @param model - Request-scoped model port; must record exactly one provider call.
+ * @param input - Turn context: message history, registry, tool choice, and phase/gate detectors.
+ * @returns The attempt's calls, observations, rejections, and terminal `stop` classification.
+ * @throws When the model port violates the single-generation contract by recording more or fewer
+ *   than one provider call for this attempt.
+ */
+export async function executeToolGenerationAttempt(
+  model: SingleGenerationModelPort,
+  input: ToolGenerationAttemptInput,
+): Promise<ToolAttemptResult> {
+  const beforeCalls = model.modelCalls;
+  const streamText = input.proseGate !== 'buffer-until-tool';
+  const requiresToolCall = input.requiredTerminalTool !== undefined || input.requiresToolEvidence === true;
+  assertToolPairingWellFormed(input.messages);
+  const generated = await model.generateToolTurn({
+    messages: input.messages,
+    system: input.system,
+    tools: modelToolDefinitions(input.registry),
+    toolChoice: input.toolChoice,
+    requiresToolCall,
+    signal: input.signal,
+    phase: input.phase,
+    instructionContext: input.instructionContext,
+    ...(streamText ? { onTextDelta: (text: string) => input.sink.stream(text) } : {}),
+  });
+  const providerCalls = model.modelCalls - beforeCalls;
+  if (providerCalls > 1) {
+    throw new Error(`Single-generation model-port contract violated: ${providerCalls} provider calls in one graph attempt.`);
+  }
+  if (generated.status === 'cancelled') {
+    return { stop: 'cancelled', providerCalls, semanticFailures: 0, calls: [], observations: [], rejections: [], text: '' };
+  }
+  if (generated.status === 'error') {
+    return {
+      stop: 'error',
+      providerCalls,
+      semanticFailures: 0,
+      calls: [],
+      observations: [],
+      rejections: [],
+      text: '',
+      error: generated.error,
+      providerError: generated.providerError,
+    };
+  }
+  if (providerCalls !== 1) {
+    throw new Error(`Single-generation model-port contract violated: completed generation recorded ${providerCalls} provider calls.`);
+  }
+
+  const finishAnomaly: ToolFinishAnomaly | null =
+    generated.finishReason === 'length' ? 'length'
+      : generated.finishReason === 'content-filter' ? 'content-filter'
+        : null;
+  const truncatedBeforeRequiredCall = finishAnomaly === 'length'
+    && generated.toolCalls.length === 0
+    && requiresToolCall;
+  if (finishAnomaly && !truncatedBeforeRequiredCall) {
+    return {
+      stop: 'output_limit',
+      finishAnomaly,
+      providerCalls,
+      semanticFailures: 0,
+      calls: [],
+      observations: [],
+      rejections: [],
+      text: generated.text,
+    };
+  }
+  const missingRequiredEvidence = input.requiresToolEvidence === true
+    && generated.toolCalls.length === 0;
+  const missingRequiredTool = input.requiredTerminalTool !== undefined
+    && generated.toolCalls.length === 0;
+  if (!streamText && generated.toolCalls.length === 0 && generated.text
+    && !missingRequiredEvidence && !missingRequiredTool) {
+    input.sink.stream(generated.text);
+  }
+
+  const semanticFailuresRemaining = Math.max(0, input.semanticFailuresRemaining ?? MAX_TOOL_SEMANTIC_FAILURES);
+  const reusableObservations = new Map<string, ToolAttemptObservation>();
+  const priorObservationKeys = new Set<string>();
+  let heldObservationBytes = 0;
+  for (const observation of input.priorObservations ?? []) {
+    heldObservationBytes += Buffer.byteLength(observation.result);
+    const key = observation.acceptedCallKey;
+    if (key === undefined || reusableObservations.has(key)) continue;
+    reusableObservations.set(key, observation);
+    priorObservationKeys.add(key);
+  }
+
+  const batch = await dispatchToolCallBatch({
+    model,
+    input,
+    toolCalls: generated.toolCalls,
+    semanticFailuresRemaining,
+    reusableObservations,
+    priorObservationKeys,
+    heldObservationBytes,
+  });
+  const { calls, observations, rejections, gate, reroute, phaseComplete, cancelled } = batch;
+  let chargeableFailures = batch.chargeableFailures;
+
   if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: input.requiredTerminalTool,
-      emptyGeneration: generated.text.trim().length === 0,
+      emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
+      chargeable: !truncatedBeforeRequiredCall,
       emptyCode: REJECTION_CODES.emptyGeneration,
-      nonEmptyCode: 'missing_required_tool_call',
+      nonEmptyCode: REJECTION_CODES.missingRequiredToolCall,
       emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
-      nonEmptyReason: `The model did not call ${input.requiredTerminalTool}.`,
-      hint: `Call ${input.requiredTerminalTool} with all required fields.`,
+      nonEmptyReason: truncatedBeforeRequiredCall
+        ? `The output limit was reached before ${input.requiredTerminalTool} was called.`
+        : `The model did not call ${input.requiredTerminalTool}.`,
+      hint: truncatedBeforeRequiredCall
+        ? `Deliberation reached the output limit before ${input.requiredTerminalTool} was called. Decide from the evidence already in this hop and emit ${input.requiredTerminalTool} first, before any further reasoning; a question this hop cannot settle is reported in the call's own fields and carried forward, never resolved by weighing it again here.`
+        : `Emit ${input.requiredTerminalTool} through the tool-call channel: a fenced JSON body, or a <function=...> block with <parameter=...> pairs, is message text and is not a call. Same fields, correct channel.`,
+      attemptedText: generated.text,
     });
   }
 
   if (missingRequiredEvidence && !input.requiredTerminalTool) {
-    // Named from this phase's own authorized registry view — never a hardcoded tool name — since
-    // the discover phase (the sole caller of `requiresToolEvidence`) offers several valid tools,
-    // not one fixed choice.
     const evidenceToolNames = input.registry.getTools().map((tool) => tool.name).join(', ');
     chargeableFailures += emitSynthesizedRejection(input, rejections, {
       toolName: 'lineage_evidence',
-      emptyGeneration: generated.text.trim().length === 0,
+      emptyGeneration: !truncatedBeforeRequiredCall && generated.text.trim().length === 0,
+      chargeable: !truncatedBeforeRequiredCall,
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: 'missing_required_evidence',
       emptyReason: 'The provider returned an empty response instead of calling a lineage tool.',
-      nonEmptyReason: 'The response contained no trusted lineage evidence.',
-      hint: `Call one of this phase's lineage tools before answering: ${evidenceToolNames}.`,
+      nonEmptyReason: truncatedBeforeRequiredCall
+        ? 'The output limit was reached before any lineage tool was called.'
+        : 'The response contained no trusted lineage evidence.',
+      hint: truncatedBeforeRequiredCall
+        ? `Deliberation reached the output limit before any lineage tool was called. Call one of this phase's tools first, before any further reasoning: ${evidenceToolNames}.`
+        : `Call one of this phase's lineage tools before answering: ${evidenceToolNames}.`,
+      attemptedText: generated.text,
     });
   }
 

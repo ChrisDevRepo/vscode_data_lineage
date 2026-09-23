@@ -40,10 +40,11 @@ const MAX_RECENT_REJECTIONS = 5;
  * - `business` → at least one section with `angle: 'business'`
  * - `technical` → at least one section with `angle: 'technical'`
  * - `both` → at least one section of each angle
- * Mechanically enforced in `interaction/rules/submitFindingsRules`
- * (`validateSectionsAgainstClassification` requires the locked angles;
- * `filterSectionsForClassification` drops off-classification sections at commit)
- * per the agreement-phase classification contract.
+ * Mechanically enforced two ways per the agreement-phase classification contract: the
+ * per-dispatch `submit_findings` schema (`tools/toolSchemas.ts` `submitFindingsSchemaForMode`)
+ * narrows the advertised `angle` enum to the locked angle(s) so an off-lock angle cannot be
+ * authored at all, and `interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`
+ * checks the locked angle(s) are present.
  */
 export type CaptureAngle = 'business' | 'technical';
 
@@ -150,12 +151,94 @@ export interface MemoryStateSnapshot {
   slotCount: number;
   /** The AI-composed mission brief, surviving sliding-memory wipes. */
   missionBrief: string;
+  /** User-stated analysis constraints no filter expresses, surviving sliding-memory wipes. */
+  scopeNotes: string[];
   /** Running verdict tally. */
   verdictCounts: { analyze: number; passthrough: number; prune: number };
   /** Ring buffer (≤5) of recent route rejections surfaced in working memory. */
   recentRejections: Array<{ nodeId: string; reason: string; atHop: number }>;
 }
 
+
+/**
+ * Appends texts that no existing section already carries verbatim.
+ *
+ * @remarks
+ * `submit_findings` may put a grounded clause on `column_flow[].upstream_columns[].note` while
+ * synthesis lifts only `detail_slots[].sections[].text`; the commit site merges those notes into
+ * the sections it stores here. Identity is trimmed exact equality — a substring match is new
+ * evidence and is kept. A dropped exact duplicate is NORMALIZE-WITH-LOG when `debugLog` is supplied.
+ *
+ * @param nodeId - Node id, for the log line when a duplicate is dropped.
+ * @param debugLog - Optional debug sink the commit site already holds.
+ */
+export function appendUniqueSectionText(
+  sections: CapturedSection[],
+  extras: readonly string[],
+  nodeId?: string,
+  debugLog?: (message: string) => void,
+): CapturedSection[] {
+  if (sections.length === 0) return sections;
+  const seenTexts = new Set(sections.map(s => s.text.trim()));
+  const unique: string[] = [];
+  let droppedCount = 0;
+  for (const raw of extras) {
+    const text = raw.trim();
+    if (!text) continue;
+    if (seenTexts.has(text) || unique.includes(text)) {
+      droppedCount++;
+      continue;
+    }
+    unique.push(text);
+  }
+  if (droppedCount > 0) {
+    debugLog?.(`[Memory] duplicate column_flow note(s) dropped — node=${nodeId ?? '(unknown)'} count=${droppedCount}`);
+  }
+  if (unique.length === 0) return sections;
+  const last = sections[sections.length - 1]!;
+  return [...sections.slice(0, -1), { ...last, text: `${last.text}\n${unique.join('\n')}` }];
+}
+
+
+/**
+ * Appends `incoming` sections that the archived `earlier` ones do not already carry verbatim.
+ *
+ * @remarks
+ * Same identity rule as {@link appendUniqueSectionText}: trimmed body text, matched by exact
+ * equality against an earlier section's own trimmed text, angle ignored. First occurrence wins.
+ * A first write (no `earlier`) is passed through untouched. A section that merely contains, or
+ * is contained by, an earlier one is distinct evidence and is kept. A dropped exact duplicate
+ * is NORMALIZE-WITH-LOG when `debugLog` is supplied.
+ *
+ * @param earlier - Sections already archived for the node, in capture order.
+ * @param incoming - Sections captured by the current visit.
+ * @param nodeId - Node id, for the log line when a duplicate is dropped.
+ * @param debugLog - Optional debug sink; {@link AiMemoryManager.storeDetail} passes the logger it holds.
+ * @returns `earlier` followed by the incoming sections it does not already carry verbatim.
+ */
+function appendUniqueSections(
+  earlier: readonly CapturedSection[],
+  incoming: readonly CapturedSection[],
+  nodeId?: string,
+  debugLog?: (message: string) => void,
+): CapturedSection[] {
+  if (earlier.length === 0) return [...incoming];
+  const seenTexts = new Set(earlier.map(s => s.text.trim()));
+  const merged = [...earlier];
+  let droppedCount = 0;
+  for (const section of incoming) {
+    const text = section.text.trim();
+    if (text && seenTexts.has(text)) {
+      droppedCount++;
+      continue;
+    }
+    merged.push(section);
+  }
+  if (droppedCount > 0) {
+    debugLog?.(`[Memory] duplicate section(s) dropped on revisit — node=${nodeId ?? '(unknown)'} count=${droppedCount}`);
+  }
+  return merged;
+}
 
 /**
  * In-session store for the per-hop working memory and full detail archive.
@@ -175,6 +258,7 @@ export class AiMemoryManager {
   private prunedDetails = new Map<string, DetailSlot>();
   private userQuestion = '';
   private missionBrief = '';
+  private scopeNotes: string[] = [];
   private verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
   private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
 
@@ -184,6 +268,7 @@ export class AiMemoryManager {
     this.prunedDetails.clear();
     this.userQuestion = '';
     this.missionBrief = '';
+    this.scopeNotes = [];
     this.verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
     this.recentRejections = [];
   }
@@ -191,8 +276,8 @@ export class AiMemoryManager {
   /**
    * Records one verdict against the running A/P/prune tally.
    *
-   * @param verdict - The verdict the model submitted this hop (`analyze`, `passthrough`, or `prune` — the AI
-   * may self-prune an irrelevant node; BB self-prune is orphan-guarded by the engine, see `submitFindings`).
+   * @param verdict - The verdict recorded this hop (`analyze`, `passthrough`, or `prune` — the internal name of
+   * the wire verdict `end_branch`, see `NavigationEngine.submitFindings`).
    */
   public recordVerdict(verdict: 'analyze' | 'passthrough' | 'prune'): void {
     this.verdictCounts[verdict]++;
@@ -238,6 +323,23 @@ export class AiMemoryManager {
   }
 
   /**
+   * Records the user-stated analysis constraints that no filter field expresses.
+   *
+   * @remarks
+   * Fixed once at `start_exploration` approval, so it is stable-prefix-safe: every hop renders the
+   * same bytes. Without this carrier an instruction like "ignore filter criteria" reaches the first
+   * hop only as conversation history and is dropped by the sliding-memory wipe.
+   */
+  public setScopeNotes(notes: readonly string[]): void {
+    this.scopeNotes = [...notes];
+  }
+
+  /** User-stated constraints carried verbatim to every hop. */
+  public getScopeNotes(): string[] {
+    return [...this.scopeNotes];
+  }
+
+  /**
    * Stores the technical findings for a single node in the detail archive.
    *
    * @param node - The node the findings describe.
@@ -246,25 +348,62 @@ export class AiMemoryManager {
    * @param meta - Optional synthesis metadata — `badge_label`, `reason_for_visit`.
    *
    * @remarks
-   * Sections are stored verbatim — uniform downstream shape simplifies eval
-   * extraction and synthesis lift.
+   * Sections are stored verbatim. A revisit (a post-delivery `supplementAgenda` follow-up re-enqueues a visited node)
+   * appends its sections after the earlier visit's — summary and metadata take the latest visit,
+   * and {@link appendUniqueSections} drops any re-emitted text as no new evidence. The caller
+   * merges `column_flow` notes into `sections` via {@link appendUniqueSectionText} before this
+   * write, so a single-accept hop does not lose clauses that sat only on the flow.
+   *
+   * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG lines: the one
+   * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat, and
+   * the one naming each `summary` / `badge_label` / `reason_for_visit` a revisit replaced.
    */
   public storeDetail(
     node: LineageNode,
     sections: CapturedSection[],
     summary: string,
     meta?: { badge_label?: string; reason_for_visit?: string },
+    debugLog?: (message: string) => void,
   ): void {
+    const previous = this.detailSlots.get(node.id);
+    const earlier = previous?.sections ?? [];
+    if (previous) {
+      const replaced = ([
+        ['summary', previous.summary, summary],
+        ['badge_label', previous.badge_label, meta?.badge_label],
+        ['reason_for_visit', previous.reason_for_visit, meta?.reason_for_visit],
+      ] as const).filter(([, before, after]) => before !== after).map(([field]) => field);
+      if (replaced.length > 0) {
+        debugLog?.(`[Memory] revisit replaced ${replaced.join(',')} — node=${node.id}`);
+      }
+    }
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
       name: node.name,
       type: node.type,
-      sections,
+      sections: appendUniqueSections(earlier, sections, node.id, debugLog),
       summary,
       badge_label: meta?.badge_label,
       reason_for_visit: meta?.reason_for_visit,
     });
+  }
+
+  /**
+   * Capture angles already archived for `nodeId` from an earlier visit, read before this
+   * submission's own sections are merged in by {@link storeDetail}.
+   *
+   * @remarks
+   * A follow-up (`supplementAgenda`) re-enqueues a node `storeDetail` already wrote once; that earlier write's
+   * sections stay in the archive (appended, never replaced), so a revisit submission does not
+   * need to re-carry an angle the archive already holds. Callers use this to credit the archive
+   * when checking classification-locked angle coverage.
+   *
+   * @param nodeId - Node id to look up in the detail archive.
+   * @returns The set of angles already archived for `nodeId`; empty for a first visit.
+   */
+  public getArchivedAngles(nodeId: string): Set<CaptureAngle> {
+    return new Set(this.detailSlots.get(nodeId)?.sections.map(s => s.angle) ?? []);
   }
 
   /**
@@ -363,6 +502,7 @@ export class AiMemoryManager {
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
     return {
       userQuestion: this.userQuestion,
+      scopeNotes: [...this.scopeNotes],
       detailSlots: slots,
       slotCount: this.detailSlots.size,
       missionBrief: this.missionBrief,
@@ -387,9 +527,9 @@ export class AiMemoryManager {
     const m = new AiMemoryManager();
     m.userQuestion = snapshot.userQuestion;
     m.missionBrief = snapshot.missionBrief;
+    m.scopeNotes = [...snapshot.scopeNotes];
     m.verdictCounts = { ...snapshot.verdictCounts };
     m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
-    // Object key order preserves insertion order for the non-integer node-id keys used here.
     for (const [id, slot] of Object.entries(snapshot.detailSlots)) m.detailSlots.set(id, slot);
     return m;
   }
@@ -407,6 +547,7 @@ export class AiMemoryManager {
     this.detailSlots = restored.detailSlots;
     this.userQuestion = restored.userQuestion;
     this.missionBrief = restored.missionBrief;
+    this.scopeNotes = [...restored.scopeNotes];
     this.verdictCounts = restored.verdictCounts;
     this.recentRejections = restored.recentRejections;
   }
@@ -427,8 +568,8 @@ export class AiMemoryManager {
   }
 
   /**
-   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the system
-   * prompt `<short_term_memory>` block.
+   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the per-hop
+   * user message's `<short_term_memory>` block.
    *
    * @remarks
    * Same sliding window used by `getWorkingMemory` — exposed separately so prompt builders

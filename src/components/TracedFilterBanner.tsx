@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { ModeBanner } from './ModeBanner';
 import { Tooltip } from './ui/Tooltip';
+import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface TracedFilterBannerProps {
   /** The display name of the starting node for the lineage trace. */
@@ -53,14 +54,8 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
   onToggleFullModel,
   filteredOutCount,
 }: TracedFilterBannerProps) {
-  /**
-   * Formats the level depth for display.
-   *
-   * @param levels - The depth number or MAX_SAFE_INTEGER for 'All'.
-   * @returns A string representation of the depth.
-   */
   const formatLevels = (levels: number) =>
-    levels === Number.MAX_SAFE_INTEGER ? 'All' : levels.toString();
+    levels === TRACE_ALL_LEVELS ? 'All' : levels.toString();
 
   const filteredHint = !useFullModel && filteredOutCount > 0
     ? <span className="ln-text-muted"> (+{filteredOutCount} filtered)</span>

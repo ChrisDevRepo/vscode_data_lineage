@@ -22,6 +22,8 @@
  *   - `model.catalog` is not read anywhere in the NavigationEngine/ColumnTracer code
  *     paths these tests exercise.
  */
+import type { NavigationEngine } from '../../../../src/ai/sm/smBase';
+import type { SerializedFilterState } from '../../../../src/engine/shared/bridgeContract';
 import type {
   DatabaseModel,
   LineageEdge,
@@ -38,6 +40,24 @@ export function makeNode(
   node: Omit<LineageNode, 'fullName'> & Partial<Pick<LineageNode, 'fullName'>>,
 ): LineageNode {
   return { fullName: node.id, ...node };
+}
+
+/**
+ * Build the engine's `activeFilter` config — the GUI filter state the NavigationEngine reads at
+ * construction. Every required field is defaulted to "no filter", so a test names only the axis
+ * it exercises (`makeActiveFilter({ schemas: ['dbo'] })`) and still hands over a complete
+ * {@link SerializedFilterState} rather than an `as any` partial that hides a contract change.
+ */
+export function makeActiveFilter(overrides: Partial<SerializedFilterState> = {}): SerializedFilterState {
+  return {
+    schemas: [],
+    types: [],
+    hideIsolated: false,
+    focusSchemas: [],
+    showExternalRefs: false,
+    externalRefTypes: [],
+    ...overrides,
+  };
 }
 
 /**
@@ -83,4 +103,108 @@ export function makeModel(
     neighborIndex: {},
     dbPlatform,
   };
+}
+
+// ─── Engine walking ───────────────────────────────────────────────────────────
+
+/**
+ * How `driveEngine` answers each hop it is handed.
+ *
+ * @remarks
+ * Exactly one routing strategy applies per walk. `routes` wins over `succ`, and both win
+ * over `followDownstream`; with none set the walk routes nothing and the engine advances
+ * on its own seeded agenda.
+ */
+export interface DriveOptions {
+  /** Focus id → the single successor to route on to. */
+  succ?: Record<string, string | undefined>;
+  /** Focus id → every successor to route on to. */
+  routes?: Record<string, string[]>;
+  /** Route every downstream neighbour the hop context offers. */
+  followDownstream?: boolean;
+  /** Ids to submit as `passthrough` rather than `analyze`. */
+  passthrough?: ReadonlySet<string>;
+  /** Ids to submit as `end_branch`. Evaluated before {@link DriveOptions.passthrough}. */
+  prune?: ReadonlySet<string>;
+  /**
+   * CT walk: focus id → the single upstream node supplying {@link DriveOptions.column}.
+   *
+   * @remarks
+   * Present at all, every focus submits `column_flow` and no `questions` — a CT contraction is
+   * carried on the column edge, not on a route. A focus that maps to a supplier submits one entry
+   * for it; a focus mapped to `undefined`, or absent from the map, submits `column_flow: []`, which
+   * is how a walk states that the chain ends at that node.
+   */
+  columnFlow?: Record<string, string | undefined>;
+  /** The traced column name, required whenever {@link DriveOptions.columnFlow} is given. */
+  column?: string;
+  /** Prefixes the section text and summary, to tell two walks of one graph apart. */
+  tag?: string;
+  /** Hop ceiling, so a routing bug fails the test instead of hanging it. */
+  limit?: number;
+}
+
+/**
+ * Drives a NavigationEngine to completion, analyzing each dispatched focus in turn.
+ *
+ * @param engine - An initialized engine; `init` must already have been called.
+ * @param options - Routing strategy and submission shape. See {@link DriveOptions}.
+ * @returns The focus ids visited, in dispatch order.
+ *
+ * @remarks
+ * The shared drive loop for nav-engine suites. Tests that assert on submitted prose author
+ * their own `submitFindings` call rather than routing it through here.
+ */
+export function driveEngine(
+  engine: Pick<NavigationEngine, 'getHopContext' | 'submitFindings'>,
+  options: DriveOptions = {},
+): string[] {
+  const { succ, routes, followDownstream, passthrough, prune, columnFlow, column, tag, limit = 50 } = options;
+  if (columnFlow && !column) throw new Error('driveEngine: columnFlow requires column, the traced column name.');
+  const visited: string[] = [];
+
+  for (let hop = 0; hop < limit; hop++) {
+    const ctx = engine.getHopContext() as {
+      done?: boolean;
+      focus_node?: { id: string };
+      neighbors?: Array<{ id: string; edge_direction?: string }>;
+    };
+    if (ctx.done || !ctx.focus_node) break;
+
+    const id = ctx.focus_node.id;
+    visited.push(id);
+
+    let targets: string[];
+    if (routes) targets = routes[id] ?? [];
+    else if (succ) targets = succ[id] ? [succ[id] as string] : [];
+    else if (followDownstream) {
+      targets = (ctx.neighbors ?? [])
+        .filter((neighbor) => neighbor.edge_direction === 'downstream')
+        .map((neighbor) => neighbor.id);
+    } else targets = [];
+
+    const label = tag ? `${tag}: ${id}` : id;
+    if (prune?.has(id)) {
+      // An end_branch carries only its reason — the submit boundary refuses sections on it.
+      engine.submitFindings({ focus_node_id: id, verdict: 'end_branch', reason: `${label} is off the answer` });
+      continue;
+    }
+    const verdict = passthrough?.has(id) ? 'passthrough' : 'analyze';
+    const supplier = columnFlow?.[id];
+    engine.submitFindings({
+      focus_node_id: id,
+      sections: [{ angle: 'business', text: `analysis for ${label}` }],
+      summary: label,
+      verdict,
+      ...(columnFlow
+        ? {
+            column_flow: supplier
+              ? [{ out_col: column!, upstream_columns: [{ node: supplier, col: column! }] }]
+              : [],
+          }
+        : { questions: targets.map((target) => ({ nodeId: target, question: 'trace downstream' })) }),
+    });
+  }
+
+  return visited;
 }

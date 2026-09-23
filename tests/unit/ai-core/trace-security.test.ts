@@ -11,21 +11,17 @@ import {
  * because the contract that matters is "this value never reaches a trace or a retry payload".
  */
 const REDACTED_VALUES: ReadonlyArray<readonly [string, string]> = [
-  // Pre-existing shapes — held as regressions now that the pattern list is extensible.
   ['bearer token', 'Authorization: Bearer sk1F9mQpZ2xLbTnR4vHc0eWaYdJgKuS7'],
   ['sk- prefixed provider key', 'the key is sk-abcdef0123456789ABCDEF'],
   ['query-string api key', 'GET https://contoso.example/v1/models?api_key=9f2b7c1de4a6'],
 
-  // Connection strings.
   ['ADO.NET connection string password', 'Server=tcp:edw.database.windows.net,1433;Database=Sales;User ID=svc_etl;Password=Hunter2Hunter2;Encrypt=true'],
   ['ODBC lowercase pwd', 'DRIVER={ODBC Driver 18 for SQL Server};SERVER=edw;UID=svc;pwd=S3cretPassphrase;'],
   ['spaced assignment', 'Password = R3allyL0ngSecretValue'],
 
-  // Bearer-style credentials.
   ['JSON Web Token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'],
   ['JWT inside a larger payload', '{"headers":"redacted","raw":"eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJhcGk6Ly9sYW5jZSJ9.QUJDREVGR0hJSktMTU5PUFFSUw"}'],
 
-  // Vendor-prefixed tokens.
   ['AWS access key id', 'AWS_ACCESS_KEY_ID is AKIAIOSFODNN7EXAMPLE for the staging loader'],
   ['AWS temporary access key id', 'ASIAY34FZKBOKMUTVV7A'],
   ['GitHub personal access token', 'remote url uses ghp_16C7e42F292c6912E7710c838347Ae178B4a'],
@@ -34,7 +30,6 @@ const REDACTED_VALUES: ReadonlyArray<readonly [string, string]> = [
   ['Slack bot token', 'xoxb-2417-2521-pOxJxKzXhLmNqRsTuVwYzAbC'],
   ['Slack user token', 'xoxp-9876543210-1234567890-abcdefghijklmnop'],
 
-  // Encoded key material with no vendor prefix.
   ['long mixed-class base64 blob', 'cert=MIIBqjCCARMCFDq3Kp7XvR9zLmN4oPqW2sTb0YcHMA0GCSqGSIb3DQEBCwUAMBQx7Kd9'],
 ];
 
@@ -115,8 +110,6 @@ describe('trace security redaction', () => {
     };
 
     it('retains a complete generation record, clear-text model id included', () => {
-      // The model id is a public product identifier and the whole point of the record: a hashed one
-      // cannot answer "which model misbehaved".
       expect(sensitiveTraceReason(generation)).toBeUndefined();
     });
 
@@ -125,8 +118,6 @@ describe('trace security redaction', () => {
     });
 
     it('refuses the same record the moment a header-bearing field is introduced', () => {
-      // Not a hypothetical: adding request headers is the single most likely "helpful" extension of
-      // this record, and it is the one that would put the Authorization value into every trace.
       expect(sensitiveTraceReason({ ...providerRaw, headers: {} })).toBe('forbidden_key');
       expect(sensitiveTraceReason({ ...providerRaw, requestHeaders: {} })).toBe('forbidden_key');
       expect(sensitiveTraceReason({ ...providerRaw, authorization: 'Bearer redacted-shape' }))
@@ -138,8 +129,6 @@ describe('trace security redaction', () => {
     });
 
     it('keeps the non-verbose system hash inert', () => {
-      // 64 lowercase hex characters: single-case, so it never reaches the base64 heuristic, and it is
-      // what a default (non-verbose) trace records instead of the prompt text.
       const hash = systemPromptHash('You are the lineage analyst. Trace [ai].[FactSalesReport].');
       expect(hash).toMatch(/^[0-9a-f]{64}$/);
       expect(sensitiveTraceReason(hash)).toBeUndefined();
@@ -148,7 +137,6 @@ describe('trace security redaction', () => {
   });
 
   it('scans a repeated shape without pathological backtracking', () => {
-    // A long non-matching run adjacent to the bounded patterns: the guard must stay linear.
     const hostile = `${'Aa0b'.repeat(4_000)}!`;
     const started = Date.now();
     expect(sensitiveTraceReason(hostile)).toBe('secret_value');

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '../engine/types';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
 /**
@@ -81,10 +81,9 @@ export interface DacpacLoaderState {
  * Orchestrates the project loading lifecycle: from file picking to full lineage extraction.
  *
  * @remarks
- * This hook handles the multi-phase extraction process used for both DACPACs and live databases.
- * Phase 1: Rapid metadata extraction to show a schema selector.
- * Phase 2: Full DDL parsing and graph building for the selected scope.
- * It communicates with the VS Code extension host via `postMessage`.
+ * Two-phase extraction for both DACPACs and live databases: Phase 1 shows a schema selector,
+ * Phase 2 does the full DDL parse and graph build. Communicates with the extension host via
+ * `postMessage`.
  *
  * @param onConfigReceived - Callback triggered when the extension host delivers updated configuration.
  * @returns The project loader state and interactive actions.
@@ -103,9 +102,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
-  // Auto-clear transient info messages after 6s (progress, connecting, loading...).
-  // Success messages persist until the next action — they carry meaningful summary information.
-  // Warning/error messages are always kept visible until explicitly replaced.
   useEffect(() => {
     if (status && status.type === 'info' && !isLoading) {
       const timer = setTimeout(() => setStatus(null), 6000);
@@ -142,24 +138,19 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   }, []);
 
-  // Listen for messages from VS Code extension host
   useEffect(() => {
-    const handler = async (event: MessageEvent) => {
-      // Single validated inbound dispatcher — host→webview messages are Zod-checked here, never read raw.
-      const parsed = ExtensionToWebviewMsgSchema.safeParse(event.data);
-      if (!parsed.success) return;
-      // Same protocol-version gate as the App.tsx and DetailApp.tsx listeners: a frame with the
-      // wrong (or no) version came from a host bundle this view cannot trust — reject it instead
-      // of applying a model whose shape we are only guessing at.
-      const version = (event.data as BridgeEnvelope | undefined)?.protocolVersion;
-      if (version !== BRIDGE_PROTOCOL_VERSION) {
-        window.vscode?.postMessage({
-          type: 'error',
-          error: `[Bridge] Protocol mismatch on "${parsed.data.type}": host sent v${String(version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
-        });
+    const handler = (event: MessageEvent) => {
+      const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, event.data);
+      if (!frame.ok) {
+        if (frame.reason === 'version') {
+          window.vscode?.postMessage({
+            type: 'error',
+            error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
+          });
+        }
         return;
       }
-      const msg = parsed.data;
+      const msg = frame.data;
 
       const applyConfig = (raw: Partial<ExtensionConfig>) => {
         onConfigReceived({
@@ -200,7 +191,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // Dacpac Phase 1: schema preview (extraction now runs in extension host)
       if (msg.type === 'dacpac-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
@@ -212,7 +202,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // Dacpac Phase 2 + demo + panel restore: full model from extension host
       if (msg.type === 'dacpac-model') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
@@ -228,7 +217,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // DB Phase 1: schema preview received (Create flow — shows schema selector)
       if (msg.type === 'db-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
@@ -238,7 +226,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // DB Phase 2: full model received
       if (msg.type === 'db-model') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
@@ -263,23 +250,16 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     return () => window.removeEventListener('message', handler);
   }, [onConfigReceived, applyModel, applySchemaPreview, vscodeApi]);
 
-  // Phase 2: trigger full extraction for selected schemas
   const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
-    // Dacpac path: request Phase 2 extraction from extension host
-    // (dacpac-model response handled above — sets model + pendingVisualize)
+    const named = projectName ? { projectName } : {};
     if (schemaPreview !== null && model === null && loadingContext !== 'database') {
-      const payload: Record<string, unknown> = { type: 'dacpac-visualize', schemas: Array.from(schemas) };
-      if (projectName) payload.projectName = projectName;
-      vscodeApi.postMessage(payload);
+      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named });
       setIsLoading(true);
       setLoadingContext('dacpac');
       return;
     }
 
-    // DB path: send selected schemas to extension host for Phase 2
-    const payload: Record<string, unknown> = { type: 'db-visualize', schemas: Array.from(schemas) };
-    if (projectName) payload.projectName = projectName;
-    vscodeApi.postMessage(payload);
+    vscodeApi.postMessage({ type: 'db-visualize', schemas: Array.from(schemas), ...named });
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Loading selected schemas from database...', type: 'info' });

@@ -3,12 +3,11 @@
  *
  * @remarks
  * LangGraph owns workflow state, conditional routing, and consent interrupts. Its checkpointing is
- * in-process only: production never supplies a checkpointer (see {@link AgentRuntimeDeps.checkpointer}),
- * so the constructor falls back to a fresh {@link MemorySaver} per turn. That is enough to pause at a
- * consent interrupt and resume through `Command({ resume })` **within a single turn**, and nothing
- * more — the saver dies with the runtime, so no state survives a host restart or even outlives the
- * turn that created it. Durable cross-restart resume would require both a supplied checkpointer and
- * serialized gate state, neither of which exists today.
+ * in-process only: `buildAgentGraph` compiles against a fresh in-memory saver per graph. That is
+ * enough to pause at a consent interrupt and resume through `Command({ resume })` **within a single
+ * turn**, and nothing more — the saver dies with the runtime, so no state survives a host restart or
+ * even outlives the turn that created it. Cross-turn state is `AiSession`, by design:
+ * `docs/ARCHITECTURE.md` §Memory and state ownership.
  *
  * This host wrapper owns only platform-facing turn lifecycle: `thread_id`, native gate event
  * emission, user resume delivery, cancellation, and the single terminal result the
@@ -16,7 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { Command, MemorySaver, INTERRUPT, isInterrupted, type BaseCheckpointSaver } from '@langchain/langgraph';
+import { Command, INTERRUPT, isInterrupted } from '@langchain/langgraph';
 import {
   modelUserMessage,
   isPortCancellation,
@@ -40,14 +39,17 @@ export { type GateDecision } from '../agent/state';
 
 /** Diagnostic detail behind a non-`ok` {@link TurnOutcome}. */
 export interface AgentFailureDetail {
+  /** Error prose behind the non-`ok` outcome — graph-state error or the caught exception message. */
   readonly message: string;
+  /** Enumerated {@link AgentErrorCode} when the failure carries one. */
   readonly code?: AgentErrorCode;
+  /** Engine stop reason when the turn ended on a stop rather than a hard failure. */
   readonly stop?: string;
 }
 
 /** Construction dependencies for {@link AgentRuntime}. */
 export interface AgentRuntimeDeps {
-  /** Durable LangGraph thread id. */
+  /** LangGraph thread id for this request; a fresh value per turn, never reused across turns. */
   readonly threadId: string;
   /** Session accessor — same singleton the toolProvider reads. */
   readonly getSession: () => AiSession;
@@ -57,6 +59,7 @@ export interface AgentRuntimeDeps {
   readonly registry: IToolRegistry<string>;
   /** Native turn event sink. */
   readonly sink: TurnEventSink;
+  /** Abort signal cancelling this turn; re-checked before every graph invoke and forwarded to the graph. */
   readonly signal?: AbortSignal;
   /** Per-phase max LM step count; defaults to 50. */
   readonly maxRounds?: number;
@@ -68,8 +71,6 @@ export interface AgentRuntimeDeps {
    * turn cannot force-idle the session a newer turn now owns.
    */
   readonly turnEpoch: number;
-  /** Durable checkpointer. Defaults to in-memory when the host does not supply one. */
-  readonly checkpointer?: BaseCheckpointSaver;
   /**
    * Prior-turn discovery conversation, oldest first, for cross-turn chat memory.
    *
@@ -110,8 +111,6 @@ function assertExternalTracingDisabled(): void {
   const enabled = EXTERNAL_TRACING_FLAGS.filter((name) => {
     const value = process.env[name];
     if (value === undefined) return false;
-    // LangChain's legacy LANGCHAIN_TRACING branch treats every defined value
-    // as enabled; the other flags are enabled only by the literal "true".
     return name === 'LANGCHAIN_TRACING' || value.toLowerCase() === 'true';
   });
   if (enabled.length > 0) {
@@ -155,7 +154,6 @@ export class AgentRuntime {
       signal: deps.signal,
       maxRounds: this.maxRounds,
       turnEpoch: deps.turnEpoch,
-      checkpointer: deps.checkpointer ?? new MemorySaver(),
       logger: deps.logger,
       traceSyntheticRejection: deps.traceSyntheticRejection,
     });
@@ -164,32 +162,22 @@ export class AgentRuntime {
   /** Runs one user prompt through the graph, handling each LangGraph consent interrupt. */
   public async run(prompt: string): Promise<TurnOutcome> {
     const session = this.getSession();
-    // Advance the round counter so parallel-start guards can distinguish same-turn from cross-turn calls.
     session.currentRoundId += 1;
-    // Retain the verbatim user prompt for canonical-question resolution at start_exploration.
-    // Host-seeded marker prompts are runtime re-entry envelopes, not user-authored questions.
     session.currentTurnPrompt = prompt.startsWith(PREVIEW_REQUEST_MARKER) || prompt.startsWith(TRACE_REQUEST_MARKER)
       ? null
       : prompt;
     try {
-      // Seed prior discovery turns ahead of the current prompt so discovery has cross-turn memory.
-      // History rides in `messages` (after the cached system prefix), preserving prompt caching.
       let input: AgentStateUpdate | Command = this.priorMessages.length > 0
         ? { prompt, messages: [...this.priorMessages, modelUserMessage(prompt)] }
         : { prompt };
       const config = {
         configurable: { thread_id: this.threadId },
-        // An explicit empty callback set prevents application-owned tracing. The environment guard
-        // in the loop rejects LangChain's ambient tracer switches before any graph/model invocation.
         callbacks: [],
-        // Derived from the active-loop cap so the recursion budget can't desync (see turnRecursionLimit).
         recursionLimit: turnRecursionLimit(this.maxRounds),
       };
 
       for (;;) {
         if (this.signal?.aborted) return this.close('cancelled');
-        // Re-checked before EVERY invoke, not once per turn: a consent gate can hold the turn open
-        // for minutes, and ambient tracing flags must fail closed before any graph or model call.
         assertExternalTracingDisabled();
         const result = await this.graph.invoke(input as never, config);
         const interruptPayload = extractInterruptPayload(result);
@@ -199,8 +187,6 @@ export class AgentRuntime {
           input = new Command({ resume: decision });
           continue;
         }
-        // An abort that fired mid-invoke can still surface a completed state — the user's Stop wins
-        // over whatever outcome the graph carried across the abort.
         if (this.signal?.aborted) return this.close('cancelled');
 
         const state = result as {
@@ -213,14 +199,11 @@ export class AgentRuntime {
         return this.close(outcome, state.error ?? undefined, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
       }
     } catch (err) {
-      // A thrown cancellation is a clean stop, not a failure: without this, a pre-aborted model
-      // call surfacing as a throw would close the turn as 'error' and toast the user.
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
         this.logger?.debug('[AI] turn aborted — closed as cancelled');
         return this.close('cancelled');
       }
       const msg = err instanceof Error ? err.message : String(err);
-      // The toast carries no stack; this is the only place the graph throw's stack still exists.
       this.logger?.error('[AI] LangGraph turn', err);
       return this.close('error', msg);
     }
@@ -249,7 +232,6 @@ export class AgentRuntime {
         return;
       }
       this.signal?.addEventListener('abort', abort, { once: true });
-      // Project the validated engine gate onto the native chat participant surface.
       this.sink.gate({
         gateId,
         gate: gate.gate,
@@ -267,22 +249,15 @@ export class AgentRuntime {
         ? this.sink.fail(error)
         : this.sink.result(status, error);
     } catch (cause) {
-      // Terminal methods claim before invoking the sink. A throw therefore still belongs to this
-      // winning close and must not skip the runtime/session bookkeeping below.
       claimed = true;
       sinkFailure = { cause };
     }
     if (!claimed) return this.sink.terminalStatus ?? status;
 
-    // Only the terminal winner may mutate runtime/session close state. A racing duplicate close is
-    // now a read of the sink's authoritative outcome, not a second bookkeeping pass.
     this.lastFailureDetail = status !== 'ok' && error ? { message: error, code: detail?.code, stop: detail?.stop } : undefined;
-    // If the turn ended abnormally, reset the session phase so the next turn is not misrouted
-    // through a stale exploring/awaiting_gate state (cancelled paths in graph.ts don't call enterIdle).
     if (status === 'cancelled' || status === 'error') {
       const sess = this.getSession();
       if (sess.phase.kind === 'exploring' || sess.phase.kind === 'awaiting_gate') {
-        // Guarded: a zombie turn's late close() must never force-idle the session a newer turn owns.
         const outcome = sess.enterIdle(this.turnEpoch);
         if (outcome.kind === 'dropped_stale_turn') {
           this.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);

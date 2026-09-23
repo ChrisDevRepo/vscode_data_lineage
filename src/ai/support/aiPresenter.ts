@@ -23,16 +23,23 @@ export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
   ) as Partial<T>;
 }
 
-const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', write: 'write', exec: 'exec', read: 'read' };
+const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', exec: 'exec' };
 const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
 /**
  * Standardizes internal edge types into an AI-consumable API nomenclature.
  *
+ * @remarks
+ * `LineageEdge.type` records provenance (`body` vs `exec`), never direction — the engine
+ * orders a `body` edge's endpoints by write-vs-read but discards the verb. Only a procedure
+ * ever emits an outbound `body` edge for a mutation; every other `body` source is a read.
+ *
  * @param type - The raw edge type from the graph engine.
+ * @param sourceNodeType - The `ObjectType` of the edge's source node.
  * @returns A simplified string representing the data flow direction (e.g., 'read', 'write', 'exec').
  */
-export function edgeApiType(type: string): string {
+export function edgeApiType(type: string, sourceNodeType: string): string {
+  if (type === 'body' && sourceNodeType === 'procedure') return 'write';
   return EDGE_TYPE_MAP[type] ?? 'read';
 }
 
@@ -46,23 +53,44 @@ type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & {
 };
 
 /**
+ * Optional context that lets {@link presentNode} serve a node's `in`/`out` neighbor split in the
+ * same shape `buildHopFocusNode` uses for the hop_context route, instead of only the scalar `deg`.
+ */
+export type NodeNeighborSplitContext = {
+  /** Full node lookup, needed to resolve each neighbor id to its schema/name/type. */
+  nodeMap: Map<string, LineageNode>;
+  /** `"source→target"` to API edge type, as built by `buildEdgeTypeMap`. */
+  edgeTypeMap: Map<string, string>;
+};
+
+/**
  * Transforms a database node into a compact, token-optimized JSON representation.
  *
  * @remarks
- * Keys are intentionally abbreviated (`s`=schema, `n`=name, `t`=type, `deg`=degree)
- * to minimize the footprint in search results and BFS discovery payloads.
+ * Keys are abbreviated (`s`=schema, `n`=name, `t`=type, `deg`=degree) to minimize payload size.
+ * `deg` alone cannot answer "which side"; passing `splitContext` adds `in`/`out` neighbor arrays in
+ * the shape `buildHopFocusNode` emits for hop_context, omitted elsewhere so payload only grows where requested.
  *
  * @param node - The node to transform.
  * @param neighborIndex - Optional index to calculate connection density (degree).
+ * @param splitContext - Optional; when provided alongside a `neighborIndex` entry, adds `in`/`out`
+ * neighbor-direction arrays instead of leaving direction unrecoverable from `deg` alone.
  * @returns A stripped record suitable for AI consumption.
  */
 export function presentNode(
   node: PresentableNode,
   neighborIndex?: NeighborIndex,
+  splitContext?: NodeNeighborSplitContext,
 ): Record<string, unknown> {
   const entry = neighborIndex?.[node.id];
   const deg = entry !== undefined
     ? entry.in.length + entry.out.length
+    : undefined;
+  const inSplit = entry && splitContext
+    ? entry.in.map(nid => presentNeighbor(nid, node.id, splitContext.nodeMap, splitContext.edgeTypeMap, true))
+    : undefined;
+  const outSplit = entry && splitContext
+    ? entry.out.map(nid => presentNeighbor(nid, node.id, splitContext.nodeMap, splitContext.edgeTypeMap, false))
     : undefined;
   return strip({
     id:  node.id,
@@ -70,8 +98,10 @@ export function presentNode(
     n:   node.name,
     t:   node.type,
     deg,
+    in:  inSplit,
+    out: outSplit,
     ext: node.externalType || undefined,
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -92,7 +122,7 @@ export function presentColumn(col: ColumnDef): Record<string, unknown> {
     pk: col.pkOrdinal ?? undefined,
     uq: col.unique    || undefined,
     ck: col.check     || undefined,
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -167,7 +197,7 @@ export function presentSchema(schema: SchemaInfo): Record<string, unknown> {
     p:    schema.types['procedure'] || undefined,
     f:    schema.types['function']  || undefined,
     ext:  schema.types['external']  || undefined,
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -199,7 +229,7 @@ export function presentNeighbor(
     n:  n?.name   ?? nid,
     t:  n?.type   || undefined,
     e:  edgeMap.get(edgeKey) ?? 'read',
-  } as Record<string, unknown>);
+  });
 }
 
 /**
@@ -224,5 +254,5 @@ export function presentFilter(filter: SerializedFilterState): Record<string, unk
     externalRefTypes:  filter.externalRefTypes?.length > 0 ? filter.externalRefTypes : undefined,
     exclusionPatterns: filter.exclusionPatterns?.length ? filter.exclusionPatterns : undefined,
     bookmark_nodes:    bookmarkCount && bookmarkCount > 0 ? bookmarkCount : undefined,
-  } as Record<string, unknown>);
+  });
 }

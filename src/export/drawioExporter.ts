@@ -1,7 +1,6 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import type { CustomNodeData } from '../components/CustomNode';
-import type { SchemaNodeData } from '../engine/types';
+import type { CustomNodeData, SchemaNodeData } from '../engine/types';
 import { TYPE_COLORS, createSchemaColorMap, getSchemaColorFromMap, getExternalNodeColor, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
@@ -56,12 +55,7 @@ const NODE_W = 180;
 const NODE_H = 70;
 const COLOR_BAND_W = 6;
 
-/**
- * Constructs a rich HTML label for a node in the Draw.io diagram.
- *
- * @param d - The custom data associated with the lineage node.
- * @returns A string containing HTML for the node label.
- */
+/** Constructs a rich HTML label for a node in the Draw.io diagram. */
 function buildLabel(d: CustomNodeData): string {
   const icon = TYPE_COLORS[d.objectType]?.icon || '■';
   const schemaLabel = d.externalType === 'file' ? 'FILE SOURCE'
@@ -78,11 +72,7 @@ function buildLabel(d: CustomNodeData): string {
 /**
  * Generates the legend section of the Draw.io diagram, mapping schema names to their assigned colors.
  *
- * @param schemas - List of unique schema names in the graph.
- * @param colorMap - Display colors keyed by schema name.
- * @param startId - The starting ID for XML elements in this section.
  * @param externalSchemas - Schema names rendered with the external-node color.
- * @returns An object containing the generated cells and the next available ID.
  */
 function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number, externalSchemas: ReadonlySet<string> = new Set()): { cells: MxCell[]; nextId: number } {
   const cells: MxCell[] = [];
@@ -142,15 +132,7 @@ function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: numbe
   return { cells, nextId: id };
 }
 
-/**
- * Constructs an mxGraph edge cell.
- *
- * @param edge - The React Flow edge data.
- * @param cellId - Unique ID for the XML cell.
- * @param sourceId - ID of the source node.
- * @param targetId - ID of the target node.
- * @returns A compiled `MxCell` representing the edge.
- */
+/** Constructs an mxGraph edge cell. */
 function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: string): MxCell {
   const isBidi = edge.id.includes('↔');
 
@@ -185,12 +167,6 @@ function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: s
  * - Styled vertices with custom HTML labels and color bands.
  * - Orthogonal edges with bidirectional support.
  * - Embedded metadata (tooltips, full names) using `<object>` containers.
- *
- * @param nodes - Array of nodes from the graph state.
- * @param edges - Array of edges from the graph state.
- * @param schemas - List of schema names for the legend.
- * @param clusterNodes - Optional schema-overview nodes included in the export.
- * @returns A full XML string ready for import into Draw.io.
  */
 export function exportToDrawio(
   nodes: FlowNode<CustomNodeData>[],
@@ -209,12 +185,12 @@ export function exportToDrawio(
   const offsetY = 20 - Math.min(0, minY);
 
   const realNodeSchemas = nodes
-    .map(n => n.data as CustomNodeData)
+    .map(n => n.data)
     .filter(d => d.objectType !== 'external')
     .map(d => d.schema);
   const realSchemaSet = new Set(realNodeSchemas);
   const externalSchemas = new Set(nodes
-    .map(n => n.data as CustomNodeData)
+    .map(n => n.data)
     .filter(d => d.objectType === 'external' && d.schema && !realSchemaSet.has(d.schema))
     .map(d => d.schema));
   const exportSchemas = Array.from(new Set([...schemas, ...realNodeSchemas]))
@@ -228,7 +204,7 @@ export function exportToDrawio(
   const nodeObjects: MxObject[] = [];
   const colorBandCells: MxCell[] = [];
   for (const node of nodes) {
-    const d = node.data as CustomNodeData;
+    const d = node.data;
     const nodeId = String(nextId++);
     idMap.set(node.id, nodeId);
 
@@ -391,10 +367,6 @@ function buildSchemaClusterObject(
 
 /**
  * Converts schema-overview cluster nodes into a Draw.io diagram showing schema-level dependencies.
- *
- * @param nodes - Schema cluster nodes from the schemaOverview display mode.
- * @param edges - Aggregated edges between schema clusters.
- * @param schemas - Schema names for the legend.
  *
  * @returns Draw.io XML document, or an empty string when no schema nodes exist.
  */

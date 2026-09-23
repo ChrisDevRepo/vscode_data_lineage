@@ -1,3 +1,0 @@
-<short_term_memory>
-No nodes visited yet.
-</short_term_memory>

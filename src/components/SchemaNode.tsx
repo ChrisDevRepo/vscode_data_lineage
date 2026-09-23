@@ -25,7 +25,6 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
     d.onExpandSchema?.(d.schemaName);
   };
 
-  // Expanded schema view clusters are secondary navigation containers beside the expanded object nodes.
   const clusterBackground = `color-mix(in srgb, ${d.color} 12%, var(--ln-bg-elevated))`;
   const clusterHeaderBackground = `color-mix(in srgb, ${d.color} 68%, var(--ln-bg-elevated))`;
   const clusterBorderColor = `color-mix(in srgb, ${d.color} 48%, var(--ln-border))`;
@@ -99,7 +98,7 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
             gap: 4,
           }}
         >
-          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span title={d.schemaName} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {d.schemaName}
           </span>
           {canExpand && (

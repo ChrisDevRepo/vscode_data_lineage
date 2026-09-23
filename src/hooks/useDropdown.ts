@@ -42,8 +42,8 @@ export function useDropdown(placement: Placement = 'bottom-start') {
     const onOtherOpen = (e: Event) => {
       if ((e as CustomEvent<symbol>).detail !== idRef.current) setIsOpen(false);
     };
-    window.addEventListener(DROPDOWN_OPEN_EVENT, onOtherOpen as EventListener);
-    return () => window.removeEventListener(DROPDOWN_OPEN_EVENT, onOtherOpen as EventListener);
+    window.addEventListener(DROPDOWN_OPEN_EVENT, onOtherOpen);
+    return () => window.removeEventListener(DROPDOWN_OPEN_EVENT, onOtherOpen);
   }, []);
 
   const { refs, floatingStyles, context } = useFloating({

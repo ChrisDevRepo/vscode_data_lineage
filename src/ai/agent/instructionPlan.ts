@@ -18,6 +18,7 @@ import type {
 } from '../model/modelPort';
 import type { ModelMessage } from '../model/modelPort';
 import type { z } from 'zod';
+import type { ClassificationValue } from '../session/classification';
 import type { TurnEventSink } from '../runtime/turnEventSink';
 import {
   filterRegistry,
@@ -57,7 +58,7 @@ interface InstructionFactsShared {
  * Mission/runtime facts from which observable plan metadata is derived.
  *
  * @remarks
- * A discriminated union on {@link InstructionFactsShared.classification | analysisMode} so the
+ * A discriminated union on `analysisMode` (with `classification` on {@link InstructionFactsShared}) so the
  * BB-forbids / CT-requires `targetColumns` invariant is enforced by the compiler, not a runtime
  * throw: BB (and the mode-absent discovery/entry shape) structurally cannot carry `targetColumns`,
  * and CT structurally must.
@@ -69,6 +70,34 @@ export type InstructionPlanFacts =
   | (InstructionFactsShared & { readonly analysisMode: 'ct'; readonly targetColumns: readonly [string, ...string[]] })
   /** Mode-agnostic calls (entry detection, discovery, compose) — no mode, no targets. */
   | (InstructionFactsShared & { readonly analysisMode?: undefined; readonly targetColumns?: never });
+
+/** Provenance shared by both BB and CT members of an exploration-scoped facts value. */
+interface ExplorationFactsShared {
+  readonly classification?: ClassificationValue;
+  readonly templateKeys?: readonly string[];
+  readonly memorySections?: readonly string[];
+}
+
+/**
+ * Builds the mode-correct {@link InstructionPlanFacts} union member for an exploration-scoped call,
+ * so no call site restates the `analysisMode === 'ct' ? {…targetColumns} : {…}` branch.
+ *
+ * @param analysisMode - Approved mode for this call (from the engine or the gate decision).
+ * @param targetColumns - Locked CT targets; required non-empty when `analysisMode` is `ct`, ignored for BB.
+ * @param shared - Classification / YAML / memory provenance common to both modes.
+ * @returns The discriminated facts member the compiler type-checks against the stage.
+ */
+export function explorationFacts(
+  analysisMode: 'bb' | 'ct',
+  targetColumns: readonly string[] | undefined,
+  shared: ExplorationFactsShared,
+): InstructionPlanFacts {
+  if (analysisMode === 'ct') {
+    if (!targetColumns?.length) throw new Error('InstructionPlan: CT requires at least one target column.');
+    return { analysisMode: 'ct', targetColumns: targetColumns as readonly [string, ...string[]], ...shared };
+  }
+  return { analysisMode: 'bb', ...shared };
+}
 
 /** Couples a structured schema with the stable identity emitted to traces. */
 export interface StructuredContract<T> {
@@ -113,6 +142,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly toolSchemaOverrides?: ReadonlyMap<string, z.ZodType>;
   /** Live ephemeral session fact read at each provider step; never copied into frame/context state. */
   readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
+  /** Whether a committed report from this run exists for `present_result` to amend; read live. */
+  readonly presentResultRetainableSections?: () => boolean;
 };
 
 type TextPlanDraft = Omit<CompleteTextInput, 'phase' | 'instructionContext'> & {
@@ -223,9 +254,6 @@ function buildContext(
 ): InstructionContext {
   const analysisMode = facts?.analysisMode;
   const targets = facts?.analysisMode === 'ct' ? facts.targetColumns : undefined;
-  // Runtime-only guards: the BB-forbids / CT-requires targetColumns invariant is now compile-time
-  // (discriminated `InstructionPlanFacts`), but classification/mode presence for active & synthesis
-  // guards live engine-state drift the type system cannot see.
   if ((phase === 'active' || phase === 'synthesis') && !facts?.classification) {
     throw new Error(`InstructionPlan: ${phase} requires a locked classification.`);
   }
@@ -290,6 +318,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     facts,
     toolSchemaOverrides,
     presentResultRepairFields,
+    presentResultRetainableSections,
     ...input
   } = draft;
   const phase = phaseOf(stage);
@@ -310,12 +339,12 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (stage.kind === 'active') {
     schemaOverrides.set(
       'lineage_submit_findings',
-      submitFindingsSchemaForMode(stage.mode === 'sm_ct' ? 'ct' : 'bb'),
+      submitFindingsSchemaForMode(stage.mode === 'sm_ct' ? 'ct' : 'bb', frozenFacts?.classification),
     );
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
   if ((stage.kind === 'completed' || stageSupportsPresentResultRepair(stage)) && !liveRepairResolver) {
-    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind));
+    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false));
   }
   let registry = schemaOverrides.size
     ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
@@ -323,7 +352,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (liveRepairResolver) {
     registry = resolveRegistrySchemas(registry, new Map([[
       'lineage_present_result',
-      () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields()),
+      () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields(), presentResultRetainableSections?.() ?? false),
     ]]));
   }
   const toolNames = registry.getTools().map(tool => tool.name);
@@ -335,9 +364,6 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     if (!input.requiredTerminalTool) {
       throw new Error(`InstructionPlan: multi-tool required choice in ${phase} needs a graph-enforced terminal tool.`);
     }
-    // Some providers reject generic Required when more than one tool is visible. The graph still
-    // enforces the required terminal tool and retries a tool-less generation, so provider Auto
-    // preserves the phase contract without narrowing away the phase's lookup tools.
     toolChoice = 'auto';
   }
   const context = buildContext('converse', phase, frozenFacts, toolNames);

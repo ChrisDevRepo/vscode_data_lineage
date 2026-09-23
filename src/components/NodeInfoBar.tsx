@@ -63,7 +63,6 @@ function NeighborHoverList({
 
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
 
-  // Group by schema, sorted alphabetically
   const bySchema = new Map<string, Array<{ id: string; entry: CatalogEntry }>>();
   for (const id of ids) {
     const entry = catalog[id];

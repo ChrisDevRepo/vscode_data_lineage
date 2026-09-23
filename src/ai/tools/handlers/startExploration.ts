@@ -5,19 +5,18 @@
  * Proposal validation and preview construction stay local to this handler.
  * Turn-lease validation and effect serialization remain in the registry wrapper.
  */
-import * as vscode from 'vscode';
-import { DEFAULT_MAX_ROUNDS } from '../../core/agentCore';
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
 import {
   DEFAULT_EXPLORATION_QUESTION,
-  resolveDepthIntent,
+  depthSidesOf,
+  mergeRefineDepthIntent,
+  resolveDepthIntentForBoundary,
   type DepthIntent,
 } from '../../sm/smTypes';
 import { sanitizeForLog, trunc } from '../../../utils/log';
 import { StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
-import { CLASSIFICATION_LABEL } from '../../session/classification';
 import { renderScopeSummaryMd } from '../../prompting/scopeSummaryRenderer';
 import {
   normalizeStartExplorationInput,
@@ -25,6 +24,7 @@ import {
 } from '../../support/inputNormalization';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
+import { isCancellationOutcome } from '../../support/cancellation';
 import {
   buildStartExplorationReject,
   evaluateBbTargetColumnsRule,
@@ -36,6 +36,8 @@ import {
 } from '../../interaction/rules/startExplorationRules';
 import type { ToolServices } from './toolServices';
 import { AI_MAX_SCOPE_NODE_IDS } from '../../../engine/shared/bridgeContract';
+import { composeDiscoverySummaryText } from '../../support/discoverySummary';
+import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
 const SAFETY_RATIO = 0.7;
@@ -47,18 +49,15 @@ const SAFETY_RATIO = 0.7;
  * @param s - Host capabilities for the active tool session.
  * @returns The structured proposal, gate, hop context, or rejection envelope.
  */
-export function executeStartExploration(input: unknown, s: ToolServices): string {
+export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);
       const sess = s.getSession();
       const m = s.requireModel();
       const g = s.requireGraph();
 
-      // Pre-Zod duplicate-start guard keeps live explorations from retrying with alternate params.
       const preCheckPrior = sess.stateMachine as NavigationEngine | null;
       const preCheckLive  = !!preCheckPrior && preCheckPrior.status !== 'complete';
-      // Computed once and reused verbatim later: nothing between here and the fresh-exploration
-      // path below writes sess.phase/pendingExploration (the supplement branch returns early).
       const isRefining = sess.pendingExploration !== null
         && sess.phase.kind === 'awaiting_gate'
         && sess.phase.gate.gate === 'confirm_sm_start';
@@ -69,7 +68,7 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
           isRefining,
         );
         if (alreadyStarted) {
-          return s.logAndReturn('start_exploration', alreadyStarted, loggedInput);
+          return s.logAndReturn('lineage_start_exploration', alreadyStarted, loggedInput);
         }
       }
 
@@ -89,19 +88,16 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         : input;
       const parsed = StartExplorationInputSchema.safeParse(parseInput);
       if (!parsed.success) {
-        return s.logAndReturn('start_exploration', buildStartExplorationReject(parsed.error, normalizedStart.input), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', buildStartExplorationReject(parsed.error, normalizedStart.input), loggedInput);
       }
       const data = parsed.data;
       if (data.mission_brief !== undefined) {
         s.logger.debug(`[Mission] provenance=tool_payload len=${data.mission_brief.length}`);
       }
 
-      // Supplements retain the completed engine while updating the follow-up mission context.
-      const applyFollowUpContext = (engine: NavigationEngine): void => {
-        if (data.analysisMode === 'ct' && data.targetColumns?.length) engine.setColumnTargets(data.targetColumns);
+      const applyFollowUpContext = (): void => {
         if (data.classification) sess.setClassification(data.classification);
         if (data.mission_brief !== undefined) sess.memory.setMissionBrief(data.mission_brief);
-        // User-authored text wins over the model's paraphrase for the canonical question.
         const canonicalQuestion = resolveCanonicalQuestion({
           lastDiscoveryQuestion: sess.lastDiscoveryQuestion,
           currentTurnPrompt: sess.currentTurnPrompt,
@@ -111,37 +107,34 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         if (canonicalQuestion) sess.memory.setUserQuestion(canonicalQuestion);
       };
 
-      // Supplement is origin-less by contract; an explicit origin starts a fresh exploration.
       if (data.supplement && !data.origin) {
         const priorEngine = sess.stateMachine as NavigationEngine | null;
         const supplementPrereq = evaluateSupplementPrereqRule(priorEngine?.status ?? null);
         if (supplementPrereq) {
-          return s.logAndReturn('start_exploration', supplementPrereq, loggedInput);
+          return s.logAndReturn('lineage_start_exploration', supplementPrereq, loggedInput);
         }
         if (!priorEngine) {
-          return s.logAndReturn('start_exploration', {
-            error: 'supplement_requires_complete_engine',
-            hint: "supplement requires a completed prior exploration. Current engine status: none. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
-          }, loggedInput);
+          throw new Error('[start_exploration] supplement prerequisite passed without a prior engine');
         }
-        const res = priorEngine.supplementAgenda(data.supplement.nodeIds ?? []);
-        if ('error' in res) return s.logAndReturn('start_exploration', res, loggedInput);
-        applyFollowUpContext(priorEngine);
-        // Unguarded by design: tool dispatch runs synchronously inside the owning turn's graph-owned
-        // generation attempt, so the live `turnEpoch` is always this turn's — the guard would always accept.
+        const supplementIds = data.supplement.nodeIds ?? [];
+        const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
+        if ('error' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
+        const admittedIds = supplementIds.filter(
+          id => !res.skippedDetails.some(skip => skip.nodeId.toLowerCase() === id.toLowerCase()),
+        );
+        applyFollowUpContext();
         sess.enterExploring(s.turnEpoch(sess));
         const skippedIdsSuffix = res.skippedDetails.length > 0
           ? ` skippedIds=[${res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(',')}]`
           : '';
         s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}${skippedIdsSuffix}`);
         const hopCtx = priorEngine.getHopContext();
-        return s.logAndReturn('start_exploration', { ok: true, supplement: res, ...hopCtx }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }
 
-      // Fresh exploration path: origin is required.
       if (!data.origin && data.proposalRevision === undefined) {
-        return s.logAndReturn('start_exploration', {
-          error: 'missing_field',
+        return s.logAndReturn('lineage_start_exploration', {
+          error: REJECTION_CODES.missingField,
           hint: "Field 'origin' is required for a fresh exploration. Supply 'supplement' with nodeIds only when extending a completed prior exploration (follow-up phase).",
         }, loggedInput);
       }
@@ -149,55 +142,43 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       const prior = sess.stateMachine as NavigationEngine | null;
       const priorLive = !!prior && prior.status !== 'complete';
 
-      // Refinement replaces the reviewable proposal. No active engine exists before approval.
       if (data.proposalRevision !== undefined && !isRefining) {
-        return s.logAndReturn('start_exploration', {
-          error: 'stale_proposal_revision',
+        return s.logAndReturn('lineage_start_exploration', {
+          error: REJECTION_CODES.staleProposalRevision,
           hint: 'proposalRevision is valid only while refining the matching pending approval gate.',
         }, loggedInput);
       }
       if (isRefining && data.proposalRevision !== sess.pendingExploration!.revision) {
-        return s.logAndReturn('start_exploration', {
-          error: 'stale_proposal_revision',
+        return s.logAndReturn('lineage_start_exploration', {
+          error: REJECTION_CODES.staleProposalRevision,
           hint: `Refine proposal revision ${sess.pendingExploration!.revision}; do not reuse an older gate revision.`,
         }, loggedInput);
       }
 
       const parallelViolation = evaluateParallelStartRule(sess.startExplorationRoundId, sess.currentRoundId);
       if (parallelViolation && !isRefining) {
-        return s.logAndReturn('start_exploration', parallelViolation, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', parallelViolation, loggedInput);
       }
-      // A completed result remains authoritative while a fresh replacement is reviewed. The
-      // existing engine/result/memory are replaced only by exact-revision approval; supplements
-      // above remain the explicit no-gate continuation path.
       if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
         s.logger.debug(`[AI] [Proposal] completed result preserved during replacement review origin=${sanitizeForLog(data.origin ?? '')}`);
       }
-      if (priorLive && prior!.sessionId && prior!.sessionId !== sess.id) {
+      if (priorLive && prior.sessionId && prior.sessionId !== sess.id) {
         sess.pendingUserNotice.add('A previous exploration was still running when you started this one. Its in-memory findings were discarded.');
         sess.resetExploration();
       } else if (priorLive) {
         const alreadyStarted = evaluateAlreadyStartedRule(
           priorLive,
-          prior!.sessionId === sess.id,
+          prior.sessionId === sess.id,
           isRefining,
         );
-        if (alreadyStarted) return s.logAndReturn('start_exploration', alreadyStarted, loggedInput);
+        if (alreadyStarted) return s.logAndReturn('lineage_start_exploration', alreadyStarted, loggedInput);
       }
 
-      // A scope revision is a patch to the reviewed proposal, not a fresh read of mutable GUI state.
       const activeFilter = isRefining
         ? structuredClone(sess.pendingExploration!.activeFilter)
         : s.buildActiveFilter(sess);
 
       const engineLog = toEngineLog(s.logger);
-      // Proposal preview uses an unpublished engine with isolated memory. It is discarded after
-      // computing the scope summary; approval is the sole site that creates active engine state.
-      // `classification` is intentionally left unset on this preview instance: it only reaches
-      // getScopeSummary(), never a hop dispatch (the getHopContext() fall-through below is
-      // unreachable for this path — phase/refine guards route here first), so
-      // shouldPreserveTechContext() never runs against it. Its unset default (preserve tech
-      // context) is the conservative choice, so an unreachable read would still be safe.
       const engine = new NavigationEngine(m, g, engineLog, { activeFilter }, sess.columnStore);
 
       engine.sessionId = sess.id;
@@ -210,11 +191,9 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       const excludeSchemas = stringArray(data.excludeSchemas, pendingInit?.excludeSchemas);
       const excludeNodeIds = stringArray(data.excludeNodeIds, pendingInit?.excludeNodeIds);
       const passNodeIds = stringArray(data.passNodeIds, pendingInit?.passNodeIds);
-      // Refine mechanically preserves omitted proposal fields; the model does not re-author them.
+      const scopeNotes = stringArray(data.scopeNotes, pendingInit?.scopeNotes);
       const refineOrigin = isRefining ? (data.origin ?? pendingInit?.origin ?? '') : (data.origin ?? '');
       const refineDirection = data.direction ?? (isRefining ? pendingInit?.direction : 'bidirectional');
-      // User-authored text wins over the model's paraphrase for the canonical question;
-      // the model-supplied `question` and the refined proposal's retained question are fallbacks.
       const refineQuestion = resolveCanonicalQuestion({
         lastDiscoveryQuestion: sess.lastDiscoveryQuestion,
         currentTurnPrompt: sess.currentTurnPrompt,
@@ -228,21 +207,37 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         s.logger.debug(`[Mission] provenance=pending_proposal len=${refineMissionBrief.length}`);
       }
       const refineAnalysisMode = data.analysisMode ?? (isRefining ? pendingInit?.analysisMode : 'bb');
-      // Static Zod validation cannot know the prior mode inherited by a refine payload.
       const bbTargetConflict = refineAnalysisMode === 'bb'
         ? evaluateBbTargetColumnsRule(data.targetColumns)
         : null;
-      if (bbTargetConflict) return s.logAndReturn('start_exploration', bbTargetConflict, loggedInput);
-      // An explicit BB refine replaces CT-only snapshot columns after validation succeeds.
+      if (bbTargetConflict) return s.logAndReturn('lineage_start_exploration', bbTargetConflict, loggedInput);
       const refineTargetColumns = refineAnalysisMode === 'ct'
         ? (data.targetColumns ?? (isRefining ? pendingInit?.targetColumns : undefined))
         : undefined;
       if (refineAnalysisMode === 'bb' && isRefining && pendingInit?.targetColumns?.length) {
         s.logger.debug(`[AI] [StartExploration] refine to BB drops proposal targetColumns cols=[${trunc(pendingInit.targetColumns.join(','), 120)}] origin=${sanitizeForLog(refineOrigin)}`);
       }
-      const depthIntent: DepthIntent = data.depth === undefined && isRefining
-        ? (pendingInit?.depthIntent ?? { kind: 'default_start' })
-        : resolveDepthIntent(data.depth);
+      if (isRefining && data.depth === undefined && data.depthStated !== undefined) {
+        s.logger.debug(`[AI] [Proposal] refine depthStated without depth rejected revision=${sess.pendingExploration!.revision}`);
+        return s.logAndReturn('lineage_start_exploration', {
+          error: REJECTION_CODES.missingField,
+          hint: 'depthStated qualifies only a depth sent in the same call: resend `depth` with the level count the user stated and depthStated: true.',
+        }, loggedInput);
+      }
+      const depthIntent: DepthIntent = isRefining
+        ? mergeRefineDepthIntent(pendingInit?.depthIntent ?? { kind: 'default_start' }, data.depth, data.depthStated)
+        : resolveDepthIntentForBoundary(data.depth, data.depthStated);
+      const boundSides = depthSidesOf(depthIntent);
+      if (data.depth && typeof data.depth === 'object') {
+        for (const side of ['upstream', 'downstream'] as const) {
+          const raw = data.depth[side];
+          if (typeof raw === 'number' && raw > 0 && boundSides[side] === null) {
+            s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth.${side} from=${sanitizeForLog(String(raw))} to=(unstated)`);
+          }
+        }
+      } else if (typeof data.depth === 'number' && boundSides.upstream === null) {
+        s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth from=${sanitizeForLog(String(data.depth))} to=(unstated)`);
+      }
 
       const proposalInit = {
         question: refineQuestion || DEFAULT_EXPLORATION_QUESTION,
@@ -255,30 +250,26 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
         excludeSchemas,
         excludeNodeIds,
         passNodeIds,
+        scopeNotes,
         mission_brief: refineMissionBrief,
       } satisfies import('../../sm/smTypes').NavigationInitParams;
       const initResult = engine.init(proposalInit);
 
-      // The preview engine is never published. Rejected proposals leave the prior proposal intact.
-      if ('error' in initResult) return s.logAndReturn('start_exploration', initResult, loggedInput);
-      const aiCfg = vscode.workspace.getConfiguration('dataLineageViz.ai');
-      const maxRounds = aiCfg.get<number>('maxRounds', DEFAULT_MAX_ROUNDS);
+      if ('error' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
+      const maxRounds = s.maxRounds;
       const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
-      // Pathological breadth only: object lineage can fan out past the sliding-memory budget even
-      // at a shallow depth (hub nodes). Recovery is structural narrowing / prune / ask-user — never
-      // an engine-invented depth number. Depth intent stays AI-owned.
       const scopeViolation = evaluateScopeBudgetRule(initResult.scopeSize, safeMax, maxRounds);
       if (scopeViolation) {
         const scopeOrigin = engine.currentOrigin ?? data.origin;
         s.logger.debug(`[ScopeBudget] origin=${scopeOrigin} scope=${initResult.scopeSize} safe_max=${safeMax}`);
-        return s.logAndReturn('start_exploration', scopeViolation, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', scopeViolation, loggedInput);
       }
 
       const classification = data.classification ?? sess.pendingExploration?.classification;
       if (!classification) {
-        return s.logAndReturn('start_exploration', { error: 'missing_field', hint: 'classification is required for the exploration proposal.' }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', { error: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }, loggedInput);
       }
-      // Native approval Markdown is the review surface, so every in-scope object must be visible.
+      engine.classification = classification;
       const summary = engine.getScopeSummary(AI_MAX_SCOPE_NODE_IDS);
       const nextProposal = {
         init: proposalInit,
@@ -288,23 +279,20 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
       };
       if (isRefining && sess.pendingExploration && sameExplorationProposal(nextProposal, sess.pendingExploration)) {
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
-        return s.logAndReturn('start_exploration', {
+        return s.logAndReturn('lineage_start_exploration', {
           error: 'no_op_refine',
           hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change.',
         }, loggedInput);
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('start_exploration', { error: 'stale_turn', hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', { error: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
-      s.logger.debug(`[AI] [Proposal] revision=${sess.pendingExploration!.revision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
+      const proposalRevision = sess.pendingExploration!.revision;
+      s.logger.debug(`[AI] [Proposal] revision=${proposalRevision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
 
-      // Discovery is content-blind: always gate before any analysis runs.
-      // Refine path: re-emit the gate with the new tree so the loop continues.
       if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed' || isRefining) {
-        const isCt = !!engine.columnAspect;
-
         const classes = ['sliding_memory'];
         if (initResult.scopeSchemas) {
           const filterSet = new Set((activeFilter.schemas || []).map(schema => schema.toLowerCase()));
@@ -315,8 +303,24 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
           }
         }
 
-        const classLabel = CLASSIFICATION_LABEL[classification] + (isCt ? ' (Column Trace)' : '');
-        const detail = `${renderScopeSummaryMd(summary)}\n\n_Analysis: ${classLabel}_`;
+        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification);
+        let discoverySummary: string | undefined;
+        if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
+          discoverySummary = await composeDiscoverySummaryText(
+            s.textModel,
+            s.signal,
+            s.logger,
+            sess.lastDiscoveryQuestion,
+            sess.lastDiscoveryAnswer,
+            classification,
+            engine,
+          );
+          if (discoverySummary) {
+            const attached = sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess));
+            if (attached.kind !== 'accepted') discoverySummary = undefined;
+          }
+        }
+        const detail = discoverySummary ? `${baseDetail}\n\n${discoverySummary}` : baseDetail;
         s.logger.debug(
           `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
           `scope_nodes=${summary.scopeCount} ` +
@@ -329,21 +333,22 @@ export function executeStartExploration(input: unknown, s: ToolServices): string
           classes,
           nodeIds: [],
           detail,
-          proposalRevision: sess.pendingExploration!.revision,
+          proposalRevision,
         });
         const hint = isRefining
           ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
           : 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.';
-        return s.logAndReturn('start_exploration', {
-          error: 'action_required',
+        return s.logAndReturn('lineage_start_exploration', {
+          error: REJECTION_CODES.actionRequired,
           ...gate,
           hint,
         }, loggedInput);
       }
 
       const hopResult = engine.getHopContext();
-      return s.logAndReturn('start_exploration', { ...initResult, ...hopResult }, loggedInput);
+      return s.logAndReturn('lineage_start_exploration', { ...initResult, ...hopResult }, loggedInput);
     } catch (err) {
+      if (isCancellationOutcome(err, s.signal)) throw err;
       return s.toolError('start_exploration', err);
     }
 }

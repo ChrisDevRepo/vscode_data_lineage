@@ -2,6 +2,7 @@ import { open, mkdir, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { TurnEvent } from '../runtime/turnEventSink';
 import { safeTraceStringify, type WireRecord } from './wireLog';
+import { markGitIgnored } from '../../utils/gitIgnoredDir';
 
 /**
  * One lifecycle record in the session-scoped AI diagnostic trace.
@@ -93,6 +94,11 @@ export type RuntimeLifecycleRecord =
       readonly outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed';
       /** Enumerated cause when `outcome` is `refused`; never free text. */
       readonly refusedBy?: 'gate_id_mismatch' | 'gate_kind_mismatch' | 'no_pending_gate';
+      /**
+       * When the action was received. The record's own `at` stamps an accepted approval only after
+       * the released turn finishes, so the pair separates decision wait from released work.
+       */
+      readonly decidedAt?: string;
     }
   | {
       readonly type: 'phase';
@@ -148,9 +154,9 @@ export type AiTraceRecord = RuntimeLifecycleRecord | WireRecord;
  *
  * @remarks
  * `extension-host` is a live VS Code session — real user, real Copilot/provider traffic, valid as
- * production evidence. `headless-harness` is `npm run test:live-provider`, which runs the production
- * runtime as a plain Node process against a substituted model port: useful for regression, never
- * evidence about the shipped extension's transport behaviour.
+ * production evidence. `headless-harness` is the internal live-provider harness, which runs the
+ * production runtime as a plain Node process against a substituted model port: useful for
+ * regression, never evidence about the shipped extension's transport behaviour.
  */
 export type TraceOrigin = 'extension-host' | 'headless-harness';
 
@@ -209,12 +215,8 @@ export class AiTraceWriter {
     if (this.closed) {
       throw new Error('AiTraceWriter: writer is closed.');
     }
-    // Once a file is open (or opening), its trace-open record has stamped the capture level: a
-    // repeat enable returns the existing path and never mutates `verbose`/`origin` mid-file.
     if (this.filePath) return this.filePath;
     if (this.enabling) return this.enabling;
-    // Set before the first await so a port that reads it during the same tick as the enabling call
-    // already sees the requested capture level rather than the default.
     this.verbose = options.verbose === true;
     this.origin = options.origin ?? 'extension-host';
 
@@ -266,13 +268,8 @@ export class AiTraceWriter {
     const write = this.pending.then(async () => {
       const handle = await this.openHandle();
       await handle.appendFile(line, { encoding: 'utf8' });
-      // The trace is read while the extension host is still running. Flush the persistent handle
-      // before resolving so a separate analyzer never observes an acknowledged record as 0 bytes.
       await handle.sync();
     });
-    // The serialization chain continues from a settled promise: one failed append (disk full,
-    // permission) must reject THIS caller but never poison every later write for the session —
-    // the diagnostic file the user explicitly enabled has to survive a transient I/O error.
     void write.catch((error) => this.reportWriteFailure(error, consumeOneShot));
     this.pending = write.catch(() => {});
     return write;
@@ -326,8 +323,6 @@ export class AiTraceWriter {
     if (this.closed) return;
     this.closed = true;
     await this.pending;
-    // A handle that never opened has nothing to close — its failure was already reported
-    // to the write() caller that triggered the open.
     const handle = await this.handle?.catch(() => undefined);
     if (handle) await handle.close();
   }
@@ -342,8 +337,6 @@ export class AiTraceWriter {
         return handle;
       });
       this.handle = opening;
-      // A failed open must not stay cached as a permanently rejected handle: clear it so the
-      // next write retries the open instead of failing forever on the first error's ghost.
       opening.catch(() => {
         if (this.handle === opening) this.handle = undefined;
       });
@@ -354,6 +347,7 @@ export class AiTraceWriter {
   private async openTrace(logRoot: string): Promise<string> {
     const directory = join(logRoot, 'lm-trace');
     await mkdir(directory, { recursive: true });
+    await markGitIgnored(directory);
     const iso = new Date().toISOString().replace(/[:.]/g, '-');
     const filePath = join(directory, `trace-${iso}.ndjson`);
     const opening = open(filePath, 'a', 0o600).then(async (handle) => {
@@ -367,16 +361,11 @@ export class AiTraceWriter {
     });
     const handle = await opening;
     if (this.closed) {
-      // close() ran while the open was in flight: it saw no handle to close, so release it here
-      // and leave the writer disabled instead of publishing a path close() can no longer drain.
       await handle.close().catch(() => {});
       throw new Error('AiTraceWriter: writer is closed.');
     }
     this.filePath = filePath;
     this.handle = Promise.resolve(handle);
-    // Queued before any caller can emit, so the producer is always the file's first line. Not
-    // awaited: enabling diagnostics must not fail because the first append did — the same reason
-    // `write` isolates append failures to their own caller.
     void this.enqueue({ type: 'trace-open', origin: this.origin, verbose: this.verbose }, false).catch(() => {});
     return filePath;
   }
@@ -387,7 +376,6 @@ export class AiTraceWriter {
     try {
       this.onWriteFailure?.(error, firstFailure);
     } catch {
-      // Diagnostic reporting must never create a second unhandled failure.
     }
   }
 }

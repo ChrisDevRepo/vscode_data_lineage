@@ -43,8 +43,6 @@ function normalizeCategorizedLogMessage(cat: LogCategory, msg: string): string {
  * Use for major state transitions, successful operations, or startup events.
  * Keep frequency low (≤ ~20 per session) to maintain high signal.
  *
- * @param ch - The VS Code `LogOutputChannel` to write to.
- * @param cat - The functional category of the log.
  * @param msg - The message to log. Format: `Operation — key result (timing)`
  */
 export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
@@ -58,8 +56,6 @@ export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
  * Only visible when the user enables the 'Debug' log level.
  * Use for tracing internal logic flow, tool calls, and payload inspection.
  *
- * @param ch - The VS Code `LogOutputChannel` to write to.
- * @param cat - The functional category of the log.
  * @param msg - The message to log. Format: `Detail — context, parameters, timing`
  */
 export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
@@ -73,8 +69,6 @@ export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): v
  * Use when a feature can continue to operate but with limitations or
  * after a successful fallback operation.
  *
- * @param ch - The VS Code `LogOutputChannel` to write to.
- * @param cat - The functional category of the log.
  * @param msg - The message to log. Format: `What happened — what system did → recovery hint`
  */
 export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
@@ -89,11 +83,7 @@ export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
  * repetitive parameter passing.
  */
 export class Logger {
-  /**
-   * Creates a new Logger instance.
-   * @param ch - The VS Code `LogOutputChannel`.
-   * @param cat - The fixed category for this logger.
-   */
+  /** Creates a new Logger instance. */
   constructor(
     private readonly ch: LogOutputChannel,
     private readonly cat: LogCategory
@@ -102,30 +92,17 @@ export class Logger {
   /**
    * Factory method to create a new Logger.
    *
-   * @param ch - Output channel to write to.
    * @param cat - Functional category prefix (e.g. `'Config'`, `'Bridge'`) prepended to every log line.
    */
   static create(ch: LogOutputChannel, cat: LogCategory): Logger {
     return new Logger(ch, cat);
   }
 
-  /**
-   * Logs an info-level message.
-   *
-   * @param msg - Message body to emit under this logger's category.
-   */
+  /** Logs an info-level message. */
   info(msg: string): void { logInfo(this.ch, this.cat, msg); }
-  /**
-   * Logs a debug-level message.
-   *
-   * @param msg - Message body to emit under this logger's category.
-   */
+  /** Logs a debug-level message. */
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
-  /**
-   * Logs a warning-level message.
-   *
-   * @param msg - Message body to emit under this logger's category.
-   */
+  /** Logs a warning-level message. */
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
   /**
    * Logs an error-level message with full stack detail.
@@ -141,6 +118,9 @@ export const LOG_TRUNC_CONTENT = 200;
 
 /** Truncation cap for JSON payloads (tool I/O, webview messages) — logging.md truncation table. */
 export const LOG_TRUNC_JSON = 300;
+
+/** Items shown when a log line previews a list. */
+export const LOG_TRUNC_LIST = 10;
 
 /**
  * Truncation cap for tool-rejection diagnostics (reason and remediation hint).
@@ -164,7 +144,7 @@ export const LOG_TRUNC_REJECTION = 1_000;
  */
 export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): string {
   try {
-    const seen = new WeakSet<object>();
+    const seen = new WeakSet();
     const serialized = JSON.stringify(value, (_key, candidate: unknown) => {
       if (typeof candidate === 'bigint') return `${candidate.toString()}n`;
       if (typeof candidate === 'string') {
@@ -178,7 +158,6 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
     });
     if (serialized !== undefined) return trunc(sanitizeForLog(serialized), max);
   } catch {
-    // Fall through to a scalar representation. Proxies/getters can make JSON serialization throw.
   }
 
   try {
@@ -191,7 +170,6 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
 /**
  * Truncates a string or an array of items for log previews.
  *
- * @param val - The input string or array.
  * @param max - The maximum length (for string) or items (for array).
  * @returns The truncated value with overflow count.
  */
@@ -208,9 +186,6 @@ export function trunc(val: string | any[], max: number): string {
  *
  * Collapses all whitespace, newlines, and escape sequences into single spaces.
  * This is crucial for keeping logs readable in the line-oriented Output view.
- *
- * @param s - The raw string to sanitize.
- * @returns A single-line sanitized string.
  */
 export function sanitizeForLog(s: string): string {
   return s
@@ -225,11 +200,6 @@ export function sanitizeForLog(s: string): string {
  *
  * Automatically extracts message from `Error` objects and logs both the
  * `FAILED:` line and the stack trace at **error** level.
- *
- * @param ch - The VS Code `LogOutputChannel` to write to.
- * @param cat - The functional category of the log.
- * @param op - The name of the operation that failed.
- * @param err - The error object or reason for failure.
  *
  * @remarks
  * Format: `[CAT] FAILED: operation — error detail`

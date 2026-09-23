@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
@@ -6,11 +6,14 @@ import {
   Controls,
   MiniMap,
   useReactFlow,
+  useNodesInitialized,
   applyNodeChanges,
   applyEdgeChanges,
+  MarkerType,
   type Node as FlowNode,
   type Edge as FlowEdge,
   type NodeTypes,
+  type EdgeTypes,
   type NodeMouseHandler,
   type OnNodesChange,
   type OnEdgesChange,
@@ -20,10 +23,11 @@ import '@xyflow/react/dist/style.css';
 import Graph from 'graphology';
 import { useVsCode } from '../contexts/VsCodeContext';
 
-import { CustomNode, type CustomNodeData, type TraceNeighborOption, type TraceNodeControls, type TraceSideControls } from './CustomNode';
+import { CustomNode } from './CustomNode';
 import { Spinner } from './ui/Spinner';
 import { SchemaNode } from './SchemaNode';
-import type { SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot } from '../engine/types';
+import type { AiBadge, ColumnTraceNodeData, CustomNodeData, SchemaNodeData, GraphMode, TraceAffordanceSnapshot, TraceAffordanceSideSnapshot, TraceNeighborOption, TraceNodeControls, TraceSideControls } from '../engine/types';
+import { ColumnTraceEdge, type ColumnTraceEdgeData } from './ColumnTraceEdge';
 import { Legend } from './Legend';
 import { deriveLegendSchemas, deriveLegendColorMap } from './legendDerivation';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -42,9 +46,22 @@ import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseMode
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
 import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
+import { ColumnTraceNode } from './ColumnTraceNode';
+import {
+  buildColumnTraceView,
+  buildColumnThreadIndex,
+  columnRowKey,
+  columnThread,
+  resolveRowLineStates,
+  type ColumnTraceViewObject,
+  type ColumnLineState,
+} from '../engine/columnTraceView';
+import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes, computeNodeDecoration } from '../engine/nodeDecoration';
+import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
+import { normalizeColName } from '../utils/sql';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 /**
@@ -54,18 +71,56 @@ import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
  * If defined inside, React Flow remounts all nodes on every render, causing
  * severe performance degradation and loss of state.
  */
-const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode } satisfies NodeTypes;
+const nodeTypes = { lineageNode: CustomNode, schemaNode: SchemaNode, columnTraceNode: ColumnTraceNode } satisfies NodeTypes;
+
+/** Mapping of custom edge types for React Flow; module-level for the same reason as {@link nodeTypes}. */
+const edgeTypes = { columnTraceEdge: ColumnTraceEdge } satisfies EdgeTypes;
 
 const AiDescriptionOverlay = lazy(async () => {
   const module = await import('./AiDescriptionOverlay');
   return { default: module.AiDescriptionOverlay };
 });
+import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
+
+/** The panel's reserved extent before its own `ResizeObserver` has reported a measured size. */
+const AI_PANEL_DEFAULT_WIDTH = 'min(440px, 55vw)';
+const AI_PANEL_DEFAULT_HEIGHT = 'min(360px, 45vh)';
+
+/** `window.vscode` state key the dock position is persisted under, merged in alongside other keys. */
+const AI_DOCK_STATE_KEY = 'aiDockPosition';
+
+/** Reverse of `aiSections`' per-section `nodeIds`: every section that badged `nodeId`, in order. */
+export function sectionsForNode(sections: readonly AiReportSection[], nodeId: string): number[] {
+  return sections.filter(s => s.nodeIds.includes(nodeId)).map(s => s.n);
+}
+
+/** Cache key for the AI pane's open state + pinned section — origin id ('preview' with none) + view name. */
+export function aiLayoutCacheKey(originId: string | undefined, viewName: string): string {
+  return `${originId ?? 'preview'}::${viewName}`;
+}
 
 /** Padding factor applied when fitting the graph view. */
 const FIT_VIEW_PADDING = 0.15;
 
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
+
+/**
+ * Delay in ms before the AI panel's dock/open change triggers a re-fit — one frame budget past the
+ * panel's CSS width/height transition, so the fit reads the settled canvas box, not the mid-animation
+ * one.
+ */
+const AI_PANEL_REFIT_DELAY = 80;
+
+/** Zoom below which AI notes are hidden once they are showing. */
+const NOTES_ZOOM_OUT = 0.45;
+
+/** Zoom above which AI notes are shown once they are hidden. */
+const NOTES_ZOOM_IN = 0.55;
+
+/** Arrow-head width and height, in px, of a column-view edge. */
+const COLUMN_EDGE_MARKER_SIZE = 14;
+
 
 /**
  * Max time (ms) to wait for a pending zoom target to appear in flowNodes before
@@ -201,6 +256,8 @@ interface GraphCanvasProps {
   config: ExtensionConfig;
   /** Callback fired when a node is clicked. */
   onNodeClick: (nodeId: string, findQuery?: string) => void;
+  /** Callback that drops the node selection — the canvas's click-away reset. */
+  onClearSelection?: () => void;
   /** Callback fired when a schema cluster is selected. */
   onSchemaNodeSelect?: (nodeId: string) => void;
   /** Callback fired when a node is right-clicked. */
@@ -325,14 +382,12 @@ interface GraphCanvasProps {
     nodeIds: string[],
     source: 'trace' | 'path',
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => void;
   /** Called when user saves an analysis result as an advanced bookmark. */
   onSaveAnalysisBookmark?: (
     name: string,
     nodeIds: string[],
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => void;
   /** Transient AI preview — shown before user decides to save. */
   aiPreview?: { name: string; nodeIds: Set<string>; aiMetadata: AIViewMetadata } | null;
@@ -341,7 +396,6 @@ interface GraphCanvasProps {
     name: string,
     withPositions: boolean,
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => void;
   /** Called when user discards the AI preview. */
   onDiscardAiPreview?: () => void;
@@ -355,8 +409,6 @@ interface GraphCanvasProps {
   onExitAdvancedBookmark?: () => void;
   /** Saved node positions from a bookmark — applied once after the next rebuild. */
   pendingPositions?: Record<string, { x: number; y: number }>;
-  /** Saved ReactFlow viewport — restored together with pendingPositions. */
-  pendingViewport?: { x: number; y: number; zoom: number };
   /** Incremented when the next graph-data update should keep the current viewport. */
   viewportPreserveVersion?: number;
   /** Called after pendingPositions have been applied so the parent can clear them. */
@@ -411,6 +463,7 @@ export function GraphCanvas({
   graph,
   config,
   onNodeClick,
+  onClearSelection,
   onSchemaNodeSelect,
   onNodeContextMenu,
   onStartTraceImmediate,
@@ -477,7 +530,6 @@ export function GraphCanvas({
   bookmarkStaleNames,
   onExitAdvancedBookmark,
   pendingPositions,
-  pendingViewport,
   viewportPreserveVersion = 0,
   onPendingPositionsApplied,
   useFullModel,
@@ -497,10 +549,138 @@ export function GraphCanvas({
   onExpandAllSchemas,
   collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
-  const { fitView, getNode, setCenter, getNodes, getEdges, getViewport, setViewport } = useReactFlow();
+  const { fitView, getNode, setCenter, getNodes, getEdges } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const vscodeApi = useVsCode();
 
-  // Pending actions after overview schema expansion (zoom to the revealed object)
+  const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
+  const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
+  const [columnView, setColumnView] = useState(false);
+
+  const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
+  const aiDescription = activeAiMetadata?.description;
+
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<number | null>(null);
+  const aiPanelDefaultOpen = !!(
+    (aiPreview && aiPreview.nodeIds.size === 0) ||
+    (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
+  );
+  const aiViewName = activeAdvancedProfile?.name ?? aiPreview?.name ?? '';
+  const aiLayoutCache = useRef(new Map<string, { open: boolean; section: number | null }>());
+  useEffect(() => {
+    if (!aiDescription) return;
+    const cached = aiLayoutCache.current.get(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName));
+    setAiPanelOpen(cached?.open ?? aiPanelDefaultOpen);
+    setActiveSection(cached?.section ?? null);
+  }, [aiDescription, aiPanelDefaultOpen, activeAdvancedProfile?.id, aiViewName]);
+  useEffect(() => {
+    if (!aiDescription) return;
+    aiLayoutCache.current.set(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName), { open: aiPanelOpen, section: activeSection });
+  }, [aiDescription, activeAdvancedProfile?.id, aiViewName, aiPanelOpen, activeSection]);
+  const aiSectionsRef = useRef<AiReportSection[]>([]);
+  /**
+   * The report navigated to a section: it lights that section's labels and frames its objects.
+   *
+   * @remarks
+   * Only this path frames — a node click also sets the active section, and moving the graph under
+   * a click the user just made would take the node out from under the pointer.
+   */
+  const handleFocusSection = useCallback((n: number | null) => {
+    setActiveSection(n);
+    if (n == null) return;
+    const nodeIds = aiSectionsRef.current.find(section => section.n === n)?.nodeIds;
+    if (!nodeIds?.length) return;
+    const nodes = nodeIds.map(id => ({ id }));
+    requestAnimationFrame(() => { void fitView({ nodes, padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); });
+  }, [fitView]);
+  const [dockPosition, setDockPositionState] = useState<AiDockPosition>(() => {
+    const saved = (vscodeApi.getState() as Record<string, unknown> | undefined)?.[AI_DOCK_STATE_KEY];
+    return saved === 'left' || saved === 'bottom' ? saved : 'right';
+  });
+  const setDockPosition = useCallback((position: AiDockPosition) => {
+    setDockPositionState(position);
+    vscodeApi.setState({ ...(vscodeApi.getState() ?? {}), [AI_DOCK_STATE_KEY]: position });
+  }, [vscodeApi]);
+  const [panelSizePx, setPanelSizePx] = useState<{ width: number; height: number } | null>(null);
+  const handleAiPanelResize = useCallback((width: number, height: number) => {
+    setPanelSizePx(prev => (prev && prev.width === width && prev.height === height) ? prev : { width, height });
+  }, []);
+  const aiCanvasReserve: CSSProperties = !(aiDescription && aiPanelOpen)
+    ? { inset: 0 }
+    : dockPosition === 'bottom'
+      ? { top: 0, left: 0, right: 0, bottom: panelSizePx ? panelSizePx.height : AI_PANEL_DEFAULT_HEIGHT }
+      : dockPosition === 'left'
+        ? { top: 0, bottom: 0, right: 0, left: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH }
+        : { top: 0, bottom: 0, left: 0, right: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH };
+  useEffect(() => {
+    if (!aiDescription) return;
+    const t = setTimeout(() => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); }, AI_PANEL_REFIT_DELAY);
+    return () => clearTimeout(t);
+  }, [aiPanelOpen, dockPosition, aiDescription, fitView]);
+
+  /**
+   * Column-level rendering of the active trace; null when the run recorded no column findings.
+   *
+   * @remarks
+   * Derived above the `ErrorBoundary` that wraps the React Flow subtree, so a throw here would
+   * escape to the root boundary and reload the whole webview; degrades to `null` instead.
+   */
+  const columnTraceView = useMemo(() => {
+    const relations = activeAiMetadata?.columnAspect?.edges;
+    if (!relations?.length) return null;
+    try {
+      const columnTypesByNode = new Map<string, ReadonlyMap<string, string>>();
+      for (const node of model?.nodes ?? []) {
+        if (node.columns?.length) {
+          columnTypesByNode.set(node.id.toLowerCase(), new Map(node.columns.map(c => [normalizeColName(c.name), c.type])));
+        }
+      }
+      const objects = new Map<string, ColumnTraceViewObject>();
+      for (const node of flowNodes) {
+        if (node.type === 'schemaNode') continue;
+        const data = node.data as CustomNodeData;
+        objects.set(node.id.toLowerCase(), {
+          id: node.id,
+          label: data.label,
+          schema: data.schema,
+          objectType: data.objectType,
+          columnTypes: columnTypesByNode.get(node.id.toLowerCase()),
+        });
+      }
+      const verdicts = activeAiMetadata?.nodeVerdicts?.length
+        ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
+        : undefined;
+      return buildColumnTraceView({
+        relations,
+        objects,
+        verdicts,
+        config,
+        layoutDirection: activeAiMetadata?.layoutDirection,
+      });
+    } catch (err) {
+      vscodeApi.postMessage({
+        type: 'log',
+        level: 'warn',
+        text: `[Graph] Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return null;
+    }
+  }, [activeAiMetadata, config, flowNodes, model, vscodeApi]);
+
+  /** Whether the column view — not the object view — is the rendering currently on stage. */
+  const columnViewActive = columnView && !!columnTraceView;
+
+  /**
+   * Node positions in object space, for the callbacks that persist or export them.
+   *
+   * @remarks
+   * React Flow's `getNodes()` yields column-trace nodes while the column view is active — the same
+   * ids in a different coordinate space. Bookmarks and exports are object-view artifacts, so they
+   * read `localNodes` instead, which `onColumnNodesChange` deliberately leaves untouched.
+   */
+  const objectNodes = useCallback(() => (columnViewActive ? localNodes : getNodes()), [columnViewActive, localNodes, getNodes]);
+
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
   /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
@@ -512,9 +692,30 @@ export function GraphCanvas({
     clearTimeout(pendingZoomTimerRef.current);
     pendingZoomTimerRef.current = null;
   }, []);
-  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
   useEffect(() => clearPendingZoomTimer, [clearPendingZoomTimer]);
-  // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
+
+  /**
+   * Arms a zoom for a node the expanded schema view has yet to reveal.
+   *
+   * @param nodeId - The node to zoom and click once it lands in `flowNodes`.
+   * @param searchTerm - Term the deferred click highlights in the detail panel.
+   *
+   * @remarks
+   * The graph-change effect expires a pending zoom against {@link pendingZoomSetAt}; not stamping
+   * it here would leave a stale timestamp and expire the zoom before the expanded graph arrives.
+   */
+  const armPendingZoom = useCallback((nodeId: string, searchTerm?: string) => {
+    pendingZoomRef.current = nodeId;
+    pendingClickRef.current = { id: nodeId, searchTerm };
+    pendingZoomSetAt.current = Date.now();
+    clearPendingZoomTimer();
+    pendingZoomTimerRef.current = window.setTimeout(() => {
+      if (!pendingZoomRef.current) return;
+      notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
+      pendingZoomRef.current = null;
+      pendingClickRef.current = null;
+    }, PENDING_ZOOM_TIMEOUT_MS);
+  }, [clearPendingZoomTimer]);
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
   const currentTraceRef = useRef(trace);
@@ -523,6 +724,24 @@ export function GraphCanvas({
   const viewportPreserveVersionRef = useRef(viewportPreserveVersion);
   viewportPreserveVersionRef.current = viewportPreserveVersion;
   const consumedViewportPreserveVersionRef = useRef(viewportPreserveVersion);
+
+  const aiSections = useMemo((): AiReportSection[] => {
+    const badges = activeAiMetadata?.badges;
+    if (!badges?.length) return [];
+    const byNumber = new Map<number, AiReportSection>();
+    for (const badge of badges) {
+      const match = /^(\d+)\s+(.+)$/.exec(badge.text);
+      if (!match) continue;
+      const n = Number(match[1]);
+      const existing = byNumber.get(n);
+      if (existing) existing.nodeIds.push(badge.nodeId);
+      else byNumber.set(n, { n, label: match[2], nodeIds: [badge.nodeId] });
+    }
+    return [...byNumber.values()].sort((a, b) => a.n - b.n);
+  }, [activeAiMetadata]);
+  useEffect(() => {
+    aiSectionsRef.current = aiSections;
+  }, [aiSections]);
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -535,9 +754,12 @@ export function GraphCanvas({
         ));
         return;
       }
+      const matches = sectionsForNode(aiSections, node.id);
+      setActiveSection(matches[0] ?? null);
+      setPinnedColumn(null);
       onNodeClick(node.id);
     },
-    [graphMode, onNodeClick, onSchemaNodeSelect]
+    [graphMode, onNodeClick, onSchemaNodeSelect, aiSections]
   );
 
   const handleNodeDoubleClick: NodeMouseHandler = useCallback(
@@ -556,7 +778,7 @@ export function GraphCanvas({
   );
 
   const handleFitView = useCallback(() => {
-    fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+    void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }, [fitView]);
 
   const handleSaveTraceAsBookmark = useCallback((name: string, withPositions: boolean) => {
@@ -564,16 +786,16 @@ export function GraphCanvas({
     const nodeIds = Array.from(trace.tracedNodeIds);
     if (withPositions) {
       const nodeIdSet = new Set(nodeIds);
-      const nodes = getNodes();
+      const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) {
         if (nodeIdSet.has(n.id)) pos[n.id] = n.position;
       }
-      onSaveTraceBookmark(name, nodeIds, 'trace', pos, getViewport());
+      onSaveTraceBookmark(name, nodeIds, 'trace', pos);
     } else {
       onSaveTraceBookmark(name, nodeIds, 'trace');
     }
-  }, [onSaveTraceBookmark, trace.tracedNodeIds, getNodes, getViewport]);
+  }, [onSaveTraceBookmark, trace.tracedNodeIds, objectNodes]);
 
   const handleSaveAnalysisAsBookmark = useCallback((name: string, withPositions: boolean) => {
     if (!onSaveAnalysisBookmark || !analysisMode) return;
@@ -584,37 +806,40 @@ export function GraphCanvas({
       ? activeGroup.nodeIds
       : analysisMode.result.groups.flatMap(g => g.nodeIds);
     if (withPositions) {
-      const nodes = getNodes();
+      const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) pos[n.id] = n.position;
-      onSaveAnalysisBookmark(name, nodeIds, pos, getViewport());
+      onSaveAnalysisBookmark(name, nodeIds, pos);
     } else {
       onSaveAnalysisBookmark(name, nodeIds);
     }
-  }, [onSaveAnalysisBookmark, analysisMode, getNodes, getViewport]);
+  }, [onSaveAnalysisBookmark, analysisMode, objectNodes]);
 
   const handleSaveAiAsBookmark = useCallback((name: string, withPositions: boolean) => {
     if (!onSaveAiBookmark) return;
     if (withPositions) {
-      const nodes = getNodes();
+      const nodes = objectNodes();
       const pos: Record<string, { x: number; y: number }> = {};
       for (const n of nodes) pos[n.id] = n.position;
-      onSaveAiBookmark(name, withPositions, pos, getViewport());
+      onSaveAiBookmark(name, withPositions, pos);
     } else {
       onSaveAiBookmark(name, withPositions);
     }
-  }, [onSaveAiBookmark, getNodes, getViewport]);
+  }, [onSaveAiBookmark, objectNodes]);
 
   useKeyboardShortcut(SHORTCUT_KEYS.fitView, handleFitView);
 
   const minimapNodeColor = useCallback(
     (node: FlowNode) => {
-      // Schema nodes (overview mode) carry SchemaNodeData with a pre-computed color
       if (node.type === 'schemaNode') {
         const color = (node.data as SchemaNodeData).color;
         return isExpandedSchemaViewActive
           ? `color-mix(in srgb, ${color} 28%, transparent)`
           : color;
+      }
+      if (node.type === 'columnTraceNode') {
+        const view = (node.data as ColumnTraceNodeData).view;
+        return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema);
       }
       const d = node.data as CustomNodeData;
       return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema)));
@@ -622,7 +847,6 @@ export function GraphCanvas({
     [isExpandedSchemaViewActive]
   );
 
-  // Ring only the schema clusters on the minimap so their kind is readable without labels.
   const minimapNodeStrokeColor = useCallback(
     (node: FlowNode) => (node.type === 'schemaNode'
       ? 'var(--ln-minimap-cluster-stroke)'
@@ -630,14 +854,15 @@ export function GraphCanvas({
     []
   );
 
-  // Zoom and center on a specific node
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
-        setCenter(
-          targetNode.position.x + NODE_WIDTH / 2,
-          targetNode.position.y + NODE_HEIGHT / 2,
+        const width = targetNode.width ?? NODE_WIDTH;
+        const height = targetNode.height ?? NODE_HEIGHT;
+        void setCenter(
+          targetNode.position.x + width / 2,
+          targetNode.position.y + height / 2,
           { zoom: 0.8, duration: FIT_VIEW_DURATION }
         );
       } else {
@@ -646,7 +871,11 @@ export function GraphCanvas({
     });
   }, [getNode, setCenter]);
 
-  // O(1) lookups for search and pending-zoom checks. First-wins maps preserve `.find()` semantics.
+  const handleAiFocusNode = useCallback((nodeId: string) => {
+    zoomToNode(nodeId);
+    onNodeClick(nodeId);
+  }, [zoomToNode, onNodeClick]);
+
   const flowNodeLookup = useMemo(() => {
     const ids = new Set<string>();
     const byLabel = new Map<string, FlowNode>();
@@ -672,7 +901,6 @@ export function GraphCanvas({
     return { byName, bySchemaName };
   }, [model]);
 
-  // Execute search: find node and zoom to it, expanding its schema from overview when needed.
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const label = schema ? `[${schema}].[${name}]` : name;
     const foundNode = schema
@@ -685,24 +913,12 @@ export function GraphCanvas({
       return;
     }
 
-    // Overview mode: node not in flowNodes — expand its schema in expanded schema view (filter untouched).
     if (graphMode === 'overview' && model) {
       const modelNode = schema
         ? modelNodeNameLookup.bySchemaName.get(searchKey(schema, name))
         : modelNodeNameLookup.byName.get(name);
       if (modelNode) {
-        pendingZoomRef.current = modelNode.id;
-        pendingClickRef.current = { id: modelNode.id };
-        pendingZoomSetAt.current = Date.now();
-        // Active timeout — guarantees warning fires even if flowNodes stops changing
-        clearPendingZoomTimer();
-        pendingZoomTimerRef.current = window.setTimeout(() => {
-          if (pendingZoomRef.current) {
-            notifyUser(`"${pendingZoomRef.current}" is not visible in the current view. Adjust your schema filter to include it.`);
-            pendingZoomRef.current = null;
-            pendingClickRef.current = null;
-          }
-        }, PENDING_ZOOM_TIMEOUT_MS);
+        armPendingZoom(modelNode.id);
         onOpenExpandedSchemaViewForNode?.(modelNode.id);
       } else {
         notifyUser(`"${label}" was not found in the loaded model.`);
@@ -710,32 +926,44 @@ export function GraphCanvas({
     } else {
       notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
-  }, [clearPendingZoomTimer, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
+  }, [armPendingZoom, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
 
-  // Export object nodes in detail views and cluster nodes in schema overview; empty exports no-op.
   const handleExportDrawio = useCallback(() => {
-    const objectNodes: FlowNode<CustomNodeData>[] = [];
+    const exportObjectNodes: FlowNode<CustomNodeData>[] = [];
     const clusterNodes: FlowNode<SchemaNodeData>[] = [];
-    const exportNodes = getNodes();
-    const exportEdges = getEdges();
+    const exportNodes = objectNodes();
+    const exportEdges = columnViewActive ? localEdges : getEdges();
     for (const n of exportNodes) {
       if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
-      else objectNodes.push(n as FlowNode<CustomNodeData>);
+      else exportObjectNodes.push(n as FlowNode<CustomNodeData>);
     }
     import('../export/drawioExporter').then(({ exportToDrawio, exportSchemaOverviewToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
-      const xml = (objectNodes.length === 0 && clusterNodes.length > 0)
+      const xml = (exportObjectNodes.length === 0 && clusterNodes.length > 0)
         ? exportSchemaOverviewToDrawio(clusterNodes, exportEdges, schemas)
-        : exportToDrawio(objectNodes, exportEdges, schemas, clusterNodes);
+        : exportToDrawio(exportObjectNodes, exportEdges, schemas, clusterNodes);
       if (!xml) return;
       const base = (sourceName?.replace(/\.dacpac$/i, '') || 'lineage').trim().replace(/[\\/:*?"<>|]/g, '_');
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [getNodes, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
 
-  // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
+  /**
+   * The one auto-fit: frames every node on the next frame, at the padding and duration every
+   * caller shares.
+   *
+   * @remarks
+   * Deferred a frame because each caller runs while the nodes it means to frame are still being
+   * measured, and `fitView` on an unmeasured node frames the wrong box.
+   *
+   * @returns The frame id, so an effect can cancel a fit its cleanup outlives.
+   */
+  const fitGraph = useCallback((): number => requestAnimationFrame(() => {
+    void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+  }), [fitView]);
+
   useEffect(() => {
     const previousTrace = traceAtLastGraphChangeRef.current;
     const currentTrace = currentTraceRef.current;
@@ -745,9 +973,6 @@ export function GraphCanvas({
     const zoomTarget = pendingZoomRef.current;
     const clickTarget = pendingClickRef.current;
     if (zoomTarget) {
-      // Verify the target node exists in the current flowNodes before consuming.
-      // During overview expansion, React may render with stale flowNodes before the expanded schema graph
-      // arrives. Keep the ref set until the correct flowNodes land, or expire after timeout.
       const nodeExists = flowNodeLookup.ids.has(zoomTarget);
       const elapsed = Date.now() - pendingZoomSetAt.current;
       if (!nodeExists) {
@@ -756,7 +981,6 @@ export function GraphCanvas({
           pendingZoomRef.current = null;
           pendingClickRef.current = null;
           clearPendingZoomTimer();
-          // Fall through to fitView
         } else {
           return; // Don't consume — wait for the next flowNodes update (silent; fires every render)
         }
@@ -765,7 +989,6 @@ export function GraphCanvas({
         pendingClickRef.current = null;
         clearPendingZoomTimer();
         zoomToNode(zoomTarget);
-        // Defer click to next frame so highlight lands after the expanded schema nodes render.
         if (clickTarget) {
           requestAnimationFrame(() => onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm));
         }
@@ -778,27 +1001,37 @@ export function GraphCanvas({
       return;
     }
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
-    const raf = requestAnimationFrame(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
-    });
+    const raf = fitGraph();
     return () => cancelAnimationFrame(raf);
-  }, [clearPendingZoomTimer, flowNodes, fitView, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+  }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
-  // Local state preserves drag positions across highlight changes
-  const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
-  const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
   const [notesVisible, setNotesVisible] = useState(true);
+  const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
+  const [pinnedColumn, setPinnedColumn] = useState<{ nodeId: string; column: string } | null>(null);
+  const [columnPositions, setColumnPositions] = useState<Record<string, { x: number; y: number }>>({});
+
+  const nodeDecorationCache = useRef(createNodeDecorationCache());
+
+  const columnNodeCache = useRef(createColumnNodeCache());
+
+  const fittedForColumnViewRef = useRef<boolean | null>(null);
+
+  const pendingPositionsRef = useRef(pendingPositions);
+  pendingPositionsRef.current = pendingPositions;
+  const handleFitViewRef = useRef(handleFitView);
+  handleFitViewRef.current = handleFitView;
+  const onPendingPositionsAppliedRef = useRef(onPendingPositionsApplied);
+  onPendingPositionsAppliedRef.current = onPendingPositionsApplied;
 
   useEffect(() => {
-    if (pendingPositions && Object.keys(pendingPositions).length > 0) {
+    const pending = pendingPositionsRef.current;
+    if (pending && Object.keys(pending).length > 0) {
       setLocalNodes(flowNodes.map(n => {
-        const saved = pendingPositions[n.id];
+        const saved = pending[n.id];
         return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
       }));
-      if (pendingViewport) {
-        requestAnimationFrame(() => setViewport(pendingViewport));
-      }
-      onPendingPositionsApplied?.();
+      requestAnimationFrame(() => handleFitViewRef.current());
+      onPendingPositionsAppliedRef.current?.();
     } else {
       setLocalNodes(flowNodes);
     }
@@ -809,24 +1042,50 @@ export function GraphCanvas({
   }, [flowEdges]);
 
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
+    (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds)),
     []
   );
+
+  /**
+   * Node changes while the column view is on stage.
+   *
+   * @remarks
+   * Column nodes carry the same ids as the object nodes they replace, so routing their changes
+   * through `onNodesChange` would corrupt the positions a bookmark saves. Only the drag is kept.
+   */
+  const onColumnNodesChange: OnNodesChange = useCallback((changes) => {
+    setColumnPositions((prev) => {
+      let next = prev;
+      for (const change of changes) {
+        if (change.type !== 'position' || !change.position) continue;
+        if (next === prev) next = { ...prev };
+        next[change.id] = { x: change.position.x, y: change.position.y };
+      }
+      return next;
+    });
+  }, []);
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => setLocalEdges((eds) => applyEdgeChanges(changes, eds)),
     []
   );
 
-  /** Hide AI notes when zoomed out below threshold for readability. */
+  /**
+   * Shows or hides AI notes as the canvas crosses the legibility zoom.
+   *
+   * @remarks
+   * The band is deliberately wider than a single threshold, since `notesVisible` feeds every node's
+   * decoration and a gesture resting on one exact zoom value would rebuild the whole node set on
+   * each crossing. Off below {@link NOTES_ZOOM_OUT}, on above {@link NOTES_ZOOM_IN}.
+   */
   const handleViewportChange = useCallback((vp: { zoom: number }) => {
     setNotesVisible(prev => {
-      const next = vp.zoom >= 0.5;
-      return prev === next ? prev : next;
+      if (prev && vp.zoom < NOTES_ZOOM_OUT) return false;
+      if (!prev && vp.zoom > NOTES_ZOOM_IN) return true;
+      return prev;
     });
   }, []);
 
-  // ── O(1) model node lookup (avoids O(n²) .find() in DetailSearchSidebar) ──
   const modelNodeMap = useMemo(() => {
     if (!model) return new Map<string, DatabaseModel['nodes'][number]>();
     const map = new Map<string, DatabaseModel['nodes'][number]>();
@@ -840,7 +1099,6 @@ export function GraphCanvas({
     return map;
   }, [modelNodeMap]);
 
-  // ── Display layer: highlight/dim applied on top of local positions ──
 
   const level1Neighbors = useMemo(() => {
     const neighbors = new Set<string>();
@@ -852,9 +1110,6 @@ export function GraphCanvas({
   }, [highlightedNodeId, graph]);
 
   const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
-
-  // Build AI highlight + badge lookups from active AI profile OR transient AI preview
-  const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
 
   const aiHighlightMap = useMemo((): Map<string, { color: string; glow: string; shadow: string }> => {
     const m = new Map<string, { color: string; glow: string; shadow: string }>();
@@ -869,13 +1124,23 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  const aiBadgeMap = useMemo((): Map<string, { text: string }> => {
-    const m = new Map<string, { text: string }>();
+  const activeSectionNodeIds = useMemo((): Set<string> | null => {
+    if (activeSection == null) return null;
+    const section = aiSections.find(s => s.n === activeSection);
+    return section?.nodeIds.length ? new Set(section.nodeIds) : null;
+  }, [aiSections, activeSection]);
+
+  const aiBadgeMap = useMemo((): Map<string, AiBadge> => {
+    const m = new Map<string, AiBadge>();
     const badges = activeAiMetadata?.badges;
     if (!badges) return m;
-    for (const b of badges) m.set(b.nodeId, { text: b.text });
+    for (const b of badges) {
+      if (m.has(b.nodeId)) continue;
+      const emphasis = activeSectionNodeIds ? (activeSectionNodeIds.has(b.nodeId) ? 'lit' : 'dim') : undefined;
+      m.set(b.nodeId, emphasis ? { text: b.text, emphasis } : { text: b.text });
+    }
     return m;
-  }, [activeAiMetadata]);
+  }, [activeAiMetadata, activeSectionNodeIds]);
 
   const aiNoteMap = useMemo((): Map<string, { text: string }> => {
     const m = new Map<string, { text: string }>();
@@ -885,52 +1150,21 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  const ctEdgeMap = useMemo((): Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>> => {
-    const m = new Map<string, Array<{ neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }>>();
-    const edges = activeAiMetadata?.columnAspect?.edges;
-    if (!edges) return m;
-    const add = (
-      nodeId: string,
-      pair: { neighborNode: string; direction: 'in' | 'out'; fromCol: string; toCol: string }
-    ) => {
-      const k = nodeId.toLowerCase();
-      if (!m.has(k)) m.set(k, []);
-      const arr = m.get(k)!;
-      if (!arr.some(p =>
-        p.neighborNode === pair.neighborNode &&
-        p.direction === pair.direction &&
-        p.fromCol === pair.fromCol &&
-        p.toCol === pair.toCol
-      )) {
-        arr.push(pair);
-      }
-    };
-    for (const e of edges) {
-      add(e.toNode, {
-        neighborNode: e.fromNode,
-        direction: 'in',
-        fromCol: e.fromCol,
-        toCol: e.toCol,
-      });
-      add(e.fromNode, {
-        neighborNode: e.toNode,
-        direction: 'out',
-        fromCol: e.fromCol,
-        toCol: e.toCol,
-      });
-      if (e.hopNode.toLowerCase() !== e.toNode.toLowerCase()) {
-        add(e.hopNode, {
-          neighborNode: e.fromNode,
-          direction: 'in',
-          fromCol: e.fromCol,
-          toCol: e.toCol,
-        });
-      }
-    }
-    return m;
-  }, [activeAiMetadata]);
+  const columnThreadIndex = useMemo(
+    () => (columnTraceView ? buildColumnThreadIndex(columnTraceView) : null),
+    [columnTraceView],
+  );
 
-  // Full-model graph backing the shared prune-safety guard; scope is bounded per call.
+  /**
+   * The active row's trace cone — its upstream sources and downstream consumers, never a sibling
+   * input it merely shares an output with. See {@link columnThread}.
+   */
+  const hoveredColumnPath = useMemo((): Set<string> | null => {
+    const active = pinnedColumn ?? hoveredColumn;
+    if (!active || !columnThreadIndex) return null;
+    return columnThread(columnThreadIndex, columnRowKey(active.nodeId, active.column));
+  }, [pinnedColumn, hoveredColumn, columnThreadIndex]);
+
   const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
 
   const traceControlsByNode = useMemo((): Map<string, TraceNodeControls> => {
@@ -939,8 +1173,6 @@ export function GraphCanvas({
     if (!model || !modelGraph || !trace.selectedNodeId || !isEditableTrace || !onTraceAddNeighbor || !onTracePruneNode) {
       return controls;
     }
-    // Only the highlighted (clicked) node shows edit controls — keeps the four +/- buttons off every
-    // other node (no clutter) and bounds the per-node prune-safety BFS to a single node.
     const targetNode = highlightedNodeId
       ? localNodes.find(n => n.id === highlightedNodeId && n.type === 'lineageNode')
       : undefined;
@@ -957,43 +1189,194 @@ export function GraphCanvas({
     return controls;
   }, [localNodes, model, modelGraph, modelNodeMap, modelNodeMapLower, onTraceAddNeighbor, onTracePruneNode, trace.mode, trace.selectedNodeId, highlightedNodeId, canEditTraceScope]);
 
-  const displayNodes = useMemo((): FlowNode[] => {
-    return localNodes.map(node => {
-      if (node.type === 'schemaNode') {
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            onExpandSchema: graphMode === 'overview' ? onExpandExpandedSchemaViewSchema : undefined,
-            onMakeSchemaCenter: graphMode === 'overview' ? onCenterExpandedSchemaViewSchema : undefined,
-          },
-        };
-      }
+  const handleColumnHover = useCallback((nodeId: string, column: string | null) => {
+    setHoveredColumn(column === null ? null : { nodeId, column });
+  }, []);
 
-      const isHighlighted = highlightedNodeId === node.id;
-      const isTraceOrigin = node.id === trace.selectedNodeId && (
-        trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied'
-      );
-      const shouldBeDimmed = highlightedNodeId && !isHighlighted && !isTraceOrigin && !level1Neighbors.has(node.id);
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : (node.data as CustomNodeData).highlighted,
-          dimmed: !!shouldBeDimmed,
-          showRemoveButton: isBookmarkMode && canRemoveNodeFromScopedView,
-          onRemoveFromView: isBookmarkMode && canRemoveNodeFromScopedView ? onRemoveFromView : undefined,
-          traceControls: traceControlsByNode.get(node.id),
-          aiHighlight: aiHighlightMap.get(node.id),
-          aiBadge: aiBadgeMap.get(node.id),
-          aiNote: notesVisible ? aiNoteMap.get(node.id) : undefined,
-          ctColumnFlows: ctEdgeMap.get(node.id.toLowerCase()),
-        },
-      };
-    });
-  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, ctEdgeMap, trace.mode, trace.selectedNodeId]);
+  const handleColumnSelect = useCallback((nodeId: string, column: string) => {
+    setActiveSection(null);
+    onClearSelection?.();
+    setPinnedColumn(current => (current?.nodeId === nodeId && current.column === column ? null : { nodeId, column }));
+  }, [onClearSelection]);
+
+  useEffect(() => {
+    if (!pinnedColumn) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setPinnedColumn(null);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [pinnedColumn]);
+
+  const columnHover = useMemo((): ColumnHoverState => ({
+    hoveredPath: hoveredColumnPath,
+    onColumnHover: handleColumnHover,
+    onColumnSelect: handleColumnSelect,
+    pinnedRow: pinnedColumn ? columnRowKey(pinnedColumn.nodeId, pinnedColumn.column) : null,
+  }), [hoveredColumnPath, handleColumnHover, handleColumnSelect, pinnedColumn]);
+
+  const handleToggleColumnView = useCallback((next: boolean) => {
+    setColumnView(next);
+    setHoveredColumn(null);
+    setPinnedColumn(null);
+  }, []);
+
+  /**
+   * Empty canvas clicked — every emphasis the user turned on goes back to normal.
+   *
+   * @remarks
+   * Section focus, node selection and the pinned column thread are separate channels that each dim
+   * something, so the reset clears all three rather than the last one used.
+   */
+  const handlePaneReset = useCallback(() => {
+    setActiveSection(null);
+    setPinnedColumn(null);
+    setHoveredColumn(null);
+    onClearSelection?.();
+  }, [onClearSelection]);
+
+  useEffect(() => {
+    if (!nodesInitialized || fittedForColumnViewRef.current === columnViewActive) return;
+    const first = fittedForColumnViewRef.current === null;
+    fittedForColumnViewRef.current = columnViewActive;
+    if (first) return;
+    const raf = fitGraph();
+    return () => cancelAnimationFrame(raf);
+  }, [columnViewActive, nodesInitialized, fitGraph]);
+
+  const fittedAiViewRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!aiDescription) { fittedAiViewRef.current = null; return; }
+    if (!nodesInitialized || fittedAiViewRef.current === aiDescription) return;
+    fittedAiViewRef.current = aiDescription;
+    const raf = fitGraph();
+    return () => cancelAnimationFrame(raf);
+  }, [aiDescription, nodesInitialized, fitGraph]);
+
+  const columnRelations = activeAiMetadata?.columnAspect;
+  useEffect(() => {
+    setColumnPositions({});
+    setHoveredColumn(null);
+    setPinnedColumn(null);
+  }, [columnRelations]);
+
+  useEffect(() => {
+    if (!columnTraceView) {
+      setColumnView(false);
+      setHoveredColumn(null);
+      setPinnedColumn(null);
+    }
+  }, [columnTraceView]);
+
+  /**
+   * Per-node data for the column view, keyed by node id.
+   *
+   * @remarks
+   * Deliberately excludes `columnPositions` and the hovered thread: React Flow re-measures any node
+   * whose object identity changed, so deriving this from a drag or pointer move would re-measure
+   * the whole canvas instead of one node. Position varies per node in {@link projectColumnNodes}.
+   */
+  const columnNodeData = useMemo((): Map<string, ColumnTraceNodeData> => {
+    const byNode = new Map<string, ColumnTraceNodeData>();
+    if (!columnTraceView) return byNode;
+    const statesByRow = resolveRowLineStates(columnTraceView.edges);
+    const decorationInputs = {
+      highlightedNodeId,
+      level1Neighbors,
+      traceMode: trace.mode,
+      traceSelectedNodeId: trace.selectedNodeId,
+      isBookmarkMode,
+      canRemoveNodeFromScopedView,
+      notesVisible,
+      onRemoveFromView,
+      traceControlsByNode,
+      aiHighlightMap,
+      aiBadgeMap,
+      aiNoteMap,
+    };
+    for (const view of columnTraceView.nodes) {
+      const rowLineStates: Record<string, ColumnLineState> = {};
+      for (const row of view.rows) {
+        const state = statesByRow.get(columnRowKey(view.id, row.name));
+        if (state) rowLineStates[row.name] = state;
+      }
+      const d = computeNodeDecoration(view.id, undefined, decorationInputs);
+      byNode.set(view.id, {
+        view,
+        rowLineStates,
+        highlighted: d.highlighted,
+        dimmed: d.dimmed,
+        aiHighlight: d.aiHighlight,
+        aiBadge: d.aiBadge,
+        aiNote: d.aiNote,
+        showRemoveButton: d.removable,
+        onRemoveFromView: d.onRemoveFromView,
+        traceControls: d.traceControls,
+      });
+    }
+    return byNode;
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode]);
+
+  const displayNodes = useMemo((): FlowNode[] => {
+    if (columnViewActive && columnTraceView) {
+      return projectColumnNodes(columnTraceView.nodes, columnNodeData, columnPositions, columnNodeCache.current);
+    }
+    return decorateFlowNodes(localNodes, {
+      graphMode,
+      highlightedNodeId,
+      level1Neighbors,
+      traceMode: trace.mode,
+      traceSelectedNodeId: trace.selectedNodeId,
+      isBookmarkMode,
+      canRemoveNodeFromScopedView,
+      notesVisible,
+      onRemoveFromView,
+      traceControlsByNode,
+      aiHighlightMap,
+      aiBadgeMap,
+      aiNoteMap,
+      onExpandSchema: onExpandExpandedSchemaViewSchema,
+      onMakeSchemaCenter: onCenterExpandedSchemaViewSchema,
+    }, nodeDecorationCache.current);
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
 
   const displayEdges = useMemo(() => {
+    if (columnViewActive && columnTraceView) {
+      const litByHover = (edge: { source: string; sourceColumn: string; target: string; targetColumn: string }) =>
+        !!hoveredColumnPath
+        && hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn))
+        && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn));
+      const litBySelection = (edge: { source: string; target: string }) =>
+        !highlightedNodeId || edge.source === highlightedNodeId || edge.target === highlightedNodeId;
+
+      return columnTraceView.edges.map(edge => {
+        const lit = hoveredColumnPath ? litByHover(edge) : litBySelection(edge);
+        return {
+          id: edge.id,
+          type: 'columnTraceEdge',
+          source: edge.source,
+          target: edge.target,
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: COLUMN_EDGE_MARKER_SIZE,
+            height: COLUMN_EDGE_MARKER_SIZE,
+            color: lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)',
+          },
+          data: {
+            state: edge.state,
+            lit,
+            sourceColumn: edge.sourceColumn,
+            targetColumn: edge.targetColumn,
+            ...(edge.transforms?.length ? { transforms: edge.transforms } : {}),
+            ...(edge.note ? { note: edge.note } : {}),
+          } satisfies ColumnTraceEdgeData,
+        };
+      });
+    }
     if (!highlightedNodeId) return localEdges;
 
     return localEdges.map(edge => {
@@ -1014,18 +1397,13 @@ export function GraphCanvas({
         ),
       };
     });
-  }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode]);
+  }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
 
-  // Stable allNodes list for autocomplete/search — derived from full model catalog,
-  // not displayNodes (which only contains Schema Cluster entries in Schema View).
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),
     [model],
   );
 
-  // IDs of objects in the current filter scope. Used by NodeInfoBar to show ⊘ on neighbors
-  // outside the filter scope, and by quick search to split visible/clustered/out-of-filter results.
-  // In Schema View, localNodes are Schema Clusters — use filteredObjectIds instead.
   const visibleNodeIds = useMemo(
     () => (graphMode === 'overview' && filteredObjectIds) ? filteredObjectIds : new Set(localNodes.map(n => n.id)),
     [localNodes, graphMode, filteredObjectIds],
@@ -1036,8 +1414,6 @@ export function GraphCanvas({
     return (displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId;
   }, [trace.selectedNodeId, displayNodes]);
 
-  // Derive visible schemas for the Legend — externals are excluded from the colorful legend
-  // list but remain in the underlying model/filters so they don't disappear from the graph.
   const legendSchemas = useMemo(
     () => deriveLegendSchemas(localNodes, graphMode, trace.mode, renderedSchemas),
     [graphMode, trace.mode, localNodes, renderedSchemas],
@@ -1048,9 +1424,6 @@ export function GraphCanvas({
     [localNodes],
   );
 
-  // Mirror the current-screen snapshot to the host so the debug dump can reproduce what
-  // the user sees: rendered counts, the highlighted node, its add/prune affordances (with the
-  // reason each is grayed), and the live trace scope. Resync on view, selection, or scope change.
   useEffect(() => {
     if (!graphErrorContext) return;
     const highlighted = highlightedNodeId ?? null;
@@ -1065,7 +1438,7 @@ export function GraphCanvas({
           tracedNodeIds: Array.from(trace.tracedNodeIds),
         }
       : null;
-    window.vscode?.postMessage({
+    vscodeApi.postMessage({
       type: 'render-state',
       renderState: {
         ...graphErrorContext,
@@ -1148,6 +1521,9 @@ export function GraphCanvas({
           shownCount={localNodes.filter(n => n.type === 'lineageNode').length}
           totalCount={activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0}
           onExit={onExitAdvancedBookmark}
+          columnViewAvailable={!!columnTraceView}
+          columnView={columnViewActive}
+          onToggleColumnView={handleToggleColumnView}
         />
       )}
 
@@ -1155,7 +1531,7 @@ export function GraphCanvas({
       {trace.mode === 'configuring' && trace.selectedNodeId && (
         <InlineTraceControls
           startNodeId={trace.selectedNodeId}
-          startNodeName={selectedNodeLabel ?? trace.selectedNodeId!}
+          startNodeName={selectedNodeLabel ?? trace.selectedNodeId}
           defaultUpstream={config.trace.defaultUpstreamLevels}
           defaultDownstream={config.trace.defaultDownstreamLevels}
           onApply={(traceConfig) => {
@@ -1168,13 +1544,13 @@ export function GraphCanvas({
       {/* Traced Filter Banner - shown during applied or filtered (immediate) mode */}
       {(trace.mode === 'applied' || trace.mode === 'filtered') && trace.selectedNodeId && (
         <TracedFilterBanner
-          startNodeName={selectedNodeLabel ?? trace.selectedNodeId!}
+          startNodeName={selectedNodeLabel ?? trace.selectedNodeId}
           upstreamLevels={trace.upstreamLevels}
           downstreamLevels={trace.downstreamLevels}
           totalNodes={trace.tracedNodeIds.size}
           totalEdges={trace.tracedEdgeIds.size}
           mode={trace.mode}
-          onEnd={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
+          onEnd={() => onTraceEnd(() => { void fitView({ padding: 0.2, duration: 800 }); })}
           onReset={() => onResetAll()}
           onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
           useFullModel={useFullModel ?? false}
@@ -1186,7 +1562,7 @@ export function GraphCanvas({
       {/* Path Finder Bar — shown during pathfinding modes */}
       {(trace.mode === 'pathfinding' || trace.mode === 'path-applied') && trace.selectedNodeId && onApplyPath && (
         <PathFinderBar
-          sourceNodeName={selectedNodeLabel ?? trace.selectedNodeId!}
+          sourceNodeName={selectedNodeLabel ?? trace.selectedNodeId}
           allNodes={allNodes}
           pathResult={trace.mode === 'path-applied' ? {
             found: true,
@@ -1194,7 +1570,7 @@ export function GraphCanvas({
             edgeCount: trace.tracedEdgeIds.size,
           } : null}
           onFindPath={onApplyPath}
-          onClose={() => onTraceEnd(() => fitView({ padding: 0.2, duration: 800 }))}
+          onClose={() => onTraceEnd(() => { void fitView({ padding: 0.2, duration: 800 }); })}
         />
       )}
 
@@ -1214,17 +1590,17 @@ export function GraphCanvas({
           nodeCount={aiPreview.nodeIds.size}
           onDiscard={onDiscardAiPreview}
           onSaveAsBookmark={onSaveAiBookmark ? handleSaveAiAsBookmark : undefined}
+          columnViewAvailable={!!columnTraceView}
+          columnView={columnViewActive}
+          onToggleColumnView={handleToggleColumnView}
         />
       )}
 
       <ErrorBoundary
-        resetKey={graphErrorResetKey}
+        resetKey={`${graphErrorResetKey ?? ''}|col:${columnViewActive}`}
         context={graphErrorContext}
         onError={() => {
-          // Detail + the VS Code error toast are already emitted by ErrorBoundary.componentDidCatch
-          // → bridge 'error' handler (error-level Output log). Here we only auto-reload so the user
-          // never stares at a dead canvas; the navbar stays mounted above this boundary.
-          setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
+          setTimeout(() => vscodeApi.postMessage({ type: 'reload' }), 800);
         }}
         fallback={
           <div className="flex-1 flex items-center justify-center text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
@@ -1244,106 +1620,112 @@ export function GraphCanvas({
             No objects match current filters. Adjust type toggles or search term.
           </div>
         ) : (
-          <div style={{ width: '100%', height: '100%', position: 'absolute' }}>
-            <ReactFlow
-              nodes={displayNodes}
-              edges={displayEdges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              nodeTypes={nodeTypes}
-              onNodeClick={handleNodeClick}
-              onNodeDoubleClick={handleNodeDoubleClick}
-              onNodeContextMenu={(event, node) => {
-                event.preventDefault();
-                if (node.type === 'schemaNode') {
-                  onSchemaNodeSelect?.(node.id);
-                  setLocalNodes((nds) => nds.map((n) => ({
-                    ...n,
-                    selected: n.id === node.id,
-                    data: n.type === 'schemaNode'
-                      ? { ...n.data, toolbarActive: n.id === node.id }
-                      : n.data,
-                  })));
-                }
-                onNodeContextMenu(node, event.clientX, event.clientY);
-              }}
-              fitView
-              fitViewOptions={{ padding: 0.15 }}
-              minZoom={0.1}
-              maxZoom={2}
-              defaultViewport={{ x: 0, y: 0, zoom: 1 }}
-              nodesDraggable={true}
-              nodesConnectable={false}
-              nodesFocusable={true}
-              edgesFocusable={true}
-              elementsSelectable={true}
-              onViewportChange={handleViewportChange}
-              selectNodesOnDrag={false}
-              deleteKeyCode={null}
-              panOnDrag={true}
-              panOnScroll={false}
-              zoomOnScroll={true}
-              zoomOnPinch={true}
-              zoomOnDoubleClick={true}
-              preventScrolling={true}
-              nodeOrigin={[0, 0] as [number, number]}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={16} />
-              <Controls showInteractive={true} position="bottom-left" />
-              {config.layout.minimapEnabled && (
-                <MiniMap
-                  pannable
-                  zoomable
-                  position="bottom-right"
-                  nodeColor={minimapNodeColor}
-                  nodeStrokeColor={minimapNodeStrokeColor}
-                  nodeStrokeWidth={2}
-                  nodeBorderRadius={4}
-                  ariaLabel="Graph minimap"
-                />
-              )}
-              {(isDetailSearchOpen || analysisMode) && (
-                <Panel position="top-left">
-                  {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
-                    <AnalysisSidebar
-                      analysis={analysisMode}
-                      graph={graph}
-                      onSelectGroup={onSelectAnalysisGroup}
-                      onClearGroup={onClearAnalysisGroup}
-                      onClose={onCloseAnalysis}
-                      onSwitchAnalysis={onOpenAnalysis}
-                    />
-                  ) : onToggleDetailSearch ? (
-                      <DetailSearchSidebar
-                        onClose={onToggleDetailSearch}
-                        allNodes={allNodes.map(n => ({
-                          id: n.id,
-                          name: n.name,
-                          schema: n.schema,
-                          type: n.type,
-                          bodyScript: modelNodeMap.get(n.id)?.bodyScript,
-                          columns: modelNodeMap.get(n.id)?.columns,
-                        }))}
-                        visibleNodeIds={visibleNodeIds}
-                        collapsedSchemaNodeIds={collapsedSchemaNodeIds}
-                        onResultClick={(nodeId, searchTerm) => {
-                          if (graphMode === 'overview') {
-                            if (modelNodeMap.has(nodeId)) {
-                            pendingZoomRef.current = nodeId;
-                            pendingClickRef.current = { id: nodeId, searchTerm };
-                            onOpenExpandedSchemaViewForNode?.(nodeId);
-                            return;
-                          }
-                        }
-                        onNodeClick(nodeId, searchTerm);
-                        zoomToNode(nodeId);
-                      }}
-                    />
-                  ) : null}
-                </Panel>
-              )}
-            </ReactFlow>
+          <div
+            style={{
+              ...aiCanvasReserve,
+              position: 'absolute',
+            }}
+          >
+            <ColumnHoverProvider value={columnHover}>
+              <ReactFlow
+                nodes={displayNodes}
+                edges={displayEdges}
+                onNodesChange={columnViewActive ? onColumnNodesChange : onNodesChange}
+                onEdgesChange={onEdgesChange}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onNodeClick={handleNodeClick}
+                onNodeDoubleClick={handleNodeDoubleClick}
+                onPaneClick={handlePaneReset}
+                onNodeContextMenu={(event, node) => {
+                  event.preventDefault();
+                  if (node.type === 'schemaNode') {
+                    onSchemaNodeSelect?.(node.id);
+                    setLocalNodes((nds) => nds.map((n) => ({
+                      ...n,
+                      selected: n.id === node.id,
+                      data: n.type === 'schemaNode'
+                        ? { ...n.data, toolbarActive: n.id === node.id }
+                        : n.data,
+                    })));
+                  }
+                  onNodeContextMenu(node, event.clientX, event.clientY);
+                }}
+                fitView
+                fitViewOptions={{ padding: 0.15 }}
+                minZoom={0.1}
+                maxZoom={2}
+                defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+                nodesDraggable={true}
+                nodesConnectable={false}
+                nodesFocusable={true}
+                edgesFocusable={true}
+                elementsSelectable={true}
+                onViewportChange={handleViewportChange}
+                selectNodesOnDrag={false}
+                deleteKeyCode={null}
+                panOnDrag={true}
+                panOnScroll={false}
+                zoomOnScroll={true}
+                zoomOnPinch={true}
+                zoomOnDoubleClick={false}
+                preventScrolling={true}
+                nodeOrigin={[0, 0] as [number, number]}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background gap={16} />
+                <Controls showInteractive={true} position="bottom-left" />
+                {config.layout.minimapEnabled && (
+                  <MiniMap
+                    pannable
+                    zoomable
+                    position="bottom-right"
+                    nodeColor={minimapNodeColor}
+                    nodeStrokeColor={minimapNodeStrokeColor}
+                    nodeStrokeWidth={2}
+                    nodeBorderRadius={4}
+                    ariaLabel="Graph minimap"
+                  />
+                )}
+                {(isDetailSearchOpen || analysisMode) && (
+                  <Panel position="top-left">
+                    {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
+                      <AnalysisSidebar
+                        analysis={analysisMode}
+                        graph={graph}
+                        onSelectGroup={onSelectAnalysisGroup}
+                        onClearGroup={onClearAnalysisGroup}
+                        onClose={onCloseAnalysis}
+                        onSwitchAnalysis={onOpenAnalysis}
+                      />
+                    ) : onToggleDetailSearch ? (
+                        <DetailSearchSidebar
+                          onClose={onToggleDetailSearch}
+                          allNodes={allNodes.map(n => ({
+                            id: n.id,
+                            name: n.name,
+                            schema: n.schema,
+                            type: n.type,
+                            bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+                            columns: modelNodeMap.get(n.id)?.columns,
+                          }))}
+                          visibleNodeIds={visibleNodeIds}
+                          collapsedSchemaNodeIds={collapsedSchemaNodeIds}
+                          onResultClick={(nodeId, searchTerm) => {
+                            if (graphMode === 'overview' && modelNodeMap.has(nodeId)) {
+                              armPendingZoom(nodeId, searchTerm);
+                              onOpenExpandedSchemaViewForNode?.(nodeId);
+                              return;
+                            }
+                            onNodeClick(nodeId, searchTerm);
+                            zoomToNode(nodeId);
+                          }}
+                      />
+                    ) : null}
+                  </Panel>
+                )}
+              </ReactFlow>
+            </ColumnHoverProvider>
           </div>
         )}
 
@@ -1379,18 +1761,21 @@ export function GraphCanvas({
             staleNodeNames={[]}
           />
         )}
-        {/* AI description overlay — collapsible markdown panel at top-center */}
+        {/* AI report column — docked to the chosen edge, collapsible to a slim rail; section chips scroll and highlight that section's nodes */}
         {activeAiMetadata?.description && (
           <Suspense fallback={null}>
             <AiDescriptionOverlay
-              viewName={activeAdvancedProfile?.name ?? aiPreview?.name ?? ''}
+              viewName={aiViewName}
               description={activeAiMetadata.description}
-              defaultExpanded={
-                (aiPreview && aiPreview.nodeIds.size === 0) ||
-                (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
-                ? true : false
-              }
-              onFocusNode={(nodeId) => { zoomToNode(nodeId); onNodeClick(nodeId); }}
+              expanded={aiPanelOpen}
+              onExpandedChange={setAiPanelOpen}
+              sections={aiSections}
+              activeSection={activeSection}
+              onFocusSection={handleFocusSection}
+              onFocusNode={handleAiFocusNode}
+              dockPosition={dockPosition}
+              onDockPositionChange={setDockPosition}
+              onPanelResize={handleAiPanelResize}
             />
           </Suspense>
         )}

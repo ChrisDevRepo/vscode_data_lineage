@@ -1,4 +1,0 @@
-## Mission Context
-<mission_brief>
-Trace how dbo.FactSales is loaded and what business rules govern NetAmountA during the load.
-</mission_brief>

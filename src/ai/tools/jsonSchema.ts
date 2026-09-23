@@ -36,10 +36,6 @@ const modelJsonSchemaCache = new WeakMap<z.ZodType, JsonSchemaNode>();
 export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
   const cached = modelJsonSchemaCache.get(schema);
   if (cached) return cached;
-  // `io: 'input'` selects the pre-parse (model-supplied) shape — the surface the model
-  // must satisfy — so `z.coerce`/`.default()` reflect what the caller actually sends.
-  // `unrepresentable: 'throw'` fails loudly if a future schema construct can't be represented,
-  // rather than silently widening it to "accepts anything" (which the drift guard would pass).
   const raw = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'throw' }) as JsonSchemaNode;
   const fragment = { ...raw };
   delete fragment.$schema;

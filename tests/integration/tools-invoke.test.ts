@@ -22,15 +22,16 @@ import { announceLaneTier } from './laneTier';
 suite('Tool surface — invokeTool, no model, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
-  suiteSetup(() => announceLaneTier(
+  suiteSetup(() => { announceLaneTier(
     'tools',
     'none',
     'every contributed read-only lineage tool is registered with vscode.lm and answers through invokeTool',
-  ));
+  ); });
 
   /** Every read-only tool contributed in `package.json` under `languageModelTools`. */
   const READ_TOOLS = [
     'lineage_get_context',
+    'lineage_get_screen_state',
     'lineage_search_objects',
     'lineage_get_object_detail',
     'lineage_get_neighbor_columns',
@@ -76,7 +77,7 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
     assert.strictEqual((await vscode.lm.selectChatModels()).length, 0);
   });
 
-  test('only the six read-only lineage tools are registered with VS Code', () => {
+  test('only the contributed read-only lineage tools are registered with VS Code', () => {
     const registered = new Set(vscode.lm.tools.map((tool) => tool.name));
     for (const name of READ_TOOLS) {
       assert.ok(registered.has(name), `${name} must be registered via vscode.lm.registerTool`);
@@ -90,10 +91,11 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
     this.timeout(60_000);
     const inputs: Record<string, object> = {
       lineage_get_context: {},
+      lineage_get_screen_state: {},
       lineage_search_objects: { query: 'Sales' },
-      lineage_get_object_detail: { node_id: '[sales].[salesorderheader]' },
-      lineage_get_neighbor_columns: { node_id: '[sales].[salesorderheader]' },
-      lineage_detect_graph_patterns: {},
+      lineage_get_object_detail: { id: '[sales].[salesorderheader]' },
+      lineage_get_neighbor_columns: { ids: ['[sales].[salesorderheader]'] },
+      lineage_detect_graph_patterns: { type: 'hubs' },
       lineage_search_ddl: { query: 'Sales' },
     };
     for (const name of READ_TOOLS) {

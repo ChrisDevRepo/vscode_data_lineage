@@ -14,6 +14,7 @@
  */
 import * as vscode from 'vscode';
 import type Graph from 'graphology';
+import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
 import { Logger, trunc, sanitizeForLog, LOG_TRUNC_JSON, LOG_TRUNC_REJECTION } from '../../utils/log';
@@ -31,6 +32,7 @@ import {
   DetectGraphPatternsInputSchema,
   SearchDdlInputSchema,
   GetContextInputSchema,
+  GetScreenStateInputSchema,
 } from '../tools/toolSchemas';
 import { type DatabaseModel } from '../../engine/types';
 import { type SerializedFilterState } from '../../engine/projectStore';
@@ -41,10 +43,75 @@ import { getToolInvocationLabel } from '../tools/toolLabels';
 import { readToolError, rejectionIssuePaths, isConsentGateRejection } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
-import type { ToolServices } from './handlers/toolServices';
+import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
+import { buildLiveRun, type StoredRunReader } from '../session/runStore';
+import { presentRunRecall, presentScreenState } from './screenStatePresenter';
+import { postToWebview } from '../../bridge/host';
+import { resolveModelNodeId } from '../support/inputNormalization';
+import { getModelNodeMap, type AiViewPreviewMessage, type ToolServices } from './handlers/toolServices';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
+import type { ModelPort } from '../model/modelPort';
+import { REJECTION_CODES } from '../support/rejectionCodes';
+
+/**
+ * Retry-messaging group for a rejection code, shared by this module's `[Reject]` debug line and
+ * `graph.ts`'s chat-facing `Retry N — <group>` line — ONE classification, read by both surfaces, so
+ * a debug trace and what the user saw can never disagree about which group a code belongs to.
+ *
+ * @remarks
+ * Deliberately five groups, not six: there is no "scope limit" group. The two budget codes are
+ * non-chargeable and never reach `rejections[]`, so a sixth group for them would be unreachable and
+ * would misrepresent a budget refusal as a model correction.
+ */
+export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'correction';
+
+/**
+ * Explicit membership for the three non-fallback groups. Every rejection code NOT listed here —
+ * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
+ * `correction` fallback, so an unmapped code can never surface to the user as a raw machine string.
+ *
+ * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
+ * - `source_selection` — routing and prune-topology guards.
+ * - `answer_format` — structural/schema violations of the tool envelope itself.
+ *
+ * Session/state codes, transport artifacts, the budget guards, and control-flow markers are
+ * deliberately absent — none says anything about the model's semantic accuracy, so they fall to
+ * `correction` rather than borrowing one of the three named groups.
+ */
+const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
+  [REJECTION_CODES.outColNotTracked]: 'column_mapping',
+  [REJECTION_CODES.outColNotOnNode]: 'column_mapping',
+  [REJECTION_CODES.contributorColNotOnSource]: 'column_mapping',
+  [REJECTION_CODES.continuationNotWriter]: 'column_mapping',
+  [REJECTION_CODES.columnSelfLoop]: 'column_mapping',
+  [REJECTION_CODES.writesToNamesReader]: 'column_mapping',
+  [REJECTION_CODES.prunedContributor]: 'column_mapping',
+  [REJECTION_CODES.columnChainIncomplete]: 'column_mapping',
+  [REJECTION_CODES.pruneCarriesTrackedColumn]: 'source_selection',
+  [REJECTION_CODES.routeValidationFailed]: 'source_selection',
+  [REJECTION_CODES.pruneOriginForbidden]: 'source_selection',
+  [REJECTION_CODES.validation]: 'answer_format',
+  [REJECTION_CODES.invalidInput]: 'answer_format',
+  [REJECTION_CODES.ctFieldRequired]: 'answer_format',
+  [REJECTION_CODES.ctFieldForbiddenInBb]: 'answer_format',
+  [REJECTION_CODES.bbFieldUnknown]: 'answer_format',
+  [REJECTION_CODES.missingField]: 'answer_format',
+  [REJECTION_CODES.fieldLengthExceeded]: 'answer_format',
+  [REJECTION_CODES.emptyStructuredOutput]: 'answer_format',
+  [REJECTION_CODES.missingRequiredToolCall]: 'answer_format',
+  [REJECTION_CODES.classificationLockViolation]: 'answer_format',
+};
+
+/**
+ * Resolves a rejection code to its retry-messaging group, defaulting an unmapped code to the
+ * `correction` fallback. See {@link REJECTION_GROUPS} for the membership this implements and why a
+ * "scope limit" group is intentionally absent.
+ */
+export function classifyRejectionCode(code: string): RejectionChatGroup {
+  return REJECTION_GROUPS[code] ?? 'correction';
+}
 
 /**
  * Private handler for AI tool execution.
@@ -58,14 +125,26 @@ class ToolHandler implements ToolServices {
   constructor(
     public readonly getSession: () => AiSession,
     outputChannel: vscode.LogOutputChannel,
-    public readonly getPanel: () => vscode.WebviewPanel | undefined,
+    private readonly getPanel: () => vscode.WebviewPanel | undefined,
     private readonly turnLease?: TurnLease,
+    public readonly getStoredRun?: StoredRunReader,
+    public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>,
+    public readonly signal?: AbortSignal,
+    public readonly maxRounds: number = DEFAULT_MAX_ROUNDS,
+    public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
 
   public turnEpoch(sess: AiSession): number {
     return this.turnLease?.epoch ?? sess.turnEpoch;
+  }
+
+  public async deliverPreview(message: AiViewPreviewMessage): Promise<boolean> {
+    const panel = this.getPanel();
+    if (!panel) return false;
+    panel.reveal();
+    return postToWebview(panel, message, this.logger);
   }
 
   public requireModel(): DatabaseModel {
@@ -80,7 +159,7 @@ class ToolHandler implements ToolServices {
     return g;
   }
 
-  public logAndReturn(toolName: string, data: object, input?: unknown): string {
+  public logAndReturn(toolName: ToolName, data: object, input?: unknown): string {
     const sess = this.getSession();
     const json = JSON.stringify(data);
     const chars = json.length;
@@ -94,14 +173,13 @@ class ToolHandler implements ToolServices {
     sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     const rejection = readToolError(data);
     if (rejection) {
-      const reason = trunc(sanitizeForLog(rejection.reason), LOG_TRUNC_REJECTION);
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';
       const paths = rejectionIssuePaths(rejection.detail);
       const pathPart = paths.length > 0 ? ` issuePaths=${paths.join(',')}` : '';
-      // The consent gate shares the rejection envelope but is the gate firing on plan — labelling
-      // it `[Reject]` made a healthy refine round read as a retry loop in the log.
-      const label = isConsentGateRejection(rejection.code) ? '[Gate]' : '[Reject]';
-      this.logger.debug(`${label} tool=${toolName} code=${rejection.code} reason=${reason}${hintPart}${pathPart}`);
+      const isGate = isConsentGateRejection(rejection.code);
+      const label = isGate ? '[Gate]' : '[Reject]';
+      const groupPart = isGate ? '' : ` group=${classifyRejectionCode(rejection.code)}`;
+      this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code}${hintPart}${pathPart}`);
     } else {
       this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
     }
@@ -145,8 +223,8 @@ class ToolHandler implements ToolServices {
    * registry execution boundary, not just at the LM `tools[]` parameter.
    *
    * @remarks
-   * The native runtime carries the full catalog. `registerAiTools` additionally exposes only the
-   * read-only subset through `vscode.lm`; both dispatch paths land on this check so the current
+   * The native runtime carries the full catalog; `registerAiTools` additionally exposes only the
+   * read-only subset through `vscode.lm`, and both dispatch paths land on this check so the current
    * phase remains authoritative even for externally addressable reads.
    *
    * @returns Provider-neutral JSON text carrying an `off_policy` error when the
@@ -169,7 +247,7 @@ class ToolHandler implements ToolServices {
     const phase = sess.phase.kind;
     const engine = sess.stateMachine;
     if (phase === 'exploring' && engine) {
-      const mode = activeModeOf(engine.columnAspect !== null);
+      const mode = activeModeOf(engine.currentHopAnalysisMode === 'ct');
       return { kind: 'active', mode };
     }
     if (phase === 'completed') return { kind: 'completed' };
@@ -181,9 +259,43 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetContextInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_context', parsed.error, input);
       const sess = this.getSession();
-      const ctx = getContext(this.requireModel(), sess.filter, sess.projectName, sess.views, sess.columnStore);
-      return this.logAndReturn('get_context', ctx, input);
+      const ctx = getContext(this.requireModel(), sess.filter, sess.projectName);
+      return this.logAndReturn('lineage_get_context', ctx, input);
     } catch (err) { return this.toolError('get_context', err); }
+  }
+
+  public getScreenState(input: unknown) {
+    try {
+      const parsed = parseToolInput(GetScreenStateInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_screen_state', parsed.error, input);
+      const sess = this.getSession();
+      const model = this.requireModel();
+      const getDdl = (id: string) => sess.columnStore.getDdl(id);
+      const { ids, filter } = parsed.data;
+      if (ids || filter) {
+        const nodeMap = getModelNodeMap(model);
+        return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
+          uiState: sess.uiState,
+          getStoredRun: this.getStoredRun,
+          liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
+          budget: this.budget,
+          ids: ids?.map(id => resolveModelNodeId(id, nodeMap) ?? id),
+          filter,
+          getDdl,
+          isInModel: id => nodeMap.has(id),
+        }), input);
+      }
+      const screen = presentScreenState({
+        uiState: sess.uiState,
+        renderState: sess.renderState,
+        graphMode: sess.graphMode,
+        filteredCount: sess.filteredCount,
+        totalNodes: model.nodes.length,
+        getStoredRun: this.getStoredRun,
+        getDdl,
+      });
+      return this.logAndReturn('lineage_get_screen_state', screen, input);
+    } catch (err) { return this.toolError('get_screen_state', err); }
   }
 
   public searchObjects(input: unknown) {
@@ -191,30 +303,21 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
       const { query, types, schemas, mode } = parsed.data;
-      return this.logAndReturn('search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter), input);
+      return this.logAndReturn('lineage_search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter), input);
     } catch (err) { return this.toolError('search_objects', err); }
   }
 
   public getScopeBundle(input: unknown) {
     try {
-      const parsed = GetScopeBundleInputSchema.safeParse(input);
-      if (!parsed.success) {
-        const issue = parsed.error.issues[0];
-        const field = issue?.path?.join('.') || '(root)';
-        return this.logAndReturn('lineage_get_scope_bundle', {
-          error: 'invalid_input',
-          hint: `Invalid get_scope_bundle input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: origin. Optional: direction, depth, upstream_depth, downstream_depth, include_ddl.`,
-        }, input);
-      }
+      const parsed = parseToolInput(GetScopeBundleInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_scope_bundle', parsed.error, input);
       const sess = this.getSession();
-      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, sess.columnStore) as Record<string, unknown>;
-      // Normalization-with-log: silence on `include_ddl` is filled by a declared default, so the
-      // decision the model did not make has to be visible. An explicit `false` is never overridden.
+      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore) as Record<string, unknown>;
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
       if (!Array.isArray(bundle.nodes) || !Array.isArray(bundle.edges) || typeof bundle.origin !== 'string') {
-        return this.logAndReturn('get_scope_bundle', bundle, input);
+        return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
       }
       const nodeIds = bundle.nodes.flatMap((node) => {
         if (!node || typeof node !== 'object') return [];
@@ -231,9 +334,9 @@ class ToolHandler implements ToolServices {
         edges,
       }, this.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return this.logAndReturn('get_scope_bundle', { error: 'stale_turn', hint: 'The turn no longer owns this session. Do not render this scope.' }, input);
+        return this.logAndReturn('lineage_get_scope_bundle', { error: REJECTION_CODES.staleTurn, hint: 'The turn no longer owns this session. Do not render this scope.' }, input);
       }
-      return this.logAndReturn('get_scope_bundle', bundle, input);
+      return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
   }
 
@@ -258,7 +361,7 @@ class ToolHandler implements ToolServices {
       const { id } = parsed.data;
       const detail = getObjectDetail(this.requireModel(), id, sess.columnStore) as Record<string, unknown>;
 
-      return this.logAndReturn('get_object_detail', detail, input);
+      return this.logAndReturn('lineage_get_object_detail', detail, input);
     } catch (err) { return this.toolError('get_object_detail', err); }
   }
 
@@ -271,7 +374,7 @@ class ToolHandler implements ToolServices {
       const resolvedMinDegree = min_degree ?? anaCfg.get<number>('analysis.hubMinDegree');
       const resolvedMaxSize   = max_size   ?? anaCfg.get<number>('analysis.islandMaxSize');
       const resolvedLongestPath = anaCfg.get<number>('analysis.longestPathMinNodes');
-      return this.logAndReturn('detect_graph_patterns', runAnalysis(this.requireGraph(), type, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
+      return this.logAndReturn('lineage_detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
     } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
 
@@ -280,7 +383,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('search_ddl', searchDdl(this.requireModel(), query, types, this.getSession().columnStore), input);
+      return this.logAndReturn('lineage_search_ddl', searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg)), input);
     } catch (err) { return this.toolError('search_ddl', err); }
   }
 
@@ -299,32 +402,25 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) {
-        return this.logAndReturn('get_neighbor_columns', {
-          error: 'no_active_session',
-          hint: 'This tool is only available during an active SM exploration. Call start_exploration first.',
+        return this.logAndReturn('lineage_get_neighbor_columns', {
+          error: REJECTION_CODES.noActiveSession,
+          hint: 'No active exploration. Call lineage_start_exploration first.',
         }, input);
       }
 
-      const parsed = GetNeighborColumnsInputSchema.safeParse(input);
-      if (!parsed.success) {
-        const issue = parsed.error.issues[0];
-        const field = issue?.path?.join('.') || '(root)';
-        return this.logAndReturn('get_neighbor_columns', {
-          error: 'invalid_input',
-          hint: `Invalid get_neighbor_columns input: field "${field}" — ${issue?.message ?? 'validation failed'}. Required: ids (non-empty array of node IDs).`,
-        }, input);
-      }
+      const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
+      if (!parsed.ok) return this.logAndReturn('lineage_get_neighbor_columns', parsed.error, input);
 
       const invalidIds = engine.validateNeighborIds(parsed.data.ids);
       if (invalidIds.length > 0) {
-        return this.logAndReturn('get_neighbor_columns', {
+        return this.logAndReturn('lineage_get_neighbor_columns', {
           error: 'out_of_scope_or_not_neighbor',
           invalid_ids: invalidIds,
           hint: `These ids are not direct neighbors of the current focus node and/or not in the active scope: ${invalidIds.join(', ')}. This tool only inspects direct neighbors for pruning verification.`,
         }, input);
       }
 
-      return this.logAndReturn('get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
+      return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
     } catch (err) { return this.toolError('get_neighbor_columns', err); }
   }
 
@@ -351,6 +447,10 @@ type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolO
  * @param outputChannel - Log channel for tracing tool activity.
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
+ * @param host - Optional host seam; `getStoredRun` resolves the AI run behind an applied bookmark,
+ * `model`/`signal` supply the text-completion capability `start_exploration` uses to compose the
+ * discovery-handoff memo shown at the bottom of the approval card, and `budget` carries the owning
+ * turn's caps so a superseded turn's dispatch keeps measuring against its own model.
  * @returns A ready-to-dispatch canonical registry.
  */
 export function buildAiToolRegistry(
@@ -358,12 +458,13 @@ export function buildAiToolRegistry(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
   turnLease?: TurnLease,
+  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText'>; signal?: AbortSignal; maxRounds?: number; budget?: TurnTokenBudget },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.maxRounds, host?.budget);
 
-  // Exhaustive catalog binding: adding or removing a tool requires a matching handler entry.
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
+    lineage_get_screen_state: (input) => handler.getScreenState(input),
     lineage_search_objects: (input) => handler.searchObjects(input),
     lineage_get_scope_bundle: (input) => handler.getScopeBundle(input),
     lineage_start_exploration: (input) => handler.startExploration(input),
@@ -411,10 +512,9 @@ export function buildAiToolRegistry(
  * The externally addressable subset of the catalog: read-only tools.
  *
  * @remarks
- * A `vscode.lm` registration is invokable by **any** extension or chat participant in the window,
- * with no `@lineage` turn behind it. The read tools are safe there — they answer questions about
- * an already-loaded snapshot. Every other effect class (`session_start`, `hop_commit`,
- * `preview_commit`, `presentation_commit`, `scope_store`) commits session lifecycle state that only
+ * A `vscode.lm` registration is invokable by **any** extension or chat participant, with no
+ * `@lineage` turn behind it; the read tools are safe there since they only answer questions about
+ * an already-loaded snapshot. Every other effect class commits session lifecycle state that only
  * the owning turn may advance, so exposing them externally would let a third party drive the
  * exploration state machine out from under the participant.
  */
@@ -436,22 +536,20 @@ const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(
  * @param getSession - Factory for the active AI session.
  * @param outputChannel - Log channel for tracing tool activity.
  * @param getPanel - Accessor for the active webview panel.
+ * @param host - Optional host seam forwarded to the shared registry builder.
  * @returns Disposables for the registered `vscode.lm` tool bindings.
  */
 export function registerAiTools(
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
-  getPanel: () => vscode.WebviewPanel | undefined
+  getPanel: () => vscode.WebviewPanel | undefined,
+  host?: { getStoredRun?: StoredRunReader },
 ): vscode.Disposable[] {
   const external = filterRegistry(
-    buildAiToolRegistry(getSession, outputChannel, getPanel),
+    buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, host),
     EXTERNAL_TOOL_NAMES,
   );
 
-  // Register the read-only catalog subset with VS Code, dispatching through the filtered view so a
-  // mutating name fails as an unknown tool even if a manifest entry were reintroduced by hand. The
-  // model-facing input schema still lives in `package.json` (VS Code reads it statically); the
-  // Zod-SSOT drift guard pins that manifest to the catalog so they cannot diverge.
   return external.getTools().map((tool) =>
     vscode.lm.registerTool(tool.name, {
       prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel(tool.name, options.input) }; },

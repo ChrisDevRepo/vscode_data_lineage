@@ -15,12 +15,15 @@
 import {
   buildGeneralSystemPrompt,
   buildPhasePrompt,
+  buildScreenStateSlot,
   type GeneralPromptContext,
   type PromptPhase,
 } from './prompts';
 import { UNKNOWN_DB_PLATFORM, type DatabaseModel } from '../../engine/types';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
+import { describeScreen } from '../tools/screenStatePresenter';
+import { escapePromptText } from '../support/text';
 
 /**
  * The grounding context surfaced in the system prompt's `## Context` block.
@@ -88,14 +91,18 @@ export function tryBuildDeterministicContextAnswer(
  *
  * @param model - The session's loaded model, or `null` when none is loaded.
  * @param filter - The active serialized filter, or `null`.
+ * @param uiState - Raw UI-state payload passed to {@link describeScreen}; absent or unrecognized
+ *   shapes simply omit the `screen` field.
  * @returns The prompt grounding values derived from the current model and filter.
  */
 export function deriveStagePromptContext(
   model: DatabaseModel | null,
   filter: SerializedFilterState | null,
+  uiState: unknown = null,
 ): StagePromptContext {
+  const screen = describeScreen(uiState);
   if (!model) {
-    return { dbPlatform: UNKNOWN_DB_PLATFORM, filterSchemas: [], totalSchemaCount: 0, visibleNodes: 0, totalNodes: 0 };
+    return { dbPlatform: UNKNOWN_DB_PLATFORM, filterSchemas: [], totalSchemaCount: 0, visibleNodes: 0, totalNodes: 0, ...(screen ? { screen } : {}) };
   }
   const filterSchemas = filter?.schemas ?? [];
   const totalNodes = model.nodes.length;
@@ -108,6 +115,7 @@ export function deriveStagePromptContext(
     totalSchemaCount: model.schemas.length,
     visibleNodes,
     totalNodes,
+    ...(screen ? { screen } : {}),
   };
 }
 
@@ -116,11 +124,17 @@ export function deriveStagePromptContext(
  *
  * @param phase - The lifecycle phase whose protocol to render.
  * @param ctx - The grounding context (see {@link deriveStagePromptContext}).
+ * @param analysisMode - Hop or session analysis mode forwarded to {@link buildPhasePrompt} so
+ *   active and synthesis compose CT as BB plus a column rider.
  * @returns The assembled system-prompt string.
  */
-export function buildHostStageSystemPrompt(phase: PromptPhase, ctx: StagePromptContext): string {
-  const base = buildGeneralSystemPrompt(phase, ctx);
-  const phaseSpecific = buildPhasePrompt(phase);
+export function buildHostStageSystemPrompt(
+  phase: PromptPhase,
+  ctx: StagePromptContext,
+  analysisMode: 'bb' | 'ct' = 'bb',
+): string {
+  const base = buildGeneralSystemPrompt(ctx);
+  const phaseSpecific = buildPhasePrompt(phase, analysisMode);
   return [base, phaseSpecific].filter(Boolean).join('\n\n');
 }
 
@@ -128,24 +142,22 @@ export function buildHostStageSystemPrompt(phase: PromptPhase, ctx: StagePromptC
  * System prompt for the code-driven **entry detector** (one structured pre-loop call).
  *
  * @remarks
- * Classifies semantic intent only. `visual_render` selects approval-gated BB exploration; the
- * host-owned preview action remains a separate RuntimeFrame fact for the bounded preview route.
+ * Classifies semantic intent only. `visual_render` enters discovery like any other free-text
+ * request; the host-owned preview action remains a separate RuntimeFrame fact for the bounded
+ * preview route reached afterward.
  *
  * @param ctx - Grounding context (see {@link deriveStagePromptContext}).
  * @returns The detector system-prompt string.
  */
 export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
   return [
-    'You are a routing classifier for a SQL data-lineage tool. Classify the user request into one entry route.',
-    '',
-    "Return 'column_trace' only when the user clearly names one or more specific columns to follow. Extract those exact names into targetColumns.",
-    "Return 'visual_render' when the user explicitly asks to see, show, render, draw, preview, or open a lineage graph, diagram, canvas, or panel. This means approval-gated hop-by-hop exploration. Set targetColumns to null.",
-    "Return 'discovery' for everything else, including broad dependency questions that do not explicitly request a visual. Set targetColumns to null.",
-    "TIEBREAKER — when in doubt, do NOT choose 'column_trace'. Column tracing requires an unambiguous, specifically named column; if the request names only an object/table with no column, choose 'discovery'. But a request that DOES name a specific column — even one described as a calculation or metric — is not ambiguous: choose 'column_trace'. Column trace is the exception only for vague requests, never for an explicitly named column.",
-    '',
-    'The conversation may include earlier turns. Classify ONLY the latest user message; use earlier turns solely to resolve what it refers to (e.g. resolving which object a bare column name belongs to).',
+    'Classify the latest user message of a SQL data-lineage chat into one entry route. Earlier turns only resolve what it refers to.',
+    '- column_trace: the user explicitly asks to trace, follow or walk one or more named columns as a new lineage request; put those names in targetColumns.',
+    '- visual_render: the user explicitly asks to see, show, render, draw, preview or open a lineage graph, diagram or panel.',
+    '- discovery: everything else, and whenever in doubt — including a follow-up that mentions a column already named, a question about what is on screen, or a bare "trace"/"explore" with no column. The user can still switch to a column trace at the approval step.',
     '',
     `Context: platform ${ctx.dbPlatform}; ${ctx.totalSchemaCount} schemas; ${ctx.visibleNodes} of ${ctx.totalNodes} objects visible.`,
+    ...(ctx.screen ? buildScreenStateSlot(ctx.screen) : []),
   ].join('\n');
 }
 
@@ -165,7 +177,7 @@ export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string 
  * Directive system prompt for the restricted **SM-entry** turn.
  *
  * @remarks
- * Paired with a 2-tool registry (`lineage_search_objects` + `lineage_start_exploration`) and
+ * Paired with a 3-tool registry (`lineage_get_screen_state` + `lineage_search_objects` + `lineage_start_exploration`) and
  * a graph-enforced required terminal tool, so a weak model can only resolve the origin and open the exploration
  * → the `confirm_sm_start` gate fires deterministically (instead of answering in prose). For a
  * column trace, the detected columns are surfaced so the model passes them as `targetColumns`.
@@ -175,27 +187,22 @@ export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string 
  * @returns The SM-entry system-prompt string.
  */
 export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?: string[]): string {
-  const base = buildGeneralSystemPrompt('discover', ctx);
+  const base = buildGeneralSystemPrompt(ctx);
   const ctLine = targetColumns?.length
-    ? `This is a column trace — set analysisMode:"ct" and pass targetColumns: [${targetColumns.map((c) => `"${c}"`).join(', ')}].`
-    : 'Set analysisMode:"bb" unless the user clearly requested tracing specific column(s). When unclear, choose "bb". Do not pass targetColumns in BB mode.';
+    ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${c}"`).join(', ')}].`
+    : '';
   const directive = [
-    '## Start the exploration',
-    'Resolve the origin object, then call `lineage_start_exploration`. Do not answer in prose.',
-    '1. Call `lineage_search_objects` to resolve the user-named object to its exact id.',
-    '2. Call `lineage_start_exploration` with `origin` set to that id, `analysisMode` (bb or ct), and a `classification` (business, technical, or both).',
-    'This is a fresh exploration: set `origin`; do not set the `supplement` field (that is only for extending a finished exploration).',
-    'Set `direction` from the request: upstream for sources/inputs ("all the way up", "show sources"), downstream for usage/impact, bidirectional when the user wants both — or wants different depths per side.',
-    'Pass a depth only when the user stated one — a level count (e.g. "3 levels"), "all" for the whole chain, or a per-side ask (e.g. "2 up, 1 down") as {upstream, downstream}. If the user gave no depth, omit it.',
+    '## Task: open the exploration',
+    "Resolve the object the user named with `lineage_search_objects`, then call `lineage_start_exploration` once with that exact id as `origin`. Set every other field from the user's own words, as its description says: `direction`, `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
     ctLine,
-    'The `confirm_sm_start` gate fires after step 2 — that is expected control flow, not an error to retry around.',
+    'The user then reviews your proposal at an approval gate.',
   ].filter(Boolean).join('\n');
   return [base, directive].join('\n\n');
 }
 
 /** Builds the system prompt for a same-turn revision of an already resolved proposal. */
 export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
-  const base = buildGeneralSystemPrompt('discover', ctx);
+  const base = buildGeneralSystemPrompt(ctx);
   const directive = [
     '## Refine the pending exploration',
     'Revise the interrupted proposal and call `lineage_start_exploration`. Do not answer in prose.',
@@ -222,7 +229,7 @@ export function buildGateRefinePrompt(
     'The user is refining the pending exploration scope. Do not start a new exploration or answer in prose.',
     '',
     'Current candidate scope (post-filter):',
-    scopeSummaryMd,
+    escapePromptText(scopeSummaryMd),
     '',
     'Requested scope edits:',
     `- excludeTypes: ${fmt(refine.excludeTypes)}`,
@@ -231,10 +238,10 @@ export function buildGateRefinePrompt(
     `- passNodeIds: ${fmt(refine.passNodeIds)}`,
     `- analysisMode: ${refine.analysisMode ?? '(unchanged)'}`,
     targetLine,
-    refine.instruction ? `- instruction: "${refine.instruction}"` : '',
+    refine.instruction ? `- instruction: "${escapePromptText(refine.instruction)}"` : '',
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
-    'Omitted proposal fields are preserved mechanically. Preserve unchanged origin, question, mission brief, direction, depth, filters, mode, classification, and columns by omitting them.',
+    'Omitted proposal fields are preserved mechanically. Preserve unchanged origin, question, mission brief, direction, depth, filters, mode, classification, and columns by omitting them. An analysis constraint in the instruction that no field above expresses goes in `scopeNotes`.',
     'Use `lineage_search_objects` only when the requested edit needs resolution, such as a typo, ambiguous name, name pattern, or newly named object.',
     'Reuse canonical IDs already present in the current proposal context. Do not search for or re-resolve the unchanged origin.',
     'Do not repeat entry detection, discovery, scope-bundle retrieval, or the original origin search.',
@@ -244,18 +251,19 @@ export function buildGateRefinePrompt(
 }
 
 /**
- * The leading user anchor seeded into active-phase history after a sliding-memory wipe.
+ * The leading user anchor the active-phase thread is reseeded to at approval and after every
+ * committed hop.
  *
  * @remarks
- * Once the host wipes the active history (hop 2+), the trimmed array is reseeded as
- * `[anchor, last-tool-call, last-tool-result]`. The anchor keeps the
- * conversation leading with a `user` turn (strict providers reject a leading assistant turn) and
- * points the model at the next agenda node — the hop protocol, agenda, and rolling
- * `<short_term_memory>` all live in the re-rendered `system`, so this stays a one-line continuation
- * directive, not a per-hop task config.
+ * The graph replaces the thread with `[anchor]` alone (`RESET_HISTORY` + this message); the per-hop
+ * task, focus context and `<short_term_memory>` ride the following worker message, while hop
+ * protocol and session memo stay in the stable `system`. The anchor keeps the conversation leading
+ * with a `user` turn (strict providers reject a leading assistant turn), so it stays a one-line
+ * continuation directive, not a per-hop task config. The incomplete-stop path keeps the last tool
+ * pair instead (`extractShortTermMemory`).
  *
  * @returns The anchor user-message text.
  */
 export function buildActiveContinuationAnchor(): string {
-  return 'Continue the hop-by-hop analysis: address the next node on the agenda per the protocol above.';
+  return 'Analyze `<current_task>` on the next agenda node.';
 }

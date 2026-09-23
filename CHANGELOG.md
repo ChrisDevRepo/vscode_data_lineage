@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.0] - 2026-09-21
+
+### Added
+- **Detail view** (Objects / Detail switch on AI previews and AI bookmarks): column-level findings of an AI analysis, rendered on the same objects; procedures and scalar functions render as compact hubs. The column-flow tooltip on objects is removed.
+- The assistant reads the current screen state and recalls a saved AI view's findings and open questions in later chats.
+- Column trace runs the same exploration as an object trace plus column findings, synthesizes at full depth, continues past objects without a SQL body, and records a column decision for every route.
+- A follow-up adds the requested object, or its chain to the source or to the end, to the presented graph; a render amendment patches the committed report. "Explore related objects" lists candidates, marks those already on the graph, and asks before adding.
+
+### Changed
+- Rejection and repair handling: one guard stops repeated errors, broken array boundaries are repaired, over-long names are repaired per field, and every dropped value is logged.
+- An explicit graph/render request is answered in discovery.
+- `@lineage` SQL code search reports the governing IF/WHILE condition of each hit.
+- In an untrusted workspace, workspace values for `dataLineageViz.parseRulesFile`, `dmvQueriesFile`, `excludePatterns` and `ai.outputTemplateFile` are ignored until the workspace is trusted.
+
+### Fixed
+- Parser and trace: bracketed `]]` escapes, comments inside identifiers.
+- Display: large graphs stay responsive while dragging, over-limit views report it, saved views fit the graph on restore, and the collapsed report rail stays docked.
+- Assistant: XML/unfenced tool calls are read without stalling the turn, bookmarks recall their AI run, formula notes reach the report, and a broad SQL code search stays within memory and time limits.
+- Webview: search hits keep their pending zoom; the AI description overlay is simplified.
+
 ## [1.1.0] - 2026-08-20
 
 ### Added

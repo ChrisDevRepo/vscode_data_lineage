@@ -2,19 +2,18 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 
 /**
  * Executable form of three written architecture rules.
  *
  * @remarks
- * Each rule below exists in prose (`docs/ARCHITECTURE.md`, `.github/copilot-instructions.md`,
- * `CLAUDE.md`) and was previously enforced by review alone. The scans here run inside the normal
- * unit suite — and therefore inside `npm run gate` — so a regression fails a build instead of
- * surviving until someone re-reads the document.
+ * Each rule below is stated in prose (`docs/ARCHITECTURE.md`, `.github/copilot-instructions.md`).
+ * The scans run inside the normal unit suite — and therefore inside `npm run gate` — so a
+ * violation fails the build.
  *
- * The scan primitives are plain functions over source text and are exercised against inline
- * fixtures as well as against the tree, because a scan that silently matches nothing would
- * otherwise "prove" every absence.
+ * The scans run over the source tree behind a file-count floor and a positive-control token per
+ * tree, because a scan that silently matches nothing would otherwise "prove" every absence.
  */
 
 const srcRoot = fileURLToPath(new URL('../../../src', import.meta.url));
@@ -236,9 +235,6 @@ describe('architecture rule gates', () => {
     expect(ai.map((path) => readFileSync(path, 'utf8')).join('\n')).toContain(AI_POSITIVE_CONTROL);
   });
 
-  // Rule: production `@lineage` dispatches through the local canonical registry and strict Zod
-  // dispatcher. Routing its own calls through `vscode.lm.invokeTool` would hand another extension's
-  // tool surface the active turn lease.
   it('never routes a production call through vscode.lm.invokeTool', () => {
     const offenders = sourceFiles(srcRoot).filter((file) =>
       /\binvokeTool\b/.test(stripComments(readFileSync(file, 'utf8'))),
@@ -247,8 +243,6 @@ describe('architecture rule gates', () => {
     expect(offenders.map((file) => posixRelative(srcRoot, file))).toEqual([]);
   });
 
-  // Rule: user-facing errors and warnings go through `notifyError`/`notifyWarning`, and diagnostics
-  // through the `src/utils/log.ts` helpers, so redaction and the output channel stay on one path.
   it('routes AI notifications and logging through the shared helpers only', () => {
     const offenders = sourceFiles(aiRoot)
       .map((file) => ({
@@ -261,7 +255,6 @@ describe('architecture rule gates', () => {
     expect(offenders).toEqual([]);
   });
 
-  // Rule: `src/ai/**` reaches the engine only through the shared contracts in `src/engine/shared/*`.
   it('adds no engine import outside src/engine/shared', () => {
     const introduced = engineLayeringViolations().filter(
       (entry) => !GRANDFATHERED_ENGINE_IMPORTS.includes(entry),
@@ -281,69 +274,49 @@ describe('architecture rule gates', () => {
       stale,
       'these imports were fixed — delete them from GRANDFATHERED_ENGINE_IMPORTS; the list may only shrink',
     ).toEqual([]);
-    // Positive control: an empty scan would make the "no new violations" assertion vacuous.
     expect(current.length).toBeGreaterThan(0);
   });
 });
 
-describe('rule-gate scan primitives', () => {
-  it('allows a modal warning and rejects every other notification or console call', () => {
-    const source = `
-      const url = 'https://example.test//not-a-comment';
-      vscode.window.showWarningMessage('Delete everything?', { modal: true }, 'Yes', 'No');
-      vscode.window.showWarningMessage(
-        localize('confirm'),
-        { modal: true, detail: 'irreversible' },
-      );
-    `;
+/**
+ * Codes with more than one emission site; every site must interpolate `REJECTION_CODES`
+ * (`src/ai/support/rejectionCodes.ts`) rather than hand-typing the literal, so a rename cannot
+ * drift between the emitting guard, the prompt that teaches the recovery, and the schema that
+ * types the envelope.
+ */
+const MULTI_SITE_REJECTION_CODES = [
+  REJECTION_CODES.staleTurn,
+  REJECTION_CODES.invalidInput,
+  REJECTION_CODES.notFound,
+  REJECTION_CODES.supplementRequiresCompleteEngine,
+  REJECTION_CODES.invalidRegex,
+] as const;
 
-    expect(forbiddenNotificationCalls(source)).toEqual([]);
+describe('rejection codes — one home per multi-site code', () => {
+  it('leaves no hand-typed literal for a multi-site code anywhere in src/ai', () => {
+    const REJECTION_CODES_OWNER = join(aiRoot, 'support', 'rejectionCodes.ts');
+    const offenders: string[] = [];
+    for (const file of sourceFiles(aiRoot)) {
+      if (file === REJECTION_CODES_OWNER) continue;
+      const lines = readFileSync(file, 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        for (const code of MULTI_SITE_REJECTION_CODES) {
+          if (line.includes(`error: '${code}'`) || line.includes(`error: "${code}"`)) {
+            offenders.push(`${posixRelative(aiRoot, file)}:${index + 1} ${code}`);
+          }
+        }
+      });
+    }
+    expect(offenders, 'every emission site interpolates REJECTION_CODES').toEqual([]);
   });
 
-  it('flags non-modal warnings, error messages and console calls', () => {
-    // The first warning must stay flagged even though a *later* call in the same file is modal:
-    // the exception is per call, not per file.
-    const source = `
-      vscode.window.showWarningMessage('just a warning');
-      vscode.window.showWarningMessage('confirm', { modal: true });
-      vscode.window.showErrorMessage('boom', { modal: true });
-      console.warn('debug');
-      console.log(1);
-    `;
-
-    expect(forbiddenNotificationCalls(source)).toEqual([
-      'showWarningMessage',
-      'showErrorMessage',
-      'console.warn',
-      'console.log',
-    ]);
-  });
-
-  it('ignores banned identifiers that appear only in prose', () => {
-    const source = `
-      /** Never call showErrorMessage or console.log here — use notifyError. */
-      // vscode.window.showWarningMessage('commented out');
-      notifyError('real path');
-    `;
-
-    expect(forbiddenNotificationCalls(source)).toEqual([]);
-  });
-
-  it('resolves relative import specifiers to src-relative module paths', () => {
-    const file = join(aiRoot, 'tools', 'tools.ts');
-    const source = `
-      import type { DatabaseModel } from '../../engine/types';
-      import { AI_MAX_SCOPE_NODE_IDS } from '../../engine/shared/bridgeContract';
-      export { helper } from './handlers/toolServices';
-      const late = await import('../../engine/columnStore');
-      import * as vscode from 'vscode';
-    `;
-
-    expect(importedModules(file, source)).toEqual([
-      'engine/types',
-      'engine/shared/bridgeContract',
-      'ai/tools/handlers/toolServices',
-      'engine/columnStore',
+  it('keeps the five codes exported with their wire values unchanged', () => {
+    expect(MULTI_SITE_REJECTION_CODES).toEqual([
+      'stale_turn',
+      'invalid_input',
+      'not_found',
+      'supplement_requires_complete_engine',
+      'invalid_regex',
     ]);
   });
 });

@@ -1,13 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * Regression test for A20 — the webview `onDidReceiveMessage` listener was registered against
- * `context.subscriptions` (extension lifetime) instead of the panel's own disposable array, so a
- * closed-and-reopened panel left the previous listener attached to a disposed webview. Fixed by
- * `4e5b885`, which scopes the registration to a `panelDisposables` array drained from
- * `panel.onDidDispose`. This pins that release: no `vscode` webview mock existed for
- * `panelProvider.ts` before this test.
- */
+/** The webview `onDidReceiveMessage` listener is scoped to the panel's own disposable array (drained from `panel.onDidDispose`), never to `context.subscriptions` (extension lifetime). */
 
 const vscodeMocks = vi.hoisted(() => ({
   panelDisposeListeners: [] as Array<() => void>,
@@ -120,10 +113,8 @@ describe('openPanel — webview message listener disposal (A20)', () => {
     expect(vscodeMocks.panelDisposeListeners.length).toBeGreaterThan(0);
     const listenerDisposable = vscodeMocks.messageListenerDisposable;
     expect(listenerDisposable.dispose).not.toHaveBeenCalled();
-    // The bug registered this same disposable against context.subscriptions instead.
     expect(context.subscriptions).not.toContain(listenerDisposable);
 
-    // Fire every onDidDispose listener, as vscode does when the panel's tab closes.
     for (const listener of vscodeMocks.panelDisposeListeners) listener();
 
     expect(listenerDisposable.dispose).toHaveBeenCalledTimes(1);

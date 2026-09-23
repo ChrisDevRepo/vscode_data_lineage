@@ -7,15 +7,15 @@ let requests = [];
 // This fixture is scripted-only, by design. It replays fixed text and tool calls through the real
 // `vscode.lm` provider API so the Extension Development Host lanes exercise registration,
 // selection, streaming, and the tool-result round-trip without inference and without a network
-// call. Inference is measured by `npm run test:live-provider`, which runs headless — see
-// docs/E2E_TESTING.md §Model tiers for why the two are deliberately separate surfaces.
+// call. Inference is measured internally, headless — see docs/EDH_TESTING.md §What the public
+// suite proves for why the two are deliberately separate surfaces.
 
 // ── Case scripting state ─────────────────────────────────────────────────────
 //
 // `null` reproduces the ORIGINAL fixed-sequence behavior byte-for-byte (structured_output ->
 // discovery/null, one lineage_search_objects round-trip keyed on 'search-001', one
 // lineage_present_result keyed on 'scripted-call-001', else 'SCRIPTED_RUNTIME_COMPLETE').
-// tests/integration/scripted-provider.test.ts asserts against exactly that sequence and never calls
+// The internal scripted lanes assert against exactly that sequence and never call
 // `lineageTestModel.setCase`, so the legacy path must stay byte-identical when no case is active.
 let activeCase = null;
 /** Monotonic per-active-hop counter, reset on every setCase/reset so callIds stay unique per turn. */
@@ -29,12 +29,11 @@ let hopSeq = 0;
 let ctColumnAssignment = new Map();
 
 /**
- * The S1-S7 scripted scenario matrix (donor: ai-embedded-chat-langgraph.test.ts,
- * `git show donor/testing13:tests/integration/ai-embedded-chat-langgraph.test.ts`).
+ * The S1-S7 scripted scenario matrix.
  *
  * @remarks
  * `entry`/`targetColumns` feed the `structured_output` entry-detector reply (src/ai/agent/state.ts
- * EntryDetectionSchema). S6 sets `entry: null` because its donor prompt is a leading `/trace`
+ * EntryDetectionSchema). S6 and S7 set `entry: null` because their prompts lead with a `/trace`
  * command — `detectSlashRoute` (src/ai/agent/slashCommands.ts) pins the route deterministically and
  * the graph never calls the entry-detector model, so the fixture must never see a `structured_output`
  * tool for that case (if it does, something upstream regressed and the fixture answers 'discovery'
@@ -88,7 +87,7 @@ const DEFAULT_CASES = {
     depth: 'all',
   },
   S7: {
-    entry: 'column_trace',
+    entry: null, // pinned by '/trace [schema].[object].[column]' — no entry-detector call for this case
     kind: 'sm',
     mode: 'ct',
     origin: '[ai].[FactSalesReport]',
@@ -115,9 +114,9 @@ function normalizePart(part) {
  *
  * @remarks
  * An ACCEPTED tool observation carries back as a user-role `<runtime_tool_context>` text block
- * (see `renderObservationsContext`, tests/integration/scripted-provider.test.ts documents the same
- * check); a REJECTED one carries as a native assistant tool-call + tool-result pair
- * (`renderRejectionExchange`, toolAttempt.ts:589). Checking only one shape lets a case's tool call
+ * (see `renderObservationsContext`; the internal scripted lanes document the same check); a
+ * REJECTED one carries as a native assistant tool-call + tool-result pair
+ * (`renderRejectionExchange` in toolAttempt.ts). Checking only one shape lets a case's tool call
  * re-emit forever until the provider-call breaker trips.
  */
 function resultObservedFor(request, callId) {
@@ -148,7 +147,7 @@ function normalizeNodeId(id) {
  * @remarks
  * `buildWorkerHopMessage` (src/ai/agent/stagePrompts.ts) precedes the real `<hop_context>` TAG with a
  * plain-prose SENTENCE that also mentions the literal string `<hop_context>`
- * ("Use ONLY node ids that appear in <hop_context> for route_requests."). A tag-only regex greedily
+ * (it names the literal `<hop_context>` tag in prose). A tag-only regex greedily
  * (non-greedily, but still) matches that mention as the opening tag and captures everything up to
  * the real closing tag as its "body" — which is not valid JSON and always fails to parse. The
  * capture group here additionally requires the body to start with `{`, which only the real tag
@@ -186,7 +185,7 @@ function latestEnvelope(request) {
 
 /**
  * Parses every JSON object carried back to the model this turn, walking into native
- * `tool-result` parts (`renderRejectionExchange`, toolAttempt.ts:589) as well as top-level text.
+ * `tool-result` parts (`renderRejectionExchange` in toolAttempt.ts) as well as top-level text.
  * A REJECTED submit_findings rides as a native assistant tool-call + tool-result pair whose
  * result content is `JSON.stringify({code, reason, hint, detail, ...})` — this is how the
  * fixture reads that `detail` array back, rather than regexing the flattened prose (fragile:
@@ -240,7 +239,7 @@ function priorAvailableColumns(request, nodeId) {
  * Fallback only: the per-hop `<column_trace>` block (`readDeclaredActiveColumns`) is the primary
  * channel and normally makes this unnecessary. When a hop renders no such block, this rejection's
  * `detail.unaccounted` (`buildIncompleteRejection`, smCompleteness.ts) is the ground truth, IF it
- * rides back as a native tool-call/tool-result pair (`renderRejectionExchange`, toolAttempt.ts:589)
+ * rides back as a native tool-call/tool-result pair (`renderRejectionExchange` in toolAttempt.ts)
  * the way every other rejection this fixture reads (`priorAvailableColumns`) does.
  *
  * The key is `code`, not `error`: the engine emits `{error:'column_chain_incomplete', hint, detail}`
@@ -582,7 +581,7 @@ function activate(context) {
         return;
       }
 
-      // ── legacy fixed sequence (no active case — tests/integration/scripted-provider.test.ts) ───────────
+      // ── legacy fixed sequence (no active case — asserted by the internal scripted lanes) ─────────────
       // Must run BEFORE any case-scripted phase branch: the legacy discovery-phase request offers
       // both lineage_get_context and lineage_search_objects together (DISCOVERY_TOOLS), so a
       // get_context-keyed branch below would otherwise shadow this path when no case is active.
@@ -634,27 +633,15 @@ function activate(context) {
         hopSeq += 1;
         const callId = `${caseId}-hop-${hopSeq}`;
         const isCt = cfg.mode === 'ct';
-        // BB required-route accounting: the full 'all'-depth scope is precomputed at
-        // start_exploration, but BbStrategy.runRequiredNodesGuard (src/ai/sm/strategies.ts) still
-        // requires each hop to explicitly account for its own in-scope, not-yet-queued directional
-        // neighbors via route_requests (or prune_neighbors) — pre-seeding the scope does not queue
-        // it. Route every in-budget upstream neighbor forward; the engine dedupes an already-queued
-        // one, so over-routing is harmless.
-        const inBudgetUpstreamNeighbors = (hop && Array.isArray(hop.neighbors) ? hop.neighbors : [])
-          .filter((n) => n && n.edge_direction === 'upstream' && n.in_budget && n.boundary !== 'cycle'
-            && typeof n.id === 'string');
-        const routeRequests = inBudgetUpstreamNeighbors.map((n) => ({
-          nodeId: n.id,
-          question: 'Trace this node\'s contribution to the upstream lineage.',
-        }));
+        // Neighbor decisions, both modes: the engine (NavigationEngine.submitFindings,
+        // src/ai/sm/smBase.ts) visits every open in-scope neighbor this hop does not prune, so the
+        // scripted provider prunes nothing and authors no per-neighbor question.
         const input = {
           focus_node_id: focusId,
           sections: [{ angle: 'business', text: `Scripted ${caseId} analysis of ${focusId}.` }],
           summary: `${focusId} passes data through unchanged.`,
           verdict: 'analyze',
-          ...(isCt
-            ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) }
-            : (routeRequests.length > 0 ? { route_requests: routeRequests } : {})),
+          ...(isCt ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) } : {}),
         };
         progress.report(new vscode.LanguageModelToolCallPart(callId, 'lineage_submit_findings', input));
         return;

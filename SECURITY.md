@@ -31,14 +31,17 @@ Include:
   not modify database objects or user source code
 - Strict Content Security Policy on the webview
 - Custom YAML DMV queries, AI templates, and parse-rule regexes are trusted local configuration; avoid loading untrusted YAML files
+- In an untrusted workspace (Restricted Mode), workspace values for `dataLineageViz.parseRulesFile`, `dmvQueriesFile`, `excludePatterns` and `ai.outputTemplateFile` are ignored until the workspace is trusted; user-level values still apply.
 - `@lineage` uses the model selected in VS Code. When invoked, the selected
   model receives the user's prompt, native `@lineage` chat history, and lineage
   metadata or DDL returned by local snapshot tools. The AI runtime cannot
   connect to a database, execute SQL, start an import, or start profiling
-- AI trace logging is disabled by default. Enabling it for a session writes full
-  model and tool diagnostics under the VS Code extension log directory. These
-  files can contain database identifiers, SQL, prompts, responses, and tool
-  payloads; review them before sharing
+- AI trace logging is disabled by default. Enabling it for a session requires an
+  open workspace folder and writes full model and tool diagnostics to
+  `tmp/lm-trace/` inside the first workspace folder; the writer is disabled again
+  when the extension host restarts. These files can contain database identifiers,
+  SQL, prompts, responses, and tool payloads; keep them out of version control and
+  review them before sharing
 - **Copy Debug Info** can include project/source/schema names, filter state, GUI
   state, database-model metadata, and AI session metadata. Review and redact
   identifiers before sharing it

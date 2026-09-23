@@ -4,9 +4,10 @@
  *
  * @remarks
  * VS Code-free on purpose so the core framework and the `vscode.lm` runner share **one** copy.
- * Secret
- * redaction lives here too so every provider-error path can sanitize before logging/emitting.
+ * Secret redaction lives here too so every provider-error path can sanitize before logging/emitting.
  */
+
+import { stripFocusNodeLinks } from '../../engine/shared/bridgeContract';
 
 /** Max characters retained from a provider error before truncation (avoid dumping a body). */
 const PROVIDER_ERROR_MAX = 300;
@@ -14,15 +15,37 @@ const PROVIDER_ERROR_CAUSE_DEPTH = 3;
 
 /** Sanitized allowlisted fields retained from one provider exception or nested cause. */
 export interface ProviderErrorCauseDiagnostic {
+  /** Sanitized exception name, reduced to diagnostic-safe characters. */
   readonly name: string;
+  /** Redacted, length-capped error message. */
   readonly message: string;
+  /** Connection-level or provider code when one survives sanitization (e.g. `ECONNRESET`). */
   readonly code?: string;
+  /** Nested sanitized cause, at most three levels deep. */
   readonly cause?: ProviderErrorCauseDiagnostic;
 }
 
 /** Sanitized provider exception evidence bound to the model-call phase that failed. */
 export interface ProviderErrorDiagnostic extends ProviderErrorCauseDiagnostic {
+  /** Model-call phase in which the exception surfaced. */
   readonly phase: string;
+}
+
+/**
+ * Escapes text for a dynamic prompt slot so it cannot open or close a prompt delimiter.
+ *
+ * @remarks
+ * Every value that reaches a system prompt from outside the prompt builder — the user question,
+ * mission brief, screen phrase — passes through here before interpolation.
+ *
+ * @param value - Untrusted text.
+ * @returns The text with `&`, `<` and `>` entity-escaped.
+ */
+export function escapePromptText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /**
@@ -93,9 +116,6 @@ export function sanitizeProviderErrorDiagnostic(error: unknown, phase: string): 
     const record = value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
     const rawName = value instanceof Error ? value.name : typeof record?.name === 'string' ? record.name : 'Error';
     const rawMessage = value instanceof Error ? value.message : typeof record?.message === 'string' ? record.message : String(value);
-    // A non-empty string code is authoritative. An absent, empty, or numeric code (Electron
-    // attaches the Chromium errno as a number) falls back to the message token, so a dropped
-    // connection is still classified as transport.
     const stringCode = typeof record?.code === 'string' && record.code.trim() !== '' ? record.code : undefined;
     const rawCode = stringCode
       ?? chromiumNetworkCode(rawMessage)
@@ -132,10 +152,9 @@ const TRANSPORT_ERROR_CODES = new Set([
  *
  * @remarks
  * Inside the extension host the request travels over Electron's network stack, which reports
- * `net::ERR_*` and attaches **no** `code` property — the token exists only inside the message. A
- * dropped connection therefore looked like a provider verdict and ended the turn. Listed
- * explicitly rather than matched by prefix so a Chromium error meaning "the provider answered and
- * the answer was refused" is never silently retried.
+ * `net::ERR_*` and attaches **no** `code` property — the token exists only inside the message.
+ * Listed explicitly rather than matched by prefix so a Chromium error meaning "the provider
+ * answered and the answer was refused" is never silently retried.
  */
 const CHROMIUM_TRANSPORT_ERRORS = new Set([
   'net::ERR_CONNECTION_TIMED_OUT', 'net::ERR_CONNECTION_RESET', 'net::ERR_CONNECTION_CLOSED',
@@ -185,18 +204,13 @@ function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): strin
  * Renders a sanitized provider diagnostic as the single user-facing chat error line.
  *
  * @remarks
- * Classification is code-based only (never message-prose matching) and is delegated to
- * {@link isTransportProviderError}: a known connection-level code anywhere in the cause chain
- * names the failure a temporary network/service interruption so the user knows a retry is
- * reasonable; anything else stays a plain provider error.
- *
- * The transport branch reports the code chain and deliberately **not** the provider's own message.
- * The host's network-layer prose is boilerplate attached to every network-class failure — one UAT
- * session carried the identical "check your firewall rules" sentence with both a connection timeout
- * and an HTTP/2 protocol error — so relaying it inside this line offered the user two contradictory
- * remedies for one event. The full message stays in the debug log and the trace diagnostic, which is
- * where a firewall would actually be diagnosed. A provider *verdict* keeps its message: there the
- * prose is the answer itself, not advice about the connection.
+ * Classification is code-based only (never message-prose matching), via
+ * {@link isTransportProviderError}: a known connection-level code names the failure a temporary
+ * network/service interruption; anything else stays a plain provider error. The transport branch
+ * reports the code chain, not the provider's own message — that prose is boilerplate shared across
+ * every network-class failure and can offer a contradictory remedy. The full message stays in the
+ * debug log and trace diagnostic. A provider *verdict* keeps its message, since there the prose is
+ * the answer itself.
  */
 export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic): string {
   const codes = providerErrorCodeChain(diagnostic);
@@ -208,8 +222,6 @@ export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic
   return `The AI provider reported an error (${detail}).`;
 }
 
-// `:` is allowed so a Chromium `net::ERR_*` token survives intact; it is still a strict allowlist
-// with no whitespace, quotes, or control characters.
 function safeDiagnosticToken(value: string, fallback: string): string {
   return sanitizeProviderError(value).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 100) || fallback;
 }
@@ -219,55 +231,17 @@ function safeDiagnosticToken(value: string, fallback: string): string {
  * replayed into a chat surface as plain text.
  *
  * @remarks
- * `#focus-node:` links only resolve inside the graph webview's own React tree (they zoom/focus a
- * node on the canvas); a chat surface — the native Copilot panel — has no such target, so the link
- * markup would render as dead or broken-looking links.
+ * `#focus-node:` links only resolve inside the graph webview's own React tree; a chat surface has
+ * no such target, so the markup would render as dead links. The `### Objects` transport line is
+ * demoted to small italic text so chat never renders a heading-scale object list.
  *
  * @param description - The full assembled markdown from `AiSession.lastPresentResultDescription`.
- * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label`.
+ * @returns The same markdown with every `[label](#focus-node:...)` reduced to plain `label` and
+ *   the Objects footnote rendered as `*Objects: …*`.
  */
 export function sanitizeDescriptionForChat(description: string): string {
-  return description
-    .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => {
-      const cleaned = tail.replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
-      return `### Objects ${cleaned}`;
-    })
-    .replace(/\[([^\]]+)\]\(#focus-node:[^)]+\)/g, '$1');
-}
-
-/**
- * A complete verbatim span — content that must survive byte-identical: a fenced code block
- * (three or more backticks, closed by an equal run), a `~~~` fence, a `$$...$$` math block, or an
- * inline code span (a backtick run closed by an equal run on the same line).
- */
-const VERBATIM_SPAN_PATTERN = /(`{3,})[\s\S]*?\1|~~~[\s\S]*?~~~|\$\$[\s\S]*?\$\$|(`+)(?!`)[^`\n]*\2(?!`)/g;
-
-/**
- * Unescapes literal `\n` sequences a model double-escapes into a JSON tool-call string argument
- * (e.g. `\\n` survives `JSON.parse` as the two literal characters `\` + `n` instead of a real
- * newline), but only in prose — never inside a fenced code block, an inline code span, or a
- * `$$...$$` math block.
- *
- * @remarks
- * A KaTeX macro such as `\not`, `\neq`, or `\nabla` also starts with a literal backslash followed
- * by `n`; unescaping those unconditionally splits the macro into a real newline plus the trailing
- * letters (`\not` -> newline + `ot`) — the exact corruption this guards against. Inline code spans
- * are protected with the same equal-backtick-run closure rule `validateMarkdownFormat`
- * (`src/ai/tools/presentResult.ts`) enforces; an unclosed/malformed span is left as ordinary
- * prose, since that content is rejected by that validator regardless.
- *
- * @param text - Raw AI-submitted prose (intro/closing/summary/section text).
- * @returns The same text with literal `\n` in prose turned into a real newline; verbatim spans
- *   pass through unchanged.
- */
-export function unescapeProseNewlines(text: string): string {
-  let out = '';
-  let last = 0;
-  for (const match of text.matchAll(VERBATIM_SPAN_PATTERN)) {
-    out += text.slice(last, match.index).replace(/\\n/g, '\n') + match[0];
-    last = match.index + match[0].length;
-  }
-  return out + text.slice(last).replace(/\\n/g, '\n');
+  return stripFocusNodeLinks(description)
+    .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => `*Objects: ${tail}*`);
 }
 
 /**

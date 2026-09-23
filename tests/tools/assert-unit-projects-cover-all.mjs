@@ -1,18 +1,4 @@
 #!/usr/bin/env node
-// Gate step: every unit test file runs in exactly one of the gate's three unit projects.
-//
-// `npm test` runs `tests/unit/**/*.test.ts` from one glob, but the gate runs `test:core`,
-// `test:runtime` and `test:prompts` — three hard-coded path lists. They happen to cover the same
-// files today, and nothing enforces it: a new `tests/unit/<dir>/` would be picked up by `npm test`
-// and silently never run by the gate, so a green gate would stop meaning "the unit suite passed".
-//
-// This compares the two and fails on either half of the mismatch — a file no project claims, or a
-// file two projects both claim (which double-counts a suite total and makes a per-project failure
-// ambiguous). It reads the path lists out of package.json rather than restating them, so the check
-// cannot drift from the scripts it is checking.
-//
-// Usage:
-//   node tests/tools/assert-unit-projects-cover-all.mjs
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,17 +7,17 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const UNIT_ROOT = path.join(repoRoot, 'tests', 'unit');
 
 /** The scripts the gate runs as its unit steps. Keep in step with `STEPS` in gate.mjs. */
-const GATE_UNIT_SCRIPTS = ['test:core', 'test:runtime', 'test:prompts'];
+const GATE_UNIT_SCRIPTS = ['coverage:core', 'test:runtime'];
 
 /** Repo-relative POSIX path, so package.json arguments and disk paths compare as strings. */
 const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');
 
-/** Every `*.test.ts` under `tests/unit`, repo-relative, matching the `npm test` include glob. */
+/** Every `*.test.ts` / `*.test.tsx` under `tests/unit`, repo-relative, matching the `npm test` include glob. */
 function unitTestFiles(dir = UNIT_ROOT, found = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) unitTestFiles(full, found);
-    else if (entry.name.endsWith('.test.ts')) found.push(rel(full));
+    else if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) found.push(rel(full));
   }
   return found;
 }
@@ -69,7 +55,7 @@ const allFiles = unitTestFiles().sort();
 const problems = [];
 
 if (allFiles.length === 0) {
-  console.error('FAIL: found no tests/unit/**/*.test.ts files at all — treating as a tooling failure.');
+  console.error('FAIL: found no tests/unit/**/*.test.ts(x) files at all — treating as a tooling failure.');
   process.exit(2);
 }
 
@@ -110,7 +96,7 @@ for (const [file, scripts] of claimedBy) {
 if (problems.length > 0) {
   console.error('FAIL  the gate unit steps do not cover the unit suite exactly:\n');
   for (const problem of problems) console.error(`  - ${problem}\n`);
-  console.error('See docs/E2E_TESTING.md §Pre-push gate.');
+  console.error('See docs/EDH_TESTING.md §Pre-push gate.');
   process.exit(1);
 }
 

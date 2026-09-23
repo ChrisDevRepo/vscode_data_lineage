@@ -83,8 +83,6 @@ export function buildModel(
 ): DatabaseModel {
   const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes, onDebugLog);
 
-  // Unify schema display names to the first-seen casing to ensure consistency in the UI
-  // across case-insensitive but distinct schema references (e.g., 'DBO' vs 'dbo').
   const schemaCanonical = new Map<string, string>();
   for (const node of nodes) {
     const k = schemaKey(node.schema);
@@ -119,6 +117,9 @@ export function buildModel(
     warnings.push('No objects found in data source.');
   } else if (uniqueNodes.length === 0) {
     warnings.push('No tables, views, or stored procedures found.');
+  }
+  if (stats.cappedRules) {
+    warnings.push(`${stats.cappedRules.length} parse rule(s) stopped at the match limit; some dependencies may be missing.`);
   }
 
   return {
@@ -228,7 +229,6 @@ export function normalizeName(name: string): string {
   if (parts.length >= 4) {
     return `[__external__].[${parts[parts.length - 1]}]`.toLowerCase();
   }
-  // 3-part name: [db].[schema].[obj]
   return `[${parts[0]}].[${parts[1]}].[${parts[2]}]`.toLowerCase();
 }
 
@@ -565,10 +565,10 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
     const onRuleFire = makeParseTraceCallback(node, ctx);
     const parsed = parseSqlBody(node.bodyScript, onRuleFire);
     const spLabel = `${node.schema}.${node.name}`;
+    recordCappedRules(parsed.cappedRules, spLabel, ctx.stats);
     const spInRefs: string[] = [];
     const spUnrelated: string[] = [];
 
-    // Track cross-DB sources as "In" references for views/functions
     for (const r of parsed.crossDbSources) {
       spInRefs.push(r);
     }
@@ -621,6 +621,12 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 }
 
+/** Records each rule that stopped at the parser's match cap for `label`'s body. */
+function recordCappedRules(cappedRules: readonly string[], label: string, stats: ParseStats): void {
+  if (cappedRules.length === 0) return;
+  (stats.cappedRules ??= []).push(...cappedRules.map(rule => `${label}: ${rule}`));
+}
+
 /**
  * Orchestrates edge creation for stored procedures using regex-based script analysis.
  *
@@ -633,6 +639,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
   const onRuleFire = makeParseTraceCallback(node, ctx);
   const parsed = parseSqlBody(node.bodyScript!, onRuleFire);
   const spLabel = `${node.schema}.${node.name}`;
+  recordCappedRules(parsed.cappedRules, spLabel, ctx.stats);
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
   const spUnrelated: string[] = [];
@@ -736,8 +743,6 @@ function buildNodesAndEdges(
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const crossDbRegexRefs = new Map<string, { sources: string[]; targets: string[] }>();
 
-  // Sample-mode parse trace: log per-rule firing for the first PARSE_TRACE_BUDGET scripted bodies.
-  // The aggregate is already logged by handleParseStats; this helps DBAs verify YAML rules fire.
   const parseTrace: ParseTraceCtx | undefined = onDebugLog
     ? { budget: PARSE_TRACE_BUDGET, emit: onDebugLog }
     : undefined;
@@ -770,9 +775,6 @@ function buildNodesAndEdges(
     createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, maxNodes);
   }
 
-  // Structural invariant: views and functions are read-only consumers and cannot DML any object.
-  // Drop any view/function → external edge that may have leaked through (defense in depth against
-  // future regressions in parse rules, metadata loops, or cross-DB resolution).
   const typeById = new Map(nodes.map(n => [n.id, n.type]));
   const sanitized: LineageEdge[] = [];
   for (const e of edges) {
@@ -913,7 +915,6 @@ function createVirtualNodes(
     }
   }
 
-  // XML metaDeps infer direction only for procedures; other sources stay read-only to avoid duplicate write edges.
   const metaDepsNodeMap = new Map(nodes.map(n => [n.id, n]));
   for (const [sourceId, rawTargets] of crossDbMetaDeps) {
     const sourceNode = metaDepsNodeMap.get(sourceId);

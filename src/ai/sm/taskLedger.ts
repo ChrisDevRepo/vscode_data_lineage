@@ -1,15 +1,31 @@
 import type { InvestigationTask, PendingLead } from './smTypes';
 
-type InvestigationTaskInput = {
+/**
+ * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state.
+ *
+ * @remarks
+ * The `kind` arm decides whether traced columns ride along: a column-lineage task always names at
+ * least one, a root or analytical task never does.
+ */
+export type InvestigationTaskInput = {
+  /** Who raised the task — the user's question, the engine, or the model. */
   source: InvestigationTask['source'];
+  /** The question this task exists to answer, compared by normalized identity. */
   question: string;
+  /** Object the task is pinned to, when it concerns one node rather than the walk. */
   nodeId?: string;
+  /** Task this one was split from, so a resolved child rolls up to its parent. */
   parentTaskId?: string;
+  /** Initial status; defaults to pending. */
   status?: InvestigationTask['status'];
+  /** Hop at which the task was raised. */
   createdHop: number;
+  /** Hop at which the task was closed, when it is opened already resolved. */
   resolvedHop?: number;
 } & (
+  /** Root or analytical task: no traced column rides along. */
   | { kind: 'root' | 'analytical'; activeColumns?: never }
+  /** Column-lineage task: the traced columns it must follow, at least one. */
   | { kind: 'column_lineage'; activeColumns: [string, ...string[]] }
 );
 
@@ -65,10 +81,9 @@ export class TaskLedger {
   }
 
   /**
-   * Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: an
-   * identity hit and a fresh insert behave differently per caller (`onHit` / `buildRecord`), but
-   * the id lookup, `stableId` derivation, and same-id-different-identity collision guard are
-   * identical for both.
+   * Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: the id
+   * lookup, `stableId` derivation and collision guard are identical; only the identity-hit and
+   * fresh-insert behavior (`onHit` / `buildRecord`) differs per caller.
    */
   private upsertByIdentity<T extends { id: string }>(
     store: Map<string, T>,
@@ -94,7 +109,6 @@ export class TaskLedger {
   /**
    * Creates or returns the task with the same normalized identity tuple.
    * @param input - Typed task content without its derived ID.
-   * @returns Existing or newly stored task.
   */
   public ensureTask(input: InvestigationTaskInput): InvestigationTask {
     const rawInput = input as { kind: string; activeColumns?: unknown };
@@ -144,7 +158,7 @@ export class TaskLedger {
 
   /**
    * Applies a valid task lifecycle transition.
-   * @param taskId - Task to update.
+   * @param taskId - Task selected by the host.
    * @param status - New engine-owned lifecycle state.
    * @param hop - Resolution hop when applicable.
    * @returns Whether the task existed.
@@ -161,7 +175,6 @@ export class TaskLedger {
   /**
    * Creates or updates the lead for a deferred task and boundary.
    * @param input - Lead content without its derived ID.
-   * @returns Existing or newly stored lead.
    */
   public ensureLead(input: Omit<PendingLead, 'id' | 'status'> & { status?: PendingLead['status'] }): PendingLead {
     const identity = leadIdentity(input);
@@ -199,6 +212,24 @@ export class TaskLedger {
   public resolveTaskLeads(taskId: string): void {
     for (const lead of this.leads.values()) {
       if (lead.taskId === taskId && lead.status === 'scheduled') lead.status = 'resolved';
+    }
+  }
+
+  /**
+   * Resolves every scheduled lead on a node whose hop completed, with its task.
+   *
+   * @remarks
+   * A follow-up add names an object, not a lead, so the leads it schedules on that object are owned
+   * by other tasks; the analysed object answers them all.
+   * @param nodeId - Node whose hop completed.
+   * @param hop - Resolution hop.
+   */
+  public resolveNodeLeads(nodeId: string, hop: number): void {
+    const key = nodeId.toLowerCase();
+    for (const lead of this.leads.values()) {
+      if (lead.status !== 'scheduled' || lead.nodeId.toLowerCase() !== key) continue;
+      lead.status = 'resolved';
+      this.setTaskStatus(lead.taskId, 'resolved', hop);
     }
   }
 

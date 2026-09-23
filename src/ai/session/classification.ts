@@ -2,17 +2,13 @@
  * Mission-type classification — selects which synthesis subsections fire.
  *
  * @remarks
- * The classification gate is a mechanical contract (Zod enum); the value
- * chooses whether the "#### Technical" subsection is appended below the
- * business body. `business` omits it; `technical` treats the section body
- * as the technical write-up; `both` appends the subsection.
- *
- * The AI declares the classification in the `start_exploration` tool call
- * via the REQUIRED `classification` enum parameter. Zod hard-rejects missing
- * or invalid values — there is no engine-side fallback. The AI is instructed
- * (via the tool param description) to weight toward `business` over
- * `technical` when the user's intent is ambiguous; `both` is reserved for
- * explicit "both angles" asks.
+ * A mechanical contract (Zod enum): `business` omits the "#### Technical" subsection,
+ * `technical` treats the section body as the technical write-up, `both` appends the subsection.
+ * Declared by the AI as a REQUIRED `start_exploration` parameter; Zod hard-rejects missing or
+ * invalid values, so there is no engine-side fallback. `business` and `technical` are chosen only
+ * when the user asks for that view; a question in neither terms, or in both, is `both`.
+ * The value is part of the approved contract, so the gate
+ * states it. The selection rule's one model-facing home is the field's `.describe()`.
  */
 
 import { z } from 'zod';
@@ -31,4 +27,20 @@ export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
   business: 'business-driven',
   technical: 'technical-driven',
   both: 'business + technical driven',
+};
+
+/**
+ * `submit_findings.sections[].angle` value(s) a locked classification keeps.
+ *
+ * @remarks
+ * Single source for both readers that must never drift apart: the per-dispatch
+ * `submit_findings` schema (`tools/toolSchemas.ts` `submitFindingsSchemaForMode`) narrows
+ * the advertised `angle` enum to this set before the model is dispatched, and the
+ * classification-lock validator (`interaction/rules/submitFindingsRules.ts`) reads the
+ * same set to check the required angle(s) are present.
+ */
+export const CLASSIFICATION_KEPT_ANGLES: Record<ClassificationValue, readonly ('business' | 'technical')[]> = {
+  business: ['business'],
+  technical: ['technical'],
+  both: ['business', 'technical'],
 };

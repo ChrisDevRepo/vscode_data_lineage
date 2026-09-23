@@ -1,3 +1,0 @@
-## Column Trace Chain
-No edges recorded — verify column_flow was submitted at each hop.
-Structure present_result as a zero-trace answer: explain that no column-flow edge was proven, link the origin/result node in sections[], and include highlight_groups.target for that origin/result node.

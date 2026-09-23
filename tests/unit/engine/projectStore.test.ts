@@ -27,7 +27,6 @@ import {
 import { stripSensitiveFields } from '../../../src/engine/connectionManager';
 import type { IConnectionInfo } from '../../../src/types/mssql';
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const dacpacConn: DacpacConnection = {
   type: 'dacpac',
@@ -49,7 +48,6 @@ const dbConn: DatabaseConnection = {
   schemas: ['dbo', 'Sales'],
 };
 
-// ─── migrateProjectStore ──────────────────────────────────────────────────────
 
 describe('migrateProjectStore', () => {
   it('returns empty store for invalid inputs', () => {
@@ -65,13 +63,11 @@ describe('migrateProjectStore', () => {
   });
 
   it('preserves valid v1 data for both connection types', () => {
-    // Dacpac
     const projD = createProject('AW', dacpacConn);
     const sD = migrateProjectStore({ schemaVersion: 1, projects: [projD], lastOpenedId: projD.id });
     expect(sD.projects.length, 'dacpac: one project').toBe(1);
     expect(sD.projects[0].id, 'dacpac: id preserved').toBe(projD.id);
     expect(sD.lastOpenedId, 'dacpac: lastOpenedId preserved').toBe(projD.id);
-    // Database
     const projDb = createProject('DB', dbConn);
     const sDb = migrateProjectStore({ schemaVersion: 1, projects: [projDb], lastOpenedId: null });
     expect(sDb.projects.length, 'database: one project').toBe(1);
@@ -91,8 +87,6 @@ describe('migrateProjectStore', () => {
   });
 
   it('preserves legacy Integrated-auth database project without user/port', () => {
-    // Integrated/Entra records carry no SQL user and often no explicit port —
-    // requiring them silently dropped persisted projects (regression, commit 2baaa650).
     const legacy = {
       id: 'legacy-int',
       name: 'Integrated DB',
@@ -114,8 +108,6 @@ describe('migrateProjectStore', () => {
   });
 
   it('survives string-encoded port from older serializations', () => {
-    // A string port must not drop the project; the schema coerces it to a number
-    // (survival is the regression protection — a strict number check would have dropped it).
     const legacy = {
       id: 'str-port',
       name: 'String Port DB',
@@ -144,17 +136,12 @@ describe('migrateProjectStore', () => {
       },
     };
     const s = migrateProjectStore({ schemaVersion: 1, projects: [unsafe], lastOpenedId: null });
-    // Rejecting the record would delete a saved project over a field an older build wrote. The
-    // credential is removed instead, so it reaches neither memory nor the webview.
     expect(s.projects.length, 'project retained').toBe(1);
     const c = s.projects[0].connection as DatabaseConnection;
     expect(Object.keys(c.connectionInfo), 'unknown credential field stripped').not.toContain('password');
   });
 
   it('keeps a project whose connection carries the wider fields an older build persisted', () => {
-    // 1.0.3 stored the connection by removing two known keys from the object the MSSQL extension
-    // returned, so every other field that object carried was persisted too. Rejecting those
-    // records deleted every live-database project on upgrade.
     const project = createProject('Legacy DB', dbConn);
     const wide = {
       ...project,
@@ -177,8 +164,6 @@ describe('migrateProjectStore', () => {
   });
 
   it('keeps a project whose saved views carry unknown keys at every nested level', () => {
-    // 1.0.3 never validated filterProfiles at all. A saved view written by any build that added a
-    // field must not cost the user the whole project — connection included — on read.
     const project = createProject('Views', dacpacConn);
     const withViews = {
       ...project,
@@ -214,7 +199,7 @@ describe('migrateProjectStore', () => {
     const profile = s.projects[0].filterProfiles?.[0];
     expect(profile?.name, 'saved view retained').toBe('AI View');
     expect(profile?.positions?.['[dbo].[FactSales]'], 'position narrowed to declared fields').toEqual({ x: 1, y: 2 });
-    expect(profile?.viewport, 'viewport narrowed to declared fields').toEqual({ x: 0, y: 0, zoom: 1 });
+    expect(profile ? 'viewport' in profile : false, 'viewport is no longer a declared field, dropped on read').toBe(false);
     expect(Object.keys(profile?.aiMetadata?.badges[0] ?? {}), 'badge fields stripped').toEqual(['nodeId', 'text']);
     expect(profile?.aiMetadata?.columnAspect?.edges[0].toCol, 'column-trace edge retained').toBe('DateKey');
   });
@@ -234,7 +219,6 @@ describe('migrateProjectStore', () => {
   });
 });
 
-// ─── drop reporting ───────────────────────────────────────────────────────────
 
 describe('migrateProjectStore drop reporting', () => {
   it('reports the dropped count and offending field paths', () => {
@@ -253,13 +237,10 @@ describe('migrateProjectStore drop reporting', () => {
       (report) => reports.push(report),
     );
 
-    // Only the structurally invalid record is dropped: an unrecognized field is stripped, never a
-    // reason to delete a saved project.
     expect(s.projects.length, 'valid and strippable projects retained').toBe(2);
     expect(reports.length, 'reported once for the whole store').toBe(1);
     expect(reports[0].dropped, 'only the record missing a required field counted').toBe(1);
     expect(reports[0].issuePaths, 'missing id reported by path').toContain('id');
-    // Field names only — a report reaches the output channel and must never carry values.
     expect(reports[0].issuePaths.join('|'), 'no field values leaked').not.toContain('secret');
     const stripped = s.projects.find((p) => p.name === 'Unsafe');
     expect(
@@ -295,10 +276,6 @@ describe('migrateProjectStore drop reporting', () => {
 });
 
 describe('stripSensitiveFields → persisted shape', () => {
-  // The mssql extension's real connection object is wider than the partial IConnectionInfo
-  // declaration in this repo. When this function spread the unknown remainder, those keys were
-  // written to the project store and the `.strict()` read schema then discarded the whole
-  // project on the next load — silent loss of a saved database connection.
   const liveShapedConnection = {
     server: 'sql.example.net',
     database: 'AdventureWorks',
@@ -327,7 +304,6 @@ describe('stripSensitiveFields → persisted shape', () => {
   });
 
   it('round-trips through the strict read schema', () => {
-    // The regression: this parse failed, so migrateProjectStore discarded the project.
     const parsed = StoredConnectionInfoSchema.safeParse(stripSensitiveFields(liveShapedConnection));
     expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true);
   });
@@ -357,8 +333,6 @@ describe('stripSensitiveFields → persisted shape', () => {
   });
 
   it('fails at save time on a record the strict read side would drop', () => {
-    // A server-scoped profile carries no database. Persisting it would succeed and the `.strict()`
-    // read schema would then silently discard the whole project — the write path must throw instead.
     const serverScoped = {
       server: 'sql.example.net',
       authenticationType: 'Integrated',
@@ -399,7 +373,6 @@ describe('project bridge contract', () => {
   });
 });
 
-// ─── Bookmark view shape ──────────────────────────────────────────────────────
 
 describe('bookmark view-shape fields', () => {
   const baseProfile = (extra: Partial<FilterProfile>): FilterProfile => ({
@@ -461,7 +434,6 @@ describe('bookmark view-shape fields', () => {
   });
 });
 
-// ─── serializeFilter / deserializeFilter ──────────────────────────────────────
 
 const sampleFilter: FilterState = {
   schemas: new Set(['dbo', 'Sales']),
@@ -477,10 +449,8 @@ const sampleFilter: FilterState = {
 describe('serializeFilter / deserializeFilter', () => {
   it('roundtrip: serialize then deserialize preserves all fields', () => {
     const s = serializeFilter(sampleFilter);
-    // Serialized form uses arrays
     expect(Array.isArray(s.schemas), 'schemas is array').toBe(true);
     expect(Array.isArray(s.types), 'types is array').toBe(true);
-    // Roundtrip
     const restored = deserializeFilter(s);
     expect(restored.schemas instanceof Set, 'schemas restored to Set').toBe(true);
     expect(restored.types instanceof Set, 'types restored to Set').toBe(true);

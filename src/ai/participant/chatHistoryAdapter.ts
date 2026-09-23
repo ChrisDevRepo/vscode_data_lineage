@@ -7,7 +7,7 @@
  *
  * The projection is bounded: replayed history is capped to the same turn-count and byte ceilings
  * as the session's canonical discovery transcript ({@link MAX_DISCOVERY_TRANSCRIPT_TURNS} /
- * {@link MAX_DISCOVERY_TRANSCRIPT_BYTES}), evicting oldest whole turns first, so native history —
+ * {@link discoveryBlockBytes}), evicting oldest whole turns first, so native history —
  * which only grows — can never push the assembled request past a model's input window.
  */
 import type * as vscode from 'vscode';
@@ -19,14 +19,15 @@ import {
   type ModelMessage,
 } from '../model/modelPort';
 import {
-  MAX_DISCOVERY_TRANSCRIPT_BYTES,
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../session/session';
+import { discoveryBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { longestPrefixFitting } from '../support/textTruncation';
+import { safeIdentifier } from '../support/logIdentifier';
 
 /**
  * Maximum UTF-8 bytes replayed from one historical tool result — a single 60 KB DDL payload in an
- * old round must not consume the whole {@link MAX_DISCOVERY_TRANSCRIPT_BYTES} history budget.
+ * old round must not consume the whole {@link discoveryBlockBytes} history budget.
  */
 const MAX_HISTORY_TOOL_RESULT_BYTES = 8_192;
 
@@ -74,15 +75,15 @@ export function applyNativeChatBoundary(
  * Converts the current participant's native chat history into ordered graph messages.
  *
  * @param history - The native VS Code chat history for this participant.
+ * @param budget - The calling turn's budget, which bounds the replayed transcript.
  * @param debug - Optional debug sink; a malformed history value that degrades to an empty
  *   string must be observable, never a silent skip.
  */
 export function chatHistoryToModelMessages(
   history: vscode.ChatContext['history'],
+  budget: TurnTokenBudget,
   debug?: (msg: string) => void,
 ): ModelMessage[] {
-  // One group per native request turn (the request plus every response message that follows it),
-  // so eviction always removes whole turns and never splits a tool-call/tool-result pair.
   const groups: ModelMessage[][] = [];
   let current: ModelMessage[] = [];
 
@@ -130,7 +131,7 @@ export function chatHistoryToModelMessages(
   }
   if (current.length > 0) groups.push(current);
 
-  return boundReplayedHistory(groups, debug);
+  return boundReplayedHistory(groups, budget, debug);
 }
 
 /**
@@ -144,6 +145,7 @@ export function chatHistoryToModelMessages(
  */
 function boundReplayedHistory(
   groups: readonly (readonly ModelMessage[])[],
+  budget: TurnTokenBudget,
   debug?: (msg: string) => void,
 ): ModelMessage[] {
   const kept: (readonly ModelMessage[])[] = [];
@@ -152,7 +154,7 @@ function boundReplayedHistory(
     const size = groupBytes(groups[index]);
     if (
       kept.length > 0
-      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > MAX_DISCOVERY_TRANSCRIPT_BYTES)
+      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > discoveryBlockBytes(budget))
     ) break;
     kept.unshift(groups[index]);
     bytes += size;
@@ -180,10 +182,9 @@ function groupBytes(group: readonly ModelMessage[]): number {
   return group.reduce((total, message) => {
     const content = message.content;
     const contentBytes = utf8Bytes(typeof content === 'string' ? content : JSON.stringify(content) ?? '');
-    const calls = (message as { tool_calls?: readonly { args?: unknown }[] }).tool_calls;
-    const callBytes = Array.isArray(calls)
-      ? calls.reduce((sum, call) => sum + utf8Bytes(JSON.stringify(call.args) ?? ''), 0)
-      : 0;
+    const rawCalls: unknown = (message as { tool_calls?: unknown }).tool_calls;
+    const calls: readonly { args?: unknown }[] = Array.isArray(rawCalls) ? rawCalls : [];
+    const callBytes = calls.reduce((sum, call) => sum + utf8Bytes(JSON.stringify(call.args) ?? ''), 0);
     return total + contentBytes + callBytes;
   }, 0);
 }
@@ -211,16 +212,28 @@ function pairedToolCalls(
       callId,
       toolName,
       input,
-      result: capHistoryToolResult(toolResultText(results[callId], debug)),
+      result: capHistoryToolResult(toolResultText(results[callId], debug), toolName, debug),
     });
   }
 
   return calls;
 }
 
-/** Caps one replayed tool result at {@link MAX_HISTORY_TOOL_RESULT_BYTES}, marking the cut. */
-function capHistoryToolResult(text: string): string {
-  if (utf8Bytes(text) <= MAX_HISTORY_TOOL_RESULT_BYTES) return text;
+/**
+ * Caps one replayed tool result at {@link MAX_HISTORY_TOOL_RESULT_BYTES}, marking the cut.
+ *
+ * @remarks
+ * Logged the same way its sibling shrink, {@link boundReplayedHistory}, logs a turn eviction: a
+ * reader reconstructing a hop from `host.log` must be able to tell that prior-turn evidence was
+ * shortened, not just that the model-facing text carries a marker.
+ */
+function capHistoryToolResult(text: string, toolName: string, debug?: (msg: string) => void): string {
+  const bytes = utf8Bytes(text);
+  if (bytes <= MAX_HISTORY_TOOL_RESULT_BYTES) return text;
+  debug?.(
+    `history tool result capped tool=${safeIdentifier(toolName, { extraChars: '.:-', replacement: '_', maxLength: 100, fallback: 'unknown' })}`
+    + ` bytes=${bytes} cap=${MAX_HISTORY_TOOL_RESULT_BYTES}`,
+  );
   const budget = MAX_HISTORY_TOOL_RESULT_BYTES - utf8Bytes(HISTORY_TRUNCATION_MARKER);
   return `${longestPrefixFitting(text, (prefix) => utf8Bytes(prefix) <= budget)}${HISTORY_TRUNCATION_MARKER}`;
 }
@@ -260,8 +273,6 @@ function stringify(value: unknown, debug?: (msg: string) => void): string {
   try {
     return JSON.stringify(value) ?? '';
   } catch (err) {
-    // Circular structure / BigInt in a history value: the empty-string fallback keeps the turn
-    // alive, but the degradation must be observable, not a silent skip.
     debug?.(`history value not serializable — dropped (${err instanceof Error ? err.message : String(err)})`);
     return '';
   }

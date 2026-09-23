@@ -33,7 +33,6 @@ function registeredCommandIds(): Set<string> {
   const ids = new Set<string>();
   for (const file of sourceFiles(rootPath('src'))) {
     const source = readFileSync(file, 'utf-8');
-    // Literal id at the call site, or the module constant a call site passes instead.
     for (const [, id] of source.matchAll(/registerCommand\(\s*'([^']+)'/g)) ids.add(id);
     for (const [, id] of source.matchAll(/^const\s+\w*COMMAND\w*\s*=\s*'(dataLineageViz\.[^']+)'/gm)) ids.add(id);
   }

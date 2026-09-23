@@ -1,14 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import {
-  formatScreenStateSections,
-  type RenderStateSnapshot,
-  type ScreenStateExtras,
-} from '../../../src/bridge/debugDumpScreenState';
+import { formatScreenStateSections } from '../../../src/bridge/debugDumpScreenState';
 import type { DatabaseModel } from '../../../src/engine/types';
+import type {
+  RenderStateSnapshot,
+  ScreenStateExtras,
+} from '../../../src/engine/shared/bridgeContract';
 
 describe('Debug Dump Screen-State', () => {
   it('screen-state formatter (deterministic)', () => {
-    // proc 'p' inbound: 'b' (origin, in-trace) + 'x' (off-trace). 'u' is the other downstream leaf.
     const model = {
       edges: [
         { source: 'b', target: 'p' },

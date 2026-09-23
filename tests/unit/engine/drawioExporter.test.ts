@@ -8,10 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import { exportToDrawio, exportSchemaOverviewToDrawio } from '../../../src/export/drawioExporter';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import type { CustomNodeData } from '../../../src/components/CustomNode';
-import type { SchemaNodeData } from '../../../src/engine/types';
+import type { CustomNodeData, SchemaNodeData } from '../../../src/engine/types';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeNode(id: string, label: string, schema: string, x = 0, y = 0): FlowNode<CustomNodeData> {
   return {
@@ -62,11 +60,8 @@ describe('Draw.io Exporter', () => {
   it('one node produces the correct mxCell / object count', () => {
     const nodes = [makeNode('n1', 'Orders', 'Sales', 100, 50)];
     const xml = exportToDrawio(nodes, [], ['Sales']);
-    // Each node becomes one <object> element and one color-band mxCell child.
-    // The root also always has two base mxCell entries (id=0, id=1).
     expect(xml.includes('object'), 'output contains object wrapper for the node').toBe(true);
     expect(xml.includes('mxCell'), 'output contains mxCell entries').toBe(true);
-    // 1 vertex node = 1 object element
     expect(countOccurrences(xml, '<object'), 'exactly one object element for one node').toBe(1);
   });
 
@@ -94,7 +89,6 @@ describe('Draw.io Exporter', () => {
     const edges = [makeEdge('e1', 'n1', 'n2')];
     const xml = exportToDrawio(nodes, edges, ['dbo']);
     expect(xml.includes('edge='), 'output contains an edge attribute').toBe(true);
-    // source and target attributes must reference numeric IDs (not original node ids)
     expect(xml.includes('source='), 'edge cell has a source attribute').toBe(true);
     expect(xml.includes('target='), 'edge cell has a target attribute').toBe(true);
   });
@@ -125,7 +119,6 @@ describe('Draw.io Exporter', () => {
       makeNode('n1', 'A', 'dbo', 0, 0),
       makeNode('n2', 'B', 'dbo', 100, 0),
     ];
-    // A bidirectional edge uses the ↔ marker in its id (mirroring buildFlowEdges convention)
     const bidiEdge: FlowEdge = { id: 'n1↔n2', source: 'n1', target: 'n2' };
     const xml = exportToDrawio(nodes, [bidiEdge], ['dbo']);
     expect(xml.includes('⇄'), 'bidirectional edge carries the ⇄ label').toBe(true);
@@ -136,7 +129,6 @@ describe('Draw.io Exporter', () => {
     const nodes = [makeNode('n1', 'A', 'dbo', 0, 0)];
     const badEdge: FlowEdge = { id: 'e-bad', source: 'n1', target: 'ghost' };
     const xml = exportToDrawio(nodes, [badEdge], ['dbo']);
-    // No edge should be emitted (ghost has no mapping)
     expect(countOccurrences(xml, 'edge='), 'edge with unknown target id is silently skipped').toBe(0);
   });
 
@@ -224,5 +216,52 @@ describe('Draw.io Exporter', () => {
     expect(countOccurrences(xml, 'edge='), 'mixed export includes edge to visible schema cluster').toBe(1);
     expect(xml.includes('rounded=1'), 'draw.io node and schema styles use the valid rounded property').toBe(true);
     expect(xml.includes('rounded-sm='), 'Tailwind utility names never leak into draw.io style properties').toBe(false);
+  });
+});
+
+/**
+ * The column view is a second rendering of the same scope in its own coordinate space, and the
+ * export is an object-view artifact. `GraphCanvas` therefore hands the exporter the object nodes and
+ * object-level edges it kept aside (`objectNodes()` / `localEdges`) rather than the mounted column
+ * nodes — pinned as source in graph-canvas-object-positions.test.ts. This is the other half: given
+ * that object-space input, the XML carries object geometry and object-level edges, and nothing from
+ * the column space.
+ */
+describe('Draw.io Exporter — column view exports the object graph', () => {
+  /** Distance the exporter shifts the whole graph right, so a source x maps to a known output x. */
+  const GRAPH_OFFSET_X = 300;
+  /** Distance the exporter shifts the whole graph down. */
+  const GRAPH_OFFSET_Y = 20;
+
+  it('emits the object positions and the object-level edge, never a column coordinate', () => {
+    const objectNodes = [
+      makeNode('sales.orderheader', 'OrderHeader', 'Sales', 0, 0),
+      makeNode('sales.orderdetail', 'OrderDetail', 'Sales', 500, 400),
+    ];
+    const objectEdges = [makeEdge('e1', 'sales.orderheader', 'sales.orderdetail')];
+
+    const xml = exportToDrawio(objectNodes, objectEdges, ['Sales']);
+
+    expect(xml, 'first object keeps its object-space position').toContain(
+      `x="${GRAPH_OFFSET_X}" y="${GRAPH_OFFSET_Y}"`,
+    );
+    expect(xml, 'second object keeps its object-space position').toContain(
+      `x="${500 + GRAPH_OFFSET_X}" y="${400 + GRAPH_OFFSET_Y}"`,
+    );
+    expect(countOccurrences(xml, '<object'), 'one element per object, not per column').toBe(2);
+    expect(countOccurrences(xml, 'edge='), 'one object-level edge, not one per column pair').toBe(1);
+  });
+
+  it('never emits a column-space coordinate for the same ids', () => {
+    const columnSpaceX = 214;
+    const objectNodes = [
+      makeNode('sales.orderheader', 'OrderHeader', 'Sales', 0, 0),
+      makeNode('sales.orderdetail', 'OrderDetail', 'Sales', 500, 400),
+    ];
+
+    const xml = exportToDrawio(objectNodes, [], ['Sales']);
+
+    expect(xml).not.toContain(`x="${columnSpaceX + GRAPH_OFFSET_X}"`);
+    expect(xml, 'column rows are not exported as their own cells').not.toContain('OrderID');
   });
 });

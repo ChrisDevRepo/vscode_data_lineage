@@ -73,9 +73,6 @@ describe('VS Code settings manifest consistency', () => {
   });
 
   it('every contributed setting is pinned to a runtime default', () => {
-    // Reverse direction: a setting added to the manifest without a runtime consumer
-    // — and therefore without a default to pin it against — fails here rather than
-    // shipping as a control that changes nothing.
     const unpinned = Object.keys(manifestSettings()).filter((key) => !(key in runtimeDefaults));
     expect(unpinned, 'settings contributed with no pinned runtime default').toEqual([]);
   });

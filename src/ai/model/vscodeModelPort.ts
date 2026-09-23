@@ -7,14 +7,21 @@ import {
   type ModelPort,
   type ModelIdentity,
   ModelPortError,
+  matchProseToolCall,
+  PROSE_PROMOTED_CALL_ID,
+  createStreamRepetitionObserver,
   type ModelToolChoice,
   type ModelToolDefinition,
+  type RepetitionStrike,
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
   cancelledToolTurnResult,
   errorToolTurnResult,
+  isHostCancellationError,
+  isPortCancellation,
 } from './modelPort';
+import type { InstructionPhase } from '../agent/instructionPlan';
 import { VscodeLangChainBridge } from './vscodeLangChainBridge';
 import { systemPromptHash, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
@@ -23,7 +30,10 @@ import {
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
 import { rejectionFromZodError } from '../support/toolErrorEnvelope';
+import { droppedKeyPaths } from '../support/inputNormalization';
+import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
   STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
@@ -40,19 +50,47 @@ type PortGenerationPart =
       readonly input: unknown;
     };
 
-// Backstop against an unbounded drain when a provider streams prose (e.g. pseudo-tool-call markup)
-// instead of a real tool call: UAT recorded a 3,638,544-char runaway against a ~33.6 KB legitimate
-// maximum, so 200,000 sits far above any real answer while stopping a runaway drain early.
 const STREAM_TEXT_CHAR_CEILING = 200_000;
 
-// A provider that streams nothing at all is indistinguishable from a hung connection: UAT recorded
-// a generation that produced zero chunks for 16m42s until manually cancelled, and neither
-// `vscode.lm` nor Copilot Chat's default fetchers bound that path. The watchdog covers ONLY the
-// zero-output window — the first streamed chunk of any kind disarms it for the rest of the
-// generation, so a model that is thinking or streaming slowly is never interrupted. 600s still
-// bounds that hang while leaving better than 2x margin over the slowest completed generation
-// observed in the same UAT (270.5s): the observed maximum is a sample, not a ceiling, and a
-// margin that thin would abort a slower model that was about to answer.
+/**
+ * Streamed-text ceiling per {@link InstructionPhase}, calibrating
+ * {@link STREAM_TEXT_CHAR_CEILING} instead of adding a second guard site.
+ *
+ * Each cap is anchored on the ~33.6 KB global legitimate maximum documented on
+ * {@link STREAM_TEXT_CHAR_CEILING}, never on a phase's own observed maximum alone:
+ *
+ * - `detect_entry`, `sm_entry`, `visual_preview`, `synthesis` 100,000 — legitimate text on these
+ *   phases is a few hundred chars at most, far too thin to tighten below the legitimate envelope,
+ *   so each is anchored at 3x the global maximum.
+ * - `discover`, `active` 50,000 — the two phases that legitimately stream prose, at ~1.5x the
+ *   global maximum, which is still an order of magnitude above their own legitimate maxima.
+ * - `compose` 200,000 — the text channel IS the deliverable there (`completeText` discards
+ *   `hitCeiling`), so a cut would be delivered silently with no retry behind it; it keeps the
+ *   outer bound.
+ * - `completed` 200,000 — no model call is issued under the label; outer bound.
+ *
+ * Total over {@link InstructionPhase} by construction: a new phase member fails to compile until
+ * it is mapped here. An unrecognized phase string resolves through {@link streamTextCharCeiling}
+ * to the outer bound, never to a smaller cap.
+ */
+const PHASE_STREAM_TEXT_CHAR_CEILINGS: Readonly<Record<InstructionPhase, number>> = {
+  detect_entry: 100_000,
+  discover: 50_000,
+  visual_preview: 100_000,
+  sm_entry: 100_000,
+  active: 50_000,
+  compose: STREAM_TEXT_CHAR_CEILING,
+  synthesis: 100_000,
+  completed: STREAM_TEXT_CHAR_CEILING,
+};
+
+/** Resolves the streamed-text ceiling for one call: its phase cap, or the outer bound when unknown. */
+function streamTextCharCeiling(phase: string | undefined): number {
+  if (phase === undefined) return STREAM_TEXT_CHAR_CEILING;
+  const mapped = PHASE_STREAM_TEXT_CHAR_CEILINGS[phase as InstructionPhase];
+  return typeof mapped === 'number' ? mapped : STREAM_TEXT_CHAR_CEILING;
+}
+
 const FIRST_OUTPUT_TIMEOUT_MS = 600_000;
 
 /**
@@ -71,6 +109,9 @@ export class VscodeModelPort implements ModelPort {
 
   /** Number of native provider requests attempted through this port. */
   public modelCalls = 0;
+
+  /** {@inheritDoc SingleGenerationModelPort.budget} */
+  public readonly budget: TurnTokenBudget;
 
   public constructor(
     private readonly model: vscode.LanguageModelChat,
@@ -101,8 +142,17 @@ export class VscodeModelPort implements ModelPort {
        * parts, not an HTTP payload — so `provider-raw` has no emitter here.
        */
       readonly traceVerbose?: boolean;
+      /**
+       * Token budget the owning turn resolved from this model's window and the workspace settings.
+       *
+       * @remarks
+       * Absent only where a caller builds a port outside a turn, which leaves the shipped defaults
+       * and the ceilings in force.
+       */
+      readonly budget?: TurnTokenBudget;
     } = {},
   ) {
+    this.budget = options.budget ?? DEFAULT_TURN_TOKEN_BUDGET;
     this.id = `vscode-lm:${model.id}`;
     this.identity = {
       id: model.id,
@@ -111,7 +161,6 @@ export class VscodeModelPort implements ModelPort {
       family: model.family,
       version: model.version,
     };
-    // Record the selected model before any provider request can fail.
     this.options.debugLog?.(
       `[AI] model id=${model.id} vendor=${model.vendor} family=${model.family} version=${model.version}`,
     );
@@ -136,7 +185,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const response = await this.collectGeneration(
+      const { parts: response, hitCeiling, nonTextChars } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -144,6 +193,7 @@ export class VscodeModelPort implements ModelPort {
         input.signal,
         input.onTextDelta,
         input.phase,
+        input.requiresToolCall === true,
       );
       const content: ToolGenerationContent[] = [];
       const toolCalls: GeneratedToolCall[] = [];
@@ -165,6 +215,7 @@ export class VscodeModelPort implements ModelPort {
             valid: false,
             callId: part.callId,
             toolName: part.toolName,
+            input: part.input,
             code: REJECTION_CODES.duplicateCallId,
             reason: 'The provider repeated a tool call identifier.',
           };
@@ -173,50 +224,57 @@ export class VscodeModelPort implements ModelPort {
             valid: false,
             callId: part.callId,
             toolName: part.toolName,
-            code: 'unknown_tool',
+            input: part.input,
+            code: REJECTION_CODES.unknownTool,
             reason: 'Tool is not available in this phase.',
           };
         } else {
           const parsed = definition.inputSchema.safeParse(part.input);
-          call = parsed.success
-            ? {
-                valid: true,
-                callId: part.callId,
-                toolName: part.toolName,
-                input: parsed.data,
-              }
-            : {
-                valid: false,
-                callId: part.callId,
-                toolName: part.toolName,
-                code: 'invalid_tool_input',
-                reason: rejectionFromZodError(
-                  parsed.error,
-                  { code: 'invalid_tool_input', input: part.input },
-                ).reason,
-                issuePaths: parsed.error.issues.map((issue) => issue.path.join('.')),
-              };
+          const dropped = parsed.success ? droppedKeyPaths(part.input, parsed.data) : [];
+          if (dropped.length > 0) {
+            this.options.debugLog?.(
+              `[AI] tool-input-keys-dropped tool=${part.toolName} paths=${trunc(sanitizeForLog(dropped.join(',')), 200)}`,
+            );
+          }
+          if (parsed.success) {
+            call = {
+              valid: true,
+              callId: part.callId,
+              toolName: part.toolName,
+              input: parsed.data,
+            };
+          } else {
+            const rejection = rejectionFromZodError(
+              parsed.error,
+              { code: REJECTION_CODES.invalidToolInput, input: part.input },
+            );
+            call = {
+              valid: false,
+              callId: part.callId,
+              toolName: part.toolName,
+              input: part.input,
+              code: REJECTION_CODES.invalidToolInput,
+              reason: rejection.reason,
+              hint: rejection.hint,
+              issuePaths: parsed.error.issues.map((issue) => issue.path.join('.')),
+            };
+          }
         }
         toolCalls.push(call);
         content.push({ type: 'tool-call', call });
       }
 
-      // An empty generation is how an endpoint commonly answers a tool choice it cannot satisfy, and
-      // also how a quota soft-fail looks; it self-repairs downstream, so it is a signal, not a fault.
       if (content.length === 0) {
         this.options.debugLog?.(
           `[AI] empty-generation phase=${input.phase} call=${this.modelCalls}`,
         );
       }
 
-      const finishReason = toolCalls.length > 0 ? 'tool-calls' : 'stop';
-      // Every generation leaves one `[AI] usage` line: without it a completed turn is
-      // indistinguishable from one that never reached the model. Token counts are structurally
-      // unavailable on this lane — `vscode.lm` exposes no usage — hence observed counters plus an
-      // explicit `(provider usage unavailable)` marker rather than omitting the line.
+      const finishReason = hitCeiling ? 'length' : toolCalls.length > 0 ? 'tool-calls' : 'stop';
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
+        + ` observed_nontext_chars=${nonTextChars}`
         + ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}`
         + ' (provider usage unavailable)',
       );
@@ -241,8 +299,6 @@ export class VscodeModelPort implements ModelPort {
 
   /** Generates a schema-constrained result through the synthetic structured-output tool. */
   public async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<T> {
-    // Same pre-flight as generateToolTurn: a pre-aborted signal must surface as a clean,
-    // classifiable cancellation before any provider request is attempted.
     if (input.signal?.aborted) throw cancelledError();
     const definitions: ModelToolDefinition[] = [{
       name: STRUCTURED_OUTPUT_TOOL,
@@ -250,7 +306,7 @@ export class VscodeModelPort implements ModelPort {
       inputSchema: input.schema,
     }];
     this.modelCalls += 1;
-    const response = await this.collectGeneration(
+    const { parts: response } = await this.collectGeneration(
       input.messages,
       input.system,
       definitions,
@@ -258,6 +314,7 @@ export class VscodeModelPort implements ModelPort {
       input.signal,
       undefined,
       input.phase,
+      true,
     );
     const calls = response.filter(
       (part): part is Extract<PortGenerationPart, { type: 'tool-call' }> =>
@@ -275,7 +332,7 @@ export class VscodeModelPort implements ModelPort {
         : calls.length > 1
         ? `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`
         : structuredRejectReason(calls.length === 1, parsed?.error),
-      emptyRequiredPayload ? 'empty_structured_output' : 'invalid_structured_output',
+      emptyRequiredPayload ? REJECTION_CODES.emptyStructuredOutput : REJECTION_CODES.invalidStructuredOutput,
     );
   }
 
@@ -283,7 +340,7 @@ export class VscodeModelPort implements ModelPort {
   public async completeText(input: CompleteTextInput): Promise<string> {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
-    const response = await this.collectGeneration(
+    const { parts: response } = await this.collectGeneration(
       input.messages,
       input.system,
       [],
@@ -291,6 +348,7 @@ export class VscodeModelPort implements ModelPort {
       input.signal,
       undefined,
       input.phase,
+      false,
     );
     if (response.some((part) => part.type !== 'text')) {
       throw new ModelPortError(
@@ -314,16 +372,12 @@ export class VscodeModelPort implements ModelPort {
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
-  ): Promise<readonly PortGenerationPart[]> {
+    requiresToolCall = false,
+  ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean; nonTextChars: number }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
-    // Captured now rather than read at emit time: concurrent generations would otherwise all
-    // stamp whichever call happened to increment the counter last.
     const generation = this.modelCalls;
     let requestEmitted = false;
-    // The bridge emits `wire-request` without knowing the system instruction — it only sees the
-    // already-projected leading User turn — so the port, which owns the original, stamps it here.
-    // Gated on wireLog: without a trace sink the hash would be computed and discarded on every call.
     const systemFields = wireLog && system
       ? {
           systemHash: systemPromptHash(system),
@@ -370,6 +424,12 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       const parts: PortGenerationPart[] = [];
       let textChars = 0;
+      let nonTextChars = 0;
+      let hitCeiling = false;
+      let sawToolCallDelta = false;
+      const textCeiling = streamTextCharCeiling(phase);
+      const repetition = requiresToolCall ? createStreamRepetitionObserver() : undefined;
+      let repetitionStrike: RepetitionStrike | null = null;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         clearTimeout(watchdog);
@@ -378,8 +438,14 @@ export class VscodeModelPort implements ModelPort {
           onTextDelta?.(chunk.content);
           parts.push({ type: 'text', text: chunk.content });
           textChars += chunk.content.length;
+          if (!sawToolCallDelta && repetitionStrike === null) {
+            repetitionStrike = repetition?.observe(chunk.content) ?? null;
+          }
         }
+        const streamedNonText = chunk.response_metadata?.nonTextChars;
+        if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
         for (const call of chunk.tool_call_chunks ?? []) {
+          sawToolCallDelta = true;
           if (!call.id || !call.name || typeof call.args !== 'string') {
             throw new ModelPortError(
               'unsupported_response',
@@ -393,47 +459,62 @@ export class VscodeModelPort implements ModelPort {
             input: parseToolInput(call.args),
           });
         }
-        // Breaking here (rather than throwing) closes the underlying stream through the normal
-        // async-generator return path and lets the accumulated `parts` fall through as an ordinary
-        // completed, tool-call-free generation — the same shape the retry-capable
-        // missing-required-tool path already handles, so no new failure branch is needed.
-        if (textChars >= STREAM_TEXT_CHAR_CEILING) {
+        if (
+          textChars >= STREAM_TEXT_CHAR_CEILING
+          || (textChars >= textCeiling && !sawToolCallDelta)
+          || (repetitionStrike !== null && !sawToolCallDelta)
+        ) {
+          hitCeiling = true;
           this.options.debugLog?.(
-            `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars}`,
+            repetitionStrike
+              ? `[AI] stream-repetition phase=${phase ?? 'unknown'} call=${generation}`
+                + ` chars=${textChars} repeats=${repetitionStrike.repeats}`
+                + ` line=${trunc(sanitizeForLog(repetitionStrike.line), 120)}`
+              : `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} nontext=${nonTextChars} cap=${textCeiling}`,
           );
           break;
         }
       }
       if (signal?.aborted) throw cancelledError();
-      // A cancelled underlying stream may end through the normal return path instead of throwing.
       if (watchdogFired) throw firstOutputTimeoutError();
-      // UAT turns n15/n16 (minimax-m3) answered with a complete, schema-valid tool payload fenced
-      // as prose seven times in a row; each drew a synthetic `missing_required_tool_call` rejection
-      // because the provider never emitted a native tool-call chunk. Promotion recovers that call
-      // before it is measured, so a payload the tool's own schema accepts never pays for the miss.
-      const resolvedParts = promoteProseToolCall(parts, definitions);
-      if (resolvedParts !== parts) {
+      const promotion = hitCeiling || parts.some((part) => part.type === 'tool-call')
+        ? { kind: 'none' as const }
+        : matchProseToolCall(
+            parts
+              .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> => part.type === 'text')
+              .map((part) => part.text)
+              .join(''),
+            definitions,
+          );
+      const resolvedParts: readonly PortGenerationPart[] = promotion.kind === 'promoted'
+        ? [{
+            type: 'tool-call',
+            callId: PROSE_PROMOTED_CALL_ID,
+            toolName: promotion.toolName,
+            input: promotion.input,
+          }]
+        : parts;
+      if (promotion.kind === 'promoted') {
         this.options.debugLog?.(
           `[AI] prose-tool-call-promoted phase=${phase ?? 'unknown'} call=${generation}`
-          + ` tool=${(resolvedParts[0] as { readonly toolName: string }).toolName}`,
+          + ` tool=${promotion.toolName}`,
+        );
+      } else if (promotion.kind === 'ambiguous') {
+        this.options.debugLog?.(
+          `[AI] prose-tool-call-ambiguous phase=${phase ?? 'unknown'} call=${generation}`
+          + ` tools=${promotion.tools.join(',')}`,
         );
       }
-      // One measurement row per completed generation, for all three port entry points. `usage` is
-      // omitted rather than zeroed: `vscode.lm` reports no token counts at all, and a zero would be
-      // indistinguishable from a provider that genuinely billed nothing.
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
-        finishReason: resolvedParts.some((part) => part.type === 'tool-call') ? 'tool-calls' : 'stop',
+        finishReason: hitCeiling
+          ? 'length'
+          : resolvedParts.some((part) => part.type === 'tool-call') ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
       });
-      return resolvedParts;
+      return { parts: resolvedParts, hitCeiling, nonTextChars };
     } catch (error) {
-      // The watchdog aborts through the shared cancellation token, so the stream surfaces its
-      // expiry as a cancellation — reclassify it here so it reaches callers as a provider timeout
-      // error, never as a silent user cancel. It is logged and charged to the phase's provider-call
-      // budget, and fails the turn: the code is deliberately not transport-classified, so submitted
-      // hops are not salvaged behind it.
       const surfaced = watchdogFired && !signal?.aborted && isCancellation(error)
         ? firstOutputTimeoutError(error)
         : error;
@@ -449,54 +530,6 @@ export class VscodeModelPort implements ModelPort {
       cancellation.dispose();
     }
   }
-}
-
-/** A fenced ```json (or bare ```) code block wrapping exactly one JSON value. */
-const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
-
-/**
- * Recovers a tool call a provider described as fenced JSON prose instead of emitting through the
- * native tool-call channel.
- *
- * @remarks
- * Promotion fires only when `parts` carries no real tool-call part already, its concatenated text
- * contains a fenced JSON block, that block parses, and the parsed object validates against one of
- * `definitions`' own input schemas — the same {@link ModelToolDefinition.inputSchema} the native
- * path validates against, so nothing here relaxes what a tool accepts. Any failure at any step
- * returns `parts` unchanged **by reference**, so a caller can test `resolvedParts !== parts` and a
- * generation that does not qualify is byte-identical to today's rejection path.
- *
- * @param parts - The drained generation, in stream order.
- * @param definitions - Tool definitions offered for this generation, already narrowed to the
- * active tool choice.
- * @returns `parts` unchanged, or a single-element array holding the promoted tool-call part.
- */
-function promoteProseToolCall(
-  parts: readonly PortGenerationPart[],
-  definitions: readonly ModelToolDefinition[],
-): readonly PortGenerationPart[] {
-  if (definitions.length === 0 || parts.some((part) => part.type === 'tool-call')) return parts;
-  const text = parts
-    .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('');
-  const match = FENCED_JSON_BLOCK.exec(text);
-  if (!match) return parts;
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(match[1]);
-  } catch {
-    return parts;
-  }
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return parts;
-  const definition = definitions.find((entry) => entry.inputSchema.safeParse(candidate).success);
-  if (!definition) return parts;
-  return [{
-    type: 'tool-call',
-    callId: 'text-promoted-0',
-    toolName: definition.name,
-    input: candidate,
-  }];
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
@@ -544,9 +577,7 @@ function bindCancellation(signal?: AbortSignal): {
 }
 
 function isCancellation(error: unknown): boolean {
-  return error instanceof ModelPortError && error.code === 'cancelled'
-    || (error instanceof Error
-      && ['AbortError', 'Canceled', 'Cancelled'].includes(error.name));
+  return isPortCancellation(error) || isHostCancellationError(error);
 }
 
 function cancelledError(): ModelPortError {

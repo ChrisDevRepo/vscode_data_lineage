@@ -64,7 +64,6 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   const pairs: Array<{ label: string; value: string }> = [];
 
   if (col.min !== undefined && col.mean !== undefined) {
-    // Numeric: Range, Mean, Std Dev, Zeros
     pairs.push({ label: 'Range', value: `${formatValue(col.min)} – ${formatValue(col.max)}` });
     pairs.push({ label: 'Mean', value: formatDecimal(col.mean) });
     if (col.stdDev !== undefined) pairs.push({ label: 'Std Dev', value: formatDecimal(col.stdDev) });
@@ -72,13 +71,11 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
       pairs.push({ label: 'Zeros', value: formatCount(col.zeroCount, rowCount) });
     }
   } else if (col.min !== undefined) {
-    // DateTime: Earliest, Latest
     pairs.push({ label: 'Earliest', value: col.min });
     pairs.push({ label: 'Latest', value: col.max ?? '' });
   }
 
   if (col.minLength !== undefined) {
-    // String: Length, Empty
     const lenVal = col.minLength === col.maxLength
       ? `${col.minLength}` : `${col.minLength} – ${col.maxLength}`;
     pairs.push({ label: 'Length', value: lenVal });

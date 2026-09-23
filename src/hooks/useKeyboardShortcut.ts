@@ -32,7 +32,6 @@ export function useKeyboardShortcut(
   useEffect(() => {
     const keys = (Array.isArray(key) ? key : [key]).map(k => k.toLowerCase());
     const handler = (e: KeyboardEvent) => {
-      // Bare-key shortcuts only — never hijack native chords (Ctrl+C, Cmd+F, Alt+…).
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (!keys.includes(e.key.toLowerCase())) return;
       if (isTextEntryTarget(e.target)) return;

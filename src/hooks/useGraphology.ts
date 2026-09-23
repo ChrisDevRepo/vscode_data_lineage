@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import type { CustomNodeData } from '../components/CustomNode';
-import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG } from '../engine/types';
+import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
 import { buildGraph, buildGraphNoLayout, getGraphMetrics } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
 import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
@@ -29,9 +28,6 @@ interface UseGraphologyReturn {
   /**
    * Rebuilds the graph from the database model based on the current filter and configuration.
    *
-   * @param model - The database model to filter and build from.
-   * @param filter - The current UI filter state.
-   * @param config - Optional configuration overrides.
    * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
    * @returns The total number of nodes in the resulting graph.
    */
@@ -58,7 +54,6 @@ export function useGraphology(): UseGraphologyReturn {
     const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
-    // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
       n.externalType === 'file' || n.externalType === 'db';
     const allExtRefsVisible = filter.showExternalRefs && filter.externalRefTypes.has('file') && filter.externalRefTypes.has('db');
@@ -83,9 +78,6 @@ export function useGraphology(): UseGraphologyReturn {
     const count = allowlistFiltered.nodes.length;
     setFilteredCount(count);
 
-    // Derive visible schemas from filtered nodes — schemas containing only external objects
-    // are included here to keep them selectable in the filter, but will be filtered out
-    // in the visual Legend component in GraphCanvas.
     const schemas = [...new Set(
       allowlistFiltered.nodes.map(n => n.schema)
     )].filter(s => !!s && s.trim().length > 0).sort();
@@ -104,9 +96,6 @@ export function useGraphology(): UseGraphologyReturn {
         };
       });
 
-    // Guard 1: full-object render limit. Keep the graphology model available for schema
-    // overview, expanded schema view, trace/path, and analysis surfaces; only the full object
-    // React Flow surface is blocked by render-limit mode.
     if (count > config.renderLimit) {
       log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
       const result = buildGraphNoLayout(allowlistFiltered, config);
@@ -120,8 +109,6 @@ export function useGraphology(): UseGraphologyReturn {
 
     setRenderLimitHit(0);
 
-    // Guard 2: schema/object surface. App owns the initial threshold decision on load/reset;
-    // this hook skips layout only when the caller explicitly asks for Schema View.
     if (skipLayout) {
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
@@ -132,7 +119,6 @@ export function useGraphology(): UseGraphologyReturn {
       return count;
     }
 
-    // Full mode — dagre runs; fall back to unpositioned graph on any layout failure.
     const t0 = performance.now();
     let result: ReturnType<typeof buildGraph>;
     let layoutFailed = false;

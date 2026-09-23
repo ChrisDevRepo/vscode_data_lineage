@@ -16,9 +16,6 @@ import { Logger } from './log';
  * The migration supports DACPAC and database connections, removes the legacy keys after
  * processing, and is safe to call when no legacy state exists.
  *
- * @param context - The VS Code extension context for state access.
- * @param PROJECT_STORE_KEY - Global-state key for the project store.
- * @param outputChannel - The log channel for reporting migration progress.
  * @param onProjectsDropped - Receives the drop report when persisted records fail validation.
  *   This path rewrites global state, so anything validation discards here is lost permanently —
  *   the host reports it through the same single-notification channel as a normal load.
@@ -51,7 +48,6 @@ export async function migrateFromWorkspaceState(
       try {
         connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
       } catch (err) {
-        // A record the strict read schema would drop anyway — skip it here, where it can be logged.
         logger.warn(`Legacy connection "${sourceName}" failed validation and was not migrated: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -72,7 +68,6 @@ export async function migrateFromWorkspaceState(
     logger.info(`Migrated legacy connection to project "${name}"`);
   }
 
-  // Clear legacy keys even when their payload is incomplete to avoid repeated migration attempts.
   await Promise.all([
     context.workspaceState.update('lastSourceType', undefined),
     context.workspaceState.update('lastDacpacPath', undefined),

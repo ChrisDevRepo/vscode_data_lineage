@@ -122,4 +122,25 @@ describe('AiSession lifecycle ownership', () => {
     session.clearPresentResultFlag();
     expect(session.presentResultAutoDispatched).toBe(false);
   });
+
+  it('lights the SM-offer only after a completed multi-object walk', () => {
+    const session = new AiSession();
+    session.beginTurn();
+    expect(session.smOfferAvailable()).toBe(false);
+
+    session.recordDiscovery('[ai].[FactSalesReport]', 1, 'What feeds FactSalesReport?', 'Summary.');
+    expect(session.smOfferAvailable()).toBe(false);
+
+    session.recordDiscovery(
+      '[ai].[FactSalesReport]',
+      2,
+      'What feeds FactSalesReport?',
+      'A detailed analysis would be needed.',
+    );
+
+    expect(session.smOfferAvailable()).toBe(true);
+    expect(session.lastDiscoveryOrigin).toBe('[ai].[FactSalesReport]');
+    expect(session.lastDiscoveryWalkCount).toBe(2);
+    expect(session.lastDiscoveryAnswer).toBe('A detailed analysis would be needed.');
+  });
 });

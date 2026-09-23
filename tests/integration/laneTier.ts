@@ -12,7 +12,7 @@
  * - `none` — no provider registered in the host at all.
  * - `scripted` — the fixture extension registers a `vscode.LanguageModelChatProvider` that replays
  *   fixed text and tool calls. Genuine `vscode.lm` wiring, zero inference, zero network.
- * - live provider (`npm run test:live-provider`, never an EDH lane) — real inference over the
+ * - live provider (measured internally, never an EDH lane) — real inference over the
  *   network, but headless: the harness supplies its own model port and a `vscode` shim, so
  *   `vscode.lm` is bypassed entirely.
  * - the product path — real VS Code, the user's own Copilot model. UAT only.
@@ -39,7 +39,7 @@ export function announceLaneTier(laneLabel: string, tier: ModelTier, proves: str
     + `    ${TIER_LINE[tier]}\n`
     + `    Proves: ${proves}\n`
     + '    NOT evidence about prompt quality, model behaviour, or answer correctness. Inference is\n'
-    + '    measured only by npm run test:live-provider (headless — it bypasses vscode.lm), and the\n'
+    + '    measured internally, headless, never by this repository\'s tracked suite, and the\n'
     + '    product path itself — real VS Code with your own Copilot model — only by UAT.\n',
   );
 }

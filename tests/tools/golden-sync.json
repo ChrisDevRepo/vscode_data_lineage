@@ -1,0 +1,10 @@
+{
+  "algorithm": "sha256",
+  "surfaces": [
+    "assets/aiOutputTemplates.yaml",
+    "src/ai/agent/stagePrompts.ts",
+    "src/ai/prompting"
+  ],
+  "fileCount": 7,
+  "surfaceHash": "14aeccc791aa4e3a702274efa0c475f2fa7b7e1c3b14e726a826c62285e41c59"
+}

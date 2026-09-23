@@ -4,8 +4,11 @@ import { resolveModelNodeId } from '../engine/shared/nodeIdResolution';
 
 /** Canonicalized AI-view payload plus unresolved node references. */
 export interface ReconciledAiView {
+  /** Canonical ids that resolved, deduplicated in submitted order. */
   nodeIds: string[];
+  /** Raw references that matched no node in the loaded model. */
   unresolved: string[];
+  /** View metadata with every node reference remapped to canonical ids. */
   metadata: AIViewMetadata;
 }
 

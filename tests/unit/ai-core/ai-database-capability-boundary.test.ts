@@ -33,7 +33,6 @@ describe('AI/database capability boundary', () => {
     const files = sourceFiles(aiRoot);
     const source = files.map(path => readFileSync(path, 'utf8')).join('\n');
 
-    // Fail closed: an empty or truncated scan would make the absence assertion meaningless.
     expect(
       files.length,
       'the AI source scan resolved too few files — an empty scan cannot prove absence',

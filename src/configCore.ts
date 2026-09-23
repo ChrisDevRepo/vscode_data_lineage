@@ -56,6 +56,7 @@ export const REQUIRED_AI_TEMPLATE_KEYS: (keyof AiOutputTemplates)[] = [
   'notes',
   'business_capture',
   'technical_capture',
+  'structural_callouts',
   'structural_summary',
   'general',
   'loading_pattern',
@@ -68,8 +69,6 @@ export const REQUIRED_AI_TEMPLATE_KEYS: (keyof AiOutputTemplates)[] = [
  * @remarks
  * Throws on invalid input (unparsable YAML or a schema mismatch) — hard-fail,
  * no fallback; callers keep their own try/catch + notification around this call.
- * @param text - Raw YAML file contents.
- * @returns The validated, schema-inferred config.
  */
 export function parseAiOutputTemplatesYaml(text: string): AiOutputTemplatesConfig {
   const rawParsed = yaml.load(text);
@@ -82,8 +81,6 @@ export function parseAiOutputTemplatesYaml(text: string): AiOutputTemplatesConfi
  * @remarks
  * Throws on invalid input (unparsable YAML or a schema mismatch) — hard-fail,
  * no fallback; callers keep their own try/catch + notification around this call.
- * @param text - Raw YAML file contents.
- * @returns The validated, schema-inferred config.
  */
 export function parseParseRulesYaml(text: string): RawParseRulesYaml {
   const rawParsed = yaml.load(text);

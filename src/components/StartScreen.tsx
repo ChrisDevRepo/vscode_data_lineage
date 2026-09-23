@@ -32,7 +32,6 @@ function truncatePath(path: string, maxLen = 45): string {
   if (path.length <= maxLen) return path;
   const sep = path.includes('\\') ? '\\' : '/';
   const parts = path.split(/[\\/]/);
-  // Always keep at least filename + parent dir
   for (let keep = 2; keep < parts.length; keep++) {
     const tail = parts.slice(parts.length - keep).join(sep);
     if (tail.length + 4 > maxLen && keep > 2) {

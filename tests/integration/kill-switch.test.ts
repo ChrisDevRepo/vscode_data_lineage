@@ -16,11 +16,11 @@ import { announceLaneTier } from './laneTier';
 suite('AI disabled by setting — kill switch honours the manifest', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
-  suiteSetup(() => announceLaneTier(
+  suiteSetup(() => { announceLaneTier(
     'kill-switch',
     'none',
     'activation completes with ai.enabled=false; core surface full, AI surface unregistered',
-  ));
+  ); });
 
   test('the seeded setting is actually in force', () => {
     const enabled = vscode.workspace.getConfiguration('dataLineageViz.ai').get<boolean>('enabled', true);

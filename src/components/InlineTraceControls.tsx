@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
+import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface InlineTraceControlsProps {
   /** ID of the node starting the trace. */
@@ -57,16 +58,7 @@ function DepthInput({
   );
 }
 
-/**
- * A configuration bar for setting up a lineage trace.
- *
- * It appears when a user initiates a trace but before the BFS is executed.
- * Users can specify numerical depths for upstream and downstream traversal
- * or select "All" for an exhaustive trace.
- *
- * @param props - The component props.
- * @returns A memoized React component.
- */
+/** A configuration bar for setting up a lineage trace, shown before the BFS is executed. */
 export const InlineTraceControls = memo(function InlineTraceControls({
   startNodeId,
   startNodeName,
@@ -83,8 +75,8 @@ export const InlineTraceControls = memo(function InlineTraceControls({
   const handleApply = () => {
     onApply({
       startNodeId,
-      upstreamLevels: isUpstreamAll ? Number.MAX_SAFE_INTEGER : upstream,
-      downstreamLevels: isDownstreamAll ? Number.MAX_SAFE_INTEGER : downstream,
+      upstreamLevels: isUpstreamAll ? TRACE_ALL_LEVELS : upstream,
+      downstreamLevels: isDownstreamAll ? TRACE_ALL_LEVELS : downstream,
     });
   };
 

@@ -4,6 +4,7 @@
 
 import type { AiOutputTemplates } from '../session/types';
 import type { ClassificationValue } from '../session/classification';
+import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
 
 /**
  * Stages at which a YAML instruction may be injected into the AI system prompt.
@@ -21,23 +22,17 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * Canonical, code-owned routing of YAML keys to stages.
  *
  * @remarks
- * Authoritative — any `stages:` field in the YAML (user overlay or shipped
- * default) is informational for human readers. If an overlay disagrees with
- * this map the loader warns and uses this routing.
+ * Authoritative — a `stages:` field in the YAML (default or overlay) is informational only; the
+ * loader never reads it (`AiOutputTemplatesConfigSchema` passes it through, only `instruction` is
+ * overlaid), so a disagreeing overlay is silently routed by this map instead. `general` is
+ * placement-only at synthesis — a captured ⚠️ sits once in the section it belongs to.
  *
- * Capture keys (`business_capture`, `technical_capture`) fire at active phase;
- * render keys fire at synthesis. There are no synthesis-side mirrors of the
- * capture keys — the slot body is the canonical surface.
- *
- * `description` is intentionally absent — it is engine output (built by
- * `orderAndAssemble` in `presentResult.ts` from title + intro + sections[] + closing),
- * not an AI-writeable field. Do not add it back without first restoring the
- * full AI-input plumbing in `tools.ts` and resolving the conflict with engine
- * assembly.
- *
- * `sections`, `business_subsection`, `technical_subsection` are also intentionally
- * absent — the lift+group+label rule for sections[] lives in
- * `buildSynthesisPrompt()` to avoid duplication with the synthesis cue.
+ * `description` is intentionally absent — it is engine output (`orderAndAssemble` in
+ * `presentResult.ts` from title + intro + sections[] + closing), not an AI-writeable field; do not
+ * add it back without restoring the full AI-input plumbing in `tools.ts` and resolving the
+ * conflict with engine assembly. `sections`, `business_subsection`, `technical_subsection` are
+ * also absent — their lift+group+label rule lives in `buildSynthesisPrompt()` to avoid
+ * duplication with the synthesis cue.
  */
 const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
   discovery_chat:       ['discover'],
@@ -49,8 +44,9 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   notes:                ['synthesis'],
   business_capture:     ['active'],
   technical_capture:    ['active'],
+  structural_callouts:  ['active'],
   structural_summary:   ['active'],
-  general:              ['discover', 'synthesis'],
+  general:              ['synthesis'],
   loading_pattern:      ['synthesis'],
   column_trace_capture: ['active'],
 };
@@ -90,8 +86,59 @@ const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
 const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
   'technical_capture',
+  'structural_callouts',
   'structural_summary',
 ]);
+
+/**
+ * The `sections[].angle` each capture key writes. The per-focus recipe labels its bullet with this
+ * value, never the YAML key, so the label is the literal the `submit_findings` schema accepts.
+ */
+const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business' | 'technical'>>> = {
+  business_capture:  'business',
+  technical_capture: 'technical',
+};
+
+/**
+ * Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the
+ * one-`sections[]`-entry-per-schema-angle rule (`classification_lock_violation` — each capture
+ * bullet is labelled with its `sections[].angle` value), the exact-substring quoting rule and
+ * the `not established` wording, so no capture key restates them.
+ */
+const CAPTURE_RECIPE_HEADER = [
+  '### Capture recipe',
+  'Submit one `sections[]` entry per angle this mission fires, with that angle in `angle`, and put every bullet below — including the ⚠️ callout bullet — inside that entry\'s `text`. Markdown without headings. Back each grain predicate, formula and ⚠️ line with one short ```sql fence of its deciding expression, an exact substring of `bb_ddl`; what the SQL does not establish reads `not established from the available SQL`. Skip an item the SQL lacks.',
+].join('\n\n');
+
+/**
+ * Bare-summary angle clause — the one line the non-bodied per-focus render keeps from
+ * {@link CAPTURE_RECIPE_HEADER} when it drops the rest of that header (its SQL-evidence rules do
+ * not apply to a schema-only node with no body). Without it the model has no cue that
+ * `sections[].angle` is a fixed schema literal and free-labels the entry from the summary's own
+ * bullet names (`Purpose`, `Upstream sources`, …), which `lineage_submit_findings` rejects.
+ *
+ * @remarks
+ * Unlocked (`classification` undefined) states every angle the mode ever accepts. A locked
+ * classification with one kept angle ({@link CLASSIFICATION_KEPT_ANGLES}) states only that angle:
+ * the per-dispatch `submit_findings` schema (`toolSchemas.ts`
+ * `capturedSectionSchemaForClassification`) hard-rejects the excluded one, so naming it here
+ * would only buy the model a rejection it cannot act on. `both` keeps every angle, same as
+ * unlocked.
+ */
+const BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED =
+  'Submit this as one `sections[]` entry per angle this mission keeps (`business`, `technical`, or both), with that literal — never a descriptive label — in `angle`.';
+
+/**
+ * Resolves {@link BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED} to the angle(s) the locked classification
+ * actually keeps, reading the same {@link CLASSIFICATION_KEPT_ANGLES} the dispatched schema
+ * narrows to — one source, so the prompt line and the schema can never name different angles.
+ */
+function bareSummaryAngleClause(classification: ClassificationValue | undefined): string {
+  if (!classification) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
+  const kept = CLASSIFICATION_KEPT_ANGLES[classification];
+  if (kept.length === 2) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
+  return `Submit this as one \`sections[]\` entry with \`angle: "${kept[0]}"\` — never a descriptive label.`;
+}
 
 /** Render scope for {@link resolveStagePrompt}: hop-invariant system block vs per-focus hop block. */
 export type StageRenderScope =
@@ -112,8 +159,13 @@ export interface StagePromptResult {
  * Assembles the stage-scoped template block for the AI system prompt.
  *
  * @remarks
- * Walks `STAGE_BY_KEY` and emits one bullet per active key: `- <key>: <instruction>`. One heading
+ * Walks `STAGE_BY_KEY` and emits one bullet per active key: `- <key>: <instruction>`, a capture key
+ * labelled with its `sections[].angle` instead (`CAPTURE_ANGLE`), and a per-focus recipe key with
+ * no angle of its own (e.g. `structural_callouts`) labelled with neither — it folds into whichever
+ * angle fired, per {@link CAPTURE_RECIPE_HEADER}, never its own `- <key>:` line. One heading
  * hierarchy — no per-key `####` wrappers. The AI parses the bullet list directly.
+ * The non-bodied per-focus render is the exception: `structural_summary` ships bare, with no
+ * `### ` header, keeping only {@link bareSummaryAngleClause} ahead of it.
  *
  * At synthesis, if `classification` is known, a `**Mission type:** <value>` one-liner is emitted
  * before the bullet list. The value is code-resolved; the `intro` template instruction references
@@ -122,7 +174,7 @@ export interface StagePromptResult {
  * @param templates - The loaded AI output templates (instruction strings).
  * @param phase - The current conversation phase.
  * @param classification - Optional mission-type signal; gates active-phase capture firing.
- * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below {@link CLOSING_MIN_SLOTS}.
+ * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below the `CLOSING_MIN_SLOTS` threshold (3).
  * @param isCtMode - True if column trace mode is active.
  * @param render - The render scope configuration.
  * @returns An object containing the assembled prompt block, shipped keys, and dropped keys.
@@ -142,9 +194,7 @@ export function resolveStagePrompt(
    */
   render: StageRenderScope = { scope: 'stable' },
 ): StagePromptResult {
-  // `closing` is only useful when the analysis spans 5+ sections (per the YAML
-  // instruction itself). Skip it on small graphs to save ~140 tokens.
-  const CLOSING_MIN_SLOTS = 5;
+  const CLOSING_MIN_SLOTS = 3;
 
   const allKeys = Object.keys(STAGE_BY_KEY) as (keyof AiOutputTemplates)[];
   const gatedOut: StagePromptResult['gatedOut'] = [];
@@ -164,7 +214,6 @@ export function resolveStagePrompt(
       gatedOut.push({ key, reason: 'ct_mode' });
       continue;
     }
-    // Keeps the system prompt byte-identical across hops: focus-dependent keys ship only per-focus.
     if (render.scope === 'stable' && PER_FOCUS_KEYS.has(key)) {
       gatedOut.push({ key, reason: 'focus_scope' });
       continue;
@@ -177,13 +226,12 @@ export function resolveStagePrompt(
       gatedOut.push({ key, reason: 'slot_count' });
       continue;
     }
-    // structural_summary replaces business/technical capture for non-bodied (table) focus nodes only.
     if (render.scope === 'per_focus') {
       if (key === 'structural_summary' && render.focusKind !== 'non_bodied') {
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }
-      if ((key === 'business_capture' || key === 'technical_capture') && render.focusKind === 'non_bodied') {
+      if ((key === 'business_capture' || key === 'technical_capture' || key === 'structural_callouts') && render.focusKind === 'non_bodied') {
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }
@@ -195,7 +243,14 @@ export function resolveStagePrompt(
     passing.push(key);
   }
 
-  const blocks = passing.map(key => `- ${key}: ${templates[key].trim()}`);
+  const bareSummary = render.scope === 'per_focus' && render.focusKind === 'non_bodied';
+  const blocks = passing.map(key => {
+    if (bareSummary) return templates[key].trim();
+    const angle = CAPTURE_ANGLE[key];
+    if (angle) return `- ${angle}: ${templates[key].trim()}`;
+    if (render.scope === 'per_focus') return `- ${templates[key].trim()}`;
+    return `- ${key}: ${templates[key].trim()}`;
+  });
 
   const missionLine = phase === 'synthesis' && classification
     ? `**Mission type:** ${classification}`
@@ -208,14 +263,18 @@ export function resolveStagePrompt(
   const headerByPhase: Record<TemplateStage, string> = {
     discover:  '### Output templates (discovery)',
     active:    render.scope === 'per_focus'
-      ? '### Capture recipe for THIS focus node (write each key to its target field)'
+      ? CAPTURE_RECIPE_HEADER
       : '### Active-phase templates (write each key to its target field)',
     synthesis: '### Output templates (synthesis)',
   };
 
   const parts: string[] = [];
   if (missionLine) parts.push(missionLine);
-  parts.push(headerByPhase[phase]);
+  if (bareSummary) {
+    parts.push(bareSummaryAngleClause(classification));
+  } else {
+    parts.push(headerByPhase[phase]);
+  }
   parts.push(...blocks);
   return { prompt: parts.join('\n\n'), shippedKeys: passing, gatedOut };
 }

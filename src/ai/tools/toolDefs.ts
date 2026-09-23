@@ -11,6 +11,7 @@ import type { z } from 'zod';
 import type { ToolDefinition } from './registry';
 import {
   GetContextInputSchema,
+  GetScreenStateInputSchema,
   SearchObjectsInputSchema,
   GetScopeBundleModelSchema,
   StartExplorationProviderInputSchema,
@@ -65,25 +66,25 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_objects', inputSchema: SearchObjectsInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search for database objects by name or column.',
-    modelDescription: 'Search database objects by name or column name using substring or regex matching. Returns object IDs and metadata. Each result carries an `in_user_filter` flag — when an in-filter search returns 0 hits but out-of-filter results exist, include that schema in the next search; the active filter is a display preference, not a boundary.',
+    modelDescription: 'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, and `in_user_filter`. When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.',
     progressLabel: 'Searching database objects…',
   },
   {
     name: 'lineage_get_scope_bundle', inputSchema: GetScopeBundleModelSchema, tags: ['lineage', 'lineage-research'], effect: 'scope_store',
     userDescription: 'Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.',
-    modelDescription: 'Discovery graph-scope retrieval for multi-object lineage questions. Set upstream_depth and downstream_depth (hops each side): equal values give a symmetric scope, "all" a whole chain, 0 excludes that side. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
+    modelDescription: 'Discovery graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (writes INTO it) and `out` (reads FROM it); every node carries `uh`/`dh`, its hop distance upstream/downstream from the origin on the side(s) it was reached (the origin is 0 on both; a node reached on both sides carries both) — read this instead of re-deriving reach from edge order. `edges` are positional [source, target, type]. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
     progressLabel: 'Gathering object dependencies…',
   },
   {
     name: 'lineage_start_exploration', inputSchema: StartExplorationProviderInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'session_start',
     userDescription: 'Start an autonomous exploration of database objects for data flow, business rules, or investigations.',
-    modelDescription: 'Proposes approval-gated hop-by-hop exploration. Fresh calls require origin, analysisMode, and classification. Choose a symmetric or bidirectional upstream/downstream starting depth, use "all", or omit depth for the reviewed default of 3. When the question asks for every/all upstream sources, a full trace, or all levels, pass depth "all" — the omitted default of 3 truncates deeper chains. BB has no target columns; CT traces named targetColumns. Completed follow-ups use supplement:{nodeIds:[...]}.',
+    modelDescription: 'Proposes a hop-by-hop exploration for the user to approve: a fresh one from origin, or a supplement of named objects after a completed exploration.',
     progressLabel: 'Starting exploration…',
   },
   {
     name: 'lineage_submit_findings', inputSchema: SubmitFindingsModelSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
     userDescription: 'Submit analysis of the current node and propose next routes in the exploration.',
-    modelDescription: 'Submits current focus-node analysis and next-hop route decisions. BB may prune current-hop neighbors; CT requires `column_flow` and rejects BB prune fields.',
+    modelDescription: 'Commits this hop: the focus node\'s verdict and analysis, and its neighbor decisions.',
   },
   {
     name: 'lineage_present_result', inputSchema: PresentResultModelSchema, tags: ['lineage-presentation'], effect: 'presentation_commit',
@@ -94,7 +95,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_object_detail', inputSchema: GetObjectDetailInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Get full details for a specific database object.',
-    modelDescription: 'Primary single-object lookup for discovery and synthesis. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls. During active SM exploration, use lineage_get_neighbor_columns instead.',
+    modelDescription: 'Primary single-object lookup for discovery and synthesis. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.',
     progressLabel: 'Fetching object details…',
   },
   {
@@ -106,14 +107,20 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_ddl', inputSchema: SearchDdlInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search SQL body scripts for a text pattern.',
-    modelDescription: 'Performs a regex search across view, procedure, and function DDL bodies. Returns matching lines with context.',
+    modelDescription: 'Grep view, procedure and function bodies. Each hit has object, line, matched line, context, `commented: true` when the match sits in a SQL comment, and `enclosing_predicate` with the governing IF/WHILE condition when the match is inside one. `by_object` is the per-object hit count. No matches is `total: 0`; a bad pattern is `invalid_regex` with the repair. Use lineage_search_objects for names.',
     progressLabel: 'Searching SQL bodies…',
   },
   {
     name: 'lineage_get_neighbor_columns', inputSchema: GetNeighborColumnsInputSchema, tags: ['lineage'], effect: 'read',
-    userDescription: 'Inspect a neighbor\'s columns for pruning decisions during active SM exploration.',
-    modelDescription: 'Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. Use this exclusively when the focus DDL is opaque (e.g., \'SELECT *\' or ambiguous joins) and the column names are hidden. For explicit DDL, derive the structure directly from the text instead. NEVER returns DDL bodies. Pass neighbor ids only, excluding the focus node itself.',
+    userDescription: 'Inspect a neighbor\'s columns for pruning decisions during an approved deep analysis.',
+    modelDescription: 'Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.',
     progressLabel: 'Inspecting neighbor columns…',
+  },
+  {
+    name: 'lineage_get_screen_state', inputSchema: GetScreenStateInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
+    userDescription: 'Shows what is currently on screen: active trace, analysis, or applied bookmark.',
+    modelDescription: 'Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. Omit input for the screen card.',
+    progressLabel: 'Reading screen state…',
   },
 ] as const satisfies readonly ToolContract[];
 

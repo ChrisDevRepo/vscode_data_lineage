@@ -11,6 +11,13 @@ type NotifyContext = Record<string, unknown>;
 
 const MAX_NOTIFICATION_CONTEXT = LOG_TRUNC_JSON * 4;
 
+/**
+ * Ceiling for the toast text itself. Comfortably above every message this extension composes,
+ * so only runaway interpolation — a raw provider error, webview-supplied text — is cut. The
+ * untruncated message always reaches the log line above the toast.
+ */
+const MAX_NOTIFICATION_MESSAGE = 400;
+
 function renderContextValue(value: unknown): string {
   try {
     if (Array.isArray(value)) {
@@ -42,16 +49,7 @@ function formatContext(context?: NotifyContext): string {
   }
 }
 
-/**
- * Logs detailed error diagnostics before showing a concise VS Code error toast.
- *
- * @param logger - The logger instance.
- * @param operation - The operation being performed.
- * @param userMessage - The message to show to the user.
- * @param error - The optional error object.
- * @param context - Additional context to log.
- * @param showErrorMessage - Function to display the error message.
- */
+/** Logs detailed error diagnostics before showing a concise VS Code error toast. */
 export function notifyError(
   logger: Logger,
   operation: string,
@@ -62,18 +60,10 @@ export function notifyError(
 ): void {
   const detail = `notification="${userMessage}"${formatContext(context)}`;
   logger.error(`${operation} — ${detail}`, error ?? new Error(userMessage));
-  showErrorMessage(userMessage);
+  showErrorMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
 }
 
-/**
- * Logs detailed information diagnostics before showing a concise VS Code info toast.
- *
- * @param logger - The logger instance.
- * @param operation - The operation being performed.
- * @param userMessage - The message to show to the user.
- * @param context - Additional context to log.
- * @param showInformationMessage - Function to display the info message.
- */
+/** Logs detailed information diagnostics before showing a concise VS Code info toast. */
 export function notifyInfo(
   logger: Logger,
   operation: string,
@@ -82,18 +72,10 @@ export function notifyInfo(
   showInformationMessage: (message: string) => unknown = vscode.window.showInformationMessage,
 ): void {
   logger.info(`${operation} — notification="${userMessage}"${formatContext(context)}`);
-  showInformationMessage(userMessage);
+  showInformationMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
 }
 
-/**
- * Logs detailed warning diagnostics before showing a concise VS Code warning toast.
- *
- * @param logger - The logger instance.
- * @param operation - The operation being performed.
- * @param userMessage - The message to show to the user.
- * @param context - Additional context to log.
- * @param showWarningMessage - Function to display the warning message.
- */
+/** Logs detailed warning diagnostics before showing a concise VS Code warning toast. */
 export function notifyWarning(
   logger: Logger,
   operation: string,
@@ -102,5 +84,5 @@ export function notifyWarning(
   showWarningMessage: (message: string) => unknown = vscode.window.showWarningMessage,
 ): void {
   logger.warn(`${operation} — notification="${userMessage}"${formatContext(context)}`);
-  showWarningMessage(userMessage);
+  showWarningMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
 }

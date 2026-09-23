@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-// Asserts that `vsce ls` — the actual VSIX file listing — contains the
-// files the packaged extension needs and none of the files it must never
-// ship (source, tests, tmp/, evidence/debug artifacts, internal tooling,
-// secrets, or a stray .vsix).
-//
-// Usage:
-//   node tests/tools/assert-package-contents.mjs
 
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -13,22 +6,20 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const vsceCli = path.join(repoRoot, 'node_modules', '@vscode', 'vsce', 'vsce');
-const result = spawnSync(process.execPath, [vsceCli, 'ls'], {
+
+const result = spawnSync(process.execPath, [vsceCli, 'ls', '--no-dependencies'], {
   cwd: repoRoot,
   encoding: 'utf8',
   maxBuffer: 16 * 1024 * 1024,
   shell: false,
 });
-
 if (result.error) {
   console.error(`FATAL: could not run the local @vscode/vsce CLI: ${result.error.message}`);
   process.exit(2);
 }
-
 if (result.status !== 0) {
-  const output = (result.stderr || result.stdout || '').trim();
-  console.error('FAIL: `vsce ls` did not run successfully.');
-  console.error(output || '(no output captured)');
+  console.error('FAIL: `vsce ls --no-dependencies` did not run successfully.');
+  console.error((result.stderr || result.stdout || '').trim() || '(no output captured)');
   process.exit(result.status ?? 1);
 }
 
@@ -51,25 +42,24 @@ const required = [
   'assets/defaultParseRules.yaml',
   'assets/dmvQueries.yaml',
   'assets/aiOutputTemplates.yaml',
+  'THIRD_PARTY_NOTICES.md',
 ];
 
 const forbidden = [
   { pattern: /^(?:src|test|tests|test-results|tmp|tooling|scripts|ai)\//u, label: 'source/test/tmp/tooling directory' },
-  // The headless harness compiles to `out/test/` and the LangSmith containment shell lives in
-  // `stubs/`. Neither is referenced by the extension bundle, so neither can be caught by the
-  // required-file list — these two patterns are what makes their absence PROVEN rather than assumed.
   { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
   { pattern: /^stubs\//u, label: 'dependency stub directory' },
-  { pattern: /^(?:\.agents|\.codex|\.claude|\.gemini|\.cursor|\.continue)\//u, label: 'internal agent directory' },
-  { pattern: /^(?:\.env(?:\..*)?|CLAUDE[^/]*|GEMINI[^/]*)$/iu, label: 'environment/agent-instruction file' },
+  { pattern: /^(?:\.agents|\.muse|\.codex|\.claude|\.gemini|\.cursor|\.continue|\.glm-skills)\//u, label: 'internal agent directory' },
+  { pattern: /^(?:\.env(?:\..*)?|\.?CLAUDE[^/]*|\.?GEMINI[^/]*|\.?GLM[^/]*|\.?AGENTS[^/]*|\.?CODEX[^/]*|\.cursorrules|\.aider[^/]*)$/iu, label: 'environment/agent-instruction file' },
   { pattern: /(?:^|\/)[^/]*internal[^/]*(?:\/|$)/iu, label: '"internal" marker path' },
   { pattern: /(?:^|\/)debug[^/]*\.txt$/iu, label: 'debug*.txt artifact' },
-  // `vsce` never reads .gitignore, so an untracked scratch file at the repo root is packaged
-  // unless .vscodeignore names it. Tooling drops these with assorted prefixes; the suffix is the
-  // only stable part, which is why the pattern keys on it rather than on a name.
+  { pattern: /^(?:PLAN[^/]*\.md|TASKLIST[^/]*)$/iu, label: 'internal task/plan notes' },
   { pattern: /\.tmp$/iu, label: 'stray .tmp scratch file' },
   { pattern: /(?:^|\/)evidence(?:\/|$)/iu, label: 'evidence/ artifact directory' },
   { pattern: /\.vsix$/iu, label: 'packaged .vsix artifact' },
+  { pattern: /(?:^|\/)\.verify[^/]*\//iu, label: 'package-verification scratch tree' },
+  { pattern: /(?:^|\/)debug\.log$/iu, label: 'debug.log artifact' },
+  { pattern: /^[^/]+\.dacpac$/iu, label: 'root-level dacpac' },
 ];
 
 const missing = required.filter((file) => !files.includes(file));

@@ -24,19 +24,14 @@ import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
 import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
 import {
+  createTurnTokenBudget,
   DEFAULT_DISCOVERY_NODE_CAP,
   DEFAULT_DISCOVERY_TOKEN_BUDGET,
   DEFAULT_EXPLORATION_NODE_CAP,
   DEFAULT_EXPLORATION_TOKEN_BUDGET,
   DISCOVERY_WINDOW_SHARE,
   EXPLORATION_WINDOW_SHARE,
-  setExplorationNodeCap,
-  setExplorationTokenBudget,
 } from '../support/tokenBudget';
-import {
-  setDiscoveryNodeCap,
-  setDiscoveryTokenBudget,
-} from '../tools/tools';
 import {
   applyNativeChatBoundary,
   chatHistoryToModelMessages,
@@ -66,6 +61,9 @@ type NativeGateAction = 'approve' | 'change' | 'cancel';
  * change. The participant mention is required for the reply to reach `@lineage`.
  */
 const CHANGE_SCOPE_QUERY = '@lineage ';
+
+/** Most "Continue at" follow-up chips offered after a completed run, taken in lead order. */
+const MAX_DEFERRED_FOLLOWUPS = 2;
 
 /** Projects the shared lineage runtime onto VS Code's native chat participant API. */
 export class LineageParticipant {
@@ -108,7 +106,6 @@ export class LineageParticipant {
           action: NativeGateAction,
           classes: string[] = [],
         ) => {
-          // Only the exploration gate can be changed; expansion gates are approve/cancel only.
           const pending = this.requirePendingGate(
             gateId,
             action,
@@ -117,8 +114,6 @@ export class LineageParticipant {
           if (!pending) return;
 
           const resolved = await this.submitGateDecision(pending, gateId, action, classes);
-          // The turn has to reach terminal state before VS Code releases the chat input, so the
-          // prefill waits for the hold to land rather than racing the still-streaming response.
           if (resolved && action === 'change') {
             await vscode.commands.executeCommand('workbench.action.chat.open', {
               query: CHANGE_SCOPE_QUERY,
@@ -149,9 +144,6 @@ export class LineageParticipant {
       && (requiredGate === undefined || pending.gate === requiredGate)
     ) return pending;
 
-    // Every discriminator this guard tests is reported. A refusal whose deciding condition is not
-    // in the record is indistinguishable from an idle card, which is exactly how a dead approval
-    // card once read as a user who simply walked away.
     this.traceGateResolution(pending, gateId, action, 'refused',
       pending === null ? 'no_pending_gate'
         : pending.gateId !== gateId ? 'gate_id_mismatch'
@@ -177,11 +169,11 @@ export class LineageParticipant {
         ? { kind: 'hold' }
         : { kind: 'cancel' };
     this.pendingGate = null;
+    const decidedAt = new Date().toISOString();
     try {
       const resolved = await this.runtime.resumeGate(gateId, decision);
-      this.traceGateResolution(pending, gateId, action, resolved ? 'accepted' : 'no_owning_turn');
+      this.traceGateResolution(pending, gateId, action, resolved ? 'accepted' : 'no_owning_turn', undefined, decidedAt);
       if (resolved) return true;
-      // No owning runtime claimed the id: put the card's state back so its buttons keep working.
       if (this.pendingGate === null) this.pendingGate = pending;
       this.logger.debug(
         `[Gate] action found no owning turn — action=${action} requestedGateId=${gateId} `
@@ -189,7 +181,7 @@ export class LineageParticipant {
       );
       return false;
     } catch (error) {
-      this.traceGateResolution(pending, gateId, action, 'failed');
+      this.traceGateResolution(pending, gateId, action, 'failed', undefined, decidedAt);
       if (this.pendingGate === null) this.pendingGate = pending;
       notifyWarning(
         this.logger,
@@ -209,6 +201,7 @@ export class LineageParticipant {
    * @param action - Action the card requested.
    * @param outcome - How the participant answered the action.
    * @param refusedBy - Enumerated deciding condition, supplied only for a refusal.
+   * @param decidedAt - ISO time the action arrived, before any turn it released was awaited.
    *
    * @remarks
    * Gate resolution happens in a VS Code command handler, outside the turn that raised the gate and
@@ -222,6 +215,7 @@ export class LineageParticipant {
     action: NativeGateAction,
     outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed',
     refusedBy?: 'gate_id_mismatch' | 'gate_kind_mismatch' | 'no_pending_gate',
+    decidedAt?: string,
   ): void {
     void this.traceWriter?.write({
       type: 'gate-resolution',
@@ -231,6 +225,7 @@ export class LineageParticipant {
       action,
       outcome,
       ...(refusedBy ? { refusedBy } : {}),
+      ...(decidedAt ? { decidedAt } : {}),
     }).catch(() => {});
   }
 
@@ -261,10 +256,6 @@ export class LineageParticipant {
       );
     }
 
-    // A live card means its turn is still parked on the interrupt, so this prompt cannot be the
-    // scope change — the change path first ends the turn, which clears `pendingGate`. A held
-    // proposal (no live card, session still `awaiting_gate`) falls through: the graph's entry
-    // route claims the prompt as the refinement.
     if (this.pendingGate && session.phase.kind === 'awaiting_gate') {
       this.write(stream, token, (out) => out.markdown(
         '_Use **Approve & Proceed**, **Change scope**, or **Cancel** on the proposal above._',
@@ -285,42 +276,36 @@ export class LineageParticipant {
     }
 
     const config = vscode.workspace.getConfiguration('dataLineageViz');
-    // Token budgets recalibrate per turn to the selected model: the setting is a ceiling and the
-    // model's input window bounds the share — a small BYOK window shrinks both budgets with it.
     const modelWindow = request.model.maxInputTokens > 0
       ? request.model.maxInputTokens
       : Number.POSITIVE_INFINITY;
-    setDiscoveryNodeCap(
-      config.get<number>('ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
-    );
-    setDiscoveryTokenBudget(Math.min(
-      config.get<number>('ai.discoveryTokenBudget', DEFAULT_DISCOVERY_TOKEN_BUDGET),
-      Math.floor(modelWindow * DISCOVERY_WINDOW_SHARE),
-    ));
-    setExplorationNodeCap(
-      config.get<number>('ai.explorationNodeCap', DEFAULT_EXPLORATION_NODE_CAP),
-    );
-    setExplorationTokenBudget(Math.min(
-      config.get<number>('ai.explorationTokenBudget', DEFAULT_EXPLORATION_TOKEN_BUDGET),
-      Math.floor(modelWindow * EXPLORATION_WINDOW_SHARE),
-    ));
+    const turnBudget = createTurnTokenBudget({
+      modelWindowTokens: request.model.maxInputTokens,
+      discoveryNodeCap: config.get<number>('ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
+      discoveryTokenBudget: Math.min(
+        config.get<number>('ai.discoveryTokenBudget', DEFAULT_DISCOVERY_TOKEN_BUDGET),
+        Math.floor(modelWindow * DISCOVERY_WINDOW_SHARE),
+      ),
+      explorationNodeCap: config.get<number>('ai.explorationNodeCap', DEFAULT_EXPLORATION_NODE_CAP),
+      explorationTokenBudget: Math.min(
+        config.get<number>('ai.explorationTokenBudget', DEFAULT_EXPLORATION_TOKEN_BUDGET),
+        Math.floor(modelWindow * EXPLORATION_WINDOW_SHARE),
+      ),
+    });
 
     const requestId = randomUUID();
+    const turnStartedAt = Date.now();
     const cancellation = tokenToAbortSignal(token);
     const traceWriter = this.traceWriter?.isEnabled() ? this.traceWriter : undefined;
     const model = new VscodeModelPort(request.model, {
       debugLog: (message) => this.logger.debug(message),
       requestId,
-      // Fire-and-forget: a debug capture must never delay or fail the turn, so only the failure
-      // kind reaches the channel — never the record, which carries model content.
       wireLog: traceWriter && ((record) => {
         void traceWriter.write(record).catch(() => {});
       }),
-      // Read once per turn: the capture level is fixed when the session command enables the trace.
       traceVerbose: traceWriter?.isVerbose(),
+      budget: turnBudget,
     });
-    // The pill carries a short sentinel so chat can label it; expansion seeds the deterministic
-    // marker the graph routes on, so the re-entry costs no entry-detector call.
     const prompt = request.command
       ? `/${request.command} ${request.prompt}`.trimEnd()
       : expandRunTracePrompt(expandShowGraphPreviewPrompt(request.prompt, session), session);
@@ -330,7 +315,7 @@ export class LineageParticipant {
     this.logger.info(
       `[${session.id}] native turn start model=${request.model.id} command=${request.command ?? 'none'} history=${chatContext.history.length}`,
     );
-    const priorMessages = chatHistoryToModelMessages(chatContext.history, (msg) => this.logger.debug(msg));
+    const priorMessages = chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) => this.logger.debug(msg));
 
     this.statusBarStart('working…');
     try {
@@ -340,19 +325,25 @@ export class LineageParticipant {
         sink,
         signal: cancellation.signal,
       });
-      this.logger.info(
-        `[${session.id}] native turn terminal status=${result.outcome} modelCalls=${result.modelCalls}`,
-      );
       const metadata = {
         requestId,
         status: result.outcome,
         modelCalls: result.modelCalls,
       };
-      if (result.outcome !== 'error') return { metadata };
+      if (result.outcome !== 'error') {
+        this.logger.info(
+          `[${session.id}] native turn terminal status=${result.outcome} modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
+        );
+        return { metadata };
+      }
 
       const message = sanitizeProviderError(result.failure?.message ?? '')
         || 'Data Lineage could not complete this request.';
-      return { metadata, errorDetails: { message } };
+      this.logger.error(
+        `[${session.id}] native turn terminal status=error modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
+        message,
+      );
+      return { metadata, errorDetails: { message: `${message} (Retry — send the request again.)` } };
     } finally {
       this.statusBarStop();
       cancellation.dispose();
@@ -422,8 +413,6 @@ export class LineageParticipant {
         stream.markdown(event.delta);
         return;
       case 'error':
-        // Terminal failures are returned through ChatResult.errorDetails so VS Code owns the
-        // error presentation and Retry affordance. Recoverable guidance remains inline.
         if (event.recoverable !== false) stream.markdown(`\n\n${event.message}`);
         return;
       case 'gate':
@@ -443,8 +432,6 @@ export class LineageParticipant {
           title: '$(check) Approve & Proceed',
           arguments: [event.gateId, 'approve', event.classes ?? []],
         });
-        // Only a fresh exploration proposal is editable; expansion gates are a yes/no on a
-        // scope the running exploration already needs.
         if (event.gate === 'confirm_sm_start') {
           stream.button({
             command: 'dataLineageViz.aiResumeNativeGate',
@@ -485,6 +472,15 @@ export class LineageParticipant {
         prompt: 'What related objects should I investigate next?',
         label: vscode.l10n.t('Explore related objects…'),
       });
+      const reachable = (session.stateMachine?.deferredQuestions ?? []).filter(deferred => deferred.reason !== 'excluded');
+      for (const deferred of reachable.slice(0, MAX_DEFERRED_FOLLOWUPS)) {
+        followups.push({
+          prompt: deferred.question
+            ? `At ${deferred.nodeId}: ${deferred.question}`
+            : `Continue the trace at ${deferred.nodeId}.`,
+          label: vscode.l10n.t('Continue at {0}', deferred.nodeId),
+        });
+      }
     }
     if (session.lastPresentResultDescription) {
       followups.push({

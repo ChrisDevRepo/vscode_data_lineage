@@ -32,22 +32,14 @@ export type WirePart =
       readonly callId: string;
       readonly content: readonly WirePart[];
     }
-  // Preserve unknown result-part variants so wire capture remains total across VS Code API changes.
+  /** Preserve unknown result-part variants so wire capture remains total across VS Code API changes. */
   | { readonly type: 'other'; readonly json: string };
 
 /** One converted message as handed to the provider. */
 export interface WireMessage {
-  /**
-   * The role exactly as the lane spells it — never a normalized label.
-   *
-   * @remarks
-   * The `vscode.lm` lane records the raw `LanguageModelChatMessageRole` integer; that API exposes
-   * user and assistant roles but no system role, so the port projects system instructions onto the
-   * supported request shape before capture. Lanes speaking an OpenAI-compatible protocol record the
-   * wire string (`'system'`/`'user'`/`'assistant'`/`'tool'`) instead. Both are kept verbatim so a
-   * trace never claims a role its provider never saw.
-   */
+  /** The role exactly as the lane spells it, never normalized — `vscode.lm` records the raw `LanguageModelChatMessageRole` integer (no system role in that API), OpenAI-compatible lanes record the wire string, and both are kept verbatim so a trace never claims a role its provider never saw. */
   readonly role: number | string;
+  /** Message content parts, shaped exactly as they sit on the wire. */
   readonly parts: readonly WirePart[];
 }
 
@@ -59,8 +51,11 @@ export interface WireMessage {
  * exposes none at all. An absent field means "not reported", never zero.
  */
 export interface TokenUsage {
+  /** Provider-reported prompt (input) token count; absent when not reported. */
   readonly inputTokens?: number;
+  /** Provider-reported completion (output) token count; absent when not reported. */
   readonly outputTokens?: number;
+  /** Provider-reported total token count; absent when not reported. */
   readonly totalTokens?: number;
   /** Reasoning tokens billed separately by reasoning models, when the provider itemizes them. */
   readonly reasoningTokens?: number;
@@ -71,18 +66,11 @@ export type WireEvent =
   | {
       readonly type: 'wire-request';
       readonly messages: readonly WireMessage[];
-      /** The tool input schema is the field no other capture surface exposes. */
-      readonly tools: ReadonlyArray<{ readonly name: string; readonly inputSchema: unknown }>;
+      /** The tool input schema is the field no other capture surface exposes; the description rides as its {@link systemPromptHash} digest, so a trace proves which revision the model received. */
+      readonly tools: ReadonlyArray<{ readonly name: string; readonly descriptionHash: string; readonly inputSchema: unknown }>;
       /** `LanguageModelChatToolMode` integer, absent when the request carries no tools. */
       readonly toolMode?: number;
-      /**
-       * The verbatim system instruction, captured only while the trace runs verbose.
-       *
-       * @remarks
-       * The system prompt is the largest single payload in a turn and it is the same text on every
-       * generation, so the default trace records {@link systemHash} alone. Verbose mode exists for
-       * the case the hash cannot answer: proving *which* prompt revision a bad answer came from.
-       */
+      /** The verbatim system instruction, captured only while the trace runs verbose; the default trace records {@link systemHash} alone since the prompt is unchanged across generations, and verbose mode exists to prove which prompt revision a bad answer came from. */
       readonly system?: string;
       /** SHA-256 of the system instruction ({@link systemPromptHash}); always present when one was sent. */
       readonly systemHash?: string;
@@ -105,17 +93,7 @@ export type WireEvent =
       readonly diagnostic: ProviderErrorDiagnostic;
     }
   | {
-      /**
-       * One completed generation, summarized: which model answered, how it stopped, how long it
-       * took, and what it cost.
-       *
-       * @remarks
-       * Deliberately separate from `wire-response`, which is the payload. This is the row a
-       * measurement reads, and it is the only record naming the model in CLEAR TEXT — the lifecycle
-       * `turn-start` record carries a `modelFingerprint` hash, which cannot answer "which model
-       * misbehaved" when comparing lanes. A model id is a public product identifier, never a
-       * credential.
-       */
+      /** One completed generation, summarized: which model answered, how it stopped, how long it took, and what it cost — deliberately separate from `wire-response` (the payload); the only record naming the model in CLEAR TEXT, since a `modelFingerprint` hash cannot answer which model misbehaved and a model id is a public identifier, never a credential. */
       readonly type: 'generation';
       readonly modelId: string;
       readonly finishReason: string;
@@ -123,14 +101,7 @@ export type WireEvent =
       readonly usage?: TokenUsage;
     }
   | {
-      /**
-       * One verbatim provider HTTP body, captured only while the trace runs verbose.
-       *
-       * @remarks
-       * Bodies only. Request headers are never captured on any lane and no field of this record may
-       * ever hold them: the Authorization header is where the credential lives, and a trace the user
-       * is invited to attach to a bug report must be safe to attach.
-       */
+      /** One verbatim provider HTTP body, captured only while the trace runs verbose; bodies only — request headers are never captured on any lane, since the Authorization header is where the credential lives and a trace attached to a bug report must be safe to attach. */
       readonly type: 'provider-raw';
       readonly direction: 'request' | 'response';
       readonly url: string;
@@ -208,7 +179,6 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
   ) {
     return value;
   }
-  // `JSON.stringify` drops these silently; the trace records them so the reader sees what was sent.
   if (typeof value === 'symbol' || typeof value === 'function') return String(value);
   if (typeof value !== 'object') return String(value);
   if (ancestors.has(value)) return '[Circular]';
@@ -219,9 +189,6 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
       return value.map((entry) => toJsonSafeValue(entry, ancestors));
     }
 
-    // Built-ins with no own enumerable keys: the generic object path below would record them as
-    // `{}` and lose content `JSON.stringify` alone would have kept (a `Date` emits its ISO string
-    // through `toJSON`). Representable content is never degraded — that is this module's contract.
     if (value instanceof Date) {
       return Number.isNaN(value.getTime()) ? '[Invalid Date]' : value.toISOString();
     }

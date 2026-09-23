@@ -18,33 +18,59 @@ export const ASYMMETRIC_DEPTH_BOTH_ZERO = 'asymmetric_depth_both_zero';
 export const ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL = 'asymmetric_depth_requires_bidirectional';
 
 /**
+ * Decodes a JSON-string-encoded non-negative integer (`"2"`) into its number before validation.
+ *
+ * @remarks
+ * Encoding-only normalization per the middleware contract, and the depth-scalar sibling of
+ * `coercedStringArray` / `coercedStringObject` / `coercedBoolean` in `ai/support/
+ * inputNormalization.ts` — kept here rather than imported from there because `engine/shared`
+ * must not reach into `src/ai/**`. Only a canonical unsigned integer literal is unwrapped; every
+ * other value (`"1.5"`, `"-1"`, `""`, `"all"`, a pseudo-XML blob, a boolean, an object) passes
+ * through untouched so the wrapped schema's own rejection surfaces unchanged. Deliberately NOT
+ * `z.coerce.number()` — that also turns `true` and `null` into `1`/`0`, accepting an input whose
+ * intent was never a depth. The wrapped bounds still decide the value: a top-level `"0"` remains
+ * rejected by `.min(1)`. Transparent to `z.toJSONSchema` (`io: 'input'`), so the model-facing
+ * tool schema is byte-identical to today's.
+ *
+ * @param schema - The numeric schema to wrap, with its own `.int()` and bounds applied.
+ * @returns The preprocess-wrapped schema; output type is identical to the wrapped schema.
+ */
+function numericStringDepth<T extends z.ZodType>(schema: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' && /^(?:0|[1-9]\d*)$/.test(value) ? Number(value) : value),
+    schema,
+  );
+}
+
+/**
  * One AI-selected starting depth for hop-by-hop exploration.
  *
  * @remarks
- * Deliberately plain `z.number()`, not `z.coerce.number()`: a top-level `depth: "2"` is pinned
- * rejected rather than silently coerced (`start-exploration-schema.test.ts`). Contrast
- * {@link ExplorationDepthSideSchema}, which does coerce — that field only ever appears paired
- * with the quoted literal `'all'` inside {@link AsymmetricExplorationDepthSchema}, the specific
- * shape that invites a provider to quote both sides.
+ * The numeric branch is wrapped in {@link numericStringDepth} for the same reason as
+ * {@link ExplorationDepthSideSchema}: this branch is rendered next to the quoted literal `'all'`
+ * in the same `anyOf`, which invites a provider to quote the number too. Both sides of the contract
+ * therefore accept the identical encoding — one union, one policy. The wrapped bounds still decide
+ * the value: a quoted `"0"` stays rejected here by `.min(1)`.
  */
-const ExplorationDepthLimitSchema = z.union([z.number().int().min(1), z.literal('all')]);
+export const ExplorationDepthLimitSchema = z.union([numericStringDepth(z.number().int().min(1)), z.literal('all')]);
 
 /**
  * One side of an asymmetric depth pair. Unlike {@link ExplorationDepthLimitSchema}, 0 is a
  * valid side value here — it PERMANENTLY disables that direction for the rest of the session
  * (no starting seed, and every later route/contraction admission in that direction is rejected
- * at {@link BorderPurpose} `'route'`/`'ct_contraction'` — see `isReachableInApprovedDirection` in
+ * at {@link BorderPurpose} `'route'`/`'contraction'` — see `isReachableInApprovedDirection` in
  * `smBase.ts`), the mechanism for a lopsided proposal (e.g. `{upstream: 2, downstream: 0}`).
- * Omitted/`null` is a distinct "unstated" signal — it resolves to the reviewed default of 3,
- * independently per side, exactly like the top-level {@link ExplorationDepthSelectionSchema}.
- * `z.coerce.number()` on the numeric branch for the same reason as {@link ExplorationDepthLimitSchema}.
+ * Omitted/`null` is a distinct "unstated" signal — that side alone starts at the soft default seed
+ * of 3 and grows, with no border, exactly like an omitted top-level {@link ExplorationDepthSelectionSchema}.
+ * {@link numericStringDepth} on the numeric branch for the same reason as
+ * {@link ExplorationDepthLimitSchema}.
  */
-const ExplorationDepthSideSchema = z.union([z.coerce.number().int().min(0), z.literal('all')]);
+const ExplorationDepthSideSchema = z.union([numericStringDepth(z.number().int().min(0)), z.literal('all')]);
 
 /**
  * Independent starting depths for a bidirectional exploration proposal. Each side independently
  * accepts a positive integer, `"all"`, `0` (permanently disables that direction), or omitted/
- * `null` (defaults to 3 — see {@link resolveDepthIntent} in `smTypes.ts`). Both sides `0` is
+ * `null` (the soft default seed of 3 — see `resolveDepthIntent` in `smTypes.ts`). Both sides `0` is
  * structurally rejected — that combination seeds an empty scope, which is never intentional.
  */
 const AsymmetricExplorationDepthSchema = z.object({

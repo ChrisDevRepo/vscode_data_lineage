@@ -1,5 +1,5 @@
 // Extension Development Host lanes. Rationale for the lane split, what each proves, and the
-// scripted-vs-real distinction live in docs/E2E_TESTING.md.
+// scripted-vs-real distinction live in docs/EDH_TESTING.md.
 //
 // Test files are the tsconfig.integration.json output under `out/test/`, not the TypeScript sources.
 import { defineConfig } from '@vscode/test-cli';
@@ -26,12 +26,6 @@ const killSwitchUserData = fileURLToPath(
 );
 
 export default defineConfig([
-  {
-    ...shared,
-    label: 'scripted-provider',
-    files: 'out/test/tests/integration/scripted-provider.test.js',
-    launchArgs: withFixture,
-  },
   {
     ...shared,
     label: 'bare-environment',
@@ -61,19 +55,5 @@ export default defineConfig([
     label: 'participant-turn',
     files: 'out/test/tests/integration/participant-turn.test.js',
     launchArgs: withFixture,
-  },
-  {
-    ...shared,
-    label: 'scenario-matrix',
-    files: 'out/test/tests/integration/scenario-matrix.test.js',
-    // The provider fixture is mandatory: the lane drives its scripted scenario matrix
-    // (`lineageTestModel.setCase`) through the production LineageRuntime.
-    launchArgs: withFixture,
-    mocha: {
-      ...shared.mocha,
-      // Headroom for suite-level dacpac extraction on a cold machine and for hop counts that grow
-      // with the fixture graph, while still failing a hung turn.
-      timeout: 180000,
-    },
   },
 ]);

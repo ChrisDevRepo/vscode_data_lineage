@@ -1,0 +1,192 @@
+/**
+ * Approval contract: the plan shown at the consent gate is the plan the engine runs.
+ *
+ * @remarks
+ * The gate is where a rule becomes binding, so display and enforcement are pinned as one
+ * fact per rule kind: a hard rule renders as fixed and the engine refuses to pass it, a
+ * soft rule renders as an estimate and stays growable, an approved filter renders as
+ * chosen and the engine applies it at every border it checks. A divergence between what
+ * the user approved and what the engine did fails here, in whichever half moved.
+ *
+ * These tests pin the CONTRACT, never a captured answer.
+ */
+import { renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRenderer';
+import { AiSession } from '../../../src/ai/session/session';
+import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
+import { makeGraph } from '../helpers/testUtils';
+import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
+import { describe, expect, it } from 'vitest';
+
+describe('Approval binds the engine — hard vs soft, and every approved filter', () => {
+  const nodes: LineageNode[] = ['n0', 'n1', 'n2', 'n3'].map(id =>
+    makeNode({ id, schema: 'dbo', name: id, type: 'view' }),
+  );
+  const edges: Array<[string, string]> = [['n0', 'n1'], ['n1', 'n2'], ['n2', 'n3']];
+  const model: DatabaseModel = makeModel(nodes, edges, ['dbo']);
+  const graph = makeGraph(nodes, edges);
+  const succ: Record<string, string | undefined> = { n0: 'n1', n1: 'n2', n2: 'n3' };
+
+  function newEngine(): NavigationEngine {
+    return new NavigationEngine(model, graph, () => {}, {});
+  }
+
+  /** Drives the chain to completion, routing one hop further at every focus. */
+  function drain(engine: NavigationEngine): void {
+    driveEngine(engine, { succ, limit: 20 });
+  }
+
+  function analyzed(engine: NavigationEngine): Set<string> {
+    return new Set(engine.getResult().detail_slots.map(s => s.nodeId.toLowerCase()));
+  }
+
+  function inScope(engine: NavigationEngine): Set<string> {
+    const summary = engine.getScopeSummary();
+    const ids = new Set<string>();
+    for (const schema of Object.values(summary.bySchema)) {
+      for (const leaf of Object.values(schema.byType)) {
+        for (const name of leaf.nodeNames) ids.add(name.toLowerCase());
+      }
+    }
+    return ids;
+  }
+
+  it('A1: a user-stated depth renders as fixed and the engine refuses to pass it', () => {
+    const engine = newEngine();
+    engine.init({
+      origin: 'n0', question: 'trace two levels down', direction: 'downstream',
+      depthIntent: { kind: 'explicit', levels: 2 },
+    });
+    const md = renderScopeSummaryMd(engine.getScopeSummary());
+    expect(!md.includes('≈'), `a stated depth must not render as an estimate:\n${md}`).toBe(true);
+    expect(md.includes('**From your question**'), `a stated depth sits under the user's words:\n${md}`).toBe(true);
+    expect(md.includes('2 levels downstream'), `a stated depth keeps its ceiling:\n${md}`).toBe(true);
+    expect(engine.currentDepthEnforcement === 'strict', 'a stated depth enforces strictly').toBe(true);
+    drain(engine);
+    expect(analyzed(engine).has('n2'), 'the node at the approved border is still analysed').toBe(true);
+    expect(!analyzed(engine).has('n3'), 'nothing past the approved border is analysed').toBe(true);
+  });
+
+  it('A2: an assistant-chosen depth renders as an estimate and stays growable', () => {
+    const engine = newEngine();
+    engine.init({
+      origin: 'n0', question: 'trace downstream', direction: 'downstream',
+      depthIntent: { kind: 'default_start' },
+    });
+    const md = renderScopeSummaryMd(engine.getScopeSummary());
+    expect(md.includes('≈'), `an inferred depth must render as an estimate:\n${md}`).toBe(true);
+    expect(md.includes('**My plan**'), `an inferred depth sits under the assistant's plan:\n${md}`).toBe(true);
+    expect(engine.currentDepthEnforcement === 'silent', 'an inferred depth stays growable').toBe(true);
+  });
+
+  it('A2b: an unbounded plan states all levels', () => {
+    const engine = newEngine();
+    engine.init({
+      origin: 'n0', question: 'trace every level downstream', direction: 'downstream',
+      depthIntent: { kind: 'full_frontier' },
+    });
+    const md = renderScopeSummaryMd(engine.getScopeSummary());
+    expect(md.includes('Depth:'), `an unbounded plan must still state a depth:\n${md}`).toBe(true);
+    expect(md.includes('all levels'), `an unbounded plan names all levels:\n${md}`).toBe(true);
+  });
+
+  it('A2c: an unbounded side is never summarised as the other side\'s ceiling', () => {
+    const engine = newEngine();
+    engine.init({
+      origin: 'n0', question: 'trace all upstream and two down', direction: 'bidirectional',
+      depthIntent: { kind: 'asymmetric', upstream: 'all', downstream: 2 },
+    });
+    const summary = engine.getScopeSummary();
+    expect(summary.depth === null, `a scalar cap must not be claimed while a side is unbounded, got ${String(summary.depth)}`).toBe(true);
+    const md = renderScopeSummaryMd(summary);
+    expect(md.includes('all levels upstream'), `the unbounded side must say so:\n${md}`).toBe(true);
+    expect(md.includes('2 levels downstream'), `the capped side must keep its ceiling:\n${md}`).toBe(true);
+  });
+
+  it('A3: an approved exclusion removes the node and what only it reaches', () => {
+    const engine = newEngine();
+    engine.init({
+      origin: 'n0', question: 'trace downstream, skip n2', direction: 'downstream',
+      depthIntent: { kind: 'full_frontier' }, excludeNodeIds: ['n2'],
+    });
+    const md = renderScopeSummaryMd(engine.getScopeSummary());
+    expect(md.includes('removed from the graph'), `an exclusion must render as a removal:\n${md}`).toBe(true);
+    expect(!inScope(engine).has('n2'), 'an excluded node is out of scope').toBe(true);
+    drain(engine);
+    expect(!analyzed(engine).has('n2'), 'an excluded node is never analysed').toBe(true);
+    expect(!analyzed(engine).has('n3'), 'a node reachable only through an exclusion is not analysed').toBe(true);
+  });
+
+  it('A4: an approved passthrough keeps the node in the graph and keeps the path open', () => {
+    const engine = newEngine();
+    engine.init({
+      origin: 'n0', question: 'trace downstream, keep n2 but do not analyse it',
+      direction: 'downstream', depthIntent: { kind: 'full_frontier' }, passNodeIds: ['n2'],
+    });
+    const md = renderScopeSummaryMd(engine.getScopeSummary());
+    expect(md.includes('not analysed'), `a passthrough must render as kept-but-skipped:\n${md}`).toBe(true);
+    expect(inScope(engine).has('n2'), 'a passthrough node stays in scope').toBe(true);
+    drain(engine);
+    expect(!analyzed(engine).has('n2'), 'a passthrough node is not analysed').toBe(true);
+    expect(analyzed(engine).has('n3'), 'a passthrough keeps the path through it open').toBe(true);
+  });
+
+  it('A5: an unresolvable filter fails init, so no plan reaches the gate', () => {
+    const engine = newEngine();
+    const result = engine.init({
+      origin: 'n0', question: 'trace downstream', direction: 'downstream',
+      depthIntent: { kind: 'full_frontier' }, excludeNodeIds: ['nowhere'],
+    });
+    expect('error' in result, 'an unknown filter id must reject rather than silently no-op').toBe(true);
+    expect((result as { unresolved_excludeNodeIds?: string[] }).unresolved_excludeNodeIds?.includes('nowhere') === true, 'the rejection names the id that could not be resolved').toBe(true);
+  });
+
+  const EMPTY_FILTER = {
+    schemas: [], types: [], hideIsolated: false, focusSchemas: [],
+    showExternalRefs: false, externalRefTypes: [],
+  };
+
+  /** Stores one reviewable proposal on `session` and returns its revision. */
+  function storeProposal(session: AiSession, epoch: number, engine: NavigationEngine): number {
+    session.storePendingExploration({
+      init: { question: 'trace downstream', origin: 'n0', analysisMode: 'bb', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } },
+      classification: 'business',
+      activeFilter: EMPTY_FILTER,
+      summary: engine.getScopeSummary(),
+    }, epoch);
+    return session.pendingExploration!.revision;
+  }
+
+  it('A6: the memo attached at proposal reaches the engine as the same text at approval', () => {
+    const session = new AiSession();
+    const epoch = session.beginTurn();
+    const engine = newEngine();
+    engine.init({ origin: 'n0', question: 'trace downstream', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+    const revision = storeProposal(session, epoch, engine);
+
+    const memo = 'The user asked which reports depend on n0; n0 feeds a two-level chain.';
+    session.attachDiscoverySummary(revision, memo, epoch);
+    const reviewed = session.pendingExploration!.discoverySummary;
+    expect(reviewed === memo, 'the attached memo is the reviewed proposal text, not a copy').toBe(true);
+
+    const outcome = session.activatePendingExploration(revision, epoch, () => engine);
+    expect(outcome.kind === 'accepted', `approval accepts the reviewed revision (got ${outcome.kind})`).toBe(true);
+    expect(session.pendingExploration === null, 'activation consumes the proposal, so the memo must be read before it').toBe(true);
+    engine.setDiscoverySummary(reviewed!);
+    expect(engine.getDiscoverySummary() === memo, 'the engine carries the reviewed memo verbatim').toBe(true);
+  });
+
+  it('A6b: a memo composed against a superseded revision never replaces the reviewed one', () => {
+    const session = new AiSession();
+    const epoch = session.beginTurn();
+    const engine = newEngine();
+    engine.init({ origin: 'n0', question: 'trace downstream', direction: 'downstream', depthIntent: { kind: 'explicit', levels: 2 } });
+    const first = storeProposal(session, epoch, engine);
+    session.attachDiscoverySummary(first, 'memo for the first revision', epoch);
+
+    const second = storeProposal(session, epoch, engine);
+    expect(second !== first, 'a refine round produces a new revision').toBe(true);
+    session.attachDiscoverySummary(first, 'a late compose for the revision the user already left', epoch);
+    expect(session.pendingExploration!.discoverySummary === undefined, 'the superseded compose is dropped rather than shown as the reviewed memo').toBe(true);
+  });
+});

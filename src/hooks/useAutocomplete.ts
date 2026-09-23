@@ -26,7 +26,6 @@ export function useAutocomplete(suggestions: AutocompleteNode[], inputValue: str
 
   const close = useCallback(() => setIsOpen(false), []);
 
-  // Capture phase: fires before ReactFlow's pane stopPropagation
   useEffect(() => {
     if (!isOpen) return;
     const onMouseDown = (e: MouseEvent) => {

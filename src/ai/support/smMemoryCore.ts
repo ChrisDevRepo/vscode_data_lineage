@@ -2,14 +2,9 @@
  * Pure SM sliding-memory policy for the native LangGraph host.
  *
  * @remarks
- * The host runs active analysis as serial LangGraph worker calls. Sliding wipe is applied at the graph
- * hop boundary. This module holds provider-neutral trimming logic over LangChain messages —
- * no VS Code calls and no session state — so it is deterministically unit-testable without
- * a live model.
- *
- * The hop-boundary decision itself (when to wipe) is the engine's authoritative `getHopDiagnostics().hop`
- * counter, read by the host closure — not re-derived here. This module only answers *how* to trim once
- * the host decides a wipe is due.
+ * The graph reseeds the thread to a single continuation anchor at approval and after every
+ * committed hop, so nothing needs trimming there. This module handles the one remaining case —
+ * the active loop stopping incomplete — by keeping the anchor plus the last well-formed tool pair.
  */
 
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -40,7 +35,6 @@ function assistantCallIds(msg: ModelMessage): Set<string> {
  * `tool`-role message whose tool-call ids are all answered by the assistant message immediately
  * before it.
  *
- * @param messages - The array of history messages to search.
  * @returns The index pair, or `null` when no well-formed adjacency exists (so the caller keeps
  * neither half — there is no path that produces an orphaned tool-result).
  */
@@ -56,21 +50,16 @@ function findLastToolPair(messages: readonly ModelMessage[]): ToolPairIndices | 
 }
 
 /**
- * Extracts the sliding-memory tail from the accumulated history: a single leading user anchor
- * plus the last well-formed tool pair. This provides the Short-Term Memory view for the AI
- * without destructively wiping the underlying state.
+ * Extracts the tail worth keeping from an accumulated history: a single leading user anchor plus
+ * the last well-formed tool pair. Used when the active loop ends incomplete; a committed hop is
+ * reseeded to the anchor alone by the graph.
  *
  * @remarks
  * The stable prefix (mission brief, contract, discovery summary) rides in the re-rendered `system`
  * override, not in `messages`; the rolling `<short_term_memory>` block rides in the per-hop user
- * message. The extracted array needs only the user anchor
- * (so the conversation still leads with a user turn, which strict providers require) and the most
- * recent `(tool-call, tool-result)` pair for continuity. When no pair exists the array degrades to the anchor
- * alone; it never emits an orphaned tool-result.
+ * message.
  *
- * @param messages - The in-flight accumulated history for the upcoming step.
  * @param anchor - The synthesized leading user message (host-owned continuation directive).
- * @returns The sliced `ModelMessage[]` to send for this step.
  */
 export function extractShortTermMemory(messages: readonly ModelMessage[], anchor: ModelMessage): ModelMessage[] {
   const pair = findLastToolPair(messages);

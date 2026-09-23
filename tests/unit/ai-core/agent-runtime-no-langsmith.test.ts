@@ -38,10 +38,10 @@ describe('AgentRuntime LangSmith egress boundary', () => {
     vi.stubGlobal('fetch', fetchSpy);
     const httpSpy = vi.spyOn(http, 'request').mockImplementation((() => {
       throw new Error('unexpected HTTP request');
-    }) as typeof http.request);
+    }));
     const httpsSpy = vi.spyOn(https, 'request').mockImplementation((() => {
       throw new Error('unexpected HTTPS request');
-    }) as typeof https.request);
+    }));
 
     const session = {
       currentRoundId: 0,
@@ -61,7 +61,6 @@ describe('AgentRuntime LangSmith egress boundary', () => {
     expect(runtime.lastFailureDetail?.message).toContain(
       'External LangChain tracing is not supported by @lineage',
     );
-    // Give any accidentally queued transport enough time to attempt egress.
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(graph.invoke).not.toHaveBeenCalled();
@@ -97,7 +96,6 @@ describe('AgentRuntime cancellation truth', () => {
   it('closes as cancelled when the abort fired mid-invoke, even if the graph returned ok', async () => {
     const controller = new AbortController();
     graph.invoke.mockImplementation(async () => {
-      // The user presses Stop while a node is executing; the graph still completes its state.
       controller.abort();
       return { outcome: 'ok' };
     });
@@ -115,21 +113,11 @@ describe('AgentRuntime cancellation truth', () => {
     expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();
   });
 
-  it('classifies a port cancellation as cancelled even when the runtime signal never fired', async () => {
-    graph.invoke.mockImplementation(async () => {
-      throw new ModelPortError('cancelled', 'Language model request was cancelled.');
-    });
-    const runtime = makeRuntime(new AbortController().signal);
-    await expect(runtime.run('q')).resolves.toBe('cancelled');
-    expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();
-  });
-
-  it('classifies an AbortError-named throw as cancelled even when the runtime signal never fired', async () => {
-    graph.invoke.mockImplementation(async () => {
-      const err = new Error('This operation was aborted');
-      err.name = 'AbortError';
-      throw err;
-    });
+  it.each([
+    ['a port cancellation', () => new ModelPortError('cancelled', 'Language model request was cancelled.')],
+    ['an AbortError-named throw', () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })],
+  ])('classifies %s as cancelled even when the runtime signal never fired', async (_title, makeError) => {
+    graph.invoke.mockImplementation(async () => { throw makeError(); });
     const runtime = makeRuntime(new AbortController().signal);
     await expect(runtime.run('q')).resolves.toBe('cancelled');
     expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();

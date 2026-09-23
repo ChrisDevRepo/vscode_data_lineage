@@ -1,20 +1,32 @@
-import type { ColumnEdge, SmNodeState } from '../sm/smTypes';
+import type { ColumnEdge, SmNodeState, SmState } from '../sm/smTypes';
 import type { AIViewMetadata } from '../../engine/projectStore';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
 export interface DiscoveryScopeArtifact {
+  /** Epoch of the host turn that captured this scope; consumers require it to match the live turn. */
   readonly turnEpoch: number;
+  /** Canonical id of the node the BFS walked from. */
   readonly origin: string;
+  /** Direction the scope was walked in. */
   readonly direction: 'upstream' | 'downstream' | 'bidirectional';
+  /** Ids of every node in the scope, origin included. */
   readonly nodeIds: readonly string[];
+  /** Tuple representation of the scope's edges: [sourceNodeId, targetNodeId, edgeType]. */
   readonly edges: readonly [string, string, string][];
 }
 
 /** Validated presentation committed by either a bounded preview or SM synthesis. */
 export interface PresentationArtifact {
+  /** Display name of the presented view. */
   readonly name: string;
+  /** Canonical node ids rendered in the view. */
   readonly nodeIds: readonly string[];
+  /** Validated AI view metadata; `summary` and `description` are always present. */
   readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
+  /** Identifier of the run that authored this presentation. */
+  readonly runId?: string;
+  /** Engine checkpoint captured at present time; absent when no exploration engine was live. */
+  readonly checkpoint?: SmState;
 }
 
 /**
@@ -39,11 +51,7 @@ export interface ResultGraph {
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /** Engine-owned lifecycle state for nodes; detail slots are content only. */
   node_states?: SmNodeState[];
-  /**
-   * Engine-assembled markdown body produced by `present_result` (engine output, not AI input).
-   * Populated by the tool handler from `orderAndAssemble()` output so `GET /session/:id/state`
-   * carries the full synthesized description, not just topology + suggested_* fields.
-   */
+  /** Engine-assembled markdown body from `present_result` (engine output, not AI input) — carries the full synthesized description, not just topology. */
   description?: string;
   /** AI-supplied one-line digest from `present_result.input.summary`. */
   summary?: string;
@@ -55,10 +63,9 @@ export interface ResultGraph {
   closing?: string;
   /** AI-supplied report sections from `present_result.input.sections[]`. */
   sections?: Array<{ label: string; node_ids?: string[]; text?: string }>;
-  /**
-   * Column lineage chain from a CT session, serialized into AI metadata for React canvas
-   * rendering. `ctPrunedNodeIds` identifies visited nodes that contributed no flow edges.
-   */
+  /** The `explorationRunId` that authored {@link sections} — distinguishes sections a later render may retain from ones left over from a previous run. */
+  sectionsRunId?: string;
+  /** Column lineage chain from a CT session; `ctPrunedNodeIds` are visited nodes with no flow edges. */
   columnAspect?: { edges: ColumnEdge[]; ctPrunedNodeIds: string[] };
 }
 
@@ -66,16 +73,10 @@ export interface ResultGraph {
  * Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure).
  *
  * @remarks
- * The single source of truth for template-structure compatibility. The built-in YAML carries a
- * matching `schemaVersion`; a user's custom overlay (`ai.outputTemplateFile`) is honoured only when
- * its `schemaVersion` equals this. **Bump this whenever a released change to the built-in YAML would
- * make a previous release's overlay wrong** — a key renamed/removed, the `instruction` shape changed,
- * or an instruction's *content* changed a rule `validatePresentResult` enforces (heading ownership,
- * section counts, grounding). Content is deliberately NOT exempt: an overlay that still clears the
- * version gate keeps instructing the model against the current validator, and that silent
- * mis-application is the failure this gate exists to prevent. Additive-only changes (a new optional
- * key that older YAML simply lacks) do NOT require a bump — the overlay tolerates absent keys.
- * `tests/tools/assert-template-schema-version.mjs` fails the gate when the asset changes without one.
+ * A user's custom overlay (`ai.outputTemplateFile`) is honoured only when its `schemaVersion`
+ * equals this. Bump only when a released change would break a previous overlay (a key/field
+ * removed or retyped); an added key or wording change never bumps. On mismatch the overlay is
+ * skipped with an Output-channel warning — no migration code.
  */
 export const AI_TEMPLATE_SCHEMA_VERSION = 2;
 
@@ -87,13 +88,7 @@ export const AI_TEMPLATE_SCHEMA_VERSION = 2;
  * and guide the AI in synthesizing its findings into a structured, user-friendly report.
  */
 export interface AiOutputTemplates {
-  /**
-   * Discovery-phase chat output — editable via the YAML overlay for tuning
-   * answer length, citation discipline, single-vs-balanced format, no-padding
-   * rule, and the biz / tech / math reference shapes used when writing chat
-   * prose. NOT a capture template; full angle templates ship only after SM
-   * gate approval.
-   */
+  /** Discovery-phase chat output — tunes answer length, citation and format; NOT a capture template. */
   discovery_chat: string;
   /** Instructions for generating the high-level summary. */
   summary: string;
@@ -123,6 +118,12 @@ export interface AiOutputTemplates {
    * synthesis already formatted and is lifted verbatim.
    */
   technical_capture: string;
+  /**
+   * The ⚠️ structural-callout contract — fired at ACTIVE phase on every bodied focus,
+   * once per hop beside whichever capture recipes the classification fires. One home for the
+   * exposure classes and the one-line form both angles cite.
+   */
+  structural_callouts: string;
   /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/Downstream/Grain). */
   structural_summary: string;
   /**
@@ -164,6 +165,7 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   notes: '',
   business_capture: '',
   technical_capture: '',
+  structural_callouts: '',
   structural_summary: '',
   general: '',
   loading_pattern: '',

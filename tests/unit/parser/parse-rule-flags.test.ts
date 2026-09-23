@@ -41,7 +41,6 @@ describe('parse rule regex flags', () => {
     expect(result.skipped).toEqual(['scan_openrowset']);
     expect(result.errors[0]).toContain('scan_openrowset');
     expect(result.errors[0]).toContain("must include 'g'");
-    // Rejecting the only rule leaves no rule set, which is the existing fallback contract.
     expect(result.usedDefaults).toBe(true);
   });
 
@@ -58,6 +57,31 @@ describe('parse rule regex flags', () => {
     expect(result.loaded).toBe(1);
     expect(result.skipped).toEqual([]);
     expect(result.errors).toEqual([]);
+  });
+
+  const valid = externalRefRule('gi').rules![0] as unknown as Record<string, unknown>;
+  it.each([
+    ['not an object', 'x', 'not an object'],
+    ['a missing name', { ...valid, name: '' }, "missing 'name'"],
+    ['a missing pattern', { ...valid, pattern: '' }, "missing 'pattern'"],
+    ['an unknown category', { ...valid, category: 'sink' }, "invalid category 'sink'"],
+    ['an external_ref rule without kind', { ...valid, kind: '' }, "require a non-empty 'kind'"],
+    ['a missing priority', { ...valid, priority: '50' }, "missing or invalid 'priority'"],
+    ['missing flags', { ...valid, flags: undefined }, "missing 'flags'"],
+    ['an empty-matching pattern', { ...valid, pattern: 'a*' }, 'matches empty string'],
+    ['an uncompilable pattern', { ...valid, pattern: '(' }, 'invalid regex'],
+  ])('rejects %s', (_title, rule, error) => {
+    const result = loadRules({ rules: [rule] } as unknown as RawParseRulesConfig);
+
+    expect(result.loaded).toBe(0);
+    expect(result.errors[0]).toContain(error);
+  });
+
+  it('falls back to defaults when the rules array is missing', () => {
+    const result = loadRules({} as RawParseRulesConfig);
+
+    expect(result.errors).toEqual(['YAML missing "rules" array']);
+    expect(result.usedDefaults).toBe(true);
   });
 
   it('leaves every shipped rule loadable', () => {

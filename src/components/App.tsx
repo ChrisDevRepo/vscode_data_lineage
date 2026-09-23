@@ -14,14 +14,15 @@ import { deriveModeCapabilities } from '../engine/modeCapabilities';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
-import type { DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, GraphMode } from '../engine/types';
+import type { ColumnTraceNodeData, DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, GraphMode } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
 import { computeSchemas } from '../engine/modelBuilder';
 import { reconcileAiView } from './aiViewReconcile';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, type BridgeEnvelope } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
+import { notifyUser } from '../utils/notify';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
@@ -50,14 +51,14 @@ const DACPAC_TIMEOUT_MS = 20_000;
 const DB_TIMEOUT_MS = 60_000;
 /** Minimum time to show the loading spinner to prevent visual flickering. */
 const MIN_SPINNER_MS = 1200;
-
 /**
- * Viewport margins reserved when positioning the object context menu, so a menu opened
- * near the right/bottom edge stays fully on screen. Values approximate the menu's rendered
- * footprint; keep in sync with NodeContextMenu.
+ * How long the rebuild spinner waits for the host's `rebuild-config` reply before giving up.
+ *
+ * @remarks
+ * The spinner is cleared only by that reply, so a dropped message would otherwise pin the toolbar
+ * in a rebuilding state with no way out.
  */
-const OBJECT_CONTEXT_MENU_WIDTH = 200;
-const OBJECT_CONTEXT_MENU_HEIGHT = 250;
+const REBUILD_TIMEOUT_MS = 15_000;
 
 /**
  * Computes the set of schemas that are immediate neighbors of a target schema.
@@ -134,7 +135,6 @@ export function App() {
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [startScreenMessage, setStartScreenMessage] = useState<string | null>(null);
 
-  // Graph source name (for toolbar/export)
   const [sourceName, setSourceName] = useState<string | null>(isAutoVisualize ? 'AdventureWorks (demo)' : null);
 
   const [filter, setFilter] = useState<FilterState>({
@@ -181,13 +181,8 @@ export function App() {
    */
   const rebuild = useCallback(
     (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false, modeOverride?: GraphMode): number => {
-      // `forceLayout` controls *scheduling* (synchronous vs. transition); `skipLayout` controls
-      // *what* is built (Schema View skips Dagre). They are orthogonal — derive skipLayout from the
-      // intended mode so a synchronous rebuild in Schema View does not fall back to full Dagre.
-      // Callers that flip the mode in the same tick must pass `modeOverride` (state is still stale here).
       const mode = modeOverride ?? graphMode;
       const skipLayout = mode === 'overview';
-      // When forceLayout is true, run synchronously for callers that need the count immediately.
       if (forceLayout) {
         return buildFromModel(m, f, cfg || config, skipLayout);
       }
@@ -236,19 +231,15 @@ export function App() {
     [rebuild, config, vscodeApi]
   );
 
-  // pendingVisualize / pendingAutoVisualize → triggers handleVisualize → then view→graph
   useEffect(() => {
     if (!dacpacLoader.model || dacpacLoader.isLoading) return;
 
     if (dacpacLoader.pendingAutoVisualize) {
-      // No view guard — auto-visualize fires from any state (sidebar demo, startup, button)
 
       setSourceName(dacpacLoader.fileName || 'Demo');
       setView('visualizing');
       setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
-      // Panel restore: projects-list was sent before dacpac-model, so lastOpenedId is current.
-      // Demo: isDemo=true → skip, demo has no project.
       if (!dacpacLoader.isDemo && lastOpenedId) setActiveProjectId(lastOpenedId);
       dacpacLoader.clearAutoVisualize();
     } else if (dacpacLoader.pendingVisualize) {
@@ -265,13 +256,11 @@ export function App() {
     handleVisualize, dacpacLoader.clearAutoVisualize, dacpacLoader.clearPendingVisualize,
   ]);
 
-  // Record when visualizing starts — used for minimum dwell enforcement
   const visualizingEnteredAt = useRef<number>(0);
   useEffect(() => {
     if (view === 'visualizing') visualizingEnteredAt.current = Date.now();
   }, [view]);
 
-  // After buildFromModel completes → delay transition to graph so spinner is readable
   useEffect(() => {
     if (view !== 'visualizing' || loadingPhase !== 'generate' || flowNodes.length === 0) return;
     const remaining = Math.max(0, MIN_SPINNER_MS - (Date.now() - visualizingEnteredAt.current));
@@ -280,7 +269,6 @@ export function App() {
     return () => clearTimeout(t);
   }, [view, loadingPhase, flowNodes.length]);
 
-  // Watch for errors in visualizing phase
   useEffect(() => {
     if (view !== 'visualizing') return;
     if (dacpacLoader.status?.type === 'error') {
@@ -290,7 +278,6 @@ export function App() {
     }
   }, [view, dacpacLoader.status, dacpacLoader.model]);
 
-  // Timeout protection: if view stays 'visualizing' with no progress, surface an error
   const visualizingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (view !== 'visualizing' || loadingError) {
@@ -324,7 +311,6 @@ export function App() {
     }
   }, [config, model, view, filter, rebuild]);
 
-  // ── Navigation handlers ─────────────────────────────────────────────────────
 
   /** Transitions to the creation wizard screen. */
   const handleCreateNew = useCallback(() => {
@@ -360,7 +346,6 @@ export function App() {
 
   /** Deletes a project and its associated data. */
   const handleDeleteProject = useCallback((id: string) => {
-    // Optimistic: update state immediately
     setProjects(prev => prev.filter(p => p.id !== id));
     if (activeProjectId === id) setActiveProjectId(null);
     vscodeApi.postMessage({ type: 'delete-project', id });
@@ -370,7 +355,6 @@ export function App() {
   const handleDeleteAllProjects = useCallback(() => {
     setProjects([]);
     setActiveProjectId(null);
-    // Extension host persists each deletion; send one message per project
     projects.forEach(p => vscodeApi.postMessage({ type: 'delete-project', id: p.id }));
   }, [projects, vscodeApi]);
 
@@ -397,7 +381,6 @@ export function App() {
     setStartScreenMessage(null);
     setActiveProjectId(null);
     setActiveViewId(null);
-    // Re-request projects so the start screen always shows fresh data
     vscodeApi.postMessage({ type: 'request-projects' });
   }, [dacpacLoader.resetToStart, clearTrace, vscodeApi]);
 
@@ -434,19 +417,16 @@ export function App() {
       vscodeApi.postMessage({ type: 'save-project', project });
       dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
     } else {
-      // DB path: extension saves project after Phase 2 succeeds, sends back projects-list
       dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
     }
 
     setView('visualizing');
   }, [dacpacLoader.visualize, dacpacLoader.selectedSchemas, vscodeApi]);
 
-  // ── Graph state ─────────────────────────────────────────────────────────────
 
   const [isRebuilding, setIsRebuilding] = useState(false);
+  const [canvasResetKey, setCanvasResetKey] = useState(0);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
-  // Expanded schema view expands selected schemas to individual objects while other schemas remain
-  // collapsed as schema clusters. `focusNodeId` is only the highlight/centre target.
   const [expandedSchemaView, setExpandedSchemaView] = useState<ExpandedSchemaViewState | null>(null);
   const [showExpandedSchemaClusters, setShowExpandedSchemaClusters] = useState(true);
   const [viewportPreserveVersion, setViewportPreserveVersion] = useState(0);
@@ -464,7 +444,6 @@ export function App() {
   const preModFilterRef = useRef<FilterState | null>(null);
   /** Saved node positions from a bookmark — applied once after rebuild, then cleared. */
   const [pendingPositions, setPendingPositions] = useState<Record<string, { x: number; y: number }> | undefined>(undefined);
-  const [pendingViewport, setPendingViewport] = useState<{ x: number; y: number; zoom: number } | undefined>(undefined);
 
   /** Names of allowlist node IDs no longer present in the model (stale objects). */
   const bookmarkStaleNames = useMemo(() => {
@@ -484,8 +463,6 @@ export function App() {
   }), [trace.mode, analysisMode, aiPreview, activeAdvancedProfile]);
   const isModeLocked = modeCapabilities.isModeLocked;
 
-  // ── Mode-lock filter save/restore ─────────────────────────────────────────
-  // Refs to access current values inside the effect without re-firing on every change
   const filterRef = useRef(filter);
   filterRef.current = filter;
   const modelRef = useRef(model);
@@ -494,8 +471,6 @@ export function App() {
   configRef.current = config;
   const rebuildRef = useRef(rebuild);
   rebuildRef.current = rebuild;
-  // True between the user clicking Refresh and receiving the 'rebuild-config' reply;
-  // causes that reply to do a full filter reset rather than just a config sync.
   const pendingRefreshReset = useRef(false);
   const prevIsModeLocked = useRef(false);
   const preserveViewportOnNextGraphChange = useCallback(() => {
@@ -525,14 +500,15 @@ export function App() {
    * Resets filters and pulls fresh extension settings from the host.
    *
    * @remarks
-   * Posts `rebuild` to the extension and sets {@link pendingRefreshReset} so that
-   * the arriving `rebuild-config` reply performs a full filter reset and re-derives
-   * the graph view mode (snapping to schema view when the graph is large).
-   * Does not exit active trace, analysis, or AI preview modes.
+   * Posts `rebuild` and sets {@link pendingRefreshReset} so the arriving `rebuild-config` reply
+   * performs a full filter reset and re-derives the graph view mode. Does not exit active trace,
+   * analysis, or AI preview modes. Also remounts the canvas ({@link canvasResetKey}), so the button
+   * repairs a stuck rendering state even when the host never replies.
    */
   const handleRefresh = useCallback(() => {
     setExpandedSchemaView(null);
     pendingRefreshReset.current = true;
+    setCanvasResetKey((k) => k + 1);
     vscodeApi.postMessage({ type: 'rebuild' });
   }, [vscodeApi]);
 
@@ -552,16 +528,41 @@ export function App() {
   }, [model, config, rebuild, clearTrace]);
 
   const rebuildStartRef = useRef(0);
-  /** Forces a complete rebuild of the graph structure. */
+  const rebuildTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Stops the {@link REBUILD_TIMEOUT_MS} watchdog once a reply has arrived. */
+  const clearRebuildTimeout = useCallback(() => {
+    if (rebuildTimeoutRef.current) {
+      clearTimeout(rebuildTimeoutRef.current);
+      rebuildTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearRebuildTimeout, [clearRebuildTimeout]);
+
+  /**
+   * Forces a complete rebuild of the graph structure, keeping the current filter.
+   *
+   * @remarks
+   * Remounts the canvas ({@link canvasResetKey}) before the round trip, so the button repairs a
+   * stuck rendering state whether or not the host replies, and arms a watchdog so a lost reply
+   * cannot pin the spinner.
+   */
   const handleRebuild = useCallback(() => {
     if (model) {
       setIsRebuilding(true);
       rebuildStartRef.current = Date.now();
+      clearRebuildTimeout();
+      rebuildTimeoutRef.current = setTimeout(() => {
+        rebuildTimeoutRef.current = null;
+        setIsRebuilding(false);
+        notifyUser('Refresh timed out waiting for the extension. The view was reset; try again.');
+      }, REBUILD_TIMEOUT_MS);
     }
+    setCanvasResetKey((k) => k + 1);
     vscodeApi.postMessage({ type: 'rebuild' });
-  }, [vscodeApi, model]);
+  }, [vscodeApi, model, clearRebuildTimeout]);
 
-  // ── Derived state: effective graph and nodes matching what's rendered ──────
   const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
     || trace.mode === 'filtered' || trace.mode === 'analysis';
 
@@ -575,7 +576,6 @@ export function App() {
     [isTraceActive, tracedNodes, flowNodes]
   );
 
-  // Clear stale highlight when the referenced node is removed by a filter change.
   useEffect(() => {
     if (highlightedNodeId && effectiveNodes.length > 0 && !effectiveNodes.some(n => n.id === highlightedNodeId)) {
       setHighlightedNodeId(null);
@@ -597,13 +597,18 @@ export function App() {
       if (isDetailOpen) {
         vscodeApi.postMessage({ type: 'update-detail', node, findQuery });
       } else if (findQuery) {
-        // DetailSearchSidebar result clicked — open panel with search term
         vscodeApi.postMessage({ type: 'show-detail', node, findQuery });
         setIsDetailOpen(true);
       }
     },
     [model, vscodeApi, isDetailOpen, highlightedNodeId]
   );
+
+  /** Drops the node selection without selecting another — the canvas's click-away reset. */
+  const handleClearSelection = useCallback(() => {
+    setHighlightedNodeId(null);
+    setInfoBarNodeId(null);
+  }, []);
 
   const handleSchemaNodeSelect = useCallback(() => {
     setHighlightedNodeId(null);
@@ -619,16 +624,32 @@ export function App() {
   /** Displays the context menu at the specified coordinates for a node. */
   const handleNodeContextMenu = useCallback(
     (node: FlowNode, x: number, y: number) => {
-      // Schema clusters use the on-node toolbar (selection), not a context window — object nodes only here.
       if (node.type === 'schemaNode') {
         setContextMenu(null);
         return;
       }
-      const data = node.data as Record<string, unknown>;
+      if (node.type === 'columnTraceNode') {
+        const { view } = node.data as ColumnTraceNodeData;
+        const modelNode = modelRef.current?.nodes.find(n => n.id === view.id);
+        setContextMenu({
+          kind: 'object',
+          x,
+          y,
+          nodeId: view.id,
+          nodeName: view.label,
+          schema: view.schema,
+          objectType: view.objectType as ObjectType,
+          externalType: modelNode?.externalType as ObjectContextMenuState['externalType'],
+          externalUrl: modelNode?.externalUrl,
+          fullName: modelNode?.fullName ?? view.id,
+        });
+        return;
+      }
+      const data = node.data;
       setContextMenu({
         kind: 'object',
-        x: Math.min(x, window.innerWidth - OBJECT_CONTEXT_MENU_WIDTH),
-        y: Math.min(y, window.innerHeight - OBJECT_CONTEXT_MENU_HEIGHT),
+        x,
+        y,
         nodeId: node.id,
         nodeName: String(data.label),
         schema: String(data.schema),
@@ -690,7 +711,6 @@ export function App() {
     const { toggle = false, forceLayout = false, includeNeighbors = true } = options;
     if (!model) return 0;
 
-    // Unfocus: clear star, show all schemas
     if (schema === null || (toggle && filter.focusSchemas.has(schema))) {
       const allSchemas = new Set(model.schemas.map(s => s.name));
       const next = { ...filter, focusSchemas: new Set<string>(), schemas: allSchemas };
@@ -699,7 +719,6 @@ export function App() {
       return count;
     }
 
-    // Focus: compute neighbor schemas, set filter
     const schemas = includeNeighbors
       ? computeNeighborSchemas(model, schema)
       : new Set<string>([schema]);
@@ -715,7 +734,6 @@ export function App() {
     [applyStarSchema]
   );
 
-  // ── Graph view mode (object-level view or schema-level view) ───────────────
 
   const handleGraphModeChange = useCallback((mode: GraphMode) => {
     if (mode === graphMode) return;
@@ -877,7 +895,6 @@ export function App() {
     }
   }, [graph, config.analysis, config.maxNodes]);
 
-  // DELETE key on a highlighted node → add exact exclusion rule
   useKeyboardShortcut(SHORTCUT_KEYS.excludeHighlightedNode, () => {
     if (!modeCapabilities.canExcludeHighlightedNode) return;
     if (!highlightedNodeId) return;
@@ -944,7 +961,6 @@ export function App() {
 
   const handlePendingPositionsApplied = useCallback(() => {
     setPendingPositions(undefined);
-    setPendingViewport(undefined);
   }, []);
 
   /** Removes a specific node from the current bookmark view. */
@@ -970,7 +986,6 @@ export function App() {
     setActiveAdvancedProfile(null);
   }, []);
 
-  // Esc cascades through active modes, exiting the topmost one only.
   useKeyboardShortcut(SHORTCUT_KEYS.exitMode, () => {
     if (aiPreview) {
       handleDiscardAiPreview();
@@ -988,12 +1003,6 @@ export function App() {
   const handleApplyView = useCallback((profile: FilterProfile) => {
     setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
-    // View shape first, so the restored layout is built once instead of rebuilt after a mode flip.
-    // A scoped bookmark (allowlist) renders its node set, never schema clusters, so it always
-    // restores into object-level mode. Otherwise the saved shape is restored only when it can
-    // render as saved: a bookmark written before these fields existed carries no `graphMode`, and
-    // a saved 'overview' is not forced onto a host whose overview setting is off — each of those
-    // keeps the view as it is, exactly as before the fields existed.
     const shapeMode: GraphMode | undefined = isAdvanced
       ? 'full'
       : profile.graphMode
@@ -1010,16 +1019,10 @@ export function App() {
         : null);
       setShowExpandedSchemaClusters(profile.showExpandedSchemaClusters ?? true);
     }
-    // `rebuild` reads `graphMode` from state, which is still stale in this tick.
     const targetMode = shapeMode ?? graphMode;
-    // Saved positions are consumed by the canvas on the first `flowNodes` change after they are
-    // set. A deferred rebuild would commit the filter/mode state first and the new graph later,
-    // producing two changes — the first spends the positions on stale nodes, the second lands the
-    // default layout and auto-fit. Building synchronously commits everything in one render.
     const hasPositions = !!profile.positions && Object.keys(profile.positions).length > 0;
     if (hasPositions) {
       setPendingPositions(profile.positions);
-      setPendingViewport(profile.viewport);
     }
     if (isAdvanced) {
       if (!preModFilterRef.current) preModFilterRef.current = filter;
@@ -1036,28 +1039,23 @@ export function App() {
     }
   }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled]);
 
-  // ── Message handler (stats + projects-list) ─────────────────────────────────
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      const parsed = ExtensionToWebviewMsgSchema.safeParse(e.data);
-      if (!parsed.success) return;
-      // Host→webview frames are stamped unconditionally by the `postValidated` send choke point, so
-      // anything that parses as a contract message but carries the wrong (or no) version came from
-      // a host bundle this view cannot trust. Fail loudly through the existing error funnel rather
-      // than rendering a message whose shape we are only guessing at.
-      const version = (e.data as BridgeEnvelope | undefined)?.protocolVersion;
-      if (version !== BRIDGE_PROTOCOL_VERSION) {
-        window.vscode?.postMessage({
-          type: 'error',
-          error: `[Bridge] Protocol mismatch on "${parsed.data.type}": host sent v${String(version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
-        });
+      const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, e.data);
+      if (!frame.ok) {
+        if (frame.reason === 'version') {
+          window.vscode?.postMessage({
+            type: 'error',
+            error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
+          });
+        }
         return;
       }
-      const msg = parsed.data;
+      const msg = frame.data;
       if (msg.type === 'detail-closed') {
         setIsDetailOpen(false);
       } else if (msg.type === 'projects-list') {
-        const updatedProjects: Project[] = (msg.projects ?? []) as Project[];
+        const updatedProjects: Project[] = msg.projects ?? [];
         setProjects(updatedProjects);
         setLastOpenedId(msg.lastOpenedId ?? null);
         if (msg.lastWizardView) setLastWizardView(msg.lastWizardView as 'main' | 'projects');
@@ -1066,6 +1064,7 @@ export function App() {
           setActiveProjectId(msg.lastOpenedId);
         }
       } else if (msg.type === 'rebuild-config') {
+        clearRebuildTimeout();
         if (!msg.config) {
           setIsRebuilding(false);
         } else {
@@ -1080,7 +1079,6 @@ export function App() {
           setConfig(merged);
 
           if (pendingRefreshReset.current && modelRef.current) {
-            // Refresh button path: full filter reset + stable view mode from fresh config.
             pendingRefreshReset.current = false;
             const f: FilterState = {
               ...getResetFilter(modelRef.current),
@@ -1094,7 +1092,6 @@ export function App() {
             setSchemaViewSoftDisabled(modelRef.current.nodes.length <= merged.overview.threshold);
             rebuildRef.current(modelRef.current, f, merged, mode === 'full', mode);
           } else if (modelRef.current && rebuildRef.current) {
-            // Normal config-only sync (Rebuild button, live settings change): keep current filter.
             if (graphMode === 'overview') setExpandedSchemaView(null);
             rebuildRef.current(modelRef.current, filterRef.current, merged);
           }
@@ -1111,7 +1108,7 @@ export function App() {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;
         let unresolved: string[] = [];
-        let metadata = msg.aiMetadata as AIViewMetadata;
+        let metadata = msg.aiMetadata;
         if (renderModel) {
           const reconciled = reconcileAiView(msg.nodeIds, metadata, renderModel);
           resolvedIds = reconciled.nodeIds;
@@ -1137,8 +1134,6 @@ export function App() {
             hideIsolated: false,
           };
           if (renderModel) {
-            // AI previews always render in the classic full Object View — the curated allowlist is
-            // small by construction, so schema-overview clustering has nothing to summarize.
             setGraphMode('full');
             rebuildRef.current(renderModel, next, configRef.current, false, 'full');
           }
@@ -1150,9 +1145,8 @@ export function App() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [view, graphMode, handleApplyView]);
+  }, [view, graphMode, handleApplyView, clearRebuildTimeout]);
 
-  // ── Saved Views ─────────────────────────────────────────────────────────────
 
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filterProfiles = activeProject?.filterProfiles ?? [];
@@ -1181,8 +1175,6 @@ export function App() {
       graphMode,
       filteredCount,
       renderLimitHit,
-      // Mode state the GraphCanvas render-state sync does not carry, so the debug dump can
-      // explain analytics/bookmark views standalone (trace/selection ride render-state).
       screenState: {
         analytics: analysisMode
           ? {
@@ -1229,10 +1221,6 @@ export function App() {
   ) => {
     if (!activeProjectId) return;
 
-    // Every save — create or update — records the view shape it was taken in, so reopening the
-    // bookmark restores schema clusters, individual objects, or the mixed state rather than
-    // whatever happens to be on screen. All three fields overwrite unconditionally: an update
-    // taken after collapsing every schema must clear a previously saved expansion, not keep it.
     const stamped: FilterProfile = {
       ...profile,
       graphMode,
@@ -1295,7 +1283,6 @@ export function App() {
     nodeIds: string[],
     source: 'trace' | 'path',
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1307,7 +1294,6 @@ export function App() {
         allowlistNodeIds: nodeIds,
       },
       ...(positions ? { positions } : {}),
-      ...(viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
@@ -1317,7 +1303,6 @@ export function App() {
     name: string,
     nodeIds: string[],
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1329,7 +1314,6 @@ export function App() {
         allowlistNodeIds: nodeIds,
       },
       ...(positions ? { positions } : {}),
-      ...(viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
@@ -1339,7 +1323,6 @@ export function App() {
     name: string,
     withPositions: boolean,
     positions?: Record<string, { x: number; y: number }>,
-    viewport?: { x: number; y: number; zoom: number },
   ) => {
     if (!aiPreview) return;
     const profile: FilterProfile = {
@@ -1353,7 +1336,6 @@ export function App() {
       },
       aiMetadata: aiPreview.aiMetadata,
       ...(withPositions && positions ? { positions } : {}),
-      ...(withPositions && viewport ? { viewport } : {}),
     };
     persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
   }, [filter, aiPreview, persistFilterProfile]);
@@ -1371,7 +1353,6 @@ export function App() {
 
   const filteredObjectIds = useMemo(() => new Set(flowNodes.map(n => n.id)), [flowNodes]);
 
-  // ── Render ──────────────────────────────────────────────────────────────────
 
   const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
     vscodeApi.postMessage({ type: 'save-wizard-view', view: v });
@@ -1430,16 +1411,19 @@ export function App() {
     schemaOverviewRenderedCount: schemaNodes.length,
     expandedSchemaViewRenderedCount,
     scopedModeActive: isTraceActive || !!aiPreview,
+    scopedRenderedCount: tracedNodes.length,
   });
 
   if (displayMode === 'renderLimit') {
+    const countText = `${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()})`;
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center p-8 max-w-md" style={{ color: 'var(--ln-fg)' }}>
           <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
           <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)' }}>
-            The current filter selects {renderedCount.toLocaleString()} nodes (limit: {config.renderLimit.toLocaleString()}).
-            Select schema or type filters to reduce scope, or adjust the render limit in settings.
+            {isTraceActive || aiPreview
+              ? `This view selects ${countText}. Reduce the trace depth, narrow the path, or adjust the render limit in settings.`
+              : `The current filter selects ${countText}. Select schema or type filters to reduce scope, or adjust the render limit in settings.`}
           </div>
         </div>
       </div>
@@ -1488,7 +1472,7 @@ export function App() {
   };
 
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={canvasResetKey}>
       <GraphCanvas
         flowNodes={renderNodes}
         flowEdges={renderEdges}
@@ -1519,6 +1503,7 @@ export function App() {
         isDetailSearchOpen={isDetailSearchOpen}
         onToggleDetailSearch={() => setIsDetailSearchOpen(prev => !prev)}
         onNodeClick={handleNodeClick}
+        onClearSelection={handleClearSelection}
         onSchemaNodeSelect={handleSchemaNodeSelect}
         onNodeContextMenu={handleNodeContextMenu}
         onStartTraceImmediate={startTraceImmediate}
@@ -1575,7 +1560,6 @@ export function App() {
         bookmarkStaleNames={bookmarkStaleNames}
         onExitAdvancedBookmark={handleExitAdvancedBookmark}
         pendingPositions={pendingPositions}
-        pendingViewport={pendingViewport}
         viewportPreserveVersion={viewportPreserveVersion}
         onPendingPositionsApplied={handlePendingPositionsApplied}
         useFullModel={useFullModel}

@@ -28,7 +28,6 @@ global keybindings, so none of these can conflict with your editor bindings.
 | <kbd>h</kbd> | Hide schema clusters in Expanded Schema View |
 | <kbd>Delete</kbd> | Exclude the selected node from the view |
 | <kbd>Esc</kbd> | Close active input, then exit the current mode |
-| <kbd>Enter</kbd> | Select a suggestion or apply the focused action |
 
 Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text,
 and never fire with a Ctrl, Cmd, or Alt modifier. <kbd>Esc</kbd> cascades: it closes
@@ -42,7 +41,7 @@ same list in the app.
 
 When a loaded graph exceeds a configurable node threshold, the extension starts in **Schema View** - replacing individual object nodes with schema cluster nodes that show object counts and type distribution. At or below the threshold it starts in Object View. After that initial load decision, the toolbar **Schema View** toggle button switches between the two views; filters and exclusions do not re-check the threshold or auto-switch the view. `dataLineageViz.renderLimit` remains the only post-load safety gate for rejecting a selected visual surface that would mount too many React Flow nodes.
 
-- Double-clicking a schema cluster expands that schema as object nodes in place.
+- Double-clicking a schema cluster expands that schema as object nodes. By default (`expandOnly`) the clicked schema becomes the only expanded one; set `dataLineageViz.overview.schemaDoubleClickBehavior` to `expand` to add it alongside schemas already expanded.
 - Selecting a schema cluster shows an on-node toolbar to **Expand** it or **Expand Only**. **Expand** keeps other expanded schemas open; **Expand Only** expands this schema and collapses the others.
 - Quick Jump and Detail Search separate results into **Visible**, **In Schema Cluster**, and **Not in Current Filter**. Selecting an object in a schema cluster expands that schema without changing the active schema filter.
 - Multiple schemas can be expanded at a time while the projected rendered node count stays within `dataLineageViz.renderLimit`.
@@ -79,6 +78,26 @@ When the selected surface would render more than `renderLimit` React Flow nodes,
 ### Bookmarks
 
 Save the current filter state as a named bookmark. Bookmarks retain schema, object-type, isolation, external-reference, focus, and exclusion choices; trace, analysis, path, and AI views can also be saved as bounded bookmarks. Restore them from the toolbar dropdown. Bookmarks are saved per project.
+
+#### AI bookmarks keep the run's memory
+
+Saving a bookmark from an AI-authored view also stores the exploration behind it: the question the
+run started from, the start object, every per-object finding and the decision that produced it, the
+objects the run pruned, the questions it left open, and a content hash of each in-scope object's DDL
+at save time.
+
+With that bookmark applied, `@lineage` can recall the run instead of repeating it — what the run
+found about a named object, which objects it pruned and why, and which questions it left open. Each
+recalled finding describes the object as it was at run time, so an object whose DDL has changed
+since is reported as stale and the assistant confirms it against the current definition before
+answering.
+
+The record lives with the bookmark: deleting the bookmark or its project deletes it, updating the
+bookmark keeps it (only a save from a newer AI view replaces it), and a bookmark saved by an
+earlier build simply has no run to recall. Each exploration approved in a chat keeps its own run, so
+a bookmark recalls the exploration it was saved from even after the same chat goes on to approve
+another; a damaged run record is treated the same as none and the recall falls back to repeating the
+work instead of answering from bad data.
 
 ---
 
@@ -218,36 +237,60 @@ The user-visible flow has the following paths:
 
 #### Discovery (chat answers, no graph)
 
-The default state. The AI uses read-only catalog tools to inspect loaded scope, DDL, columns, neighbours, and graph patterns, then answers in chat.
+The default state. The AI uses snapshot catalog tools to inspect loaded scope, DDL, columns, neighbours, and graph patterns, then answers in chat.
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
 - `/search` pins this path deterministically, skipping the entry-detection model call. `/trace` pins the deep-analysis path below.
 - Discovery scope is bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; over-budget requests are redirected to the approval-gated deep-analysis path.
 - During approved deep analysis, total scope growth is bounded by `dataLineageViz.ai.explorationNodeCap` and `dataLineageViz.ai.explorationTokenBudget`; an over-budget hop submission is held and rejected with a hint to prune, defer, or synthesize.
-- An explicit graph/render request routes to approval-gated deep analysis so the rendered result includes the hop-by-hop explanation.
+- An explicit graph/render request is answered by discovery like any other question; the picture itself is the separate bounded preview below, reached by follow-up, not deep analysis.
 
 #### Bounded graph preview
 
 Triggered by the **Show graph preview** follow-up. The assistant resolves a
 finite scope and opens an **AI Preview** in
 the side panel. The preview is transient; use **Save as Bookmark** to retain it.
+**Data Lineage: Show AI Trace in Graph** (Command Palette) re-opens the session's
+current AI-authored view in the graph panel.
+
+#### Detail view in an AI preview
+
+When the run recorded column findings, the preview banner offers an **Objects / Detail** switch.
+Objects is the default. Detail redraws the same scope with one row per traced column — not every
+declared column, only the ones the trace actually recorded — threads running column to column,
+procedures and scalar functions drawn as a compact hub (circle and gear, ports on the arc) rather
+than as a column card, and a chip on a line carrying a hover explanation of the transform where the
+value changed between its two endpoints; a line with no chip passed the value through unchanged.
+Hovering a row lights that whole thread and dims the rest; the rows collapse to a summary line when
+you zoom out.
+
+A procedure or function that transformed a value sits in the chain between the columns it reads and
+the columns it writes, with a port on the hub for each name the value carries — two ports when it
+renames one. The thread therefore runs source → transform → target rather than past the transform. Structure
+labels stay on the endpoints: a target column fed by two sources still reads `incoming (2)`, one
+column feeding several still reads `outgoing (2)`, whichever object combined or split it. Selecting a
+node highlights and dims exactly as it does in Objects view, and any AI badge or note attached to a
+node carries over unchanged. Detail view lays out with the same graph-layout settings — direction and
+spacing — as the object view, then fits the result to the window; switching back returns to the
+object view where you left it. If Detail view hits a rendering error, switching back to Objects
+clears it rather than leaving the graph stuck on the crash.
+
+This is a rendering of the AI-generated column analysis — the same best-effort finding described
+under **Tips** below, shown on the graph instead of only in the write-up. Verify it against the
+database for compliance-critical claims.
 
 #### Deep analysis
 
-Triggered by an explicit graph/render request, `/trace`, a named-column trace,
-the **Start deeper hop-by-hop analysis** follow-up, or an engine-forced
-over-budget discovery request. It
-begins only after the user approves the `confirm_sm_start` consent gate.
+Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
+analysis** follow-up, or a discovery request that exceeds the configured
+budget. It begins only after the user approves the consent gate.
 
 - The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal.
 - The extension walks the approved graph scope one object at a time and validates every requested route against the loaded catalog before visiting it.
 - Recent summaries provide short-term continuity while full hop details are retained for final synthesis.
-
-### Why it matters
-
-In complex ETL pipelines a column often changes name several times. Deep
-analysis preserves recent context while retaining per-object findings for the
-final synthesis.
+- Below the `Hop X/Y` counter, the chat echoes each completed hop's one-line finding as it lands — a
+  transient progress trail, not part of the saved transcript, so it never reaches the model again on
+  a later turn.
 
 ### Mission types
 
@@ -258,23 +301,41 @@ When you ask `@lineage` a question, the assistant labels the mission as `busines
 The proposed scope shown at the approval gate preserves the user's depth
 intent:
 
-- an explicit hop count seeds exactly that many levels;
+- an explicit hop count bounds the trace to exactly that many levels;
 - “all” seeds the full reachable frontier;
 - bidirectional questions can use different upstream and downstream depths,
   including zero to disable one side;
-- omitted depth uses the configured upstream and downstream defaults.
+- omitted depth uses a fixed default of three levels per side, not the
+  `trace.default*Levels` settings, which apply to the GUI trace.
 
-After approval, explicit model routes may extend beyond the initial depth seed
-while direction, exclusions, and the approved schema border remain
-mechanically enforced. Mission-relevant routes outside the schema border are
-counted after synthesis and can be revisited through the related-objects
-follow-up.
+**A level count you state is a hard border; a depth the assistant chose is a
+starting point.** When your question names a number of levels, the trace stops
+there — the assistant may not extend past it, and each side of a bidirectional
+ask is bounded independently. When you do not name one — including a phrase
+like "back to its original sources" or "where does X come from", which name no
+count — the assistant seeds a reasonable default and may follow the lineage
+further if the question needs it; a number the assistant picks on its own to
+fill that starting point never becomes a hard border, only a fresh count you
+state, or "all", does. The approval gate labels which of the two applies
+before you approve, and that label is fixed for the whole trace: the
+assistant cannot loosen or tighten it mid-trace, only through a new **Change
+scope** request you send before approving, or a follow-up you ask after the
+answer.
+
+Objects just past a stated border are not discarded: they are reported after
+synthesis as follow-up leads, alongside mission-relevant routes outside the
+schema border, and can be revisited through the related-objects follow-up.
+Naming an object in a follow-up brings in that object, not the rest of its
+schema; a sibling in the same schema surfaces as its own separate lead.
+Direction, exclusions, and the approved schema border remain mechanically
+enforced throughout.
 
 ### Tips
 
 - **Column-level questions are best-effort.** The AI traces column mappings, joins, and formulas from the loaded metadata. Always verify against the database for compliance-critical claims.
 - **Ask for a graph preview.** Try *"show me the lineage for `dbo.udfLeadingZeros` in the app"*. The preview is transient; save it explicitly if you want a bookmark.
 - **The assistant is context-aware.** It knows what filters are active and which schemas are visible. Ask *"what's filtered out?"*.
+- **It also sees the screen.** With a trace, a graph analysis, or a bookmark applied, ask *"explain this"*, *"what am I looking at?"*, or — for an AI bookmark — *"what did you find about X?"*, *"which objects did you drop and why?"*, *"has anything changed since?"*. Type `#lineageView` in the chat input to attach the screen explicitly; the lineage tools appear in the `#` picker once a model is loaded.
 - **Customise output.** Command Palette → **Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). See [`AI_PROMPTS.md`](AI_PROMPTS.md) for what each key controls.
 
 ### Requirements

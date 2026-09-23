@@ -13,6 +13,8 @@
 
 import Graph from 'graphology';
 import { connectedComponents, stronglyConnectedComponents } from 'graphology-components';
+import { bidirectional } from 'graphology-shortest-path';
+import { bfsFromNode } from 'graphology-traversal';
 import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
 
 /**
@@ -160,83 +162,272 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
 }
 
 /**
- * Calculates the longest non-cyclic dependency chains in the graph.
+ * Default number of dependency chains {@link analyzeLongestPath} reports.
+ *
+ * @remarks
+ * A chain count, not a node count. Chains are emitted deepest first, so the cap drops the shallow
+ * tail of the ranking and never displaces the deepest chain. `DEFAULT_CONFIG.maxNodes` is a
+ * node-count safety limit — three orders of magnitude too loose for a per-chain group list, and a
+ * payload risk on a warehouse with many staging roots.
+ */
+const DEFAULT_MAX_CHAINS = 25;
+
+/**
+ * Condensed view of the graph: one vertex per strongly connected component.
+ *
+ * @remarks
+ * A condensation is acyclic by construction, which is what makes the depth DP in
+ * {@link analyzeLongestPath} exact.
+ */
+interface Condensation {
+  /** Member node ids per component, indexed by component number. */
+  components: string[][];
+  /**
+   * Component successors. Each destination keeps every realised `[tail, head]` pair, not only the
+   * first edge the walk saw — two bridges between the same components can have different lengths.
+   */
+  successors: Map<number, Map<number, Array<[string, string]>>>;
+  /** Component in-degree in the condensation (one per successor component, not per parallel edge). */
+  inDegree: number[];
+  /**
+   * Nodes at which a chain can arrive in each component: the head of every realised incoming edge,
+   * or every member when the component is a root. A root that starts only at `members[0]` is
+   * order-dependent and can miss the longer chain.
+   */
+  entriesOf: string[][];
+}
+
+/** Condenses each strongly connected component of `graph` to a single vertex. */
+function condense(graph: Graph): Condensation {
+  const components = stronglyConnectedComponents(graph);
+  const componentOf = new Map<string, number>();
+  components.forEach((members, index) => {
+    for (const id of members) componentOf.set(id, index);
+  });
+
+  const successors = new Map<number, Map<number, Array<[string, string]>>>();
+  const inDegree = new Array<number>(components.length).fill(0);
+  const heads = components.map(() => new Set<string>());
+  graph.forEachEdge((_edge, _attrs, source, target) => {
+    const from = componentOf.get(source)!;
+    const to = componentOf.get(target)!;
+    if (from === to) return;
+    let edges = successors.get(from);
+    if (!edges) {
+      edges = new Map();
+      successors.set(from, edges);
+    }
+    let pairs = edges.get(to);
+    if (!pairs) {
+      pairs = [];
+      edges.set(to, pairs);
+      inDegree[to]++;
+    }
+    pairs.push([source, target]);
+    heads[to].add(target);
+  });
+
+  const entriesOf = components.map((members, index) =>
+    inDegree[index] === 0 ? [...members] : [...heads[index]]);
+
+  return { components, successors, inDegree, entriesOf };
+}
+
+/**
+ * Walks one component from `entry` to `exit`.
+ *
+ * @remarks
+ * A path between two members of a strongly connected component cannot leave it — a node reachable
+ * from `entry` that also reaches `exit` reaches `entry` too, so it belongs to the same component.
+ * The graph-wide search is therefore already confined to the component.
+ */
+function walkComponent(graph: Graph, members: readonly string[], entry: string, exit: string): string[] {
+  if (members.length === 1 || entry === exit) return [entry];
+  return bidirectional(graph, entry, exit) ?? [entry];
+}
+
+/**
+ * Walks one component from `entry`: how far every member sits from it, and the walk to the farthest.
+ *
+ * @remarks
+ * One outbound BFS from `entry` measures every member's shortest-path length, then one bidirectional
+ * search reconstructs the winning walk — linear in the component instead of one search per member.
+ * The BFS stays among the members without losing a distance: a shortest path from `entry` to a
+ * member cannot leave the component (see {@link walkComponent}). Tail selection is the first member,
+ * in `members` order, whose distance strictly exceeds the best so far. An `entry` with no path to
+ * any other member stays the whole tail.
+ *
+ * @param graph - The graph instance.
+ * @param members - Node ids of the component.
+ * @param entry - Member the walk starts at.
+ * @returns `dist` — hop count from `entry` to each member; `tail` — the walk to the farthest member.
+ */
+function walkFromEntry(graph: Graph, members: readonly string[], entry: string): { dist: Map<string, number>; tail: string[] } {
+  if (members.length === 1) return { dist: new Map([[entry, 0]]), tail: [entry] };
+  const memberIds = new Set(members);
+  const dist = new Map<string, number>();
+  bfsFromNode(graph, entry, (node, _attributes, depth) => {
+    if (!memberIds.has(node)) return true;
+    dist.set(node, depth);
+  }, { mode: 'outbound' });
+  let exit = entry;
+  let best = 0;
+  for (const member of members) {
+    if (member === entry) continue;
+    const memberDist = dist.get(member);
+    if (memberDist !== undefined && memberDist > best) {
+      best = memberDist;
+      exit = member;
+    }
+  }
+  return { dist, tail: walkComponent(graph, members, entry, exit) };
+}
+
+/** One `(component, realized entry node)` state of the chain DP. */
+interface ChainState {
+  /** Component the chain is in. */
+  component: number;
+  /** Member the chain arrives at. */
+  entry: string;
+}
+
+/** The best chain reachable from one {@link ChainState}, valued in real node counts. */
+interface ChainValue {
+  /** Real objects on the chain from this state to its far end, this component's own included. */
+  nodes: number;
+  /** Node ids this component contributes, in chain order. */
+  segment: string[];
+  /** Where the chain continues, or `null` when it ends inside this component. */
+  next: ChainState | null;
+}
+
+/**
+ * Solves the longest chain from every `(component, entry)` state, in real node counts.
+ *
+ * @remarks
+ * Scoring a successor as one hop per component undercounts a branch that runs through a multi-node
+ * strongly connected component by every member it crosses, so a shorter chain of singletons can win.
+ * This DP values a state as `max(|tail|, max over successors (hops(entry→exit) + 1 + value(next)))`
+ * — real objects on both arms — and is exact because the condensation is acyclic and every state's
+ * successors are resolved before it, in reverse Kahn order. Intra-component travel is the shortest
+ * path on both arms (`walkFromEntry`'s BFS and {@link walkComponent}), so the value a state is
+ * ranked by and the segment it expands to always agree.
+ *
+ * @param graph - The graph instance.
+ * @param condensation - Condensed view of `graph`.
+ * @param order - Kahn ordering of the condensation.
+ * @returns Solved chain per component, keyed by entry node.
+ */
+function solveChains(graph: Graph, condensation: Condensation, order: readonly number[]): Map<number, Map<string, ChainValue>> {
+  const { components, successors, entriesOf } = condensation;
+  const best = new Map<number, Map<string, ChainValue>>();
+
+  for (let i = order.length - 1; i >= 0; i--) {
+    const component = order[i];
+    const members = components[component];
+    const byEntry = new Map<string, ChainValue>();
+    for (const entry of entriesOf[component]) {
+      const { dist, tail } = walkFromEntry(graph, members, entry);
+      let nodes = tail.length;
+      let exit: string | null = null;
+      let next: ChainState | null = null;
+      for (const [to, pairs] of successors.get(component) ?? []) {
+        const nextBest = best.get(to);
+        if (!nextBest) continue;
+        for (const [edgeTail, edgeHead] of pairs) {
+          const hop = dist.get(edgeTail);
+          if (hop === undefined) continue;
+          const nextValue = nextBest.get(edgeHead);
+          if (!nextValue) continue;
+          const candidate = hop + 1 + nextValue.nodes;
+          if (candidate > nodes) {
+            nodes = candidate;
+            exit = edgeTail;
+            next = { component: to, entry: edgeHead };
+          }
+        }
+      }
+      byEntry.set(entry, {
+        nodes,
+        segment: exit === null ? tail : walkComponent(graph, members, entry, exit),
+        next,
+      });
+    }
+    best.set(component, byEntry);
+  }
+
+  return best;
+}
+
+/** Expands the chain a state won into an ordered list of real node ids. */
+function expandChain(best: Map<number, Map<string, ChainValue>>, root: ChainState): string[] {
+  const chain: string[] = [];
+  let state: ChainState | null = root;
+  while (state !== null) {
+    const value: ChainValue = best.get(state.component)!.get(state.entry)!;
+    chain.push(...value.segment);
+    state = value.next;
+  }
+  return chain;
+}
+
+/**
+ * Calculates the longest dependency chains in the graph, walking through circular dependencies.
+ *
+ * @remarks
+ * Strongly connected components condense to single vertices, so a chain crosses a cycle as one
+ * entry-to-exit segment ({@link walkComponent}, {@link walkFromEntry}) instead of stopping at it.
  *
  * @param graph - The graph instance.
  * @param minNodes - Minimum nodes required in a chain to be reported.
  * @param maxChains - Maximum number of chains to return.
  * @returns Result object containing the discovered dependency chains.
  */
-export function analyzeLongestPath(graph: Graph, minNodes: number = 5, maxChains: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
+export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number = DEFAULT_MAX_CHAINS): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
   }
 
-  const depth = new Map<string, number>();
-  const successor = new Map<string, string>();
-  const visiting = new Set<string>();
+  const condensation = condense(graph);
+  const { components, successors, inDegree } = condensation;
 
-  function dfsLP(node: string): number {
-    if (depth.has(node)) return depth.get(node)!;
-    if (visiting.has(node)) return 0;
-    visiting.add(node);
-
-    let maxDown = 0;
-    let bestNext: string | null = null;
-
-    graph.forEachOutNeighbor(node, (neighbor) => {
-      const d = dfsLP(neighbor) + 1;
-      if (d > maxDown) {
-        maxDown = d;
-        bestNext = neighbor;
-      }
-    });
-
-    visiting.delete(node);
-    depth.set(node, maxDown);
-    if (bestNext) successor.set(node, bestNext);
-    return maxDown;
-  }
-
-  graph.forEachNode((id) => dfsLP(id));
-
-  const roots: Array<{ id: string; depth: number }> = [];
-  graph.forEachNode((id) => {
-    const d = depth.get(id) || 0;
-    if (d > 0 && graph.inDegree(id) === 0) {
-      roots.push({ id, depth: d });
+  const remaining = [...inDegree];
+  const order: number[] = [];
+  for (let i = 0; i < components.length; i++) if (remaining[i] === 0) order.push(i);
+  for (let i = 0; i < order.length; i++) {
+    for (const to of successors.get(order[i])?.keys() ?? []) {
+      if (--remaining[to] === 0) order.push(to);
     }
-  });
-
-  if (roots.length === 0) {
-    graph.forEachNode((id) => {
-      const d = depth.get(id) || 0;
-      if (d > 0) roots.push({ id, depth: d });
-    });
   }
 
-  roots.sort((a, b) => b.depth - a.depth);
+  const best = solveChains(graph, condensation, order);
+  const roots = order.filter((component) => inDegree[component] === 0);
+  const expandedChains: string[][] = [];
+  for (const root of roots) {
+    const byEntry = best.get(root);
+    if (!byEntry) continue;
+    let winner: string | null = null;
+    let bestNodes = -1;
+    for (const [entry, value] of byEntry) {
+      if (value.nodes > bestNodes) {
+        bestNodes = value.nodes;
+        winner = entry;
+      }
+    }
+    if (winner) expandedChains.push(expandChain(best, { component: root, entry: winner }));
+  }
+  expandedChains.sort((a, b) => b.length - a.length);
 
   const chains: Array<{ nodeIds: string[]; length: number }> = [];
   const seenEndpoints = new Set<string>();
 
-  for (const root of roots) {
-    const chain: string[] = [root.id];
-    let cur = root.id;
-    const visited = new Set<string>([cur]);
-    while (successor.has(cur)) {
-      cur = successor.get(cur)!;
-      if (visited.has(cur)) break;
-      visited.add(cur);
-      chain.push(cur);
-    }
-
-    const endNode = chain[chain.length - 1];
+  for (const nodeIds of expandedChains) {
+    const endNode = nodeIds[nodeIds.length - 1];
     if (seenEndpoints.has(endNode)) continue;
     seenEndpoints.add(endNode);
 
-    if (chain.length < minNodes) continue;
-    chains.push({ nodeIds: chain, length: chain.length - 1 });
+    if (nodeIds.length < minNodes) continue;
+    chains.push({ nodeIds, length: nodeIds.length - 1 });
     if (chains.length >= maxChains) break;
   }
 
@@ -369,7 +560,9 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
  * @param graph - The graphology instance.
  * @param type - Type of analysis to perform.
  * @param analysisConfig - Analysis-specific thresholds.
- * @param maxNodes - Safety limit for graph exploration.
+ * @param maxNodes - Upper bound on island size, applied as the tighter of it and `islandMaxSize`.
+ *   It is a node count and bounds no other analysis; longest-path chain count is capped by
+ *   {@link DEFAULT_MAX_CHAINS}.
  * @returns The resulting analysis report.
  */
 export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
@@ -377,7 +570,7 @@ export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: An
     case 'islands': return analyzeIslands(graph, Math.min(analysisConfig.islandMaxSize, maxNodes));
     case 'hubs': return analyzeHubs(graph, analysisConfig.hubMinDegree);
     case 'orphans': return analyzeOrphans(graph);
-    case 'longest-path': return analyzeLongestPath(graph, analysisConfig.longestPathMinNodes, maxNodes);
+    case 'longest-path': return analyzeLongestPath(graph, analysisConfig.longestPathMinNodes);
     case 'cycles': return analyzeCycles(graph);
     case 'external-refs': return analyzeExternalRefs(graph);
   }

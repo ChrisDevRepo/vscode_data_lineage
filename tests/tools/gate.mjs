@@ -1,10 +1,4 @@
 #!/usr/bin/env node
-// One command that answers "which gates are green?" — `npm run gate`.
-//
-// Local deterministic gate. Nothing here pushes, publishes, or runs a real
-// model. T1-T7 runs in the tracked scenario-matrix EDH lane (`npm run
-// test:scenario-matrix`), which launches Electron and is therefore not part of
-// this gate.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,25 +37,18 @@ function runStep(step) {
 const npmRun = (name, script) => ({ name, ...npmCommand('npm', ['run', script]) });
 
 const STEPS = [
-  // Ordered cheapest-first: type errors and derived-artifact drift fail in seconds, before the
-  // suites, and everything needing build output runs after the single build step.
   npmRun('typecheck', 'typecheck'),
   npmRun('typecheck:tests', 'typecheck:tests'),
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
-  { name: 'AI template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
+  { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
+  { name: 'prompt golden sync', cmd: nodeBin, args: ['tests/tools/assert-golden-sync.mjs'] },
   { name: 'honest test labels', cmd: nodeBin, args: ['tests/tools/assert-honest-test-labels.mjs'] },
-  // Runs before the three unit steps below, because it is what makes them add up to the whole
-  // unit suite. Without it a new tests/unit/ directory is run by `npm test` and by no gate step.
+  { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
-  npmRun('unit: core', 'test:core'),
-  // Not "unit: AI". These cover the agent runtime's own logic — state machine, tool dispatch,
-  // schemas, gates — against a stubbed `vscode` and scripted model doubles. Zero model calls, so
-  // naming them for AI would report inference coverage the step does not have.
+  { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },
+  npmRun('unit: core (+ core coverage floors)', 'coverage:core'),
   npmRun('unit: agent runtime', 'test:runtime'),
-  npmRun('unit: prompts (golden)', 'test:prompts'),
 
-  // `pretest:integration` is `build` plus the integration-test compile, which keeps the optional
-  // E2E tests from rotting without launching a host here.
   npmRun('build + integration tsc', 'pretest:integration'),
   { name: 'package contents', cmd: nodeBin, args: ['tests/tools/assert-package-contents.mjs'] },
   { name: 'no LangSmith in bundle', cmd: nodeBin, args: ['tests/tools/assert-no-langsmith.mjs'] },
@@ -84,9 +71,6 @@ for (const step of STEPS) {
     name: step.name,
     ok,
     logPath,
-    // A step that never started is reported differently from one that ran and failed. `viaShim`
-    // marks the degraded PATH lookup, which changes what a failure likely means — npm-launcher.mjs
-    // documents that callers report it, and this is the caller.
     note: run.error ? `did not start: ${run.error.message}`
       : run.status === null ? 'killed by signal'
       : !ok && step.viaShim ? 'ran via the PATH npm shim'
@@ -106,17 +90,12 @@ for (const r of results) {
 const failed = results.filter((r) => !r.ok);
 process.stdout.write(`${'='.repeat(width + 18)}\n`);
 process.stdout.write(`${results.length - failed.length}/${results.length} green\n`);
-// Stated on every run, green or red. A gate summary is quoted as a result, and every step above
-// runs against a stubbed `vscode` and scripted doubles — so without this line a reader can take a
-// green gate for evidence about model behaviour, which no step here produces.
 process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n');
 process.stdout.write(
-  'NOT covered: extension-host behaviour (npm run test:e2e-electron — scripted provider, still 0 '
-  + 'inference); model behaviour, which only the headless live-provider lane measures '
-  + '(npm run test:live-provider -- --lane <azure-foundry|openrouter|local-mlx> --prompt <P1-P3|T1-T7>, '
-  + 'needs provider credentials in .env, and bypasses vscode.lm); or the product path itself — real '
-  + "VS Code with the user's own Copilot model — which no automated suite covers and only UAT does. "
-  + 'See docs/E2E_TESTING.md.\n',
+  'NOT covered: extension-host behaviour (npm run test:edh — smoke lanes only, still 0 '
+  + 'inference); model behaviour, which is measured internally, never by this repository; or the '
+  + "product path itself — real VS Code with the user's own Copilot model — which no automated "
+  + 'suite covers and only UAT does. See docs/EDH_TESTING.md.\n',
 );
 
 process.exit(failed.length === 0 ? 0 : 1);

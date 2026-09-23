@@ -45,7 +45,6 @@ export const CreateFlow = memo(function CreateFlow({
 }: CreateFlowProps) {
   const [projectName, setProjectName] = useState('');
 
-  // Auto-fill project name when schema preview arrives (Phase 1 done)
   const schemaOrModel = loader.schemaPreview ?? loader.model;
   const hasSource = !!schemaOrModel;
   const isPhase1Loading = loader.isLoading && !loader.schemaPreview && !loader.model;
@@ -64,7 +63,6 @@ export const CreateFlow = memo(function CreateFlow({
       };
       return generateProjectName(conn);
     }
-    // DB path: sourceName = fileName; connectionInfo unused by generateProjectName
     const conn: DatabaseConnection = {
       type: 'database',
       connectionInfo: {} as StoredConnectionInfo,
@@ -74,7 +72,6 @@ export const CreateFlow = memo(function CreateFlow({
     return generateProjectName(conn);
   }, [loader.fileName, loader.filePath, loader.selectedSchemas]);
 
-  // Fill name when source becomes available
   const displayName = projectName || autoName();
 
   /**
@@ -91,7 +88,6 @@ export const CreateFlow = memo(function CreateFlow({
       };
       onVisualize(name, conn);
     } else {
-      // DB path — extension will build the real connection after Phase 2 completes
       onVisualize(name, null);
     }
   }, [displayName, autoName, loader.filePath, loader.fileName, loader.selectedSchemas, onVisualize]);

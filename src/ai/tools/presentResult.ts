@@ -8,11 +8,17 @@ import {
   PresentResultModelSchema,
   PresentResultRepairPatchSchema,
   PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX,
+  PRESENT_RESULT_HIGHLIGHT_LABEL_MAX,
+  PRESENT_RESULT_NAME_MAX,
   PRESENT_RESULT_REPAIR_FIELDS,
+  PRESENT_RESULT_SECTION_LABEL_MAX,
+  PRESENT_RESULT_TITLE_MAX,
   type PresentResultRepairField,
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
-import { quoteIds, unescapeProseNewlines } from '../support/text';
+import { quoteIds } from '../support/text';
+import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
+import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
 
 /**
@@ -32,8 +38,68 @@ type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closin
  */
 export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
 
-/** Offender-list rendering for unknown-node-id rejections; see {@link quoteIds}. */
-const renderUnknownNodeIds = (ids: readonly string[]): string => quoteIds(ids, 3);
+/** Offenders named inline in a node-id rejection; the complete list rides in `detail`. */
+const NODE_ID_OFFENDERS_SHOWN = 3;
+
+/** Accepted result-graph ids named inline in a node-id rejection; the complete set rides in `detail`. */
+const NODE_ID_ACCEPTED_SHOWN = 5;
+
+/**
+ * The state the engine already records for a node id the current result graph cannot link.
+ *
+ * @remarks
+ * The id check runs over the whole loaded model before this contract sees it (the dispatcher
+ * normalizes every `node_ids` entry with `resolveModelNodeId`), so exactly one member of this union
+ * is a hallucination and the rest are real objects the render does not carry. A real object rejected
+ * as "unknown" tells the model to invent a replacement instead of moving the fact into prose, which
+ * is what has run a synthesis into the semantic-failure breaker. The classification itself belongs
+ * to the caller — only the session holds the engine snapshot — so it arrives as
+ * {@link PresentNodeIdStateLookup}.
+ */
+export type PresentNodeIdState =
+  | 'not_in_model'
+  | 'pruned'
+  | 'render_dropped'
+  | 'in_scope_undispositioned'
+  | 'out_of_scope';
+
+/**
+ * Wording per {@link PresentNodeIdState}, in the vocabulary the engine already rejects with
+ * (`ROUTE_REJECTION_DIRECTIVE`, the `getResult` disposition lines) — no second dialect for the same
+ * facts.
+ */
+export const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> = {
+  not_in_model: 'not in the loaded model',
+  pruned: 'already pruned on an earlier hop',
+  render_dropped: 'in scope, dropped from the render',
+  in_scope_undispositioned: 'in scope but never dispositioned',
+  out_of_scope: 'outside the approved exploration scope',
+};
+
+/**
+ * Classifies one unlinkable node id against the engine state the session holds.
+ *
+ * @remarks
+ * Invoked only for ids the result graph rejects, so a passing call pays nothing for it. A caller
+ * that holds no engine state omits it and every offender is reported as `not_in_model` — the
+ * pre-existing behaviour.
+ */
+export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
+
+/**
+ * The route back for a real id the render does not carry, per stage — only what the tool accepts.
+ *
+ * @remarks
+ * `notes[].node_id` is deliberately absent: it is validated against the same result-graph set, so
+ * offering it would send the model into an identical rejection. `add_node_ids` is accepted in
+ * Completed Phase only (the dispatcher forbids it during a preview or a synthesis render), so every
+ * other stage is left with prose.
+ */
+const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
+  completed: 'A real id outside the result graph can be brought into the view with add_node_ids; otherwise state it in sections[].text.',
+  synthesis: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
+  visual_preview: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
+};
 
 /**
  * Builds the unknown-node-id repair hint for the calling stage.
@@ -109,7 +175,8 @@ type PresentResultRequest = {
   node_ids: string[];
   summary: string;
   description: string;
-  layout_direction: 'LR' | 'TB';
+  /** Absent when the model omitted it — the view then follows the user's configured direction. */
+  layout_direction?: 'LR' | 'TB';
   highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
   badges: Array<{ node_id: string; text: string }>;
   notes: Array<{ node_id: string; text: string }>;
@@ -136,11 +203,33 @@ export type PresentResultError = {
    * model has to guess which of N captions or sections failed. `rejectionIssuePaths` already mines
    * this exact shape out of any tool's `detail`, so emitting it here reaches both the model's
    * correction envelope and the diagnostic trace without a second channel.
+   *
+   * A node-id entry additionally carries every offending id at that path with its recorded state,
+   * and the first such entry carries the uncapped accepted set — the message states both, capped, so
+   * they survive the rejection replay; `detail` is where the full lists live.
    */
-  detail?: ReadonlyArray<{ readonly path: string }>;
+  detail?: ReadonlyArray<{
+    readonly path: string;
+    /** Offending ids at this path, each with its {@link PRESENT_NODE_ID_STATE_TEXT} wording. */
+    readonly unlinkable_node_ids?: ReadonlyArray<{ readonly node_id: string; readonly state: string }>;
+    /** The complete current result-graph id set, stated once per rejection. */
+    readonly accepted_node_ids?: readonly string[];
+    /** See {@link PresentResultViolation.entryIds} — carried through verbatim, id offenders only. */
+    readonly entry_ids?: readonly string[];
+    /** Measured character length of a label over its hard cap; present with `limit`, length offenders only. */
+    readonly length?: number;
+    /** The hard cap `length` exceeds; present with `length`, length offenders only. */
+    readonly limit?: number;
+  }>;
 };
 
-/** Splits the cached discovery answer into engine-owned title/summary and verbatim section source. */
+/**
+ * Splits the cached discovery answer into engine-owned title/summary and verbatim section source.
+ *
+ * @param answer - The cached discovery chat answer (Markdown), title already inline if present.
+ * @returns The split-off `title` (absent when the answer has no leading heading), the remaining
+ *   `body`, and a one-line `summary` derived from the title or first non-empty body line.
+ */
 export function discoveryPreviewNarrative(answer: string): {
   title?: string;
   body: string;
@@ -167,11 +256,26 @@ export function discoveryPreviewNarrative(answer: string): {
  * Passing findings in instead keeps every rule on one accumulator and one rejection.
  */
 export interface PresentResultViolation {
+  /** Input field the violation is attributed to. */
   readonly field: PresentResultFailedField;
+  /** Rejection messages reported through the validator's accumulator. */
   readonly messages: readonly string[];
+  /** Fields this violation authorizes for a repair resend. */
   readonly repairFields: readonly PresentResultRepairField[];
   /** Exact offending entry paths, empty when the violation is about the payload as a whole. */
   readonly paths: readonly string[];
+  /**
+   * The offending entries this violation names (e.g. an uncovered detail-slot or CT-chain node id),
+   * when the violation's offender is an id rather than a field path.
+   *
+   * @remarks
+   * `paths` here is a fixed structural root (e.g. `sections`) shared by every offender, so it never
+   * shrinks as the model repairs individual entries — a cross-attempt comparison needs the entries
+   * themselves. Carried into `detail` (never into `messages` or `hint`, which already state them,
+   * capped) purely so a later attempt's rejection can be compared against this one's; never read by
+   * the model or the repair-patch machinery.
+   */
+  readonly entryIds?: readonly string[];
   /**
    * Replaces the generic field-list hint when this is the only reported failure.
    *
@@ -253,6 +357,12 @@ export function isRepairablePresentResultFailure(failure: PresentResultError): b
  * Patch fields replace whole presentation collections by design. The model does not send partial
  * array operations; it sends the corrected sections/notes/highlight_groups collection, and the
  * normal validation/assembly path checks the merged full draft.
+ *
+ * @param draft - The held full `present_result` draft the patch amends.
+ * @param patch - The repair patch fields sent by the model.
+ * @param allowedFields - The fields this rejection authorized for repair.
+ * @returns The draft with `allowedFields` keys from `patch` merged in.
+ * @throws When `patch` names a key outside `allowedFields`.
  */
 export function mergePresentResultRepairPatch(
   draft: PresentResultInput,
@@ -345,6 +455,287 @@ function normalizePresentSectionLabel(label: string): string {
 }
 
 /**
+ * Encodes a node id for the `#focus-node:` destination of an engine-assembled object link.
+ *
+ * @remarks
+ * A bracketed SQL identifier may legally contain characters that break the link on either side of
+ * the wire. `encodeURIComponent` covers `%`, which raw would make the overlay's `decodeURIComponent`
+ * throw a `URIError` in the click handler (`Discount%`) or silently resolve to a different id
+ * (`Rate%20Card`). It deliberately leaves `(` and `)` alone, so those are escaped after it: an
+ * unbalanced `)` terminates a markdown link destination and truncates the href. Both escapes are
+ * ordinary percent sequences, so the overlay's existing single `decodeURIComponent` reverses them.
+ *
+ * @param id - Canonical node id from the model.
+ * @returns The id as a markdown-safe, `decodeURIComponent`-reversible link destination.
+ */
+function encodeFocusNodeId(id: string): string {
+  return encodeURIComponent(id).replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+/** Minimum normalized length for a backtick-quoted fragment to fingerprint a captured callout. */
+const DETAIL_CALLOUT_FINGERPRINT_MIN = 8;
+
+/**
+ * Normalizes text for captured-item presence matching: case, quote/emphasis markers, and
+ * whitespace — including spacing around operators and punctuation — never distinguish two
+ * renderings of the same captured statement or formula.
+ */
+function normalizeCalloutFingerprint(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/⚠️/g, '')
+    .replace(/[`*_#]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([=(),<>+\-\/|])\s*/g, '$1')
+    .trim();
+}
+
+/**
+ * A ```sql fence at the start of the matched text: closed on its own opening line, or else on a
+ * later line — where the closing marker may share a line with the last line of code.
+ */
+const SQL_FENCE_AT_START = /^```sql(?:[^\n]*?```|[^\n]*\n[\s\S]*?```)/i;
+
+/**
+ * Returns the ```sql fence opening at `openIndex`, tolerant of a one-line fence and of its closing
+ * marker sharing a line with the last line of code rather than starting one of its own.
+ *
+ * @param text - Full captured `DetailSlot` section body.
+ * @param openIndex - Offset where the fence's own ```sql marker begins.
+ * @returns The fence, closed; `undefined` when no ```sql marker opens there or it never closes.
+ */
+function sqlFenceAt(text: string, openIndex: number): string | undefined {
+  return SQL_FENCE_AT_START.exec(text.slice(openIndex))?.[0];
+}
+
+/**
+ * Returns the ```sql fence that opens at the start of the line right after `lineEnd`, if any.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @param lineEnd - Offset of the newline ending the line the fence must follow, or -1.
+ * @returns The fence, closed; `undefined` when none follows.
+ */
+function sqlFenceAfter(text: string, lineEnd: number): string | undefined {
+  if (lineEnd === -1) return undefined;
+  const rest = text.slice(lineEnd + 1);
+  const indent = /^[ \t]*/.exec(rest)?.[0] ?? '';
+  if (!rest.startsWith('```sql', indent.length)) return undefined;
+  return sqlFenceAt(text, lineEnd + 1 + indent.length);
+}
+
+/** A line opening a new block: list item, heading, fence, or another callout. */
+const BLOCK_START_LINE = /^\s*(?:[-*+]\s|\d+[.)]\s|#|```|⚠️)/;
+
+/**
+ * Extracts the ⚠️ callouts from captured section text, each in its full extent.
+ *
+ * @remarks
+ * A callout that opens its own line runs from that line, stripped of any list marker, through
+ * every following line that continues it — a line inside a backtick span the callout opened, or a
+ * non-blank line indented deeper than the callout's own line that opens no new block — and then
+ * takes the ```sql fence that immediately follows, by the same boundary rule a formula uses. A ⚠️
+ * that opens mid-sentence, inside a line some other text already opened, runs instead from that
+ * marker through the next ⚠️ on the same line or the line's end, whichever comes first; only the
+ * last such callout on its line takes a fence — one whose ```sql marker opens later on that same
+ * line, by the rule a formula uses, or else one opening the next line.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @returns Per callout, the prose (fence excluded, for fingerprints) and the verbatim block, in authored order.
+ */
+function extractCapturedCallouts(text: string): Array<{ line: string; block: string }> {
+  const callouts: Array<{ line: string; block: string }> = [];
+  const lines = text.split('\n');
+  const indentOf = (line: string) => line.length - line.trimStart().length;
+  let lineEnd = -1;
+  for (let i = 0; i < lines.length; i++) {
+    lineEnd += lines[i].length + 1;
+    const rawLine = lines[i];
+    const head = rawLine.trim().replace(/^[-*]\s+/, '');
+    if (head.startsWith('⚠️')) {
+      const indent = indentOf(rawLine);
+      const extent = [head];
+      while (i + 1 < lines.length) {
+        const next = lines[i + 1];
+        const spanOpen = (extent.join('\n').match(/`/g)?.length ?? 0) % 2 === 1;
+        const continues = next.trim() !== '' && (spanOpen || (indentOf(next) > indent && !BLOCK_START_LINE.test(next)));
+        if (!continues) break;
+        extent.push(next.trim());
+        i++;
+        lineEnd += next.length + 1;
+      }
+      const line = extent.join('\n');
+      const fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
+      callouts.push({ line, block: fence ? `${line}\n${fence}` : line });
+      continue;
+    }
+    const lineStart = lineEnd - rawLine.length;
+    const markers = [...rawLine.matchAll(/⚠️/g)].map(marker => marker.index ?? -1);
+    for (let k = 0; k < markers.length; k++) {
+      const isLast = k === markers.length - 1;
+      const segmentEnd = isLast ? rawLine.length : markers[k + 1];
+      const openInSegment = isLast ? rawLine.slice(markers[k], segmentEnd).search(/```sql/i) : -1;
+      const prose = rawLine.slice(markers[k], openInSegment === -1 ? segmentEnd : markers[k] + openInSegment).trim();
+      if (prose.length === 0) continue;
+      let fence: string | undefined;
+      if (openInSegment !== -1) fence = sqlFenceAt(text, lineStart + markers[k] + openInSegment);
+      else if (isLast) fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
+      callouts.push({ line: prose, block: fence ? `${prose}\n${fence}` : prose });
+    }
+  }
+  return callouts;
+}
+
+/** Display-math span as the capture templates author a formula. */
+const DISPLAY_MATH_SPAN = /\$\$([^$]+?)\$\$/g;
+
+/**
+ * Extracts the display-math formulas from captured section text, each with the SQL fence that
+ * immediately follows its line, if any.
+ *
+ * @remarks
+ * The fence is attached only to the last formula on its line, so a line listing several formulas
+ * never repeats one fence under each. The fence's own ```sql marker may open on the formula's own
+ * line, after its description, or at the start of the line right after — both count as
+ * "immediately follows".
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @returns Normalized formula bodies with their restorable block (`$$ … $$` plus fence), in order.
+ */
+function extractCapturedFormulas(text: string): Array<{ body: string; block: string }> {
+  const formulas: Array<{ body: string; block: string }> = [];
+  for (const match of text.matchAll(DISPLAY_MATH_SPAN)) {
+    const body = match[1].trim();
+    if (body.length === 0) continue;
+    const spanEnd = (match.index ?? 0) + match[0].length;
+    const lineEnd = text.indexOf('\n', spanEnd);
+    const restOfLine = lineEnd === -1 ? text.slice(spanEnd) : text.slice(spanEnd, lineEnd);
+    let fence: string | undefined;
+    if (!restOfLine.includes('$$')) {
+      const openInLine = restOfLine.search(/```sql/i);
+      fence = openInLine !== -1 ? sqlFenceAt(text, spanEnd + openInLine) : sqlFenceAfter(text, lineEnd);
+    }
+    const formula = `$$ ${body} $$`;
+    formulas.push({ body, block: fence ? `${formula}\n${fence}` : formula });
+  }
+  return formulas;
+}
+
+/**
+ * Derives presence fingerprints for one captured callout.
+ *
+ * @remarks
+ * The capture contract quotes the row-losing statement in backticks, so each quoted fragment long
+ * enough to be distinctive is a fingerprint: a section that re-quotes every quoted statement counts
+ * as carrying the callout even when the surrounding prose is reworded. A callout with no usable
+ * quote falls back to its own normalized line.
+ *
+ * @param callout - One ⚠️ callout's prose from {@link extractCapturedCallouts}, fence excluded.
+ * @returns Normalized fingerprints; empty only when the line carries no matchable text.
+ */
+function calloutFingerprints(callout: string): string[] {
+  const quoted: string[] = [];
+  for (const match of callout.matchAll(/`([^`]+)`/g)) {
+    const fingerprint = normalizeCalloutFingerprint(match[1]);
+    if (fingerprint.length >= DETAIL_CALLOUT_FINGERPRINT_MIN) quoted.push(fingerprint);
+  }
+  if (quoted.length > 0) return quoted;
+  const whole = normalizeCalloutFingerprint(callout);
+  return whole.length > 0 ? [whole] : [];
+}
+
+/** Kind of captured detail content the assembler guarantees a place in the preview. */
+export type CapturedDetailKind = 'callout' | 'formula';
+
+/** One captured item restored into a section because the authored text omitted it. */
+export type RestoredDetailItem = {
+  /** Rendered section label the item was appended to. */
+  label: string;
+  /** Captured content kind. */
+  kind: CapturedDetailKind;
+  /** Verbatim restored text: the ⚠️ callout in its full extent or the `$$ … $$` formula, each with its SQL fence. */
+  text: string;
+};
+
+/**
+ * Lists the restorable captured items of one section body with their presence fingerprints.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @returns Callouts and formulas, each with its dedup key and the fingerprints that prove presence.
+ */
+function extractCapturedDetailItems(
+  text: string,
+): Array<{ kind: CapturedDetailKind; text: string; key: string; fingerprints: string[] }> {
+  const callouts = extractCapturedCallouts(text).map(({ line, block }) => ({
+    kind: 'callout' as const,
+    text: block,
+    key: normalizeCalloutFingerprint(line),
+    fingerprints: calloutFingerprints(line),
+  }));
+  const formulas = extractCapturedFormulas(text).map(({ body, block }) => {
+    const fingerprint = normalizeCalloutFingerprint(body);
+    return {
+      kind: 'formula' as const,
+      text: block,
+      key: fingerprint,
+      fingerprints: fingerprint.length > 0 ? [fingerprint] : [],
+    };
+  });
+  return [...callouts, ...formulas];
+}
+
+/**
+ * Lists captured ⚠️ callouts and `$$ … $$` formulas absent from the assembled text, per owning
+ * section.
+ *
+ * @remarks
+ * Presence is tested against the whole document, not just the owning section: synthesis may
+ * legitimately group sibling findings across nodes, and an item discussed under another section
+ * is delivered, not dropped. A callout counts as present when every quoted statement is present;
+ * a formula when its body is present in any normalized form. An absent item is restored,
+ * verbatim, to its own node's section — a formula together with the SQL fence that followed it.
+ * A paraphrase that never re-quotes the captured statement is restored alongside
+ * it — completeness over brevity, since the engine cannot prove the paraphrase covers the quoted
+ * statement and the no-drop ruling collapses only true duplication. Slots with no linked section
+ * are ignored: the caller's unlinked-slot rejection owns that case.
+ *
+ * @param labelToNodeIds - Section-linked node ids per rendered label, first-wins as for badges.
+ * @param haystack - Normalized full-document text used for presence matching.
+ * @param detailSlots - Captured slots for the rendered nodes, if any.
+ * @returns Missing items in capture order; empty when everything is already present.
+ */
+function findMissingDetailItems(
+  labelToNodeIds: ReadonlyMap<string, readonly string[]>,
+  haystack: string,
+  detailSlots: readonly DetailSlot[] | undefined,
+): RestoredDetailItem[] {
+  const missing: RestoredDetailItem[] = [];
+  if (!detailSlots || detailSlots.length === 0) return missing;
+  const nodeToLabel = new Map<string, string>();
+  for (const [label, ids] of labelToNodeIds) {
+    for (const id of ids) {
+      const key = id.toLowerCase();
+      if (!nodeToLabel.has(key)) nodeToLabel.set(key, label);
+    }
+  }
+  const seen = new Set<string>();
+  for (const slot of detailSlots) {
+    const label = nodeToLabel.get(slot.nodeId.toLowerCase());
+    if (label === undefined) continue;
+    for (const section of slot.sections ?? []) {
+      for (const item of extractCapturedDetailItems(section.text)) {
+        if (item.fingerprints.length === 0) continue;
+        if (item.fingerprints.every(fingerprint => haystack.includes(fingerprint))) continue;
+        const dedupKey = `${label}\n${item.kind}\n${item.key}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        missing.push({ label, kind: item.kind, text: item.text });
+      }
+    }
+  }
+  return missing;
+}
+
+/**
  * Builds the rendered description markdown from the AI's structured input parts.
  *
  * @remarks
@@ -352,7 +743,7 @@ function normalizePresentSectionLabel(label: string): string {
  * `AiDescriptionOverlay`. The AI never writes the blob directly — it writes the
  * parts (title, intro, sections[], closing) and the engine assembles them
  * deterministically here. Section numbering (`## N {label}`), badge chips, and
- * the `### Objects [name](#focus-node:id)` link header are all engine-owned;
+ * the `### Objects [name](#focus-node:id)` footnote are all engine-owned;
  * they are not AI-authored fields.
  *
  * Numbered badges are emitted only for AI-provided `sections[].node_ids[]`, in
@@ -360,46 +751,85 @@ function normalizePresentSectionLabel(label: string): string {
  * description. Nodes not linked by the AI get no badge. Leading numbers in
  * AI-supplied labels are stripped to keep numbering deterministic.
  *
+ * A node the AI links from more than one section is normalized here, not rejected: the first
+ * section wins the badge and the object link, the later links are returned in
+ * `droppedSectionLinks` for the caller to log, and no section text changes.
+ *
+ * The object links render as a footnote at the END of each section body, not a
+ * heading under the section title: the renderer restyles the `### Objects`
+ * transport line into a small muted paragraph, so the link list reads as a
+ * side note at body-small size instead of competing with the section heading.
+ *
+ * Captured detail-slot callouts and formulas (`opts.detailSlots`) are delivered here for the same
+ * reason badges and numbering are engine-owned: the node-level link check accepts a section that
+ * names the node while omitting individual captured findings, so the assembler restores every
+ * absent ⚠️ callout and `$$ … $$` formula (with its SQL fence) verbatim into its node's section.
+ * The rendered preview then drops no captured information regardless of how the model phrased
+ * the section.
+ *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
- * @returns A pair of numbered badges for the graph and the fully assembled markdown description.
+ * @returns The numbered badges for the graph, the fully assembled markdown description, any
+ *   duplicate section links first-wins dropped while assembling them, and every captured callout
+ *   or formula restored into a section.
  */
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
   opts?: {
     title?: string;
     intro?: string;
+    /** Engine-owned block (e.g. the CT column chain) inserted between the intro and the first section. */
+    preface?: string;
     closing?: string;
-    /** Optional node lookup for injecting clickable H3 object-name headings per section. */
+    /** Optional node lookup for injecting clickable object-link footnotes per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
+    /**
+     * Captured detail slots for the rendered nodes. Every ⚠️ callout and `$$ … $$` formula a
+     * section-linked slot carries is guaranteed a place in the assembled description: items
+     * already present are left alone, the rest are appended verbatim to the owning section under
+     * a `Captured callouts` / `Captured formulas` marker. Slots with no linked section are
+     * ignored here — the caller's unlinked-slot rejection owns that case.
+     */
+    detailSlots?: readonly DetailSlot[];
   },
-): { badges: Array<{ node_id: string; text: string }>; description: string } {
-  // Strip leading "N " or "N. " so AI numbers don't interfere with label matching.
+): {
+  badges: Array<{ node_id: string; text: string }>;
+  description: string;
+  droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }>;
+  restoredDetailItems: RestoredDetailItem[];
+} {
   const stripLeadingNumber = (s: string) => (typeof s === 'string' ? s : '').replace(/^\d+[\.]?\s+/, '').trim();
 
-  // First occurrence index per label — preserves AI's narrative order
   const labelToAiIndex = new Map<string, number>();
   sections.forEach((sec, i) => {
     const norm = stripLeadingNumber(sec.label);
     if (!labelToAiIndex.has(norm)) labelToAiIndex.set(norm, i);
   });
 
-  // Unique labels in AI's sections[] order
   const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
   uniqueLabels.sort((a, b) => (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0));
 
-  // Assign step number N per unique label (1-based, in AI's narrative order)
   const labelToNumber = new Map<string, number>();
   uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
 
-  // Build (node_id → label) map from sections[].node_ids
   const nodeToLabel = new Map<string, string>();
+  const labelToNodeIds = new Map<string, string[]>();
+  const droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }> = [];
   for (const sec of sections) {
     const label = stripLeadingNumber(sec.label);
-    for (const id of sec.node_ids ?? []) nodeToLabel.set(id, label);
+    let kept = labelToNodeIds.get(label);
+    if (!kept) { kept = []; labelToNodeIds.set(label, kept); }
+    for (const id of sec.node_ids ?? []) {
+      const owner = nodeToLabel.get(id);
+      if (owner !== undefined) {
+        if (owner !== label) droppedSectionLinks.push({ node_id: id, dropped_from: label, kept_in: owner });
+        continue;
+      }
+      nodeToLabel.set(id, label);
+      kept.push(id);
+    }
   }
 
-  // Emit numbered badge chips, dropping any node whose label has no matching section.
   const numberedBadges = [...nodeToLabel.entries()]
     .map(([node_id, label]) => {
       const n = labelToNumber.get(label);
@@ -409,50 +839,113 @@ export function orderAndAssemble(
     .sort((a, b) => a._n - b._n)
     .map(({ node_id, text }) => ({ node_id, text }));
 
-  // Assemble markdown: title → intro → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
-  // First-occurrence node_ids list per unique label (AI-authored order preserved).
-  const labelToNodeIds = new Map<string, string[]>();
-  for (const sec of sections) {
-    const label = stripLeadingNumber(sec.label);
-    if (!labelToNodeIds.has(label)) labelToNodeIds.set(label, sec.node_ids ?? []);
+
+  const detailHaystack = normalizeCalloutFingerprint(
+    [opts?.title, opts?.intro, opts?.preface, ...sectionMap.values(), opts?.closing]
+      .filter((part): part is string => typeof part === 'string')
+      .join('\n'),
+  );
+  const restoredDetailItems = findMissingDetailItems(labelToNodeIds, detailHaystack, opts?.detailSlots);
+  for (const label of new Set(restoredDetailItems.map(item => item.label))) {
+    const ofLabel = (kind: CapturedDetailKind) =>
+      restoredDetailItems.filter(item => item.label === label && item.kind === kind).map(item => item.text);
+    const callouts = ofLabel('callout');
+    const formulas = ofLabel('formula');
+    let body = sectionMap.get(label) ?? '';
+    if (callouts.length > 0) body += `\n\n**Captured callouts:**\n${callouts.map(block => `- ${block.replace(/\n/g, '\n  ')}`).join('\n')}`;
+    if (formulas.length > 0) body += `\n\n**Captured formulas:**\n${formulas.join('\n')}`;
+    sectionMap.set(label, body);
   }
 
   const parts: string[] = [];
   if (opts?.title)        parts.push(`# ${opts.title}`);
   if (opts?.intro)        parts.push(opts.intro);
+  if (opts?.preface)      parts.push(opts.preface);
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
     const nodeIds = labelToNodeIds.get(label) ?? [];
-    let objectHeadings = '';
+    let objectFootnote = '';
     if (opts?.nodeMap && nodeIds.length > 0) {
       const links = nodeIds
         .map(id => opts.nodeMap!.get(id))
         .filter((node): node is { id: string; name: string } => !!node)
-        .map(node => `[${node.name}](#focus-node:${node.id})`);
-      if (links.length > 0) objectHeadings = `### Objects ${links.join(', ')}\n\n`;
+        .map(node => `[${node.name}](${FOCUS_NODE_HREF_PREFIX}${encodeFocusNodeId(node.id)})`);
+      if (links.length > 0) objectFootnote = `### Objects ${links.join(', ')}`;
     }
-    parts.push(`## ${n} ${label}\n\n${objectHeadings}${text}`);
+    let section = `## ${n} ${label}`;
+    if (text)          section += `\n\n${text}`;
+    if (objectFootnote) section += `\n\n${objectFootnote}`;
+    parts.push(section);
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
-  return { badges: numberedBadges, description: parts.join('\n\n') };
+  return { badges: numberedBadges, description: parts.join('\n\n'), droppedSectionLinks, restoredDetailItems };
 }
 
 /**
- * Reports which non-pruned nodes the AI left bare (linked in neither preview surface) — an
- * observation for the log, never a payload mutation.
+ * One validated CT column-flow edge, reduced to the structural fields the chain table reads.
+ *
+ * @remarks Structural on purpose: the sm-side `ColumnEdge` satisfies it without an import, so
+ * this assembler stays a pure document builder with no dependency on navigation state.
+ */
+export type ColumnChainEdge = {
+  /** 1-based hop index the edge was traced at. */
+  hop: number;
+  /** Source node id. */
+  from_node: string;
+  /** Source column name. */
+  from_col: string;
+  /** Destination node id. */
+  to_node: string;
+  /** Destination column name. */
+  to_col: string;
+};
+
+/**
+ * Builds the engine-owned "Column Chain" preface for a CT result from validated column-flow edges.
  *
  * @remarks
- * The prompt contract permits bare nodes: "nodes left out of both preview surfaces stay bare" —
- * they still render in the graph via the engine-owned resolved scope, just without a badge or
- * color. The engine therefore has no authority to re-link them: a tool boundary accepts, rejects
- * with a structural hint, or mechanically normalizes with a log — it never silently rewrites an
- * AI presentation decision (the predecessor of this function injected bare nodes into
- * `sections[].node_ids`, which badge-labeled every non-pruned node in the rendered view).
- * Only `prune` removes a node from the view; bare-by-choice is a permitted verdict-respecting
- * outcome for `analyze`/`passthrough` nodes.
+ * CT answers differ from BB by a proven column chain, and that chain already exists in validated
+ * form (`column_flow` per hop) — this renders it as a deterministic table at the top of the
+ * document instead of leaving the distinction to prose. Like badges and section numbering, the
+ * table is engine output: the model never writes it, so it can never drift from the recorded
+ * edges. Rows are ordered by hop; the unnumbered `## Column Chain` heading is deliberately not a
+ * `## N` section, so it takes no section number and no navigation chip.
+ *
+ * @param edges - Validated column-flow edges accumulated by the engine.
+ * @returns The preface markdown, or `undefined` when no edge was recorded (nothing to show).
+ */
+export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): string | undefined {
+  if (edges.length === 0) return undefined;
+  const rows = [...edges]
+    .sort((a, b) => a.hop - b.hop)
+    .map(e => `| ${e.hop} | \`${e.to_node}\` | \`${e.to_col}\` | \`${e.from_node}.${e.from_col}\` |`);
+  return [
+    '## Column Chain',
+    '',
+    '| Hop | Produces | Column | Reads from |',
+    '| --- | --- | --- | --- |',
+    ...rows,
+  ].join('\n');
+}
+
+/**
+ * Reports which non-pruned nodes the AI left unlinked in both badge-producing surfaces
+ * (`sections[].node_ids` and `highlight_groups[].node_ids`) — an observation for the log,
+ * never a payload mutation.
+ *
+ * @remarks
+ * The `notes` schema requires a caption for every kept node the engine lists with no detail slot
+ * (`toolSchemas.ts` notes description; the checklist is rendered by `smPrompts.ts`), so a node this
+ * function flags is not a licensed "stays bare" outcome — it is either covered by a `notes[]` entry
+ * this function does not inspect, or a gap that note-coverage contract was meant to close. Either
+ * way the engine has no authority to re-link it: a tool boundary accepts, rejects with a structural
+ * hint, or mechanically normalizes with a log — it never silently rewrites an AI presentation
+ * decision. Only `prune` removes a node from the
+ * view; an unlinked node still renders via `resolvedNodeIds`, just without a badge or highlight
+ * color.
  *
  * @param resultGraph - The engine result carrying the locked `node_states` verdicts.
  * @param input - The (already auto-fixed) present payload. Read-only.
@@ -481,32 +974,39 @@ export function findBareNonPrunedNodes(
 }
 
 /**
- * Normalizes and "auto-fixes" common AI output artifacts in the final presentation input.
+ * Reports which delivered `detail_slots[]` reached no rendered section.
  *
  * @remarks
- * Handles only mechanical normalization the model cannot self-correct: double-escaped newlines.
- * Skips fenced code blocks and `$$...$$` math (see {@link unescapeProseNewlines}) so a KaTeX macro
- * like `\not`/`\neq` is never split by this correction. It does NOT touch content length —
- * GUI-label bounds are enforced by the Zod boundary caps (which reject-and-self-heal past the
- * tolerance), never by silently truncating authored text.
+ * A different question from {@link findBareNonPrunedNodes}: that function walks every rendered
+ * (non-pruned) node and accepts either badge-producing surface, `sections[].node_ids[]` OR
+ * `highlight_groups[].node_ids[]`, because a highlight color is a legitimate way to place a
+ * passthrough node that never had analyzed detail to begin with. A `detail_slots[]` entry is
+ * different: it is the model's own captured technical findings for that node, the richest
+ * material the synthesis call received. Only a `sections[].node_ids[]` link places that prose in
+ * the walkthrough (`sections[].text`); a `notes[]` caption is a one-line orientation chip and a
+ * highlight color carries no captured findings at all. Accepting notes as coverage is what let a
+ * CT render park every formula-bearing hop on a caption and ship a chain table in place of the BB
+ * walkthrough. Folding this into `findBareNonPrunedNodes`'s highlight-tolerant check would hide
+ * exactly that loss, so it stays a second, narrower computation. The caller
+ * (`executePresentResult`) reports every returned id as a {@link PresentResultViolation} whose
+ * `repairFields`/`paths` name `sections` only — never `notes` or `highlight_groups`.
  *
- * @param input - The raw input from the AI.
- * @returns The normalized input.
+ * @param slotNodeIds - Delivered `detail_slots[].nodeId` values — slots whose node is in the
+ *   current result graph. The caller intersects `sess.memory.notedNodeIds` with the rendered id
+ *   set; a slot whose node the render dropped cannot be linked, so requiring coverage of it
+ *   contradicts the node-id check.
+ * @param input - The (already auto-fixed) present payload. Read-only.
+ * @returns The slot ids absent from every `sections[].node_ids[]`, in `slotNodeIds` order; empty
+ *   when there are no authored sections (update-style calls) or every slot is section-linked.
  */
-export function autoFixPresentResult(input: PresentResultInput): PresentResultInput {
-  let fixed = { ...input };
-
-  // 0. Unescape literal \n sequences (AI double-escapes newlines in JSON tool args).
-  // Tolerate a mistyped (non-string) field: pass it through untouched so the downstream
-  // validator reports a clean field error instead of throwing on `.replace` (→ swallowed internal_error).
-  const unescapeNewlines = (s: string): string =>
-    typeof s === 'string' ? unescapeProseNewlines(s) : s;
-  if (fixed.intro)    fixed = { ...fixed, intro:    unescapeNewlines(fixed.intro) };
-  if (fixed.closing)  fixed = { ...fixed, closing:  unescapeNewlines(fixed.closing) };
-  if (fixed.summary)  fixed = { ...fixed, summary:  unescapeNewlines(fixed.summary) };
-  if (fixed.sections) fixed = { ...fixed, sections: fixed.sections.map(s => ({ ...s, text: s.text ? unescapeNewlines(s.text) : s.text })) };
-
-  return fixed;
+export function findUnrenderedDetailSlotIds(
+  slotNodeIds: readonly string[],
+  input: PresentResultInput,
+): string[] {
+  if (slotNodeIds.length === 0 || !input.sections || input.sections.length === 0) return [];
+  const sectionNodeIds = new Set<string>();
+  for (const sec of input.sections) for (const id of sec.node_ids ?? []) sectionNodeIds.add(id);
+  return slotNodeIds.filter(id => !sectionNodeIds.has(id));
 }
 
 /**
@@ -526,7 +1026,7 @@ export function autoFixPresentResult(input: PresentResultInput): PresentResultIn
  * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
  * never read from `input`. The AI does not write the assembled document.
  *
- * @param input - The (possibly auto-fixed) AI input.
+ * @param input - The raw AI input.
  * @param resolvedNodeIds - The canonical set of node IDs.
  * @param assembledBadges - Pre-assembled numbered badges for consistency.
  * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
@@ -534,10 +1034,16 @@ export function autoFixPresentResult(input: PresentResultInput): PresentResultIn
  *   Completed Phase, so `highlight_groups` may be inherited from that prior render. A held synthesis
  *   draft is not an amendment and must still pass the complete new-render contract. Computed by the
  *   dispatcher — never the model's raw `is_update` flag.
+ * @param externalViolations - Findings from checks that need context this function does not hold
+ *   (the cached discovery answer, the result graph), reported through this accumulator alongside the
+ *   structural rules below — see {@link PresentResultViolation}.
  * @param stage - The calling stage (engine-derived), used to keep the unknown-node-id repair hint
  *   caller-possible — see {@link presentNodeIdHint}. Defaults to `'completed'`, the only stage whose
  *   tool policy includes `lineage_search_objects`, so existing callers that do not pass a stage keep
  *   today's hint wording unchanged.
+ * @param nodeIdState - Classifies an id the result graph cannot link against the engine state the
+ *   caller holds — see {@link PresentNodeIdStateLookup}. Omitted, every offender is reported as
+ *   `not_in_model`, which is the only classification a caller without engine state can make.
  * @returns A successful request object or a structured error with correction hints.
  */
 export function validatePresentResult(
@@ -545,56 +1051,74 @@ export function validatePresentResult(
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
   assembledDescription?: string,
-  isAmendment: boolean = false,
+  isAmendment = false,
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
+  nodeIdState?: PresentNodeIdStateLookup,
 ): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
-  // Structural classification — the failed field AND repairability are set once per addError call
-  // at the exact site the error is known, never re-derived later by matching error TEXT
-  // (see PresentResultError.repairable). A message rewording can therefore never desync the
-  // repair-hint field list.
   let allRepairable = true;
   const repairFields = new Set<PresentResultRepairField>();
   const failedFields = new Set<PresentResultFailedField>();
-  // Offending entry paths, collected at the same call sites for the same reason the field list is:
-  // a rejection that names a rule but not the offender costs a repair round to locate.
   const issuePaths = new Set<string>();
+  const pathUnlinkableIds = new Map<string, readonly string[]>();
+  const pathEntryIds = new Map<string, readonly string[]>();
+  const pathLengthOverruns = new Map<string, { readonly length: number; readonly limit: number }>();
   const addError = (
     field: PresentResultFailedField,
     message: string,
     authorizedFields: readonly PresentResultRepairField[] = [],
     paths: readonly string[] = [],
+    unlinkableIdsAtPath: readonly string[] = [],
+    entryIds: readonly string[] = [],
   ): void => {
     errors.push(message);
     failedFields.add(field);
     if (authorizedFields.length === 0) allRepairable = false;
     for (const f of authorizedFields) repairFields.add(f);
-    for (const path of paths) issuePaths.add(path);
+    for (const path of paths) {
+      issuePaths.add(path);
+      if (unlinkableIdsAtPath.length > 0) pathUnlinkableIds.set(path, unlinkableIdsAtPath);
+      if (entryIds.length > 0) pathEntryIds.set(path, entryIds);
+    }
   };
-  // Set only at the unexplained-highlight addError call below — drives a bespoke hint override
-  // instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
   let hasUnexplainedHighlightGap = false;
 
-  // Findings computed by callers that hold context this function does not — the cached discovery
-  // answer, the result graph. Reported first so their messages keep the priority they had when each
-  // owned its own early return, but through this accumulator so a payload carrying one of them plus
-  // a structural defect reports both in one round instead of one per round.
   const soleHints = externalViolations.flatMap(violation => violation.soleHint ?? []);
   for (const violation of externalViolations) {
     for (const message of violation.messages) {
-      addError(violation.field, message, violation.repairFields, violation.paths);
+      addError(violation.field, message, violation.repairFields, violation.paths, [], violation.entryIds);
     }
   }
-  // How many of `errors` came from callers — lets a caller's own hint stand while it is the only
-  // thing wrong, without assuming one violation means one message.
   const externalErrorCount = errors.length;
 
-  // Presence only — length caps are Zod-owned at the boundary schema (name/title/summary), so no
-  // hand-rolled length check here (it would duplicate Zod and, for summary, reject on prose length).
-  if (!input.name || input.name.trim().length === 0) addError('name', 'name is required');
+  /**
+   * Reports one GUI label over its hard cap.
+   *
+   * @remarks
+   * The caps are validator-owned rather than Zod-owned at the boundary (see
+   * `PresentResultBoundarySchema`): a Zod reject fails the whole call with a field path and no held
+   * draft, so an overrun costs a full resend of an answer that was otherwise correct. Reported here
+   * the overrun is repairable, authorizes only its own field, and names the exact entry. The
+   * measured length is stated because a model cannot count characters — the same fact
+   * `describeSizeIssue` (`toolErrorEnvelope.ts`) states for a Zod size issue, in the same wording.
+   * `summary`, `intro` and `closing` are prose, never a rejection axis, and have no cap to check.
+   */
+  const addLengthError = (
+    field: PresentResultFailedField & PresentResultRepairField,
+    path: string,
+    value: string,
+    limit: number,
+  ): void => {
+    if (value.length <= limit) return;
+    addError(field, `${path} is over its length limit: ${value.length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`, [field], [path]);
+    pathLengthOverruns.set(path, { length: value.length, limit });
+  };
 
-  // Node set must be non-empty (after resolve + prune)
+  if (!input.name || input.name.trim().length === 0) addError('name', 'name is required');
+  else addLengthError('name', 'name', input.name, PRESENT_RESULT_NAME_MAX);
+  if (typeof input.title === 'string') addLengthError('title', 'title', input.title, PRESENT_RESULT_TITLE_MAX);
+
   if (resolvedNodeIds.length === 0) {
     addError('nodes', 'No nodes in view — the result graph is empty or all nodes were pruned');
   }
@@ -607,28 +1131,57 @@ export function validatePresentResult(
   const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
   const sectionLinkedNodeIds = new Set<string>();
 
-  // Either AI submitted sections[] (which the engine assembles into a description before
-  // validation) OR an engine-assembled description is supplied. Without one, there's no body.
+  const resolvedSet = new Set(resolvedNodeIds);
+  const nodeIdStateCache = new Map<string, PresentNodeIdState>();
+  const stateOf = (nodeId: string): PresentNodeIdState => {
+    let state = nodeIdStateCache.get(nodeId);
+    if (state === undefined) {
+      state = nodeIdState?.(nodeId) ?? 'not_in_model';
+      nodeIdStateCache.set(nodeId, state);
+    }
+    return state;
+  };
+  const unlinkableNodeIds = [...new Set([
+    ...(input.sections ?? []).flatMap(section => section.node_ids ?? []),
+    ...(input.notes ?? []).map(note => note.node_id),
+    ...(input.highlight_groups ?? []).flatMap(group => group.node_ids ?? []),
+  ].filter(id => !resolvedSet.has(id)))];
+  const allHallucinated = unlinkableNodeIds.every(id => stateOf(id) === 'not_in_model');
+  const nodeIdNoun = allHallucinated
+    ? 'contains unknown IDs'
+    : 'names IDs the result graph cannot link';
+  const renderNodeIdStates = (ids: readonly string[]): string =>
+    ids.slice(0, NODE_ID_OFFENDERS_SHOWN)
+      .map(id => `\`${id}\` — ${PRESENT_NODE_ID_STATE_TEXT[stateOf(id)]}`)
+      .join('; ')
+    + (ids.length > NODE_ID_OFFENDERS_SHOWN ? ' ...' : '');
+  /**
+   * Offenders elsewhere in the call, the accepted set, and the route back — appended to each site,
+   * in that order: the rejection replay hard-slices this string, so the least recoverable fact (which
+   * id failed and why) is stated before the ones the completion envelope also carries.
+   */
+  const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
+    const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
+    return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
+      + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds, NODE_ID_ACCEPTED_SHOWN)}.`
+      + (allHallucinated ? '' : ` ${PRESENT_REAL_ID_ROUTE[stage]}`)
+      + ` ${presentNodeIdHint(stage)}`;
+  };
+
   if (!hasSections && !hasAssembled) {
     addError('sections', 'sections[] is required — provide at least one section with label and text; node_ids[] is optional.');
   }
 
-  // Markdown/KaTeX formatting is never validated here: a formatting flaw must not reject a call
-  // or kill a session. The webview renderer degrades invalid math to red source text
-  // (rehype-katex fallback) and formatting quality is checked by the offline test harness only.
 
-  // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
   if (hasSections) {
-    const resolvedSet = new Set(resolvedNodeIds);
     const labels = new Set<string>();
-    const nodeToSectionLabel = new Map<string, string>();
-    for (const [sectionIndex, sec] of input.sections!.entries()) {
+    for (const [sectionIndex, sec] of input.sections.entries()) {
       const label = (sec.label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
       const normalizedLabel = normalizePresentSectionLabel(sec.label);
       if (!label) {
         addError('sections', 'Section label is required — provide a short final label for this detail section');
       } else {
-        // Label brevity is prompt-owned content quality; structural validity stays at this boundary.
+        addLengthError('sections', `sections.${sectionIndex}.label`, sec.label, PRESENT_RESULT_SECTION_LABEL_MAX);
         if (labels.has(normalizedLabel)) {
           addError('sections', `Duplicate section label "${label}" — each final label must map to exactly one section text`);
         }
@@ -637,18 +1190,10 @@ export function validatePresentResult(
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
-          // Repair authorization deliberately left empty (unchanged): only the offending entry path
-          // is added, so `rejectionCode` alone no longer has to identify which rule fired.
-          addError('sections', `Section "${sec.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, [], [`sections.${sectionIndex}`]);
+          addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
         }
         for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
           sectionLinkedNodeIds.add(nodeId);
-          const existingLabel = nodeToSectionLabel.get(nodeId);
-          if (existingLabel && existingLabel !== normalizedLabel) {
-            addError('sections', `Node "${nodeId}" already appears in section "${existingLabel}" — remove it from section "${normalizedLabel}" (sections[${sectionIndex}].node_ids) and keep it only in "${existingLabel}".`, ['sections'], [`sections.${sectionIndex}`]);
-          } else {
-            nodeToSectionLabel.set(nodeId, normalizedLabel);
-          }
         }
       }
       if (typeof sec.text !== 'string' || sec.text.trim().length === 0) {
@@ -659,12 +1204,11 @@ export function validatePresentResult(
 
   const noteNodeIds = new Set<string>();
   if (input.notes?.length) {
-    const resolvedSet = new Set(resolvedNodeIds);
     for (const [noteIndex, note] of input.notes.entries()) {
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
-        addError('notes', `notes[].node_id contains unknown ID: ${renderUnknownNodeIds([note.node_id])} — ${presentNodeIdHint(stage)}`, [], [`notes.${noteIndex}`]);
+        addError('notes', `notes[].node_id ${nodeIdNoun}: ${renderNodeIdStates([note.node_id])}.${nodeIdRejectionTail([note.node_id])}`, ['notes'], [`notes.${noteIndex}`], [note.node_id]);
       }
       if (typeof note.text !== 'string' || note.text.trim().length === 0) {
         addError('notes', `Note for "${note.node_id}" is missing text`);
@@ -672,8 +1216,6 @@ export function validatePresentResult(
     }
   }
 
-  // highlight_groups validation — required for new renders; inherited (optional) only when this render
-  // amends an existing one (engine-derived isAmendment), never on the model's raw is_update flag.
   const highlightedNodeIds = new Set<string>();
   if (!input.highlight_groups || input.highlight_groups.length === 0) {
     if (!isAmendment) {
@@ -683,13 +1225,13 @@ export function validatePresentResult(
     if (input.highlight_groups.length > PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX) {
       addError('highlight_groups', `highlight_groups exceeds maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`, ['highlight_groups']);
     }
-    const resolvedSet = new Set(resolvedNodeIds);
     for (const [groupIndex, g] of input.highlight_groups.entries()) {
       if (!g.label) addError('highlight_groups', 'Group label is required');
+      else addLengthError('highlight_groups', `highlight_groups.${groupIndex}.label`, g.label, PRESENT_RESULT_HIGHLIGHT_LABEL_MAX);
       if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
       const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
       if (unknownIds.length > 0) {
-        addError('highlight_groups', `highlight_groups "${g.label}" node_ids contains unknown IDs: ${renderUnknownNodeIds(unknownIds)} — ${presentNodeIdHint(stage)}`, [], [`highlight_groups.${groupIndex}`]);
+        addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
       }
       for (const nodeId of g.node_ids ?? []) {
         if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
@@ -697,8 +1239,6 @@ export function validatePresentResult(
     }
   }
 
-  // Highlighted nodes require an explanation, but unhighlighted preview nodes do not require notes.
-  // A repair may add or relink the missing explanation without modifying the locked graph.
   const unexplainedHighlightNodeIds = [...highlightedNodeIds].filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id));
   if (unexplainedHighlightNodeIds.length > 0) {
     hasUnexplainedHighlightGap = true;
@@ -709,10 +1249,27 @@ export function validatePresentResult(
     );
   }
 
+  const buildRejectionDetail = (): PresentResultError['detail'] => {
+    let acceptedStated = false;
+    return [...issuePaths].map(path => {
+      const ids = pathUnlinkableIds.get(path);
+      const entryIds = pathEntryIds.get(path);
+      const overrun = pathLengthOverruns.get(path);
+      if (!ids && !entryIds && !overrun) return { path };
+      const entry = {
+        path,
+        ...(ids ? { unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })) } : {}),
+        ...(ids && !acceptedStated ? { accepted_node_ids: [...resolvedNodeIds] } : {}),
+        ...(entryIds ? { entry_ids: entryIds } : {}),
+        ...(overrun ?? {}),
+      };
+      if (ids) acceptedStated = true;
+      return entry;
+    });
+  };
+
   if (errors.length > 0) {
-    // The failed-field list was attached structurally at each addError site above.
     const fieldList = [...failedFields];
-    // Derive the resend list from the same field set used to narrow the repair schema.
     const resendList = [...repairFields];
     let hint = fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`
@@ -720,15 +1277,9 @@ export function validatePresentResult(
     if (failedFields.has('sections')) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }
-    // The unexplained-highlight-coverage gap authorizes three repair fields (sections, notes,
-    // highlight_groups — see the addError call above), and its node ids are already resolved, so
-    // both the generic single-field template ("keep highlight_groups exactly as submitted") and
-    // the unknown-ID hint above misfire for this class. Override when it is the sole reported
-    // failure; a mixed batch (e.g. alongside a non-repairable field) keeps the generic hint.
     if (hasUnexplainedHighlightGap && errors.length === 1) {
       hint = "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a note naming it, or drop it from highlight_groups[] if it is uncolored plumbing.";
     }
-    // Same rule for a caller-supplied class: its wording stands only while nothing else is wrong.
     if (soleHints.length === 1 && errors.length === externalErrorCount) {
       hint = soleHints[0];
     }
@@ -738,7 +1289,7 @@ export function validatePresentResult(
       hint,
       repairable: allRepairable,
       repairFields: [...repairFields],
-      ...(issuePaths.size > 0 ? { detail: [...issuePaths].map(path => ({ path })) } : {}),
+      ...(issuePaths.size > 0 ? { detail: buildRejectionDetail() } : {}),
     };
   }
 
@@ -748,7 +1299,7 @@ export function validatePresentResult(
     node_ids: resolvedNodeIds,
     summary: input.summary,
     description: assembledDescription!,
-    layout_direction: input.layout_direction ?? 'TB',
+    layout_direction: input.layout_direction,
     highlight_groups: input.highlight_groups ?? [],
     badges: assembledBadges ?? [],
     notes: input.notes ?? [],

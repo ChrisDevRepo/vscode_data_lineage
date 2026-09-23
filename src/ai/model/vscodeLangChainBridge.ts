@@ -27,27 +27,33 @@ import {
 } from '@langchain/core/messages';
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
-import { toJsonSchema, type JSONSchema } from '@langchain/core/utils/json_schema';
-import { ModelPortError, type ModelPortErrorCode } from './modelPort';
-import type { WireEvent } from '../observability/wireLog';
+import { toJsonSchema } from '@langchain/core/utils/json_schema';
+import { isHostCancellationError, ModelPortError, type ModelPortErrorCode } from './modelPort';
+import { systemPromptHash, type WireEvent } from '../observability/wireLog';
 import { toWireMessage } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
 export interface VscodeBridgeToolDefinition {
+  /** Tool name the model addresses the call by. */
   readonly name: string;
+  /** Natural-language tool description shown to the model. */
   readonly description: string;
+  /** JSON Schema object describing the tool's input. */
   readonly inputSchema: Record<string, unknown>;
 }
 
 /** LangChain call options projected onto one VS Code Language Model request. */
 export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
+  /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
 }
 
 /** Constructor fields for one request-selected VS Code language model. */
 export interface VscodeLangChainBridgeFields {
+  /** The exact `vscode.LanguageModelChat` selected for this request. */
   readonly model: vscode.LanguageModelChat;
+  /** Cancellation token for the request; firing it surfaces as a port-level cancellation. */
   readonly token: vscode.CancellationToken;
   /**
    * Debug wire capture, present only when session trace logging is enabled.
@@ -65,8 +71,7 @@ export interface VscodeLangChainBridgeFields {
  * The instance is request-scoped and has no model-selection or provider-fallback behavior.
  */
 export class VscodeLangChainBridge extends BaseChatModel<
-  VscodeLangChainCallOptions,
-  AIMessageChunk
+  VscodeLangChainCallOptions
 > {
   private readonly model: vscode.LanguageModelChat;
   private readonly token: vscode.CancellationToken;
@@ -141,22 +146,21 @@ export class VscodeLangChainBridge extends BaseChatModel<
     }
     const definitions = [...(options.tools ?? [])];
     const { tools, toolMode } = projectToolChoice(definitions, options.tool_choice);
-    // `this.token` is already the caller's cancellation: VscodeModelPort binds the request
-    // AbortSignal to one CancellationTokenSource (`bindCancellation`) and hands its token to this
-    // bridge. Deriving a second source here would only duplicate that chain.
     let iterator: AsyncIterator<unknown> | undefined;
     let reachedEof = false;
-    // Only allocated when the wire log is on, so the normal path pays one truthiness check.
     const capture = this.wire
       ? { text: '', calls: [] as Array<{ callId: string; name: string; input: unknown }> }
       : undefined;
     try {
       const nativeMessages = messages.map(toVscodeMessage);
-      // Emitted before the request, so a request that never returns still leaves its own evidence.
       this.wire?.({
         type: 'wire-request',
         messages: nativeMessages.map(toWireMessage),
-        tools: tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema })),
+        tools: tools.map((tool) => ({
+          name: tool.name,
+          descriptionHash: systemPromptHash(tool.description),
+          inputSchema: tool.inputSchema,
+        })),
         toolMode: tools.length > 0 ? toolMode : undefined,
       });
       const response = await this.model.sendRequest(
@@ -212,10 +216,11 @@ export class VscodeLangChainBridge extends BaseChatModel<
           yield new ChatGenerationChunk({ text: '', message });
           continue;
         }
-        // `LanguageModelChatResponse.stream` is typed `… | unknown` as the API's forward-compat
-        // placeholder, so a part kind added by a newer VS Code must never end the user's turn.
-        // Ignore it silently: providers may emit many metadata parts, and logging each one floods
-        // the Output channel without adding actionable diagnostics.
+        const nonTextChars = streamedValueChars(part);
+        if (nonTextChars > 0) {
+          const message = new AIMessageChunk({ content: '', response_metadata: { nonTextChars } });
+          yield new ChatGenerationChunk({ text: '', message });
+        }
       }
       if (this.isCancelled(options)) {
         throw cancelledError();
@@ -227,7 +232,6 @@ export class VscodeLangChainBridge extends BaseChatModel<
         try {
           await iterator.return();
         } catch {
-          // Preserve the primary provider/cancellation outcome.
         }
       }
     }
@@ -236,10 +240,6 @@ export class VscodeLangChainBridge extends BaseChatModel<
 
 /** Converts one LangChain message without adding history or helper prose. */
 export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
-  // Platform constraint, not a simplification: `LanguageModelChatMessageRole` exposes only User and
-  // Assistant — VS Code has no System role — so a SystemMessage can only be projected onto `.User()`
-  // alongside genuine human turns. System instructions therefore reach the model as leading user
-  // content; nothing downstream can distinguish them again.
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
     return vscode.LanguageModelChatMessage.User(toTextParts(message.content), message.name);
   }
@@ -274,6 +274,16 @@ export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatM
     'invalid_request',
     `Unsupported LangChain message type: ${message.getType()}.`,
   );
+}
+
+/** Character size of a stream part's string or string-array `value`; 0 for any other shape. */
+function streamedValueChars(part: unknown): number {
+  const value = part && typeof part === 'object' ? (part as { value?: unknown }).value : undefined;
+  if (typeof value === 'string') return value.length;
+  if (Array.isArray(value)) {
+    return value.reduce<number>((sum, item) => sum + (typeof item === 'string' ? item.length : 0), 0);
+  }
+  return 0;
 }
 
 function toTextParts(content: MessageContent): vscode.LanguageModelTextPart[] {
@@ -314,9 +324,6 @@ function toBridgeToolDefinition(tool: BindToolsInput): VscodeBridgeToolDefinitio
       'LangChain tool requires name, description, and an input schema.',
     );
   }
-  // Shared, never mutated downstream: `readInputSchema` may hand back the same memoized
-  // `toModelJsonSchema` object across many calls (see jsonSchema.ts's WeakMap cache), and neither
-  // this bridge nor `vscode.lm.sendRequest` writes into it, so no defensive clone is needed here.
   return { name, description, inputSchema };
 }
 
@@ -324,7 +331,7 @@ function readInputSchema(tool: Record<string, unknown>): Record<string, unknown>
   if (isRecord(tool.inputSchema)) return tool.inputSchema;
   if (isRecord(tool.function) && isRecord(tool.function.parameters)) return tool.function.parameters;
   if (!('schema' in tool) || !tool.schema) return null;
-  const schema = toJsonSchema(tool.schema as Parameters<typeof toJsonSchema>[0]) as JSONSchema;
+  const schema = toJsonSchema(tool.schema as Parameters<typeof toJsonSchema>[0]);
   return isRecord(schema) ? schema : null;
 }
 
@@ -367,11 +374,8 @@ function projectToolChoice(
     tools: selected.map((definition) => ({
       name: definition.name,
       description: definition.description,
-      // Same shared-and-immutable reasoning as `toBridgeToolDefinition` — no clone needed.
       inputSchema: definition.inputSchema,
     })),
-    // VS Code Required means one of the supplied tools. Providers that only support one tool must
-    // reject explicitly; silently weakening LangChain `any` to Auto changes graph semantics.
     toolMode: choice === 'any' || named
       ? vscode.LanguageModelChatToolMode.Required
       : vscode.LanguageModelChatToolMode.Auto,
@@ -393,8 +397,7 @@ function normalizeBridgeError(
   signal?: AbortSignal,
 ): ModelPortError {
   if (error instanceof ModelPortError) return error;
-  if (token.isCancellationRequested || signal?.aborted
-    || (error instanceof Error && ['AbortError', 'Canceled', 'Cancelled'].includes(error.name))) {
+  if (token.isCancellationRequested || signal?.aborted || isHostCancellationError(error)) {
     return cancelledError();
   }
   const rawCode = isRecord(error) && 'code' in error ? String(error.code) : '';
@@ -404,11 +407,6 @@ function normalizeBridgeError(
     NotFound: 'model_not_found',
   };
   const code = mapped[rawCode] ?? 'provider_error';
-  // The provider's own message is retained — redacted and length-capped by `sanitizeProviderError`
-  // — and the original exception is kept as `cause`. Flattening both away makes every non-verdict
-  // failure indistinguishable because `sanitizeProviderErrorDiagnostic` cannot preserve a nested
-  // connection-level code for the user-facing transport classification. Sanitizing here keeps that
-  // distinction without ever putting an unredacted provider body into a message.
   return new ModelPortError(code, providerFailureMessage(error, code), error);
 }
 

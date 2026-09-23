@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { ModeBanner } from './ModeBanner';
+import { ColumnViewToggle } from './ColumnViewToggle';
 
 interface AiViewBannerProps {
   /** The name or title of the AI-generated view. */
@@ -8,12 +9,20 @@ interface AiViewBannerProps {
   nodeCount: number;
   /** Callback triggered when the user chooses to discard the AI preview. */
   onDiscard: () => void;
-  /**
-   * Callback triggered when the user chooses to save the current AI view as a permanent bookmark.
-   * @param name - The name for the new bookmark.
-   * @param withPositions - Whether to save the current visual positions of nodes.
-   */
+  /** Callback triggered when the user chooses to save the current AI view as a permanent bookmark. */
   onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  /**
+   * Whether the run recorded column-level findings, which is what the column view renders.
+   *
+   * @remarks
+   * The switch is offered only when it has something to show; a run without column findings
+   * keeps the object view as its only view.
+   */
+  columnViewAvailable?: boolean;
+  /** Whether the column view is the one currently rendered. */
+  columnView?: boolean;
+  /** Switches between the object view and the column view of the same scope. */
+  onToggleColumnView?: (columnView: boolean) => void;
 }
 
 /** SVG path for the AI/Sparkle icon. */
@@ -27,7 +36,14 @@ export const AiViewBanner = memo(function AiViewBanner({
   nodeCount,
   onDiscard,
   onSaveAsBookmark,
+  columnViewAvailable,
+  columnView,
+  onToggleColumnView,
 }: AiViewBannerProps) {
+  const viewToggle = columnViewAvailable && onToggleColumnView ? (
+    <ColumnViewToggle active={columnView} onToggle={onToggleColumnView} />
+  ) : null;
+
   return (
     <ModeBanner
       variant="ai"
@@ -42,6 +58,7 @@ export const AiViewBanner = memo(function AiViewBanner({
       }
       onClose={onDiscard}
       onSaveAsBookmark={onSaveAsBookmark}
+      extraControls={viewToggle}
     />
   );
 });

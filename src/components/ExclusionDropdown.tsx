@@ -35,7 +35,6 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
   const [tipsOpen, setTipsOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus input when dropdown opens
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 50); // defer past dropdown paint

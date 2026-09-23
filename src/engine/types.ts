@@ -1,4 +1,6 @@
 
+import type { ColumnLineState, ColumnTraceViewNode } from './columnTraceView';
+
 /**
  * Canonical list of supported lineage object kinds. Single source of truth — the
  * {@link ObjectType} union is derived from it, and the bridge contract's
@@ -116,6 +118,8 @@ export interface ParseStats {
   droppedRefs: string[];
   /** Detailed breakdown for each analyzed script. */
   spDetails: SpParseDetail[];
+  /** `schema.name: rule` for every body whose rule stopped at the parser's per-rule match cap; absent when none did. */
+  cappedRules?: string[];
 }
 
 /**
@@ -171,12 +175,9 @@ export interface DatabaseModel {
    * Which ingestion lane produced this model.
    *
    * @remarks
-   * Stamped by each extractor rather than derived, because the two lanes are otherwise
-   * indistinguishable downstream — a DACPAC carries a platform label from its DSP just as a
-   * live import does, so platform presence cannot stand in for provenance. Consumers that
-   * describe the model to the user or the AI must read this, never infer it.
-   *
-   * Optional so `buildModel` stays lane-agnostic; both production extractors always set it.
+   * Stamped by each extractor rather than derived — platform presence cannot stand in for
+   * provenance, since a DACPAC also carries a platform label from its DSP. Optional so `buildModel`
+   * stays lane-agnostic; both production extractors always set it.
    */
   source?: ModelSource;
 }
@@ -188,12 +189,9 @@ export type ModelSource = 'dacpac' | 'database';
  * Label recorded when no source can identify the database platform.
  *
  * @remarks
- * Single-sourced because this string is simultaneously user-visible (status bar, project
- * card) and model-visible (the `db_platform` tool field and the `- Platform:` prompt line).
- * Independent copies in the extractor, the bridge, and the prompt builder would let a
- * reworded label desynchronize what the user sees from what the model is told. Deliberately
- * explicit rather than a `SQL Server` default — the model must not reason from an invented
- * platform.
+ * Single-sourced because this string is both user-visible (status bar, project card) and
+ * model-visible (the `db_platform` tool field). Deliberately explicit rather than a `SQL Server`
+ * default — the model must not reason from an invented platform.
  */
 export const UNKNOWN_DB_PLATFORM = 'Unknown database platform';
 
@@ -252,8 +250,8 @@ export interface XmlProperty {
   '@_Name': string;
   /** The value of the property, if provided as an attribute. */
   '@_Value'?: string;
-  /** The value of the property, if provided as an element text node. */
-  Value?: string | { '#text': string };
+  /** The value of the property, if provided as element text or CDATA (kept under `__cdata`). */
+  Value?: string | { '#text'?: string; __cdata?: string | string[] };
 }
 
 /**
@@ -350,18 +348,20 @@ export interface ForeignKeyInfo {
  * Handles nvarchar/nchar byte→char conversion and fixed-type detection.
  *
  * @param typeName - SQL type name.
- * @param maxLength - Declared max length.
+ * @param maxLength - Declared max length. Unit depends on `lengthInChars`.
  * @param precision - Declared precision.
  * @param scale - Declared scale.
+ * @param lengthInChars - True when `maxLength` is already a character count (dacpac's
+ *   `TypeSpecifier.Length`). False (default) when `maxLength` is a byte count (DMV's
+ *   `max_length`), which nvarchar/nchar must still be halved to get the character count.
  *
  * @returns Formatted SQL type string.
  */
 export function formatColumnType(
-  typeName: string, maxLength: string, precision: string, scale: string
+  typeName: string, maxLength: string, precision: string, scale: string, lengthInChars = false
 ): string {
   const t = typeName.toLowerCase();
 
-  // Types that never need length/precision
   if (['int', 'bigint', 'smallint', 'tinyint', 'bit', 'float', 'real',
     'money', 'smallmoney', 'date', 'datetime', 'datetime2', 'smalldatetime',
     'datetimeoffset', 'time', 'timestamp', 'uniqueidentifier', 'xml',
@@ -370,15 +370,14 @@ export function formatColumnType(
     return typeName;
   }
 
-  // String/binary types: use max_length (-1 = max)
   if (['varchar', 'nvarchar', 'char', 'nchar', 'varbinary', 'binary'].includes(t)) {
     if (maxLength === '-1') return `${typeName}(max)`;
-    // nvarchar/nchar store 2 bytes per char — display char count
-    const len = (t.startsWith('n') && maxLength) ? String(Math.floor(parseInt(maxLength, 10) / 2)) : maxLength;
+    const len = (t.startsWith('n') && maxLength && !lengthInChars)
+      ? String(Math.floor(parseInt(maxLength, 10) / 2))
+      : maxLength;
     return len ? `${typeName}(${len})` : typeName;
   }
 
-  // Decimal/numeric: precision,scale
   if (['decimal', 'numeric'].includes(t)) {
     if (precision && scale) return `${typeName}(${precision},${scale})`;
     if (precision) return `${typeName}(${precision})`;
@@ -389,6 +388,13 @@ export function formatColumnType(
 }
 
 /**
+ * The type a column shows when the source model declares none — a computed column whose expression
+ * the model did not resolve. One home for the placeholder, so a later pass can recognise its own
+ * unresolved rows rather than string-matching a dash.
+ */
+export const UNRESOLVED_COLUMN_TYPE = '—';
+
+/**
  * Build a ColumnDef from raw metadata — single code path for both dacpac and DMV.
  *
  * @param name - Name to use.
@@ -396,9 +402,11 @@ export function formatColumnType(
  * @param nullable - Whether the column is nullable.
  * @param isIdentity - Whether the column is an identity column.
  * @param isComputed - Whether the column is computed.
- * @param maxLength - Declared max length.
+ * @param maxLength - Declared max length. Unit depends on `lengthInChars`.
  * @param precision - Declared precision.
  * @param scale - Declared scale.
+ * @param lengthInChars - True when `maxLength` is already a character count (dacpac). False
+ *   (default) when `maxLength` is a byte count (DMV) — see `formatColumnType`.
  *
  * @returns Normalized column definition.
  */
@@ -411,12 +419,13 @@ export function buildColumnDef(
   maxLength?: string,
   precision?: string,
   scale?: string,
+  lengthInChars = false,
 ): ColumnDef {
   return {
     name,
     type: isComputed
-      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '') : '—')
-      : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? ''),
+      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars) : UNRESOLVED_COLUMN_TYPE)
+      : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars),
     nullable: nullable ? 'NULL' : 'NOT NULL',
     extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
   };
@@ -691,6 +700,135 @@ export interface SchemaNodeData extends Record<string, unknown> {
   /** Right-click-only selection flag controlling the attached schema toolbar. */
   toolbarActive?: boolean;
 }
+
+/** One selectable direct neighbor for interactive trace add/prune controls. */
+export type TraceNeighborOption = {
+  /** Stable node ID passed back to trace edit handlers. */
+  id: string;
+  /** Display name shown in the neighbor picker. */
+  label: string;
+  /** Schema displayed with the neighbor label. */
+  schema: string;
+  /** Object kind used for compact type badges in the picker. */
+  objectType: ObjectType;
+};
+
+/** Add/prune candidates and disabled-copy for one lineage side of a node. */
+export type TraceSideControls = {
+  /** Direct neighbors that can be added on this side. */
+  add: TraceNeighborOption[];
+  /** Visible trace nodes that can be pruned on this side. */
+  prune: TraceNeighborOption[];
+  /** Reason add controls are disabled, or an empty string when enabled. */
+  addDisabledReason: string;
+  /** Reason prune controls are disabled, or an empty string when enabled. */
+  pruneDisabledReason: string;
+  /** Total direct neighbors on this side (drives hide-vs-disable for add). */
+  neighborCount: number;
+  /** Direct neighbors on this side already in the trace (drives hide-vs-disable for prune). */
+  visibleNeighborCount: number;
+};
+
+/** Per-node callbacks and candidate lists for interactive trace editing. */
+export type TraceNodeControls = {
+  /** Controls for upstream direct-neighbor trace edits. */
+  in: TraceSideControls;
+  /** Controls for downstream direct-neighbor trace edits. */
+  out: TraceSideControls;
+  /** Adds the selected direct neighbor to the current trace scope. */
+  onAdd: (nodeId: string) => void;
+  /** Removes the selected node from the current trace scope when safe. */
+  onPrune: (nodeId: string) => void;
+};
+
+/**
+ * The business data associated with a single node in the React Flow canvas.
+ */
+export type CustomNodeData = {
+  /** Display label rendered inside the node. */
+  label: string;
+  /** Schema name used for grouping, color selection, and tooltips. */
+  schema: string;
+  /** Fully qualified object name used by detail and debug surfaces. */
+  fullName: string;
+  /** Object kind that drives icon, color, and tooltip behavior. */
+  objectType: ObjectType;
+  /** Count of upstream dependencies shown in node metadata. */
+  inDegree: number;
+  /** Count of downstream dependents shown in node metadata. */
+  outDegree: number;
+  /** Whether the node is de-emphasized in the current scoped view. */
+  dimmed?: boolean;
+  /** Highlight state applied by search, trace, or AI presentation. */
+  highlighted?: boolean | 'yellow';
+  /** External reference subtype for file, database, or external-table nodes. */
+  externalType?: 'et' | 'file' | 'db';
+  /** File or URL target displayed for file-based external references. */
+  externalUrl?: string;
+  /** Database name displayed for cross-database external references. */
+  externalDatabase?: string;
+  /** Resolved schema color supplied by the parent graph projection. */
+  schemaColor?: string;
+  /** AI-authored badge rendered above the node. */
+  aiBadge?: AiBadge;
+  /** AI-authored note rendered below the node. */
+  aiNote?: { text: string };
+  /** AI-authored highlight styling applied to the node border and glow. */
+  aiHighlight?: { color: string; glow: string; shadow: string };
+  /** Whether the scoped-view remove control is shown. */
+  showRemoveButton?: boolean;
+  /** Removes the node from the active allowlist-backed view. */
+  onRemoveFromView?: (nodeId: string) => void;
+  /** Interactive trace controls for adding or pruning direct neighbors. */
+  traceControls?: TraceNodeControls;
+};
+
+/**
+ * An AI-authored section label rendered above a node.
+ *
+ * @remarks
+ * `emphasis` is the report's section focus, not a node state: node bodies keep whatever the
+ * selection and column thread already say about them. The channels stay separate on purpose — a
+ * section focus that dimmed nodes would overwrite the answer the user is looking at.
+ */
+export type AiBadge = {
+  /** Section label text. */
+  text: string;
+  /** `lit` for the focused section's own labels, `dim` for every other label. */
+  emphasis?: 'lit' | 'dim';
+};
+
+/**
+ * The business data associated with a single column-trace node in the React Flow canvas.
+ */
+export type ColumnTraceNodeData = {
+  /** Positioned view node computed by `buildColumnTraceView` (`src/engine/columnTraceView.ts`). */
+  view: ColumnTraceViewNode;
+  /** Whether the scoped-view remove control is shown — same chrome as {@link CustomNodeData}. */
+  showRemoveButton?: boolean;
+  /** Removes the node from the active allowlist-backed view. */
+  onRemoveFromView?: (nodeId: string) => void;
+  /** Interactive trace controls for adding or pruning direct neighbors. */
+  traceControls?: TraceNodeControls;
+  /**
+   * Per-row line state for the state dot, keyed by row name.
+   *
+   * @remarks
+   * A row absent from this map renders an unstated dot — the map is populated by the caller from
+   * edges touching this row, never computed here.
+   */
+  rowLineStates?: Partial<Record<string, ColumnLineState>>;
+  /** Highlight state applied by node selection, matching {@link CustomNodeData.highlighted}. */
+  highlighted?: boolean | 'yellow';
+  /** Whether the node is de-emphasized because a different node is selected. */
+  dimmed?: boolean;
+  /** AI-authored highlight styling applied to the node border and glow. */
+  aiHighlight?: { color: string; glow: string; shadow: string };
+  /** AI-authored badge rendered above the node. */
+  aiBadge?: AiBadge;
+  /** AI-authored note rendered below the node. */
+  aiNote?: { text: string };
+};
 
 /**
  * Durable graph filter state applied to the current model.

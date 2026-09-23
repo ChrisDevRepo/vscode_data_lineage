@@ -13,13 +13,14 @@ type StartRejectIssue = { code: string; path: string; message: string; action: s
  * Resolves the canonical user question for an exploration.
  *
  * @remarks
- * User-authored text always wins over the model's paraphrase: the retained
- * verbatim discovery prompt covers approve-gate and follow-up flows, the current
- * turn's verbatim prompt covers direct free-text entry, and only then does the
- * model-supplied `question` (or the refined proposal's retained question) apply.
- * Without this precedence the stored question is frequently the model's
- * restatement — or the literal default `'Explore lineage'` — which then anchors
- * every hop and synthesis to the wrong text.
+ * User-authored text always wins over the model's paraphrase: the retained verbatim discovery
+ * prompt covers approve-gate and follow-up flows, the current turn's verbatim prompt covers direct
+ * free-text entry, and only then does the model-supplied `question` apply — otherwise the stored
+ * question is frequently the model's restatement, or the literal placeholder default, which then
+ * anchors every hop and synthesis to the wrong text. `pendingInitQuestion` outranks the current
+ * turn's prompt because callers supply it only while refining a held proposal, where the turn's
+ * prompt is the scope change ("skip DimCalendar") rather than the question, and it is the last
+ * surviving copy of what the user asked once the sliding-memory wipe removes the original chat turn.
  *
  * @param sources - The candidate question sources in provenance order.
  * @returns The canonical question, or null when no source is available.
@@ -30,16 +31,14 @@ export function resolveCanonicalQuestion(sources: {
   modelQuestion: string | undefined;
   pendingInitQuestion: string | undefined;
 }): string | null {
-  // The placeholder sentinel is "absent" by contract (see DEFAULT_EXPLORATION_QUESTION in
-  // smTypes.ts) — it must never become the canonical question that anchors hops and synthesis.
   const pick = (v: string | null | undefined): string | null =>
     typeof v === 'string' && v.trim().length > 0 && v.trim() !== DEFAULT_EXPLORATION_QUESTION
       ? v
       : null;
   return pick(sources.lastDiscoveryQuestion)
+    ?? pick(sources.pendingInitQuestion)
     ?? pick(sources.currentTurnPrompt)
-    ?? pick(sources.modelQuestion)
-    ?? pick(sources.pendingInitQuestion);
+    ?? pick(sources.modelQuestion);
 }
 
 const BB_ACTION = 'Omit targetColumns and resubmit the BB specification. If the provider emits an empty array, the encoding boundary normalizes it automatically.';
@@ -48,17 +47,17 @@ const CT_ACTION = 'Provide at least one named targetColumns value and resubmit C
 function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartRejectIssue {
   const path = issue.path.join('.') || '(root)';
   const tag = issue.code === 'custom' ? issue.params?.startIssue : undefined;
-  if (tag === 'bb_target_columns_forbidden') return { code: 'ct_field_forbidden_in_bb', path, message: issue.message, action: BB_ACTION };
-  if (tag === 'ct_target_columns_required') return { code: 'missing_field', path, message: issue.message, action: CT_ACTION };
+  if (tag === 'bb_target_columns_forbidden') return { code: REJECTION_CODES.ctFieldForbiddenInBb, path, message: issue.message, action: BB_ACTION };
+  if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message: issue.message, action: CT_ACTION };
   if (tag === ASYMMETRIC_DEPTH_BOTH_ZERO) return { code: ASYMMETRIC_DEPTH_BOTH_ZERO, path, message: issue.message, action: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' };
   if (tag === ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL) return { code: ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL, path, message: issue.message, action: 'Asymmetric upstream/downstream depth requires direction "bidirectional". For one direction only, use direction "upstream"/"downstream" with a symmetric depth (a hard border); or keep "bidirectional" and set the other side to 0 to permanently exclude it.' };
   if (issue.code === 'unrecognized_keys') return { code: 'unknown_field', path: issue.keys.join(',') || path, message: issue.message, action: 'Remove the unknown field and resubmit.' };
-  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? 'missing_field' : 'invalid_type', path, message: issue.message, action: `Correct ${path} and resubmit.` };
+  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message: issue.message, action: `Correct ${path} and resubmit.` };
   if (issue.code === 'invalid_value' && ['analysisMode', 'classification', 'direction'].includes(path)) {
-    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: 'missing_field', path, message: issue.message, action: `Provide ${path} and resubmit.` };
+    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message: issue.message, action: `Provide ${path} and resubmit.` };
     return { code: 'invalid_enum', path, message: issue.message, action: `Use an allowed ${path} value and resubmit.` };
   }
-  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' ? 'missing_field' : 'invalid_value', path, message: issue.message, action: `Correct ${path} and resubmit.` };
+  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message: issue.message, action: `Correct ${path} and resubmit.` };
 }
 
 /**
@@ -88,7 +87,7 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
  */
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
-  return { error: 'ct_field_forbidden_in_bb', hint: BB_ACTION, next_action: BB_ACTION };
+  return { error: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_ACTION, next_action: BB_ACTION };
 }
 
 /**
@@ -141,7 +140,7 @@ export function evaluateParallelStartRule(
 export function evaluateSupplementPrereqRule(engineStatus: string | null): InteractionRuleResult {
   if (engineStatus === 'complete') return null;
   return {
-    error: 'supplement_requires_complete_engine',
+    error: REJECTION_CODES.supplementRequiresCompleteEngine,
     hint: `supplement requires a completed prior exploration. Current engine status: ${engineStatus ?? 'none'}. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').`,
   };
 }

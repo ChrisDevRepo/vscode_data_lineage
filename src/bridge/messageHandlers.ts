@@ -6,6 +6,7 @@ import { type AiSession } from '../ai/session/session';
 import {
   Logger,
   trunc,
+  LOG_TRUNC_LIST,
   sanitizeForLog,
   safeStringifyForLog,
   LOG_TRUNC_JSON,
@@ -33,10 +34,11 @@ import {
   type ProjectStore,
 } from '../engine/projectStore';
 import { buildBareGraph } from '../ai/support/graphUtils';
+import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
-import { formatRenderConnectivity, type RenderConnectivity } from '../engine/renderConnectivity';
-import { formatScreenStateSections, type RenderStateSnapshot, type ScreenStateExtras } from './debugDumpScreenState';
+import { formatRenderConnectivity } from '../engine/renderConnectivity';
+import { formatScreenStateSections } from './debugDumpScreenState';
 import {
   BRIDGE_PROTOCOL_VERSION,
   DetailPanelToExtensionMsgSchema,
@@ -44,6 +46,9 @@ import {
   type BridgeEnvelope,
   type MainPanelToExtensionMsg,
   type Project,
+  type RenderStateSnapshot,
+  type ScreenStateExtras,
+  stripFocusNodeLinks,
 } from '../engine/shared/bridgeContract';
 import { summarizeZodError, postToDetail } from './host';
 
@@ -56,6 +61,50 @@ export type WebviewMessageHandlers = {
     msg: Extract<MainPanelToExtensionMsg, { type: K }>,
   ) => Promise<void> | void;
 };
+
+/**
+ * Panel-lived connection state for table profiling.
+ *
+ * @remarks
+ * `pending` holds the connection negotiation currently in flight, so concurrent stats requests
+ * join it rather than each opening their own connection.
+ */
+export type StatsConnState = {
+  /** Negotiated connection uri, or `undefined` before the first successful negotiation. */
+  uri: string | undefined;
+  /** The in-flight negotiation, joined by concurrent requests instead of starting a second one. */
+  pending: Promise<string | undefined> | null;
+};
+
+/**
+ * Resolves the connection uri table profiling runs against, negotiating at most one connection.
+ *
+ * @remarks
+ * A request arriving while a negotiation is in flight joins it, instead of opening a second
+ * connection or putting a second connection prompt in front of the user. The in-flight promise is
+ * cleared however it settles, so a cancelled or failed negotiation leaves the state ready again.
+ *
+ * @param state - Panel-lived connection state, mutated in place.
+ * @param negotiate - Opens or prompts for a connection and yields its uri, or `undefined` when the
+ *   user cancelled.
+ * @returns The connection uri, or `undefined` when the negotiation yielded none.
+ */
+export async function resolveStatsConnectionUri(
+  state: StatsConnState,
+  negotiate: () => Promise<string | undefined>,
+): Promise<string | undefined> {
+  if (state.uri) return state.uri;
+  state.pending ??= negotiate();
+  let negotiated: string | undefined;
+  try {
+    negotiated = await state.pending;
+  } finally {
+    state.pending = null;
+  }
+  if (!negotiated) return undefined;
+  state.uri ??= negotiated;
+  return state.uri;
+}
 
 declare const __BUILD_TIMESTAMP__: string;
 
@@ -91,11 +140,9 @@ function parseWebviewLog(text: string): { category: LogCategory; message: string
  * Splits a project list into the records the webview contract accepts and those it rejects.
  *
  * @remarks
- * The send path validates the whole frame, so one unacceptable record used to cost every project in
- * it — the webview then kept an empty or stale list for the rest of the session. Partitioning first
- * keeps that failure proportional: the readable projects still arrive, and the rejected one is named
- * in the log. This does not soften the contract — {@link ProjectSchema} stays strict, and a record
- * it rejects is still not replayed.
+ * The send path validates the whole frame, so one unacceptable record would otherwise cost every
+ * project in it. Partitioning first keeps the failure proportional: the readable projects still
+ * arrive, and the rejected one is named in the log — {@link ProjectSchema} stays strict throughout.
  *
  * @param projects - Records loaded from the project store.
  * @returns The records that validate, plus one issue summary per record that does not.
@@ -136,7 +183,7 @@ interface WebviewErrorEntry {
 }
 
 interface UiDiagnosticsState {
-  renderState: unknown | null;
+  renderState: RenderStateSnapshot | null;
   lastUiSyncAt: number | null;
   lastErrors: WebviewErrorEntry[];
 }
@@ -192,16 +239,11 @@ export interface MessageHandlerBundle {
  * Installs a freshly built model as the session's current one.
  *
  * @remarks
- * Deliberately panel-independent — it never posts to a webview, so a command-driven load
- * (`dataLineageViz.openExternalProject`) leaves the session in exactly the state a
- * bridge-driven load does: column store repopulated (column tracing reads it), source
- * labels set, and `dataLineageViz.modelLoaded` raised so the model-gated language-model tools
- * become available.
- *
- * The lineage store is opened for `project` only, fire-and-forget: an ad-hoc or demo load gets no
- * store, and a storage failure degrades to storage-off rather than failing the model install. The
- * snapshot is captured synchronously here because the write runs later on the storage queue — a
- * payload read at write time could be read after the session had replaced the model it came from.
+ * Deliberately panel-independent — it never posts to a webview, so a command-driven load leaves the
+ * session in exactly the state a bridge-driven load does: column store repopulated, source labels
+ * set, and `dataLineageViz.modelLoaded` raised. The lineage store is opened for `project` only,
+ * fire-and-forget, and the snapshot is captured synchronously here because the write runs later on
+ * the storage queue — a payload read at write time could see a model the session already replaced.
  *
  * @param sess - Session to install the model into.
  * @param model - Model just extracted from a dacpac or from DMV results.
@@ -279,7 +321,7 @@ export function createMessageHandlers(
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
-  const statsConnState: { uri: string | undefined } = { uri: undefined };
+  const statsConnState: StatsConnState = { uri: undefined, pending: null };
   async function cleanupStatsConnection(): Promise<void> {
     if (statsConnState.uri) {
       await disconnectDatabase(statsConnState.uri, outputChannel).catch(err =>
@@ -291,6 +333,15 @@ export function createMessageHandlers(
 
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
+  }
+
+  /** Clears a filter view's stored AI run record, logging rather than throwing on failure. */
+  async function clearStoredRunLogged(profileId: string): Promise<void> {
+    try {
+      await clearStoredRun(context.globalState, profileId);
+    } catch (err) {
+      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   async function getDetailConfig() {
@@ -364,14 +415,12 @@ export function createMessageHandlers(
         setDetailPanel(detailPanel);
 
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
-          // Same envelope gate as the main panel: detail→host frames are unstamped, so only a
-          // present-but-wrong version proves the two bundles disagree about the message shapes.
           const inboundVersion = (rawM as BridgeEnvelope | undefined)?.protocolVersion;
           if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
             notifyError(
               bridgeLogger,
               'Bridge protocol mismatch (detail panel)',
-              `Data Lineage: the detail panel is speaking bridge protocol v${String(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
+              `Data Lineage: the detail panel is speaking bridge protocol v${safeStringifyForLog(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
             );
             return;
           }
@@ -400,9 +449,9 @@ export function createMessageHandlers(
             } else if (m.type === 'close-detail') {
               detailPanel?.dispose();
             } else if (m.type === 'error') {
-              handlers.error(m);
+              await handlers.error(m);
             } else if (m.type === 'show-warning') {
-              handlers['show-warning'](m);
+              await handlers['show-warning'](m);
             }
           } catch (err) {
             host.log('error', 'Bridge', 'Detail panel handler threw unexpectedly', err instanceof Error ? err : new Error(String(err)));
@@ -500,7 +549,7 @@ export function createMessageHandlers(
           const schemas = project.connection.schemas;
 
           if (schemas && schemas.length > 0) {
-            host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, 10)}`);
+            host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
             const { elements, dspName } = await extractSchemaPreview(data);
             const logger = Logger.create(outputChannel, 'Parse');
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
@@ -527,7 +576,6 @@ export function createMessageHandlers(
           }
         }
       } else if (project.connection.type === 'database') {
-        // Capture narrowed connection — TS loses union narrowing across async closures.
         const dbConn = project.connection;
         await withDbProgressHost(host, 'Loading project', async () => {
           const result = await connectDirect(dbConn.connectionInfo as IConnectionInfo, outputChannel);
@@ -541,9 +589,6 @@ export function createMessageHandlers(
             await runDbPhase2Host(host, dbResult.connectionUri, schemas, outputChannel, getSession, dbResult.connectionInfo.database, dbConn.sourceName, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
             });
-            // Re-narrow on write-back: the record must carry only allow-listed fields, whoever
-            // touched the object in between. `stripSensitiveFields` throws on a record the read
-            // side would reject — at save time, by the owning layer's contract, never silently.
             const refreshed = {
               ...project,
               connection: { ...dbConn, connectionInfo: stripSensitiveFields(dbConn.connectionInfo as IConnectionInfo) },
@@ -569,9 +614,13 @@ export function createMessageHandlers(
     'delete-project': async (msg) => {
       host.log('debug', 'Bridge', `Deleting project: ${msg.id}`);
       const store = loadProjectStore(context);
+      const profileIds = (store.projects.find(p => p.id === msg.id)?.filterProfiles ?? []).map(fp => fp.id);
       const updated = deleteProject(store, msg.id);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
+      for (const profileId of profileIds) {
+        await clearStoredRunLogged(profileId);
+      }
     },
     'load-demo': async () => {
       host.log('debug', 'Bridge', 'Loading demo');
@@ -621,8 +670,6 @@ export function createMessageHandlers(
               schemas: msg.schemas,
             });
           } catch (err) {
-            // The graph still loads; only persistence is skipped, and the user learns it now
-            // rather than through a silently missing project on the next start.
             notifyWarning(
               Logger.create(outputChannel, 'DB'),
               'Persist database project',
@@ -651,24 +698,25 @@ export function createMessageHandlers(
     },
     'filter-changed': (msg) => {
       const sess = getSession();
-      if (msg.uiState) {
-        const prevCount = sess.filteredCount;
-        const prevHit = sess.renderLimitHit;
-        sess.uiState = msg.uiState;
-        sess.filter = msg.uiState.filter;
-        sess.traceState = msg.uiState.trace;
-        sess.graphMode = msg.uiState.graphMode;
-        sess.filteredCount = msg.uiState.filteredCount;
-        sess.renderLimitHit = msg.uiState.renderLimitHit;
-        getUiDiagnostics(sess).lastUiSyncAt = Date.now();
-        if (prevCount !== msg.uiState.filteredCount || prevHit !== msg.uiState.renderLimitHit) {
-          host.log('debug', 'Filter', `State sync — ${msg.uiState.filteredCount ?? '?'} nodes, renderLimitHit=${msg.uiState.renderLimitHit ?? 0}`);
-        }
+      const { uiState } = msg;
+      const prevCount = sess.filteredCount;
+      const prevHit = sess.renderLimitHit;
+      sess.uiState = uiState;
+      sess.filter = uiState.filter;
+      sess.traceState = uiState.trace;
+      sess.graphMode = uiState.graphMode;
+      sess.filteredCount = uiState.filteredCount;
+      sess.renderLimitHit = uiState.renderLimitHit;
+      getUiDiagnostics(sess).lastUiSyncAt = Date.now();
+      if (prevCount !== uiState.filteredCount || prevHit !== uiState.renderLimitHit) {
+        host.log('debug', 'Filter', `State sync — ${uiState.filteredCount} nodes, renderLimitHit=${uiState.renderLimitHit}`);
       }
     },
     'render-state': (msg) => {
-      const state = getUiDiagnostics(getSession());
-      state.renderState = msg.renderState ?? null;
+      const sess = getSession();
+      const state = getUiDiagnostics(sess);
+      state.renderState = msg.renderState;
+      sess.renderState = msg.renderState;
       state.lastUiSyncAt = Date.now();
     },
     'db-connect': () => {
@@ -690,6 +738,18 @@ export function createMessageHandlers(
         await saveProjectStore(context, updated);
         logger.info(`Successfully saved filter view: "${msg.profile?.name}"`);
         postProjectsList(host, updated);
+        try {
+          const sess = getSession();
+          const run = buildStoredRun(msg.profile, sess.presentationArtifact, id => sess.columnStore.getDdl(id));
+          if (run) {
+            const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
+            logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
+          } else {
+            logger.debug(`AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`);
+          }
+        } catch (runErr) {
+          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);
+        }
       } catch (err) {
         logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
         throw err;
@@ -705,10 +765,10 @@ export function createMessageHandlers(
       const updated = deleteFilterProfile(store, msg.projectId, msg.profileId);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
+      await clearStoredRunLogged(msg.profileId);
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
-      getSession().columnStore.clear();
       const config = await readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },
@@ -731,12 +791,48 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', 'Opening extension settings');
       host.executeCommand('workbench.action.openSettings', 'dataLineageViz');
     },
+    /**
+     * Saves a webview-composed export under a name the user confirms in the save dialog.
+     *
+     * @remarks
+     * `defaultName` is webview-supplied, so only its base name pre-fills the dialog: a name carrying
+     * separators or `..` segments would otherwise seed the dialog at a path the export never came
+     * from. The dialog still owns the destination — this only bounds what the webview may suggest.
+     */
     'export-file': async (msg) => {
-      host.log('debug', 'Bridge', `Exporting file: ${msg.defaultName}`);
-      const uri = await host.showSaveDialog({ defaultUri: vscode.Uri.file(msg.defaultName) });
+      const defaultName = path.basename(msg.defaultName);
+      host.log('debug', 'Bridge', `Exporting file: ${defaultName}`);
+      const uri = await host.showSaveDialog({ defaultUri: vscode.Uri.file(defaultName) });
       if (uri) {
         await host.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
         host.executeCommand('revealFileInOS', uri);
+      }
+    },
+    /**
+     * Opens the AI report as an untitled markdown document and previews it beside the panel.
+     *
+     * @remarks
+     * No HTML sanitizing pass runs here: the content lands in a text document, and VS Code's own
+     * markdown preview renders it under its `markdown.preview.security` policy. The preview command
+     * belongs to the built-in markdown extension, which a user can disable — its absence is not a
+     * failed action, so the fallback shows the document itself and reports it as a warning.
+     */
+    'ai-open-in-editor': async (msg) => {
+      host.log('debug', 'Bridge', 'Opening AI description in editor');
+      const doc = await vscode.workspace.openTextDocument({
+        content: stripFocusNodeLinks(msg.markdown),
+        language: 'markdown',
+      });
+      try {
+        await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
+      } catch (err) {
+        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+        notifyWarning(
+          Logger.create(outputChannel, 'Bridge'),
+          'Markdown preview unavailable',
+          'Data Lineage: the built-in Markdown preview is unavailable, so the report opened as a Markdown document instead.',
+          { messageType: 'ai-open-in-editor', reason: err instanceof Error ? err.message : String(err) },
+        );
       }
     },
     'log': (msg) => {
@@ -747,8 +843,6 @@ export function createMessageHandlers(
     'error': (msg) => {
       const source = msg.source ?? 'unknown';
       const logger = Logger.create(outputChannel, 'Bridge');
-      // Reconstruct an Error carrying the webview's original stack so downstream
-      // consumers see the real throw site, not the rethrow point in the extension.
       const err = new Error(msg.error);
       if (msg.stack) err.stack = msg.stack;
       const componentLine = msg.componentStack
@@ -758,8 +852,6 @@ export function createMessageHandlers(
         ? safeStringifyForLog(msg.context, 500)
         : '(no context)';
 
-      // Retain for the debug dump's LAST ERRORS section — the context carries the full
-      // current-screen snapshot, so a crash is reproducible from the dump alone.
       recordWebviewError(getSession(), {
         timestamp: msg.timestamp ?? Date.now(),
         source,
@@ -769,14 +861,10 @@ export function createMessageHandlers(
         context: msg.context,
       });
 
-      // A render-boundary crash auto-reloads the panel — say so plainly. Other sources
-      // (window error, unhandled rejection) just report the failure.
       const userMessage = source === 'error-boundary'
         ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
         : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
 
-      // Full detail (message + stack + component tree + screen context) is written to the
-      // Output channel at error level by notifyError, before the concise toast.
       notifyError(
         logger,
         `Webview ${source}`,
@@ -882,16 +970,11 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const timeoutMs = (host.getConfiguration().get<number>('dmvQueryTimeout') ?? 120) * 1000;
-  // Platform detection and the catalog fetch precede the sweep; the sweep's own 1..N steps
-  // shift up by the lead-step count so the counter stays monotonic instead of restarting.
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;
   const totalSteps = queries.filter(isPhase2Query).length + leadSteps;
   host.postMessage({ type: 'db-progress', step: 1, total: totalSteps, label: 'Detecting database platform' });
   const platformMetadata = await loadDatabasePlatform(connectionUri, queries, outputChannel, timeoutMs);
-  // Full object catalog for cross-schema dependency resolution. Optional by contract: a custom
-  // query file without 'all-objects', or a failed fetch, degrades to unclassified cross-schema
-  // references — never to a failed import.
   let allObjectsResult: SimpleExecuteResult | undefined;
   if (allObjectsQuery) {
     host.postMessage({ type: 'db-progress', step: 2, total: totalSteps, label: 'Loading object catalog' });
@@ -935,11 +1018,10 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
  * Upper bound for the platform probe, independent of `dmvQueryTimeout`.
  *
  * @remarks
- * The probe is a single-row `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must
- * not inherit the user's bulk-query budget (default 120 s). An unreachable server would
- * otherwise stall the import behind a progress notification showing no steps before any real
- * work began. Capping here costs nothing when the server is healthy and bounds the stall when
- * it is not — the fallback tiers still produce a platform either way.
+ * The probe is a single-row `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must not
+ * inherit the user's bulk-query budget (default 120 s) — an unreachable server would otherwise
+ * stall the import behind a progress notification showing no steps. The fallback tiers still
+ * produce a platform either way.
  */
 const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
 
@@ -947,10 +1029,9 @@ const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
  * Shape accepted from the MSSQL extension's `getServerInfo`.
  *
  * @remarks
- * `IServerInfo` types these as required, but the value crosses an extension boundary this
- * code does not own, so the types are a claim rather than a guarantee. Only the three fields
- * the platform mapping reads are validated — a malformed response degrades to the explicit
- * unknown label instead of throwing inside `mapEngineMetadata`.
+ * `IServerInfo` types these as required, but the value crosses an extension boundary this code
+ * does not own, so a malformed response degrades to the explicit unknown label instead of throwing
+ * inside `mapEngineMetadata`.
  */
 const ServerInfoSchema = z.object({
   engineEditionId: z.number(),
@@ -962,14 +1043,10 @@ const ServerInfoSchema = z.object({
  * Resolves the database platform before the Phase 2 model is built.
  *
  * @remarks
- * Three tiers, none of which may fail the import: the `platform-info` query, then
- * authoritative MSSQL `getServerInfo` metadata, then an explicit unknown label. Platform
- * is display and AI-grounding context, never a correctness input, so a database that
- * cannot answer must still import — but it must say so rather than be labelled with an
- * invented `SQL Server` default that the model would then reason from.
- *
- * Runs ahead of the Phase 2 sweep because `buildModelFromDmv` needs the result at model
- * construction; `platform-info` carries `phase: 1` so the sweep does not re-run it.
+ * Three tiers, none of which may fail the import: the `platform-info` query, then authoritative
+ * MSSQL `getServerInfo` metadata, then an explicit unknown label — never an invented `SQL Server`
+ * default the model would reason from. Runs ahead of the Phase 2 sweep because `buildModelFromDmv`
+ * needs the result at model construction.
  */
 async function loadDatabasePlatform(
   connectionUri: string,
@@ -1031,7 +1108,7 @@ async function withDbProgressHost(host: BridgeHost, title: string, connectFn: ()
 async function handleTableStatsRequestHost(
   host: BridgeHost,
   storedConnectionInfo: IConnectionInfo | undefined,
-  statsConnState: { uri: string | undefined },
+  statsConnState: StatsConnState,
   panel: vscode.WebviewPanel,
   schema: string,
   objectName: string,
@@ -1059,15 +1136,14 @@ async function handleTableStatsRequestHost(
 
   logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
   try {
-    if (!statsConnState.uri) {
+    const connectionUri = await resolveStatsConnectionUri(statsConnState, async () => {
       const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
-      if (!result) {
-        void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
-        return;
-      }
-      statsConnState.uri = result.connectionUri;
+      return result?.connectionUri;
+    });
+    if (!connectionUri) {
+      void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
+      return;
     }
-    const connectionUri = statsConnState.uri!;
     const serverInfo = await getServerInfo(connectionUri);
     const engineEdition = serverInfo.engineEditionId;
 
@@ -1079,8 +1155,6 @@ async function handleTableStatsRequestHost(
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
     const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
     if (!profilingSql) {
-      // The detail panel is in its loading phase and leaves it only on a result or error frame —
-      // a bare return here left it spinning forever.
       logger.info(`No profileable columns for ${schema}.${objectName} — nothing to query`);
       void postToDetail(panel, {
         type: 'table-stats-error',
@@ -1141,9 +1215,11 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
     if (stats.droppedRefs.length > 0) {
       logger.info(`Phase 2 Result: Dropped — ${stats.droppedRefs.length} refs unrelated (aliases/built-ins)`);
     }
+    if (stats.cappedRules) {
+      logger.warn(`Phase 2 Result: Match limit hit — ${stats.cappedRules.length} rule(s), dependencies past the limit are missing: ${trunc(stats.cappedRules, LOG_TRUNC_LIST)}`);
+    }
   }
 
-  // Detailed debug logs for each scripted object
   if (spCount === 0) {
     logger.debug('No scripted objects (procedures/views) with valid definitions found for parsing.');
   }
@@ -1270,7 +1346,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`Webview errors captured: ${uiDiagnostics.lastErrors.length}`);
   add('');
 
-  // ── ENVIRONMENT ──
   add('ENVIRONMENT');
   add(`  Extension:    ${version}`);
   add(`  Build Stamp:  ${buildStamp}`);
@@ -1278,7 +1353,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`  OS:           ${os.type()} ${os.release()} (${os.arch()})`);
   add('');
 
-  // ── DATA SOURCE ──
   add('DATA SOURCE');
   add(`  Project:      ${sess.projectName ?? 'N/A'}`);
   add(`  Source:       ${sess.sourceLabel}`);
@@ -1286,7 +1360,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`  Parse rules:  ${sess.parseRulesLabel}`);
   add('');
 
-  // ── MODEL ──
   if (sess.model) {
     add('MODEL');
     add(`  Nodes total:  ${sess.model.nodes.length}`);
@@ -1297,13 +1370,11 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add(JSON.stringify(sess.model.schemas, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
     add('');
 
-    // ── MODEL CONNECTIVITY (full model, filter-independent) ──
     add('MODEL CONNECTIVITY (full model, filter-independent)');
     add(formatModelConnectivity(summarizeModelConnectivity(sess.model)));
     add('');
   }
 
-  // ── SCHEMA LEGEND ──
   if (sess.model) {
     const names = sess.model.schemas
       .filter(s => !(s.types['external'] > 0 && s.nodeCount === s.types['external']))
@@ -1313,21 +1384,18 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add('');
   }
 
-  // ── PARSE STATS ──
   if (sess.parseStats) {
     add('PARSE STATS');
     add(JSON.stringify(sess.parseStats, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
     add('');
   }
 
-  // ── GUI STATE ──
   if (sess.uiState) {
     add('GUI STATE');
     add(JSON.stringify(sess.uiState, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
     add('');
   }
 
-  // ── RENDER STATE (current on-screen graph) ──
   add('RENDER STATE (current screen)');
   if (uiDiagnostics.renderState) {
     add(JSON.stringify(uiDiagnostics.renderState, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
@@ -1336,23 +1404,19 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
   add('');
 
-  // ── RENDERED CONNECTIVITY (what the user currently sees) ──
-  const renderConnectivity = (uiDiagnostics.renderState as { connectivity?: RenderConnectivity } | undefined)?.connectivity;
+  const renderConnectivity = uiDiagnostics.renderState?.connectivity;
   if (renderConnectivity) {
     add('RENDERED CONNECTIVITY (current screen)');
     add(formatRenderConnectivity(renderConnectivity));
     add('');
   }
 
-  // ── SELECTION & AFFORDANCES / TRACE SCOPE / DETAIL PANEL / ANALYTICS / BOOKMARK ──
-  // Explains why the selected node shows or grays its +/- trace controls, standalone.
   add(formatScreenStateSections(
-    uiDiagnostics.renderState as RenderStateSnapshot | null,
+    uiDiagnostics.renderState,
     (sess.uiState as { screenState?: ScreenStateExtras } | null)?.screenState ?? null,
     sess.model ?? null,
   ));
 
-  // ── LAST ERRORS (newest last) ──
   add(`LAST ERRORS (${uiDiagnostics.lastErrors.length})`);
   if (uiDiagnostics.lastErrors.length === 0) {
     add('    (none captured this session)');
@@ -1367,7 +1431,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
   add('');
 
-  // ── SM SUMMARY (overview only; full dump is a separate command) ──
   add('SM SUMMARY');
   add(`  Phase:        ${sess.phase.kind}`);
   add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
@@ -1377,7 +1440,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add('  Full SM dump: use Data Lineage: Dump SM State');
   add('');
 
-  // ── SETTINGS ──
   add('SETTINGS (dataLineageViz.*, excluding ai.*)');
   try {
     const cfg = vscode.workspace.getConfiguration('dataLineageViz');

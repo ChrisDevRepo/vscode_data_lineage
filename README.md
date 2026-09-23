@@ -48,8 +48,9 @@ model.
 ```
 
 Use it to ask dependency questions, preview graph scopes, save useful previews as
-bookmarks, and — where the metadata allows — follow column mappings or explain
-SQL logic.
+bookmarks, ask about what is on screen (*"explain this trace"*, or `#lineageView`),
+recall what an earlier analysis found from its saved AI bookmark, and — where the
+metadata allows — follow column mappings or explain SQL logic.
 
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
@@ -71,7 +72,7 @@ demo data, profiling, and export features work without one.
 - **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
 - **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
-- **Optional `@lineage` AI** — use VS Code Chat to ask lineage questions, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows.
+- **Optional `@lineage` AI** — use VS Code Chat to ask lineage questions, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows. The assistant can read what is currently on screen, and a bookmark saved from an AI-authored view keeps that run's findings so a later question can recall them.
 - **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
 - **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).
@@ -81,12 +82,13 @@ For the full feature catalogue, settings, and customisation paths see [`docs/FEA
 
 ## Limitations
 
-The extension is built from database DDL/catalog metadata only. The following are out of scope:
+The lineage graph is built from database DDL/catalog metadata only. The following are out of scope:
 
 - **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source. Target tables appear as leaves; the upstream pipeline does not.
 - **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected.
 - **Dynamic SQL** — `EXEC(@sql)` and `sp_executesql` cannot be analysed statically.
 - **Unqualified references** — references without a schema prefix are ambiguous; metadata may resolve some known dependencies, but dynamic/default-schema cases are not guaranteed.
+- **Triggers and synonyms** — not ingested from either source. They do not appear as nodes, and references made through them do not become edges.
 
 ## FAQ
 
@@ -102,14 +104,15 @@ Unqualified names depend on caller default schema and context. Schema-qualified 
 ## Documentation
 
 - [`docs/FEATURES.md`](docs/FEATURES.md) — full feature catalogue, settings, customisation paths.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Map & Router engine, bipartite analysis, memory model.
-- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — fork starting point, repo layout, build / test, prompt-builder hierarchy.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Map & Router engine, BB and column-trace exploration modes, memory model.
+- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — fork starting point, repo layout, build / test.
+- [`docs/EDH_TESTING.md`](docs/EDH_TESTING.md) — local test commands and Extension Development Host smoke lanes.
 - [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA contract for live-database ingestion (no black box).
 - [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — generated SQL for table profiling.
 - [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) — YAML reference for the SQL parser.
 - [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — prompt architecture + YAML reference for `@lineage` capture / render templates.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common issues.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — coding standards, testing protocol, PR hygiene.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — coding standards and testing protocol.
 
 ## Contributing
 

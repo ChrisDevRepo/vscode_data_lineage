@@ -32,10 +32,6 @@ export const Legend = memo(function Legend({
   const [expanded, setExpanded] = useState(false);
   const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
 
-  /**
-   * Effect to monitor VS Code theme changes.
-   * Updates internal state to trigger re-renders when the theme kind attribute on document.body changes.
-   */
   useEffect(() => {
     const observer = new MutationObserver(() => {
       setThemeKind(document.body.getAttribute('data-vscode-theme-kind') ?? '');
@@ -53,15 +49,15 @@ export const Legend = memo(function Legend({
   return (
     <div
       className="absolute top-4 ln-legend rounded-md overflow-hidden z-10 transition-all duration-200"
-      style={{ left: isSidebarOpen ? 380 : 16 }}
+      style={{ left: isSidebarOpen ? 'min(380px, calc(100vw - 120px))' : 16 }}
     >
       <button
         onClick={() => setCollapsed(!collapsed)}
         aria-expanded={!collapsed}
-        aria-label="Toggle schema legend"
+        aria-label="Toggle legend"
         className="w-full flex items-center justify-between px-3 py-2 transition-colors text-left ln-legend-header"
       >
-        <span className="text-[10px] font-normal uppercase tracking-wider">SCHEMAS</span>
+        <span className="text-[10px] font-normal uppercase tracking-wider">LEGEND</span>
         <span className="text-[10px] opacity-70 ml-1.5">{collapsed ? '▼' : '▲'}</span>
       </button>
 

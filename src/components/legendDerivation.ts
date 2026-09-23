@@ -1,5 +1,4 @@
-import type { CustomNodeData } from './CustomNode';
-import type { SchemaNodeData, GraphMode, TraceState } from '../engine/types';
+import type { CustomNodeData, SchemaNodeData, GraphMode, TraceState } from '../engine/types';
 import { schemaKey } from '../utils/sql';
 import { getSchemaColor, type SchemaColorMap } from '../utils/schemaColors';
 
@@ -37,8 +36,6 @@ export function deriveLegendSchemas(
   traceMode: TraceState['mode'],
   renderedSchemas: string[] | undefined,
 ): string[] {
-  // In overview mode localNodes are SchemaNodeData buckets, plus object nodes for any
-  // expanded schema. Externals are excluded so the list matches legendColorMap.
   if (graphMode === 'overview') {
     const schemas = new Set<string>();
     for (const n of nodes) {
@@ -60,7 +57,6 @@ export function deriveLegendSchemas(
   const isTraceActive = traceMode === 'applied' || traceMode === 'path-applied'
     || traceMode === 'filtered' || traceMode === 'analysis';
 
-  // The legend shows only schemas that contain at least one non-external object.
   const schemasWithRealObjects = new Set(
     nodes
       .map(n => n.data as CustomNodeData)

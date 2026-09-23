@@ -1,60 +1,35 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# AI Output Specification — what evidence and final output @lineage should produce.
+# ──────────────────────────────────────────────────────────────────────────────
+# AI Output Specification — what @lineage writes, and how.
 #
-# This is the user/business tuning surface for evidence and presentation.
-# TypeScript decides WHEN each requirement is injected and owns phases, tools,
-# memory, schemas, retries, routing, validation, dispatch, and engine state.
-# Edit `instruction` text to change output/evidence expectations, not workflow.
+# EDIT `instruction:` — it is the only text sent to the AI. In every block below:
+#   instruction:  sent to the AI. Change this to change the output.
+#   stages:       label only. Routing is decided in code; editing it does nothing.
+#   example:      sample for you to read. Never sent to the AI.
+# Neither ignored field warns you. No `instruction:` changed = nothing changed.
 #
-# VS Code override: `dataLineageViz.ai.outputTemplateFile`. Your overlay
-# merges on top of this default — your keys win.
+# The three stages, and which blocks fire in each:
 #
-# Full key reference (purpose + maintenance for each key): see
-#   docs/AI_PROMPTS.md
+#   discovery   first chat reply, no exploration — bounded catalog and lineage
+#               questions answered with the discovery read tools
+#               → discovery_chat
 #
-# Contract — AI writes parts, engine builds the document:
+#   active      per-hop analysis. Each fired *_capture writes ONE section:
+#               business → 1, technical → 1, both → 2. Blocks are independent.
+#               → business_capture, technical_capture, structural_callouts,
+#                 structural_summary, column_trace_capture (column-trace mode only)
 #
-#   AI writes structured PARTS:
-#     active phase: business_capture / technical_capture / structural_summary
-#                   → produces sections[].text bodies stored in the archive
-#     synthesis:    summary, title, intro, sections[], closing, notes[],
-#                   highlight_groups[]
-#                   → assembled by the engine into the rendered document
+#   synthesis   final document. The AI writes these parts; the engine assembles,
+#               numbers, and decorates them — do not template what the engine builds.
+#               → summary, title, intro, closing, highlights, notes, general,
+#                 loading_pattern (technical only)
 #
-#   Engine OWNS deterministic outputs (no instruction template — the AI never
-#   writes these):
-#     - The full markdown document shown in AiDescriptionOverlay (built by
-#       orderAndAssemble in src/ai/tools/presentResult.ts from title + intro + sections[]
-#       + closing).
-#     - Section numbering (## N {label}), badge chips, ### Objects link blocks.
+# Your own copy: set `dataLineageViz.ai.outputTemplateFile`. It merges over this
+# file and your keys win — but only while its `schemaVersion` matches the one
+# below. On a mismatch it is skipped with a warning in the Output channel; re-run
+# "Data Lineage: Create AI Output Templates" and re-apply your edits.
 #
-#   Do NOT add an instruction template for any field the engine builds itself.
-#   The lift+group+label rule for sections[] lives in src/ai/prompting/prompts.ts →
-#   buildSynthesisPrompt(), not here, to avoid duplication.
-#
-# Stages:
-#   discovery  = first chat response, no SM. Trivial questions only.
-#   active     = per-hop analysis. The AI writes one section per fired
-#                *_capture template into `submit_findings.sections[]`.
-#                Each fired *_capture produces ONE section (angle + text).
-#                business classification → 1 section; technical → 1; both → 2.
-#                Templates are independent — no cross-references between
-#                business_capture and technical_capture.
-#   synthesis  = final document assembly. The engine assembles the rendered
-#                document from the AI's submitted parts; the templates here
-#                describe only the parts the AI writes from scratch.
-#
-# Authoritative delivery routing lives in code (templateRenderer.ts → STAGE_BY_KEY).
-# YAML `stages:` documents the intended destination for business authors; it is
-# informational only — overlays that contradict code are logged and ignored.
-#
-# schemaVersion: the template-structure contract version. A custom overlay
-# (dataLineageViz.ai.outputTemplateFile) is applied ONLY when its schemaVersion
-# matches this; a mismatch (or a missing field) means the structure changed in a
-# newer release — the overlay is skipped and a warning is written to the Output
-# channel ("review your YAML"). Keep this field in your custom file and re-scaffold
-# (Create AI Output Templates) after upgrading if you see that warning.
-# ─────────────────────────────────────────────────────────────────────────────
+# Per-key reference: docs/AI_PROMPTS.md
+# ──────────────────────────────────────────────────────────────────────────────
 
 schemaVersion: 2
 
@@ -63,58 +38,43 @@ schemaVersion: 2
 discovery_chat:
   stages: [discovery]
   instruction: >
-    Markdown. Lead with the direct answer to the user's question, then explain
-    the lineage as a coherent flow: what each relevant object contributes and
-    why it matters before adding technical evidence.
-
-
-    Preserve every substantive fact supported by the loaded data, including
-    transformations and column mappings, filters and predicates, read/write
-    distinctions, validation or deduplication rules, error and audit paths, and
-    notable inconsistencies or risks. Use canonical object and column names.
-    If evidence is missing, state what is unavailable instead of inferring it.
-
-
-    Keep internal tool names, call syntax, and payload fields out of the answer.
-    Organize multi-object answers by the question's flow and group simple source
-    or pass-through objects when helpful. Show a raw node/edge inventory only
-    when the user explicitly asks for one. Use headings, bullets, tables, or SQL
-    fences only when they make the answer clearer.
+    Markdown; SQL in ```sql fences; levels as a table or nested list. Lead
+    with the direct answer. When the answer is a set — every
+    source, every consumer, every match — give the whole set, its count and
+    how much was searched, from the tool totals. Then explain the flow: what
+    each object contributes, with the transformations, column mappings,
+    predicates, read/write roles, validation rules and risks the loaded SQL
+    shows. Use canonical names; say what is unavailable rather than infer it.
+    Keep tool names and payload fields out of the answer, and list raw nodes
+    or edges only when asked.
 
 # ── Card + top of the document ───────────────────────────────────────────────
 
 summary:
   stages: [synthesis]
   instruction: >
-    One-line graph purpose — aim for ~120 chars. Shown in the info card. This is
-    prose, not a fixed-width label: write the full purpose; avoid padding or clipping to a number.
-  example: "Revenue lineage from raw orders through price calculation to FactTableA."
+    One line for the info card, ~120 chars: the subject of the analysis and
+    where its data lands.
+  example: "Loan lineage from raw checkouts through fee calculation to FactCircA."
 
 title:
   stages: [synthesis]
   instruction: >
-    Optional. Aim for ≤80 chars (hard cap 120 — over-length titles are rejected
-    and re-asked). Names the analysis subject and its key finding:
-    "[Subject] — [key computation, pattern, or finding]". Include the final
-    output object if space allows. Omit step counts and numbers.
-    GOOD: "NetAmountA — QtyA × PriceA, 6-hop chain to FactTableA"
-  example: "NetAmountA — QtyA × PriceA, 6-hop ETL to FactTableA"
+    Optional, ≤80 chars: "[Subject] — [key computation, pattern or finding]",
+    ending on the final output object where it fits.
+  example: "NetFeeA — DaysA × RateA, 6-hop ETL to FactCircA"
 
 intro:
   stages: [synthesis]
   instruction: >
-    2–4 sentences of narrative prose as a standalone paragraph before the
-    sections. Open with the direct answer to the user's stated question —
-    name the origin, the key relationship, or the finding the user asked
-    for — then set architectural context. Refer to shared state by role
-    ("central scratch-pad table", "terminal publication step") rather than
-    by listing its columns. Schema details (column names, data types,
-    nullability) belong in the later sections.
+    2–4 sentences before the sections: the direct answer to the question
+    first — the origin, the key relationship or the finding asked for — then
+    the architectural context.
   example: >
-    Read as a business-driven view: NetAmountA is the product of QtyA
-    and PriceA — both computed independently before joining at
-    spBuildFactA. QtyA originates in raw order imports; PriceA is
-    derived from supplier margins with a markup formula.
+    Read as a business-driven view: NetFeeA is the product of DaysA
+    and RateA — both computed independently before joining at
+    spBuildCircA. DaysA originates in raw checkout imports; RateA is
+    derived from branch margins with a markup formula.
 
 # Section assembly (lift + group + label) is governed by buildSynthesisPrompt()
 # in src/ai/prompting/prompts.ts — kept there to avoid duplication with the synthesis cue.
@@ -123,26 +83,13 @@ intro:
 closing:
   stages: [synthesis]
   instruction: >
-    Required whenever this template appears — the engine renders it only
-    for results large enough to need a wrap-up.
-    After the sections, separated by a `---` divider, write a brief
-    closing block:
-    (1) one-paragraph through-line that names the overall pipeline answer
-    in the lens the user requested.
-    Add a risk callout block only when there is a significant,
-    decision-impacting issue grounded in captured evidence. In business-only
-    missions, keep callouts business-facing (impact/scope), not technical
-    internals. If no significant issue is present, omit risk callouts.
-    Write complete sentences and finish the closing cleanly.
+    One paragraph after the sections with the overall answer in the lens the
+    user asked for; a business mission states impact and scope and leaves
+    the mechanism to the sections.
   example: |
-    The spBuildFactA pipeline reloads from staging each run, applies a
-    four-stage cascade (order staging → price calculation → discount
-    application → fact write), and lands USD-converted totals in FactTableA.
-
-    | Risk | Scope |
-    |---|---|
-    | ⚠️ NULL PriceA in OrderDetailA collapses NetAmountA | All revenue rows |
-    | ⚠️ Missing DimCurrency rows produce NULL CurrencyTotal | Final fact load |
+    The spBuildCircA pipeline reloads from staging each run, applies a
+    four-stage cascade (loan staging → fee calculation → waiver
+    application → fact write), and lands region-normalized totals in FactCircA.
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools/presentResult.ts
 # from title + intro + sections[] + closing) — NOT an AI-writeable field.
@@ -153,261 +100,128 @@ closing:
 highlights:
   stages: [synthesis]
   instruction: >
-    Colors and labels are two different channels, both relative to the USER
-    QUESTION. Colors (highlight_groups) mark importance: the question's data
-    Sources, its Target, and the important transformations — nodes that CREATE
-    or CHANGE the answer's values (formula, condition, classification, status
-    transition). Carry-through plumbing (renames, SELECT * bridges, movement
-    procs, plain storage tables, row filters) stays uncolored — the graph is a
-    map: colored landmarks on a plain background. Highlight selectively:
-    emphasis, not the full node list; the linked sections already carry the
-    complete set. Pick one scheme: Lineage (source/transform/target) or
-    Diagnostic (good/warn/fail). Keep one scheme. Lineage colors follow DATA
-    FLOW, not question direction: `source` = the deepest data origins the trace
-    reached (raw/base feeds), `target` = where the data lands — in an upstream
-    trace that is the queried object itself.
+    Color the landmarks of the answer, relative to the question — not the
+    full node list: the sources whose data feeds it (filter-only lookups stay
+    bare), its target, and the transformations that create or change its
+    values. Carry-through stays uncolored. Each legend label (~40 chars)
+    names the role its nodes share.
 
 notes:
   stages: [synthesis]
   instruction: >
-    Per-node captions (node_id, text). ONE short sentence under each node —
-    what it does specifically in this flow, not a generic description. Keep
-    it terse; ~120 chars typical. No SQL snippets, no formulas, no multi-line
-    captions. Detail belongs in the section body, not in the graph caption.
-    Glancing at graph + notes should tell the story; deeper logic lives in
-    the description.
-    If the node is a passthrough, name what it passes or filters in one
-    short clause ("Passthrough — IsValid filter").
-    GOOD: "Computes NetAmountA at INSERT"
-    BAD : "Computes NetAmountA = QtyA × PriceA at INSERT\nAlso computes
-    AdjustedAmountA" (multi-line + formula belongs in the section body).
+    One caption per linked node, one line (~120 chars): what it does in this
+    flow; SQL and formulas stay in the section body. In a column trace, name
+    the traced column there and any rename.
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
-# Each fired *_capture template produces ONE section into submit_findings.sections[].
-# Submit shape: { angle: 'business' | 'technical', text: '<body>' }.
-# Independent specs — no cross-references between templates. Each section is
-# self-contained; synthesis groups across nodes at the next phase.
+# Each fired *_capture template produces ONE sections[] entry for its angle.
+# Under classification `both` both recipes fire (two entries); a single-angle
+# lock fires one recipe (one body). Shape: { angle, text }. Independent specs —
+# no cross-references between templates. Each section is self-contained;
+# synthesis groups across nodes at the next phase.
 
 business_capture:
   stages: [active]
   instruction: |
-    <purpose>
-    Capture this node's BUSINESS LOGIC from current DDL so a business analyst
-    can understand: what changes, why the rule exists, how the rule is decided,
-    and what assumptions/effects exist both upstream and downstream.
-    </purpose>
-
-    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Use only
-    rules, formulas, thresholds, and relationships present in DDL. If a
-    construct is absent from DDL, treat it as out of scope. Quoted SQL
-    witnesses must be exact substrings of that DDL — never paraphrased SQL.
-    When the DDL proves the mechanism but not the intent, prevalence, or
-    runtime impact, state `not established from the available SQL` — never
-    fill a gap with a plausible inference.
+    What the node does to the meaning of the data.
+    1. Purpose: the domain role and the decision it serves.
+    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active.
+    3. Grain: "one row per …", with the predicates and join keys the rows arrive under.
+    4. Formulas: each assigned expression and its default as `$$ target = expression $$`, term for term, with what its terms mean.
+    5. Column mapping: `| From | To | Business meaning |`.
+    6. Lifecycle: status transitions as numbered steps.
+    7. Loading: whether target rows are replaced, extended or removed.
+    8. Error handling: what a failure leaves in the rows.
+    9. Gaps.
 
     <scope_relevance>
-    Logging, error-capture, audit, and retention sinks are usually not part of
-    the business answer — prune them (verdict: prune) unless the question is
-    specifically about logging, errors, auditing, or retention. Keep any node
-    that transforms or carries a value on the answer path.
+    A sink that records the run itself — which procedure ran, when, with
+    what outcome — is a sidecar in this business section: one line inside
+    the section it hangs off, never a section or highlight of its own. A
+    sink holding the traced column's own values, before/after or as-of, is
+    a business audit trail: a consumer with a one-line caption.
     </scope_relevance>
-
-    Submit one section: `{ angle: "business", text: "<body>" }`. The
-    archive has no length cap and synthesis lifts your text verbatim —
-    write at the depth the node's role in answering the user's question
-    warrants. Nodes that directly address the question get full depth;
-    context nodes in scope but tangential to the question get a brief
-    functional note. Brevity here becomes brevity in the final report.
-    A node central to the question typically needs several paragraphs
-    covering every rule and branch visible in its DDL — a 2–3 sentence
-    summary is under-depth for such a node.
-
-    <emphasis>
-    Highest-value content, in order:
-    1. **Business outcome** — what changes for users, reporting, or decisions.
-    2. **Business intent (why)** — the decision objective this rule serves.
-    3. **Decision rules (how)** — what condition triggers the change and what outcome it drives.
-    4. **Lifecycle impact** — business status/phase transitions when present.
-    5. **Audit-trail meaning** — what business event each audit entry represents.
-    6. **Material risks** — add ⚠️ only for significant, decision-impacting
-       data-quality issues grounded in the loaded evidence.
-    7. **Technical evidence** — formulas, predicates, thresholds, and key column references
-       used to explain business logic.
-    </emphasis>
-
-    <body_recipe>
-    1. Open with one sentence naming the domain role ("computes revenue
-       at INSERT") and the decision objective ("why this rule exists").
-    2. Walk through business rules in plain language first. Name what
-       changes for the business when each rule fires.
-    3. For EVERY computed or derived expression in the DDL (arithmetic,
-       CASE result, COALESCE fallback, aggregation), write the formula as
-       a `$$ … $$` block and explain the business meaning of its terms
-       briefly.
-    4. Capture both **upstream assumptions** and **downstream effects** when
-       evidenced in current DDL context.
-    5. Express status-enum lifecycles as numbered transitions
-       ("1. New → 2. Approved → 3. Shipped"). Capture the business
-       state change, not the SQL UPDATE that effects it.
-    6. Add ⚠️ only when the issue is significant and decision-impacting.
-       If no material issue exists, omit risk callouts.
-    7. For SELECT-only views (no INSERT/UPDATE/DELETE): describe what data
-       this view makes queryable and its business meaning — not how the
-       SELECT is structured.
-    8. Wrap column and object names in `\`backticks\`` only when used.
-    </body_recipe>
   example: |
-    `spCalcA` computes `NetAmountA` at the final INSERT into
-    `FactTableA`, only for rows with `Status = 'CONFIRMED'`.
+    `spCalcFeeA` computes `NetFeeA` at the final INSERT into
+    `FactCircA`, only for rows with `Status = 'CONFIRMED'`.
 
     $$
-    NetAmountA = QtyA \times PriceA
+    NetFeeA = DaysA \times RateA
     $$
 
-    1. `QtyA` is line-item quantity sold, renamed from `RawQtyA` in
-       `CTE_Orders`.
-    2. `PriceA` is list price after markup:
+    1. `DaysA` is line-item days checked out, renamed from `RawDaysA` in
+       `CTE_Loans`.
+    2. `RateA` is list rate after markup:
 
        $$
-       PriceA = BaseCostA \times (1 + UpliftPctA)
+       RateA = BaseRateA \times (1 + MarkupPctA)
        $$
-    3. The fact row is INSERTed with `NetAmountA` populated.
+    3. The fact row is INSERTed with `NetFeeA` populated.
 
     | From | To | Business meaning |
     |------|----|------------------|
-    | RawQtyA | QtyA | line-item quantity sold |
-    | ListPriceA | PriceA (pre-markup) | sticker price |
-    | UpliftPctA | PriceA (component) | supplier-specific uplift |
+    | RawDaysA | DaysA | line-item days checked out |
+    | StdRateA | RateA (pre-markup) | published rate |
+    | MarkupPctA | RateA (component) | branch-specific markup |
 
-    ⚠️ Null `UpliftPctA` collapses `PriceA` to `BaseCostA` — verify
-    supplier coverage before each run. Consumer impact: every revenue
-    dashboard reads `NetAmountA` directly; this rule defines the
+    ⚠️ Null `MarkupPctA` collapses `RateA` to `BaseRateA` — verify
+    branch coverage before each run. Consumer impact: every fee
+    dashboard reads `NetFeeA` directly; this rule defines the
     dashboard's accuracy.
 
 technical_capture:
   stages: [active]
   instruction: |
-    <purpose>
-    Capture HOW this node runs — execution mechanics, query shape, loading
-    pattern, performance affordances and traps.
-    </purpose>
-
-    ⛔ STRICT GROUNDING — analyze only `bb_ddl` from the focus node. Make
-    claims only about indexes, partitioning, performance issues, or references
-    present in DDL. Tie performance claims to visible SQL constructs (JOIN,
-    WHERE, DISTINCT, subquery). If it is absent from DDL, it is out of scope.
-    Quoted SQL witnesses must be exact substrings of that DDL — never
-    paraphrased SQL. When the DDL shows a pattern but not its runtime effect,
-    state `not established from the available SQL` rather than inferring it.
-
-    Submit one section: `{ angle: "technical", text: "<body>" }`. The
-    archive has no length cap; synthesis lifts your text verbatim. Write
-    as deeply as the node's implementation warrants.
-
-    <body_recipe>
-    1. SQL evidence — quote the key expressions verbatim: JOIN predicates,
-       CASE conditions, COALESCE fallbacks, computed-column formulas, the
-       window-function partition clause. Snippet only, not the full
-       INSERT/SELECT statement.
-    2. Loading pattern (procedures only) — one coarse value: `reload`
-       (TRUNCATE + INSERT), `append` (INSERT-only), `upsert` (MERGE or
-       UPDATE + conditional INSERT), `historization` (versioned history),
-       `purge` (DELETE-only), `orchestration` (EXECs other SPs, no data
-       mutation). Coarse only — sub-variants (SCD1/SCD2/CDC) belong in
-       prose if relevant. Omit when the focus is a view, UDF, or table.
-    3. Computed columns — the formula as a `$$ … $$` block alongside its
-       snippet.
-    4. Relationship role labels — "reads lookup from `DimProduct`",
-       "writes via MERGE to `FactTableA`", "triggered by `spLoadA`".
-    5. Join types when hinted (HASH / MERGE / LOOP); flag Cartesian risk
-       with ⚠️.
-    6. Antipatterns — excessive DISTINCT, OR in join predicates,
-       correlated subqueries in SELECT, scalar UDFs in WHERE.
-    7. Distribution / indexing hints — partition key, hash-distribution
-       column, clustered-index column order.
-    8. Datatype declarations — call out non-default precisions
-       (`DECIMAL(19,4)` vs `DECIMAL(18,2)`), nullability surprises, and
-       casts that change semantics (`CAST AS DATE` truncating time).
-    9. Execution-plan candidates visible in the SQL text — flag as
-       candidates requiring validation, never as confirmed behavior:
-       sargability, parameter sniffing, and statistics effects need
-       schema metadata or plan evidence beyond this DDL.
-    10. DDL comments and version annotations — author intent that would be
-       lost after this hop.
-    </body_recipe>
-
-    Format with markdown — no `#`/`##` headings (the engine owns section
-    headings; open with a bold label instead), SQL in ```sql fences
-    (snippet only), join steps as ordered lists, ⚠️ inline at risks.
-
-    Each capture is independent — synthesis detects sibling variants
-    across nodes and emits comparison tables at assembly time.
+    The mechanics, and which rows survive them.
+    1. Purpose: the execution role.
+    2. Rules and branches: each switch value and the statement it runs.
+    3. Join shape and grain: JOIN and WHERE predicates, join hints, "one row per …".
+    4. Formulas: `$$ … $$` beside the snippet, one line per branch that assigns the column.
+    5. Steps as a numbered walk.
+    6. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
+    7. Error handling: TRY/CATCH, retry, locking.
+    8. Antipatterns: a ⚠️ line per non-sargable or converting predicate, per-row UDF or correlated subquery, unguarded UPDATE or DELETE, or read-before-write order.
   example: >
     Loading: TRUNCATE + INSERT — full reload, no delta tracking.
 
     ```sql
-    INSERT INTO dbo.FactTableA (NetAmountA, ProductId, QtyA)
-    SELECT o.RawQtyA * p.PriceA, o.ProductId, o.RawQtyA
-    FROM CTE_Orders o
-    INNER HASH JOIN DimProduct p ON o.ProductId = p.ProductId
-    LEFT JOIN vwPriceA pl ON o.ProductId = pl.ProductId
+    INSERT INTO dbo.FactCircA (NetFeeA, BranchId, DaysA)
+    SELECT o.RawDaysA * p.RateA, o.BranchId, o.RawDaysA
+    FROM CTE_Loans o
+    INNER HASH JOIN DimBranch p ON o.BranchId = p.BranchId
+    LEFT JOIN vwRateA pl ON o.BranchId = pl.BranchId
     WHERE o.IsActive = 1
     ```
 
     Filters: `WHERE IsActive = 1` — plain equality predicate; index
     support is unknown from this DDL (schema metadata required).
-    `INNER HASH JOIN` on `ProductId` — explicit hash-join hint in the
+    `INNER HASH JOIN` on `BranchId` — explicit hash-join hint in the
     source; fit for the actual table sizes needs plan evidence.
-    `LEFT JOIN vwPriceA` on `ProductId` — ⚠️ unmatched rows produce NULL
+    `LEFT JOIN vwRateA` on `BranchId` — ⚠️ unmatched rows produce NULL
     downstream; no ISNULL guard before the INSERT.
-    Candidate: an index covering `(ProductId, OrderDate)` may help the
+    Candidate: an index covering `(BranchId, CheckoutDate)` may help the
     downstream aggregation — validate against existing indexes first.
+
+# ── Structural callouts (active phase, bodied focus) ─────────────────────────
+# One contract for the ⚠️ findings every capture angle may raise. Fires once per
+# bodied hop beside whichever capture recipes the classification fires, so the
+# rule is sent once under `both` instead of once per angle.
+
+structural_callouts:
+  stages: [active]
+  instruction: |
+    In either angle, one ⚠️ line per statement that silently loses, duplicates, overwrites or defaults rows — including a multi-statement write with no wrapping transaction, where a failure between the statements leaves rows lost or doubled: quote it and say its effect on the rows. A hardcoded value is stated as its literal.
+  example: >
+    ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
+    `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
 
 # ── Reduced capture for non-bodied starting points ───────────────────────────
 
 structural_summary:
   stages: [active]
   instruction: >
-    Fires only when the focus node has no DDL body (table/non-bodied).
-    For this hop only, it replaces `business_capture` and `technical_capture`. It replaces the
-    recipes but not the section count: submit one section per angle the mission requires, each
-    carrying this same body, because the locked classification decides how many sections a hop
-    must contain and the focus type does not change it.
-
-    Describe what this node **is**; point to the surrounding procedures for
-    what it **does**. Non-bodied nodes carry structure, not behaviour.
-
-    ⛔ STRICT GROUNDING — use only `focus_node` data. Use only columns,
-    objects, neighbors, and relationships present in that data. If a field is
-    missing/empty, output the explicit empty-case text below.
-
-    Required parts, in this order, each opened with a bold label on its own line:
-
-    **Purpose**
-    One short sentence naming the role of this node in the pipeline.
-    Source: node id / type from focus_node.
-
-    **Columns**
-    From `cols[]` only, render a `| Column | Type | Role / ⚠️ |` table. Role is a short phrase
-    (key / dim / metric / audit / computed). Flag nullable columns with ⚠️.
-    If `cols[]` is absent: write "Column metadata not available in current model."
-
-    **Upstream sources**
-    Populate from `in[]` in focus_node — these are the nodes that write TO
-    this table. One line per entry: node id + one-sentence role.
-    If `in[]` is empty or absent: write "No upstream sources found in graph."
-
-    **Downstream consumers**
-    Populate from `out[]` in focus_node — these are the nodes that read FROM
-    this table. One line per entry: node id + one-sentence role.
-    If `out[]` is empty or absent: write "No downstream consumers found in graph."
-
-    **Grain / keys**
-    Derive from PK-flagged columns in `cols[]` and `fks[]` in focus_node only.
-    If neither is present: write "Key information not available in current model."
-
-    Scope: structure and relationships only — the surrounding procedure slots carry all transform logic.
+    This focus has no SQL body, so each `sections[]` entry follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
 # Fires additively alongside business_capture / technical_capture when the
@@ -421,69 +235,22 @@ column_trace_capture:
   instruction: |
     <purpose>
     Account for EVERY active tracked column — each gets one explicit decision:
-      → Continue it:  a column_flow entry mapping it to its upstream source column(s) + route upstream.
+      → Continue it:  a column_flow entry mapping it to its upstream source column(s).
       → It ends here: a column_flow entry with upstream_columns: [] (terminal — produced here, no upstream real column).
-    If this node carries NONE of the tracked columns, submit column_flow: [] — it is off-trace and
-    the engine excludes it from the result.
-
-    A tracked column you leave out of column_flow is rejected as column_chain_incomplete —
-    account for it (continue / terminal). column_flow is engine-validated:
-    omitting the field returns ct_field_required; column_flow: [] means "no columns accounted"
-    and is valid only when this node has no active tracked columns (off-trace).
     </purpose>
 
     ## Before submitting — verify
-    □ Every active tracked column appears as an out_col in column_flow (continued, or terminal with upstream_columns: []). If the node has no tracked columns, submit column_flow: [] (off-trace).
-    □ Each upstream_columns entry is a real INPUT to `out_col`'s value — it appears in `out_col`'s producing expression (the formula / CASE / SELECT clause that computes it). A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
+    □ A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
     □ sections[].text — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
-    □ sections[].text: open with focus node as subject — "[schema].[FocusNode] is ..." not "This node is the builder for `OtherNode`".
-    □ When an out_col is produced by a computed expression (arithmetic, CASE, COALESCE, aggregation), sections[].text includes the producing expression as a `$$ … $$` block.
 
-    ## Example — column interacts (Revenue computed at vw_Sales)
-    column_flow: [
-      { out_col: "Revenue",
-        upstream_columns: [
-          { node: "fact_orders", col: "Qty" },
-          { node: "fact_orders", col: "PriceA" }
-        ]}
-    ]
-    verdict: "analyze"
-
-    ## Example — this node is off-trace (carries none of the tracked columns)
-    column_flow: []    ← the engine excludes this node from the result
-
-    ## Verdict — choose based on how the node interacts with tracked columns
-    - `analyze`: the node transforms or is the terminal source of a target column.
-      Fill column_flow for each active column.
-      Terminal (no upstream possible): upstream_columns: [] — stored base column,
-      hardcoded literal, or system function (GETDATE(), NEWID()). Empty
-      upstream_columns signals the branch ends here.
-    - `passthrough`: column flows through unchanged; the upstream writer is not yet visited.
-      Fill column_flow naming the upstream column, then add route_requests to visit it.
-      The edge is recorded here; full attribution resolves at the routed node.
-    - Off-trace: if the node carries none of the tracked columns, submit
-      column_flow: [] — the engine excludes it from the trace.
-
-    ## Non-bodied table focus (TABLE written by a procedure)
-    When the focus node is a TABLE (no DDL — only schema metadata), the procedure that
-    writes to it is upstream. Use verdict='passthrough'; use the column name as it appears in the table.
-    column_flow: [{ out_col: "OrderTotal", upstream_columns: [{ node: "[schema].[spWriter]", col: "OrderTotal" }] }]
-    Leave route_requests empty — the CT engine queues upstream_columns[] automatically.
-
-    ## column_flow fields per entry
-    - out_col: column name being produced. For PROCEDURE focus: the column name in the target table (same as writes_to.col).
-    - upstream_columns[]: real upstream source column(s), each { node, col }. One entry per upstream input.
-      Formula / CASE / COALESCE with multiple inputs: list each input separately.
-    - writes_to: set when the focus node is a PROCEDURE that writes to a table.
-      Must be an OBJECT: { node: "[schema].[TargetTable]", col: "ColumnName" }.
-      NOT a string. out_col = the column name being written; upstream_columns = upstream inputs.
-
-    ## Common patterns
-    - Rename (upstream col name ≠ out_col): same data, different name — note the rename in sections[].text.
-    - Fan-out (one source → two output columns): two entries, same upstream column.
-    - Computed expression from two columns: two upstream_columns entries.
-    - Filter/lookup-only column (WHERE / JOIN-ON only, no value contribution): NOT an
-      upstream_columns entry — explain it in sections[].text when it matters.
+    ## Verdict — the `verdict` field decides it; column_flow follows
+    On `analyze`, column_flow carries each active column — upstream_columns: []
+    where the value originates here (stored base column, hardcoded literal, system
+    function such as GETDATE() or NEWID()). On `passthrough`, column_flow names the
+    upstream column; its writer is visited next, where full attribution
+    resolves.
+    Off-trace (no tracked column here): column_flow: [] — the node stays for what it
+    does to the rows, stated in sections[].text.
 
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompting/prompts.ts. No separate per-angle templates
@@ -497,51 +264,29 @@ column_trace_capture:
 # material; the AI does NOT invent tables / formulas / fences without source.
 
 general:
-  stages: [discovery, synthesis]
-  instruction: >
-    Apply this rendering set across every assembled section so the document
-    reads consistently end-to-end. Prioritize business clarity; include
-    technical formatting only when needed to clarify business meaning:
-
-    - **Formulas**: every calculation present in the captured bodies that
-      bears on the asked question appears exactly once as a `$$ … $$`
-      block in its most relevant section; ground every formula in
-      captured content.
-    - **Column renames**: render as a `| From | To | Business meaning |`
-      table only when the rename pattern is central to business understanding.
-    - **Source guards** (WHERE / JOIN / MERGE predicates that filter or key
-      the data): quote short SQL snippets only when needed for business
-      clarification; use fenced ```sql blocks with short snippets, not full
-      statements.
-    - **Status-enum lifecycles**: express as numbered transitions
-      ("1. New → 2. Approved → 3. Shipped").
-    - **Risks / data-quality flags**: include ⚠️ only for material,
-      decision-impacting issues backed by captured evidence. In
-      business-only missions, phrase risk in business terms first; add
-      technical detail only when it clarifies impact.
-    - **Scope**: answer ONLY what was asked. Side branches the question did
-      not ask about (audit, logging, retention, error-handling paths) get at
-      most a one-line note, not their own section or highlight. In a
-      column trace, sections and highlights follow the value chain of the
-      traced column and its terminal sources.
-
-    These rules apply only when the captured body has the underlying material.
-    Use sourced tables, formulas, and fences only.
+  stages: [synthesis]
+  instruction: |
+    Render what the captured bodies contain, business meaning first; nothing is invented to fill a bullet:
+    - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation.
+    - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.
+    - **Status lifecycles**: numbered transitions.
+    - **Callouts**: each captured ⚠️ sits once, in its section; impact before mechanism in a business mission.
+    - **Scope**: a side branch the question did not ask about is one line in the section it hangs off — never a section, a highlight, or a deletion. A column trace follows the traced column's value chain to its terminal sources.
   example: >
-    $$NetAmountA = QtyA \times PriceA \times (1 - DiscountA)$$
+    $$NetFeeA = DaysA \times RateA \times (1 - WaiverPctA)$$
 
     | From | To | Business meaning |
     | --- | --- | --- |
-    | RawQtyA | QtyA | Units sold per order line |
-    | ListPriceA | PriceA | Price after supplier markup |
+    | RawDaysA | DaysA | Days counted per loan line |
+    | StdRateA | RateA | Rate after branch markup |
 
     ```sql
-    WHERE o.IsActive = 1 AND o.OrderDate >= DATEADD(YEAR, -2, GETDATE())
+    WHERE o.IsActive = 1 AND o.CheckoutDate >= DATEADD(YEAR, -2, GETDATE())
     ```
 
-    Status flow: 1. New → 2. Reviewed → 3. Approved → 4. Shipped → 5. Closed.
+    Status flow: 1. Checked Out → 2. Renewed → 3. Overdue → 4. Returned → 5. Closed.
 
-    ⚠️ Null `DiscountA` collapses NetAmountA to QtyA × PriceA — verify input.
+    ⚠️ Null `WaiverPctA` collapses NetFeeA to DaysA × RateA — verify input.
 
 # ── Big-picture ETL closing — TECHNICAL angle only ───────────────────────────
 # Classification-gated to ['technical', 'both'] in templateRenderer.ts.
@@ -551,23 +296,12 @@ general:
 loading_pattern:
   stages: [synthesis]
   instruction: >
-    Technical-angle closing addition. When all bodied procedures in scope
-    share a single load shape, name it once — in `closing` if a closing is
-    requested, otherwise in the section that covers the load — because the
-    pattern is one statement about the whole pipeline, not per section.
-    Recognized shapes (coarse — no SCD1/SCD2/CDC sub-variants):
-
-    - `reload`        TRUNCATE + INSERT / full refresh
-    - `append`        INSERT-only, no UPDATE or DELETE
-    - `upsert`        MERGE or UPDATE + conditional INSERT
-    - `historization` versioned history / change tracking
-    - `purge`         DELETE-only / retention
-    - `orchestration` EXECs other SPs, no data mutation on the target
-
-    Skip when shapes differ across procedures, when the analysis spans
-    non-bodied origins only, or when classification is `business`.
+    When every bodied procedure carried the same captured load shape, name it
+    once — in `closing` if requested, else in the section covering the load —
+    with what it means for consumers. Nothing when the shapes differ or none
+    was captured.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
-    INSERT — each run rebuilds `FactTableA` from scratch with no
+    INSERT — each run rebuilds `FactCircA` from scratch with no
     delta tracking. Downstream consumers must tolerate full-replace
     semantics; there is no incremental-load fallback.
