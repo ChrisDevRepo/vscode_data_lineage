@@ -104,6 +104,15 @@
   --ln-node-shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.18);
   --ln-dropdown-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
 
+  /* Selection dim (object view) — read by the `.ln-has-selection` / `.ln-lit` rules in the React
+     Flow Overrides region below; see `SELECTION_ACTIVE_CLASS_NAME` in GraphCanvas.tsx and
+     `LIT_CLASS_NAME` in src/engine/nodeDecoration.ts. */
+  --ln-dim-node-opacity: 0.25;
+  --ln-dim-edge-opacity: 0.35;
+  --ln-dim-edge-width-scale: 0.6;
+  --ln-lit-edge-width-boost: 0.6px;
+  --ln-lit-edge-min-width: 2px;
+
   /* Wizard (start screen) — always dark/black palette regardless of VS Code theme.
      Use --ln-wizard-* for ALL start screen + modal colors. Never use --vscode-* tokens
      or --ln-* theme vars here — the wizard background is always #000000. */
@@ -802,6 +811,34 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-ove
   outline-offset: 2px;
 }
 
+/* Selection dim: while `.ln-has-selection` is on the canvas root, every node/edge the click
+   selection didn't mark `.ln-lit` (the clicked node, its neighbours, or an edge between two lit
+   nodes) is de-emphasised by this one rule pair rather than by a per-node/per-edge style, so an
+   unrelated node or edge never needs a new object identity just because a different node was
+   clicked. `--ln-edge-w` is each edge's own base stroke width, stamped on once when the edge is
+   built (`withEdgeBaseWidthVar` in GraphCanvas.tsx) since graphBuilder.ts assigns different edges
+   different base widths. */
+.react-flow.ln-has-selection .react-flow__node:not(.ln-lit) .ln-node-card {
+  box-shadow: var(--ln-node-shadow-dimmed) !important;
+}
+
+/* `:not(:hover)` so the `.ln-node-card:hover` rule earlier in this file still wins on hover without
+   a specificity fight — this selector is more specific and would otherwise always win regardless of
+   source order. */
+.react-flow.ln-has-selection .react-flow__node:not(.ln-lit) .ln-node-card:not(:hover) {
+  opacity: var(--ln-dim-node-opacity) !important;
+}
+
+.react-flow.ln-has-selection .react-flow__edge:not(.ln-lit) .react-flow__edge-path {
+  opacity: var(--ln-dim-edge-opacity) !important;
+  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-dim-edge-width-scale)) !important;
+}
+
+.react-flow.ln-has-selection .react-flow__edge.ln-lit .react-flow__edge-path {
+  stroke: var(--ln-focus-border) !important;
+  stroke-width: max(calc(var(--ln-edge-w, 1.2) + var(--ln-lit-edge-width-boost)), var(--ln-lit-edge-min-width)) !important;
+}
+
 .react-flow__minimap {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--ln-border) 60%, transparent);
@@ -950,6 +987,22 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 .ln-trace-node-action--prune {
   top: 31px;
   background: var(--vscode-charts-red, #c5221f);
+}
+.ln-trace-node-action-count {
+  position: absolute;
+  top: 2px;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--ln-fg-muted);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 12;
+}
+.ln-trace-node-action-count--in {
+  left: -20px;
+}
+.ln-trace-node-action-count--out {
+  right: -20px;
 }
 
 .ln-trace-node-picker {
@@ -1368,16 +1421,6 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 .ln-legend-header {
   background: transparent;
   color: var(--ln-fg);
-}
-
-/* Trace banner */
-/* Advanced bookmark banner (slim top bar) */
-.ln-bookmark-banner {
-  background: var(--ln-bg-secondary);
-  border-bottom: 1px solid var(--ln-border);
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ln-border) transparent;
 }
 
 /* Advanced bookmark info card (floating bottom-left) */

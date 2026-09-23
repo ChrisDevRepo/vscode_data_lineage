@@ -6,6 +6,7 @@ import { useAutocomplete } from '../hooks/useAutocomplete';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { SuggestionList } from './ui/SuggestionList';
 import { Tooltip } from './ui/Tooltip';
+import { disabledControl } from './ui/disabledControl';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 interface SearchWithAutocompleteProps {
@@ -13,6 +14,8 @@ interface SearchWithAutocompleteProps {
   onExecuteSearch?: (name: string, schema?: string) => void;
   /** Optional callback to initiate a trace directly from the search result. */
   onStartTrace?: (nodeId: string) => void;
+  /** When set, the Start Trace action renders disabled with this reason instead of starting a trace. */
+  startTraceDisabledReason?: string;
   /** Flattened list of all nodes in the project for autocomplete suggestions. */
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
   /** Authoritative set of node IDs currently rendered in the graph; partitions suggestions into "In View" and "Other". */
@@ -25,6 +28,7 @@ interface SearchWithAutocompleteProps {
 export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   onExecuteSearch,
   onStartTrace,
+  startTraceDisabledReason,
   allNodes = [],
   visibleNodeIds,
   collapsedSchemaNodeIds,
@@ -152,23 +156,32 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
             dropdownRef={mergedDropdownRef}
             portal
             style={floatingStyles}
-            renderAction={onStartTrace ? (node) => (
-              <Tooltip content="Start Trace">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onStartTrace(node.id);
-                    setSearchTerm('');
-                    setIsOpen(false);
-                  }}
-                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded-sm hover:opacity-70 ln-text-link"
-                >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
-                </svg>
-              </button>
-              </Tooltip>
-            ) : undefined}
+            renderAction={onStartTrace ? (node) => {
+              const trigger = disabledControl(
+                (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  onStartTrace(node.id);
+                  setSearchTerm('');
+                  setIsOpen(false);
+                },
+                !!startTraceDisabledReason,
+                startTraceDisabledReason,
+                'Start Trace',
+              );
+              return (
+                <Tooltip content={trigger.tooltip}>
+                  <button
+                    onClick={trigger.onClick}
+                    disabled={trigger.disabled}
+                    className="shrink-0 w-7 h-7 flex items-center justify-center rounded-sm hover:opacity-70 ln-text-link disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40"
+                  >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
+                  </svg>
+                </button>
+                </Tooltip>
+              );
+            } : undefined}
           />
         </FloatingPortal>
       )}

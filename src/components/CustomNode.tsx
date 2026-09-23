@@ -1,13 +1,19 @@
 import { memo } from 'react';
-import { Handle, Position, NodeToolbar } from '@xyflow/react';
+import { Handle, Position, NodeToolbar, useStore } from '@xyflow/react';
 import { TYPE_COLORS, TYPE_LABELS, SHORT_TYPE_LABELS, getSchemaColor, getExternalNodeColor } from '../utils/schemaColors';
 import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { Tooltip } from './ui/Tooltip';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { CloseIcon } from './ui/CloseIcon';
 import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
+import { SIMPLE_NODE_ZOOM_THRESHOLD } from '../engine/nodeDecoration';
 import type { CustomNodeData, TraceNeighborOption, TraceNodeControls } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
+
+/** Whether the canvas zoom is low enough that a node should render as a plain, undecorated box. */
+export function isZoomBelowSimpleThreshold(zoom: number): boolean {
+  return zoom < SIMPLE_NODE_ZOOM_THRESHOLD;
+}
 
 /** User action supported by the interactive trace node controls. */
 export type TraceNeighborAction = 'add' | 'prune';
@@ -23,6 +29,11 @@ function traceActionLabel(action: TraceNeighborAction, side: NeighborSide): stri
   return `${action === 'add' ? 'Add' : 'Prune'} ${side === 'in' ? 'inbound' : 'outbound'} neighbor`;
 }
 
+/** Cut-size suffix shown on a prune candidate that would also remove other visible trace nodes. */
+function formatPruneCutSuffix(option: TraceNeighborOption): string {
+  return option.cutCount && option.cutCount > 0 ? ` (+${option.cutCount} reachable only through it)` : '';
+}
+
 function traceActionTooltip(
   action: TraceNeighborAction,
   side: NeighborSide,
@@ -33,7 +44,7 @@ function traceActionTooltip(
 
   const label = traceActionLabel(action, side);
   return options.length === 1
-    ? `${label}: ${options[0].schema}.${options[0].label}`
+    ? `${label}: ${options[0].schema}.${options[0].label}${action === 'prune' ? formatPruneCutSuffix(options[0]) : ''}`
     : `${label}: choose one of ${options.length}`;
 }
 
@@ -59,27 +70,32 @@ function TraceActionButton({
 
   const label = traceActionLabel(action, side);
   return (
-    <Tooltip content={traceActionTooltip(action, side, options, disabledReason)} placement="top" asChild>
-      <button
-        type="button"
-        aria-label={label}
-        aria-disabled={!enabled}
-        className={`ln-trace-node-action ln-trace-node-action--${side} ln-trace-node-action--${action}${enabled ? '' : ' ln-trace-node-action--disabled'}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!enabled) return;
-          onAction(action, side, options);
-        }}
-      >
-        <svg aria-hidden="true" viewBox="0 0 16 16" className="ln-trace-node-action__icon">
-          {action === 'add' ? (
-            <path d="M8 3v10M3 8h10" />
-          ) : (
-            <path d="M3 8h10" />
-          )}
-        </svg>
-      </button>
-    </Tooltip>
+    <>
+      <Tooltip content={traceActionTooltip(action, side, options, disabledReason)} placement="top" asChild>
+        <button
+          type="button"
+          aria-label={label}
+          aria-disabled={!enabled}
+          className={`ln-trace-node-action ln-trace-node-action--${side} ln-trace-node-action--${action}${enabled ? '' : ' ln-trace-node-action--disabled'}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!enabled) return;
+            onAction(action, side, options);
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" className="ln-trace-node-action__icon">
+            {action === 'add' ? (
+              <path d="M8 3v10M3 8h10" />
+            ) : (
+              <path d="M3 8h10" />
+            )}
+          </svg>
+        </button>
+      </Tooltip>
+      {action === 'add' && enabled && (
+        <span className={`ln-trace-node-action-count ln-trace-node-action-count--${side}`}>+{options.length}</span>
+      )}
+    </>
   );
 }
 
@@ -115,7 +131,10 @@ export function TraceNeighborPickerToolbar({
             onClick={() => onSelect(option)}
           >
             <span className="ln-trace-node-picker__type">{SHORT_TYPE_LABELS[option.objectType]}</span>
-            <span className="ln-trace-node-picker__name">[{option.schema}].{option.label}</span>
+            <span className="ln-trace-node-picker__name">
+              [{option.schema}].{option.label}
+              {picker.action === 'prune' ? formatPruneCutSuffix(option) : ''}
+            </span>
           </button>
         ))}
       </div>
@@ -165,7 +184,8 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const displayIcon = isVirtual ? '⬡' : data.externalType === 'et' ? '⬢' : style.icon;
   const schemaColor = isExternal ? getExternalNodeColor() : (data.schemaColor ?? getSchemaColor(data.schema));
   const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, transform, zIndex } =
-    resolveNodeHighlightStyle(data.highlighted, data.aiHighlight, data.dimmed);
+    resolveNodeHighlightStyle(data.highlighted, data.aiHighlight);
+  const isSimple = useStore((s) => isZoomBelowSimpleThreshold(s.transform[2]));
 
   const tooltipLines: string[] = [];
   if (data.externalType === 'file' && data.externalUrl) tooltipLines.push(data.externalUrl);
@@ -177,6 +197,30 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   const tooltipContent: string = tooltipLines.join('\n');
 
   const { picker, applyTraceAction, closePicker, selectPickerOption } = useTraceNeighborPicker(data.traceControls);
+
+  if (isSimple) {
+    return (
+      <div
+        className="rounded-lg border-2 ln-node-card"
+        style={{
+          position: 'relative',
+          borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
+          borderLeftColor: highlighted ? highlightColor : schemaColor,
+          borderLeftWidth: 6,
+          backgroundColor: 'var(--ln-node-bg)',
+          opacity,
+          width: 180,
+          height: 70,
+          boxShadow,
+          transform,
+          zIndex,
+        }}
+      >
+        <Handle type="target" position={Position.Left} className="w-2! h-2! ln-handle" />
+        <Handle type="source" position={Position.Right} className="w-2! h-2! ln-handle" />
+      </div>
+    );
+  }
 
   return (
     <>

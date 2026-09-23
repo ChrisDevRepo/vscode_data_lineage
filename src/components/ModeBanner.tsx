@@ -5,7 +5,7 @@ import { Tooltip } from './ui/Tooltip';
  * Supported visual variants for the {@link ModeBanner}.
  * Each variant applies specific styling and icon colors.
  */
-export type BannerVariant = 'trace' | 'analysis' | 'ai';
+export type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
 
 interface ModeBannerProps {
   /** The visual style of the banner. */
@@ -31,6 +31,7 @@ const VARIANT_CLASS: Record<BannerVariant, string> = {
   trace: 'ln-mode-banner--trace',
   analysis: 'ln-mode-banner--analysis',
   ai: 'ln-mode-banner--ai',
+  bookmark: 'ln-mode-banner--bookmark',
 };
 
 /**

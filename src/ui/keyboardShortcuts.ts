@@ -8,11 +8,26 @@ export type KeyboardShortcutId =
   | 'excludeHighlightedNode'
   | 'exitMode'
   | 'toggleSchemaView'
-  | 'hideExpandedSchemaClusters';
+  | 'hideExpandedSchemaClusters'
+  | 'aiSectionPrevious'
+  | 'aiSectionNext';
 
 /**
- * Subset of {@link KeyboardShortcutId} for app-level (always-active) shortcuts —
- * the ids that carry a concrete key binding in {@link SHORTCUT_KEYS}.
+ * The Esc step-back order: one `useKeyboardShortcut` priority per overlay level, highest first.
+ * A registration at a lower level never fires while a higher one is active and unblocked —
+ * closing Help always outranks unpinning a column or closing a local picker, which always
+ * outranks exiting the mode itself. The mode-exit registration uses the hook's default priority.
+ */
+export const ESC_PRIORITY = {
+  help: 20,
+  overlay: 10,
+} as const;
+
+/**
+ * Subset of {@link KeyboardShortcutId} documented in the Help panel and carrying a concrete key
+ * binding in {@link SHORTCUT_KEYS} — every one of them reaches the document, either as an
+ * always-active app-level shortcut or, for `aiSectionPrevious` / `aiSectionNext`, as the AI
+ * report pane's own local handler while it has focus.
  *
  * @remarks
  * Binding {@link SHORTCUT_KEYS} to `Record<AppShortcutId, string>` turns any drift
@@ -27,6 +42,8 @@ export type AppShortcutId = Extract<
   | 'exitMode'
   | 'toggleSchemaView'
   | 'hideExpandedSchemaClusters'
+  | 'aiSectionPrevious'
+  | 'aiSectionNext'
 >;
 
 /**
@@ -44,6 +61,8 @@ export const SHORTCUT_KEYS: Record<AppShortcutId, string> = {
   exitMode: 'Escape',
   toggleSchemaView: 's',
   hideExpandedSchemaClusters: 'h',
+  aiSectionPrevious: '[',
+  aiSectionNext: ']',
 };
 
 /**
@@ -63,6 +82,8 @@ export const SHORTCUT_DESCRIPTIONS: Record<AppShortcutId, string> = {
   hideExpandedSchemaClusters: 'Hide schema clusters in Expanded Schema View',
   excludeHighlightedNode: 'Exclude the selected node from the view',
   exitMode: 'Close active input, then exit the current mode',
+  aiSectionPrevious: 'Previous AI report section (report pane focused)',
+  aiSectionNext: 'Next AI report section (report pane focused)',
 };
 
 /**
@@ -84,4 +105,22 @@ export function isTextEntryTarget(target: EventTarget | null): boolean {
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement
   );
+}
+
+/**
+ * Reports whether an event target is a text-entry surface that currently holds content.
+ *
+ * @remarks
+ * A step-back shortcut (Esc) that owns emptying-then-exiting behavior passes this guard instead
+ * of {@link isTextEntryTarget}: the first press clears the local field (handled by the field's own
+ * key handler), and only once it is empty does the shortcut reach the mode it steps back out of.
+ * A focused-but-empty field is not "the user is typing" for that purpose.
+ *
+ * @param target - The `KeyboardEvent.target` to classify.
+ * @returns `true` when the target is a text-entry surface and currently non-empty.
+ */
+export function isTextEntryTargetWithContent(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return target.value.length > 0;
+  return target.isContentEditable && (target.textContent?.length ?? 0) > 0;
 }

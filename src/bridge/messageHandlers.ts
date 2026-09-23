@@ -19,6 +19,7 @@ import {
   UNKNOWN_DB_PLATFORM,
 } from '../engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
+import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import {
   promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
@@ -51,6 +52,7 @@ import {
   stripFocusNodeLinks,
 } from '../engine/shared/bridgeContract';
 import { summarizeZodError, postToDetail } from './host';
+import { clampDeclaredNumericSetting } from '../configCore';
 
 /**
  * Maps each main-panel message type to a handler whose `msg` parameter is
@@ -554,8 +556,8 @@ export function createMessageHandlers(
             const logger = Logger.create(outputChannel, 'Parse');
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
               externalRefsEnabled: config.externalRefs.enabled,
-              maxNodes: config.maxNodes,
             });
+            if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
             logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
@@ -640,8 +642,8 @@ export function createMessageHandlers(
       const logger = Logger.create(outputChannel, 'Parse');
       const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
         externalRefsEnabled: config.externalRefs.enabled,
-        maxNodes: config.maxNodes,
       });
+      if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
       logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
@@ -922,6 +924,26 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode
   return true;
 }
 
+/**
+ * Refuses a built model that exceeds `dataLineageViz.maxNodes` — the shared `checkObjectLimit`
+ * gate for every model load path, webview-bridge or command. Nothing is posted to the webview when
+ * this returns `true`. `host` is omitted where there is no webview bridge to hand `notifyError`;
+ * it then falls back to `vscode.window.showErrorMessage`.
+ */
+export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger: Logger, host?: BridgeHost): boolean {
+  const check = checkObjectLimit(model, maxNodes);
+  if (check.ok) return false;
+  notifyError(
+    logger,
+    'Validate object count',
+    formatObjectLimitMessage(check.count, check.limit),
+    new Error(`Model object count ${check.count} exceeds maxNodes ${check.limit}`),
+    { count: check.count, limit: check.limit },
+    host?.showErrorMessage,
+  );
+  return true;
+}
+
 async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, onModelBuilt?: (model: DatabaseModel) => void) {
   const config = await readExtensionConfig(host);
   try {
@@ -932,8 +954,8 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     const logger = Logger.create(outputChannel, 'Parse');
     const model = await extractDacpac(data, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
       externalRefsEnabled: config.externalRefs.enabled,
-      maxNodes: config.maxNodes,
     });
+    if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
     host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
@@ -1004,9 +1026,10 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const logger = Logger.create(outputChannel, 'Parse');
   logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
 
-  const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes, (msg) => {
+  const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, (msg) => {
     logger.debug(msg);
   });
+  if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
   logger.info(`Extraction Complete — ${model.nodes.length} nodes, ${model.edges.length} deps`);
 
   onModelBuilt?.(model);
@@ -1236,19 +1259,21 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
 
 /**
  * Reads display and behaviour settings from a VS Code workspace configuration
- * and returns the serialisable config snapshot sent to the webview.
+ * and returns the serialisable config snapshot sent to the webview. Numeric settings are
+ * clamped to their declared manifest range.
  *
  * @param cfg - Workspace configuration scoped to `dataLineageViz`.
  * @returns Config snapshot for the webview (same shape as {@link ExtensionConfigSchema}).
  */
 export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record<string, any> {
+  const num = (key: string) => clampDeclaredNumericSetting(key, cfg.get<number>(key));
   return {
     excludePatterns: cfg.get<string[]>('excludePatterns'),
-    maxNodes: cfg.get<number>('maxNodes'),
+    maxNodes: num('maxNodes'),
     layout: {
       direction: cfg.get<string>('layout.direction'),
-      rankSeparation: cfg.get<number>('layout.rankSeparation'),
-      nodeSeparation: cfg.get<number>('layout.nodeSeparation'),
+      rankSeparation: num('layout.rankSeparation'),
+      nodeSeparation: num('layout.nodeSeparation'),
       edgeAnimation: cfg.get<boolean>('layout.edgeAnimation'),
       highlightAnimation: cfg.get<boolean>('layout.highlightAnimation'),
       minimapEnabled: cfg.get<boolean>('layout.minimapEnabled'),
@@ -1257,18 +1282,18 @@ export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record
     externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled') },
     overview: {
       enabled: cfg.get<boolean>('overview.enabled'),
-      threshold: cfg.get<number>('overview.threshold'),
+      threshold: num('overview.threshold'),
       schemaDoubleClickBehavior: cfg.get<string>('overview.schemaDoubleClickBehavior'),
     },
-    renderLimit: cfg.get<number>('renderLimit'),
+    renderLimit: num('renderLimit'),
     trace: {
-      defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels'),
-      defaultDownstreamLevels: cfg.get<number>('trace.defaultDownstreamLevels'),
+      defaultUpstreamLevels: num('trace.defaultUpstreamLevels'),
+      defaultDownstreamLevels: num('trace.defaultDownstreamLevels'),
     },
     analysis: {
-      hubMinDegree: cfg.get<number>('analysis.hubMinDegree'),
-      islandMaxSize: cfg.get<number>('analysis.islandMaxSize'),
-      longestPathMinNodes: cfg.get<number>('analysis.longestPathMinNodes'),
+      hubMinDegree: num('analysis.hubMinDegree'),
+      islandMaxSize: num('analysis.islandMaxSize'),
+      longestPathMinNodes: num('analysis.longestPathMinNodes'),
     },
   };
 }

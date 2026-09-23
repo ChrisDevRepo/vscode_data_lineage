@@ -22,7 +22,6 @@ import {
   ExtractedDependency,
   CatalogEntry,
   NeighborIndex,
-  DEFAULT_CONFIG,
   createEmptySchemaInfo,
 } from './types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
@@ -67,7 +66,6 @@ function makeParseTraceCallback(
  * @param allObjects - Catalog of all known objects in scope.
  * @param currentDatabase - Current database name for local-object resolution.
  * @param externalRefsEnabled - Whether external reference nodes should be emitted.
- * @param maxNodes - Total budget used only when adding virtual external nodes; real nodes are retained.
  * @param onDebugLog - Debug logger callback.
  *
  * @returns A fully assembled DatabaseModel.
@@ -78,10 +76,9 @@ export function buildModel(
   allObjects?: ExtractedObject[],
   currentDatabase?: string,
   externalRefsEnabled = true,
-  maxNodes = DEFAULT_CONFIG.maxNodes,
   onDebugLog?: (msg: string) => void,
 ): DatabaseModel {
-  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes, onDebugLog);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog);
 
   const schemaCanonical = new Map<string, string>();
   for (const node of nodes) {
@@ -719,7 +716,6 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
  * @param allObjects - Full database catalog.
  * @param currentDatabase - Active database name.
  * @param externalRefsEnabled - Whether to create virtual nodes for external systems.
- * @param maxNodes - Total budget used only when adding virtual external nodes; real nodes are retained.
  * @param onDebugLog - Optional sink for sampled parser diagnostics.
  * @returns Assembled nodes, edges, statistics, and neighbor index pairs.
  */
@@ -729,7 +725,6 @@ function buildNodesAndEdges(
   allObjects?: ExtractedObject[],
   currentDatabase?: string,
   externalRefsEnabled = true,
-  maxNodes = DEFAULT_CONFIG.maxNodes,
   onDebugLog?: (msg: string) => void,
 ): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
   const { nodes, nodeIds } = buildNodeList(objects);
@@ -772,7 +767,7 @@ function buildNodesAndEdges(
   }
 
   if (externalRefsEnabled) {
-    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, maxNodes);
+    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase);
   }
 
   const typeById = new Map(nodes.map(n => [n.id, n.type]));
@@ -819,6 +814,11 @@ function lastUrlSegment(url: string, maxLen = 40): string {
 /**
  * Creates virtual nodes for external systems like cloud files or remote databases.
  *
+ * @remarks
+ * Every distinct external reference becomes a node and edge; there is no admission budget. A
+ * caller that must honor `dataLineageViz.maxNodes` checks the assembled model afterward with
+ * {@link checkObjectLimit} in `modelFilters.ts`.
+ *
  * @param nodes - Node collection to add to.
  * @param nodeIds - ID set to add to.
  * @param edges - Edge collection.
@@ -826,7 +826,6 @@ function lastUrlSegment(url: string, maxLen = 40): string {
  * @param crossDbRegexRefs - Discovered 3-part references from regex.
  * @param crossDbMetaDeps - Discovered 3-part references from model metadata.
  * @param currentDatabase - Active database name.
- * @param maxNodes - Total node budget for admitting virtual external nodes.
  */
 function createVirtualNodes(
   nodes: LineageNode[],
@@ -836,9 +835,7 @@ function createVirtualNodes(
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>,
   crossDbMetaDeps: Map<string, string[]>,
   currentDatabase?: string,
-  maxNodes = DEFAULT_CONFIG.maxNodes,
 ): void {
-  let budget = Math.max(0, maxNodes - nodes.length);
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
   const fileNodeMap = new Map<string, string>();
@@ -853,8 +850,6 @@ function createVirtualNodes(
         virtualId = `[__ext__].[${hash}]`;
         fileNodeMap.set(ref.url, virtualId);
         if (!nodeIds.has(virtualId)) {
-          if (budget <= 0) continue;
-          budget--;
           nodeIds.add(virtualId);
           nodes.push({
             id: virtualId, schema: '', name: lastUrlSegment(ref.url),
@@ -875,17 +870,14 @@ function createVirtualNodes(
     return false;
   };
 
-  const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string): boolean => {
-    if (nodeIds.has(crossDbId)) return true;
-    if (budget <= 0) return false;
-    budget--;
+  const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string): void => {
+    if (nodeIds.has(crossDbId)) return;
     nodeIds.add(crossDbId);
     nodes.push({
       id: crossDbId, schema: '', name: `${schema}.${object}`,
       fullName: crossDbId, type: 'external', externalType: 'db',
       externalDatabase: db,
     });
-    return true;
   };
 
   for (const [nodeId, { sources, targets }] of crossDbRegexRefs) {
@@ -896,7 +888,7 @@ function createVirtualNodes(
       const localId = `[${schema}].[${object}]`;
       const crossDbId = normalizeName(`${db}.${schema}.${object}`);
       if (isLocalRef(db, localId)) continue;
-      if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
+      ensureCrossDbNode(db, schema, object, crossDbId);
       addEdge(edges, edgeKeys, crossDbId, nodeId, 'body');
     }
     const node = nodeMap.get(nodeId);
@@ -909,7 +901,7 @@ function createVirtualNodes(
         const localId = `[${schema}].[${object}]`;
         const crossDbId = normalizeName(`${db}.${schema}.${object}`);
         if (isLocalRef(db, localId)) continue;
-        if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
+        ensureCrossDbNode(db, schema, object, crossDbId);
         addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
       }
     }
@@ -936,7 +928,7 @@ function createVirtualNodes(
         }
         continue;
       }
-      if (!ensureCrossDbNode(db, schema, object, crossDbId)) continue;
+      ensureCrossDbNode(db, schema, object, crossDbId);
       if (isWrite) addEdge(edges, edgeKeys, sourceId, crossDbId, 'body');
       else         addEdge(edges, edgeKeys, crossDbId, sourceId, 'body');
     }

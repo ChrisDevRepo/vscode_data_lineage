@@ -2,6 +2,7 @@ import { memo, useState, useRef, useCallback, useEffect } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { disabledControl } from './ui/disabledControl';
 import { useDropdown } from '../hooks/useDropdown';
 import { compileExclusionPattern } from '../utils/sql';
 
@@ -12,6 +13,10 @@ interface ExclusionDropdownProps {
   onAddPattern: (pattern: string) => void;
   /** Callback fired when an existing pattern is removed. */
   onRemovePattern: (pattern: string) => void;
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger while {@link disabled}. */
+  disabledReason?: string;
 }
 
 /**
@@ -28,6 +33,8 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
   exclusionPatterns,
   onAddPattern,
   onRemovePattern,
+  disabled = false,
+  disabledReason,
 }: ExclusionDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown('bottom-end');
   const [inputValue, setInputValue] = useState('');
@@ -69,15 +76,17 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
   }, [handleAdd]);
 
   const count = exclusionPatterns.length;
+  const trigger = disabledControl(toggle, disabled, disabledReason, 'Exclusion Rules — hide nodes matching patterns');
 
   return (
     <>
       <div className="relative inline-flex">
-        <Tooltip content="Exclusion Rules — hide nodes matching patterns">
+        <Tooltip content={trigger.tooltip}>
           <Button
             ref={refs.setReference}
-            onClick={toggle}
+            onClick={trigger.onClick}
             variant="icon"
+            disabled={trigger.disabled}
             aria-expanded={isOpen}
           aria-haspopup="true"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
@@ -99,7 +108,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
       </div>
 
       <FloatingPortal>
-        {isOpen && (
+        {!disabled && isOpen && (
           <div
             ref={refs.setFloating}
             style={{ ...floatingStyles, width: '288px', boxShadow: 'var(--ln-dropdown-shadow)' }}

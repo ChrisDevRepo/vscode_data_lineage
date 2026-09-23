@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useRef } from 'react';
+import { memo, useState, useEffect, useRef, type ReactNode } from 'react';
 import {
   useFloating,
   useInteractions,
@@ -9,8 +9,43 @@ import {
 } from '@floating-ui/react';
 import { FloatingPortal } from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
+import type { RemoveAction } from '../engine/modeCapabilities';
+import { disabledControl } from './ui/disabledControl';
 import { escapeRegexLiteral } from '../utils/sql';
 
+/** Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas. */
+function useContextMenuFloating(x: number, y: number, onClose: () => void) {
+  const virtualRef = useRef({
+    getBoundingClientRect() {
+      return { x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x };
+    },
+  });
+
+  useEffect(() => {
+    virtualRef.current.getBoundingClientRect = () => ({
+      x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x,
+    });
+  }, [x, y]);
+
+  const { refs, floatingStyles, context } = useFloating({
+    open: true,
+    onOpenChange: (open) => { if (!open) onClose(); },
+    middleware: [
+      offset(2),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+    ],
+  });
+
+  useEffect(() => {
+    refs.setReference(virtualRef.current);
+  }, [refs]);
+
+  const dismiss = useDismiss(context, { referencePress: true });
+  const { getFloatingProps } = useInteractions([dismiss]);
+
+  return { refs, floatingStyles, getFloatingProps };
+}
 
 interface NodeContextMenuProps {
   /** X-coordinate for the menu origin. */
@@ -43,12 +78,48 @@ interface NodeContextMenuProps {
   onViewDdl: (nodeId: string) => void;
   /** Callback to show the detailed info bar for this node. */
   onShowDetails: (nodeId: string) => void;
-  /** Callback to add a new exclusion rule based on this node's name. */
+  /**
+   * What "remove from what is on screen" does for this node, from
+   * {@link import('../engine/modeCapabilities').resolveRemoveAction} — the single Remove item
+   * this menu renders always shown, disabled with its reason when refused, never omitted.
+   */
+  removeAction: RemoveAction;
+  /** Callback to add a new exclusion rule based on this node's name (`removeAction.kind === 'exclude'`). */
   onExcludeNode?: (pattern: string) => void;
-  /** Whether exclusion/delete actions are allowed in the current mode. */
-  canExcludeNode?: boolean;
+  /** Callback to prune this node from the active trace (`removeAction.kind === 'trace-prune'`). */
+  onTracePruneNode?: (nodeId: string) => void;
+  /** Callback to remove this node from the active curated/bookmark view (`removeAction.kind === 'curated-remove'`). */
+  onCuratedRemoveNode?: (nodeId: string) => void;
   /** Callback to collapse this node's schema in Expanded Schema View. */
   onCollapseSchema?: (schema: string) => void;
+}
+
+/** Shared row styling for a full-width menu button, dimmed and inert when `disabled`. */
+function MenuButton({ onClick, disabled, reason, children }: { onClick: () => void; disabled?: boolean; reason?: string; children: ReactNode }) {
+  const trigger = disabledControl(onClick, disabled, reason);
+  return (
+    <button
+      onClick={trigger.onClick}
+      disabled={trigger.disabled}
+      title={trigger.tooltip}
+      aria-disabled={disabled}
+      className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 ${disabled ? 'opacity-50 cursor-not-allowed ln-text-dim' : 'ln-list-item'}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const REMOVE_ICON = 'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636';
+
+/** Label the single Remove item shows for each {@link RemoveAction} kind. */
+function removeActionLabel(action: RemoveAction): string {
+  switch (action.kind) {
+    case 'exclude': return 'Exclude from view';
+    case 'trace-prune': return 'Remove from trace';
+    case 'curated-remove': return 'Remove from view';
+    case 'refuse': return 'Remove';
+  }
 }
 
 /**
@@ -58,7 +129,7 @@ interface NodeContextMenuProps {
  * - Initiating Trace and Pathfinding modes.
  * - Opening DDL and Table Detail views.
  * - Copying qualified names to the clipboard.
- * - Adding ad-hoc exclusion rules.
+ * - Removing the node from whatever scope currently owns it.
  *
  * @param props - The component props.
  * @returns A portal-rendered React component.
@@ -79,40 +150,30 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   onFindPath,
   onViewDdl,
   onShowDetails,
+  removeAction,
   onExcludeNode,
-  canExcludeNode = true,
+  onTracePruneNode,
+  onCuratedRemoveNode,
   onCollapseSchema,
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
+  const { refs, floatingStyles, getFloatingProps } = useContextMenuFloating(x, y, onClose);
 
-  const virtualRef = useRef({
-    getBoundingClientRect() {
-      return { x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x };
-    },
-  });
+  const isExternal = externalType === 'file' || externalType === 'db';
+  const effectiveRemoveAction: RemoveAction = removeAction.kind === 'exclude' && isExternal
+    ? { kind: 'refuse', reason: 'External references cannot be excluded here' }
+    : removeAction;
 
-  useEffect(() => {
-    virtualRef.current.getBoundingClientRect = () => ({
-      x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x,
-    });
-  }, [x, y]);
-
-  const { refs, floatingStyles, context } = useFloating({
-    open: true,
-    onOpenChange: (open) => { if (!open) onClose(); },
-    middleware: [
-      offset(2),
-      flip({ padding: 8 }),
-      shift({ padding: 8 }),
-    ],
-  });
-
-  useEffect(() => {
-    refs.setReference(virtualRef.current);
-  }, [refs]);
-
-  const dismiss = useDismiss(context, { referencePress: true });
-  const { getFloatingProps } = useInteractions([dismiss]);
+  const handleRemove = () => {
+    if (effectiveRemoveAction.kind === 'exclude') {
+      onExcludeNode?.(`^${escapeRegexLiteral(schema)}\\.${escapeRegexLiteral(nodeName)}$`);
+    } else if (effectiveRemoveAction.kind === 'trace-prune') {
+      onTracePruneNode?.(nodeId);
+    } else if (effectiveRemoveAction.kind === 'curated-remove') {
+      onCuratedRemoveNode?.(nodeId);
+    }
+    onClose();
+  };
 
   return (
     <FloatingPortal>
@@ -198,23 +259,13 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           </>
         )}
 
-        {canExcludeNode && onExcludeNode && externalType !== 'file' && externalType !== 'db' && (
-          <>
-            <div className="my-1 ln-border-top" />
-            <button
-              onClick={() => {
-                onExcludeNode(`^${escapeRegexLiteral(schema)}\\.${escapeRegexLiteral(nodeName)}$`);
-                onClose();
-              }}
-              className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
-              </svg>
-              Exclude from view
-            </button>
-          </>
-        )}
+        <div className="my-1 ln-border-top" />
+        <MenuButton onClick={handleRemove} disabled={effectiveRemoveAction.kind === 'refuse'} reason={effectiveRemoveAction.kind === 'refuse' ? effectiveRemoveAction.reason : undefined}>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d={REMOVE_ICON} />
+          </svg>
+          {removeActionLabel(effectiveRemoveAction)}
+        </MenuButton>
 
         <div className="my-1 ln-border-top" />
 
@@ -234,6 +285,58 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           </svg>
           {copyFailed ? 'Copy failed' : 'Copy Qualified Name'}
         </button>
+      </div>
+    </FloatingPortal>
+  );
+});
+
+interface SchemaContextMenuProps {
+  /** X-coordinate for the menu origin. */
+  x: number;
+  /** Y-coordinate for the menu origin. */
+  y: number;
+  /** Schema name the right-clicked cluster represents. */
+  schema: string;
+  /** Whether this schema is currently expanded in Expanded Schema View. */
+  isExpanded: boolean;
+  /** Reason Expand/Collapse is disabled this render, or `undefined` when allowed. */
+  disabledReason?: string;
+  /** Callback fired when the menu is closed. */
+  onClose: () => void;
+  /** Expands this schema in Expanded Schema View. */
+  onExpand: (schema: string) => void;
+  /** Collapses this schema out of Expanded Schema View. */
+  onCollapse: (schema: string) => void;
+}
+
+/** Right-click menu for a Schema View cluster: Expand/Collapse, the one action a schema box owns. */
+export const SchemaContextMenu = memo(function SchemaContextMenu({
+  x,
+  y,
+  schema,
+  isExpanded,
+  disabledReason,
+  onClose,
+  onExpand,
+  onCollapse,
+}: SchemaContextMenuProps) {
+  const { refs, floatingStyles, getFloatingProps } = useContextMenuFloating(x, y, onClose);
+
+  return (
+    <FloatingPortal>
+      <div
+        ref={refs.setFloating}
+        style={{ ...floatingStyles, zIndex: 50, boxShadow: 'var(--ln-dropdown-shadow)' }}
+        className="rounded-lg py-1 min-w-[180px] ln-dropdown"
+        {...getFloatingProps()}
+      >
+        <div className="px-3 py-1.5 text-xs truncate ln-text-dim ln-border-bottom">{schema}</div>
+        <MenuButton onClick={() => { (isExpanded ? onCollapse : onExpand)(schema); onClose(); }} disabled={!!disabledReason} reason={disabledReason}>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d={isExpanded ? 'M5 12h14M4.5 4.5h15v15h-15v-15Z' : 'M12 4.5v15m7.5-7.5h-15'} />
+          </svg>
+          {isExpanded ? 'Collapse schema' : 'Expand schema'}
+        </MenuButton>
       </div>
     </FloatingPortal>
   );

@@ -6,12 +6,14 @@
  *     REQUIRED_AI_TEMPLATE_KEYS entry present with a non-empty instruction; schemaVersion
  *     readable; negative cases (scalar-under-key rejected, bare schemaVersion accepted)
  *   parseParseRulesYaml — real assets/defaultParseRules.yaml parses with a non-empty rules[]
+ *   clampDeclaredNumericSetting — numeric settings are held to their package.json min/max
  */
 
 import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { rootPath } from '../helpers/testUtils';
 import {
+  clampDeclaredNumericSetting,
   parseAiOutputTemplatesYaml,
   parseParseRulesYaml,
   REQUIRED_AI_TEMPLATE_KEYS,
@@ -130,5 +132,24 @@ describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
     expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: "1"\n'); }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(1);
+  });
+});
+
+describe('clampDeclaredNumericSetting', () => {
+  it('holds a value above the declared maximum at the maximum', () => {
+    expect(clampDeclaredNumericSetting('maxNodes', 10000)).toBe(2000);
+    expect(clampDeclaredNumericSetting('renderLimit', 10000)).toBe(1500);
+    expect(clampDeclaredNumericSetting('overview.threshold', 10000)).toBe(1000);
+  });
+
+  it('holds a value below the declared minimum at the minimum', () => {
+    expect(clampDeclaredNumericSetting('maxNodes', 1)).toBe(10);
+    expect(clampDeclaredNumericSetting('trace.defaultUpstreamLevels', -5)).toBe(0);
+  });
+
+  it('passes an in-range value, an unset value and an undeclared key through unchanged', () => {
+    expect(clampDeclaredNumericSetting('renderLimit', 750)).toBe(750);
+    expect(clampDeclaredNumericSetting('renderLimit', undefined)).toBeUndefined();
+    expect(clampDeclaredNumericSetting('notDeclared', 123456)).toBe(123456);
   });
 });

@@ -63,7 +63,65 @@ export function createNodeDecorationCache(): NodeDecorationCache {
   return new Map();
 }
 
-function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
+/**
+ * Class name marking a node exempt from the active-selection dim — the node itself, a level-1
+ * neighbour, or the trace origin.
+ *
+ * @remarks
+ * Paired with the `.ln-has-selection` wrapper class ({@link ./GraphCanvas.tsx}) by the CSS rule in
+ * `src/index.css`: everything outside the lit set is dimmed by that one rule, so an ordinary node's
+ * `data` never needs to change just because some other node was clicked. {@link decorateFlowEdges}
+ * (`src/engine/edgeDecoration.ts`) applies the same class to an edge's incident set.
+ */
+export const LIT_CLASS_NAME = 'ln-lit';
+
+/**
+ * Node count above which React Flow's `onlyRenderVisibleElements` viewport culling pays for
+ * itself — below it, the per-frame visibility bookkeeping costs more than the render work it
+ * would skip (React Flow's own performance guidance).
+ */
+export const VIRTUALIZATION_NODE_THRESHOLD = 300;
+
+/**
+ * Edge count above which a connected edge's dash animation is switched off regardless of
+ * `config.layout`, so a dense graph is not repainted every frame for a flourish nobody can track
+ * by eye at that density.
+ */
+export const EDGE_ANIMATION_COUNT_THRESHOLD = 200;
+
+/** Whether the rendered node count justifies React Flow's viewport-culling mode. */
+export function shouldVirtualizeCanvas(renderedNodeCount: number): boolean {
+  return renderedNodeCount > VIRTUALIZATION_NODE_THRESHOLD;
+}
+
+/**
+ * Whether a connected edge should animate: the config toggle, gated off past
+ * {@link EDGE_ANIMATION_COUNT_THRESHOLD}.
+ */
+export function shouldAnimateEdges(renderedEdgeCount: number, configAllowsAnimation: boolean): boolean {
+  return configAllowsAnimation && renderedEdgeCount <= EDGE_ANIMATION_COUNT_THRESHOLD;
+}
+
+/**
+ * Zoom below which `CustomNode` drops its label, badges and trace-control decorations for a plain
+ * box — at this scale none of that detail is legible, and skipping it keeps a large, zoomed-out
+ * graph cheap to repaint.
+ */
+export const SIMPLE_NODE_ZOOM_THRESHOLD = 0.4;
+
+/**
+ * Floor for React Flow's `minZoom`, so `fitView` can always zoom out far enough to contain every
+ * node of the largest renderable graph rather than clamping and leaving nodes outside the pane.
+ *
+ * @remarks
+ * Well below {@link SIMPLE_NODE_ZOOM_THRESHOLD}: every node this small already renders as the plain
+ * box {@link SIMPLE_NODE_ZOOM_THRESHOLD} gates, so a small `minZoom` still reads as a legible map
+ * rather than illegible label text.
+ */
+export const MIN_CANVAS_ZOOM = 0.02;
+
+/** Compares two decoration keys field by field, treating `NaN`-safe identity as equal. */
+export function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (!Object.is(a[i], b[i])) return false;
@@ -72,7 +130,7 @@ function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
 }
 
 /** Drops cache entries for ids no longer present in the current render pass. */
-function pruneStaleEntries<K, V>(cache: Map<K, V>, present: ReadonlySet<K>): void {
+export function pruneStaleEntries<K, V>(cache: Map<K, V>, present: ReadonlySet<K>): void {
   for (const id of [...cache.keys()]) {
     if (!present.has(id)) cache.delete(id);
   }
@@ -87,6 +145,16 @@ export interface NodeDecoration {
   highlighted: boolean | 'yellow' | undefined;
   /** Whether the node is de-emphasised because another node is focused. */
   dimmed: boolean;
+  /**
+   * Whether the node is exempt from the active-selection dim — itself, a level-1 neighbour, or the
+   * trace origin.
+   *
+   * @remarks
+   * Unlike {@link dimmed}, this stays `false` for an ordinary node whether or not a selection is
+   * active, so the object-view canvas can use it as a `className` (see {@link LIT_CLASS_NAME}) that
+   * only changes identity for the handful of nodes actually entering or leaving the lit set.
+   */
+  lit: boolean;
   /** Whether the scoped-view remove control is shown. */
   removable: boolean;
   /** Remove-from-view callback, attached only while the control is shown. */
@@ -115,10 +183,11 @@ function resolveBaseSelectionState(
   nodeId: string,
   highlightedNodeId: string | null | undefined,
   level1Neighbors: ReadonlySet<string>,
-): { highlighted: boolean; dimmed: boolean } {
+): { highlighted: boolean; isNeighbor: boolean; dimmed: boolean } {
   const highlighted = highlightedNodeId === nodeId;
-  const dimmed = !!highlightedNodeId && !highlighted && !level1Neighbors.has(nodeId);
-  return { highlighted, dimmed };
+  const isNeighbor = level1Neighbors.has(nodeId);
+  const dimmed = !!highlightedNodeId && !highlighted && !isNeighbor;
+  return { highlighted, isNeighbor, dimmed };
 }
 
 /** Whether `nodeId` is the origin of an applied, filtered, or path trace. */
@@ -151,12 +220,13 @@ export function computeNodeDecoration(
   ownHighlight: boolean | 'yellow' | undefined,
   inputs: NodeSelectionInputs,
 ): NodeDecoration {
-  const { highlighted: isHighlighted, dimmed: baseDimmed } = resolveBaseSelectionState(nodeId, inputs.highlightedNodeId, inputs.level1Neighbors);
+  const { highlighted: isHighlighted, isNeighbor, dimmed: baseDimmed } = resolveBaseSelectionState(nodeId, inputs.highlightedNodeId, inputs.level1Neighbors);
   const isTraceOrigin = isTraceOriginNode(nodeId, inputs);
   const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
   return {
     highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : ownHighlight,
     dimmed: baseDimmed && !isTraceOrigin,
+    lit: isHighlighted || isNeighbor || isTraceOrigin,
     removable,
     onRemoveFromView: removable ? inputs.onRemoveFromView : undefined,
     traceControls: inputs.traceControlsByNode.get(nodeId),
@@ -172,8 +242,8 @@ export function computeNodeDecoration(
  *
  * @remarks
  * The two reuse paths are what keeps `React.memo` alive: an unchanged node object is handed back
- * untouched, and a node object replaced by a position-only change carries the previous `data`
- * across so even the dragged node's renderer skips.
+ * untouched, and a node object replaced by a position-only change carries the previous `data` and
+ * `className` across so even the dragged node's renderer skips.
  */
 function reuseOrBuild(
   node: FlowNode,
@@ -185,7 +255,7 @@ function reuseOrBuild(
   if (cached && sameKey(cached.key, key)) {
     if (cached.source === node) return cached.result;
     if (cached.source.data === node.data) {
-      const moved = { ...node, data: cached.result.data };
+      const moved = { ...node, className: cached.result.className, data: cached.result.data };
       cache.set(node.id, { source: node, key, result: moved });
       return moved;
     }
@@ -195,14 +265,22 @@ function reuseOrBuild(
   return result;
 }
 
-/** Applies an already-computed decoration to its node. */
+/**
+ * Applies an already-computed decoration to its node.
+ *
+ * @remarks
+ * The dim itself is not written into `data`: {@link NodeDecoration.lit} becomes the node's
+ * `className` instead (see {@link LIT_CLASS_NAME}), a top-level `FlowNode` field React Flow applies
+ * to the node's outer wrapper without passing it to the memoized node renderer. That keeps `data`
+ * — and with it, `React.memo`'s ability to skip the renderer — unaffected by which node is dimmed.
+ */
 function applyDecoration(node: FlowNode, d: NodeDecoration): FlowNode {
   return {
     ...node,
+    className: d.lit ? LIT_CLASS_NAME : undefined,
     data: {
       ...node.data,
       highlighted: d.highlighted,
-      dimmed: d.dimmed,
       showRemoveButton: d.removable,
       onRemoveFromView: d.onRemoveFromView,
       traceControls: d.traceControls,
@@ -251,7 +329,7 @@ export function decorateFlowNodes(
     const decoration = computeNodeDecoration(node.id, (node.data as CustomNodeData).highlighted, inputs);
     return reuseOrBuild(
       node,
-      [decoration.highlighted, decoration.dimmed, decoration.removable, decoration.onRemoveFromView, decoration.traceControls, decoration.aiHighlight, decoration.aiBadge, decoration.aiNote],
+      [decoration.lit, decoration.highlighted, decoration.removable, decoration.onRemoveFromView, decoration.traceControls, decoration.aiHighlight, decoration.aiBadge, decoration.aiNote],
       cache,
       () => applyDecoration(node, decoration),
     );

@@ -28,7 +28,7 @@ interface TracedFilterBannerProps {
   onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
   /** Whether the trace should ignore existing schema/type filters and use the full model. */
   useFullModel: boolean;
-  /** Callback triggered when the "Include filtered" checkbox is toggled. */
+  /** Callback triggered when the "Include objects outside the filters" checkbox is toggled. */
   onToggleFullModel: () => void;
   /** The number of nodes that are hidden due to active schema/type filters. */
   filteredOutCount: number;
@@ -85,7 +85,7 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
           onChange={onToggleFullModel}
           className="ln-checkbox"
         />
-        Include filtered
+        Include objects outside the filters
       </label>
     </Tooltip>
   );

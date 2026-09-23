@@ -1,6 +1,7 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useState } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
-import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, type AppShortcutId } from '../ui/keyboardShortcuts';
+import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, ESC_PRIORITY, type AppShortcutId } from '../ui/keyboardShortcuts';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
@@ -382,16 +383,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      onClose();
-    };
-    document.addEventListener('keydown', handler, true);
-    return () => document.removeEventListener('keydown', handler, true);
-  }, [isOpen, onClose]);
+  useKeyboardShortcut(SHORTCUT_KEYS.exitMode, onClose, false, { priority: ESC_PRIORITY.help, active: isOpen });
 
   if (!isOpen) return null;
 

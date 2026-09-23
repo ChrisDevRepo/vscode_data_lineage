@@ -101,8 +101,14 @@ export const PathFinderBar = memo(function PathFinderBar({
                   handleSelect(suggestions[selectedIndex].id);
                 }
               } else if (e.key === 'Escape') {
-                setInput('');
-                setIsOpen(false);
+                if (input) {
+                  e.stopPropagation();
+                  setInput('');
+                  setIsOpen(false);
+                } else {
+                  setIsOpen(false);
+                  (e.target as HTMLInputElement).blur();
+                }
               }
             }}
             placeholder="Type target node..."

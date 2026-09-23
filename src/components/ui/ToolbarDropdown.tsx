@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { Button } from './Button';
 import { Tooltip } from './Tooltip';
+import { disabledControl } from './disabledControl';
 import { useDropdown } from '../../hooks/useDropdown';
 
 /** Props for the {@link ToolbarDropdown} component. */
@@ -18,6 +19,10 @@ interface ToolbarDropdownProps {
   panelRole: 'listbox' | 'menu';
   /** Accessible label for the floating panel. */
   ariaLabel: string;
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger in place of {@link tooltipContent} while {@link disabled}. */
+  disabledReason?: string;
   /** `aria-haspopup` value for the trigger button (default `'listbox'`). */
   ariaHaspopup?: boolean | 'true' | 'false' | 'menu' | 'listbox' | 'tree' | 'grid' | 'dialog';
   /** Extra Tailwind classes appended to the panel element. */
@@ -43,18 +48,22 @@ export function ToolbarDropdown({
   ariaLabel,
   ariaHaspopup = 'listbox',
   panelClassName = '',
+  disabled = false,
+  disabledReason,
   children,
 }: ToolbarDropdownProps) {
   const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
+  const trigger = disabledControl(toggle, disabled, disabledReason, tooltipContent);
 
   return (
     <>
       <div className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}>
-        <Tooltip content={tooltipContent}>
+        <Tooltip content={trigger.tooltip}>
           <Button
             ref={refs.setReference}
-            onClick={toggle}
+            onClick={trigger.onClick}
             variant="icon"
+            disabled={trigger.disabled}
             aria-expanded={isOpen}
             aria-haspopup={ariaHaspopup}
             style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
@@ -65,7 +74,7 @@ export function ToolbarDropdown({
       </div>
 
       <FloatingPortal>
-        {isOpen && (
+        {!disabled && isOpen && (
           <div
             ref={refs.setFloating}
             style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}

@@ -253,14 +253,15 @@ describe('virtual-node suppression', () => {
     expect(built.nodes).toHaveLength(2);
   });
 
-  it('creates none when maxNodes leaves no budget beyond the real nodes', () => {
+  it('creates virtual nodes regardless of real node count — no admission budget', () => {
     const built = buildModel(
       [table('[dbo].[Sales]'), table('[dbo].[Products]'), externalObjects()[1]],
       [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }],
-      undefined, undefined, true, 3,
+      undefined, undefined, true,
     );
-    expect(built.nodes.filter(node => node.externalType === 'file' || node.externalType === 'db')).toEqual([]);
-    expect(built.nodes).toHaveLength(3);
+    const virtual = built.nodes.filter(node => node.externalType === 'file' || node.externalType === 'db');
+    expect(virtual.length).toBeGreaterThan(0);
+    expect(built.nodes).toHaveLength(3 + virtual.length);
   });
 });
 

@@ -23,8 +23,8 @@ export interface ModeCapabilityInput {
 export interface ModeCapabilities {
   /** Whether any scoped mode is active and should lock conflicting controls. */
   isModeLocked: boolean;
-  /** Whether the highlighted node can be added to durable exclusion filters. */
-  canExcludeHighlightedNode: boolean;
+  /** Whether the interactive-trace hook's traced subset (not the raw base graph) should render. */
+  isTraceActive: boolean;
   /** Whether a node can be removed from the current allowlist-backed view. */
   canRemoveNodeFromScopedView: boolean;
   /** Whether direct-neighbor add/prune controls are enabled for the trace. */
@@ -46,13 +46,45 @@ export function deriveModeCapabilities(input: ModeCapabilityInput): ModeCapabili
   const hasTraceMode = isTraceView || isPathView || input.traceMode === 'configuring' || input.traceMode === 'pathfinding';
   const hasScopedView = hasTraceMode || input.hasAnalysisMode || input.hasAiPreview || input.hasAdvancedView;
   const isCuratedView = input.hasAiPreview || input.hasAdvancedView;
+  const isTraceActive = isTraceView || isPathView || input.traceMode === 'analysis';
 
   return {
     isModeLocked: hasScopedView,
-    canExcludeHighlightedNode: !hasScopedView,
+    isTraceActive,
     canRemoveNodeFromScopedView: isCuratedView && !input.hasAnalysisMode && !hasTraceMode,
     canEditTraceScope: isTraceView,
     canStartNewScopedMode: !hasScopedView,
     canSwitchGraphMode: !hasScopedView,
   };
+}
+
+/** The concrete action Delete (or its menu/button equivalents) performs, per {@link ModeCapabilities}. */
+export type RemoveAction =
+  | { kind: 'exclude' }
+  | { kind: 'trace-prune' }
+  | { kind: 'curated-remove' }
+  | { kind: 'refuse'; reason: string };
+
+/**
+ * Decides what "remove from what is on screen" does for the highlighted node, from the same
+ * {@link ModeCapabilities} every other control reads — one dispatcher, one source of truth,
+ * instead of each caller (keyboard shortcut, context menu item, node button) re-deriving its own
+ * notion of what Delete means in the current mode.
+ *
+ * @param capabilities - The active mode's capability set.
+ * @param context - Per-node facts {@link ModeCapabilities} does not carry.
+ * @returns The action to perform, or a refusal with a user-facing reason.
+ */
+export function resolveRemoveAction(
+  capabilities: Pick<ModeCapabilities, 'isModeLocked' | 'canEditTraceScope' | 'canRemoveNodeFromScopedView'>,
+  context: { hasAnalysisMode: boolean; isTraceOrigin: boolean },
+): RemoveAction {
+  if (capabilities.canEditTraceScope) {
+    if (context.isTraceOrigin) return { kind: 'refuse', reason: 'This is the trace source — it cannot be removed' };
+    return { kind: 'trace-prune' };
+  }
+  if (capabilities.canRemoveNodeFromScopedView) return { kind: 'curated-remove' };
+  if (!capabilities.isModeLocked) return { kind: 'exclude' };
+  if (context.hasAnalysisMode) return { kind: 'refuse', reason: 'Exit analysis to remove nodes from the view' };
+  return { kind: 'refuse', reason: 'Nothing can be removed from this view' };
 }

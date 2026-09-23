@@ -1,10 +1,11 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useTransition } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel, type CustomNodeData } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
 import { buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode } from '../engine/traceScope';
 import { directNeighborIds } from '../engine/graphGuards';
+import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
 /**
  * Return type for the useInteractiveTrace hook, providing state and control actions.
@@ -44,6 +45,8 @@ interface UseInteractiveTraceReturn {
   addTraceNeighbor: (nodeId: string) => void;
   /** Removes one safe node from the current trace scope. */
   pruneTraceNode: (nodeId: string) => void;
+  /** Node count a trace from the current origin at the given depths would render — BFS only, no layout. */
+  estimateTraceSize: (upstreamLevels: number, downstreamLevels: number) => number;
 }
 
 /** Initial trace state factory */
@@ -117,6 +120,7 @@ export function useInteractiveTrace(
 ): UseInteractiveTraceReturn {
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
   const [useFullModel, setUseFullModel] = useState(false);
+  const [, startTransition] = useTransition();
 
   const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
 
@@ -157,18 +161,20 @@ export function useInteractiveTrace(
         `[Trace] 0 results for "${nodeId}" — exists in model but has no connections` });
     }
 
-    setTrace(createTrace(config, {
-      mode: 'filtered',
-      selectedNodeId: nodeId,
-      upstreamLevels: config.trace.defaultUpstreamLevels,
-      downstreamLevels: config.trace.defaultDownstreamLevels,
-      baseNodeIds: nodeIds,
-      baseEdgeIds: edgeIds,
-      tracedNodeIds: nodeIds,
-      tracedEdgeIds: edgeIds,
-      autoPromoted,
-    }));
-  }, [graph, fullGraph, config]);
+    startTransition(() => {
+      setTrace(createTrace(config, {
+        mode: 'filtered',
+        selectedNodeId: nodeId,
+        upstreamLevels: config.trace.defaultUpstreamLevels,
+        downstreamLevels: config.trace.defaultDownstreamLevels,
+        baseNodeIds: nodeIds,
+        baseEdgeIds: edgeIds,
+        tracedNodeIds: nodeIds,
+        tracedEdgeIds: edgeIds,
+        autoPromoted,
+      }));
+    });
+  }, [graph, fullGraph, config, startTransition]);
 
   const applyTrace = useCallback(
     (upstreamLevels: number, downstreamLevels: number) => {
@@ -197,19 +203,21 @@ export function useInteractiveTrace(
         `[Trace] Apply: "${trace.selectedNodeId}" up=${upstreamLevels} down=${downstreamLevels} fullModel=${useFullModelRef.current}${autoPromoted ? ' (auto-promoted)' : ''} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
       });
 
-      setTrace(createTrace(config, {
-        mode: 'applied',
-        selectedNodeId: trace.selectedNodeId,
-        upstreamLevels,
-        downstreamLevels,
-        baseNodeIds: nodeIds,
-        baseEdgeIds: edgeIds,
-        tracedNodeIds: nodeIds,
-        tracedEdgeIds: edgeIds,
-        autoPromoted,
-      }));
+      startTransition(() => {
+        setTrace(createTrace(config, {
+          mode: 'applied',
+          selectedNodeId: trace.selectedNodeId,
+          upstreamLevels,
+          downstreamLevels,
+          baseNodeIds: nodeIds,
+          baseEdgeIds: edgeIds,
+          tracedNodeIds: nodeIds,
+          tracedEdgeIds: edgeIds,
+          autoPromoted,
+        }));
+      });
     },
-    [config, graph, fullGraph, trace.selectedNodeId]
+    [config, graph, fullGraph, trace.selectedNodeId, startTransition]
   );
 
   const startPathFinding = useCallback((nodeId: string) => {
@@ -342,11 +350,16 @@ export function useInteractiveTrace(
     if (!model || !fullGraph) return;
     setTrace(prev => {
       if (!isEditableTraceMode(prev.mode) || nodeId === prev.selectedNodeId) return prev;
-      if (!canPruneTraceNode(fullGraph, prev.selectedNodeId, prev.tracedNodeIds, nodeId).safe) return prev;
+      const check = canPruneTraceNode(fullGraph, prev.selectedNodeId, prev.tracedNodeIds, nodeId);
+      if (!check.safe) return prev;
       const manualAddedNodeIds = new Set(prev.manualAddedNodeIds);
       const manualPrunedNodeIds = new Set(prev.manualPrunedNodeIds);
       manualAddedNodeIds.delete(nodeId);
       manualPrunedNodeIds.add(nodeId);
+      for (const cutId of check.cutNodeIds ?? []) {
+        manualAddedNodeIds.delete(cutId);
+        manualPrunedNodeIds.add(cutId);
+      }
       const scope = buildVisibleTraceScope(prev.baseNodeIds, manualAddedNodeIds, manualPrunedNodeIds, model.edges);
       return {
         ...prev,
@@ -385,6 +398,9 @@ export function useInteractiveTrace(
       if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
         return { tracedNodes: flowNodes, tracedEdges: flowEdges, traceGraph: null };
       }
+      if (trace.tracedNodeIds.size > config.renderLimit) {
+        return { tracedNodes: [], tracedEdges: [], traceGraph: null };
+      }
 
       const synthesize = baseRenderLimited || useFullModel || !!trace.autoPromoted || trace.manualAddedNodeIds.size > 0;
       const { nodes, edges, graph: tGraph } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model, synthesize);
@@ -393,5 +409,13 @@ export function useInteractiveTrace(
     [flowNodes, flowEdges, trace, config, model, useFullModel, baseRenderLimited]
   );
 
-  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode };
+  /** Node count a trace from the current origin at the given depths would render — resolves the same BFS graph {@link applyTrace} would use. */
+  const estimateTraceSize = useCallback((upstreamLevels: number, downstreamLevels: number): number => {
+    if (!trace.selectedNodeId) return 0;
+    const { bfsGraph } = resolveBfsGraph(trace.selectedNodeId, useFullModelRef.current, graph, fullGraph);
+    if (!bfsGraph) return 0;
+    return traceSizeByDepth(bfsGraph, trace.selectedNodeId, upstreamLevels, downstreamLevels);
+  }, [graph, fullGraph, trace.selectedNodeId]);
+
+  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize };
 }

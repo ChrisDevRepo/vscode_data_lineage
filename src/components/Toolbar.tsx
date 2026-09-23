@@ -42,6 +42,8 @@ interface ToolbarProps {
   onRefresh: () => void;
   /** Callback to re-extract metadata and completely rebuild the graph. */
   onRebuild?: () => void;
+  /** Whether a rebuild (re-extract or config-triggered) is currently in flight. */
+  isRebuilding?: boolean;
   /** Callback to return to the project selection screen. */
   onBack: () => void;
   /** Callback to open the DDL/SQL source viewer for the selected node. */
@@ -203,6 +205,7 @@ export const Toolbar = memo(function Toolbar({
   availableSchemas,
   onRefresh,
   onRebuild,
+  isRebuilding = false,
   onBack,
   onOpenDdlViewer,
   onExportDrawio,
@@ -291,6 +294,8 @@ export const Toolbar = memo(function Toolbar({
       ? 'var(--ln-warning-fg)'
       : undefined;
 
+  const filterEditDisabledReason = isModeLocked ? 'Exit the current trace or view to edit filters' : undefined;
+
   const activeFilterCount = useMemo(() => [
     selectedSchemas.size < schemas.length && schemas.length > 0,
     types.size < 5,
@@ -326,7 +331,8 @@ export const Toolbar = memo(function Toolbar({
         <div className="flex-1 min-w-[100px] max-w-[340px]">
           <SearchWithAutocomplete
             onExecuteSearch={onExecuteSearch}
-            onStartTrace={canStartNewScopedMode ? onStartTrace : undefined}
+            onStartTrace={onStartTrace}
+            startTraceDisabledReason={!canStartNewScopedMode ? 'Exit the current mode to start a new trace' : undefined}
             allNodes={allNodes}
             visibleNodeIds={visibleNodeIds}
             collapsedSchemaNodeIds={collapsedSchemaNodeIds}
@@ -354,8 +360,8 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} isNarrowed={selectedSchemas.size < schemas.length && schemas.length > 0} />
-        <TypeFilterDropdown types={types} onToggleType={onToggleType} isNarrowed={types.size < 5} />
+        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} isNarrowed={selectedSchemas.size < schemas.length && schemas.length > 0} disabled={isModeLocked} disabledReason={filterEditDisabledReason} />
+        <TypeFilterDropdown types={types} onToggleType={onToggleType} isNarrowed={types.size < 5} disabled={isModeLocked} disabledReason={filterEditDisabledReason} />
         {onToggleExternalRefs && onToggleExternalRefType && (
           <ExternalRefsDropdown
             showExternalRefs={showExternalRefs}
@@ -363,11 +369,13 @@ export const Toolbar = memo(function Toolbar({
             onToggleMaster={onToggleExternalRefs}
             onToggleSubType={onToggleExternalRefType}
             isNarrowed={!showExternalRefs || externalRefTypes.size < 2}
+            disabled={isModeLocked}
+            disabledReason={filterEditDisabledReason}
           />
         )}
         <div className="relative inline-flex">
           <Tooltip content={activeFilterCount > 0 ? `Refresh View (${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active)` : 'Refresh View'}>
-            <Button onClick={() => { onRefresh(); onResetExpandedSchemaView?.(); }} variant="icon" aria-label="Refresh View">
+            <Button onClick={() => { onRefresh(); onResetExpandedSchemaView?.(); }} variant="icon" aria-label="Refresh View" disabled={isRebuilding}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
@@ -398,6 +406,8 @@ export const Toolbar = memo(function Toolbar({
             exclusionPatterns={exclusionPatterns}
             onAddPattern={onAddExclusionPattern}
             onRemovePattern={onRemoveExclusionPattern}
+            disabled={isModeLocked}
+            disabledReason={filterEditDisabledReason}
           />
         )}
 
@@ -468,7 +478,7 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
         {onRebuild && (
           <Tooltip content="Refresh (re-read settings &amp; rebuild graph)">
-            <Button onClick={onRebuild} variant="icon" aria-label="Refresh (re-read settings and rebuild graph)">
+            <Button onClick={onRebuild} variant="icon" aria-label="Refresh (re-read settings and rebuild graph)" disabled={isRebuilding}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
               </svg>

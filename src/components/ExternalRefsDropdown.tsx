@@ -12,6 +12,10 @@ interface ExternalRefsDropdownProps {
   onToggleSubType: (subType: 'file' | 'db') => void;
   /** Optional visual flag indicating if the view is already narrowed by other filters. */
   isNarrowed?: boolean;
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger while {@link disabled}. */
+  disabledReason?: string;
 }
 
 const EXTERNAL_REFS_ICON = (
@@ -32,6 +36,8 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   onToggleMaster,
   onToggleSubType,
   isNarrowed = false,
+  disabled = false,
+  disabledReason,
 }: ExternalRefsDropdownProps) {
   return (
     <ToolbarDropdown
@@ -42,6 +48,8 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
       panelRole="menu"
       ariaLabel="External reference filters"
       ariaHaspopup="true"
+      disabled={disabled}
+      disabledReason={disabledReason}
     >
       <div className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={showExternalRefs}>
         <input

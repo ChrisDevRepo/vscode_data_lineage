@@ -10,6 +10,10 @@ interface TypeFilterDropdownProps {
   onToggleType: (type: ObjectType) => void;
   /** Whether the filter is currently active (narrowing the results). */
   isNarrowed?: boolean;
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger while {@link disabled}. */
+  disabledReason?: string;
 }
 
 const ALL_TYPES: ObjectType[] = ['table', 'view', 'procedure', 'function', 'external'];
@@ -31,6 +35,8 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,
   onToggleType,
   isNarrowed = false,
+  disabled = false,
+  disabledReason,
 }: TypeFilterDropdownProps) {
   return (
     <ToolbarDropdown
@@ -40,6 +46,8 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
       panelWidth="w-56"
       panelRole="listbox"
       ariaLabel="Filter object types"
+      disabled={disabled}
+      disabledReason={disabledReason}
     >
       {ALL_TYPES.map((type) => (
         <div key={type} className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item">

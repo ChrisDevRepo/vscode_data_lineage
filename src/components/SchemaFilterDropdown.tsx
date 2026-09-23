@@ -31,6 +31,10 @@ interface SchemaFilterDropdownProps {
   onToggleFocusSchema: (schema: string) => void;
   /** Whether the current filter state is "narrowed" (affects visual indicators). */
   isNarrowed?: boolean;
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger while {@link disabled}. */
+  disabledReason?: string;
 }
 
 const SCHEMA_ICON = (
@@ -51,6 +55,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectNone,
   onToggleFocusSchema,
   isNarrowed = false,
+  disabled = false,
+  disabledReason,
 }: SchemaFilterDropdownProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -67,6 +73,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
       panelRole="listbox"
       ariaLabel="Filter schemas"
       panelClassName="max-h-96 flex flex-col"
+      disabled={disabled}
+      disabledReason={disabledReason}
     >
       <div className="mb-2 flex items-center gap-2">
         <input

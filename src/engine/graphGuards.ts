@@ -111,33 +111,35 @@ export function bfsReachable(
 
 
 /**
- * Returns the first required node that would become disconnected from origin after removals.
+ * Computes the nodes a removal cuts loose from the origin — the shared self-prune cut applied by
+ * both the AI navigation engine and the webview trace.
  *
  * @remarks
- * Shared closed-graph guard for prune operations. Any node in `requiredNodeIds` that
- * is not removed must stay reachable from the origin.
+ * A cut node is one reachable from `originId` before the removal and not after: the removed
+ * node's subtree, per the self-prune contract (a pruned node leaves together with every node
+ * reachable from the origin only through it). The origin itself is never a member of the result
+ * because it seeds both walks. `removedAfter` and `keep` are excluded from the result even when
+ * the before/after reachability delta would otherwise include them.
  *
- * @param graph - The graphology instance to check.
- * @param originId - Exploration origin node id.
- * @param removedSet - Node ids treated as removed.
- * @param requiredNodeIds - Nodes that must remain connected from origin.
- * @param scope - Optional traversal scope restriction.
- * @returns First disconnected required node id, otherwise `null`.
+ * @param graph - Graphology instance to traverse.
+ * @param originId - Exploration origin node id, never itself a cut candidate.
+ * @param removedBefore - Node ids treated as removed before this removal.
+ * @param removedAfter - Node ids treated as removed after this removal (superset of `removedBefore`).
+ * @param scope - Optional traversal scope restriction, applied to both walks.
+ * @param keep - Optional node ids excluded from the cut regardless of reachability (for example, already-visited nodes whose analysis is committed).
+ * @returns Node ids reachable from origin before the removal, unreachable after, excluding `removedAfter` and `keep`.
  */
-export function firstDisconnectedRequiredNode(
+export function nodesCutByRemoval(
   graph: Graph,
   originId: string,
-  removedSet: ReadonlySet<string>,
-  requiredNodeIds: ReadonlySet<string>,
+  removedBefore: ReadonlySet<string>,
+  removedAfter: ReadonlySet<string>,
   scope?: ReadonlySet<string>,
-): string | null {
-  if (requiredNodeIds.size === 0) return null;
-  const reachable = bfsReachable(graph, originId, removedSet, undefined, scope);
-  for (const id of requiredNodeIds) {
-    if (removedSet.has(id)) continue;
-    if (!reachable.has(id)) return id;
-  }
-  return null;
+  keep?: ReadonlySet<string>,
+): string[] {
+  const before = bfsReachable(graph, originId, removedBefore, undefined, scope);
+  const after = bfsReachable(graph, originId, removedAfter, undefined, scope);
+  return [...before].filter(id => !after.has(id) && !removedAfter.has(id) && !(keep?.has(id) ?? false));
 }
 
 /**

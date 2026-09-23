@@ -22,7 +22,6 @@ import {
   buildColumnDef,
   enrichColumnsWithConstraints,
   createEmptySchemaInfo,
-  DEFAULT_CONFIG,
   UNKNOWN_DB_PLATFORM,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
@@ -93,7 +92,6 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
  * @param results - Raw DMV query results to assemble.
  * @param currentDatabase - Current database name for local-object resolution.
  * @param externalRefsEnabled - Whether external reference nodes should be emitted.
- * @param maxNodes - Configured node cap for the generated model.
  * @param onDebugLog - Debug logger callback.
  *
  * @returns A resolved DatabaseModel including the graph and metadata.
@@ -102,7 +100,6 @@ export function buildModelFromDmv(
   results: DmvResults,
   currentDatabase?: string,
   externalRefsEnabled = true,
-  maxNodes = DEFAULT_CONFIG.maxNodes,
   onDebugLog?: (msg: string) => void,
 ): DatabaseModel {
   const objects = extractObjects(results);
@@ -118,7 +115,7 @@ export function buildModelFromDmv(
     }).length ?? 0;
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
-  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, maxNodes, onDebugLog);
+  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog);
   const queryPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
   const dbPlatform = queryPlatform !== UNKNOWN_DB_PLATFORM
     ? queryPlatform

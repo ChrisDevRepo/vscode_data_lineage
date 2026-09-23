@@ -7,7 +7,7 @@ import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
 import { searchCatalog } from './utils/modelSearch';
 import { markGitIgnored } from './utils/gitIgnoredDir';
-import { applyModelToSession, buildExtensionConfig } from './bridge/messageHandlers';
+import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './bridge/messageHandlers';
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 
 /**
@@ -229,9 +229,9 @@ export function registerCommands(
           undefined,
           {
             externalRefsEnabled: config.externalRefs.enabled,
-            maxNodes: config.maxNodes,
           },
         );
+        if (isModelOverLimit(model, config.maxNodes, configLogger)) return;
         const sess = getSession();
 
         applyModelToSession(sess, model, false, null);

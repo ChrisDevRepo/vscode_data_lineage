@@ -2,13 +2,13 @@
  * Pure helpers for interactive trace scope edits.
  *
  * These functions keep the webview trace UX aligned with SM graph-integrity
- * rules: the origin is an anchor, prune is disabled when it would disconnect
- * the remaining trace, and traversal is cycle-safe.
+ * rules: the origin is an anchor, a prune takes the subtree reachable only
+ * through the pruned node with it, and traversal is cycle-safe.
  */
 
 import type Graph from 'graphology';
 import type { LineageEdge, TraceState } from './types';
-import { firstDisconnectedRequiredNode } from './graphGuards';
+import { nodesCutByRemoval } from './graphGuards';
 
 /**
  * Whether a trace mode permits manual add/prune edits.
@@ -58,14 +58,20 @@ export function isManualTraceScopeEdit(previous: TraceState, next: TraceState): 
     || !sameIdSet(previous.manualPrunedNodeIds, next.manualPrunedNodeIds);
 }
 
-/** Result of validating whether a visible trace node can be pruned safely. */
+/**
+ * Result of validating whether a visible trace node can be pruned.
+ *
+ * @remarks
+ * A prune takes its subtree with it, so only the origin and a node outside the visible scope
+ * are refused.
+ */
 export interface TracePruneCheck {
-  /** True when pruning preserves origin reachability for all remaining visible trace nodes. */
+  /** True when the candidate is prunable — the origin and every out-of-scope node are the only refusals. */
   safe: boolean;
   /** Stable reason code when pruning is rejected. */
-  reason?: 'origin' | 'not-visible' | 'disconnected';
-  /** First remaining node that would become disconnected from the origin. */
-  disconnectedNodeId?: string;
+  reason?: 'origin' | 'not-visible';
+  /** Node ids that leave together with the candidate (its subtree). Present only when `safe`. */
+  cutNodeIds?: string[];
 }
 
 function edgeId(source: string, target: string): string {
@@ -116,21 +122,21 @@ export function buildVisibleTraceScope(
 }
 
 /**
- * Checks whether removing one visible trace node preserves origin reachability.
+ * Checks whether one visible trace node can be pruned, and what leaves with it.
  *
  * @remarks
- * Delegates to {@link firstDisconnectedRequiredNode}, the same disconnect guard
- * the NavigationEngine applies to hop-by-hop prunes. The walk is scoped to the
- * visible trace nodes and undirected: pruning a connector is unsafe when any
- * remaining visible node would no longer be reachable from the origin,
- * irrespective of lineage edge direction.
+ * A self-prune like the AI backend's `end_branch`: the candidate leaves together with its
+ * subtree — every node reachable from the origin only through it — computed by
+ * {@link nodesCutByRemoval}, the same cut the NavigationEngine applies at a hop resolution. The
+ * walk is scoped to the visible trace nodes and undirected: relevance in a trace runs both ways.
+ * The result never leaves an island, and the origin is never removable.
  *
  * @param graph - Graphology graph spanning the trace nodes and their edges.
  * @param originNodeId - Origin node ID (anchor, never prunable).
  * @param visibleNodeIds - Currently visible node IDs.
  * @param candidateNodeId - Node ID being tested.
  *
- * @returns Prune verdict with a stable rejection reason when unsafe.
+ * @returns Prune verdict; `cutNodeIds` lists the subtree leaving alongside the candidate when safe.
  */
 export function canPruneTraceNode(
   graph: Graph,
@@ -142,10 +148,12 @@ export function canPruneTraceNode(
   if (!visibleNodeIds.has(candidateNodeId)) return { safe: false, reason: 'not-visible' };
   if (!visibleNodeIds.has(originNodeId)) return { safe: false, reason: 'origin' };
 
-  const required = new Set(visibleNodeIds);
-  required.delete(candidateNodeId);
-  const removed = new Set<string>([candidateNodeId]);
-  const disconnected = firstDisconnectedRequiredNode(graph, originNodeId, removed, required, visibleNodeIds);
-  if (disconnected) return { safe: false, reason: 'disconnected', disconnectedNodeId: disconnected };
-  return { safe: true };
+  const cutNodeIds = nodesCutByRemoval(
+    graph,
+    originNodeId,
+    new Set<string>(),
+    new Set<string>([candidateNodeId]),
+    visibleNodeIds,
+  );
+  return { safe: true, cutNodeIds };
 }

@@ -20,6 +20,10 @@ interface InlineTraceControlsProps {
   }) => void;
   /** Callback fired to cancel the trace configuration. */
   onClose: () => void;
+  /** BFS-only probe for the object count the current upstream/downstream choice would produce — "count before the click". Omitted when the caller cannot resolve a graph yet. */
+  estimateCount?: (upstreamLevels: number, downstreamLevels: number) => number;
+  /** Render limit the count is checked against for the "over limit" hint; the choice stays clickable regardless — the render-limit notice handles it once applied. */
+  renderLimit?: number;
 }
 
 /** Numeric depth input paired with an exhaustive-depth toggle. */
@@ -66,18 +70,21 @@ export const InlineTraceControls = memo(function InlineTraceControls({
   defaultDownstream = 3,
   onApply,
   onClose,
+  estimateCount,
+  renderLimit,
 }: InlineTraceControlsProps) {
   const [upstream, setUpstream] = useState(defaultUpstream);
   const [isUpstreamAll, setIsUpstreamAll] = useState(false);
   const [downstream, setDownstream] = useState(defaultDownstream);
   const [isDownstreamAll, setIsDownstreamAll] = useState(false);
 
+  const effectiveUpstream = isUpstreamAll ? TRACE_ALL_LEVELS : upstream;
+  const effectiveDownstream = isDownstreamAll ? TRACE_ALL_LEVELS : downstream;
+  const previewCount = estimateCount?.(effectiveUpstream, effectiveDownstream);
+  const overLimit = previewCount !== undefined && renderLimit !== undefined && previewCount > renderLimit;
+
   const handleApply = () => {
-    onApply({
-      startNodeId,
-      upstreamLevels: isUpstreamAll ? TRACE_ALL_LEVELS : upstream,
-      downstreamLevels: isDownstreamAll ? TRACE_ALL_LEVELS : downstream,
-    });
+    onApply({ startNodeId, upstreamLevels: effectiveUpstream, downstreamLevels: effectiveDownstream });
   };
 
   return (
@@ -106,6 +113,11 @@ export const InlineTraceControls = memo(function InlineTraceControls({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+        {previewCount !== undefined && (
+          <span className={`text-xs whitespace-nowrap ${overLimit ? 'ln-text-warning' : 'ln-text-muted'}`}>
+            {previewCount.toLocaleString()} objects{overLimit ? ' — over limit' : ''}
+          </span>
+        )}
         <button
           onClick={handleApply}
           className="h-9 px-4 rounded-sm text-sm font-medium transition-colors ln-btn-primary"

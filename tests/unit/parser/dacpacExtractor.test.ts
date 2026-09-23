@@ -423,29 +423,23 @@ async function testPhase1Phase2Bridge() {
 async function testDacpacExtractionOptions() {
   const buffer = await makeExternalRefDacpac();
 
-  const enabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true, maxNodes: 2 });
+  const enabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true });
   expect(enabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
     'Full extract: externalRefsEnabled=true creates virtual file node').toBe(true);
 
-  const disabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: false, maxNodes: 2 });
+  const disabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: false });
   expect(!disabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
     'Full extract: externalRefsEnabled=false suppresses virtual file node').toBe(true);
-
-  const capped = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true, maxNodes: 1 });
-  expect(!capped.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Full extract: maxNodes caps virtual file nodes').toBe(true);
 
   const { elements, dspName } = await extractSchemaPreview(buffer);
   const filteredEnabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
     externalRefsEnabled: true,
-    maxNodes: 2,
   });
   expect(filteredEnabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
     'Filtered extract: externalRefsEnabled=true creates virtual file node').toBe(true);
 
   const filteredDisabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
     externalRefsEnabled: false,
-    maxNodes: 2,
   });
   expect(!filteredDisabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
     'Filtered extract: externalRefsEnabled=false suppresses virtual file node').toBe(true);

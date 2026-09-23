@@ -627,7 +627,7 @@ export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   /** Regex patterns, with `%` wildcard compatibility, excluded from the webview model. */
   excludePatterns: string[];
-  /** Webview working-graph cap and virtual-external-node budget. */
+  /** Hard cap on objects admitted to the webview working graph; a selection over this limit is refused rather than truncated. */
   maxNodes: number;
   /** Maximum duration (in seconds) for DMV metadata queries. */
   dmvQueryTimeout: number;
@@ -711,6 +711,8 @@ export type TraceNeighborOption = {
   schema: string;
   /** Object kind used for compact type badges in the picker. */
   objectType: ObjectType;
+  /** For a prune candidate, the number of other visible trace nodes reachable only through it. */
+  cutCount?: number;
 };
 
 /** Add/prune candidates and disabled-copy for one lineage side of a node. */
@@ -757,8 +759,6 @@ export type CustomNodeData = {
   inDegree: number;
   /** Count of downstream dependents shown in node metadata. */
   outDegree: number;
-  /** Whether the node is de-emphasized in the current scoped view. */
-  dimmed?: boolean;
   /** Highlight state applied by search, trace, or AI presentation. */
   highlighted?: boolean | 'yellow';
   /** External reference subtype for file, database, or external-table nodes. */

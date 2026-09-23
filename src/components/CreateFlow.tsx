@@ -1,4 +1,4 @@
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, useMemo } from 'react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
@@ -8,6 +8,7 @@ import { Spinner } from './ui/Spinner';
 import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
 import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
 import { generateProjectName } from '../engine/projectStore';
+import { formatObjectLimitMessage } from '../engine/modelFilters';
 
 interface CreateFlowProps {
   /** The state object from the `useDacpacLoader` hook, managing the connection lifecycle. */
@@ -48,6 +49,15 @@ export const CreateFlow = memo(function CreateFlow({
   const schemaOrModel = loader.schemaPreview ?? loader.model;
   const hasSource = !!schemaOrModel;
   const isPhase1Loading = loader.isLoading && !loader.schemaPreview && !loader.model;
+
+  /** Total object count across selected schemas, from the Phase 1 preview counts. */
+  const selectedCount = useMemo(() => {
+    const schemas = schemaOrModel?.schemas ?? [];
+    return schemas
+      .filter(s => loader.selectedSchemas.has(s.name))
+      .reduce((sum, s) => sum + s.nodeCount, 0);
+  }, [schemaOrModel, loader.selectedSchemas]);
+  const overLimit = selectedCount > maxNodes;
 
   /**
    * Generates a default project name based on the current connection metadata.
@@ -92,7 +102,7 @@ export const CreateFlow = memo(function CreateFlow({
     }
   }, [displayName, autoName, loader.filePath, loader.fileName, loader.selectedSchemas, onVisualize]);
 
-  const canVisualize = hasSource && loader.selectedSchemas.size > 0 && !loader.isLoading;
+  const canVisualize = hasSource && loader.selectedSchemas.size > 0 && !loader.isLoading && !overLimit;
 
   const footer = hasSource && !isPhase1Loading ? (
     <Button variant="primary" className="w-full" disabled={!canVisualize} onClick={handleVisualize}>
@@ -200,10 +210,6 @@ export const CreateFlow = memo(function CreateFlow({
                 </div>
               );
             }
-            const selectedCount = schemas
-              .filter(s => loader.selectedSchemas.has(s.name))
-              .reduce((sum, s) => sum + s.nodeCount, 0);
-            const overLimit = selectedCount > maxNodes;
             return (
               <>
                 <SchemaSelector
@@ -213,14 +219,13 @@ export const CreateFlow = memo(function CreateFlow({
                   onSelectAll={loader.selectAllSchemas}
                   onClearAll={loader.clearAllSchemas}
                 />
-                <div
-                  className={`text-xs px-1 ${overLimit ? 'ln-status-warning rounded-sm px-2 py-1' : ''}`}
-                  style={{ color: overLimit ? undefined : 'var(--ln-wizard-fg-dim)' }}
-                >
-                  {overLimit
-                    ? `⚠ ${selectedCount.toLocaleString()} objects selected — exceeds the ${maxNodes} node limit. Largest schemas will be trimmed.`
-                    : `${selectedCount.toLocaleString()} objects selected`}
-                </div>
+                {overLimit ? (
+                  <StatusMessage text={formatObjectLimitMessage(selectedCount, maxNodes)} type="error" />
+                ) : (
+                  <div className="text-xs px-1" style={{ color: 'var(--ln-wizard-fg-dim)' }}>
+                    {`${selectedCount.toLocaleString()} objects selected`}
+                  </div>
+                )}
               </>
             );
           })()}

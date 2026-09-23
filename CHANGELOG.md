@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.1] - 2026-09-23
+
+### Fixed
+- A selection above `dataLineageViz.maxNodes` stops the load with an error naming the setting; the graph is never silently cut to the first 2,000 objects, and external references are no longer dropped above that size.
+- Leaving a trace, analysis, bookmark, AI view or path finder restores the exact previous view: filters, Object/Schema View, expanded schemas, focus and camera. Refresh and settings changes keep expanded schemas.
+- Over the render limit, the toolbar and banners stay on screen: the base view falls back to Schema View, and an oversized trace is checked before layout and offers "Reduce depth to N" or "Exit trace".
+- Loading a second DACPAC into an open panel shows the new model, not the previous one.
+- Fit view contains every node on large graphs (minimum zoom lowered).
+- The camera no longer jumps after a user pan; a rebuild during a node drag waits for the drop; Refresh and Rebuild are disabled while one runs.
+- Deleting a node in a trace removes its now-unreachable subtree, the same cut the assistant uses.
+- Numeric settings are clamped to their declared minimum and maximum.
+
+### Changed
+- Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.
+- Trace depth controls show the object count before the click, and the add-neighbour control shows "+N".
+- Large graphs: nodes render as plain boxes when zoomed out, off-screen nodes are skipped above 300 nodes, edge animation stops above 200 edges, and a click re-renders only the nodes it changes.
+- Dependencies updated to their latest patch and minor releases: React 19.3.0, React Flow (`@xyflow/react`) 12.11.6, DOMPurify 3.4.16, fast-xml-parser 5.11.1, js-yaml 5.4.2, JSZip 3.10.2, marked 18.0.14 and Zod 4.6.5.
+
 ## [1.2.0] - 2026-09-21
 
 ### Added

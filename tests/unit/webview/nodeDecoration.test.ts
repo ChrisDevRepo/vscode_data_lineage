@@ -21,8 +21,10 @@ import {
   decorateFlowNodes,
   createColumnNodeCache,
   projectColumnNodes,
+  LIT_CLASS_NAME,
   type NodeDecorationInputs,
 } from '../../../src/engine/nodeDecoration';
+import { createEdgeDecorationCache, decorateFlowEdges } from '../../../src/engine/edgeDecoration';
 import type { ColumnTraceViewNode } from '../../../src/engine/columnTraceView';
 import type { ColumnTraceNodeData, CustomNodeData, SchemaNodeData, TraceNodeControls } from '../../../src/engine/types';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
@@ -50,6 +52,10 @@ function baseInputs(overrides: Partial<NodeDecorationInputs> = {}): NodeDecorati
 
 function largeFlowNodes(): FlowNode[] {
   return buildGraphNoLayout(buildLargeModel(NODE_COUNT), DEFAULT_CONFIG).flowNodes as FlowNode[];
+}
+
+function largeFlowEdges() {
+  return buildGraphNoLayout(buildLargeModel(NODE_COUNT), DEFAULT_CONFIG).flowEdges;
 }
 
 function dragOne(nodes: FlowNode[], index: number): FlowNode[] {
@@ -105,17 +111,20 @@ describe('decorateFlowNodes — decoration correctness', () => {
     }), cache);
 
     expect(after[10].data.highlighted).toBe('yellow');
-    expect(after[10].data.dimmed).toBe(false);
-    expect(after[11].data.dimmed).toBe(false);
-    expect(after[12].data.dimmed).toBe(true);
+    expect(after[10].className).toBe(LIT_CLASS_NAME);
+    expect(after[11].className).toBe(LIT_CLASS_NAME);
+    expect(after[12].className).toBeUndefined();
 
-    expect(after[10].data).not.toBe(before[10].data);
-    expect(after[12].data).not.toBe(before[12].data);
-    const unchanged = after.filter((node, i) => node.data === before[i].data);
-    expect(unchanged.map(n => n.id)).toEqual([neighbour]);
+    // The dim itself is a CSS class on the outer node, not a `data` field (see LIT_CLASS_NAME), so
+    // only the node whose lit status actually flips gets a new node object — everything outside the
+    // selected node and its neighbours, including the far, never-lit node 12, keeps identity.
+    const rebuilt = after.filter((node, i) => node !== before[i]);
+    expect(rebuilt.map(n => n.id).sort()).toEqual([neighbour, target].sort());
+    const unchangedData = after.filter((node, i) => node.data === before[i].data);
+    expect(unchangedData.map(n => n.id)).toContain(nodes[12].id);
   });
 
-  it('keeps the trace origin highlighted rather than dimming it', () => {
+  it('keeps the trace origin highlighted and lit rather than dimming it', () => {
     const nodes = largeFlowNodes();
     const cache = createNodeDecorationCache();
     const origin = nodes[3].id;
@@ -127,7 +136,7 @@ describe('decorateFlowNodes — decoration correctness', () => {
     }), cache);
 
     expect(decorated[3].data.highlighted).toBe(true);
-    expect(decorated[3].data.dimmed).toBe(false);
+    expect(decorated[3].className).toBe(LIT_CLASS_NAME);
   });
 
   it('drops AI notes when the zoom hides them and restores them when it does not', () => {
@@ -154,6 +163,33 @@ describe('decorateFlowNodes — decoration correctness', () => {
 
     decorateFlowNodes(nodes.slice(0, 10), baseInputs(), cache);
     expect(cache.size).toBe(10);
+  });
+});
+
+describe('decorateFlowNodes — cheap clicks: a click only touches the click, not the crowd', () => {
+  it('moving the highlight from node X to node Y only rebuilds X, Y and their neighbours', () => {
+    const nodes = largeFlowNodes();
+    const cache = createNodeDecorationCache();
+    const x = nodes[10].id;
+    const xNeighbour = nodes[11].id;
+    const y = nodes[600].id;
+    const yNeighbour = nodes[601].id;
+
+    decorateFlowNodes(nodes, baseInputs(), cache);
+    const afterX = decorateFlowNodes(nodes, baseInputs({
+      highlightedNodeId: x,
+      level1Neighbors: new Set([xNeighbour]),
+    }), cache);
+    const afterY = decorateFlowNodes(nodes, baseInputs({
+      highlightedNodeId: y,
+      level1Neighbors: new Set([yNeighbour]),
+    }), cache);
+
+    const rebuiltData = afterY.filter((node, i) => node.data !== afterX[i].data);
+    expect(rebuiltData.map(n => n.id).sort()).toEqual([x, xNeighbour, y, yNeighbour].sort());
+
+    const rebuiltNode = afterY.filter((node, i) => node !== afterX[i]);
+    expect(rebuiltNode.map(n => n.id).sort()).toEqual([x, xNeighbour, y, yNeighbour].sort());
   });
 });
 
@@ -251,13 +287,21 @@ describe('decorateFlowNodes — emitted data matrix', () => {
 
   it('emits the same data for every axis of the matrix', () => {
     const decorated = decorateFlowNodes(matrixNodes(), matrixInputs(), createNodeDecorationCache());
+
+    // The dim itself is the `.ln-lit` className, not a `data` field — see LIT_CLASS_NAME. Lit:
+    // the highlighted node (n1), its neighbour (n2), and the trace origin (n4). Not lit: a plain
+    // node (n0), a second plain node (n3), the AI-overlaid node (n5, AI highlight alone does not
+    // exempt from dim), the trace-controlled node (n6), and the schema cluster (dim is object-only).
+    expect(decorated.map(n => n.className)).toEqual([
+      undefined, LIT_CLASS_NAME, LIT_CLASS_NAME, undefined, LIT_CLASS_NAME, undefined, undefined, undefined,
+    ]);
+
     expect(decorated.map(plainData)).toMatchInlineSnapshot(`
       [
         {
           "aiBadge": undefined,
           "aiHighlight": undefined,
           "aiNote": undefined,
-          "dimmed": true,
           "fullName": "dbo.n0",
           "highlighted": undefined,
           "inDegree": 1,
@@ -272,7 +316,6 @@ describe('decorateFlowNodes — emitted data matrix', () => {
           "aiBadge": undefined,
           "aiHighlight": undefined,
           "aiNote": undefined,
-          "dimmed": false,
           "fullName": "dbo.n1",
           "highlighted": "yellow",
           "inDegree": 1,
@@ -287,7 +330,6 @@ describe('decorateFlowNodes — emitted data matrix', () => {
           "aiBadge": undefined,
           "aiHighlight": undefined,
           "aiNote": undefined,
-          "dimmed": false,
           "fullName": "dbo.n2",
           "highlighted": undefined,
           "inDegree": 1,
@@ -302,7 +344,6 @@ describe('decorateFlowNodes — emitted data matrix', () => {
           "aiBadge": undefined,
           "aiHighlight": undefined,
           "aiNote": undefined,
-          "dimmed": true,
           "fullName": "dbo.n3",
           "highlighted": undefined,
           "inDegree": 1,
@@ -317,7 +358,6 @@ describe('decorateFlowNodes — emitted data matrix', () => {
           "aiBadge": undefined,
           "aiHighlight": undefined,
           "aiNote": undefined,
-          "dimmed": false,
           "fullName": "dbo.n4",
           "highlighted": true,
           "inDegree": 1,
@@ -340,7 +380,6 @@ describe('decorateFlowNodes — emitted data matrix', () => {
           "aiNote": {
             "text": "note",
           },
-          "dimmed": true,
           "fullName": "dbo.n5",
           "highlighted": undefined,
           "inDegree": 1,
@@ -355,7 +394,6 @@ describe('decorateFlowNodes — emitted data matrix', () => {
           "aiBadge": undefined,
           "aiHighlight": undefined,
           "aiNote": undefined,
-          "dimmed": true,
           "fullName": "dbo.n6",
           "highlighted": undefined,
           "inDegree": 1,
@@ -519,5 +557,56 @@ describe('projectColumnNodes', () => {
     const fewer = nodes.slice(0, 2);
     projectColumnNodes(fewer, dataFor(fewer), {}, cache);
     expect(cache.size).toBe(2);
+  });
+});
+
+describe('decorateFlowEdges', () => {
+  it('leaves every edge not incident to the highlighted node at the same object identity', () => {
+    const edges = largeFlowEdges();
+    const cache = createEdgeDecorationCache();
+    const connectedTo = edges[0].source;
+
+    const before = decorateFlowEdges(edges, null, true, cache);
+    const after = decorateFlowEdges(edges, connectedTo, true, cache);
+
+    const incident = edges.filter(e => e.source === connectedTo || e.target === connectedTo).map(e => e.id);
+    expect(incident.length).toBeGreaterThan(0);
+
+    const changed = after.filter((edge, i) => edge !== before[i]);
+    expect(changed.map(e => e.id).sort()).toEqual([...incident].sort());
+    for (const edge of changed) {
+      expect(edge.className).toBe(LIT_CLASS_NAME);
+      expect(edge.animated).toBe(true);
+    }
+
+    const unchanged = after.filter((edge, i) => edge === before[i]);
+    expect(unchanged.length).toBe(edges.length - incident.length);
+  });
+
+  it('moving the highlight from one node to another only touches the old and new incident edges', () => {
+    const edges = largeFlowEdges();
+    const cache = createEdgeDecorationCache();
+    const nodeX = edges[0].source;
+    const nodeY = edges[edges.length - 1].target;
+
+    const afterX = decorateFlowEdges(edges, nodeX, true, cache);
+    const afterY = decorateFlowEdges(edges, nodeY, true, cache);
+
+    const incidentX = new Set(edges.filter(e => e.source === nodeX || e.target === nodeX).map(e => e.id));
+    const incidentY = new Set(edges.filter(e => e.source === nodeY || e.target === nodeY).map(e => e.id));
+    const expectedChurn = new Set([...incidentX, ...incidentY]);
+
+    const changed = afterY.filter((edge, i) => edge !== afterX[i]).map(e => e.id);
+    expect(new Set(changed)).toEqual(expectedChurn);
+  });
+
+  it('releases cache entries for edges a filter removed', () => {
+    const edges = largeFlowEdges();
+    const cache = createEdgeDecorationCache();
+    decorateFlowEdges(edges, null, true, cache);
+    expect(cache.size).toBe(edges.length);
+
+    decorateFlowEdges(edges.slice(0, 5), null, true, cache);
+    expect(cache.size).toBe(5);
   });
 });

@@ -58,11 +58,11 @@ The extension separates the **webview working graph** (`maxNodes`) from **React 
 
 | Setting | Controls |
 |---------|----------|
-| `dataLineageViz.maxNodes` | Objects admitted to the webview working graph and its virtual-node budget |
+| `dataLineageViz.maxNodes` | Objects (including virtual external-reference nodes) admitted to the webview working graph |
 | `dataLineageViz.renderLimit` | React Flow nodes the GUI will lay out and render |
 | `dataLineageViz.overview.threshold` | Whether a new load starts in Schema View or Object View |
 
-When the selected surface would render more than `renderLimit` React Flow nodes, the graph shows a "limit reached" message instead of rendering that surface. Schema View and Expanded Schema View count collapsed schemas as one rendered node each, and trace/path/analysis scopes render ahead of the base full-graph limit. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
+A selection whose object count exceeds `maxNodes` is refused outright — nothing is loaded or rendered, the prior view stays, and an error names the count, the limit, and the setting. It is never silently truncated. When a selection within `maxNodes` would still render more than `renderLimit` React Flow nodes, the graph shows a "limit reached" message instead of rendering that surface. Schema View and Expanded Schema View count collapsed schemas as one rendered node each, and trace/path/analysis scopes render ahead of the base full-graph limit. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
 
 ---
 

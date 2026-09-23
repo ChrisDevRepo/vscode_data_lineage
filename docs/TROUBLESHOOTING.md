@@ -20,7 +20,7 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **Blank or stuck graph.** Open Webview Developer Tools, check the console, then reload the window.
 
-**"Render limit reached".** `dataLineageViz.renderLimit` is the hard visual ceiling after load — raise it (default 750, maximum 1500). Raising `dataLineageViz.maxNodes` will not help: it already ships at its maximum of 2000. `dataLineageViz.overview.threshold` only dictates whether a new load defaults to Schema View or fully-expanded Object View.
+**"Render limit reached".** `dataLineageViz.renderLimit` is the hard visual ceiling after load — raise it (default 750, maximum 1500). `dataLineageViz.maxNodes` is a separate load limit: a selection over it is refused with an error instead of being loaded. `dataLineageViz.overview.threshold` only dictates whether a new load defaults to Schema View or fully-expanded Object View.
 
 **Docking the graph or the AI report.** The graph webview is a normal VS Code editor tab: drag it to any editor group, split it, or right-click → **Move Editor into New Window**. Chat (including `@lineage`) docks the same way via its drag handle or **View: Move Chat**. Inside the graph, the dock menu in the AI report header moves that panel to the left, bottom, or right edge.
 

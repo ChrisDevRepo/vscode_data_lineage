@@ -14,7 +14,7 @@ import { buildEdgeTypeMap, buildHopFocusNode } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
-import { bfsDepthMap, bfsReachable, type LogFn } from '../../engine/graphGuards';
+import { bfsDepthMap, bfsReachable, nodesCutByRemoval, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import { normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, appendUniqueSectionText, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
@@ -2586,9 +2586,7 @@ export class NavigationEngine implements IHopStateMachine {
   private cutUnreachable(cutNodeId: string, removedBefore: ReadonlySet<string>): void {
     const origin = this.originNodeId;
     if (!origin) return;
-    const before = bfsReachable(this.graph, origin, removedBefore, undefined, this.scopeNodeIds);
-    const after = bfsReachable(this.graph, origin, this.removedSet, undefined, this.scopeNodeIds);
-    const dropped = [...before].filter(id => !after.has(id) && !this.removedSet.has(id) && !this.visited.has(id));
+    const dropped = nodesCutByRemoval(this.graph, origin, removedBefore, this.removedSet, this.scopeNodeIds, this.visited);
     for (const id of dropped) {
       this.removedSet.add(id);
       this.pruneBallots.delete(id);

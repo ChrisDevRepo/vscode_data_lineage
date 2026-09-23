@@ -7,8 +7,8 @@ import {
 } from '../../../src/engine/traceScope';
 import {
   bfsReachable,
-  firstDisconnectedRequiredNode,
   findShortestPathOrdered,
+  nodesCutByRemoval,
 } from '../../../src/engine/graphGuards';
 import type { TraceState } from '../../../src/engine/types';
 import type { LineageEdge } from '../../../src/engine/types';
@@ -111,28 +111,25 @@ describe("Trace Scope Safety Tests", () => {
   expect(reach.size, 'missing start → empty set').toBe(0);
 });
 
-  it("empty required set → null", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
-  const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set());
-  expect(result === null, 'empty required set → null').toBe(true);
-});
-
-  it("removing bridge B disconnects required C", () => {
+  it("nodesCutByRemoval: bridge removal cuts its subtree", () => {
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['C']));
-  expect(result, 'removing bridge B disconnects required C').toBe('C');
+  const cut = nodesCutByRemoval(g, 'A', new Set(), new Set(['B']));
+  expect(cut, 'nodesCutByRemoval: C cut, B excluded as removedAfter').toEqual(['C']);
 });
 
-  it("removing B when C has direct path from A → no disconnection", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['A', 'C']]);
-  const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['C']));
-  expect(result === null, 'removing B when C has direct path from A → no disconnection').toBe(true);
+  it("nodesCutByRemoval: diamond keeps C reachable through the other branch", () => {
+  const g = makeGraph(
+    [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
+    [['A', 'B'], ['A', 'D'], ['B', 'C'], ['D', 'C']]
+  );
+  const cut = nodesCutByRemoval(g, 'A', new Set(), new Set(['B']));
+  expect(cut, 'nodesCutByRemoval: C survives through D').toEqual([]);
 });
 
-  it("required node already in removedSet is skipped", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
-  const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['B']));
-  expect(result === null, 'required node already in removedSet is skipped').toBe(true);
+  it("nodesCutByRemoval: keep set excludes an already-visited node from the cut", () => {
+  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
+  const cut = nodesCutByRemoval(g, 'A', new Set(), new Set(['B']), undefined, new Set(['C']));
+  expect(cut, 'nodesCutByRemoval: C kept even though it would otherwise be cut').toEqual([]);
 });
 
   it("canPruneTraceNode", () => {
@@ -158,19 +155,19 @@ describe("Trace Scope Safety Tests", () => {
   expect(check.reason, "null origin: reason='origin'").toBe('origin');
 });
 
-  it("bridge prune: not safe", () => {
+  it("bridge prune: self-prune, safe, takes C with it", () => {
   const g = makeGraph(
     [{ id: 'O' }, { id: 'B' }, { id: 'C' }],
     [['O', 'B'], ['B', 'C']]
   );
   const visible = new Set(['O', 'B', 'C']);
   const check = canPruneTraceNode(g, 'O', visible, 'B');
-  expect(!check.safe, 'bridge prune: not safe').toBe(true);
-  expect(check.reason, "bridge prune: reason='disconnected'").toBe('disconnected');
-  expect(check.disconnectedNodeId, 'bridge prune: disconnectedNodeId=C').toBe('C');
+  expect(check.safe, 'bridge prune: self-prune is safe, never refused').toBe(true);
+  expect(check.reason === undefined, 'bridge prune: no reason').toBe(true);
+  expect(check.cutNodeIds, 'bridge prune: C leaves with B (its subtree)').toEqual(['C']);
 });
 
-  it("safe leaf prune: safe=true", () => {
+  it("safe leaf prune: safe=true, nothing cut", () => {
   const g = makeGraph(
     [{ id: 'O' }, { id: 'A' }, { id: 'B' }],
     [['O', 'A'], ['O', 'B']]
@@ -179,9 +176,10 @@ describe("Trace Scope Safety Tests", () => {
   const check = canPruneTraceNode(g, 'O', visible, 'A');
   expect(check.safe, 'safe leaf prune: safe=true').toBe(true);
   expect(check.reason === undefined, 'safe leaf prune: no reason').toBe(true);
+  expect(check.cutNodeIds, 'safe leaf prune: no subtree').toEqual([]);
 });
 
-  it("diamond prune A: safe — C reachable via B", () => {
+  it("diamond prune A: safe, nothing cut — C reachable via B", () => {
   const g = makeGraph(
     [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['O', 'A'], ['O', 'B'], ['A', 'C'], ['B', 'C']]
@@ -189,6 +187,38 @@ describe("Trace Scope Safety Tests", () => {
   const visible = new Set(['O', 'A', 'B', 'C']);
   const check = canPruneTraceNode(g, 'O', visible, 'A');
   expect(check.safe, 'diamond prune A: safe — C reachable via B').toBe(true);
+  expect(check.cutNodeIds, 'diamond prune A: C survives, nothing cut').toEqual([]);
+});
+
+  it("diamond, second shape: pruning A cuts nothing — C survives through D", () => {
+  const g = makeGraph(
+    [{ id: 'O' }, { id: 'A' }, { id: 'D' }, { id: 'C' }],
+    [['O', 'A'], ['A', 'C'], ['O', 'D'], ['D', 'C']]
+  );
+  const visible = new Set(['O', 'A', 'D', 'C']);
+  const check = canPruneTraceNode(g, 'O', visible, 'A');
+  expect(check.safe, 'diamond (second shape): safe').toBe(true);
+  expect(check.cutNodeIds, 'diamond (second shape): C survives through D, nothing cut').toEqual([]);
+});
+
+  it("chain origin→A→B→C plus origin→D: pruning A cuts B and C, D survives", () => {
+  const g = makeGraph(
+    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
+    [['O', 'A'], ['A', 'B'], ['B', 'C'], ['O', 'D']]
+  );
+  const visible = new Set(['O', 'A', 'B', 'C', 'D']);
+  const check = canPruneTraceNode(g, 'O', visible, 'A');
+  expect(check.safe, 'chain prune A: safe').toBe(true);
+  expect(new Set(check.cutNodeIds), 'chain prune A: cuts [B, C]').toEqual(new Set(['B', 'C']));
+  expect(check.cutNodeIds?.length, 'chain prune A: exactly 2 cut').toBe(2);
+
+  const remaining = new Set(visible);
+  remaining.delete('A');
+  for (const id of check.cutNodeIds ?? []) remaining.delete(id);
+  const stillReachable = bfsReachable(g, 'O', new Set(['A', ...(check.cutNodeIds ?? [])]));
+  for (const id of remaining) {
+    expect(stillReachable.has(id), `no island: ${id} stays reachable from origin after prune+cut`).toBe(true);
+  }
 });
 
   it("origin not in visible: not safe", () => {

@@ -112,6 +112,26 @@ describe('dagreLayout', () => {
   it('returns an empty map for no nodes instead of throwing', () => {
     expect(dagreLayout({ nodeIds: [], edges: [], config: DEFAULT_CONFIG }).size).toBe(0);
   });
+
+  it('serves the same cached layout regardless of node/edge array order', () => {
+    const first = dagreLayout(input());
+    const reordered = dagreLayout({
+      nodeIds: ['C', 'A', 'B'],
+      edges: [{ source: 'B', target: 'C' }, { source: 'A', target: 'B' }],
+      config: DEFAULT_CONFIG,
+    });
+    expect(reordered).toBe(first);
+  });
+
+  it('treats a different edge set as a different layout, not a cache hit', () => {
+    const first = dagreLayout(input());
+    const extraEdge = dagreLayout({
+      nodeIds: ['A', 'B', 'C'],
+      edges: [{ source: 'A', target: 'B' }, { source: 'B', target: 'C' }, { source: 'A', target: 'C' }],
+      config: DEFAULT_CONFIG,
+    });
+    expect(extraEdge).not.toBe(first);
+  });
 });
 
 

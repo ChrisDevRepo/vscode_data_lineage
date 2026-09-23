@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import {
   ReactFlow,
@@ -15,6 +15,7 @@ import {
   type NodeTypes,
   type EdgeTypes,
   type NodeMouseHandler,
+  type OnNodeDrag,
   type OnNodesChange,
   type OnEdgesChange,
   Panel,
@@ -56,13 +57,24 @@ import {
   type ColumnTraceViewObject,
   type ColumnLineState,
 } from '../engine/columnTraceView';
-import { createNodeDecorationCache, decorateFlowNodes, createColumnNodeCache, projectColumnNodes, computeNodeDecoration } from '../engine/nodeDecoration';
+import {
+  createNodeDecorationCache,
+  decorateFlowNodes,
+  createColumnNodeCache,
+  projectColumnNodes,
+  computeNodeDecoration,
+  shouldVirtualizeCanvas,
+  shouldAnimateEdges,
+  MIN_CANVAS_ZOOM,
+} from '../engine/nodeDecoration';
+
+import { createEdgeDecorationCache, decorateFlowEdges } from '../engine/edgeDecoration';
 import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
 import { normalizeColName } from '../utils/sql';
-import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
+import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 
 /**
  * Mapping of custom node types for React Flow.
@@ -112,6 +124,35 @@ const FIT_VIEW_DURATION = 250;
  */
 const AI_PANEL_REFIT_DELAY = 80;
 
+/**
+ * Arms `fire` through `schedule` (`requestAnimationFrame`/`setTimeout`), claiming the next value of
+ * `generationRef` as this fit's generation; `fire` runs only if `generationRef` still holds that
+ * generation when `schedule` fires — a later user gesture or fit bumps it past that point and this
+ * one becomes a no-op instead of running.
+ *
+ * @returns A cancel that clears the scheduled callback directly (effect cleanup / unmount).
+ */
+export function scheduleFit(
+  generationRef: { current: number },
+  fire: () => void,
+  schedule: (run: () => void) => number,
+  clear: (id: number) => void,
+): () => void {
+  const generation = ++generationRef.current;
+  const id = schedule(() => {
+    if (generationRef.current === generation) fire();
+  });
+  return () => clear(id);
+}
+
+/**
+ * Whether a `ReactFlow` `onMoveStart` event is a user gesture — React Flow fires it with a real
+ * `event` for a user pan/zoom and `null` for a programmatic `fitView`/`setViewport`/`setCenter`.
+ */
+export function isUserMoveEvent(event: MouseEvent | TouchEvent | null): boolean {
+  return event !== null;
+}
+
 /** Zoom below which AI notes are hidden once they are showing. */
 const NOTES_ZOOM_OUT = 0.45;
 
@@ -127,6 +168,58 @@ const COLUMN_EDGE_MARKER_SIZE = 14;
  * giving up and showing a warning.
  */
 const PENDING_ZOOM_TIMEOUT_MS = 5000;
+
+/**
+ * Class toggled on the React Flow root while object view has an active node selection.
+ *
+ * @remarks
+ * Pairs with `LIT_CLASS_NAME` (`src/engine/nodeDecoration.ts`, `src/engine/edgeDecoration.ts`): the
+ * CSS rule in `src/index.css` dims every node/edge that isn't marked lit while this class is
+ * present, so the vast majority of the canvas never needs a new object identity just because some
+ * other node was clicked. Column view keeps its own independent dim/hover styling and never
+ * receives this class.
+ */
+const SELECTION_ACTIVE_CLASS_NAME = 'ln-has-selection';
+
+/**
+ * Name of the per-edge CSS custom property carrying its own base stroke width, set once when an
+ * edge enters `localEdges`.
+ *
+ * @remarks
+ * The selection-dim/lit CSS rules (`src/index.css`) scale an edge's width off this property.
+ */
+const EDGE_BASE_WIDTH_VAR = '--ln-edge-w';
+
+/** Base stroke width, in px, an edge falls back to when its own style omits one. */
+const DEFAULT_EDGE_STROKE_WIDTH = 1.2;
+
+/** Inline style carrying a CSS custom property alongside the standard style properties. */
+type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
+
+/** Stamps an edge's own base stroke width onto it as {@link EDGE_BASE_WIDTH_VAR}. */
+function withEdgeBaseWidthVar(edge: FlowEdge): FlowEdge {
+  const width = (edge.style?.strokeWidth as number | undefined) ?? DEFAULT_EDGE_STROKE_WIDTH;
+  return { ...edge, style: { ...edge.style, [EDGE_BASE_WIDTH_VAR]: width } as StyleWithVars };
+}
+
+/**
+ * Merges a freshly rebuilt node list with the local nodes mid-drag: a node in `draggingIds` keeps
+ * the position it currently holds in `currentNodes` — where the drag left it — while every field on
+ * every node, dragging or not, otherwise comes from `incomingNodes`.
+ */
+export function mergeIncomingNodesPreservingDrag(
+  incomingNodes: FlowNode[],
+  currentNodes: FlowNode[],
+  draggingIds: ReadonlySet<string>,
+): FlowNode[] {
+  if (draggingIds.size === 0) return incomingNodes;
+  const currentById = new Map(currentNodes.map((n) => [n.id, n]));
+  return incomingNodes.map((n) => {
+    if (!draggingIds.has(n.id)) return n;
+    const current = currentById.get(n.id);
+    return current ? { ...n, position: current.position } : n;
+  });
+}
 
 type ModelNode = DatabaseModel['nodes'][number];
 
@@ -178,7 +271,6 @@ function derivePruneDisabledReason(
   if (pruneChecks.some(p => p.check.safe)) return '';
   if (pruneChecks.length === 0) return `No ${sideLabel} node in the trace to remove`;
   const reasons = new Set(pruneChecks.map(p => p.check.reason));
-  if (reasons.has('disconnected')) return 'Removing this would disconnect the trace from its source';
   if (reasons.has('origin')) return 'This is the trace source — it cannot be removed';
   return 'These nodes cannot be removed without breaking the trace';
 }
@@ -204,7 +296,9 @@ function buildTraceSideControls(
     option,
     check: canPruneTraceNode(graph, originNodeId, visibleIds, option.id),
   }));
-  const prune = pruneChecks.filter(p => p.check.safe).map(p => p.option);
+  const prune = pruneChecks
+    .filter(p => p.check.safe)
+    .map(p => ({ ...p.option, cutCount: p.check.cutNodeIds?.length }));
   const sideLabel = side === 'in' ? 'upstream' : 'downstream';
 
   return {
@@ -262,6 +356,8 @@ interface GraphCanvasProps {
   onSchemaNodeSelect?: (nodeId: string) => void;
   /** Callback fired when a node is right-clicked. */
   onNodeContextMenu: (node: FlowNode, x: number, y: number) => void;
+  /** Callback fired when an object node is double-clicked — opens the same detail view as the context menu's Show Details. */
+  onShowDetails?: (nodeId: string) => void;
   /** Callback to start a trace immediately from a node. */
   onStartTraceImmediate: (nodeId: string) => void;
   /** Callback to apply a trace configuration (upstream/downstream levels). */
@@ -332,6 +428,8 @@ interface GraphCanvasProps {
   onApplyPath?: (targetNodeId: string) => boolean;
   /** Whether the graph is currently being rebuilt. */
   isRebuilding?: boolean;
+  /** Estimates the node count a trace at the given upstream/downstream depth would render, before it runs. */
+  estimateTraceSize?: (upstreamLevels: number, downstreamLevels: number) => number;
   /** Display name of the active source (e.g. dacpac filename). */
   sourceName?: string;
   /** List of saved filter profiles (bookmarks). */
@@ -413,6 +511,12 @@ interface GraphCanvasProps {
   viewportPreserveVersion?: number;
   /** Called after pendingPositions have been applied so the parent can clear them. */
   onPendingPositionsApplied?: () => void;
+  /** Reports the live viewport on every change, for the parent to capture into a view snapshot. */
+  onCameraChange?: (viewport: { x: number; y: number; zoom: number }) => void;
+  /** A viewport to apply once after the next graph-data update, then cleared. */
+  pendingViewport?: { x: number; y: number; zoom: number };
+  /** Called after pendingViewport has been applied so the parent can clear it. */
+  onPendingViewportApplied?: () => void;
   /** Whether trace BFS uses the full (unfiltered) model. */
   useFullModel?: boolean;
   /** Toggle between filtered and full-model trace. */
@@ -448,6 +552,8 @@ interface GraphCanvasProps {
    * Passed to the toolbar search for three-state partitioning.
    */
   collapsedSchemaNodeIds?: Set<string>;
+  /** Render-limit notice, positioned inside the canvas area so it never covers the toolbar or banners. */
+  renderLimitNotice?: ReactNode;
 }
 
 /**
@@ -466,6 +572,7 @@ export function GraphCanvas({
   onClearSelection,
   onSchemaNodeSelect,
   onNodeContextMenu,
+  onShowDetails,
   onStartTraceImmediate,
   onTraceApply,
   onTraceEnd,
@@ -501,6 +608,7 @@ export function GraphCanvas({
   onClearAnalysisGroup,
   onApplyPath,
   isRebuilding = false,
+  estimateTraceSize,
   sourceName,
   filterProfiles,
   activeProjectId,
@@ -532,6 +640,9 @@ export function GraphCanvas({
   pendingPositions,
   viewportPreserveVersion = 0,
   onPendingPositionsApplied,
+  onCameraChange,
+  pendingViewport,
+  onPendingViewportApplied,
   useFullModel,
   onToggleFullModel,
   filteredOutCount,
@@ -548,8 +659,9 @@ export function GraphCanvas({
   expandedSchemaCount = 0,
   onExpandAllSchemas,
   collapsedSchemaNodeIds,
+  renderLimitNotice,
 }: GraphCanvasProps) {
-  const { fitView, getNode, setCenter, getNodes, getEdges } = useReactFlow();
+  const { fitView, getNode, setCenter, getNodes, getEdges, setViewport } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const vscodeApi = useVsCode();
 
@@ -579,6 +691,19 @@ export function GraphCanvas({
     aiLayoutCache.current.set(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName), { open: aiPanelOpen, section: activeSection });
   }, [aiDescription, activeAdvancedProfile?.id, aiViewName, aiPanelOpen, activeSection]);
   const aiSectionsRef = useRef<AiReportSection[]>([]);
+
+  /**
+   * Generation for every pending programmatic camera fit (AI-panel refit timer, section-focus fit,
+   * column-view toggle fit, AI description fit, graph-change fit): each fit claims the next value on
+   * scheduling, and a user pan/zoom (`onMoveStart` firing with a real event) bumps it so any fit still
+   * in flight no-ops instead of running.
+   */
+  const fitGenerationRef = useRef(0);
+  /** `ReactFlow`'s `onMoveStart` — bumps the fit generation only for a real user gesture. */
+  const handleMoveStart = useCallback((event: MouseEvent | TouchEvent | null) => {
+    if (isUserMoveEvent(event)) fitGenerationRef.current++;
+  }, []);
+
   /**
    * The report navigated to a section: it lights that section's labels and frames its objects.
    *
@@ -592,7 +717,12 @@ export function GraphCanvas({
     const nodeIds = aiSectionsRef.current.find(section => section.n === n)?.nodeIds;
     if (!nodeIds?.length) return;
     const nodes = nodeIds.map(id => ({ id }));
-    requestAnimationFrame(() => { void fitView({ nodes, padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); });
+    scheduleFit(
+      fitGenerationRef,
+      () => { void fitView({ nodes, padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); },
+      (run) => requestAnimationFrame(run),
+      (id) => cancelAnimationFrame(id),
+    );
   }, [fitView]);
   const [dockPosition, setDockPositionState] = useState<AiDockPosition>(() => {
     const saved = (vscodeApi.getState() as Record<string, unknown> | undefined)?.[AI_DOCK_STATE_KEY];
@@ -615,8 +745,12 @@ export function GraphCanvas({
         : { top: 0, bottom: 0, left: 0, right: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH };
   useEffect(() => {
     if (!aiDescription) return;
-    const t = setTimeout(() => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); }, AI_PANEL_REFIT_DELAY);
-    return () => clearTimeout(t);
+    return scheduleFit(
+      fitGenerationRef,
+      () => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); },
+      (run) => window.setTimeout(run, AI_PANEL_REFIT_DELAY),
+      (id) => window.clearTimeout(id),
+    );
   }, [aiPanelOpen, dockPosition, aiDescription, fitView]);
 
   /**
@@ -764,7 +898,11 @@ export function GraphCanvas({
 
   const handleNodeDoubleClick: NodeMouseHandler = useCallback(
     (event, node) => {
-      if (graphMode !== 'overview' || node.type !== 'schemaNode') return;
+      if (node.type !== 'schemaNode') {
+        onShowDetails?.(node.id);
+        return;
+      }
+      if (graphMode !== 'overview') return;
       event.preventDefault();
       setLocalNodes((nds) => nds.map((n) => n.selected ? { ...n, selected: false } : n));
       const schemaName = (node.data as SchemaNodeData).schemaName;
@@ -774,7 +912,7 @@ export function GraphCanvas({
         onCenterExpandedSchemaViewSchema?.(schemaName);
       }
     },
-    [config.overview.schemaDoubleClickBehavior, graphMode, onCenterExpandedSchemaViewSchema, onExpandExpandedSchemaViewSchema]
+    [config.overview.schemaDoubleClickBehavior, graphMode, onCenterExpandedSchemaViewSchema, onExpandExpandedSchemaViewSchema, onShowDetails]
   );
 
   const handleFitView = useCallback(() => {
@@ -854,8 +992,16 @@ export function GraphCanvas({
     []
   );
 
+  /** Pending {@link zoomToNode} frame, cancelled by the next call or on unmount so a fast repeat search never queues competing `setCenter` calls. */
+  const zoomToNodeFrameRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (zoomToNodeFrameRef.current !== null) cancelAnimationFrame(zoomToNodeFrameRef.current);
+  }, []);
+
   const zoomToNode = useCallback((nodeId: string) => {
-    requestAnimationFrame(() => {
+    if (zoomToNodeFrameRef.current !== null) cancelAnimationFrame(zoomToNodeFrameRef.current);
+    zoomToNodeFrameRef.current = requestAnimationFrame(() => {
+      zoomToNodeFrameRef.current = null;
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
         const width = targetNode.width ?? NODE_WIDTH;
@@ -952,18 +1098,28 @@ export function GraphCanvas({
 
   /**
    * The one auto-fit: frames every node on the next frame, at the padding and duration every
-   * caller shares.
+   * caller shares; a later user pan/zoom bumps {@link fitGenerationRef} so it no-ops instead of
+   * running.
    *
    * @remarks
    * Deferred a frame because each caller runs while the nodes it means to frame are still being
    * measured, and `fitView` on an unmeasured node frames the wrong box.
    *
-   * @returns The frame id, so an effect can cancel a fit its cleanup outlives.
+   * @returns A cancel to return directly as an effect's cleanup.
    */
-  const fitGraph = useCallback((): number => requestAnimationFrame(() => {
-    void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
-  }), [fitView]);
+  const fitGraph = useCallback((): (() => void) => scheduleFit(
+    fitGenerationRef,
+    () => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); },
+    (run) => requestAnimationFrame(run),
+    (id) => cancelAnimationFrame(id),
+  ), [fitView]);
 
+  /**
+   * The sole owner of fit-on-graph-change: every `flowNodes` update — including a trace ending and
+   * the graph reverting to its pre-trace shape — reframes here, once. A manual add/prune trace-scope
+   * edit is the one graph change this owner does not reframe for, since the edited node is already
+   * on screen and a fit there would move the view out from under the click that caused it.
+   */
   useEffect(() => {
     const previousTrace = traceAtLastGraphChangeRef.current;
     const currentTrace = currentTraceRef.current;
@@ -1001,8 +1157,7 @@ export function GraphCanvas({
       return;
     }
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
-    const raf = fitGraph();
-    return () => cancelAnimationFrame(raf);
+    return fitGraph();
   }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   const [notesVisible, setNotesVisible] = useState(true);
@@ -1011,6 +1166,8 @@ export function GraphCanvas({
   const [columnPositions, setColumnPositions] = useState<Record<string, { x: number; y: number }>>({});
 
   const nodeDecorationCache = useRef(createNodeDecorationCache());
+
+  const edgeDecorationCache = useRef(createEdgeDecorationCache());
 
   const columnNodeCache = useRef(createColumnNodeCache());
 
@@ -1023,7 +1180,19 @@ export function GraphCanvas({
   const onPendingPositionsAppliedRef = useRef(onPendingPositionsApplied);
   onPendingPositionsAppliedRef.current = onPendingPositionsApplied;
 
+  /**
+   * Node ids currently mid-drag, read by the sync effect below so a rebuild landing mid-drag never
+   * resets the dragged node's position out from under the user's pointer.
+   */
+  const draggingNodeIdsRef = useRef<Set<string> | null>(null);
+  /** The `flowNodes` the sync effect deferred while a drag was in progress; applied on drag stop. */
+  const deferredFlowNodesRef = useRef<FlowNode[] | null>(null);
+
   useEffect(() => {
+    if (draggingNodeIdsRef.current) {
+      deferredFlowNodesRef.current = flowNodes;
+      return;
+    }
     const pending = pendingPositionsRef.current;
     if (pending && Object.keys(pending).length > 0) {
       setLocalNodes(flowNodes.map(n => {
@@ -1038,13 +1207,56 @@ export function GraphCanvas({
   }, [flowNodes]);
 
   useEffect(() => {
-    setLocalEdges(flowEdges);
+    setLocalEdges(flowEdges.map(withEdgeBaseWidthVar));
   }, [flowEdges]);
+
+  const pendingViewportRef = useRef(pendingViewport);
+  pendingViewportRef.current = pendingViewport;
+  const onPendingViewportAppliedRef = useRef(onPendingViewportApplied);
+  onPendingViewportAppliedRef.current = onPendingViewportApplied;
+  const setViewportRef = useRef(setViewport);
+  setViewportRef.current = setViewport;
+
+  /**
+   * Applies a restored viewport once after the graph-data update it was captured for, then clears it.
+   *
+   * @remarks
+   * Runs after the {@link fitGraph} owner above; the caller pairs a `pendingViewport` with
+   * `preserveViewportOnNextGraphChange` so that owner skips its own fit for this same update.
+   */
+  useEffect(() => {
+    const pending = pendingViewportRef.current;
+    if (!pending) return;
+    setViewportRef.current(pending, { duration: 0 });
+    onPendingViewportAppliedRef.current?.();
+  }, [flowNodes]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setLocalNodes((nds) => applyNodeChanges(changes, nds)),
     []
   );
+
+  /**
+   * Marks a drag live so the `localNodes` sync effect defers a rebuild that lands mid-drag, rather
+   * than deriving drag state from `applyNodeChanges` position events (which arrive one frame late).
+   */
+  const handleNodeDragStart: OnNodeDrag = useCallback((_event, node, nodes) => {
+    draggingNodeIdsRef.current = new Set((nodes.length ? nodes : [node]).map(n => n.id));
+  }, []);
+
+  /**
+   * Releases the drag and, if a rebuild landed while it was live, applies the deferred nodes now —
+   * the dragged node(s) keep the position the drag left them at; every other node takes the rebuilt
+   * shape. See {@link mergeIncomingNodesPreservingDrag}.
+   */
+  const handleNodeDragStop: OnNodeDrag = useCallback((_event, node, nodes) => {
+    const draggingIds = draggingNodeIdsRef.current ?? new Set((nodes.length ? nodes : [node]).map(n => n.id));
+    draggingNodeIdsRef.current = null;
+    const deferred = deferredFlowNodesRef.current;
+    if (!deferred) return;
+    deferredFlowNodesRef.current = null;
+    setLocalNodes(current => mergeIncomingNodesPreservingDrag(deferred, current, draggingIds));
+  }, []);
 
   /**
    * Node changes while the column view is on stage.
@@ -1078,12 +1290,16 @@ export function GraphCanvas({
    * decoration and a gesture resting on one exact zoom value would rebuild the whole node set on
    * each crossing. Off below {@link NOTES_ZOOM_OUT}, on above {@link NOTES_ZOOM_IN}.
    */
-  const handleViewportChange = useCallback((vp: { zoom: number }) => {
+  const onCameraChangeRef = useRef(onCameraChange);
+  onCameraChangeRef.current = onCameraChange;
+
+  const handleViewportChange = useCallback((vp: { x: number; y: number; zoom: number }) => {
     setNotesVisible(prev => {
       if (prev && vp.zoom < NOTES_ZOOM_OUT) return false;
       if (!prev && vp.zoom > NOTES_ZOOM_IN) return true;
       return prev;
     });
+    onCameraChangeRef.current?.(vp);
   }, []);
 
   const modelNodeMap = useMemo(() => {
@@ -1199,16 +1415,10 @@ export function GraphCanvas({
     setPinnedColumn(current => (current?.nodeId === nodeId && current.column === column ? null : { nodeId, column }));
   }, [onClearSelection]);
 
-  useEffect(() => {
-    if (!pinnedColumn) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
-      setPinnedColumn(null);
-    };
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [pinnedColumn]);
+  useKeyboardShortcut(SHORTCUT_KEYS.exitMode, () => setPinnedColumn(null), false, {
+    priority: ESC_PRIORITY.overlay,
+    active: !!pinnedColumn,
+  });
 
   const columnHover = useMemo((): ColumnHoverState => ({
     hoveredPath: hoveredColumnPath,
@@ -1242,8 +1452,7 @@ export function GraphCanvas({
     const first = fittedForColumnViewRef.current === null;
     fittedForColumnViewRef.current = columnViewActive;
     if (first) return;
-    const raf = fitGraph();
-    return () => cancelAnimationFrame(raf);
+    return fitGraph();
   }, [columnViewActive, nodesInitialized, fitGraph]);
 
   const fittedAiViewRef = useRef<string | null>(null);
@@ -1251,8 +1460,7 @@ export function GraphCanvas({
     if (!aiDescription) { fittedAiViewRef.current = null; return; }
     if (!nodesInitialized || fittedAiViewRef.current === aiDescription) return;
     fittedAiViewRef.current = aiDescription;
-    const raf = fitGraph();
-    return () => cancelAnimationFrame(raf);
+    return fitGraph();
   }, [aiDescription, nodesInitialized, fitGraph]);
 
   const columnRelations = activeAiMetadata?.columnAspect;
@@ -1379,24 +1587,10 @@ export function GraphCanvas({
     }
     if (!highlightedNodeId) return localEdges;
 
-    return localEdges.map(edge => {
-      const isConnected = edge.source === highlightedNodeId || edge.target === highlightedNodeId;
-      const baseWidth = (edge.style?.strokeWidth as number | undefined) ?? 1.2;
-      return {
-        ...edge,
-        style: {
-          ...edge.style,
-          stroke: isConnected ? 'var(--ln-focus-border)' : edge.style?.stroke,
-          strokeWidth: isConnected ? Math.max(baseWidth + 0.6, 2.0) : baseWidth * 0.6,
-          opacity: isConnected ? 1 : 0.35,
-        },
-        animated: isConnected && (
-          (trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied')
-            ? config.layout.edgeAnimation
-            : config.layout.highlightAnimation
-        ),
-      };
-    });
+    const isTraceAnimationContext = trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied';
+    const configAllowsAnimation = isTraceAnimationContext ? config.layout.edgeAnimation : config.layout.highlightAnimation;
+    const litAnimated = shouldAnimateEdges(localEdges.length, configAllowsAnimation);
+    return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current);
   }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
 
   const allNodes = useMemo(
@@ -1465,6 +1659,7 @@ export function GraphCanvas({
         availableSchemas={availableSchemas}
         onRefresh={onRefresh}
         onRebuild={onRebuild}
+        isRebuilding={isRebuilding}
         onBack={onBack}
         onOpenDdlViewer={onOpenDdlViewer}
         onExportDrawio={handleExportDrawio}
@@ -1538,6 +1733,8 @@ export function GraphCanvas({
             onTraceApply(traceConfig);
           }}
           onClose={onTraceEnd}
+          estimateCount={estimateTraceSize}
+          renderLimit={config.renderLimit}
         />
       )}
 
@@ -1550,7 +1747,7 @@ export function GraphCanvas({
           totalNodes={trace.tracedNodeIds.size}
           totalEdges={trace.tracedEdgeIds.size}
           mode={trace.mode}
-          onEnd={() => onTraceEnd(() => { void fitView({ padding: 0.2, duration: 800 }); })}
+          onEnd={onTraceEnd}
           onReset={() => onResetAll()}
           onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
           useFullModel={useFullModel ?? false}
@@ -1570,7 +1767,7 @@ export function GraphCanvas({
             edgeCount: trace.tracedEdgeIds.size,
           } : null}
           onFindPath={onApplyPath}
-          onClose={() => onTraceEnd(() => { void fitView({ padding: 0.2, duration: 800 }); })}
+          onClose={onTraceEnd}
         />
       )}
 
@@ -1610,6 +1807,7 @@ export function GraphCanvas({
       >
       <div className="flex-1 flex flex-row overflow-hidden min-h-0">
         <div className="flex-1 relative overflow-hidden min-w-0">
+        {renderLimitNotice}
         {isRebuilding && (
           <div className="absolute inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--ln-bg)', opacity: 0.85 }}>
             <Spinner className="h-8 w-8" style={{ color: 'var(--ln-fg-muted)' }} />
@@ -1628,10 +1826,14 @@ export function GraphCanvas({
           >
             <ColumnHoverProvider value={columnHover}>
               <ReactFlow
+                className={!columnViewActive && highlightedNodeId ? SELECTION_ACTIVE_CLASS_NAME : undefined}
                 nodes={displayNodes}
                 edges={displayEdges}
+                onlyRenderVisibleElements={shouldVirtualizeCanvas(displayNodes.length)}
                 onNodesChange={columnViewActive ? onColumnNodesChange : onNodesChange}
                 onEdgesChange={onEdgesChange}
+                onNodeDragStart={handleNodeDragStart}
+                onNodeDragStop={handleNodeDragStop}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 onNodeClick={handleNodeClick}
@@ -1653,7 +1855,7 @@ export function GraphCanvas({
                 }}
                 fitView
                 fitViewOptions={{ padding: 0.15 }}
-                minZoom={0.1}
+                minZoom={MIN_CANVAS_ZOOM}
                 maxZoom={2}
                 defaultViewport={{ x: 0, y: 0, zoom: 1 }}
                 nodesDraggable={true}
@@ -1662,6 +1864,7 @@ export function GraphCanvas({
                 edgesFocusable={true}
                 elementsSelectable={true}
                 onViewportChange={handleViewportChange}
+                onMoveStart={handleMoveStart}
                 selectNodesOnDrag={false}
                 deleteKeyCode={null}
                 panOnDrag={true}

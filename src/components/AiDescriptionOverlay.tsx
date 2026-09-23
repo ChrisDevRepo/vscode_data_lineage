@@ -6,6 +6,7 @@ import { useDropdown } from '../hooks/useDropdown';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { AI_SECTION_ID_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
 import { FOCUS_NODE_HREF_PREFIX } from '../engine/shared/bridgeContract';
+import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 
 /** Which edge of the canvas the report column is docked against. */
 export type AiDockPosition = 'right' | 'left' | 'bottom';
@@ -154,10 +155,15 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   }, [activeSection]);
 
   function handlePaneKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if ((e.key !== '[' && e.key !== ']') || !sections?.length) return;
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      handleCollapse();
+      return;
+    }
+    if ((e.key !== SHORTCUT_KEYS.aiSectionPrevious && e.key !== SHORTCUT_KEYS.aiSectionNext) || !sections?.length) return;
     e.preventDefault();
     const idx = activeSection == null ? -1 : sections.findIndex(s => s.n === activeSection);
-    const nextIdx = e.key === ']' ? Math.min(idx + 1, sections.length - 1) : Math.max(idx - 1, 0);
+    const nextIdx = e.key === SHORTCUT_KEYS.aiSectionNext ? Math.min(idx + 1, sections.length - 1) : Math.max(idx - 1, 0);
     onFocusSection?.(sections[nextIdx].n);
   }
 

@@ -4,7 +4,7 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
 import { buildGraph, buildGraphNoLayout, getGraphMetrics } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
-import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
+import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter, checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 
 /**
@@ -29,7 +29,9 @@ interface UseGraphologyReturn {
    * Rebuilds the graph from the database model based on the current filter and configuration.
    *
    * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
-   * @returns The total number of nodes in the resulting graph.
+   * @returns The total number of nodes in the resulting graph, or `-1` when the schema selection's
+   *   object count exceeds `dataLineageViz.maxNodes` — nothing is built and the prior render state
+   *   is left untouched.
    */
   buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean) => number;
 }
@@ -52,7 +54,15 @@ export function useGraphology(): UseGraphologyReturn {
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false): number => {
     const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
-    const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
+    const schemaFiltered = filterBySchemas(model, filter.schemas);
+    const limitCheck = checkObjectLimit(schemaFiltered, config.maxNodes);
+    if (!limitCheck.ok) {
+      const text = formatObjectLimitMessage(limitCheck.count, limitCheck.limit);
+      window.vscode?.postMessage({ type: 'error', error: text });
+      log(`[Filter] Refused — ${text}`, 'info');
+      return -1;
+    }
+    const filtered = limitCheck.model;
 
     const isVirtual = (n: { externalType?: string }) =>
       n.externalType === 'file' || n.externalType === 'db';
