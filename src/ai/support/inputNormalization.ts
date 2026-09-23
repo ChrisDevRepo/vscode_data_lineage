@@ -334,30 +334,168 @@ export function hoistSectionNotes(value: unknown): unknown {
 }
 
 /**
- * Moves a `submit_findings` `summary` placed inside its one carrying section to the top level.
+ * Top-level `HopFindingBaseSchema` fields observed authored one level too deep, inside a
+ * `sections[]` entry, instead of at the payload's flat top level.
+ */
+const NESTED_TOP_LEVEL_FIELDS = ['summary', 'prune_neighbors', 'questions'] as const;
+
+/** Deep-equality key for deduping a merged array entry so a repeated element is counted once. */
+function dedupeKey(entry: unknown): string {
+  return JSON.stringify(entry);
+}
+
+/**
+ * Concatenates a section-nested array field onto the top-level array of the same field, dropping
+ * entries already present (deep equality) so a repeated element is never carried twice.
+ */
+function mergeArrayField(top: unknown[], nested: unknown[]): unknown[] {
+  const seen = new Set(top.map(dedupeKey));
+  const merged = [...top];
+  for (const entry of nested) {
+    const key = dedupeKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
+  }
+  return merged;
+}
+
+/**
+ * Moves a `submit_findings` top-level field (`summary`, `prune_neighbors`, `questions`) placed
+ * inside its one carrying section to the top level; merges rather than drops when the top level
+ * already carries that field.
  *
  * @remarks
- * Sibling of {@link hoistSectionNotes} for the per-hop finding: a provider that nests the one-sentence
- * `summary` inside `sections[N]` (measured on the gated lane, rejected as `sections.0: Unrecognized key`)
- * sent the same field in another place. Applies only when the top level carries no `summary` and
- * exactly one section carries one; any other shape passes through untouched so the strict schema still
- * rejects it with its own issue path. `droppedKeyPaths` reports the vacated section path.
+ * Sibling of {@link hoistSectionNotes} for the per-hop finding: a provider that nests a top-level
+ * `HopFindingBaseSchema` field inside `sections[N]` (otherwise rejected as `sections.0:
+ * Unrecognized key(s)`) sent it in another place. Each field of {@link NESTED_TOP_LEVEL_FIELDS} is
+ * repaired by where the top level already stands:
+ * - Absent at the top level, exactly one section carries it: relocated whole — nothing exists yet
+ *   to merge against.
+ * - Present at the top level already, and the field is `prune_neighbors`/`questions`: the two
+ *   arrays are concatenated ({@link mergeArrayField}) and the section's copy removed.
+ * - Present at the top level already, and the field is `summary`: the top-level sentence is kept as
+ *   the finding's summary — the payload never carries two top-level summaries. A section copy
+ *   identical to it (ignoring surrounding whitespace) is removed, since the top level already
+ *   carries that sentence; a differing copy is folded onto that same section's `text` instead of
+ *   discarded (appended, unless `text` already contains it), so the content survives even though
+ *   the field does not relocate.
+ *
+ * More than one carrying section for a field, or a carried value of the wrong shape, passes that
+ * field through untouched so the strict schema still rejects it with its own issue path.
+ * `droppedKeyPaths` reports the vacated section path for every field this relocates or folds in.
  *
  * @param value - Raw model payload before Zod validation.
- * @returns The payload with that section's `summary` moved to the top level, or `value` unchanged.
+ * @returns The payload with each field's carrying section repaired, or `value` unchanged.
  */
-export function hoistSectionSummary(value: unknown): unknown {
-  if (!isPlainObject(value) || value.summary !== undefined) return value;
-  const sections = value.sections;
-  if (!Array.isArray(sections)) return value;
-  const carriers = sections.filter(section => isPlainObject(section) && 'summary' in section);
-  if (carriers.length !== 1) return value;
-  const rewrittenSections = sections.map((section) => {
-    if (section !== carriers[0]) return section;
-    const { summary: _summary, ...rest } = section as Record<string, unknown>;
-    return rest;
-  });
-  return { ...value, sections: rewrittenSections, summary: (carriers[0] as Record<string, unknown>).summary };
+export function hoistSectionTopLevelFields(value: unknown): unknown {
+  if (!isPlainObject(value) || !Array.isArray(value.sections)) return value;
+  let sections = value.sections as unknown[];
+  const topPatch: Record<string, unknown> = {};
+  let changed = false;
+
+  for (const field of NESTED_TOP_LEVEL_FIELDS) {
+    const carrierIndexes = sections
+      .map((section, index) => (isPlainObject(section) && field in section ? index : -1))
+      .filter(index => index !== -1);
+    if (carrierIndexes.length !== 1) continue;
+    const [carrierIndex] = carrierIndexes;
+    const carrier = sections[carrierIndex] as Record<string, unknown>;
+    const carrierValue = carrier[field];
+    const topValue = value[field];
+
+    if (topValue === undefined) {
+      const { [field]: _omitted, ...rest } = carrier;
+      sections = sections.map((section, index) => (index === carrierIndex ? rest : section));
+      topPatch[field] = carrierValue;
+      changed = true;
+      continue;
+    }
+
+    if (field === 'summary') {
+      if (typeof carrierValue !== 'string' || typeof carrier.text !== 'string') continue;
+      const alreadyCarried = typeof topValue === 'string' && topValue.trim() === carrierValue.trim();
+      const text = alreadyCarried || carrier.text.includes(carrierValue) ? carrier.text : `${carrier.text} ${carrierValue}`;
+      const { summary: _omittedSummary, ...rest } = carrier;
+      sections = sections.map((section, index) => (index === carrierIndex ? { ...rest, text } : section));
+      changed = true;
+      continue;
+    }
+
+    if (!Array.isArray(topValue) || !Array.isArray(carrierValue)) continue;
+    const { [field]: _omittedArray, ...rest } = carrier;
+    sections = sections.map((section, index) => (index === carrierIndex ? rest : section));
+    topPatch[field] = mergeArrayField(topValue, carrierValue);
+    changed = true;
+  }
+
+  return changed ? { ...value, ...topPatch, sections } : value;
+}
+
+/**
+ * Splits a `sections[]` entry that carries a key equal to a declared angle other than its own
+ * `angle` value into a second `sections[]` entry naming that angle, so a second capture recipe's
+ * whole body flattened under its own angle name becomes the section entry the strict schema
+ * already expects instead of an unrecognized key.
+ *
+ * @remarks
+ * Sibling of {@link hoistSectionNotes} for the two-angle capture shape (`CapturedSectionSchema`,
+ * `src/ai/tools/toolSchemas.ts`): a provider that fires both capture templates in one turn can
+ * collapse the second into a sibling key on the first, naming the missing entry's angle as a key
+ * rather than opening a new array element (otherwise rejected as `sections.0: Unrecognized key:
+ * "technical"`, a shape a plain retry reproduces). When no section already carries that angle, the
+ * flattened body is appended as its own `{angle, text}` entry; when one already does, the flattened
+ * body is folded onto that section's `text` instead (appended, unless already present) — either
+ * way nothing is dropped. Under a single-angle classification lock the split-out entry then fails
+ * the dispatch schema's angle narrowing, whose rejection directs the model to fold that content
+ * into the kept section. A key whose value is not a string, or that does not match a declared
+ * angle, passes through untouched so the strict schema still rejects it with its own issue path.
+ * `droppedKeyPaths` reports the vacated key.
+ *
+ * @param value - Raw model payload before Zod validation.
+ * @param angles - The full set of valid section angle names (`CapturedSectionSchema`'s own `angle`
+ * enum values), supplied by the caller so this module states no schema-owned constant of its own.
+ * @returns The payload with every flattened angle body split out or folded in, or `value` unchanged.
+ */
+export function splitFlattenedAngleSections(value: unknown, angles: readonly string[]): unknown {
+  if (!isPlainObject(value) || !Array.isArray(value.sections)) return value;
+  const original = value.sections as unknown[];
+  let changed = false;
+  const stripped: unknown[] = [];
+  const pending: { angle: string; text: string }[] = [];
+
+  for (const section of original) {
+    if (!isPlainObject(section) || typeof section.angle !== 'string') {
+      stripped.push(section);
+      continue;
+    }
+    const flattenedAngle = angles.find(angle => angle !== section.angle && typeof section[angle] === 'string');
+    if (flattenedAngle === undefined) {
+      stripped.push(section);
+      continue;
+    }
+    changed = true;
+    const flattenedText = section[flattenedAngle] as string;
+    const { [flattenedAngle]: _omittedAngle, ...rest } = section;
+    stripped.push(rest);
+    pending.push({ angle: flattenedAngle, text: flattenedText });
+  }
+  if (!changed) return value;
+
+  const result = [...stripped];
+  for (const { angle, text } of pending) {
+    const existingIndex = result.findIndex(entry => isPlainObject(entry) && entry.angle === angle);
+    if (existingIndex === -1) {
+      result.push({ angle, text });
+      continue;
+    }
+    const existing = result[existingIndex] as Record<string, unknown>;
+    const existingText = typeof existing.text === 'string' ? existing.text : '';
+    const mergedText = existingText.includes(text) ? existingText : `${existingText} ${text}`.trim();
+    result[existingIndex] = { ...existing, text: mergedText };
+  }
+
+  return { ...value, sections: result };
 }
 
 /** Plain object carrying its own `notes` key, regardless of that key's shape. */

@@ -211,7 +211,7 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    In either angle, one ⚠️ line per statement that silently loses, duplicates, overwrites or defaults rows: quote it and say its effect on the rows. A hardcoded value is stated as its literal.
+    In either angle, one ⚠️ line per statement that silently loses, duplicates, overwrites or defaults rows — including a multi-statement write with no wrapping transaction, where a failure between the statements leaves rows lost or doubled: quote it and say its effect on the rows. A hardcoded value is stated as its literal.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.

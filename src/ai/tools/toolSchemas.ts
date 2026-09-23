@@ -12,7 +12,7 @@ import {
   ExplorationDepthLimitSchema,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, hoistSectionSummary, nullAsAbsent, rejoinSectionTextBoundaryArtifacts, repairArrayBoundaryArtifacts } from '../support/inputNormalization';
+import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, hoistSectionTopLevelFields, nullAsAbsent, rejoinSectionTextBoundaryArtifacts, repairArrayBoundaryArtifacts, splitFlattenedAngleSections } from '../support/inputNormalization';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import type { CapturedSection } from '../session/memoryManager';
@@ -637,10 +637,16 @@ const HopFindingBaseSchema = z.object({
   reason: nullAsAbsent(z.string().optional()).describe(END_BRANCH_REASON_DESCRIPTION),
 }).strict();
 
-/** CT form: the BB form plus `column_flow` (required with a kept verdict). */
-const HopFindingCtBaseSchema = HopFindingBaseSchema.extend({
-  column_flow: ColumnFlowSchema.optional(),
-}).strict();
+const { badge_label, prune_neighbors, questions, reason } = HopFindingBaseSchema.shape;
+
+/**
+ * CT form: the BB form plus `column_flow` (required with a kept verdict), declared right after
+ * `summary` so it is authored with the analysis rather than after the routing tail.
+ */
+const HopFindingCtBaseSchema = HopFindingBaseSchema
+  .omit({ badge_label: true, prune_neighbors: true, questions: true, reason: true })
+  .extend({ column_flow: ColumnFlowSchema.optional(), badge_label, prune_neighbors, questions, reason })
+  .strict();
 
 /** The flat parsed payload, before {@link toHopFinding} narrows it by verdict. */
 type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema> };
@@ -711,9 +717,14 @@ function toHopFinding(value: FlatSubmitFindings): HopFinding {
   return kept;
 }
 
-/** Boundary recoveries for `submit_findings`: element and string boundaries first, then the summary hoist. */
+/**
+ * Boundary recoveries for `submit_findings`: element and string boundaries first, then a flattened
+ * second angle split out of its carrying section, then the top-level-field hoist.
+ */
 function recoverSubmitFindingsPayload(value: unknown): unknown {
-  return hoistSectionSummary(recoverSectionBoundaries(value));
+  return hoistSectionTopLevelFields(
+    splitFlattenedAngleSections(recoverSectionBoundaries(value), CapturedSectionSchema.shape.angle.options),
+  );
 }
 
 /** Applies the verdict-shape check and the union narrowing to one flat per-mode object. */

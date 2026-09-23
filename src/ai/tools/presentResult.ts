@@ -490,20 +490,37 @@ function normalizeCalloutFingerprint(value: string): string {
     .trim();
 }
 
-/** A ```sql fence opening on the first line of the text it is matched against. */
-const LEADING_SQL_FENCE = /^[ \t]*(```sql[^\n]*\n[\s\S]*?\n)[ \t]*```/i;
+/**
+ * A ```sql fence at the start of the matched text: closed on its own opening line, or else on a
+ * later line — where the closing marker may share a line with the last line of code.
+ */
+const SQL_FENCE_AT_START = /^```sql(?:[^\n]*?```|[^\n]*\n[\s\S]*?```)/i;
 
 /**
- * Returns the ```sql fence that opens on the line right after `lineEnd`, if any.
+ * Returns the ```sql fence opening at `openIndex`, tolerant of a one-line fence and of its closing
+ * marker sharing a line with the last line of code rather than starting one of its own.
+ *
+ * @param text - Full captured `DetailSlot` section body.
+ * @param openIndex - Offset where the fence's own ```sql marker begins.
+ * @returns The fence, closed; `undefined` when no ```sql marker opens there or it never closes.
+ */
+function sqlFenceAt(text: string, openIndex: number): string | undefined {
+  return SQL_FENCE_AT_START.exec(text.slice(openIndex))?.[0];
+}
+
+/**
+ * Returns the ```sql fence that opens at the start of the line right after `lineEnd`, if any.
  *
  * @param text - One captured `DetailSlot` section body.
  * @param lineEnd - Offset of the newline ending the line the fence must follow, or -1.
- * @returns The fence, left-trimmed and closed; `undefined` when none follows.
+ * @returns The fence, closed; `undefined` when none follows.
  */
 function sqlFenceAfter(text: string, lineEnd: number): string | undefined {
   if (lineEnd === -1) return undefined;
-  const match = LEADING_SQL_FENCE.exec(text.slice(lineEnd + 1));
-  return match ? `${match[1]}\`\`\`` : undefined;
+  const rest = text.slice(lineEnd + 1);
+  const indent = /^[ \t]*/.exec(rest)?.[0] ?? '';
+  if (!rest.startsWith('```sql', indent.length)) return undefined;
+  return sqlFenceAt(text, lineEnd + 1 + indent.length);
 }
 
 /** A line opening a new block: list item, heading, fence, or another callout. */
@@ -513,10 +530,14 @@ const BLOCK_START_LINE = /^\s*(?:[-*+]\s|\d+[.)]\s|#|```|⚠️)/;
  * Extracts the ⚠️ callouts from captured section text, each in its full extent.
  *
  * @remarks
- * A callout runs from its ⚠️ line, stripped of any list marker, through every following line
- * that continues it — a line inside a backtick span the callout opened, or a non-blank line
- * indented deeper than the callout's own line that opens no new block — and then takes the
- * ```sql fence that immediately follows, by the same boundary rule a formula uses.
+ * A callout that opens its own line runs from that line, stripped of any list marker, through
+ * every following line that continues it — a line inside a backtick span the callout opened, or a
+ * non-blank line indented deeper than the callout's own line that opens no new block — and then
+ * takes the ```sql fence that immediately follows, by the same boundary rule a formula uses. A ⚠️
+ * that opens mid-sentence, inside a line some other text already opened, runs instead from that
+ * marker through the next ⚠️ on the same line or the line's end, whichever comes first; only the
+ * last such callout on its line takes a fence — one whose ```sql marker opens later on that same
+ * line, by the rule a formula uses, or else one opening the next line.
  *
  * @param text - One captured `DetailSlot` section body.
  * @returns Per callout, the prose (fence excluded, for fingerprints) and the verbatim block, in authored order.
@@ -528,22 +549,38 @@ function extractCapturedCallouts(text: string): Array<{ line: string; block: str
   let lineEnd = -1;
   for (let i = 0; i < lines.length; i++) {
     lineEnd += lines[i].length + 1;
-    const head = lines[i].trim().replace(/^[-*]\s+/, '');
-    if (!head.startsWith('⚠️')) continue;
-    const indent = indentOf(lines[i]);
-    const extent = [head];
-    while (i + 1 < lines.length) {
-      const next = lines[i + 1];
-      const spanOpen = (extent.join('\n').match(/`/g)?.length ?? 0) % 2 === 1;
-      const continues = next.trim() !== '' && (spanOpen || (indentOf(next) > indent && !BLOCK_START_LINE.test(next)));
-      if (!continues) break;
-      extent.push(next.trim());
-      i++;
-      lineEnd += next.length + 1;
+    const rawLine = lines[i];
+    const head = rawLine.trim().replace(/^[-*]\s+/, '');
+    if (head.startsWith('⚠️')) {
+      const indent = indentOf(rawLine);
+      const extent = [head];
+      while (i + 1 < lines.length) {
+        const next = lines[i + 1];
+        const spanOpen = (extent.join('\n').match(/`/g)?.length ?? 0) % 2 === 1;
+        const continues = next.trim() !== '' && (spanOpen || (indentOf(next) > indent && !BLOCK_START_LINE.test(next)));
+        if (!continues) break;
+        extent.push(next.trim());
+        i++;
+        lineEnd += next.length + 1;
+      }
+      const line = extent.join('\n');
+      const fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
+      callouts.push({ line, block: fence ? `${line}\n${fence}` : line });
+      continue;
     }
-    const line = extent.join('\n');
-    const fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
-    callouts.push({ line, block: fence ? `${line}\n${fence}` : line });
+    const lineStart = lineEnd - rawLine.length;
+    const markers = [...rawLine.matchAll(/⚠️/g)].map(marker => marker.index ?? -1);
+    for (let k = 0; k < markers.length; k++) {
+      const isLast = k === markers.length - 1;
+      const segmentEnd = isLast ? rawLine.length : markers[k + 1];
+      const openInSegment = isLast ? rawLine.slice(markers[k], segmentEnd).search(/```sql/i) : -1;
+      const prose = rawLine.slice(markers[k], openInSegment === -1 ? segmentEnd : markers[k] + openInSegment).trim();
+      if (prose.length === 0) continue;
+      let fence: string | undefined;
+      if (openInSegment !== -1) fence = sqlFenceAt(text, lineStart + markers[k] + openInSegment);
+      else if (isLast) fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
+      callouts.push({ line: prose, block: fence ? `${prose}\n${fence}` : prose });
+    }
   }
   return callouts;
 }
@@ -557,7 +594,9 @@ const DISPLAY_MATH_SPAN = /\$\$([^$]+?)\$\$/g;
  *
  * @remarks
  * The fence is attached only to the last formula on its line, so a line listing several formulas
- * never repeats one fence under each.
+ * never repeats one fence under each. The fence's own ```sql marker may open on the formula's own
+ * line, after its description, or at the start of the line right after — both count as
+ * "immediately follows".
  *
  * @param text - One captured `DetailSlot` section body.
  * @returns Normalized formula bodies with their restorable block (`$$ … $$` plus fence), in order.
@@ -570,7 +609,11 @@ function extractCapturedFormulas(text: string): Array<{ body: string; block: str
     const spanEnd = (match.index ?? 0) + match[0].length;
     const lineEnd = text.indexOf('\n', spanEnd);
     const restOfLine = lineEnd === -1 ? text.slice(spanEnd) : text.slice(spanEnd, lineEnd);
-    const fence = restOfLine.includes('$$') ? undefined : sqlFenceAfter(text, lineEnd);
+    let fence: string | undefined;
+    if (!restOfLine.includes('$$')) {
+      const openInLine = restOfLine.search(/```sql/i);
+      fence = openInLine !== -1 ? sqlFenceAt(text, spanEnd + openInLine) : sqlFenceAfter(text, lineEnd);
+    }
     const formula = `$$ ${body} $$`;
     formulas.push({ body, block: fence ? `${formula}\n${fence}` : formula });
   }
