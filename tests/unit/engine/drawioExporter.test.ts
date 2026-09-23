@@ -60,11 +60,8 @@ describe('Draw.io Exporter', () => {
   it('one node produces the correct mxCell / object count', () => {
     const nodes = [makeNode('n1', 'Orders', 'Sales', 100, 50)];
     const xml = exportToDrawio(nodes, [], ['Sales']);
-    // Each node becomes one <object> element and one color-band mxCell child.
-    // The root also always has two base mxCell entries (id=0, id=1).
     expect(xml.includes('object'), 'output contains object wrapper for the node').toBe(true);
     expect(xml.includes('mxCell'), 'output contains mxCell entries').toBe(true);
-    // 1 vertex node = 1 object element
     expect(countOccurrences(xml, '<object'), 'exactly one object element for one node').toBe(1);
   });
 
@@ -92,7 +89,6 @@ describe('Draw.io Exporter', () => {
     const edges = [makeEdge('e1', 'n1', 'n2')];
     const xml = exportToDrawio(nodes, edges, ['dbo']);
     expect(xml.includes('edge='), 'output contains an edge attribute').toBe(true);
-    // source and target attributes must reference numeric IDs (not original node ids)
     expect(xml.includes('source='), 'edge cell has a source attribute').toBe(true);
     expect(xml.includes('target='), 'edge cell has a target attribute').toBe(true);
   });
@@ -123,7 +119,6 @@ describe('Draw.io Exporter', () => {
       makeNode('n1', 'A', 'dbo', 0, 0),
       makeNode('n2', 'B', 'dbo', 100, 0),
     ];
-    // A bidirectional edge uses the ↔ marker in its id (mirroring buildFlowEdges convention)
     const bidiEdge: FlowEdge = { id: 'n1↔n2', source: 'n1', target: 'n2' };
     const xml = exportToDrawio(nodes, [bidiEdge], ['dbo']);
     expect(xml.includes('⇄'), 'bidirectional edge carries the ⇄ label').toBe(true);
@@ -134,7 +129,6 @@ describe('Draw.io Exporter', () => {
     const nodes = [makeNode('n1', 'A', 'dbo', 0, 0)];
     const badEdge: FlowEdge = { id: 'e-bad', source: 'n1', target: 'ghost' };
     const xml = exportToDrawio(nodes, [badEdge], ['dbo']);
-    // No edge should be emitted (ghost has no mapping)
     expect(countOccurrences(xml, 'edge='), 'edge with unknown target id is silently skipped').toBe(0);
   });
 
@@ -259,7 +253,6 @@ describe('Draw.io Exporter — column view exports the object graph', () => {
   });
 
   it('never emits a column-space coordinate for the same ids', () => {
-    // The same two ids as the column view would lay them out: a different, much tighter space.
     const columnSpaceX = 214;
     const objectNodes = [
       makeNode('sales.orderheader', 'OrderHeader', 'Sales', 0, 0),

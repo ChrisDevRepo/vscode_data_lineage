@@ -106,13 +106,11 @@ function testBuildModelFromDmv() {
 
   expect(model.edges.length > 0, `Has ${model.edges.length} edges`).toBe(true);
 
-  // View edge (from DMV deps — not regex parsed): Customers → vActiveCustomers
   const viewEdge = model.edges.find(e =>
     e.source === '[dbo].[customers]' && e.target === '[dbo].[vactivecustomers]'
   );
   expect(viewEdge !== undefined, 'View has inbound edge from Customers').toBe(true);
 
-  // SP edges (regex-parsed): uspGetOrdersByCustomer reads Orders and Customers
   const spReadOrders = model.edges.find(e =>
     e.source === '[dbo].[orders]' && e.target === '[sales].[uspgetordersbycustomer]'
   );
@@ -123,7 +121,6 @@ function testBuildModelFromDmv() {
   );
   expect(spReadCustomers !== undefined, 'SP uspGetOrdersByCustomer reads Customers').toBe(true);
 
-  // SP edges (regex-parsed): uspCreateOrder writes to Orders, reads Customers + Products
   const spWriteOrders = model.edges.find(e =>
     e.source === '[sales].[uspcreateorder]' && e.target === '[dbo].[orders]'
   );
@@ -139,19 +136,15 @@ function testBuildModelFromDmv() {
   );
   expect(spReadProducts !== undefined, 'SP uspCreateOrder reads Products').toBe(true);
 
-  // Parse stats
   expect(model.parseStats !== undefined, 'Parse stats present').toBe(true);
   expect(model.parseStats!.spDetails.length, '2 SPs in parse details').toBe(2);
 
-  // Table columns available on node
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
   expect(!!ordersNode?.columns?.some(c => c.name === 'OrderId'), 'Orders table has OrderId column').toBe(true);
   expect(!!ordersNode?.columns?.some(c => c.type.includes('int')), 'Orders table has int type column').toBe(true);
 
-  // No warnings for valid data
   expect(model.warnings === undefined, 'No warnings for valid data').toBe(true);
 
-  // ── Empty database ──
   const emptyResults: DmvResults = {
     nodes: makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), []),
     columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
@@ -162,7 +155,6 @@ function testBuildModelFromDmv() {
   expect(emptyModel.edges.length, 'Empty DB has 0 edges').toBe(0);
   expect(emptyModel.warnings !== undefined && emptyModel.warnings.length > 0, 'Empty DB produces warning').toBe(true);
 
-  // ── Duplicate node handling ──
   const nodeCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const dupResults: DmvResults = {
     nodes: makeResult(nodeCols, [
@@ -174,7 +166,6 @@ function testBuildModelFromDmv() {
   };
   expect(buildModelFromDmv(dupResults).nodes.length, 'Duplicate nodes are deduplicated').toBe(1);
 
-  // ── Self-reference exclusion ──
   const selfRefResults: DmvResults = {
     nodes: makeResult(nodeCols, [[cell('dbo'), cell('MyTable'), cell('U '), nullCell()]]),
     columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
@@ -187,7 +178,6 @@ function testBuildModelFromDmv() {
 function testValidateQueryResult() {
   console.log('\n── DMV Extractor: Column Validation ──');
 
-  // Valid results for each query type
   const validCases: [string, string[]][] = [
     ['nodes', ['schema_name', 'object_name', 'type_code', 'body_script']],
     ['dependencies', ['referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name']],
@@ -198,7 +188,6 @@ function testValidateQueryResult() {
     expect(validateQueryResult(name, makeResult(cols(...colNames), [])).length, `Valid ${name}: no missing`).toBe(0);
   }
 
-  // Missing columns detected
   const missing = validateQueryResult('nodes', makeResult(cols('schema_name', 'object_name'), []));
   expect(missing.length, 'Invalid nodes: 2 missing').toBe(2);
   expect(
@@ -206,32 +195,25 @@ function testValidateQueryResult() {
     'Invalid platform-info: 2 missing',
   ).toBe(2);
 
-  // Case insensitive
   expect(validateQueryResult('nodes', makeResult(cols('Schema_Name', 'Object_Name', 'Type_Code', 'Body_Script'), [])).length, 'Case-insensitive').toBe(0);
 
-  // Unknown query → no missing
   expect(validateQueryResult('unknown', makeResult(cols(), [])).length, 'Unknown query: no missing').toBe(0);
 }
 
 function testFormatColumnType() {
   console.log('\n── DMV Extractor: formatColumnType ──');
 
-  // [typeName, maxLen, precision, scale, expected]
   const cases: [string, string, string, string, string][] = [
-    // Simple types (no size)
     ['int',       '4',   '10', '0', 'int'],
     ['bigint',    '8',   '19', '0', 'bigint'],
     ['bit',       '1',   '1',  '0', 'bit'],
     ['datetime',  '8',   '23', '3', 'datetime'],
-    // String types with max_length
     ['varchar',   '50',  '0',  '0', 'varchar(50)'],
     ['varchar',   '-1',  '0',  '0', 'varchar(max)'],
     ['nvarchar',  '200', '0',  '0', 'nvarchar(100)'],  // bytes ÷ 2
     ['nvarchar',  '-1',  '0',  '0', 'nvarchar(max)'],
     ['nchar',     '20',  '0',  '0', 'nchar(10)'],      // bytes ÷ 2
-    // Binary
     ['varbinary', '-1',  '0',  '0', 'varbinary(max)'],
-    // Decimal/numeric
     ['decimal',   '9',   '18', '2', 'decimal(18,2)'],
     ['numeric',   '9',   '10', '0', 'numeric(10,0)'],
   ];
@@ -243,9 +225,6 @@ function testFormatColumnType() {
 function testFallbackBodyDirection() {
   console.log('\n── DMV Extractor: Fallback Body Direction ──');
 
-  // SP body uses unqualified table refs (no schema prefix) — regex skips them (normalizeCaptured rejects).
-  // MS metadata (DMV deps) knows about both tables with schema. inferBodyDirection() should
-  // correctly classify writes vs reads based on the keyword preceding the table name.
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
     [cell('dbo'), cell('WriteTarget'), cell('U '), nullCell()],
@@ -279,7 +258,6 @@ function testFallbackBodyDirection() {
   expect(readEdge !== undefined, 'Fallback: unqualified FROM → READ edge (table → SP)').toBe(true);
 }
 
-// ─── Test: Cross-schema dependency remains explicit when outside selection ──
 
 function testCrossSchemaUnresolved() {
   console.log('\n── DMV: Cross-schema dependency → unresolved detail ──');
@@ -303,20 +281,17 @@ function testCrossSchemaUnresolved() {
 
   const model = buildModelFromDmv(results);
 
-  // Metadata dep must surface in Unresolved — never silently dropped
   const detail = model.parseStats?.spDetails.find(d => d.name.toLowerCase() === 'humanresources.uspupdateemployeepersonalinfo');
   expect(detail !== undefined, 'spDetails entry found for SP').toBe(true);
   const hasUnresolved = detail?.unrelated.some(r => r.toLowerCase().includes('usplogerror'));
   expect(hasUnresolved === true,
     `spDetails.unrelated contains uspLogError (got: ${JSON.stringify(detail?.unrelated)})`).toBe(true);
 
-  // No neighborIndex entry is fabricated for an object outside the selected result set.
   const logErrId = '[dbo].[usplogerror]';
   expect(model.neighborIndex[logErrId] === undefined,
     'No neighborIndex entry for unknown dbo.uspLogError').toBe(true);
 }
 
-// ─── Test: Cross-schema dependency classified via the all-objects catalog ───
 
 function testCrossSchemaKnownViaCatalog() {
   console.log('\n── DMV: Cross-schema dependency → known neighbor via catalog ──');
@@ -332,8 +307,6 @@ function testCrossSchemaKnownViaCatalog() {
     [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('dbo'), cell('uspLogError')],
   ];
 
-  // Same fixture as testCrossSchemaUnresolved, plus the full-catalog result that lists the
-  // referenced object living in the unselected 'dbo' schema.
   const allObjectsCols = cols('schema_name', 'object_name', 'type_code');
   const allObjectsRows: DbCellValue[][] = [
     [cell('dbo'), cell('uspLogError'), cell('P ')],
@@ -352,13 +325,11 @@ function testCrossSchemaKnownViaCatalog() {
   const spId = '[humanresources].[uspupdateemployeepersonalinfo]';
   const logErrId = '[dbo].[usplogerror]';
 
-  // With the catalog the reference is classified "cross-schema known" — not unresolved.
   const detail = model.parseStats?.spDetails.find(d => d.name.toLowerCase() === 'humanresources.uspupdateemployeepersonalinfo');
   expect(detail !== undefined, 'spDetails entry found for SP').toBe(true);
   expect(detail!.unrelated.every(r => !r.toLowerCase().includes('usplogerror')),
     `spDetails.unrelated must NOT contain uspLogError (got: ${JSON.stringify(detail?.unrelated)})`).toBe(true);
 
-  // The known cross-schema object surfaces as a neighbor pair in the index.
   const logErrNeighbors = model.neighborIndex[logErrId];
   expect(logErrNeighbors !== undefined, 'neighborIndex entry exists for known dbo.uspLogError').toBe(true);
   const linked = [...(logErrNeighbors?.in ?? []), ...(logErrNeighbors?.out ?? [])];
@@ -366,18 +337,14 @@ function testCrossSchemaKnownViaCatalog() {
     `dbo.uspLogError is linked to the SP in the neighbor index (got: ${JSON.stringify(logErrNeighbors)})`).toBe(true);
 }
 
-// ─── Test: External Table (ET) nodes ─────────────────────────────────────────
 
 function testExternalTableNodes() {
   console.log('\n── DMV Extractor: External Table (ET) Nodes ──');
 
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
-    // Regular table
     [cell('dbo'), cell('LocalOrders'), cell('U '), nullCell()],
-    // External table — type_code 'ET' (char(2) padded)
     [cell('ext'), cell('ExternalSales'), cell('ET'), nullCell()],
-    // SP that reads from external table
     [cell('dbo'), cell('uspLoadSales'), cell('P '),
       cell('CREATE PROCEDURE [dbo].[uspLoadSales] AS\nINSERT INTO [dbo].[LocalOrders]\nSELECT * FROM [ext].[ExternalSales]')],
   ];
@@ -398,12 +365,10 @@ function testExternalTableNodes() {
 
   const model = buildModelFromDmv(results);
 
-  // Node count and types
   expect(model.nodes.length, 'Should have 3 nodes (1 table, 1 external, 1 SP)').toBe(3);
   const extNodes = model.nodes.filter(n => n.type === 'external');
   expect(extNodes.length, 'Should have 1 external node').toBe(1);
 
-  // External node properties
   const extNode = extNodes[0];
   expect(extNode !== undefined, 'External node exists').toBe(true);
   expect(extNode?.schema, 'External node has correct schema').toBe('ext');
@@ -413,18 +378,15 @@ function testExternalTableNodes() {
   expect(extNode?.bodyScript === undefined || extNode?.bodyScript === null,
     'External node has no bodyScript (ET has no SQL body)').toBe(true);
 
-  // Schema info includes external type count
   const extSchema = model.schemas.find(s => s.name === 'ext');
   expect(extSchema !== undefined, 'ext schema present in schemas').toBe(true);
   expect(extSchema?.types?.external ?? 0, 'ext schema counts 1 external node').toBe(1);
 
-  // External node in catalog
   const extId = '[ext].[externalsales]';
   const catEntry = model.catalog[extId];
   expect(catEntry !== undefined, 'External node in catalog').toBe(true);
   expect(catEntry?.type, 'catalog entry type=external').toBe('external');
 
-  // Edge: SP reads from external table (FROM clause → external is source/upstream)
   const readEdge = model.edges.find(e =>
     e.source === extId && e.target === '[dbo].[uspLoadsales]'.toLowerCase()
   );
@@ -446,7 +408,6 @@ function testExternalTableNodes() {
 function testExternalTableWriteDirection() {
   console.log('\n── DMV Extractor: External Table Write Direction (CETAS) ──');
 
-  // CETAS pattern: SP writes INTO external table (Synapse/Fabric CETAS)
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
     [cell('dbo'), cell('SourceData'), cell('U '), nullCell()],
@@ -475,7 +436,6 @@ function testExternalTableWriteDirection() {
   const spId = '[dbo].[uspexportdata]';
   const srcId = '[dbo].[sourcedata]';
 
-  // WRITE edge: SP → external target (INSERT INTO)
   const writeEdge = model.edges.find(e => e.source === spId && e.target === extId);
   expect(writeEdge !== undefined,
     `Write edge SP → ExportTarget exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
@@ -671,12 +631,10 @@ function testYamlQueriesHavePlaceholder() {
   for (const q of phase2) {
     expect(q.sql.includes('{{SCHEMAS}}'), `YAML Phase 2 query '${q.name}' has {{SCHEMAS}} placeholder`).toBe(true);
 
-    // Expand and verify no remnants
     const expanded = expandSchemaPlaceholder(q.sql, ['dbo', 'Sales']);
     expect(!expanded.includes('{{SCHEMAS}}'), `YAML '${q.name}': no placeholder remnants after expansion`).toBe(true);
   }
 
-  // Phase 1 queries should NOT have placeholder
   const phase1 = config.queries.filter(q => q.phase === 1);
   expect(phase1.length >= 2, `At least 2 Phase 1 queries (got ${phase1.length})`).toBe(true);
   for (const q of phase1) {
@@ -687,9 +645,6 @@ function testYamlQueriesHavePlaceholder() {
 function testPhase2QueryPredicate() {
   console.log('\n── isPhase2Query: sweep membership and progress step count ──');
 
-  // The bridge sizes its progress counter from this predicate and the sweep selects work with
-  // it. If the two ever diverge, the counter over- or under-reports and the platform step
-  // would be numbered against the wrong total.
   const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
   const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
 
@@ -707,13 +662,11 @@ function testPhase2QueryPredicate() {
     expect(sweep.some(q => q.name === name), `Required query '${name}' is in the sweep`).toBe(true);
   }
 
-  // A query with no explicit phase defaults into the sweep.
   expect(isPhase2Query({ name: 'custom', description: '', sql: '' }),
     'Untagged query defaults to Phase 2').toBe(true);
   expect(!isPhase2Query({ name: 'custom', description: '', sql: '', phase: 1 }),
     'phase: 1 query is excluded').toBe(true);
 
-  // The bridge reports sweep length + 1 to account for the platform-detection step.
   expect(sweep.length + 1,
     'Progress total = sweep size + 1 platform step').toBe(config.queries.length - excluded.length + 1);
 }
@@ -728,11 +681,9 @@ function testExpandedSqlStructure() {
   for (const q of phase2) {
     const expanded = expandSchemaPlaceholder(q.sql, ['dbo', 'Sales']);
 
-    // No literal {{ or }} remnants (catches partial expansion bugs)
     expect(!expanded.includes('{{'), `'${q.name}': no {{ remnants`).toBe(true);
     expect(!expanded.includes('}}'), `'${q.name}': no }} remnants`).toBe(true);
 
-    // Balanced parentheses
     let depth = 0;
     let balanced = true;
     for (const ch of expanded) {
@@ -742,7 +693,6 @@ function testExpandedSqlStructure() {
     }
     expect(balanced && depth === 0, `'${q.name}': balanced parentheses (depth=${depth})`).toBe(true);
 
-    // CTE queries must start with WITH and end with a SELECT
     if (/^\s*WITH\s+/i.test(q.sql)) {
       expect(/^\s*WITH\s+/i.test(expanded), `'${q.name}': CTE structure preserved after expansion`).toBe(true);
       expect(/\bSELECT\b/i.test(expanded), `'${q.name}': CTE has final SELECT`).toBe(true);
@@ -750,7 +700,6 @@ function testExpandedSqlStructure() {
   }
 }
 
-// ─── Bridge: mapEnginePlatform via buildModelFromDmv ─────────────────────────
 
 function makePlatformInfo(engineEdition: number, majorVersion: number, edition: string): SimpleExecuteResult {
   return makeResult(
@@ -770,7 +719,6 @@ function testDbPlatformFromDmv() {
     return buildModelFromDmv({ nodes: emptyNodes, columns: emptyCols, dependencies: emptyDeps, platformInfo });
   }
 
-  // Cloud editions
   expect(modelWithPlatform(makePlatformInfo(5,  0, '')).dbPlatform,        'EngineEdition 5 → Azure SQL Database').toBe('Azure SQL Database');
   expect(modelWithPlatform(makePlatformInfo(6,  0, '')).dbPlatform,     'EngineEdition 6 → Synapse Dedicated Pool').toBe('Synapse Dedicated Pool');
   expect(modelWithPlatform(makePlatformInfo(8,  0, '')).dbPlatform, 'EngineEdition 8 → Azure SQL Managed Instance').toBe('Azure SQL Managed Instance');
@@ -778,7 +726,6 @@ function testDbPlatformFromDmv() {
   expect(modelWithPlatform(makePlatformInfo(11, 0, '')).dbPlatform,      'EngineEdition 11 → Fabric Data Warehouse').toBe('Fabric Data Warehouse');
   expect(modelWithPlatform(makePlatformInfo(12, 0, '')).dbPlatform,     'EngineEdition 12 → SQL Database in Fabric').toBe('SQL Database in Fabric');
 
-  // On-prem editions: representative versions (earliest, middle, latest)
   const onPremCases: [number, string][] = [
     [17, 'SQL Server 2025'],
     [13, 'SQL Server 2016'],
@@ -789,24 +736,19 @@ function testDbPlatformFromDmv() {
     expect(model.dbPlatform, `EngineEdition 3, major ${major} → ${expected}`).toBe(expected);
   }
 
-  // Unknown major version → fall back to edition string
   const unknownMajor = modelWithPlatform(makePlatformInfo(3, 99, 'Developer Edition'));
   expect(unknownMajor.dbPlatform,
     'Unknown major version → edition string fallback').toBe('Developer Edition');
 
-  // Unknown edition AND unknown major → explicit unknown, never an invented SQL Server label
   const unknownAll = modelWithPlatform(makePlatformInfo(3, 99, ''));
   expect(unknownAll.dbPlatform,
     'Unknown edition + unknown major → explicit unknown platform').toBe('Unknown database platform');
 
-  // No platform metadata → explicit unknown
   const noPlatform = buildModelFromDmv({ nodes: emptyNodes, columns: emptyCols, dependencies: emptyDeps });
   expect(noPlatform.dbPlatform, 'No platform metadata → explicit unknown').toBe('Unknown database platform');
 
-  // Provenance is stamped by the lane, independent of whether a platform resolved.
   expect(noPlatform.source, 'DMV model without platform metadata: source = database').toBe('database');
 
-  // Empty rows in platformInfo → explicit unknown
   const emptyRows = makeResult(cols('engine_edition', 'major_version', 'edition'), []);
   const noRows = modelWithPlatform(emptyRows);
   expect(noRows.dbPlatform, 'Empty platformInfo rows → explicit unknown').toBe('Unknown database platform');
@@ -831,7 +773,6 @@ function testDbPlatformFromDmv() {
     'MSSQL server metadata is carried into the database model').toBe('Fabric Data Warehouse');
 }
 
-// ─── Bridge: pkOrdinal from columns query ────────────────────────────────────
 
 function testPkOrdinalFromDmv() {
   console.log('\n── DMV Bridge: pkOrdinal in ColumnDef ──');
@@ -841,7 +782,6 @@ function testPkOrdinalFromDmv() {
     [cell('dbo'), cell('OrderDetail'), cell('U '), nullCell()],
   ];
 
-  // columns with pk_ordinal column: composite PK on (OrderId, LineId), Name is non-PK
   const columnsCols = cols(
     'schema_name', 'table_name', 'ordinal', 'column_name',
     'type_name', 'max_length', 'precision', 'scale',
@@ -880,7 +820,6 @@ function testPkOrdinalFromDmv() {
   expect(name !== undefined, 'Name column found').toBe(true);
   expect(name!.pkOrdinal === undefined, 'Name: no pkOrdinal (not a PK column)').toBe(true);
 
-  // Single-column PK: pk_ordinal=1 only
   const singlePkCols = cols(
     'schema_name', 'table_name', 'ordinal', 'column_name',
     'type_name', 'max_length', 'precision', 'scale',
@@ -907,12 +846,10 @@ function testPkOrdinalFromDmv() {
   expect(product?.columns?.find(c => c.name === 'Name')?.pkOrdinal === undefined,
     'Single PK: Name column has no pkOrdinal').toBe(true);
 
-  // No pk_ordinal column in result (older query version) → no pkOrdinal set, no crash
   const noPkCols = cols(
     'schema_name', 'table_name', 'ordinal', 'column_name',
     'type_name', 'max_length', 'precision', 'scale',
     'is_nullable', 'is_identity', 'is_computed',
-    // pk_ordinal intentionally absent
   );
   const noPkRows: DbCellValue[][] = [
     [cell('dbo'), cell('Legacy'), cell('1'), cell('Id'),

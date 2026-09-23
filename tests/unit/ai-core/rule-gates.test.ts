@@ -237,9 +237,6 @@ describe('architecture rule gates', () => {
     expect(ai.map((path) => readFileSync(path, 'utf8')).join('\n')).toContain(AI_POSITIVE_CONTROL);
   });
 
-  // Rule: production `@lineage` dispatches through the local canonical registry and strict Zod
-  // dispatcher. Routing its own calls through `vscode.lm.invokeTool` would hand another extension's
-  // tool surface the active turn lease.
   it('never routes a production call through vscode.lm.invokeTool', () => {
     const offenders = sourceFiles(srcRoot).filter((file) =>
       /\binvokeTool\b/.test(stripComments(readFileSync(file, 'utf8'))),
@@ -248,8 +245,6 @@ describe('architecture rule gates', () => {
     expect(offenders.map((file) => posixRelative(srcRoot, file))).toEqual([]);
   });
 
-  // Rule: user-facing errors and warnings go through `notifyError`/`notifyWarning`, and diagnostics
-  // through the `src/utils/log.ts` helpers, so redaction and the output channel stay on one path.
   it('routes AI notifications and logging through the shared helpers only', () => {
     const offenders = sourceFiles(aiRoot)
       .map((file) => ({
@@ -262,7 +257,6 @@ describe('architecture rule gates', () => {
     expect(offenders).toEqual([]);
   });
 
-  // Rule: `src/ai/**` reaches the engine only through the shared contracts in `src/engine/shared/*`.
   it('adds no engine import outside src/engine/shared', () => {
     const introduced = engineLayeringViolations().filter(
       (entry) => !GRANDFATHERED_ENGINE_IMPORTS.includes(entry),
@@ -282,7 +276,6 @@ describe('architecture rule gates', () => {
       stale,
       'these imports were fixed — delete them from GRANDFATHERED_ENGINE_IMPORTS; the list may only shrink',
     ).toEqual([]);
-    // Positive control: an empty scan would make the "no new violations" assertion vacuous.
     expect(current.length).toBeGreaterThan(0);
   });
 });

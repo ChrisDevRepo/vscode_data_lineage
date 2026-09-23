@@ -50,9 +50,6 @@ const required = [
 
 const forbidden = [
   { pattern: /^(?:src|test|tests|test-results|tmp|tooling|scripts|ai)\//u, label: 'source/test/tmp/tooling directory' },
-  // The headless harness compiles to `out/test/` and the LangSmith containment shell lives in
-  // `stubs/`. Neither is referenced by the extension bundle, so neither can be caught by the
-  // required-file list — these two patterns are what makes their absence PROVEN rather than assumed.
   { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
   { pattern: /^stubs\//u, label: 'dependency stub directory' },
   { pattern: /^(?:\.agents|\.muse|\.codex|\.claude|\.gemini|\.cursor|\.continue|\.glm-skills)\//u, label: 'internal agent directory' },
@@ -60,16 +57,11 @@ const forbidden = [
   { pattern: /(?:^|\/)[^/]*internal[^/]*(?:\/|$)/iu, label: '"internal" marker path' },
   { pattern: /(?:^|\/)debug[^/]*\.txt$/iu, label: 'debug*.txt artifact' },
   { pattern: /^(?:PLAN[^/]*\.md|TASKLIST[^/]*)$/iu, label: 'internal task/plan notes' },
-  // `vsce` never reads .gitignore, so an untracked scratch file at the repo root is packaged
-  // unless .vscodeignore names it. Tooling drops these with assorted prefixes; the suffix is the
-  // only stable part, which is why the pattern keys on it rather than on a name.
   { pattern: /\.tmp$/iu, label: 'stray .tmp scratch file' },
   { pattern: /(?:^|\/)evidence(?:\/|$)/iu, label: 'evidence/ artifact directory' },
   { pattern: /\.vsix$/iu, label: 'packaged .vsix artifact' },
-  // Mirrors .vscodeignore: `.verify*/**` (package-verification scratch trees) and `debug.log`.
   { pattern: /(?:^|\/)\.verify[^/]*\//iu, label: 'package-verification scratch tree' },
   { pattern: /(?:^|\/)debug\.log$/iu, label: 'debug.log artifact' },
-  // The only dacpac the VSIX ships is assets/demo.dacpac; one at the repo root is a staged internal model.
   { pattern: /^[^/]+\.dacpac$/iu, label: 'root-level dacpac' },
 ];
 

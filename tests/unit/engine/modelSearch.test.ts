@@ -238,8 +238,6 @@ describe('model search', () => {
   });
 
   it('does not skip a body whose first match is empty', () => {
-    // `x*` matches the empty string at offset 0; the scan advances one position instead of
-    // abandoning the node, so the real match later in the same body is still reported.
     const body: SearchableNode[] = [{
       id: 'dbo.vwx', name: 'vwX', schema: 'dbo', type: 'view',
       bodyScript: 'SELECT ColA\nFROM dbo.xTable',
@@ -336,7 +334,6 @@ describe('model search — commented matches', () => {
   });
 
   it('marks a hit the 3-line context window cannot explain', () => {
-    // The window is [hit-1, hit, hit+1]; the opener sits outside it, which is the whole defect.
     const compiled = compileSearchRegex('DELETE');
     if (!compiled.ok) throw new Error('DELETE must compile');
     const lines = ['/* OLD DEDUP APPROACH (pre v2.0)', 'a', 'b', 'c', 'd', 'e', 'DELETE d1', 'f', '*/'];
@@ -488,8 +485,6 @@ describe('model search — enclosing predicate', () => {
   });
 
   it('leaves a hit before the governing IF unmarked — the exact D-049 shape', () => {
-    // The verification SELECT is ungated; the IF that follows it gates only the warning after it.
-    // A hit on the SELECT must not inherit the later IF's predicate.
     const hit = hits([
       'BEGIN',                                          // 1
       '    SELECT @VerifyCount = COUNT(*)',              // 2
@@ -552,7 +547,6 @@ describe('model search — enclosing predicate', () => {
 
 describe('compileSearchRegex — ReDoS guard', () => {
   it('refuses exponential patterns without hanging on its own probe', () => {
-    // A single 200-character probe never returns for these; the guard must stop at a short input.
     for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {
       const start = performance.now();
       const compiled = compileSearchRegex(pattern);
@@ -578,9 +572,6 @@ describe('regexRejectHint', () => {
   }
 
   it('names the flags option instead of blaming nested quantifiers for an inline flag', () => {
-    // A redundant "(?i)"/"(?m)" no longer reaches this hint — compileSearchRegex strips it and
-    // compiles the remainder (covered in the 'model search' describe above). "(?s)" requests
-    // semantics the engine does not otherwise apply, so it still fails to compile and needs this hint.
     const hint = hintFor('(?s)order');
     expect(hint).toContain('inline flag');
     expect(hint).toContain('already case-insensitive');

@@ -176,8 +176,6 @@ describe('save-view run memory', () => {
     const store = seededStore();
     const globalState = fakeMemento(['bm-1', 'bm-2']);
     const host = fakeHost();
-    // getSession() yields no presentationArtifact, exactly as a fresh window does — so
-    // buildStoredRun cannot rebuild the record for this id.
     const { handlers } = buildHandlers(store, globalState, host);
 
     await handlers['save-view']({

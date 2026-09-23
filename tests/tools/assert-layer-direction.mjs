@@ -55,9 +55,6 @@ function resolvesIntoComponents(fromFile, specifier) {
     .split(path.sep)
     .join('/');
   if (resolved === FORBIDDEN_ROOT || resolved.startsWith(`${FORBIDDEN_ROOT}/`)) return true;
-  // Belt-and-braces for a specifier the join/normalize above fails to place under FORBIDDEN_ROOT
-  // (e.g. a symlinked or unconventionally nested engine subdirectory): the two depths named in the
-  // gate contract are matched on the literal specifier text too.
   return specifier.includes('../components') || specifier.includes('../../components');
 }
 

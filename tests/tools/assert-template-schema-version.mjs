@@ -56,9 +56,6 @@ const readVersion = (text, re, label) => {
 const currentAsset = normalize(readFileSync(ASSET, 'utf8'));
 const currentTypes = normalize(readFileSync(TYPES, 'utf8'));
 
-// Bumping one of the two and not the other leaves the built-in YAML unable to match its own
-// constant, which rejects every overlay including correctly updated ones. Checked before the
-// history comparison because it is wrong regardless of what the last release shipped.
 const constantVersion = readVersion(currentTypes, VERSION_RE, 'AI_TEMPLATE_SCHEMA_VERSION');
 const assetVersion = readVersion(currentAsset, YAML_VERSION_RE, `schemaVersion in ${ASSET}`);
 if (constantVersion !== assetVersion) {
@@ -71,7 +68,6 @@ if (constantVersion !== assetVersion) {
 
 const { ref: baseline, label: baselineLabel } = baselineRef();
 if (!baseline) {
-  // A shallow clone without tags or a main branch is a legitimate state, not a defect to fail over.
   console.log('SKIP  no release tag and no origin/main — cannot compare the templates asset against a baseline.');
   process.exit(0);
 }
@@ -94,8 +90,6 @@ const changes = structureDiff(baselineStructure, currentStructure);
 const breaking = breakingStructureChanges(changes);
 const formattedChanges = changes.map((line) => `      ${line}`).join('\n');
 
-// Only the changed path needs the baseline constant, and it is the rare path. Reading it above
-// would spawn a `git show` on every gate run that leaves the templates asset alone — which is most.
 const baselineTypes = showAtTag(baseline, TYPES);
 if (baselineTypes === undefined) {
   console.log(`SKIP  ${baselineLabel} predates ${TYPES} — no comparable baseline for the constant.`);

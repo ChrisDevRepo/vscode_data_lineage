@@ -252,7 +252,6 @@ describe('buildExpandedSchemaViewGraph', () => {
 });
 
 describe('buildExpandedSchemaViewGraph — additive expansion', () => {
-  // Re-declared locally: these cases vary the expanded set rather than the model.
   const NODES: DatabaseModel['nodes'] = [
     node('[sales].[orders]', 'Orders', 'sales', 'table'),
     node('[sales].[customer]', 'Customer', 'sales', 'table'),
@@ -296,8 +295,6 @@ describe('buildExpandedSchemaViewGraph — additive expansion', () => {
   });
 
   it('gives every individual node its own bridge to a shared collapsed cluster', () => {
-    // Regression: only one bridge per (expanded schema × collapsed schema) pair existed,
-    // anchored to the first node found, so the second appeared orphaned despite its edges.
     const extra = [...EDGES, { source: '[sales].[customer]', target: '[audit].[auditorders]', type: 'body' as const }];
     const result = buildExpandedSchemaViewGraph(buildGraphologyGraph(modelOf(NODES, extra)), new Set(['sales']), null);
     const audit = result.flowNodes.find(entry => entry.type === 'schemaNode' && entry.data.schemaName === 'audit')!;
@@ -337,7 +334,6 @@ describe('buildExpandedSchemaViewGraph — additive expansion', () => {
   });
 });
 
-// ─── External-only schemas ────────────────────────────────────────────────────
 
 describe('schema views — an external-only schema', () => {
   const external = { ...node('[ext].[externalfile]', 'ExternalFile', 'ext', 'external'), externalType: 'file' as const };

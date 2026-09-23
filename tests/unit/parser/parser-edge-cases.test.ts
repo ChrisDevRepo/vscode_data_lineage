@@ -90,7 +90,6 @@ function check(testCase: ParseCase): void {
 
 const table = (cases: ParseCase[]) => it.each(cases)('$name', check);
 
-// ─── 1. Preprocessing (clean_sql) ─────────────────────────────────────────────
 
 describe('preprocessing — comments and strings', () => {
   table([
@@ -171,7 +170,6 @@ describe('preprocessing — nested block comments', () => {
   ]);
 });
 
-// ─── 2. Source extraction (FROM / JOIN) ───────────────────────────────────────
 
 describe('source extraction', () => {
   table([
@@ -242,7 +240,6 @@ describe('source extraction', () => {
   ]);
 });
 
-// ─── 3. Target extraction ─────────────────────────────────────────────────────
 
 describe('target extraction', () => {
   table([
@@ -348,12 +345,10 @@ describe('target extraction', () => {
   it('does not make DELETE FROM a target — it removes rows, writing no column data', () => {
     const result = parseSqlBody('DELETE FROM [dbo].[Target] WHERE Id = 1');
     expect(hasName(result.targets, 'Target')).toBe(false);
-    // The FROM keyword still fires source extraction, so it remains a read reference.
     expect(hasName(result.sources, 'Target')).toBe(true);
   });
 });
 
-// ─── 4. EXEC calls ────────────────────────────────────────────────────────────
 
 describe('procedure calls', () => {
   table([
@@ -387,7 +382,6 @@ describe('procedure calls', () => {
   });
 });
 
-// ─── 5. UDF extraction ────────────────────────────────────────────────────────
 
 describe('UDF extraction', () => {
   table([
@@ -424,7 +418,6 @@ describe('UDF extraction', () => {
   ]);
 });
 
-// ─── 6. CTE exclusion ─────────────────────────────────────────────────────────
 
 describe('CTE exclusion', () => {
   table([
@@ -481,7 +474,6 @@ describe('CTE exclusion', () => {
   });
 });
 
-// ─── 7. Extraction boundaries ─────────────────────────────────────────────────
 
 describe('extraction boundaries', () => {
   table([
@@ -541,7 +533,6 @@ describe('extraction boundaries', () => {
   });
 });
 
-// ─── 8. Combined complex SQL ──────────────────────────────────────────────────
 
 describe('a complete procedure body', () => {
   const sql = `
@@ -567,7 +558,6 @@ EXEC [dbo].[LogComplete]
   ]);
 });
 
-// ─── 9. Three- and four-part names ────────────────────────────────────────────
 
 describe('cross-database references', () => {
   table([
@@ -621,11 +611,8 @@ describe('cross-database references', () => {
   });
 });
 
-// ─── 10. CLR method false positives ───────────────────────────────────────────
 
 describe('CLR method calls are not cross-database references', () => {
-  // `alias.column.Method(args)` is textually a three-part name. Admitting one invents a
-  // database that does not exist, so each CLR family is guarded separately.
   table([
     {
       name: 'HierarchyID GetAncestor inside a recursive CTE',
@@ -711,7 +698,6 @@ describe('CLR method calls are not cross-database references', () => {
   });
 });
 
-// ─── 11. CETAS ────────────────────────────────────────────────────────────────
 
 describe('CETAS', () => {
   table([
@@ -767,7 +753,6 @@ describe('CETAS', () => {
   ]);
 });
 
-// ─── 12. External file and URL references ─────────────────────────────────────
 
 describe('extractExternalRefs', () => {
   const REFS: Array<{ name: string; sql: string; count: number; kind?: string }> = [
@@ -901,9 +886,6 @@ describe('extractExternalRefs', () => {
   });
 });
 
-// ─── 13. Constructs with no dedicated parse rule ──────────────────────────────
-// None of these have a rule of their own; each rides on FROM/JOIN, INSERT, or the string-
-// cleansing pass. Pinned here so a future rule change shows up as a diff against a known value.
 
 describe('PIVOT and UNPIVOT', () => {
   table([
@@ -927,9 +909,6 @@ describe('PIVOT and UNPIVOT', () => {
 });
 
 describe('OPENJSON and OPENXML', () => {
-  // Both are single-part identifiers to the ANSI FROM rule (`normalizeCaptured` drops anything
-  // under 2 dot-separated parts), and neither is followed by a `.` so `extract_udf_calls` never
-  // sees them either — the function name itself never becomes a dependency.
   table([
     {
       name: 'OPENJSON is not captured as a source',
@@ -964,9 +943,6 @@ describe('OPENQUERY and OPENDATASOURCE', () => {
     },
     {
       name: 'OPENDATASOURCE captures no source — the provider string and connection string do not leak',
-      // The four-part `OPENDATASOURCE(...).dbo.RemoteTable` reference itself is not recognized either:
-      // real T-SQL treats it as a source, but nothing here precedes `dbo.RemoteTable` with FROM/JOIN or
-      // a dot-prefixed call, so it is silently dropped rather than falsely captured.
       sql: `SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Server=Remote;Trusted_Connection=yes').dbo.RemoteTable`,
       sourceCount: 0,
     },
@@ -1086,15 +1062,11 @@ describe('TABLESAMPLE', () => {
   ]);
 });
 
-// ─── 14. Statement boundaries and pass ordering ───────────────────────────────
 
 describe('UPDATE alias target does not cross a statement boundary', () => {
   table([
     {
       name: 'an unqualified UPDATE does not claim a table read by a later statement',
-      // The alias rule exists for `UPDATE u SET ... FROM schema.table`, where the target is
-      // only knowable from the FROM. Bounded by `;` it cannot reach into the next statement,
-      // so an unrelated later read stays a source and never becomes a target.
       sql: 'UPDATE t SET col = 1;\nSELECT x FROM dbo.UnrelatedNextStatement;',
       exactSources: ['dbo.UnrelatedNextStatement'],
       noTargets: ['unrelatednextstatement'],
@@ -1111,10 +1083,6 @@ describe('UPDATE alias target does not skip past its own FROM', () => {
   table([
     {
       name: 'a temp-table target does not hand the target role to a subquery read',
-      // The alias rule captures `schema.object`, which no `#temp` name can satisfy. The skip
-      // between SET and FROM is tempered against FROM and SELECT so the rule is offered only
-      // its own statement's FROM: `#RawBatch` fails the capture and the rule yields nothing,
-      // rather than running on to the read inside NOT EXISTS and naming it the target.
       sql: [
         'UPDATE rb',
         "SET rb.ValidationMessage = COALESCE(rb.ValidationMessage + '; ', '') + 'Unknown region'",
@@ -1124,17 +1092,11 @@ describe('UPDATE alias target does not skip past its own FROM', () => {
         '    WHERE ar.RegionCode = rb.RegionCode AND ar.IsActive = 1',
         ');',
       ].join('\n'),
-      // The `'; '` literal is load-bearing: the cleansing pass removes the string, and with it
-      // the only semicolon standing between SET and the subquery FROM. A skip bounded by `;`
-      // alone is already unbounded here by the time the rule runs.
       exactSources: ['ai.ActiveRegions'],
       noTargets: ['activeregions'],
     },
     {
       name: 'a temp-table target yields no target at all rather than a wrong one',
-      // `#Staging` is the real target and cannot be captured, so the correct result is silence.
-      // A skip able to reach the second FROM would report `dbo.Reference` — a table this
-      // statement only reads — as the written object.
       sql: 'UPDATE stg SET stg.Flag = 1 FROM #Staging stg WHERE stg.id IN (SELECT id FROM [dbo].[Reference])',
       exactSources: ['dbo.Reference'],
       noTargets: ['reference'],
@@ -1146,10 +1108,6 @@ describe('CREATE TABLE is not a function call', () => {
   table([
     {
       name: 'a permanent table created in the body is not captured as a source',
-      // extract_udf_calls matches any `schema.name(`, and the suppression that rescues
-      // `INSERT INTO dbo.T (cols)` only drops a UDF source that is also a target — which a
-      // plain CREATE TABLE never is. Without an exclusion the created table becomes a read,
-      // drawing the dependency arrow backwards.
       sql: 'CREATE TABLE dbo.StageBatch (id INT NOT NULL); SELECT id FROM dbo.Source;',
       exactSources: ['dbo.Source'],
       noSources: ['stagebatch'],
@@ -1167,11 +1125,6 @@ describe('a wildcard path in a string literal is not a comment', () => {
   table([
     {
       name: 'statements after a wildcard storage path are still parsed',
-      // Pass 0 strips block comments from raw SQL, before Pass 1 neutralises string
-      // literals. A path such as '.../01/*.parquet' contains `/*`, which opens a comment
-      // that never closes — and the unterminated-comment guard then discards the whole
-      // remainder of the body, silently. Wildcards in a storage path are ordinary
-      // OPENROWSET/COPY INTO usage on Fabric and Synapse.
       sql:
         "COPY INTO dbo.Fact FROM 'https://acct.blob.core.windows.net/sales/2024/01/*.parquet' WITH (FILE_TYPE = 'PARQUET');"
         + ' INSERT INTO dbo.Dim SELECT c.id FROM stg.Customer c;'

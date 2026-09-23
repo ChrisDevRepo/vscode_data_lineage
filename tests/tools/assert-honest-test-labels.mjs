@@ -34,7 +34,6 @@ for (const name of Object.keys(pkg.scripts ?? {})) {
   }
 }
 
-// @vscode/test-cli chain for a string check.
 const laneConfig = readFileSync('.vscode-test.mjs', 'utf8');
 for (const [, label] of laneConfig.matchAll(/label:\s*'([^']+)'/g)) {
   if (AI_VOCABULARY.test(label)) {

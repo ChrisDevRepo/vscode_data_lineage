@@ -34,7 +34,6 @@ function directedGraph(
   return graph;
 }
 
-// ─── buildGraph ───────────────────────────────────────────────────────────────
 
 describe('buildGraph', () => {
   let model: DatabaseModel;
@@ -52,10 +51,8 @@ describe('buildGraph', () => {
   });
 });
 
-// ─── Trace: siblings and cross-connections ────────────────────────────────────
 
 describe('traceNodeWithLevels — siblings and shortcuts', () => {
-  // GP → P1 → X → C1, GP → P2 → X → C2, plus the P1 → C1 shortcut that skips X.
   const graph = () => directedGraph(
     ['GP', 'P1', 'P2', 'X', 'C1', 'C2'],
     [['GP', 'P1'], ['GP', 'P2'], ['P1', 'X'], ['P2', 'X'], ['X', 'C1'], ['X', 'C2'], ['P1', 'C1']],
@@ -95,11 +92,8 @@ describe('traceNodeWithLevels — siblings and shortcuts', () => {
   });
 });
 
-// ─── Trace: bidirectional edges ───────────────────────────────────────────────
 
 describe('traceNodeWithLevels — bidirectional edges', () => {
-  // SP1 both reads and writes Table and TableA, so the chain can only be walked if a
-  // bidirectional pair does not terminate the traversal.
   const graph = () => directedGraph(
     ['Table', 'SP1', 'TableA', 'SP2', 'TableB', 'SP3', 'TableC'],
     [
@@ -136,7 +130,6 @@ describe('traceNodeWithLevels — bidirectional edges', () => {
   it('stops at the depth cap, counting the bidirectional hop once', () => {
     const traced = traceNodeWithLevels(graph(), 'Table', 2, 0);
     expect([...traced.nodeIds].sort()).toEqual(['SP1', 'Table', 'TableA']);
-    // Every edge among the three admitted nodes, both halves of each pair included.
     expect([...traced.edgeIds].sort()).toEqual(['SP1→Table', 'SP1→TableA', 'TableA→SP1', 'Table→SP1']);
   });
 
@@ -157,10 +150,8 @@ describe('traceNodeWithLevels — bidirectional edges', () => {
   });
 });
 
-// ─── Trace: virtual external nodes ────────────────────────────────────────────
 
 describe('traceNodeWithLevels — virtual external nodes', () => {
-  // FileNode → SP1 → Table1: an external file participates in the trace like any node.
   const graph = () => directedGraph(
     ['FileNode', 'SP1', 'Table1'],
     [['FileNode', 'SP1'], ['SP1', 'Table1']],
@@ -186,15 +177,12 @@ describe('traceNodeWithLevels — virtual external nodes', () => {
   });
 });
 
-// ─── Trace: real Synapse model ────────────────────────────────────────────────
 
 describe('traceNodeWithLevels — Synapse dacpac', () => {
   it('never returns an edge whose endpoint is outside the traced node set', async () => {
     const model = await extractDacpac(readFileSync(testPath('AdventureWorks_sdk-style.dacpac')));
     const { graph } = buildGraph(model);
 
-    // Collected across every eligible procedure, then asserted once, so a failure names
-    // every offending procedure rather than aborting at the first.
     const phantoms: string[] = [];
     let checked = 0;
 

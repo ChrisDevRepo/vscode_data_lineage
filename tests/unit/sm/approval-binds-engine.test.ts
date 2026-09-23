@@ -103,7 +103,6 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     expect(md.includes('2 levels downstream'), `the capped side must keep its ceiling:\n${md}`).toBe(true);
   });
 
-  // ── A3/A4: the two filters with opposite effects bind as approved, not as intended ───
   it('A3: an approved exclusion removes the node and what only it reaches', () => {
     const engine = newEngine();
     engine.init({
@@ -132,7 +131,6 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     expect(analyzed(engine).has('n3'), 'a passthrough keeps the path through it open').toBe(true);
   });
 
-  // ── A5: the gate can never display a filter the engine did not accept ────────────────
   it('A5: an unresolvable filter fails init, so no plan reaches the gate', () => {
     const engine = newEngine();
     const result = engine.init({
@@ -143,10 +141,6 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     expect((result as { unresolved_excludeNodeIds?: string[] }).unresolved_excludeNodeIds?.includes('nowhere') === true, 'the rejection names the id that could not be resolved').toBe(true);
   });
 
-  // ── A6: the discovery memo shown at the gate is the memo the engine runs ─────────
-  // The memo is composed once, at proposal time, and cached on the reviewed proposal.
-  // Approval reads that cached text and hands it to the engine verbatim; a memo composed
-  // again at approval would put text in front of the model that the user never reviewed.
   const EMPTY_FILTER = {
     schemas: [], types: [], hideIsolated: false, focusSchemas: [],
     showExternalRefs: false, externalRefTypes: [],
@@ -172,7 +166,6 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
 
     const memo = 'The user asked which reports depend on n0; n0 feeds a two-level chain.';
     session.attachDiscoverySummary(revision, memo, epoch);
-    // Read before activation, exactly as the approval path does — activation clears the proposal.
     const reviewed = session.pendingExploration!.discoverySummary;
     expect(reviewed === memo, 'the attached memo is the reviewed proposal text, not a copy').toBe(true);
 

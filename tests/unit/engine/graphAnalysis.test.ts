@@ -29,7 +29,6 @@ function externalGraph(nodes: Array<[string, Record<string, unknown>]>, edges: A
   return graph;
 }
 
-// ─── analyzeIslands ──────────────────────────────────────────────────────────
 
 describe('analyzeIslands', () => {
   const twoPairs = () => makeGraph(
@@ -75,7 +74,6 @@ describe('analyzeIslands', () => {
   });
 });
 
-// ─── analyzeHubs ─────────────────────────────────────────────────────────────
 
 describe('analyzeHubs', () => {
   const star = () => makeGraph(
@@ -138,7 +136,6 @@ describe('analyzeHubs', () => {
   });
 });
 
-// ─── analyzeOrphans ──────────────────────────────────────────────────────────
 
 describe('analyzeOrphans', () => {
   const mixed = () => makeGraph(
@@ -161,7 +158,6 @@ describe('analyzeOrphans', () => {
   });
 
   it('groups orphans by schema and type', () => {
-    // C is dbo/table, D is sales/view — two groups, not one bucket of two nodes.
     expect(analyzeOrphans(mixed()).groups).toHaveLength(2);
   });
 
@@ -174,7 +170,6 @@ describe('analyzeOrphans', () => {
   });
 });
 
-// ─── analyzeLongestPath ──────────────────────────────────────────────────────
 
 describe('analyzeLongestPath', () => {
   const chain = () => makeGraph(
@@ -222,8 +217,6 @@ describe('analyzeLongestPath', () => {
     }
   });
 
-  // A chain that enters a two-node cycle and leaves it again. The cycle must not truncate the
-  // chain at its exit: the tail beyond the cycle belongs to the same dependency path.
   const throughCycle = (ids: string[]) => makeGraph(
     ids.map(id => ({ id })),
     [['X1', 'X2'], ['X2', 'X3'], ['X3', 'X4'], ['X4', 'B'], ['B', 'C'], ['C', 'B'], ['C', 'D']],
@@ -246,11 +239,6 @@ describe('analyzeLongestPath', () => {
     expect(analyzeLongestPath(emptyGraph(), 2).groups).toEqual([]);
   });
 
-  // Two roots: one crosses only singleton components (component-hop depth == real length), the
-  // other crosses a 5-node cycle that condenses to a single component (component-hop depth 2, but
-  // a real length of 6 once expanded). Ranking/capping candidates by component-hop depth instead
-  // of real expanded length would rank the shorter singleton chain first and drop the true longest
-  // chain once `maxChains` is reached.
   const competingRoots = () => makeGraph(
     [
       { id: 'R1a' }, { id: 'R1b' }, { id: 'R1c' }, { id: 'R1d' }, { id: 'R1e' },
@@ -268,10 +256,6 @@ describe('analyzeLongestPath', () => {
     expect(group.meta?.depth).toBe(6);
   });
 
-  // One root, two branches. The cycle branch condenses to a single component, so scoring a branch
-  // by component hops values it at 1 and loses to the 3-hop singleton branch — while the real
-  // object count is 5 against 3. Ranking must happen in real nodes, inside the branch choice and
-  // not only across roots.
   const singleRootBranches = () => makeGraph(
     [
       { id: 'R' },
@@ -290,9 +274,6 @@ describe('analyzeLongestPath', () => {
     expect(group.meta?.depth).toBe(5);
   });
 
-  // The chain enters the cycle at K1 and can leave it immediately for the sink Z. Walking the
-  // component to K5 reaches five objects; leaving reaches two. Stopping inside a component must
-  // therefore stay a candidate against every successor.
   const tailBeatsSuccessor = () => makeGraph(
     [
       { id: 'R' },
@@ -311,8 +292,6 @@ describe('analyzeLongestPath', () => {
     expect(group.meta?.depth).toBe(5);
   });
 
-  // T4: a chain whose far end is a multi-node cycle. Every member of the cycle is a real object on
-  // the chain and counts toward its depth.
   const endsInCycle = () => makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'E' }],
     [['A', 'B'], ['B', 'C'], ['C', 'D'], ['D', 'E'], ['E', 'C']],
@@ -324,8 +303,6 @@ describe('analyzeLongestPath', () => {
     expect(group.meta?.depth).toBe(4);
   });
 
-  // Two bridges between the same pair of components: the first edge in walk order is a short
-  // sink; the second is a longer chain. Keeping only the first bridge would rank the short arm.
   const twoBridges = () => makeGraph(
     [
       { id: 'A1' }, { id: 'A2' },
@@ -346,7 +323,6 @@ describe('analyzeLongestPath', () => {
   });
 });
 
-// ─── analyzeCycles ───────────────────────────────────────────────────────────
 
 describe('analyzeCycles', () => {
   const triangle = () => makeGraph(
@@ -402,7 +378,6 @@ describe('analyzeCycles', () => {
     selfLoop.addEdgeWithKey('X→X', 'X', 'X', { type: 'body' });
     const result = analyzeCycles(selfLoop);
     expect(result.type).toBe('cycles');
-    // A self-loop is a strongly connected component of one node; the size>=2 filter drops it.
     expect(result.groups).toEqual([]);
   });
 
@@ -411,7 +386,6 @@ describe('analyzeCycles', () => {
   });
 });
 
-// ─── analyzeExternalRefs ─────────────────────────────────────────────────────
 
 describe('analyzeExternalRefs', () => {
   it('labels the result external-refs and summarises an empty graph', () => {

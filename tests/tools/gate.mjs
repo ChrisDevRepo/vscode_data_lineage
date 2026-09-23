@@ -60,8 +60,6 @@ const results = [];
 for (const step of STEPS) {
   process.stdout.write(`\n──── ${step.name}\n`);
   if (step.skip) {
-    // A skipped step never spawns — nothing to time, capture, or log. It still gets a row, so a
-    // reader of the summary sees why a step is missing instead of having to notice it is.
     process.stdout.write(`SKIP  ${step.name}  (${step.skip})\n`);
     results.push({ name: step.name, skipped: true, reason: step.skip });
     continue;
@@ -79,9 +77,6 @@ for (const step of STEPS) {
     skipped: false,
     ok,
     logPath,
-    // A step that never started is reported differently from one that ran and failed. `viaShim`
-    // marks the degraded PATH lookup, which changes what a failure likely means — npm-launcher.mjs
-    // documents that callers report it, and this is the caller.
     note: run.error ? `did not start: ${run.error.message}`
       : run.status === null ? 'killed by signal'
       : !ok && step.viaShim ? 'ran via the PATH npm shim'
@@ -102,16 +97,11 @@ for (const r of results) {
   process.stdout.write(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name.padEnd(width)}  ${r.seconds}s${note}${log}\n`);
 }
 
-// Skipped steps are neither green nor red — they never ran — so the tally counts them apart from
-// the green/total ratio instead of letting them inflate or deflate it silently.
 const judged = results.filter((r) => !r.skipped);
 const failed = judged.filter((r) => !r.ok);
 const skipped = results.filter((r) => r.skipped);
 process.stdout.write(`${'='.repeat(width + 18)}\n`);
 process.stdout.write(`${judged.length - failed.length}/${judged.length} green, ${skipped.length} skipped\n`);
-// Stated on every run, green or red. A gate summary is quoted as a result, and every step above
-// runs against a stubbed `vscode` and scripted doubles — so without this line a reader can take a
-// green gate for evidence about model behaviour, which no step here produces.
 process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n');
 process.stdout.write(
   'NOT covered: extension-host behaviour (npm run test:edh — smoke lanes only, still 0 '

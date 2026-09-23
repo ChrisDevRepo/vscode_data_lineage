@@ -43,9 +43,6 @@ const fixtures = readdirSync(FIXTURE_DIR)
 
 if (fixtures.length === 0) problems.push(`${FIXTURE_DIR} holds no .sql fixtures.`);
 
-// A rule may also be exercised by SQL written inline in a parser test rather than by a fixture
-// file. Both are real coverage, so both count — the check is "is this rule reached by anything",
-// not "is it reached the preferred way".
 const corpus = [
   ...fixtures,
   ...readdirSync('tests/unit/parser')
@@ -56,8 +53,6 @@ const corpus = [
 const rules = yaml.load(readFileSync('assets/defaultParseRules.yaml', 'utf8')).rules ?? [];
 for (const rule of rules) {
   if (rule.enabled === false) continue;
-  // `clean_sql` documents the built-in TypeScript cleansing pipeline; its pattern is read-only
-  // and is not applied as an extraction rule. See assets/defaultParseRules.yaml.
   if (rule.category === 'preprocessing') continue;
 
   let pattern;
@@ -77,7 +72,6 @@ for (const rule of rules) {
   }
 }
 
-// ─── 2. Every exported core symbol is named by a test ─────────────────────────
 function testSources() {
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = join(dir, entry.name);

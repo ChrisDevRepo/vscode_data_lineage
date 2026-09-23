@@ -98,11 +98,6 @@ describe('AdventureWorks baseline — analysis', () => {
 });
 
 describe('AdventureWorks baseline — named edges', () => {
-  // `spImportOrders` reads ActiveRegions inside a `NOT EXISTS` subquery and writes nothing to it.
-  // The write direction was invented by `extract_update_alias_target`, whose skip between SET and
-  // FROM ran past the statement's own `FROM #RawBatch` — unbracketable as a capture — and landed on
-  // the subquery read. Named here rather than left to the edge count, because the count alone
-  // cannot say which edge came back.
   it('does not write [ai].[activeregions] from [ai].[spimportorders]', () => {
     expect(graph.hasEdge('[ai].[spimportorders]', '[ai].[activeregions]')).toBe(false);
   });

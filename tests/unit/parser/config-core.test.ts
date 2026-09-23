@@ -117,22 +117,16 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
 
 describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
   it('rejects a scalar value under a template key', () => {
-    // A top-level scalar under a non-schemaVersion key must still reject (every key but
-    // schemaVersion must be a template object).
     expect(() => parseAiOutputTemplatesYaml('schemaVersion: 1\nsummary: "just a string"\n')).toThrow();
   });
 
   it('accepts a bare top-level schemaVersion scalar and round-trips it', () => {
-    // A bare top-level schemaVersion scalar must parse cleanly.
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
     expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: 2\n'); }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(2);
   });
 
   it('coerces a string schemaVersion "1" to numeric 1', () => {
-    // A hand-authored string schemaVersion must coerce to a number so the extension.ts `!==`
-    // gate (strict compare against the numeric contract version) matches instead of silently
-    // disabling the overlay.
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
     expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: "1"\n'); }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(1);

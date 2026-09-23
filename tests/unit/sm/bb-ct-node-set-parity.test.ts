@@ -101,9 +101,6 @@ function runCt(): NavigationEngine {
         });
       }
       if (id === 'carrier') {
-        // `carrier` declares `amount` itself and has no further upstream in this fixture: the
-        // chain terminates here with an explicit originates-here entry, not an empty array — an
-        // empty `column_flow` is only accepted from a focus that declares none of the active columns.
         return engine.submitFindings({
           ...base,
           verdict: 'passthrough',
@@ -314,8 +311,6 @@ describe('BB <-> CT node-set parity: schema-exclusion border', () => {
       if (ctx.done || !ctx.focus_node) break;
       const id = ctx.focus_node.id;
       const base = { focus_node_id: id, sections: [{ angle: 'business' as const, text: id }], summary: id, verdict: 'analyze' as const };
-      // Both arms explicitly ask about the excluded-schema neighbor too — the border must refuse
-      // the route regardless of the model naming it, not merely because nothing asked for it.
       const outcome = id === 'root'
         ? engine.submitFindings({
           ...base,
@@ -398,17 +393,12 @@ describe('BB <-> CT node-set parity: asymmetric per-side depth border', () => {
               ...(ct ? { column_flow: [{ out_col: 'amount', upstream_columns: [{ node: 'up1', col: 'amount' }] }] } : {}),
             });
           case 'up1':
-            // Terminal: up2 sits past the upstream depth-1 border and is deferred, never asked.
             return engine.submitFindings({
               ...base,
               verdict: 'passthrough',
               ...(ct ? { column_flow: [{ out_col: 'amount', upstream_columns: [] }] } : {}),
             });
           case 'down1':
-            // root's own column_flow entry auto-carries `amount` onto its immediate downstream
-            // reader (`onDownstreamSide`, smBase.ts ~2122) even though down1 does not declare it —
-            // `verdict: 'passthrough'` with no column_flow is the documented "declares none of the
-            // active columns" escape that ends the chain here without fabricating an entry.
             return engine.submitFindings({ ...base, verdict: 'passthrough', questions: [{ nodeId: 'down2', question: 'who consumes this' }] });
           case 'down2':
             return engine.submitFindings({ ...base, verdict: 'passthrough' });
@@ -472,7 +462,6 @@ describe('BB <-> CT node-set parity: fixed-direction out_of_direction disclosure
       const id = ctx.focus_node.id;
       if (id === 'root') {
         const downNeighbor = (ctx.neighbors ?? []).find(n => n.id === 'down');
-        // BB never computes the flag (`checkOutOfDirection = this.tracer !== null`); CT must.
         if (ct) {
           expect(downNeighbor?.out_of_direction, 'CT must disclose the disapproved-direction neighbor').toBe(true);
           sawDisclosure = true;
@@ -481,8 +470,6 @@ describe('BB <-> CT node-set parity: fixed-direction out_of_direction disclosure
         }
       }
       const base = { focus_node_id: id, sections: [{ angle: 'business' as const, text: id }], summary: id, verdict: 'analyze' as const };
-      // Both arms explicitly ask about the disapproved-direction neighbor too — the route must be
-      // refused regardless of the model naming it, exercising the same predicate the disclosure reads.
       const outcome = id === 'root'
         ? engine.submitFindings({
           ...base,

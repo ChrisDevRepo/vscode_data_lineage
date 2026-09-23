@@ -81,7 +81,6 @@ describe('external file references — OPENROWSET', () => {
   });
 });
 
-// ─── COPY INTO and BULK INSERT ────────────────────────────────────────────────
 
 describe('external file references — COPY INTO and BULK INSERT', () => {
   const built = () => buildModel([
@@ -114,7 +113,6 @@ describe('external file references — COPY INTO and BULK INSERT', () => {
   });
 });
 
-// ─── Cross-database references ────────────────────────────────────────────────
 
 describe('cross-database references', () => {
   it('creates a db node holding the database name and schema-qualified object', () => {
@@ -172,7 +170,6 @@ describe('cross-database references', () => {
   });
 });
 
-// ─── CETAS ────────────────────────────────────────────────────────────────────
 
 describe('CETAS external-table target', () => {
   it('links the procedure to the external table it writes', () => {
@@ -199,7 +196,6 @@ describe('CETAS external-table target', () => {
   });
 });
 
-// ─── Mixed references and budget ──────────────────────────────────────────────
 
 describe('mixed local, file and cross-database references', () => {
   const built = () => buildModel(
@@ -268,11 +264,8 @@ describe('virtual-node suppression', () => {
   });
 });
 
-// ─── CLR method suppression ───────────────────────────────────────────────────
 
 describe('CLR method suppression', () => {
-  // A dependency reported as [EMP_cte].[OrganizationNode].[GetAncestor] is a HierarchyID
-  // method call, not [database].[schema].[object]. Admitting it invents a database.
   it.each([
     ['HierarchyID GetAncestor', '[EMP_cte].[OrganizationNode].[GetAncestor]'],
     ['HierarchyID ToString', '[EMP_cte].[OrganizationNode].[ToString]'],

@@ -74,7 +74,6 @@ describe('columnTraceView', () => {
       config: DEFAULT_CONFIG,
     });
 
-    // Neither shape invents a node for a hop that isn't a real endpoint.
     expect(endpointView.nodes.map((n) => n.id).sort()).toEqual(['dbo.s', 'dbo.t']);
     expect(viaNodeView.nodes.map((n) => n.id).sort()).toEqual(['dbo.s', 'dbo.t']);
 
@@ -83,7 +82,6 @@ describe('columnTraceView', () => {
     const endpointEdge = endpointView.edges[0];
     const viaEdge = viaNodeView.edges[0];
 
-    // Same rendering for the shared parts of the two shapes.
     expect(viaEdge.source).toBe(endpointEdge.source);
     expect(viaEdge.target).toBe(endpointEdge.target);
     expect(viaEdge.sourceHandle).toBe(endpointEdge.sourceHandle);
@@ -217,7 +215,6 @@ describe('columnTraceView', () => {
     const sourceHandle = columnHandleId('Amount', 'source');
     const targetHandle = columnHandleId('Amount', 'target');
     expect(sourceHandle).not.toBe(targetHandle);
-    // Same normalised column identity underlies both handles.
     expect(columnHandleId('[Amount]', 'source')).toBe(sourceHandle);
   });
 
@@ -251,7 +248,6 @@ describe('columnTraceView', () => {
 
     const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     expect(findRow(view, 'dbo.s', '[Amount]').dataType).toBe('decimal(18,2)');
-    // No declared type on the target — no invented one either.
     expect(findRow(view, 'dbo.t', 'Amount').dataType).toBeUndefined();
   });
 
@@ -267,8 +263,6 @@ describe('columnTraceView', () => {
   });
 
   it('puts the same classification on both legs of a relation routed through the hop', () => {
-    // The split into two legs is a drawing decision only — the value's story is one fact, so both
-    // halves name the same classes and the same note.
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [
       { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total', transforms: ['aggregate'], note: 'SUM of Qty' },
@@ -282,8 +276,6 @@ describe('columnTraceView', () => {
   });
 
   it('merges the notes with the classes on a leg two relations share', () => {
-    // Both relations reach dbo.t.Total through dbo.p, so their outbound halves are one line: every
-    // class on its chip keeps the note that explains it.
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.r'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [
       { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total', transforms: ['compute'], note: 'Qty * 2' },
@@ -321,7 +313,6 @@ describe('columnTraceView', () => {
 describe('buildColumnTraceView — routing through the analysing hop', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
 
-  // The shape from a real trace: two feeders whose values a procedure combines into one output.
   const relations: ColumnTraceRelation[] = [
     { hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total' },
     { hopNode: 'dbo.p', fromNode: 'dbo.s2', fromCol: 'Price', toNode: 'dbo.t', toCol: 'Total' },
@@ -334,7 +325,6 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     expect(legs).toContain('dbo.s1.Qty->dbo.p.Qty');
     expect(legs).toContain('dbo.s2.Price->dbo.p.Price');
     expect(legs).toContain('dbo.p.Total->dbo.t.Total');
-    // No line goes straight from a feeder to the target.
     expect(legs.some((leg) => leg.startsWith('dbo.s1.Qty->dbo.t'))).toBe(false);
   });
 
@@ -383,8 +373,6 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
   });
 
   it('bridges the hop\'s two ports, so a thread crossing it does not end there', () => {
-    // The reported defect: TotalRevenue on the target reached the procedure's output port and
-    // stopped, because nothing links that port to the input port the value arrived on.
     const view = buildColumnTraceView({
       relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s1', fromCol: 'Amt', toNode: 'dbo.t', toCol: 'Amount' }],
       objects,
@@ -399,7 +387,6 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
       { nodeId: 'dbo.p', fromColumn: 'Qty', toColumn: 'Total' },
       { nodeId: 'dbo.p', fromColumn: 'Price', toColumn: 'Total' },
     ]);
-    // Qty and Price meet at the same output port; neither is bridged to the other.
     expect(view.portBridges.some((b) => b.fromColumn === 'Qty' && b.toColumn === 'Price')).toBe(false);
   });
 
@@ -604,7 +591,6 @@ describe('columnThread — directed trace cone', () => {
     mkObj('ai.SalesStaging'), mkObj('ai.vwConsolidatedSales', 'view'), mkObj('ai.PriceMaster'),
     mkObj('ai.vwPriceList', 'view'), mkObj('ai.spBuildSalesReport', 'procedure'), mkObj('ai.FactSalesReport'),
   );
-  // The shape of the reported trace: Qty and UnitPrice both feed TotalRevenue through the procedure.
   const relations: ColumnTraceRelation[] = [
     { hopNode: 'ai.vwConsolidatedSales', fromNode: 'ai.SalesStaging', fromCol: 'OrderQty', toNode: 'ai.vwConsolidatedSales', toCol: 'Qty' },
     { hopNode: 'ai.vwPriceList', fromNode: 'ai.PriceMaster', fromCol: 'ListPrice', toNode: 'ai.vwPriceList', toCol: 'UnitPrice' },

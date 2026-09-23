@@ -43,12 +43,8 @@ describe('graph build above the tracked fixture size', () => {
     expect(result.flowEdges).toHaveLength(model.edges.length);
     expect(result.graph.order).toBe(size);
 
-    // A layout that silently degraded would stack every node on the origin.
     const distinct = new Set((result.flowNodes as FlowNode[]).map(n => `${n.position.x},${n.position.y}`));
     expect(distinct.size).toBeGreaterThan(size / 2);
-    // Dagre is synchronous and takes seconds at this size — several times longer again under the
-    // coverage run's instrumentation. The generous ceiling keeps that a printed number rather than
-    // a machine-dependent gate failure.
   }, 120_000);
 
   it('builds without layout when the render limit blocks the object surface', () => {
@@ -116,7 +112,6 @@ describe('scoped surface ceiling', () => {
     const traced = traceNodeWithLevels(graph, origin, TRACE_ALL_LEVELS, TRACE_ALL_LEVELS);
     console.log(`all-levels trace from ${origin}: ${traced.nodeIds.size} of ${model.nodes.length} nodes`);
 
-    // A connected model has no structural bound below its own size: the trace reaches the whole graph.
     expect(traced.nodeIds.size).toBe(1000);
   });
 

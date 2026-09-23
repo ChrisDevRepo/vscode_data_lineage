@@ -46,7 +46,6 @@ describe('Over-budget neighbour deferral (src/ai/sm/smBase.ts requiredNeighborId
       origin: 'n0', question: 'trace downstream', direction: 'downstream',
       depthIntent: { kind: 'default_start' },
     });
-    // Init BFS-seeds {n0, n1, n2, n3} (depth ≤ 3) — 4 nodes. A cap of 4 leaves no room for n4.
     const budget = createTurnTokenBudget({ explorationNodeCap: 4 });
 
     for (const focusId of ['n0', 'n1', 'n2']) {
@@ -56,24 +55,19 @@ describe('Over-budget neighbour deferral (src/ai/sm/smBase.ts requiredNeighborId
       expect('error' in result, `hop on ${focusId} must not reject: ${JSON.stringify(result)}`).toBe(false);
     }
 
-    // Hop at n3: n4 is not yet in scope; committing it would grow scope to 5 nodes > cap 4.
     let ctx = engine.getHopContext() as { focus_node?: { id: string }; done?: boolean };
     expect(ctx.focus_node?.id, 'fourth hop is n3').toBe('n3');
     const result = driveOneHop(engine, 'n3', budget);
     expect('error' in result, `hop on n3 must not reject: ${JSON.stringify(result)}`).toBe(false);
 
-    // n4 is never visited or queued — but it must not vanish with no trace: it is a deferred
-    // 'budget' follow-up, the same shape a depth-border deferral takes.
     const deferred = engine.deferredQuestions;
     const n4Lead = deferred.find(d => d.nodeId === 'n4');
     expect(n4Lead !== undefined, `n4 must appear as a deferred follow-up, got: ${JSON.stringify(deferred)}`).toBe(true);
     expect(n4Lead?.reason, 'the deferral reason must name the budget, not the schema/depth border').toBe('budget');
 
-    // No fifth hop — the engine never dispatches n4.
     ctx = engine.getHopContext() as { focus_node?: { id: string }; done?: boolean };
     expect(ctx.done, 'no fifth hop is dispatched — n4 was deferred, not enqueued').toBe(true);
 
-    // The drop is logged, not silent.
     expect(
       logs.some(l => l.includes('[Budget]') && l.includes('n4')),
       `expected a [Budget] debug log line naming n4, got:\n${logs.join('\n')}`,
@@ -97,7 +91,6 @@ describe('Over-budget neighbour deferral (src/ai/sm/smBase.ts requiredNeighborId
     const before = engine.pendingLeads.find(l => l.nodeId === 'n4');
     expect(before?.reason, 'precondition: the live engine holds a budget lead for n4').toBe('budget');
 
-    // Serialize, then rehydrate onto a fresh engine — the strict current-format checkpoint boundary.
     const snapshot = engine.toJSON();
     const restoredLogs: string[] = [];
     const restored = NavigationEngine.fromJSON(
@@ -119,8 +112,6 @@ describe('Over-budget neighbour deferral (src/ai/sm/smBase.ts requiredNeighborId
       origin: 'n0', question: 'trace downstream', direction: 'downstream',
       depthIntent: { kind: 'default_start' },
     });
-    // Ample budget: nothing is ever deferred, so no lead of any kind exists — the shape an older
-    // build (before 'budget' was ever produced) would have persisted.
     const roomyBudget = createTurnTokenBudget({ explorationNodeCap: 150 });
     engine.getHopContext();
     driveOneHop(engine, 'n0', roomyBudget);

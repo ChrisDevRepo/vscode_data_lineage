@@ -66,14 +66,10 @@ if (!existsSync(targetedDir)) throw new Error(`${targetedDir} not found`);
 const files = readdirSync(targetedDir).filter(name => name.endsWith('.sql')).sort();
 
 describe('SQL fixture corpus', () => {
-  // A count floor, not an exact match: fixtures are expected to be added, never to disappear.
-  // `length > 0` would still pass if the glob broke and matched a single file.
   it('is not empty — the corpus is what makes this suite meaningful', () => {
     expect(files.length).toBeGreaterThanOrEqual(55);
   });
 
-  // parseExpectation returning null downgrades a fixture to stability-only, so a deleted or
-  // mistyped EXPECT line silently removes its assertions while the suite stays green.
   it('keeps an EXPECT annotation on every fixture that carries one today', () => {
     const annotated = files.filter(
       file => parseExpectation(readFileSync(testPath('sql/targeted', file), 'utf-8')) !== null,
@@ -93,8 +89,6 @@ describe('SQL fixture corpus', () => {
     const expectation = parseExpectation(sql);
     if (!expectation) return; // Stability-only fixture: parsing without crashing is the assertion.
 
-    // Collected, then asserted once, so a failure lists every miss in the fixture rather
-    // than stopping at the first — the whole point of driving the corpus from one place.
     const misses: string[] = [];
     for (const name of expectation.sources) {
       if (!includes(result.sources, name)) misses.push(`source ${name} not found`);

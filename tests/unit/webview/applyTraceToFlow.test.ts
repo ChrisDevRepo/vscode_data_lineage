@@ -136,11 +136,8 @@ describe('applyTraceToFlow — layout', () => {
   });
 });
 
-// ─── Out-of-filter synthesis ─────────────────────────────────────────────────
 
 describe('applyTraceToFlow — out-of-filter synthesis', () => {
-  // A path trace may run through objects the active filter hides. Those must be injected into the
-  // rendered flow rather than dropped, or the path is drawn with a gap where a real object sits.
   const modelNode = (id: string, extra: Record<string, unknown> = {}) => ({
     id, schema: 'dbo', name: id, fullName: `[dbo].[${id}]`, type: 'table' as const, columns: [], ...extra,
   });
