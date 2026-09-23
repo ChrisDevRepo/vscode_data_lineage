@@ -71,12 +71,9 @@ describe('decorateFlowNodes — identity across a drag', () => {
     const before = decorateFlowNodes(nodes, inputs, cache);
     const after = decorateFlowNodes(dragOne(nodes, 0), inputs, cache);
 
-    // Not "all but the dragged node" — every node keeps its data, the dragged one included, so its
-    // own renderer skips too and React Flow only moves the transform.
     const churned = after.filter((node, i) => node.data !== before[i].data);
     expect(churned).toHaveLength(0);
 
-    // Only the dragged node is a new object at all, and only because its position moved.
     const rebuilt = after.filter((node, i) => node !== before[i]);
     expect(rebuilt.map(n => n.id)).toEqual([nodes[0].id]);
   });
@@ -111,9 +108,6 @@ describe('decorateFlowNodes — decoration correctness', () => {
     expect(after[11].data.dimmed).toBe(false);
     expect(after[12].data.dimmed).toBe(true);
 
-    // The cache must not suppress a real change: the highlighted node and every node the highlight
-    // dims are rebuilt. The level-1 neighbour is the one node whose decoration genuinely did not
-    // change, so keeping its reference is correct rather than stale.
     expect(after[10].data).not.toBe(before[10].data);
     expect(after[12].data).not.toBe(before[12].data);
     const unchanged = after.filter((node, i) => node.data === before[i].data);

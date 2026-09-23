@@ -93,7 +93,6 @@ export function explorationFacts(
   shared: ExplorationFactsShared,
 ): InstructionPlanFacts {
   if (analysisMode === 'ct') {
-    // CT locks its targets at engine init; a missing set here is engine-state drift, not model input.
     if (!targetColumns?.length) throw new Error('InstructionPlan: CT requires at least one target column.');
     return { analysisMode: 'ct', targetColumns: targetColumns as readonly [string, ...string[]], ...shared };
   }
@@ -255,7 +254,6 @@ function buildContext(
 ): InstructionContext {
   const analysisMode = facts?.analysisMode;
   const targets = facts?.analysisMode === 'ct' ? facts.targetColumns : undefined;
-  // Runtime-only guards: the BB-forbids / CT-requires targetColumns invariant is compile-time (discriminated `InstructionPlanFacts`), but classification/mode presence for active & synthesis guards live engine-state drift the type system cannot see.
   if ((phase === 'active' || phase === 'synthesis') && !facts?.classification) {
     throw new Error(`InstructionPlan: ${phase} requires a locked classification.`);
   }
@@ -366,10 +364,6 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     if (!input.requiredTerminalTool) {
       throw new Error(`InstructionPlan: multi-tool required choice in ${phase} needs a graph-enforced terminal tool.`);
     }
-    // VS Code LanguageModelChatToolMode.Required: some models only support a single
-    // tool in that mode. Copilot Chat participants must send Auto when more than one
-    // tool is visible (official chat-sample: Required only after narrowing to one tool).
-    // The graph still names requiredTerminalTool and retries a tool-less generation.
     toolChoice = 'auto';
   }
   const context = buildContext('converse', phase, frozenFacts, toolNames);

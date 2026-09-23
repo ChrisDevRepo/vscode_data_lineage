@@ -10,7 +10,6 @@ import { exportToDrawio, exportSchemaOverviewToDrawio } from '../../../src/expor
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData, SchemaNodeData } from '../../../src/engine/types';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeNode(id: string, label: string, schema: string, x = 0, y = 0): FlowNode<CustomNodeData> {
   return {

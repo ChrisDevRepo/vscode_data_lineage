@@ -61,10 +61,8 @@ export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 
 export const EntryDetectionSchema = z.object({
   entry: z.enum(['column_trace', 'visual_render', 'discovery'])
     .describe('Discrete entry route selected from the user request.'),
-  // Omitted, explicit null, and empty [] all mean "no target columns" — [] is a common model habit on non-trace routes and must not hard-reject the whole detection.
   targetColumns: z.preprocess(
     value => (Array.isArray(value) && value.length === 0 ? null : value),
-    // The null-unwrap sits INSIDE so the decoded null reaches the nullable branch before the array schema rejects it (Zod v4 pipes run their transform before outer unions apply).
     coercedStringNull(coercedStringArray(ColumnIdentifierSchema).nullable().default(null)),
   )
     .describe('Explicit user-named columns for column_trace; null for discovery or visual_render.'),

@@ -45,7 +45,6 @@ export function assertToolPairingWellFormed(messages: readonly BaseMessage[]): v
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (!ToolMessage.isInstance(message)) continue;
-    // Consecutive tool messages all answer the same assistant turn; walk back to its anchor.
     let anchor = i - 1;
     while (anchor >= 0 && ToolMessage.isInstance(messages[anchor])) anchor--;
     const assistant = anchor >= 0 ? messages[anchor] : undefined;

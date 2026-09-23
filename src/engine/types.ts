@@ -250,8 +250,8 @@ export interface XmlProperty {
   '@_Name': string;
   /** The value of the property, if provided as an attribute. */
   '@_Value'?: string;
-  /** The value of the property, if provided as an element text node. */
-  Value?: string | { '#text': string };
+  /** The value of the property, if provided as element text or CDATA (kept under `__cdata`). */
+  Value?: string | { '#text'?: string; __cdata?: string | string[] };
 }
 
 /**
@@ -362,7 +362,6 @@ export function formatColumnType(
 ): string {
   const t = typeName.toLowerCase();
 
-  // Types that never need length/precision
   if (['int', 'bigint', 'smallint', 'tinyint', 'bit', 'float', 'real',
     'money', 'smallmoney', 'date', 'datetime', 'datetime2', 'smalldatetime',
     'datetimeoffset', 'time', 'timestamp', 'uniqueidentifier', 'xml',
@@ -371,17 +370,14 @@ export function formatColumnType(
     return typeName;
   }
 
-  // String/binary types: use max_length (-1 = max)
   if (['varchar', 'nvarchar', 'char', 'nchar', 'varbinary', 'binary'].includes(t)) {
     if (maxLength === '-1') return `${typeName}(max)`;
-    // nvarchar/nchar store 2 bytes per char in a byte count — display char count
     const len = (t.startsWith('n') && maxLength && !lengthInChars)
       ? String(Math.floor(parseInt(maxLength, 10) / 2))
       : maxLength;
     return len ? `${typeName}(${len})` : typeName;
   }
 
-  // Decimal/numeric: precision,scale
   if (['decimal', 'numeric'].includes(t)) {
     if (precision && scale) return `${typeName}(${precision},${scale})`;
     if (precision) return `${typeName}(${precision})`;

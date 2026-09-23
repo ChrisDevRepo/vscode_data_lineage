@@ -63,7 +63,6 @@ export interface ModelConnectivity {
  * weakly-connected schema components (with isolated schemas flagged).
  */
 export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectivity {
-  // schema universe = declared schemas ∪ schemas seen on nodes (defence against drift)
   const schemaUniverse = new Set<string>();
   const objectCounts = new Map<string, number>();
   const nodeSchema = new Map<string, string>();
@@ -78,7 +77,6 @@ export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectiv
     objectCounts.set(node.schema, (objectCounts.get(node.schema) ?? 0) + 1);
   }
 
-  // directed schema→schema aggregation, intra-schema edges skipped
   const rawEdges = new Map<string, number>();
   for (const edge of model.edges) {
     const src = nodeSchema.get(edge.source);
@@ -87,13 +85,11 @@ export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectiv
     addRawSchemaEdge(rawEdges, src, tgt);
   }
 
-  // collapse antiparallel pairs into single bidirectional entries
   const interSchemaEdges: SchemaInterEdge[] = collapseRawSchemaEdges(rawEdges).map((e) => ({
     source: e.sourceSchema, target: e.targetSchema, count: e.count, reverseCount: e.reverseCount, totalCount: e.totalCount, bidirectional: e.bidirectional,
   }));
   interSchemaEdges.sort((x, y) => x.source.localeCompare(y.source) || x.target.localeCompare(y.target));
 
-  // weakly-connected components over the undirected schema graph
   const components: SchemaComponent[] = groupByWeaklyConnected(
     [...schemaUniverse],
     interSchemaEdges.map((e) => [e.source, e.target] as const),

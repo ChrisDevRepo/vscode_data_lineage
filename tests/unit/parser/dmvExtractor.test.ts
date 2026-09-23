@@ -16,7 +16,6 @@ import { loadParseRules, rootPath } from '../helpers/testUtils';
 describe('DMV Extractor', () => {
   loadParseRules();
 
-// ─── Test Data Helpers ──────────────────────────────────────────────────────
 
 function cell(value: string): DbCellValue {
   return { displayValue: value, isNull: false };
@@ -31,10 +30,8 @@ function makeResult(columns: IDbColumn[], rows: DbCellValue[][]): SimpleExecuteR
   return { rowCount: rows.length, columnInfo: columns, rows };
 }
 
-// ─── Synthetic DMV Data ─────────────────────────────────────────────────────
 
 function buildSyntheticResults(): DmvResults {
-  // 3 tables, 1 view, 2 procedures
   const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
   const nodesRows: DbCellValue[][] = [
     [cell('dbo'), cell('Customers'), cell('U '), nullCell()],
@@ -45,7 +42,6 @@ function buildSyntheticResults(): DmvResults {
     [cell('sales'), cell('uspCreateOrder'), cell('P '), cell('CREATE PROCEDURE [sales].[uspCreateOrder]\nAS\nINSERT INTO [dbo].[Orders] (CustomerId, ProductId)\nSELECT c.Id, p.Id FROM [dbo].[Customers] c\nCROSS JOIN [dbo].[Products] p')],
   ];
 
-  // Column metadata for tables
   const columnsCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
   const columnsRows: DbCellValue[][] = [
     [cell('dbo'), cell('Customers'), cell('1'), cell('Id'), cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('1'), cell('0')],
@@ -58,15 +54,11 @@ function buildSyntheticResults(): DmvResults {
     [cell('dbo'), cell('Products'), cell('2'), cell('Name'), cell('nvarchar'), cell('510'), cell('0'), cell('0'), cell('0'), cell('0'), cell('0')],
   ];
 
-  // Dependencies (DMV-level — these supplement regex parsing for SPs)
   const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
   const depsRows: DbCellValue[][] = [
-    // View depends on Customers
     [cell('dbo'), cell('vActiveCustomers'), cell('dbo'), cell('Customers')],
-    // SP depends on Orders, Customers
     [cell('sales'), cell('uspGetOrdersByCustomer'), cell('dbo'), cell('Orders')],
     [cell('sales'), cell('uspGetOrdersByCustomer'), cell('dbo'), cell('Customers')],
-    // SP depends on Orders, Customers, Products
     [cell('sales'), cell('uspCreateOrder'), cell('dbo'), cell('Orders')],
     [cell('sales'), cell('uspCreateOrder'), cell('dbo'), cell('Customers')],
     [cell('sales'), cell('uspCreateOrder'), cell('dbo'), cell('Products')],
@@ -79,14 +71,12 @@ function buildSyntheticResults(): DmvResults {
   };
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
 
 function testBuildModelFromDmv() {
   console.log('\n── DMV Extractor: buildModelFromDmv ──');
   const results = buildSyntheticResults();
   const model = buildModelFromDmv(results);
 
-  // Node counts
   expect(model.nodes.length, 'Should have 6 nodes').toBe(6);
   const tables = model.nodes.filter(n => n.type === 'table');
   const views = model.nodes.filter(n => n.type === 'view');
@@ -95,7 +85,6 @@ function testBuildModelFromDmv() {
   expect(views.length, 'Should have 1 view').toBe(1);
   expect(procs.length, 'Should have 2 procedures').toBe(2);
 
-  // Schema computation
   expect(model.schemas.length, 'Should have 2 schemas').toBe(2);
   const dboSchema = model.schemas.find(s => s.name === 'dbo');
   const salesSchema = model.schemas.find(s => s.name === 'sales');
@@ -104,22 +93,17 @@ function testBuildModelFromDmv() {
   expect(dboSchema!.nodeCount, 'dbo has 4 nodes').toBe(4);
   expect(salesSchema!.nodeCount, 'sales has 2 nodes').toBe(2);
 
-  // Node IDs are normalized
   const customerNode = model.nodes.find(n => n.name === 'Customers');
   expect(customerNode?.id, 'Customer ID normalized to lowercase').toBe('[dbo].[customers]');
   expect(customerNode?.schema, 'Customer schema preserved in catalog-original casing').toBe('dbo');
 
-  // Catalog and neighborIndex are present and populated
   expect(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog has at least one entry per node').toBe(true);
   expect(Object.keys(model.neighborIndex).length > 0, 'NeighborIndex populated').toBe(true);
 
-  // neighborIndex: vActiveCustomers should have Customers as inbound neighbor
   const viewId = '[dbo].[vactivecustomers]';
   expect(model.neighborIndex[viewId]?.in.includes('[dbo].[customers]'), 'neighborIndex: Customers → vActiveCustomers').toBe(true);
-  // catalog: Customers entry should have original casing
   expect(model.catalog['[dbo].[customers]']?.schema === 'dbo', 'catalog: Customers schema is dbo').toBe(true);
 
-  // Edges
   expect(model.edges.length > 0, `Has ${model.edges.length} edges`).toBe(true);
 
   // View edge (from DMV deps — not regex parsed): Customers → vActiveCustomers
@@ -447,13 +431,11 @@ function testExternalTableNodes() {
   expect(readEdge !== undefined,
     `Read edge external → SP exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
 
-  // Edge: SP writes to local table
   const writeEdge = model.edges.find(e =>
     e.source === '[dbo].[uspLoadsales]'.toLowerCase() && e.target === '[dbo].[localorders]'
   );
   expect(writeEdge !== undefined, 'Write edge SP → LocalOrders exists').toBe(true);
 
-  // NeighborIndex: external table has SP in its out neighbors
   const spId = '[dbo].[uspLoadsales]'.toLowerCase();
   const extNeighbors = model.neighborIndex[extId];
   expect(extNeighbors !== undefined, 'neighborIndex entry for external node').toBe(true);
@@ -498,12 +480,10 @@ function testExternalTableWriteDirection() {
   expect(writeEdge !== undefined,
     `Write edge SP → ExportTarget exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
 
-  // READ edge: SourceData → SP
   const readEdge = model.edges.find(e => e.source === srcId && e.target === spId);
   expect(readEdge !== undefined, 'Read edge SourceData → SP exists').toBe(true);
 }
 
-// ─── Constraint Tests ────────────────────────────────────────────────────────
 
 function buildConstraintsResult(): SimpleExecuteResult {
   const constraintCols = cols(
@@ -511,16 +491,12 @@ function buildConstraintsResult(): SimpleExecuteResult {
     'column_name', 'column_ordinal', 'ref_schema', 'ref_table', 'ref_column', 'on_delete',
   );
   const rows: DbCellValue[][] = [
-    // FK: Orders.CustomerId → Customers.Id
     [cell('dbo'), cell('Orders'), cell('FK'), cell('FK_Orders_Customers'),
       cell('CustomerId'), cell('1'), cell('dbo'), cell('Customers'), cell('Id'), cell('NO ACTION')],
-    // FK: Orders.ProductId → Products.Id
     [cell('dbo'), cell('Orders'), cell('FK'), cell('FK_Orders_Products'),
       cell('ProductId'), cell('1'), cell('dbo'), cell('Products'), cell('Id'), cell('CASCADE')],
-    // UQ: Customers.Name
     [cell('dbo'), cell('Customers'), cell('UQ'), cell('UQ_Customers_Name'),
       cell('Name'), cell('1'), nullCell(), nullCell(), nullCell(), nullCell()],
-    // CK: Products.Id (column-level)
     [cell('dbo'), cell('Products'), cell('CK'), cell('CK_Products_Id'),
       cell('Id'), nullCell(), nullCell(), nullCell(), nullCell(), nullCell()],
   ];
@@ -537,14 +513,11 @@ function testConstraintMapsEnrichColumns() {
   };
   const model = buildModelFromDmv(resultsWithConstraints);
 
-  // Customers.Name should have UQ flag
   const customersNode = model.nodes.find(n => n.name === 'Customers');
   expect(customersNode !== undefined, 'Customers node found').toBe(true);
   expect(!!customersNode?.columns?.some(c => c.unique !== undefined && c.unique !== ''), 'Customers has UQ flag on column').toBe(true);
-  // Customers has no FKs → fks should be empty array
   expect(customersNode?.fks !== undefined && customersNode.fks.length === 0, 'Customers has empty fks array (no FKs)').toBe(true);
 
-  // Orders should have FK data on node
   const ordersNode = model.nodes.find(n => n.name === 'Orders');
   expect(ordersNode !== undefined, 'Orders node found').toBe(true);
   expect((ordersNode?.fks?.length ?? 0) > 0, 'Orders has FK constraints').toBe(true);
@@ -553,12 +526,10 @@ function testConstraintMapsEnrichColumns() {
   expect(ordersNode!.fks!.some(fk => fk.onDelete === 'CASCADE'), 'Orders FK has CASCADE on delete').toBe(true);
   expect(ordersNode!.fks!.some(fk => fk.refTable === 'Customers'), 'Orders FK references Customers').toBe(true);
 
-  // Products.Id should have CK flag
   const productsNode = model.nodes.find(n => n.name === 'Products');
   expect(productsNode !== undefined, 'Products node found').toBe(true);
   expect(!!productsNode?.columns?.some(c => c.check !== undefined && c.check !== ''), 'Products has CK flag on column').toBe(true);
 
-  // ── No constraints result (dacpac-path compat) ──
   const noConstraintResults = buildSyntheticResults();  // no constraints field
   const noConstraintModel = buildModelFromDmv(noConstraintResults);
   const ordersNoConst = noConstraintModel.nodes.find(n => n.name === 'Orders');
@@ -568,7 +539,6 @@ function testConstraintMapsEnrichColumns() {
   expect(!!ordersNoConst?.columns?.some(c => c.name === 'OrderId'), 'Columns still present without constraints').toBe(true);
 }
 
-// ─── Test: Cross-DB Dependencies via referenced_database ─────────────────────
 
 function testCrossDbDepsFromDmv() {
   console.log('\n── DMV Extractor: Cross-DB Dependencies (referenced_database) ──');
@@ -580,12 +550,9 @@ function testCrossDbDepsFromDmv() {
       cell('CREATE PROCEDURE [dbo].[spLoadFromArchive] AS\nINSERT INTO [dbo].[Sales]\nSELECT * FROM [ArchiveDB].[dbo].[ArchivedSales]')],
   ];
 
-  // 5-column deps — includes referenced_database
   const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
   const depsRows: DbCellValue[][] = [
-    // Local dep: SP → Sales (no database)
     [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('Sales'), nullCell()],
-    // Cross-DB dep: SP → ArchiveDB.dbo.ArchivedSales
     [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('ArchivedSales'), cell('ArchiveDB')],
   ];
 
@@ -599,28 +566,23 @@ function testCrossDbDepsFromDmv() {
 
   const model = buildModelFromDmv(results);
 
-  // Cross-DB virtual node should be created
   const crossDbNode = model.nodes.find(n => n.externalType === 'db');
   expect(crossDbNode !== undefined, 'CrossDB-DMV: virtual db node created from referenced_database').toBe(true);
-  // DMV metadata path lowercases all parts (modelBuilder.ts L705)
   expect(crossDbNode?.externalDatabase?.toLowerCase(), 'CrossDB-DMV: externalDatabase set correctly').toBe('archivedb');
   expect(crossDbNode?.schema, 'CrossDB-DMV: virtual node has empty schema').toBe('');
   expect(crossDbNode!.name.toLowerCase().includes('archivedsales'), 'CrossDB-DMV: virtual node name includes object name').toBe(true);
 
-  // Edge: SP → cross-DB node (cross-DB is a source in the SP body, so cross-DB → SP)
   const crossDbEdge = model.edges.find(e =>
     e.target === '[dbo].[sploadfromarchive]' && e.source === crossDbNode!.id
   );
   expect(crossDbEdge !== undefined,
     `CrossDB-DMV: cross-DB → SP edge exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
 
-  // Local edge still works: SP writes to Sales
   const localEdge = model.edges.find(e =>
     e.source === '[dbo].[sploadfromarchive]' && e.target === '[dbo].[sales]'
   );
   expect(localEdge !== undefined, 'CrossDB-DMV: local SP → Sales write edge exists').toBe(true);
 
-  // Total: 2 real + 1 virtual = 3 nodes
   expect(model.nodes.length, 'CrossDB-DMV: 2 real + 1 virtual = 3 nodes').toBe(3);
 }
 
@@ -635,7 +597,6 @@ function testCrossDbSameDbSuppression() {
       cell('CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM [dbo].[ArchivedSales]')],
   ];
 
-  // Cross-DB dep where database = currentDatabase → should resolve locally
   const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
   const depsRows: DbCellValue[][] = [
     [cell('dbo'), cell('spLoad'), cell('dbo'), cell('ArchivedSales'), cell('MyDB')],
@@ -650,17 +611,12 @@ function testCrossDbSameDbSuppression() {
     dependencies: makeResult(depsCols, depsRows),
   };
 
-  // Pass currentDatabase = 'MyDB' — same as referenced_database
   const model = buildModelFromDmv(results, 'MyDB');
   const crossDbNode = model.nodes.find(n => n.externalType === 'db');
   expect(crossDbNode === undefined, 'CrossDB-SameDB: no virtual node when referenced_database = currentDatabase').toBe(true);
   expect(model.nodes.length, 'CrossDB-SameDB: only 3 real nodes').toBe(3);
 }
 
-// These eleven ran here as bare calls in the `describe` body — during collection, not as
-// tests. Their assertions executed but were attributed to no test, so the reporter said
-// "6 tests" for a file holding seventeen, and a failure surfaced as a collection error
-// naming no case. Each is now its own `it`.
 it('builds a model from DMV results', testBuildModelFromDmv);
 it('validates query results against their required columns', testValidateQueryResult);
 it('formats column types', testFormatColumnType);
@@ -673,38 +629,31 @@ it('derives cross-database dependencies from DMV rows', testCrossDbDepsFromDmv);
 it('suppresses a cross-database reference to the current database', testCrossDbSameDbSuppression);
 it('enriches columns from constraint maps', testConstraintMapsEnrichColumns);
 
-// ─── expandSchemaPlaceholder ──────────────────────────────────────────────────
 
 function testExpandSchemaPlaceholder() {
   console.log('\n── expandSchemaPlaceholder ──');
 
-  // Basic expansion
   const sql = `SELECT * FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nWHERE s.name IN ({{SCHEMAS}})`;
   const expanded = expandSchemaPlaceholder(sql, ['dbo', 'Sales']);
   expect(expanded.includes("s.name IN ('dbo', 'Sales')"), 'Basic: schema list expanded').toBe(true);
   expect(!expanded.includes('{{SCHEMAS}}'), 'Basic: no placeholder remnants').toBe(true);
 
-  // Multiple placeholders (dependencies-style OR)
   const depsSql = `SELECT * FROM sys.sql_expression_dependencies d\nWHERE (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))`;
   const expandedDeps = expandSchemaPlaceholder(depsSql, ['dbo']);
   expect(expandedDeps.includes("s1.name IN ('dbo')"), 'Multi: first placeholder expanded').toBe(true);
   expect(expandedDeps.includes("d.referenced_schema_name IN ('dbo')"), 'Multi: second placeholder expanded').toBe(true);
   expect(!expandedDeps.includes('{{SCHEMAS}}'), 'Multi: no placeholder remnants').toBe(true);
 
-  // No placeholder — returns SQL unchanged
   const noPlaceholder = `SELECT * FROM sys.objects`;
   const unchanged = expandSchemaPlaceholder(noPlaceholder, ['dbo']);
   expect(unchanged === noPlaceholder, 'No placeholder: SQL unchanged').toBe(true);
 
-  // SQL injection: single quote in schema name
   const injected = expandSchemaPlaceholder(sql, ["O'Brien"]);
   expect(injected.includes("'O''Brien'"), 'SQL injection: single quote escaped').toBe(true);
 
-  // Empty schema list
   const empty = expandSchemaPlaceholder(sql, []);
   expect(empty.includes('s.name IN ()'), 'Empty: produces IN ()').toBe(true);
 
-  // validateSchemaPlaceholder: Phase 2 without placeholder → warning; Phase 1 → no warning
   expect(validateSchemaPlaceholder('q', 'SELECT 1', 2) !== undefined, 'Phase 2 no placeholder → warning').toBe(true);
   expect(validateSchemaPlaceholder('q', 'WHERE IN ({{SCHEMAS}})', 2) === undefined, 'Phase 2 with placeholder → ok').toBe(true);
   expect(validateSchemaPlaceholder('q', 'SELECT 1', 1) === undefined, 'Phase 1 no placeholder → ok').toBe(true);
@@ -713,7 +662,6 @@ function testExpandSchemaPlaceholder() {
 function testYamlQueriesHavePlaceholder() {
   console.log('\n── YAML queries: Phase 2 placeholder validation ──');
 
-  // Load the ACTUAL dmvQueries.yaml and validate all Phase 2 queries have {{SCHEMAS}}
   const yamlContent = readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8');
   const config = yaml.load(yamlContent) as { queries: Array<{ name: string; sql: string; phase?: number }> };
 

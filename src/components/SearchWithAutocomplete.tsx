@@ -29,7 +29,6 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
   visibleNodeIds,
   collapsedSchemaNodeIds,
 }: SearchWithAutocompleteProps) {
-  // Search term is local state so keystrokes don't re-render the App/GraphCanvas tree; the parent is notified only on Enter.
   const [searchTerm, setSearchTerm] = useState('');
 
   const allSuggestions = useMemo(
@@ -37,7 +36,6 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     [allNodes, searchTerm],
   );
 
-  // Three-partition split: rendered on canvas / collapsed in schema cluster / filtered out.
   const { suggestions, collapsedSuggestions, otherSuggestions } = useMemo(() => {
     const rendered: typeof allSuggestions = [];
     const collapsed: typeof allSuggestions = [];
@@ -80,7 +78,6 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     ],
   });
 
-  // Merge dropdownRef (outside-click detection) with floating ref (portal positioning)
   const mergedDropdownRef = useCallback((node: HTMLDivElement | null) => {
     dropdownRef.current = node;
     refs.setFloating(node);

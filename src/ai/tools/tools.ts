@@ -132,9 +132,6 @@ export function buildHopFocusNode(
 
   const result = strip(focusNode) as Record<string, unknown>;
 
-  // Non-bodied nodes (tables) carry no DDL body — the AI must ground structural_summary
-  // sections (Upstream sources / Downstream consumers) in actual graph edges, not guesses.
-  // Always emit in/out even when empty so the AI sees "zero neighbors" rather than absence.
   if (!SCRIPT_TYPES.has(node.type) && neighborIndex && edgeTypeMap) {
     const entry = neighborIndex[node.id] ?? { in: [], out: [] };
     result.in  = entry.in.map(nid  => presentNeighbor(nid, node.id, nodeMap, edgeTypeMap, true));
@@ -176,9 +173,6 @@ export function getContext(
 
   return {
     project_name:  projectName,
-    // Read, never inferred: a dacpac carries a DSP-derived platform label just like a live
-    // import, so platform presence says nothing about provenance. Falls back to the snapshot
-    // answer, which understates rather than overstates what the model is connected to.
     source_type:   model.source ?? 'dacpac',
     db_platform:   model.dbPlatform ?? null,
     model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
@@ -235,10 +229,6 @@ function validateQuery(query: string): { ok: true } | { ok: false; error: string
   if (trimmed.length < 1) {
     return { ok: false, error: 'query_too_short', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` };
   }
-  // Quote characters sit in the class for the same reason the regex metacharacters do: matched
-  // literally, no object name contains them. It is also what a caller sends after reading "an empty
-  // query" as a value to type out, so the reading is named here instead of answering it with a list
-  // of nothing.
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
     return { ok: false, error: 'query_not_a_name', hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` };
   }
@@ -275,19 +265,12 @@ export function searchObjects(
   activeFilter?: SerializedFilterState | null,
 ) {
   const isRegex = mode === 'regex';
-  // A regex is passed through untouched. The id normalizer splits on "." to lift a schema prefix
-  // out of `[dbo].[FactSales]`, which in a pattern is the any-character metacharacter: it turned
-  // `sales\..*order` into query `.*order` with schemaHint `sales\`, silently searching the wrong
-  // thing. Trimming is skipped for the same reason — trailing space is part of a pattern.
   const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
   const normalizedSchemas =
     schemas && schemas.length > 0
       ? schemas
       : (normalizedQuery.schemaHint ? [normalizedQuery.schemaHint] : undefined);
   const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
-  // See WILDCARD_ALL_TOKENS: a bare match-everything token has exactly one meaning once a schema
-  // scope pins what "everything" ranges over, so it is normalized onto the list-all path below
-  // before either the regex-length/compile gate or the substring-punctuation gate can reject it.
   const isWildcardAllQuery = (appliedSchemaFilter?.length ?? 0) > 0
     && WILDCARD_ALL_TOKENS.has((isRegex ? query : normalizedQuery.query).trim());
 
@@ -296,20 +279,12 @@ export function searchObjects(
   }
 
   const effectiveQuery = isWildcardAllQuery ? '' : (isRegex ? normalizedQuery.query : normalizedQuery.query.trim());
-  // An unusable pattern is named, never answered with an empty list: `searchCatalog` swallows a
-  // compile failure and returns [], which reads to the model as "no such object exists".
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
       return { error: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) };
     }
   }
-  // Empty query WITH an explicit schema scope is a legitimate "list everything in schema X"
-  // ask — there is no name fragment to search, so enumerate the schema directly instead of
-  // rejecting (query_too_short) or handing an empty string to searchCatalog (which matches
-  // nothing). Case-insensitive so the model's `ai` matches a node schema stored as `ai`/`AI`.
-  // A recognized wildcard-all token takes the same path regardless of `mode` (isWildcardAllQuery
-  // already requires the schema scope).
   const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
 
   if (!isRegex && !listAllInSchemas) {
@@ -336,8 +311,6 @@ export function searchObjects(
         mode,
       );
 
-  // Column name search (tables/external only, always-on, respects schema/type filters).
-  // Skipped for a list-all enumeration — nameHits already covers every node in the schema.
   let columnNodes = model.nodes as SearchableNode[];
   if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
   if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
@@ -346,9 +319,6 @@ export function searchObjects(
     : [];
   const seenIds = new Set(nameHits.map(n => n.id));
 
-  // A list-all enumeration hit matched no name fragment — the query was empty by definition
-  // (listAllInSchemas, above) — so it is labelled `schema`, not `name`; a real substring/regex
-  // hit against the object's own name or id keeps `name`. One label per cause, no false positive.
   const nameMatchLabel: 'name' | 'schema' = listAllInSchemas ? 'schema' : 'name';
   const results = [
     ...nameHits.map(n => ({
@@ -364,10 +334,6 @@ export function searchObjects(
       })),
   ];
 
-  // Tag each result with in_user_filter so AI knows what the user currently sees, and tally the
-  // type breakdown on that same pass: `by_type` is the list `total` summarises, counted once, so
-  // the two cannot disagree and no count is left to be tallied from the rows. One home, one pass,
-  // no second walk over the results.
   const filterSchemaSet = activeFilter?.schemas?.length
     ? new Set(activeFilter.schemas.map(s => s.toLowerCase()))
     : null;
@@ -381,9 +347,6 @@ export function searchObjects(
       in_user_filter: filterSchemaSet ? filterSchemaSet.has(((row.s as string) ?? '').toLowerCase()) : true,
     };
   });
-  // Bounded by the object-kind union (OBJECT_TYPES, five members), not by the result count, so the
-  // breakdown costs the same on a 32-row answer as on a whole-catalog one. Largest first, so the
-  // heading order an answer writes matches the order it reads.
   const byType = Object.fromEntries(
     [...typeCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
   );
@@ -414,8 +377,6 @@ export function searchObjects(
 
   if (taggedResults.length === 0) {
     if (appliedSchemaFilter) {
-      // Probe cross-schema to surface where the object actually lives — return schema names only,
-      // not the results themselves, so the AI self-corrects its filter on the next call.
       const crossHits = searchCatalog(
         model.nodes,
         effectiveQuery,
@@ -446,6 +407,9 @@ export function searchObjects(
 
 const NEIGHBOR_CAP = 25;
 
+/** Corrective hint on every per-id `not_found` rejection that names an object id — points the model at the search tool instead of leaving it to guess a corrected id. */
+const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
+
 /**
  * Retrieves full metadata for a specific database object, including DDL, columns, and neighbors.
  *
@@ -464,13 +428,11 @@ export function getObjectDetail(
   id: string,
   store?: import('../../engine/columnStore').ColumnStore,
 ): object {
-  // AI may send bracket-qualified or mixed-case names; normalize to the
-  // canonical [schema].[name] lowercase form used by the model's node map.
   const normalizedId = normalizeName(id);
   const nodeMap   = buildNodeMap(model);
   const node      = nodeMap.get(normalizedId);
   if (!node) {
-    return { error: REJECTION_CODES.notFound, id, hint: 'Call lineage_search_objects to find the exact object ID.' };
+    return { error: REJECTION_CODES.notFound, id, hint: SEARCH_OBJECTS_HINT };
   }
 
   const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
@@ -504,12 +466,10 @@ export function getObjectDetail(
 
   const ddl = getNodeDdl(node.id, nodeMap, store) ?? null;
 
-  // Attach unresolved refs for scriptable nodes
   const unrelMap = buildUnrelatedMap(model);
   const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
   const unresolved_refs = unrelMap.get(unrelKey) ?? undefined;
 
-  // Never truncate DDL — zero-truncation guarantee
   return { ...base, ddl, unresolved_refs };
 }
 
@@ -544,16 +504,12 @@ export function getScopeBundle(
   }
 
   const direction = input.direction ?? 'bidirectional';
-  // Preserve the distinction between an omitted `include_ddl` and an explicit `false`.
   const includeDdl = input.include_ddl;
   const symmetricDepth = input.depth ?? 3;
   const upstreamDepth = direction === 'bidirectional' ? (input.upstream_depth ?? symmetricDepth) : undefined;
   const downstreamDepth = direction === 'bidirectional' ? (input.downstream_depth ?? symmetricDepth) : undefined;
   const singleDepth = input.depth ?? 3;
 
-  // Every model-facing call now states both sides explicitly (GetScopeBundleModelSchema requires
-  // upstream_depth/downstream_depth); reject the degenerate origin-only combination with a
-  // field-specific reason instead of silently returning a scope with no neighbors.
   if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
     return {
       error: ASYMMETRIC_DEPTH_BOTH_ZERO,
@@ -562,10 +518,6 @@ export function getScopeBundle(
   }
 
   const scopeIds = new Set<string>([origin]);
-  // Per-side hop distance from the origin, keyed by the same lowercased id as `scopeIds`. The BFS
-  // below already computes this `depth` to enforce the cap; retained here instead of discarded so
-  // the response can state "how far upstream/downstream" directly instead of making the model
-  // re-derive it by walking the flat positional `edges[]` itself.
   const upstreamDistance = new Map<string, number>();
   const downstreamDistance = new Map<string, number>();
   let nodeBudgetExceeded = false;
@@ -580,8 +532,6 @@ export function getScopeBundle(
       if (nodeBudgetExceeded || depth > maxDepth) return true;
       const id = String(key).toLowerCase();
       scopeIds.add(id);
-      // BFS never revisits a node, so the first (and only) callback for `id` already carries its
-      // shortest depth on this side.
       distance?.set(id, depth);
       if (!checkScopeBudget(budget, scopeIds.size, 0).ok) nodeBudgetExceeded = true;
       return false;
@@ -597,10 +547,6 @@ export function getScopeBundle(
     walkWithCap('outbound', downstreamDepth!, downstreamDistance);
   }
 
-  // The over-budget reply is the bare checkScopeBudget envelope (wire value
-  // `over_discovery_budget`) plus the `scope_proposal` SM entry re-proposes for approval. No
-  // partial payload: the graph treats this result as a reroute terminal, so the model never gets
-  // another discovery attempt to answer from it.
   const overBudgetScopeReply = (
     admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
   ): Record<string, unknown> => ({
@@ -616,30 +562,19 @@ export function getScopeBundle(
 
   if (nodeBudgetExceeded) {
     const admission = checkScopeBudget(budget, scopeIds.size, 0);
-    // The walk measured this exact request as over cap, so the ok arm is unreachable; falling
-    // through to the full bundle is the correct reply for a request that fits.
     if (!admission.ok) return overBudgetScopeReply(admission);
   }
 
-  // Always measure DDL so the engine can auto-attach it when it fits the budget. Edge direction and
-  // role (INSERT/exec/read/filter-only) are grounded in the DDL body, not the generic stored edge
-  // verbs, so grounding must not depend on the model remembering to set include_ddl.
   let ddlChars = 0;
   for (const id of scopeIds) {
     const ddl = getNodeDdl(id, nodeMap, store);
     if (ddl) ddlChars += ddl.length;
   }
-  // Auto-attach DDL when it fits the token budget. If the caller explicitly asked for DDL that does
-  // not fit, route to SM (their intent needs the bodies). If they did NOT ask and it does not fit,
-  // fall through with metadata only — preserves the inline chat path, no forced SM.
   const ddlFits = checkScopeBudget(budget, 0, ddlChars).ok;
   if (includeDdl && !ddlFits) {
     const admission = checkScopeBudget(budget, scopeIds.size, ddlChars);
-    // ddlFits false means the token axis is already over, so the ok arm is unreachable; falling
-    // through serves the metadata-only bundle — the correct reply for a request that fits.
     if (!admission.ok) return overBudgetScopeReply(admission);
   }
-  // Only an omitted value may enable automatic DDL grounding.
   const effectiveIncludeDdl = includeDdl === false
     ? false
     : (includeDdl === true || ddlChars > 0) && ddlFits;
@@ -648,17 +583,6 @@ export function getScopeBundle(
     .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
     .map(e => [e.source, e.target, edgeApiType(e.type, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
 
-  // The edge triples above are bare positional [source, target, type] — a consumer that has only
-  // that array cannot tell "which side" without re-deriving direction from position, and two of
-  // three edges starting at the origin makes position a false signal. Serve the origin's own
-  // in/out split explicitly, in the same shape buildHopFocusNode already emits for hop_context, so
-  // direction is never inferred from tuple position. Scoped to the origin only — every other node
-  // keeps the scalar `deg` it always had; this is not a payload grown for the whole scope.
-  //
-  // `uh`/`dh` (upstream/downstream hop distance from the origin) are the one addition that is
-  // whole-scope: every node carries the scalar hop count(s) for the side(s) it was reached on
-  // (never both unless reached on both sides), read straight off the BFS `depth` that already
-  // enforces the walk's cap above — no second traversal, no array, no re-derivation from `edges[]`.
   const edgeTypeMap = buildEdgeTypeMap(model);
   const nodes = [...scopeIds]
     .map(id => nodeMap.get(id))
@@ -735,7 +659,7 @@ export function getNeighborColumns(
   const results = ids.map(id => {
     const node = nodeMap.get(id);
     if (!node) {
-      return { id, error: REJECTION_CODES.notFound };
+      return { id, error: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT };
     }
     const cols = getNodeColumns(id, nodeMap, store);
     const foreignKeys = presentForeignKeys(node.fks);
@@ -786,15 +710,8 @@ export function runAnalysis(
 
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
 
-  // Same discovery budget guard as the catalog listing, token axis only — an analysis report has no
-  // per-node scope semantics. Hub, orphan and external-ref reports are bounded by the graph rather
-  // than by a threshold, so a wide warehouse can produce a group list far past the turn budget.
-  // Over budget → the counts WITHOUT the group list, never a sliced one: the pattern total stays
-  // usable and the AI narrows the query with the knob that type actually has, or a different type.
   const groupChars = JSON.stringify(result.groups).length;
   if (!checkScopeBudget(budget, 0, groupChars).ok) {
-    // Only `hubs` takes min_degree and only `islands` takes max_size — naming either knob for a
-    // type it does not apply to (orphans, longest-path, cycles, external-refs) is wrong advice.
     const narrowByType: Partial<Record<AnalysisType, string>> = {
       hubs:    'Raise min_degree',
       islands: 'Lower max_size',
@@ -894,7 +811,6 @@ export function searchDdl(
     return { error: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
   }
 
-  // Reject invalid / catastrophically slow regex
   const compiled = compileSearchRegex(query, onDebug);
   if (!compiled.ok) {
     return { error: REJECTION_CODES.invalidRegex, hint: regexRejectHint(query, compiled) };
@@ -905,20 +821,15 @@ export function searchDdl(
     : [...SCRIPT_TYPES];
   const typeSet = new Set<ObjectType>(ddlTypes);
 
-  // Build searchable nodes with DDL from ColumnStore (or inline fallback for tests)
   const searchableNodes: SearchableNode[] = model.nodes.map(n => ({
     ...n,
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
-  // What was actually read, so a zero-match answer is a fact about the search rather than advice
-  // about the pattern: a wrong `types` filter and a genuinely absent string read differently here.
   const searched = {
     bodies: searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length,
     types:  ddlTypes,
   };
 
-  // Over budget → the counts WITHOUT the match list, never a sliced one: the model narrows the
-  // pattern or the types, and an oversized ask is the hand-off to the approval-gated path.
   const overBudget = (
     admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
     total: number,
@@ -934,9 +845,6 @@ export function searchDdl(
     hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
   });
 
-  // Every served row costs at least its empty shape, so one sweep builds rows only while their empty
-  // shapes fit the budget and counts past that; a count that outgrew it is answered from the counts.
-  // A grep result is never sliced: size is answered by this check and the full one below.
   const rowAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_ROW_CHARS);
   const scanned = scanBodyMatches(searchableNodes, compiled.regex, typeSet, count => rowAdmission(count).ok);
   const countAdmission = rowAdmission(scanned.total);
@@ -946,8 +854,6 @@ export function searchDdl(
   }
   const matches = scanned.matches;
 
-  // `commented` is spread in only when the match sits inside a comment, so a live hit serializes
-  // exactly as before; a dead one says so instead of reading as behaviour.
   const results = matches.map(m => ({
     id:      m.node.id,
     name:    m.node.name,
@@ -961,10 +867,6 @@ export function searchDdl(
 
   if (results.length === 0) return { results, total: 0, objects: 0, searched };
 
-  // One group per object, in first-hit order: how many hits it contributed, and which of them are
-  // dead. Built from the same rows and the same `commented` bit, so it can only restate what is
-  // already there; only genuinely consecutive lines are joined, so a range never claims a line that
-  // produced no hit.
   const hitsByObject = new Map<string, { id: string; name: string; type: string; hits: number; commentedLines: number[] }>();
   for (const m of matches) {
     let group = hitsByObject.get(m.node.id);
@@ -983,7 +885,6 @@ export function searchDdl(
   }));
   const objects = byObject.length;
 
-  // Same discovery budget guard as the catalog listing and the pattern report, token axis only.
   const payload = {
     results,
     total: results.length,

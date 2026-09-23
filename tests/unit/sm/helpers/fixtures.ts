@@ -124,13 +124,13 @@ export interface DriveOptions {
   followDownstream?: boolean;
   /** Ids to submit as `passthrough` rather than `analyze`. */
   passthrough?: ReadonlySet<string>;
-  /** Ids to submit as `prune`. Evaluated before {@link DriveOptions.passthrough}. */
+  /** Ids to submit as `end_branch`. Evaluated before {@link DriveOptions.passthrough}. */
   prune?: ReadonlySet<string>;
   /**
    * CT walk: focus id → the single upstream node supplying {@link DriveOptions.column}.
    *
    * @remarks
-   * Present at all, every focus submits `column_flow` and no `route_requests` — a CT contraction is
+   * Present at all, every focus submits `column_flow` and no `questions` — a CT contraction is
    * carried on the column edge, not on a route. A focus that maps to a supplier submits one entry
    * for it; a focus mapped to `undefined`, or absent from the map, submits `column_flow: []`, which
    * is how a walk states that the chain ends at that node.
@@ -184,13 +184,16 @@ export function driveEngine(
     } else targets = [];
 
     const label = tag ? `${tag}: ${id}` : id;
-    const verdict = prune?.has(id) ? 'prune' : passthrough?.has(id) ? 'passthrough' : 'analyze';
+    if (prune?.has(id)) {
+      // An end_branch carries only its reason — the submit boundary refuses sections on it.
+      engine.submitFindings({ focus_node_id: id, verdict: 'end_branch', reason: `${label} is off the answer` });
+      continue;
+    }
+    const verdict = passthrough?.has(id) ? 'passthrough' : 'analyze';
     const supplier = columnFlow?.[id];
     engine.submitFindings({
       focus_node_id: id,
-      // A prune verdict carries no sections — the submit boundary refuses them — so the
-      // simulated walk sends bare prunes, as the model must.
-      sections: verdict === 'prune' ? [] : [{ angle: 'business', text: `analysis for ${label}` }],
+      sections: [{ angle: 'business', text: `analysis for ${label}` }],
       summary: label,
       verdict,
       ...(columnFlow
@@ -199,7 +202,7 @@ export function driveEngine(
               ? [{ out_col: column!, upstream_columns: [{ node: supplier, col: column! }] }]
               : [],
           }
-        : { route_requests: targets.map((target) => ({ nodeId: target, question: 'trace downstream' })) }),
+        : { questions: targets.map((target) => ({ nodeId: target, question: 'trace downstream' })) }),
     });
   }
 

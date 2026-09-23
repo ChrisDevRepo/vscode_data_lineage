@@ -23,6 +23,25 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   interrupts, synthesis, and turn settlement.
 - `NavigationEngine` owns agenda, scope, lifecycle state, route/prune checks,
   graph closure, and completion.
+- **Backend and model roles.** The backend routes, schedules hops, guards,
+  verifies that objects are correct, and drives the defined process: phase
+  changes (discovery → consent → hop-by-hop → synthesis) and the
+  metadata-driven prompt for each phase. It applies only stated, deterministic
+  rules and never authors content, infers intent, guesses what a node needs,
+  defers on speculation, judges relevance, or rewrites the model's findings.
+  Content judgement belongs to the model alone: a node's status and findings at
+  its own visit, and one note per not-yet-visited neighbor (prune or add, an
+  optional sub-question, columns). Every backend response to model output is
+  ACCEPT, REJECT (code plus recovery hint), or NORMALIZE-WITH-LOG, and the
+  model sees the outcome. This is the standard split of agent frameworks: the
+  application owns control flow and validation, the model owns decisions.
+- **Instructions.** Each stage prompt states the task, the deliverable, the
+  tools, and only the invariants the tool schemas cannot express. Each rule has
+  one home; a field's meaning lives in its Zod `.describe()`, which ships with
+  the tool on every call. No worked example is built from a fixture, and no
+  sentence is written to patch one observed failure — such a sentence is
+  removed, not extended. Template and wording detail:
+  [`AI_PROMPTS.md`](AI_PROMPTS.md).
 - Model tools pass through the local canonical registry, phase policy, and
   strict Zod dispatcher. Production does not route its own calls through
   `vscode.lm.invokeTool`. `package.json` `languageModelTools` is the
@@ -53,10 +72,9 @@ Model input crosses three layers, in this order:
   one shared error envelope. A code belongs in
   [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts) when
   its wire `error` literal reaches the model on a second surface. Prose that
-  teaches a refusal without naming its code is not an emission site:
-  `route_columns_flow_conflict` is taught by the `route_requests[].columns`
-  `.describe()` but emitted only from `ROUTE_REJECTION_CODE` in
-  `smRouteValidation.ts`, so the map stays its single owner.
+  teaches a refusal without naming its code is not an emission site; a code
+  emitted only from `ROUTE_REJECTION_CODE` in `smRouteValidation.ts` stays
+  owned by that map.
 
 Handlers assume a parsed payload and a resolved id. A defensive re-check
 further in points at a defect in the layer that owns the contract.
@@ -208,7 +226,17 @@ stated; **How I read it** is the assistant's mechanization (exclusions,
 passthroughs, schema/type filters); **My plan** is what the assistant chose
 (hop and scope counts, tracing mode, an estimated depth). Which strength a
 rule carries is a typed field — the host enforces it and never guesses from
-prose.
+prose. Depth is the concrete instance: `depthStated` (`toolSchemas.ts`) is a
+field the model sets alongside `depth`, never inferred from whether `depth`
+carries a number — a finite `depth` without `depthStated: true` resolves to
+the same soft, growing default as an omitted one
+(`resolveDepthIntentForBoundary`, `smTypes.ts`), so a level count the model
+picks on its own can never bind as a hard border (PM ruling
+`depth-soft-default`, 2026-09-22). Once approved, the border a rule carries
+holds for the whole hop-by-hop run; the model may extend a hard value only
+after synthesis, as a deferred lead or `supplement` follow-up, or through a
+fresh refine at this same gate carrying the user's own correction — never by
+its own initiative mid-run.
 
 `approveGateNode` builds the engine with `init(proposal.init)` — the same
 object that produced the summary the user read. `activatePendingExploration`
@@ -232,33 +260,108 @@ test, so nothing rejects a violation of it.
 
 ### Active exploration
 
-After approval, the engine drains an agenda one focus at a time. The model
-sees the current focus, immediate routing facts, the current task, and bounded
-recent context. It returns one structured finding proposal. The engine
-validates the proposal and either commits it atomically or returns a
+After approval, the hop loop is LangGraph's orchestrator-worker pattern:
+`activeCoordinatorNode` asks the engine for the next focus and
+`activeWorkerNode` runs one model hop on it
+([`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts)). The lineage graph is
+data, scheduled inside the coordinator's `NavigationEngine`; it is never
+compiled into LangGraph nodes, because a compiled topology is static and
+re-runs a node on every channel update, while a database object is visited
+once. The model sees the current focus, its inbox, immediate neighbor facts,
+and bounded recent context. It returns one structured finding proposal. The
+engine validates the proposal and either commits it atomically or returns a
 structured correction.
 
-Lifecycle is recorded separately from prose:
+On the wire, a kept hop states its neighbor decisions as `prune_neighbors`
+(`[{id, reason}]`) and optional `questions` (`[{nodeId, question}]`); the
+focus-node verdict is `analyze`, `passthrough` or `end_branch`.
 
-- `analyze` keeps the node and stores classified findings;
-- `passthrough` keeps topology without treating the node as a key transform;
-- `prune` removes an irrelevant node only when closure checks allow it.
+**One visit per node.** The backend schedules until every in-scope node has
+had exactly one hop, in BB and CT alike. A hop never travels back to a visited
+node; it reads its own body and its neighbors' columns, never a neighbor's
+SQL, and a question about a neighbor's logic reaches that neighbor as a note.
+Revisiting a node is a follow-up after the result is delivered, never part of
+exploration.
 
-Neighbor pruning is narrower than a focus-node `prune`: it can remove only
-an adjacent, topology-safe object — outside the approved scope, or in scope
-when the hop decides it is off the answer path. A neighbor that already owns
-a queued hop is never pulled, and the don't-orphan closure check governs every
-accepted prune. Repeated attempts against an object already removed are
-accepted as already-pruned no-ops.
+**Scheduling** is the textbook worklist schedule, computed from recorded state
+only:
 
-Tables and other non-bodied nodes can be contracted as topology-only
-passthroughs so the agenda stays focused on analyzable SQL bodies. The model
-is never the owner of a completion flag; synthesis starts when the engine
-reaches its terminal condition.
+- *Direction.* A note travels from the node that can ask to the node that
+  answers: in an upstream trace a consumer is visited before its producer;
+  downstream, a producer before its consumer; a bidirectional run applies each
+  rule on its own side and orders nothing across sides. Edges contract through
+  non-bodied carriers.
+- *Readiness* (Kahn, 1962). A node is ready when every in-scope node that can
+  still send it a note has been visited or pruned. The worklist drains ready
+  nodes until none is queued (Aho, Lam, Sethi and Ullman, *Compilers*, ch. 9).
+- *Loops* (Tarjan, 1972). Strongly connected components are condensed, so a
+  loop is scheduled as one unit, earliest first inside it by the tie-break. With
+  no revisit, a loop gets one pass.
+- *Tie-break.* Priority-queue topological order: the origin and follow-up tier
+  first, then directed distance from the origin, then node id. Column count,
+  question length and arrival order play no part.
+- *Dynamic order* (Pearce and Kelly, 2006). Readiness is recomputed at every
+  dequeue, so a prune releases the nodes waiting on it and scope growth can
+  delay a queued node.
 
-In CT, once an accepted `route_requests` entry names a neighbor for the
-traced column, that node is protected from `prune_neighbors` for the rest of
-the run. Per-hop memory resets to the anchor, so a later hop cannot recall a
+The condensation of the live graph is acyclic, so a ready node exists whenever
+the queue is non-empty; no stalemate fallback exists or is needed.
+
+**Message passing.** At each hop the model records the focus node's findings
+and, for not-yet-visited neighbors only, a note: a prune (`prune_neighbors`,
+with a reason) or a question (`questions`, one specific check). It never sends
+a route. Every open neighbor the hop does not prune is enqueued by the
+backend and visited exactly once, through the same border checks
+(`admitsRoute`: exclusion, direction, schema allowlist, depth) that defer an
+out-of-scope neighbor as a lead; a question shapes what that hop is asked,
+never whether it happens. In CT, what a kept neighbor carries comes from the
+hop's `column_flow` — the columns `upstream_columns` names on it (and, on the
+downstream side, what the focus writes to its readers); a kept neighbor named
+in none is visited row-role-only. A node's inbox — every
+note on its incoming edges — is rendered as one templated block built only from
+recorded facts: the sender, the carrier, the columns, and the sender's verbatim
+question. The backend writes no summary, paraphrase, or question of its own
+into it. A note on a visited, removed, or queued-for-prune neighbor gets a
+stated outcome (`already_visited`, `already_pruned`), never a revisit. A late
+note — possible only inside a loop — is reported back to the sender and listed
+in the final report as an open point for a follow-up.
+
+**Node status** is decided at the node's own visit and recorded separately
+from prose:
+
+- `analyze` — the node transforms; its classified findings are stored;
+- `passthrough` — identity: the node moves data without logic (OpenLineage
+  IDENTITY versus TRANSFORMATION); it drives the Column Detail view's
+  passthrough versus transformation line;
+- `end_branch` — off the answer path, knowable only after reading its SQL. It
+  carries only a reason, never on the origin (`prune_origin_forbidden`), and
+  never on a node carrying a tracked column a visited neighbor's `column_flow`
+  declared on it (`prune_carries_tracked_column`, naming the columns). Stored
+  internally as node action `prune`.
+
+A neighbor prune is narrower than `end_branch`: it removes an adjacent object
+the hop has not visited, based on the focus's SQL alone. A neighbor that
+already owns a queued hop is never pulled, and a declared column carrier is
+refused with the same code. Repeated attempts against an object already
+removed are accepted as already-pruned no-ops.
+
+**The cut.** An accepted `end_branch` or neighbor prune also removes every
+unvisited node reachable from the origin only through the removed node
+(undirected reachability inside scope, before versus after). A visited node is
+never cut. The cut is logged (`[Cut] hop=N via=X dropped=[…]`) and recorded
+as node state `bb_prune_neighbor` with the removing node; it is not returned to
+the model, and no would-orphan refusal exists.
+
+Tables and other non-bodied nodes are never visited: with no SQL body to read,
+their status is keep or prune only. A note addressed to one is forwarded to
+its bodied writers or readers (bipartite contraction), and readiness is
+computed on that contracted graph. The model is never the owner of a
+completion flag; synthesis starts when the engine reaches its terminal
+condition.
+
+In CT, once a committed `column_flow` entry names a node for a traced column
+(`upstream_columns` or `writes_to`), that node is protected from
+`prune_neighbors` and from its own `end_branch` for the rest of the run. Per-hop memory resets to the anchor, so a later hop cannot recall a
 relevance the run already established. The protection is additive on the
 tracer and empty in BB. A non-bodied target is contracted the instant it is
 enqueued, so the declaration record is what refuses a later prune of a
@@ -312,8 +415,8 @@ current task, the focus context, a fixed-size window of recent hop summaries
 anchor at approval and after every committed hop. Synthesis receives the
 complete archived result surface.
 
-`submit_findings` is atomic. Route, column, required-neighbor, and prune
-checks complete before findings or topology are committed. Unresolvable
+`submit_findings` is atomic. Neighbor, column, and prune checks complete
+before findings or topology are committed. Unresolvable
 references that are safe to skip become structured notices; unsafe or
 malformed mutations reject with correction data. Any phase that declares a
 required terminal tool never streams model prose to the chat: a text-only
@@ -321,8 +424,9 @@ finish there is a rejected attempt (`missing_required_tool_call`).
 
 ## BB and column-trace modes
 
-BB is whole-object analysis. It supports focus verdicts, semantic route
-requests, and engine-validated neighbor pruning.
+BB is whole-object analysis. It supports focus verdicts and engine-validated
+neighbor decisions (`prune_neighbors`, `questions`); every remaining open
+in-scope neighbor not pruned is enqueued and visited once, automatically.
 
 CT is BB plus column tracking, never a parallel traversal. It runs the same
 agenda, the same approved scope, the same retention, and the same lifecycle.
@@ -354,45 +458,25 @@ per-hop instruction surface, the whole-object instruction always ships, and a
 neighbor that carries traced columns earns the column-trace rider on top; a
 neighbor that only shapes rows gets the whole-object instruction alone.
 
-`route_requests[].columns` is required on every CT route request
-(`CtRouteRequestSchema` in `toolSchemas.ts`): a non-empty list, or the word
-`none`, never an omitted field. `ColumnCarry` (`smTypes.ts`) has exactly two
-states — `carry` (the listed columns) and `row_role_only` (the neighbor
-carries no traced value and is dispatched as a plain object). There is no
-silent default; a CT route that skips the decision is rejected before
-commit. BB's route form carries no `columns` field at all — the channel does
-not exist in that mode — and when a BB-mode hop inside a CT run is read for
-its (structurally absent) decision, it resolves to `row_role_only`, the same
-as an explicit `none`.
+What a kept neighbor carries is derived from the hop's own `column_flow`,
+never stated per neighbor: the columns `upstream_columns` names on it, and on
+the downstream side of the trace the `out_col` the focus writes to its readers
+(or `writes_to.col` for the named write target). `ColumnCarry` (`smTypes.ts`)
+has exactly two states — `carry` (the derived columns) and `row_role_only` (a
+kept neighbor named in no entry, dispatched as a plain object). BB derives no
+carry at all. `questions` carry no columns in either mode.
 
-The decision persists on the agenda entry (`columnCarry`). At dispatch, a
+The carry persists on the agenda entry (`columnCarry`). At dispatch, a
 dequeued CT candidate's base active-column set is `[]` when the carry is
 `row_role_only`, otherwise the entry's own recorded `activeColumns`; spine
 recovery — the accumulated committed `column_flow` edges, bound against the
 node's own declared columns — overrides that base only when it resolves
 non-empty. No other fallback exists: a stale seed-target set is never
-re-applied to a node several hops from where it was resolved.
-
-Where the two channels disagree, the engine does not pick a winner. A route
-stating `columns: 'none'` for a node the SAME submission names in
-`column_flow[].upstream_columns` is one payload contradicting itself, so it is
-refused (`route_columns_flow_conflict`) with the neighbour and the attributed
-columns named, and the model repairs whichever half it meant. That is a CT
-content fact on the submit, not a BB admission fact: a neighbour BB would
-defer or exclude is still refused when the same payload names it both ways,
-and the repair path is `route_requests[].columns`. The refusal is scoped to
-model-authored routes: the engine synthesizes its own routes from
-`column_flow` and from the required-neighbour fill, and states their columns at
-the point of synthesis rather than leaving them to be resolved later.
-
-The reverse order — a `'none'` contradicted by an edge committed at an EARLIER
-hop — is not a contradiction in one payload: each statement was correct when it
-was made. `routeCarryFor` honours the stated `'none'` and enqueues it as
-submitted. The committed column is not dropped: the dispatch-time spine bind in
-`getHopContext` binds it (logged as `[Normalize] dispatch carry`), and the
-committed edge's continuation question is dispatched with it, so the node that
-owns the answer is asked about the column on its own hop. A route's column
-decision describes that one edge; it never narrows a demand another edge placed.
+re-applied to a node several hops from where it was resolved. A column edge
+committed at an earlier hop is never dropped by a later hop's
+`row_role_only`: the dispatch-time spine bind in `getHopContext` binds it
+(logged as `[Normalize] dispatch carry`), and the committed edge's
+continuation question is dispatched with it.
 
 A column edge carries an optional multi-select transform classification.
 `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts` is the
@@ -411,6 +495,10 @@ DIRECT means the upstream value reaches the output; INDIRECT means no value
 crosses the edge and the node only decided which rows appear. The field is
 optional on both contracts, and the engine never fills it in.
 
+Scheduling, the inbox, and node status are the same in both modes (§Active
+exploration): the visit order is identical, and CT adds only columns on a note
+and `column_flow` on a finding.
+
 Neighbor visibility is the same in both modes, structurally: CT presents the
 focus node's full neighbor set, exactly as BB does, and routing eligibility
 is never filtered by column state — a neighbor that carries none of the
@@ -428,7 +516,7 @@ fixture through independent BB and CT engine instances and asserts their
 reachable only through a `row_role_only` hop. That two independently-run
 traces of the *same question* issue matching routing decisions in the first
 place is a property of the model's own behaviour, not something any engine
-mechanism enforces. `tests/unit/sm/ct-retention-differential.test.ts` ("CT chain connectivity") pins a
+mechanism enforces. The internal state-machine suite ("CT chain connectivity") pins a
 related but distinct invariant — that the committed `column_flow` edges form
 one connected component reaching the origin, so a column chain can never start
 detached from the traced origin.

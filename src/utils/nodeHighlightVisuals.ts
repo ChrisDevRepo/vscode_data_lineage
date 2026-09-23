@@ -32,8 +32,6 @@ export function resolveNodeHighlightStyle(
   const highlightColor = aiHighlight
     ? aiHighlight.color
     : isYellow ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
-  // AI highlight takes the glow at any selection state except the plain yellow click-highlight,
-  // which always wins its own color.
   const boxShadow = isYellow
     ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
     : aiHighlight

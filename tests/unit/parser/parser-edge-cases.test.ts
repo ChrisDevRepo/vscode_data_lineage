@@ -1200,9 +1200,6 @@ describe('a double-quoted identifier is not a comment', () => {
   table([
     {
       name: 'statements after a double-quoted identifier containing /* are still parsed',
-      // SET QUOTED_IDENTIFIER ON treats "..." as a delimited identifier, not a string literal.
-      // A `/*` inside one (e.g. an alias carrying odd characters) must not open a block comment
-      // that swallows the rest of the batch.
       sql:
         'SELECT c.id AS "My/*Alias" FROM stg.Customer c;'
         + ' INSERT INTO dbo.Dim SELECT 1;'
@@ -1218,17 +1215,12 @@ describe('a bracketed identifier is not a string literal', () => {
   table([
     {
       name: 'a block comment after a bracketed name containing an apostrophe is still removed',
-      // `[…]` delimits an identifier, so the apostrophe in it is an ordinary character. Reading it
-      // as the start of a string literal makes everything up to the next apostrophe opaque — here
-      // the whole rest of the body — and the commented-out object survives into extraction.
       sql: "SELECT * FROM [dbo].[Bob's Table] /* FROM dbo.GhostTable */",
       exactSources: ["dbo.Bob's Table"],
       noSources: ['GhostTable'],
     },
     {
       name: 'a doubled bracket inside a bracketed name does not swallow the statement after it',
-      // `]]` is T-SQL's escape for a literal `]`, so `[a]]b]` is the single identifier `a]b`.
-      // Ending the name at the first `]` leaves the rest of the body misread.
       sql: 'SELECT * FROM [dbo].[a]]b] /* FROM dbo.GhostTable */; INSERT INTO dbo.Dim SELECT 1;',
       targets: ['Dim'],
       noSources: ['GhostTable'],
@@ -1240,8 +1232,6 @@ describe('a bracketed identifier is not a string literal', () => {
     },
   ]);
 
-  // The table helpers compare on names with every bracket removed, which erases the very
-  // character under test. These two assert the captured name verbatim instead.
   it('an escaped bracket in a source name is captured, not the fragment before it', () => {
     const result = parseSqlBody('SELECT * FROM [dbo].[a]]b]');
     expect(result.sources).toContain('[dbo].[a]b]');
@@ -1257,9 +1247,6 @@ describe('CTAS carries its distribution clause', () => {
   table([
     {
       name: 'a Synapse CTAS with a mandatory DISTRIBUTION clause still names its target',
-      // "The CTAS statement requires a distribution option and doesn't have default values."
-      // The WITH clause is therefore present in every valid Synapse CTAS, and a rule that
-      // demands `CREATE TABLE x AS SELECT` with nothing between matches none of them.
       sql: 'CREATE TABLE dbo.FactCopy WITH ( DISTRIBUTION = HASH([OrderID]), CLUSTERED COLUMNSTORE INDEX ) AS SELECT * FROM dbo.Fact;',
       targets: ['FactCopy'],
       exactSources: ['dbo.Fact'],

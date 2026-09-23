@@ -14,8 +14,6 @@ import * as yaml from 'js-yaml';
 import { z } from 'zod';
 
 const DmvQueriesConfigSchema = z.object({
-  // Hand-authored YAML, so `version: "1"` must still parse. Coerced to a number because the
-  // upgrade gate below compares it with strict `!==` against the shipped file's own version.
   version: z.coerce.number().optional(),
   queries: z.array(z.record(z.string(), z.any())).optional()
 }).passthrough();
@@ -102,11 +100,6 @@ export async function loadDmvQueries(
         const rawParsed = yaml.load(new TextDecoder().decode(data));
         const parsed = DmvQueriesConfigSchema.parse(rawParsed);
 
-        // The shipped asset is the contract, so it is its own source of truth — no separate
-        // constant to drift from it. A custom file written against an older query set (a query
-        // renamed or removed, changed {{SCHEMAS}} expansion) is skipped rather than executed
-        // against a contract it no longer matches. A missing `version` counts as a mismatch:
-        // silently running an unversioned file is the failure this gate exists to prevent.
         const builtInConfig = await loadBuiltInDmvConfig(outputChannel, extensionUri);
         if (parsed.version !== builtInConfig.version) {
           notifyWarning(
@@ -223,8 +216,6 @@ async function loadBuiltInDmvConfig(
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
   }
   if (version === undefined) {
-    // The shipped version is the contract every custom file is gated against; a version-less
-    // built-in would silently disable that gate.
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "version"');
   }
   const validQueries = queries.filter(hasRequiredQueryFields);
@@ -325,12 +316,9 @@ export async function promptForConnection(
  *   example a server-scoped profile with no `database`.
  */
 export function stripSensitiveFields(info: IConnectionInfo): StoredConnectionInfo {
-  // Double cast: the runtime object is wider than the declared interface, which has no index
-  // signature — that gap is exactly why this allow-list exists.
   const source = info as unknown as Record<string, unknown>;
   const persistable: Record<string, unknown> = {};
   for (const key of Object.keys(StoredConnectionInfoSchema.shape)) {
-    // Omit absent optionals rather than writing explicit `undefined`, which JSON drops anyway.
     if (source[key] !== undefined) persistable[key] = source[key];
   }
   return StoredConnectionInfoSchema.parse(persistable);
@@ -363,9 +351,6 @@ export async function connectDirect(
 
   logger.debug(`>> Open: ${connectionInfo.server} / ${connectionInfo.database} (reconnect)`);
   const reconnectStart = Date.now();
-  // Shallow copy, not structuredClone: the caller may pass a live mssql profile object, whose
-  // runtime shape can carry values structuredClone throws on, and the observed mutation
-  // (acquired-token fields) is a top-level write, so a shallow copy fully isolates the record.
   const profile = { ...connectionInfo };
   try {
     const connectionUri = await api.connect(profile, false);

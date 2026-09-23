@@ -1,15 +1,4 @@
 #!/usr/bin/env node
-// Gate step: no test surface may be named for AI unless it actually calls a model.
-//
-// A suite name is quoted as evidence. "the AI tests pass" was true of a run that made zero model
-// calls, because `test:ai` was named for the subsystem it covered rather than for what it did.
-// This check makes that naming impossible to reintroduce silently: every npm test script and every
-// Extension Development Host label is matched against the AI vocabulary, and only the live-provider
-// lanes are allowed to use it.
-//
-// The rule is about NAMES, not about what a suite covers. `tests/unit/ai-core/` keeps its
-// directory name — a path names the code under test. A command a person types and quotes is
-// different: it must say what it does.
 import { readFileSync } from 'node:fs';
 
 /** Words that make a reader expect inference. Matched case-insensitively on whole words. */
@@ -29,7 +18,6 @@ const problems = [];
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 for (const name of Object.keys(pkg.scripts ?? {})) {
-  // `pretest:*` is included deliberately. It is quoted as a command like any other.
   if (!/^(?:pre)?test/u.test(name)) continue;
   if (OVERCLAIM_VOCABULARY.test(name)) {
     problems.push(
@@ -46,7 +34,6 @@ for (const name of Object.keys(pkg.scripts ?? {})) {
   }
 }
 
-// `.vscode-test.mjs` is read as text rather than imported: importing it resolves the whole
 // @vscode/test-cli chain for a string check.
 const laneConfig = readFileSync('.vscode-test.mjs', 'utf8');
 for (const [, label] of laneConfig.matchAll(/label:\s*'([^']+)'/g)) {
@@ -58,10 +45,6 @@ for (const [, label] of laneConfig.matchAll(/label:\s*'([^']+)'/g)) {
   }
 }
 
-// The gate's own step labels: the summary those produce is the single most-quoted artifact here.
-// Matches both forms a step label takes in gate.mjs — `npmRun('name', ...)` and the inline
-// `{ name: 'name', ... }` object literal most steps use — so a label typed directly into the
-// object form is checked exactly like one passed through npmRun.
 const gateSource = readFileSync('tests/tools/gate.mjs', 'utf8');
 for (const [, label] of gateSource.matchAll(/(?:npmRun\(|name: )'([^']+)'/g)) {
   if (AI_VOCABULARY.test(label)) {

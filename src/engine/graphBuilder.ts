@@ -597,7 +597,6 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
   try {
     dagre.layout(g);
   } catch (e) {
-    // Dagre's longest-path ranker crashes on disconnected graphs; return empty positions so toFlowResult falls back to {x:0,y:0}.
     logSink('warn', `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}`);
     return new Map();
   }
@@ -768,7 +767,6 @@ export function buildSchemaGraph(
   try {
     dagre.layout(g);
   } catch (e) {
-    // Disconnected schema singletons hit the same longest-path crash; g.node() then returns undefined and positions fall back to {x:0,y:0}.
     logSink('warn', `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}`);
   }
 
@@ -844,7 +842,6 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
     }
   });
 
-  // Separate nodes that participate in at least one edge from disconnected singletons.
   const connectedIds = new Set<string>();
   for (const { source, target } of edges) { connectedIds.add(source); connectedIds.add(target); }
   const allIds = graph.nodes();
@@ -853,7 +850,6 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
 
   const positions = dagreLayout({ nodeIds: layoutIds, edges, config, ranker: 'longest-path' });
 
-  // Place isolated nodes in a row below the main layout.
   if (isolatedIds.length > 0) {
     let maxY = 0;
     for (const pos of positions.values()) {
@@ -1075,7 +1071,6 @@ export function buildExpandedSchemaViewGraph(
   config: ExtensionConfig = DEFAULT_CONFIG,
   options: ExpandedSchemaViewRenderOptions = {},
 ): { flowNodes: FlowNode[]; flowEdges: FlowEdge[] } {
-  // Always include clusters so the layout cache key stays stable and positions don't shift when the hide toggle fires.
   const projection = projectExpandedSchemaView(graph, expandedSchemas,
     { ...options, includeCollapsedSchemaClusters: true });
   const hideClusters = options.hideClusters ?? false;

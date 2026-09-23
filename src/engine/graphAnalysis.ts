@@ -266,7 +266,6 @@ function walkFromEntry(graph: Graph, members: readonly string[], entry: string):
   if (members.length === 1) return { dist: new Map([[entry, 0]]), tail: [entry] };
   const memberIds = new Set(members);
   const dist = new Map<string, number>();
-  // Returning true prunes the walk at a non-member — a shortest path between members never leaves it.
   bfsFromNode(graph, entry, (node, _attributes, depth) => {
     if (!memberIds.has(node)) return true;
     dist.set(node, depth);
@@ -392,7 +391,6 @@ export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number
   const condensation = condense(graph);
   const { components, successors, inDegree } = condensation;
 
-  // Kahn ordering, then the chain DP in reverse — both iterative, so a chain of thousands cannot exhaust the call stack.
   const remaining = [...inDegree];
   const order: number[] = [];
   for (let i = 0; i < components.length; i++) if (remaining[i] === 0) order.push(i);

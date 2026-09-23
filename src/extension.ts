@@ -19,8 +19,6 @@ export async function activate(context: vscode.ExtensionContext) {
   try {
     runtime = (await import('./extensionRuntime.js')).default;
   } catch (err) {
-    // The runtime bundle failed to load, so the notification helpers it carries are unavailable;
-    // the raw VS Code API is the only remaining user-facing surface.
     void vscode.window.showErrorMessage(
       'Data Lineage could not load its runtime bundle. Reinstall the extension; if the problem persists, report it.',
     );

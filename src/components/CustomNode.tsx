@@ -55,7 +55,6 @@ export function TraceActionButton({
   onAction: (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => void;
 }) {
   const enabled = options.length > 0;
-  // Smart-hide: suppress only when the side has nothing to act on; otherwise show it grayed with a tooltip.
   if (!enabled && !hasContext) return null;
 
   const label = traceActionLabel(action, side);

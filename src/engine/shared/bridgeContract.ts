@@ -677,7 +677,6 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('load-demo') }),
   z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
   z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
-  // `uiState`/`renderState` are opaque passthrough buffers the webview owns the shape of; `unknown` (not `any`) keeps them from leaking untyped access elsewhere.
   z.object({ type: z.literal('filter-changed'), uiState: z.any() }),
   z.object({ type: z.literal('render-state'), renderState: z.unknown() }),
   z.object({ type: z.literal('db-connect') }),

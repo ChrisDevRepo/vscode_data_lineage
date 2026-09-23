@@ -48,9 +48,10 @@ model would break that inheritance rather than extend it.
 `SystemMessage` to a User turn. Anything that depends on system-role semantics
 has to survive that mapping. Copilot Chat also prepends its own `system`
 message to every request (content policy, "keep answers short", Markdown,
-KaTeX `$`/`$$`, mermaid code blocks); the extension's depth and "never draw
-diagrams" rules must therefore be explicit in its own instruction text — they
-cannot rely on being the only instructions the model sees.
+KaTeX `$`/`$$`, mermaid code blocks); the extension's depth contract and its
+"the extension draws the graph; describe lineage in tables, lists and prose"
+rule must therefore be explicit in its own instruction text — they cannot rely
+on being the only instructions the model sees.
 
 Tool calls run through the local strict-Zod dispatcher, not
 `vscode.lm.invokeTool`. The bridge preserves tool-selection semantics across the
@@ -127,29 +128,50 @@ closure, and termination. Bounding traversal in the engine rather than in the
 prompt is deliberate: a schema, state machine, or code guard holds where a
 prompt-only constraint drifts.
 
-Depth follows that rule and splits on who chose it. A level count the model
-reports as stated by the user (`depthIntent.kind` of `explicit` or `asymmetric`)
-is a **hard border**: the engine refuses admission past it, per direction, and
-records the frontier through the same `deferQuestion` path a schema breach uses.
-A node reachable on both sides of the origin is judged against each side's own
-ceiling — admitted when either side's distance fits, refused only when neither
-does. A depth the model inferred (`default_start`) stays a **soft seed** the model may
-grow, exactly as before. Which of the two applies is the model's semantic call,
-carried as Zod-validated `depth` — the host never parses the user's text for it —
-and the engine, never the prompt, enforces the result.
+Depth follows that rule and splits on who chose it — never on the shape of the number alone.
+Only a level count the user literally stated (a bare count, "one level down", "two levels up"),
+or an explicit unbounded ask ("all the way to the source"), binds; any other wording — including
+"back to its original sources" or "where does X come from", which name no count — starts at the
+soft default seed that grows (PM ruling `depth-soft-default`, 2026-09-22). Because the host never
+parses the user's sentence, provenance cannot be inferred from `depth`'s shape alone: a bare
+finite number the model invents to fill the field would be indistinguishable, at the schema
+boundary, from one it copied off the user's words. The tool contract therefore carries provenance
+as its own typed field, `depthStated` (`src/ai/tools/toolSchemas.ts`), alongside `depth`:
+`depthStated: true` asserts the accompanying finite `depth` is the user's own literal count;
+omitted or `false`, a finite `depth` is treated as unstated. `resolveDepthIntentForBoundary`
+(`src/ai/sm/smTypes.ts`), the one call site that turns the Zod-validated payload into engine-owned
+intent (`startExploration.ts`), gates on exactly that pairing before `resolveDepthIntent` ever
+sees the value — a finite `depth` without `depthStated: true` is dropped to unstated and resolves
+to the same `default_start` seed as an omitted `depth`, never the hard `explicit`/`asymmetric`
+kind. `"all"` is exempt from the pairing: it can only ever grow the scope, never truncate it, so
+an unstated `"all"` is already safe.
 
-That split generalizes past depth. Every scope rule reaching the engine is either **hard** —
-the user stated it — or **soft** — the model chose it as a starting point; the model
-classifies which, as a typed field, and the host never reads the user's sentence to decide.
-The approval card is grouped by that classification, so a limit the user set and one the
-model estimated are never rendered as the same kind of fact, and an estimate carries `≈`
-— facts only: the depth line states what the engine will do with the depth (a
-default start the engine can extend), never the assistant's intent, so no
-first person appears on the card.
-Once approved, the plan is what runs: the engine is constructed from the approved `init`
-object itself, and `checkBorder` enforces the result at every admission purpose. The one
-thing the engine cannot bind is an instruction that maps to no filter field — it rides along
-as `scopeNotes` for the model to honour, with nothing to reject a breach.
+A hard depth (`depthIntent.kind` of `explicit` or `asymmetric`, both requiring `depthStated:
+true`) is a **hard border**: the engine refuses admission past it, per direction, and records the
+frontier through the same `deferQuestion` path a schema breach uses. A node reachable on both
+sides of the origin is judged against each side's own ceiling — admitted when either side's
+distance fits, refused only when neither does. A depth the model did not mark as user-stated
+(`default_start`) stays a **soft seed** the model may grow, exactly as before. The engine, never
+the prompt, enforces the result either way.
+
+That split generalizes past depth. Every scope rule reaching the engine — depth, direction, the
+schema allowlist, exclusions, a follow-up correction at the refine gate — is either **hard**, once
+approved at the gate, or **soft**, a starting point the model may still grow inside. A hard value
+binds for the entire hop-by-hop run: the model may extend it only after the answer is rendered, as
+a follow-up or deferred lead (`supplementAgenda`), never mid-run — the same `confirm_sm_start`
+gate that approved the border is the only place a hard value may be replaced, and only by a fresh
+refine carrying the user's own correction. The model classifies hard vs. soft as a typed field
+(`depthStated` for depth; the raw value itself for direction, the exclusion lists, and
+`scopeNotes`, none of which admit a competing "model estimate" reading), and the host never reads
+the user's sentence to decide. The approval card is grouped by that classification, so a limit the
+user set and one the model estimated are never rendered as the same kind of fact, and an estimate
+carries `≈` — facts only: the depth line states what the engine will do with the depth (a default
+start the engine can extend), never the assistant's intent, so no first person appears on the card.
+Once approved, the plan is what runs: the engine is constructed from the approved `init` object
+itself, and `checkBorder` enforces the result at every admission purpose. The one thing the engine
+cannot bind is an instruction that maps to no filter field — it rides along as `scopeNotes` for
+the model to honour, with nothing to reject a breach; `scopeNotes` reaches every active hop and
+synthesis alike (`buildStableContextBlocks`, `stagePrompts.ts`), never only the first.
 
 ## Prompts, presentation, and rejection
 
@@ -253,7 +275,9 @@ API uses `/** */` with `@remarks` for invariants, `{@link}` for symbols, and
 signature does not already state. Types live in TypeScript; never write JSDoc
 `{Type}` braces. Plain `.mjs` scripts keep type-bearing JSDoc because that is
 the only place the type can be stated. Comments carry contracts, not narration,
-decision history, or notes to a reviewer.
+decision history, provenance tags (dates, author names, register/row references,
+issue links), commented-out code, or notes to a reviewer. Test files carry a
+1–3 line header stating what the suite pins.
 
 Commands and settings use the `dataLineageViz.*` prefix, and the schema
 expansion view is named `Expanded Schema View`. Changelog notes go under the
@@ -289,7 +313,7 @@ place their defects can surface; everything it adds beyond that is deterministic
 translation that does not care whether the text came from inference. Model
 behaviour is measured internally, headless, never through this repository's
 tracked suite, and the Electron fixture stays scripted-only — it must not grow a
-live-provider mode. `tests/unit/ai-core/helpers/portContract.ts` is a
+live-provider mode. The internal model-port contract suite is a
 port-agnostic acceptance suite proving the real `vscode.lm` transport
 (`VscodeModelPort`) satisfies the model-port contract; a new guarantee about that
 boundary belongs in that suite, never in a credentialed host lane.

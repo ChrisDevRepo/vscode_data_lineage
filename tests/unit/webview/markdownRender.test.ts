@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { renderAiMarkdown } from '../../../src/components/markdown/renderAiMarkdown';
 
-// jsdom leaves `import.meta.url` as an http URL, so resolve from the Vitest root instead.
 const fixture = readFileSync(
   join(process.cwd(), 'tests', 'fixtures', 'markdown', 'spImportOrders.md'),
   'utf8',
@@ -116,7 +115,6 @@ describe('renderAiMarkdown — the reported document', () => {
   beforeAll(() => { host = render(fixture); });
 
   it('renders every formula as math rather than literal dollar text', () => {
-    // 4 display formulas plus 6 inline spans; none may survive as raw `$…$` prose.
     expect(host.querySelectorAll('.katex')).toHaveLength(10);
     expect(host.textContent).not.toContain('$\\rightarrow$');
     expect(host.textContent).not.toContain('$\\text{RawQty} = 0$');

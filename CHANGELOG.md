@@ -4,20 +4,19 @@
 
 ### Added
 - **Column Detail** — column-level findings of an AI analysis, shown as a second rendering of the same objects; procedures and scalar functions appear as compact hubs. Replaces the always-on column-flow tooltip on objects.
-- The assistant reads what is on screen, recalls a saved AI view's findings and open questions in later chats, checks SQL comments against the statements they annotate, and renders formulas as mathematics.
-- Improved column tracing in GUI and backend: CT prompts compose as BB plus a column rider with full-depth synthesis in both modes; a body-less CT focus grows continuation edges instead of stalling; every CT route states its column decision with no engine fallback; truncated retries are non-chargeable.
+- The assistant reads what is on screen, recalls a saved AI view's findings and open questions in later chats.
+- Improved column tracing in GUI and backend: CT prompts compose as BB plus a column rider with full-depth synthesis in both modes; a body-less CT focus grows continuation edges instead of stalling; every CT route states its column decision.
 - Follow-ups add the requested object into the graph already presented — or its whole chain up to the source or down to the end — and render amendments patch the committed report instead of re-authoring it. "Explore related objects" suggests candidates, marking those already on the graph, and asks before adding.
 
 ### Changed
 - Rejection and repair handling unified: one repeated-error guard, self-repair for array-boundary breaks, one home for every rejection code; over-long names become single-field repairs; callouts delivered as a sidecar; remaining silent drops log instead of vanishing.
-- An explicit graph/render request is answered in discovery; a stated depth is a hard per-direction limit reported on the approval card; the longest-chain report follows chains through circular dependencies.
-- Column trace is the same exploration as object analysis plus columns; prune protection covers BB as well as CT; Copilot single-tool hops send Auto.
+- An explicit graph/render request is answered in discovery
 
 ### Fixed
-- Parser and trace fixes: bracketed `]]` escapes, comments inside identifiers, and wildcard storage paths no longer drop or invent dependencies; one-direction traces draw every edge between the objects they include.
+- Parser and trace fixes: bracketed `]]` escapes, comments inside identifiers.
 - Display: large graphs stay responsive while dragging, over-limit views report it, saved views fit the graph on restore, and the collapsed report rail stays docked.
 - Assistant robustness: XML/unfenced tool calls read without stalling the turn, bookmarks recall their AI run, formula notes reach the report, and a very broad SQL code search no longer exhausts memory or hangs the extension host.
-- Webview: search hits keep their pending zoom and report the enclosing predicate; Refresh is a hang-free canvas reset; the AI description overlay is simplified.
+- Webview: search hits keep their pending zoom and report the enclosing predicate; the AI description overlay is simplified.
 
 ## [1.1.0] - 2026-08-20
 

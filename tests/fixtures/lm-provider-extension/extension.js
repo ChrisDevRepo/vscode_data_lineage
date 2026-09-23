@@ -148,7 +148,7 @@ function normalizeNodeId(id) {
  * @remarks
  * `buildWorkerHopMessage` (src/ai/agent/stagePrompts.ts) precedes the real `<hop_context>` TAG with a
  * plain-prose SENTENCE that also mentions the literal string `<hop_context>`
- * ("Use ONLY node ids that appear in <hop_context> for route_requests."). A tag-only regex greedily
+ * (it names the literal `<hop_context>` tag in prose). A tag-only regex greedily
  * (non-greedily, but still) matches that mention as the opening tag and captures everything up to
  * the real closing tag as its "body" — which is not valid JSON and always fails to parse. The
  * capture group here additionally requires the body to start with `{`, which only the real tag
@@ -634,27 +634,15 @@ function activate(context) {
         hopSeq += 1;
         const callId = `${caseId}-hop-${hopSeq}`;
         const isCt = cfg.mode === 'ct';
-        // Required-route accounting, both modes: the full 'all'-depth scope is precomputed at
-        // start_exploration, but the engine's required-nodes guard (NavigationEngine.submitFindings,
-        // src/ai/sm/smBase.ts) still requires each hop to explicitly account for its own in-scope,
-        // not-yet-queued directional neighbors via route_requests (or prune_neighbors) —
-        // pre-seeding the scope does not queue it. CT is BB plus column tracking and is held to the
-        // same checklist. Route every in-budget upstream neighbor forward; the engine dedupes an
-        // already-queued one, so over-routing is harmless.
-        const inBudgetUpstreamNeighbors = (hop && Array.isArray(hop.neighbors) ? hop.neighbors : [])
-          .filter((n) => n && n.edge_direction === 'upstream' && n.in_budget && n.boundary !== 'cycle'
-            && typeof n.id === 'string');
-        const routeRequests = inBudgetUpstreamNeighbors.map((n) => ({
-          nodeId: n.id,
-          question: 'Trace this node\'s contribution to the upstream lineage.',
-        }));
+        // Neighbor decisions, both modes: the engine (NavigationEngine.submitFindings,
+        // src/ai/sm/smBase.ts) visits every open in-scope neighbor this hop does not prune, so the
+        // scripted provider prunes nothing and authors no per-neighbor question.
         const input = {
           focus_node_id: focusId,
           sections: [{ angle: 'business', text: `Scripted ${caseId} analysis of ${focusId}.` }],
           summary: `${focusId} passes data through unchanged.`,
           verdict: 'analyze',
           ...(isCt ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) } : {}),
-          ...(routeRequests.length > 0 ? { route_requests: routeRequests } : {}),
         };
         progress.report(new vscode.LanguageModelToolCallPart(callId, 'lineage_submit_findings', input));
         return;

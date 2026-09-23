@@ -132,7 +132,7 @@ export function buildHostStageSystemPrompt(
   ctx: StagePromptContext,
   analysisMode: 'bb' | 'ct' = 'bb',
 ): string {
-  const base = buildGeneralSystemPrompt(phase, ctx);
+  const base = buildGeneralSystemPrompt(ctx);
   const phaseSpecific = buildPhasePrompt(phase, analysisMode);
   return [base, phaseSpecific].filter(Boolean).join('\n\n');
 }
@@ -150,13 +150,10 @@ export function buildHostStageSystemPrompt(
  */
 export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
   return [
-    'You are a routing classifier for a SQL data-lineage tool. Classify the user request into one entry route.',
-    '',
-    "Return 'column_trace' ONLY when the user explicitly asks to trace, follow, or walk one or more specific named columns as a new lineage request — e.g. \"trace column ColumnX\", \"walk the lineage of [dbo].[t].[col]\". Extract those exact names into targetColumns.",
-    "Return 'visual_render' when the user explicitly asks to see, show, render, draw, preview, or open a lineage graph, diagram, canvas, or panel. Set targetColumns to null.",
-    "Return 'discovery' for everything else, and default to 'discovery' whenever in doubt: broad dependency questions that do not explicitly request a visual or a column trace; a follow-up that merely refers to a column already named earlier in the conversation, or asks how/why something already on screen behaves (e.g. \"what am I looking at\", \"how was ColumnX calculated\" when already named or summarized) — naming a column is not, by itself, a reason to choose 'column_trace'. A bare \"trace\"/\"explore\" verb with no column named also stays 'discovery'. Under-choosing 'column_trace' costs nothing — the user can switch to a column trace at the approval step before anything runs. Set targetColumns to null.",
-    '',
-    'The conversation may include earlier turns. Classify ONLY the latest user message; use earlier turns solely to resolve what it refers to (e.g. resolving which object a bare column name belongs to).',
+    'Classify the latest user message of a SQL data-lineage chat into one entry route. Earlier turns only resolve what it refers to.',
+    '- column_trace: the user explicitly asks to trace, follow or walk one or more named columns as a new lineage request; put those names in targetColumns.',
+    '- visual_render: the user explicitly asks to see, show, render, draw, preview or open a lineage graph, diagram or panel.',
+    '- discovery: everything else, and whenever in doubt — including a follow-up that mentions a column already named, a question about what is on screen, or a bare "trace"/"explore" with no column. The user can still switch to a column trace at the approval step.',
     '',
     `Context: platform ${ctx.dbPlatform}; ${ctx.totalSchemaCount} schemas; ${ctx.visibleNodes} of ${ctx.totalNodes} objects visible.`,
     ...(ctx.screen ? buildScreenStateSlot(ctx.screen) : []),
@@ -189,28 +186,22 @@ export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string 
  * @returns The SM-entry system-prompt string.
  */
 export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?: string[]): string {
-  const base = buildGeneralSystemPrompt('discover', ctx);
+  const base = buildGeneralSystemPrompt(ctx);
   const ctLine = targetColumns?.length
-    ? `This is a column trace — set analysisMode:"ct" and pass targetColumns: [${targetColumns.map((c) => `"${c}"`).join(', ')}].`
-    : 'Set analysisMode:"bb" unless the user clearly requested tracing specific column(s). When unclear, choose "bb". Do not pass targetColumns in BB mode.';
+    ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${c}"`).join(', ')}].`
+    : '';
   const directive = [
-    '## Start the exploration',
-    'Resolve the origin object, then call `lineage_start_exploration`. Do not answer in prose.',
-    '1. Call `lineage_search_objects` to resolve the user-named object to its exact id.',
-    '2. Call `lineage_start_exploration` with `origin` set to that id, `analysisMode` (bb or ct), and a `classification` (business, technical, or both).',
-    'This is a fresh exploration: set `origin`; do not set the `supplement` field (that is only for extending a finished exploration).',
-    'Set `direction` from the request: upstream for sources/inputs ("all the way up", "show sources"), downstream for usage/impact, bidirectional when the user wants both.',
-    'Pass a depth only when the user stated one — a level count (e.g. "3 levels"), "all" when the ask is unbounded instead of counted ("back to its original sources", "all the way up", "the full chain"), or a per-side ask (e.g. "2 up, 1 down") as {upstream, downstream}, where an unbounded side is "all". Omit depth only when the user gave neither a level count nor an unbounded ask.',
-    'Also required before calling `lineage_start_exploration`: `mission_brief`, plus `scopeNotes` when the user stated a constraint no filter field captures.',
+    '## Task: open the exploration',
+    "Resolve the object the user named with `lineage_search_objects`, then call `lineage_start_exploration` once with that exact id as `origin`. Set every other field from the user's own words, as its description says: `direction`, `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
     ctLine,
-    'The `confirm_sm_start` gate fires after step 2 — that is expected control flow, not an error to retry around.',
+    'The user then reviews your proposal at an approval gate.',
   ].filter(Boolean).join('\n');
   return [base, directive].join('\n\n');
 }
 
 /** Builds the system prompt for a same-turn revision of an already resolved proposal. */
 export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
-  const base = buildGeneralSystemPrompt('discover', ctx);
+  const base = buildGeneralSystemPrompt(ctx);
   const directive = [
     '## Refine the pending exploration',
     'Revise the interrupted proposal and call `lineage_start_exploration`. Do not answer in prose.',

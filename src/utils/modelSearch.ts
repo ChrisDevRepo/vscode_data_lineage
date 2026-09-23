@@ -195,7 +195,6 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
   } catch (err) {
     return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
   }
-  // Heuristic ReDoS guard: reject patterns that take too long on a bounded probe input.
   if (exceedsRedosBudget(regex)) return { ok: false, reason: 'redos' };
   return { ok: true, regex };
 }
@@ -287,7 +286,6 @@ export function searchCatalog(
   if (types && types.size > 0) filtered = filtered.filter(n => types.has(n.type));
   if (schemas && schemas.size > 0) filtered = filtered.filter(n => schemas.has(n.schema));
 
-  // Regex mode: match against name or schema.name
   if (mode === 'regex') {
     const compiled = compileSearchRegex(query);
     if (!compiled.ok) return [];
@@ -297,7 +295,6 @@ export function searchCatalog(
       .slice(0, limit);
   }
 
-  // Substring mode (default): case-insensitive, starts-with ranked first
   const lower = query.toLowerCase();
   const matches = filtered
     .map(n => ({ node: n, nameLower: n.name.toLowerCase(), idLower: n.id.toLowerCase() }))
@@ -347,7 +344,6 @@ export function searchBodyScripts(
   let filtered = nodes;
   if (types && types.size > 0) filtered = filtered.filter(n => n.bodyScript && types.has(n.type));
 
-  // One allocation for the whole sweep, not one per node.
   const scanner = regex === null ? null : globalScanner(regex);
 
   const matches: BodyMatch[] = [];
@@ -515,7 +511,6 @@ function makeMatch(
     text:    lines[matchLine].trimEnd(),
     snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap, deadLine),
   };
-  // Set only when true/present: an executable, unconditional match keeps the shape it has always had.
   if (commentMask[index] !== SQL_CODE) match.commented = true;
   const predicate = predicateAt[matchLine];
   if (predicate !== undefined) match.enclosingPredicate = predicate;
@@ -565,7 +560,6 @@ function deriveEnclosingPredicates(
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const base = lineStarts[i];
-    // The live-only view of the line: comment content replaced with spaces so a keyword inside a comment can neither open a block nor be mistaken for the line's own condition.
     let live = '';
     for (let c = 0; c < line.length; c++) live += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
     const trimmed = live.trim();
@@ -591,7 +585,6 @@ function deriveEnclosingPredicates(
       }
     }
 
-    // A hit on this line is governed by the innermost open frame, or a still-pending IF/WHILE's single live statement when no frame is open.
     let applicable = stack.length > 0 ? stack[stack.length - 1] : undefined;
     if (applicable === undefined && !ownPredicate && pending !== undefined && !pendingConsumed && isLive) {
       applicable = pending;
@@ -662,7 +655,6 @@ function buildSnippet(
   const start = Math.max(0, matchLine - (contextLines - 1));
   const end = Math.min(lines.length, matchLine + contextLines);
   const termLower = matchText.toLowerCase();
-  // Applied at every return, after the window is chosen — the prefix must not enter the cap arithmetic that decides what of the line is shown.
   const mark = (lineIndex: number, rendered: string): string =>
     deadLine[lineIndex] === 1 ? `${DEAD_LINE_PREFIX}${rendered}` : rendered;
   return lines.slice(start, end).map((l, offset) => {
@@ -671,7 +663,6 @@ function buildSnippet(
     if (trimmed.length <= lineCap) return mark(lineIndex, trimmed);
     const matchPos = termLower.length > 0 ? trimmed.toLowerCase().indexOf(termLower) : -1;
     if (matchPos < 0) return mark(lineIndex, trimmed);
-    // Trim long lines so the match stays within the visible panel width.
     const windowStart = Math.max(0, matchPos - SIDEBAR_WINDOW_LEAD);
     const windowEnd = Math.min(trimmed.length, windowStart + lineCap);
     return mark(lineIndex, (windowStart > 0 ? '\u2026' : '') +

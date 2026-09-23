@@ -30,10 +30,8 @@ const modelOf = (
   schemas: DatabaseModel['schemas'] = [],
 ) => ({ nodes, edges, schemas, catalog: {}, neighborIndex: {} }) as unknown as DatabaseModel;
 
-// ─── projectSchemaQuotient ────────────────────────────────────────────────────
 
 describe('projectSchemaQuotient', () => {
-  // dbo.ProcA writes sales.TableB; sales.ProcC reads dbo.TableD — one edge each way.
   const crossSchema = () => modelOf(
     [
       node('[dbo].[proca]', 'ProcA', 'dbo', 'procedure'),
@@ -78,7 +76,6 @@ describe('projectSchemaQuotient', () => {
   });
 });
 
-// ─── buildSchemaGraph over the real model ─────────────────────────────────────
 
 describe('buildSchemaGraph — AdventureWorks', () => {
   let model: DatabaseModel;
@@ -121,7 +118,6 @@ describe('buildSchemaGraph — AdventureWorks', () => {
   });
 });
 
-// ─── buildSchemaGraph — bidirectional pair and configuration ──────────────────
 
 describe('buildSchemaGraph — bidirectional pair', () => {
   const bidiModel = () => modelOf(
@@ -147,7 +143,6 @@ describe('buildSchemaGraph — bidirectional pair', () => {
     const { nodes } = buildSchemaGraph(buildGraphologyGraph(bidiModel()), vertical);
     const source = nodes.find(entry => entry.data.schemaName === 'a')!;
     const target = nodes.find(entry => entry.data.schemaName === 'b')!;
-    // Top-to-bottom means the pair separates further vertically than horizontally.
     expect(Math.abs(target.position.y - source.position.y))
       .toBeGreaterThan(Math.abs(target.position.x - source.position.x));
   });
@@ -161,7 +156,6 @@ describe('buildSchemaGraph — bidirectional pair', () => {
   });
 });
 
-// ─── buildExpandedSchemaViewGraph ─────────────────────────────────────────────
 
 describe('buildExpandedSchemaViewGraph', () => {
   const NODES: DatabaseModel['nodes'] = [

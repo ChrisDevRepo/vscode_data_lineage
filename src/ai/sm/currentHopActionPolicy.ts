@@ -1,6 +1,6 @@
 import type { InvalidRoute } from './smTypes';
 
-/** One model-authored route/prune target after identifier resolution. */
+/** One model-authored prune target after identifier resolution. */
 export interface CurrentHopActionTarget {
   /** Verbatim model-authored identifier used in notices. */
   raw: string;
@@ -10,16 +10,12 @@ export interface CurrentHopActionTarget {
   path: string;
 }
 
-/** Immutable facts needed to classify current-hop route and prune actions. */
+/** Immutable facts needed to classify current-hop prune actions. */
 export interface CurrentHopActionPolicyInput {
   /** Canonical exploration origin. */
   originId: string;
-  /** Explicit route_requests targets. */
-  routeTargets: CurrentHopActionTarget[];
   /** Explicit prune_neighbors targets. */
   pruneTargets: CurrentHopActionTarget[];
-  /** Nodes admitted to the approved exploration scope. */
-  scopeNodeIds: ReadonlySet<string>;
   /** Nodes already processed or removed. */
   visitedIds: ReadonlySet<string>;
   /** Nodes already removed by an earlier accepted prune. */
@@ -36,43 +32,24 @@ export interface CurrentHopActionPolicyResult {
   fatalErrors: InvalidRoute[];
   /** Nonfatal refused/unknown actions recorded for the next hop. */
   notices: InvalidRoute[];
-  /** Prune targets — in scope or out — that are not already visited, queued, noted or removed, all eligible for declared-route and topology (don't-orphan) validation. */
+  /** Prune targets — in scope or out — that are not already visited, queued, noted or removed, eligible for the declared-column check. */
   acceptedPruneIds: string[];
 }
 
 /**
- * Classifies current-hop actions without mutating engine state.
+ * Classifies current-hop prune actions without mutating engine state.
  *
  * @remarks
- * Unresolved routes and refused no-op prunes are notices; route/prune conflicts and origin
- * mutation are fatal. Reachable routes are not restricted to direct neighbors, and approved
- * in-scope/queued work is protected rather than turned into a retry-loop rejection.
+ * Unresolved and no-op prunes are notices; pruning the origin is fatal. Queued, visited and
+ * removed targets are protected rather than turned into a retry-loop rejection.
  */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
   const fatalErrors: InvalidRoute[] = [];
   const notices: InvalidRoute[] = [];
   const acceptedPruneIds: string[] = [];
-  const routedIds = new Set<string>();
-
-  for (const target of input.routeTargets) {
-    routedIds.add(target.resolved ?? target.raw.toLowerCase());
-    if (!target.resolved) {
-      notices.push({
-        kind: 'absent_route',
-        id: target.raw,
-        path: target.path,
-        reason: 'Route target absent from the loaded graph model — recorded as an unresolved reference and skipped.',
-      });
-      continue;
-    }
-  }
 
   for (const target of input.pruneTargets) {
     const id = target.resolved ?? target.raw.toLowerCase();
-    if (routedIds.has(id)) {
-      fatalErrors.push({ kind: 'prune_route_conflict', id, path: target.path, reason: `\`${id}\` was submitted in both route_requests and prune_neighbors in the same hop.` });
-      continue;
-    }
     if (!target.resolved) {
       notices.push({ kind: 'prune_absent', id: target.raw, path: target.path, reason: `\`${target.raw}\` is not in the loaded model.` });
       continue;
@@ -93,7 +70,6 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       notices.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: `\`${id}\` is already recorded as an analyzed node.` });
       continue;
     }
-    // Unconditional: a prune may not pull a neighbour that already owns a pending hop, in or out of scope (a priority-3 origin/supplement enqueue can hold an agenda slot without a scope entry).
     if (input.agendaIds.has(id)) {
       notices.push({
         kind: 'prune_noop_queued',
@@ -103,7 +79,6 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       });
       continue;
     }
-    // Hop-level prune decision: an in-scope neighbour deemed off-path is pruned like any out-of-scope one; declared-route and don't-orphan checks govern every accepted prune after this.
     acceptedPruneIds.push(id);
   }
 

@@ -158,7 +158,6 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
     });
     if (serialized !== undefined) return trunc(sanitizeForLog(serialized), max);
   } catch {
-    // Fall through to a scalar representation. Proxies/getters can make JSON serialization throw.
   }
 
   try {

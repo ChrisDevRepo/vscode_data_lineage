@@ -12,12 +12,11 @@ import {
   ExplorationDepthLimitSchema,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, nullAsAbsent, repairArrayBoundaryArtifacts } from '../support/inputNormalization';
-import { PRUNE_VERDICT_LEAD } from '../prompting/smPrompts';
+import { coercedBoolean, coercedStringArray, coercedStringObject, declaredKeysOnly, hoistSectionNotes, hoistSectionSummary, nullAsAbsent, repairArrayBoundaryArtifacts } from '../support/inputNormalization';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import type { CapturedSection } from '../session/memoryManager';
-import type { HopFinding } from '../sm/smTypes';
+import type { HopFinding, HopFindingKept } from '../sm/smTypes';
 import type { PresentResultStage } from './presentResult';
 
 /**
@@ -36,17 +35,15 @@ const MissionBriefValueSchema = z.string()
 const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope note must contain non-whitespace content.'))
   .max(8)
   .describe(
-    'Analysis constraints the user stated that no filter field can express — e.g. "ignore filter criteria", '
-    + '"explain the waiver logic on a named object in detail". One short note per instruction, in the '
-    + "user's own terms. These are echoed back at the approval gate for the user to confirm, and are carried to "
-    + 'every hop, so record an instruction here rather than dropping it when it maps to no filter.',
+    'Constraints the user stated that no filter field expresses (e.g. "ignore filter criteria"), one short note '
+    + "each in the user's terms; echoed at the approval gate and carried to every hop.",
   );
 
 const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
-    'Required answer angle, following what the user asked for: use "business" unless the user named a '
-    + 'technical lens (performance, indexes, execution plan, query shape, load pattern); use "technical" when '
-    + 'that lens is the whole request; use "both" when the request spans both.',
+    'Answer angle the user asked for: "business" only when the user asks for the business view (meaning, '
+    + 'impact, business rules); "technical" only when the user asks for a technical lens (performance, indexes, '
+    + 'execution plan, query shape, load pattern); otherwise "both" — a question in neither terms, or in both.',
   );
 
 const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(AI_MAX_SCOPE_NODE_IDS).describe(
@@ -80,9 +77,32 @@ const SupplementSchema = z.object({
  * {@link ExplorationDepthSideSchema}'s own contract (`explorationDepthContract.ts`) and
  * `isReachableInApprovedDirection` (`smBase.ts`): 0 is a permanent border for the rest of the
  * session, not merely a one-time skip of the initial seed.
+ *
+ * @remarks
+ * A finite number or per-side object is a hard border only when paired with
+ * {@link StartDepthStatedSchema} `true` — see that schema's remarks for why the pairing exists.
  */
 const StartDepthSchema = coercedStringObject(ExplorationDepthSelectionSchema).nullable().optional().describe(
-  'AI-selected hop-by-hop starting scope: a symmetric positive integer, or per-side {upstream,downstream} (requires direction "bidirectional"). When the request explicitly asks for every upstream/downstream source or the complete chain (for example, "all the way up/down"), set "all"; do not omit depth. In a per-side value, 0 permanently disables that direction for the rest of the session, not just the initial seed. If the user stated no depth, omit the field; omitted/null intent proposes the reviewed default of 3.',
+  'Starting scope in levels: a positive integer copied from a level count the user literally stated (e.g. "two levels", "one hop upstream"); "all" for an explicit unbounded ask ("every source", "the complete chain"); or per-side {upstream, downstream} with direction "bidirectional", where 0 closes that side for the session. Omit both depth and depthStated whenever the user gave no level count and no unbounded ask — including "back to the source", "where does X come from", or any wording with no number — the engine seeds a reviewed default that keeps growing. A finite number here also requires depthStated: true or it is treated as unstated; never invent a number to fill this field.',
+);
+
+/**
+ * Marks a finite {@link StartDepthSchema} value (a positive integer, or an asymmetric object with
+ * at least one finite side) as copied verbatim from a level count the user stated, rather than a
+ * starting estimate the model chose. `"all"` never needs this flag — it can only ever grow the
+ * scope, never truncate it, so an un-stated `"all"` is already safe.
+ *
+ * @remarks
+ * The host never reads the user's sentence (`AGENTS.md` §Runtime Contract), so it cannot verify a
+ * finite depth is truly the user's own count; this field is the one place that intent is declared
+ * instead of inferred from the shape of `depth` alone. Reaching the engine, a finite depth sent
+ * without this flag is treated as unstated and seeds the same soft, growing default as an omitted
+ * `depth` — never a hard stop the model invented on its own; the demotion is logged, per side, as
+ * a `[Normalize]` line (`resolveDepthIntentForBoundary`/`gateDepthSide` in `smTypes.ts`,
+ * `startExploration.ts`), never silent.
+ */
+const StartDepthStatedSchema = coercedBoolean().optional().describe(
+  'true only when depth is a level count the user literally stated. Omit (or send false) whenever depth is your own estimate of where to start — a finite depth sent without depthStated:true is treated as unstated and seeded as a soft, growing default, never a hard stop.',
 );
 
 /**
@@ -131,8 +151,9 @@ export const StartExplorationInputSchema = z.object({
   targetColumns: coercedStringArray(ColumnIdentifierSchema).optional().describe(
     'CT only: user-named columns to trace. BB forbids this property; a raw provider empty BB array may normalize to absence.',
   ),
-  direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.'),
+  direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user: upstream for sources/inputs, downstream for usage/impact, bidirectional for both. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.'),
   depth: StartDepthSchema,
+  depthStated: StartDepthStatedSchema,
   excludeTypes: z.array(z.string()).optional().describe('Object types the user explicitly excluded from the approved scope.'),
   /**
    * Schemas to drop from the BFS scope (case-insensitive). Honored at scope-build time —
@@ -159,8 +180,6 @@ export const StartExplorationInputSchema = z.object({
   passNodeIds: z.array(z.string()).optional().describe('Resolved object IDs to keep as topology-only passthrough nodes without analyzing them.'),
   scopeNotes: ScopeNotesValueSchema.optional(),
   mission_brief: MissionBriefValueSchema.optional(),
-  // Keep decision guidance on the field schema so every adapter advertising this Zod contract
-  // gives the model the same classification semantics.
   classification: ClassificationValueSchema.optional(),
   /**
    * Post-synthesis supplement: extend the existing archive with explicit nodes. Runs through the SM hop loop; slots merge into the existing
@@ -225,7 +244,7 @@ export const StartExplorationInputSchema = z.object({
 
 const StartOriginSchema = z.string().min(1).describe('Canonical object ID that anchors a fresh exploration.');
 const StartQuestionSchema = z.string().optional().describe('The user question this exploration must answer.');
-const StartDirectionSchema = z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.');
+const StartDirectionSchema = z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Lineage direction requested by the user: upstream for sources/inputs, downstream for usage/impact, bidirectional for both. "upstream"/"downstream" is a hard border excluding the other side entirely; use "bidirectional" with per-side depths for a lopsided start.');
 const StartExcludeTypesSchema = z.array(z.string()).optional().describe('Object types the user explicitly excluded from the approved scope.');
 const StartExcludeSchemasSchema = z.array(z.string()).optional().describe('Complete replacement list of schema names excluded from the approved scope.');
 const StartExcludeNodeIdsSchema = z.array(z.string()).optional().describe('Resolved object IDs to remove, including dependent branches reachable only through them.');
@@ -241,6 +260,7 @@ const StartPatchFields = {
   question: StartQuestionSchema,
   direction: StartDirectionSchema,
   depth: StartDepthSchema,
+  depthStated: StartDepthStatedSchema,
   excludeTypes: StartExcludeTypesSchema,
   excludeSchemas: StartExcludeSchemasSchema,
   excludeNodeIds: StartExcludeNodeIdsSchema,
@@ -400,10 +420,10 @@ export type GetScopeBundleInput = z.infer<typeof GetScopeBundleInputSchema>;
 export const GetScopeBundleModelSchema = z.object({
   origin: ScopeOriginSchema,
   upstream_depth: ScopeDepthSchema.describe(
-    'Hops of upstream (source) dependencies: a positive integer, "all" for the entire upstream chain, or 0 to exclude upstream. Use the same value as downstream_depth for a symmetric scope (3 each is typical).',
+    'Upstream levels: a positive integer, "all" for the whole chain, or 0 to exclude upstream.',
   ),
   downstream_depth: ScopeDepthSchema.describe(
-    'Hops of downstream (dependent) objects: a positive integer, "all", or 0 to exclude downstream.',
+    'Downstream levels: a positive integer, "all" for the whole chain, or 0 to exclude downstream.',
   ),
   include_ddl: ScopeIncludeDdlSchema,
 }).strict();
@@ -422,91 +442,52 @@ export const GetScopeBundleModelSchema = z.object({
  */
 const CapturedSectionSchema = z.object({
   /** Which YAML capture template produced this section. */
-  angle: z.enum(['business', 'technical']).describe('The locked output angle represented by this section.'),
+  angle: z.enum(['business', 'technical']),
   /** Pre-formatted section body. */
-  text: z.string().min(1).describe('Grounded analysis for this node under the selected angle.'),
+  text: z.string().min(1),
 }).strict();
 
 /**
- * Single source for the `route_requests[].columns` describe text.
- *
- * @remarks
- * The per-neighbor fork at a branch: one neighbor carries traced columns, its sibling only decides
- * which rows the answer returns. `column_flow[].upstream_columns` cannot state this — it is keyed
- * by an output column of the focus, so it asserts provenance, and the carry decision would ride on
- * that assertion. Kept as one exported constant because the field's contract must read the same on
- * the strict per-mode schemas and on the permissive registered union.
- */
-export const ROUTE_COLUMNS_DESCRIPTION =
-  'Column-trace sessions only. Which traced columns travel to this neighbor: list them to carry exactly '
-  + 'those, or send the word "none" when the neighbor supplies no traced value and only decides which rows '
-  + 'the answer returns (a filter, a join key) — it is then explored as a whole object, with no column '
-  + 'question attached. State one or the other for every routed neighbor — an undecided neighbor is '
-  + 'rejected, not defaulted, and so is a contradicted one: "none" is refused when column_flow in this '
-  + 'same submission names the neighbor as a real contributor; list at least those columns instead.';
-
-/**
- * Per-route column decision. A word rather than an empty array for the row-role case, so an
- * omitted field and a stated "no columns" can never be read as the same payload.
- */
-const RouteColumnsSchema = z.union([
-  z.array(z.string().min(1)).min(1),
-  z.literal('none'),
-]);
-
-const RouteRequestSchema = z.object({
-  nodeId: z.string().describe('Exact current-hop neighbor ID to queue.'),
-  question: z.string().describe(
-    'Verification sub-question for the routed node, self-contained so a later hop can act on it after ' +
-    'older turns are wiped. Name the node being routed to, the specific column or value to resolve there, ' +
-    'and the mission decision it answers — e.g. "Does spNormalizeLoansA derive DaysA from RawDaysA or pass it ' +
-    'through? Resolves whether the days chain continues upstream." Frame it around the routed node, not the ' +
-    'current focus; "analyze this node" carries no decision and is not a usable sub-question.',
-  ),
-  columns: RouteColumnsSchema.optional().describe(ROUTE_COLUMNS_DESCRIPTION),
-}).strict();
-
-/**
- * CT-mode `route_requests[]` shape: {@link RouteRequestSchema} with `columns` required.
- *
- * @remarks
- * A CT hop states a column decision for every routed neighbor — a non-empty list, or the literal
- * `"none"` — never an omitted field; an omission has no engine-side "carry whatever the trace
- * already carries" fallback to resolve to.
- */
-const CtRouteRequestSchema = RouteRequestSchema.extend({
-  columns: RouteColumnsSchema.describe(ROUTE_COLUMNS_DESCRIPTION),
-}).strict();
-
-/**
- * BB-mode `route_requests[]` shape: {@link RouteRequestSchema} without `columns`.
- *
- * @remarks
- * `columns` is a column-trace decision (which traced columns carry to a neighbor); a BB session
- * traces no columns, so BB never advertises the field — mirroring the per-mode narrowing
- * {@link capturedSectionSchemaForClassification} already performs for `sections[].angle`. A BB
- * payload naming `columns` anyway fails `.strict()` here and rejects through the same generic
- * invalid-input path every other unrecognized BB field takes, instead of being silently dropped at
- * the handler.
- */
-const BbRouteRequestSchema = RouteRequestSchema.omit({ columns: true });
-
-/**
- * Single source for the `route_requests` field describe text, shared by the strict per-mode
- * schemas and the permissive registered union so the contract cannot drift between them.
- */
-export const ROUTE_REQUESTS_DESCRIPTION =
-  'Current-hop neighbor nodes worth exploring next, each with a self-contained verification question.';
-
-/**
- * Single source for the `prune_neighbors` field describe text: a prune is valid
- * for a neighbor off the answer path — outside the approved exploration scope, or inside it with
- * nothing the answer needs. Shared by the strict per-mode schemas and the permissive registered
- * union so the registered surface cannot narrow this decision space out of sync with
- * `NEIGHBOR_DECISION_CORE` (`src/ai/prompting/smPrompts.ts`).
+ * Single source for the `prune_neighbors` field describe text, shared by the strict per-mode
+ * schemas and the permissive registered union so the two cannot drift.
  */
 export const PRUNE_NEIGHBORS_DESCRIPTION =
-  'Current-hop neighbor IDs to drop from the session because current evidence proves they are off the answer path — out of the approved scope, or in scope with nothing the answer needs.';
+  'Removes a neighbor you have not visited, and whatever only it leads to, based on this node\'s SQL alone; '
+  + 'use it for writes this node makes that nothing reads.';
+
+/** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
+const PruneNeighborSchema = z.object({
+  id: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
+  reason: z.string().min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
+}).strict();
+
+/**
+ * Single source for the `questions` field describe text, shared by the strict per-mode schemas and
+ * the permissive registered union.
+ */
+export const QUESTIONS_DESCRIPTION =
+  'Optional: a specific check for one neighbor (a rule, filter or calculation to establish there). '
+  + 'Every open neighbor you do not prune is visited next.';
+
+/** One `questions[]` entry, attached to that neighbour's queued hop. */
+const NeighborQuestionSchema = z.object({
+  nodeId: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
+  question: z.string().min(1).describe('The check, self-contained: name the neighbor and what to establish there.'),
+}).strict();
+
+/**
+ * Single source for the end_branch row-decision condition — reused by both the `reason` describe
+ * text and {@link HopVerdictSchema}'s `end_branch` clause, so the "row decision" definition is
+ * stated once, not restated per site.
+ */
+const END_BRANCH_ROW_DECISION_CONDITION =
+  'no tracked column and no row decision reaches the start object through this node; '
+  + 'a statement that filters, inserts, updates or deletes rows of a table on the path is a row decision.';
+
+/** Single source for the `reason` describe text of an `end_branch` submit. */
+const END_BRANCH_REASON_DESCRIPTION =
+  'Required with end_branch, and then the only field besides focus_node_id and verdict: why '
+  + END_BRANCH_ROW_DECISION_CONDITION;
 
 /**
  * States a content cap in the JSON schema the model reads (`maxLength` / `maxItems`) without
@@ -552,8 +533,7 @@ export const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
  * same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere
  * else: `badge_label` is a per-hop tool field, not template-governed content.
  */
-export const BADGE_LABEL_DESCRIPTION =
-  `Short advisory label for this hop; final graph labels are authored by present_result sections. Maximum ${SUBMIT_FINDINGS_BADGE_LABEL_MAX} characters — a 2-4 word label.`;
+export const BADGE_LABEL_DESCRIPTION = '2-4 word label for this node.';
 
 /**
  * Hard cap on `column_flow[].upstream_columns[].note`.
@@ -565,8 +545,8 @@ export const BADGE_LABEL_DESCRIPTION =
 export const COLUMN_FLOW_NOTE_MAX = 200;
 
 const ColumnRefSchema = z.object({
-  node: z.string().describe('Canonical upstream node ID.'),
-  col: z.string().describe('Real upstream column name.'),
+  node: z.string(),
+  col: z.string(),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'How THIS upstream column\'s value reaches out_col, judged end to end: ignore intermediate copies into ' +
     'temp tables or variables, and list every class this column\'s own role proves — usually one. Omit the ' +
@@ -578,20 +558,18 @@ const ColumnRefSchema = z.object({
     'appears in a WHERE, HAVING, join ON predicate, TOP or DISTINCT.',
   ),
   note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(
-    'One short grounded clause naming the rule or expression behind the transforms — e.g. ' +
-    '"SUM of LoanLines Days * Rate" — at most ~12 words. Omit when transforms is omitted or the ' +
-    'DDL gives nothing concrete to quote; never speculate.',
+    'The deciding expression, at most ~12 words.',
   ),
 }).strict();
 
 const ColumnFlowWritesToObject = z.object({
-  node: z.string().describe('Canonical downstream node ID.'),
-  col: z.string().describe('Downstream column receiving this value.'),
+  node: z.string(),
+  col: z.string(),
 }).strict();
 
 const ColumnFlowEntryObject = z.object({
-  out_col: z.string().describe('Tracked output column on the current focus node.'),
-  writes_to: nullAsAbsent(declaredKeysOnly(ColumnFlowWritesToObject).optional()).describe('Optional downstream write destination observed in the current node.'),
+  out_col: z.string().describe('The tracked column as named on this node; for a procedure, the column it writes.'),
+  writes_to: nullAsAbsent(declaredKeysOnly(ColumnFlowWritesToObject).optional()).describe('Procedure focus: the table column the value is written to.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
     'Two states by focus: at a bodied focus, the real upstream columns the node READS that contribute to out_col ' +
     '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the neighbours ' +
@@ -604,28 +582,22 @@ const ColumnFlowEntrySchema = declaredKeysOnly(ColumnFlowEntryObject);
 
 
 /**
- * Mode-locked `verdict` field description for `submit_findings`.
+ * `verdict` field for `submit_findings`: one definition set for BB, CT and the registered union.
  *
  * @remarks
- * One set of definitions, both modes: this description is the last text the model reads before it
- * answers, and a CT restatement here rewrote "analyze" and "passthrough" in column vocabulary — a
- * row-shaping node carrying no traced column then matched neither, leaving `prune` as the only
- * word available and removing a node BB keeps. CT renders the same sentence and adds its column
- * clause, matching the composed Verdict Protocol block in the system prompt.
+ * CT is BB plus columns, so the verdict words mean the same in both modes. `end_branch` is the one
+ * home of the cut's contract; its payload shape (reason only) is enforced by
+ * {@link refineSubmitFindingsShape}.
  */
-const VERDICT_DEFINITIONS =
-  `"analyze" applies logic on the data path, "passthrough" is on the path with no logic, "prune": ${PRUNE_VERDICT_LEAD}`;
-
-const hopVerdictSchema = (mode: 'bb' | 'ct') =>
-  z.enum(['analyze', 'passthrough', 'prune']).describe(
-    `Your assessment of the focus node, per the Verdict Protocol in the system prompt. ${VERDICT_DEFINITIONS}`
-    + (mode === 'ct' ? ' In CT, "analyze" also covers a traced column\'s terminal source, and every verdict carries column_flow.' : ''),
-  );
+const HopVerdictSchema = z.enum(['analyze', 'passthrough', 'end_branch']).describe(
+  'analyze: transforms data on the answer path (a calculation, condition, filter, join or status change). '
+  + 'passthrough: on the path, handing values on unchanged (a stored table, SELECT *, a synonym). '
+  + 'end_branch: Removes this node and every node reachable only through it from the result, for the rest of this run; '
+  + 'use only when ' + END_BRANCH_ROW_DECISION_CONDITION + ' Never the start object.',
+);
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_IDS).describe(
-  'CT mode only: structural provenance for active tracked columns. Use column_flow: [] only when the focus has no active tracked-column interaction. ' +
-  'When a tracked output exists but has no upstream real column, emit its entry with upstream_columns: []. ' +
-  'A focus with no body of its own applies no logic: declare continuation on its carrier side.',
+  'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries.',
 );
 
 /**
@@ -635,60 +607,140 @@ const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_ID
  */
 const SUBMIT_FINDINGS_SECTIONS_MAX = 2;
 
+/** Single source for the `summary` describe text, shared by the per-mode schemas and the registered union. */
+const SUMMARY_DESCRIPTION =
+  'One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
+
 /**
- * Shared `submit_findings` fields across BB and CT modes.
+ * Shared `submit_findings` fields across BB and CT modes, one flat object.
+ *
+ * @remarks
+ * Flat by design: a top-level `anyOf` defeats constrained decoding, so the verdict-dependent shape
+ * (a kept verdict carries sections and summary, `end_branch` carries only `reason`) is stated in
+ * the describes and enforced by {@link refineSubmitFindingsShape} at parse.
  */
 const HopFindingBaseSchema = z.object({
-  focus_node_id: z.string().describe('Exact current focus-node ID supplied by the runtime frame.'),
+  focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
+  verdict: HopVerdictSchema,
   /**
    * One section per fired `*_capture` template. Length 1 (`business` / `technical`
-   * classification) or 2 (`both`) — required on every hop (a node always commits its analysis).
+   * classification) or 2 (`both`) — required with a kept verdict (a kept node always commits its analysis).
    */
-  sections: coercedStringArray(CapturedSectionSchema, { max: SUBMIT_FINDINGS_SECTIONS_MAX }).describe('One grounded section for each output angle required by the locked classification.'),
-  summary: z.string().describe(
-    'One-line digest a later hop reads in isolation after older turns are wiped. Name what this node does ' +
-    'to the data — the transform, filter, or pass-through — and what it hands to which downstream node. ' +
-    'Example: "vwRateA carries StdRateA through unchanged and feeds spBuildCircA with UnitRateA." ' +
-    'Aim for one line; length is never a rejection axis.',
-  ),
+  sections: coercedStringArray(CapturedSectionSchema, { max: SUBMIT_FINDINGS_SECTIONS_MAX }).optional().describe('One entry per capture recipe in this hop\'s message.'),
+  summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
   badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
+  prune_neighbors: coercedStringArray(PruneNeighborSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
+  questions: coercedStringArray(NeighborQuestionSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(QUESTIONS_DESCRIPTION),
+  reason: nullAsAbsent(z.string().optional()).describe(END_BRANCH_REASON_DESCRIPTION),
 }).strict();
+
+/** CT form: the BB form plus `column_flow` (required with a kept verdict). */
+const HopFindingCtBaseSchema = HopFindingBaseSchema.extend({
+  column_flow: ColumnFlowSchema.optional(),
+}).strict();
+
+/** The flat parsed payload, before {@link toHopFinding} narrows it by verdict. */
+type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema> };
+
+/** Fields a kept verdict may carry and an `end_branch` must not. */
+const END_BRANCH_EXCLUDED_FIELDS = ['sections', 'summary', 'badge_label', 'column_flow', 'prune_neighbors', 'questions'] as const;
+
+/**
+ * Enforces the verdict-dependent shape of one flat `submit_findings` payload.
+ *
+ * @remarks
+ * `end_branch` carries only `focus_node_id`, `verdict` and a required `reason`; a kept verdict
+ * carries `sections` and `summary` (and, in CT, `column_flow`) and never `reason`. Each fault is one
+ * issue on its own path, so the rejection names the exact field to drop or add.
+ */
+function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, mode: 'bb' | 'ct'): void {
+  if (value.verdict === 'end_branch') {
+    for (const field of END_BRANCH_EXCLUDED_FIELDS) {
+      if (value[field] === undefined) continue;
+      ctx.addIssue({
+        code: 'custom',
+        path: [field],
+        message: `not accepted with verdict end_branch — an end_branch submit carries only focus_node_id, verdict and reason; remove ${field}, or submit analyze or passthrough to keep the node.`,
+      });
+    }
+    const reasonMessage = 'required with verdict end_branch: why nothing on the answer path runs through this node.';
+    if (value.reason === undefined) {
+      ctx.addIssue({ code: 'invalid_type', expected: 'string', input: undefined, path: ['reason'], message: reasonMessage });
+    } else if (!value.reason.trim()) {
+      ctx.addIssue({ code: 'custom', path: ['reason'], message: reasonMessage });
+    }
+    return;
+  }
+  if (value.reason !== undefined) {
+    ctx.addIssue({ code: 'custom', path: ['reason'], message: `accepted only with verdict end_branch; with ${value.verdict}, state the findings in sections and summary and remove reason.` });
+  }
+  if (value.sections === undefined) {
+    ctx.addIssue({ code: 'invalid_type', expected: 'array', input: undefined, path: ['sections'], message: `required with verdict ${value.verdict}.` });
+  }
+  if (value.summary === undefined) {
+    ctx.addIssue({ code: 'invalid_type', expected: 'string', input: undefined, path: ['summary'], message: `required with verdict ${value.verdict}.` });
+  }
+  if (mode === 'ct' && value.column_flow === undefined) {
+    ctx.addIssue({ code: 'invalid_type', expected: 'array', input: undefined, path: ['column_flow'], message: `required with verdict ${value.verdict}: one entry per tracked column this node carries, [] when it carries none.` });
+  }
+}
+
+/**
+ * Narrows a shape-checked flat payload to the {@link HopFinding} union the engine consumes.
+ *
+ * @param value - A payload {@link refineSubmitFindingsShape} accepted.
+ * @returns The `end_branch` or kept variant, carrying exactly that variant's fields.
+ */
+function toHopFinding(value: FlatSubmitFindings): HopFinding {
+  if (value.verdict === 'end_branch') {
+    return { focus_node_id: value.focus_node_id, verdict: 'end_branch', reason: value.reason ?? '' };
+  }
+  const kept: HopFindingKept = {
+    focus_node_id: value.focus_node_id,
+    verdict: value.verdict,
+    sections: value.sections ?? [],
+    summary: value.summary ?? '',
+  };
+  if (value.badge_label !== undefined) kept.badge_label = value.badge_label;
+  if (value.prune_neighbors !== undefined) kept.prune_neighbors = value.prune_neighbors;
+  if (value.questions !== undefined) kept.questions = value.questions;
+  if (value.column_flow !== undefined) kept.column_flow = value.column_flow;
+  return kept;
+}
+
+/** Applies the verdict-shape check and the union narrowing to one flat per-mode object. */
+function finalizeSubmitFindingsSchema(
+  schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
+  mode: 'bb' | 'ct',
+): z.ZodType<HopFinding> {
+  return z.preprocess(hoistSectionSummary, schema
+    .superRefine((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode))
+    .transform(value => toHopFinding(value as FlatSubmitFindings)));
+}
 
 /**
  * BB-mode submit_findings input.
  *
  * @remarks
- * The node's self-status is `analyze` (carries lineage), `passthrough` (kept, not a key transform), or `prune` (entirely irrelevant focus node — orphan-guarded removal).
- * `prune_neighbors` removes topology-safe neighbors the evidence proves are off the answer path — out of scope, or in scope with nothing the answer needs; queued, visited, and removed targets are protected no-ops and every executed prune is don't-orphan-guarded.
- * BB does not carry CT-only `column_flow`, and its `route_requests[]` entries do not carry the
- * CT-only `columns` decision ({@link BbRouteRequestSchema}) — a BB session traces no columns, so
- * the field is never advertised here.
+ * The node's self-status is `analyze` (carries lineage), `passthrough` (kept, not a key transform),
+ * or `end_branch` (cut: the node and every open node reachable only through it leave the result).
+ * A kept verdict enqueues every open neighbour not named in `prune_neighbors`; `questions` attach a
+ * check to one of them. BB does not carry CT-only `column_flow`.
  */
-export const SubmitFindingsBbInputSchema = HopFindingBaseSchema.extend({
-  verdict: hopVerdictSchema('bb'),
-  route_requests: coercedStringArray(BbRouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
-  prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
-}).strict();
+export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindingBaseSchema, 'bb');
 
 /**
  * CT-mode submit_findings input.
  *
  * @remarks
- * CT is BB plus column tracking, so every BB field — including `prune_neighbors` — is present on
- * the CT form; `column_flow`'s own contract is documented on {@link ColumnFlowSchema}. Its
- * `route_requests[]` entries additionally require the per-neighbor `columns` decision
- * ({@link CtRouteRequestSchema}) — a non-empty list or `"none"`, never omitted — which BB's form
- * omits entirely.
+ * CT is BB plus column tracking, so every BB field is present on the CT form; `column_flow`'s own
+ * contract is documented on {@link ColumnFlowSchema}, and its `upstream_columns` are the carry each
+ * enqueued neighbour receives.
  */
-export const SubmitFindingsCtInputSchema = HopFindingBaseSchema.extend({
-  verdict: hopVerdictSchema('ct'),
-  column_flow: ColumnFlowSchema,
-  route_requests: coercedStringArray(CtRouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
-  prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
-}).strict();
+export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindingCtBaseSchema, 'ct');
 
 /** Memoized per (mode, classification) narrowed `submit_findings` schemas built by {@link submitFindingsSchemaForMode}. */
 const submitFindingsSchemaCache = new Map<string, z.ZodType<HopFinding>>();
@@ -709,9 +761,7 @@ function capturedSectionSchemaForClassification(classification: ClassificationVa
     `classification=${classification} keeps only angle="${onlyAngle}". Fold this content into the `
     + `existing "${onlyAngle}" section instead of submitting a separate section for another angle.`;
   return CapturedSectionSchema.extend({
-    angle: z.literal(onlyAngle, { message: foldMessage }).describe(
-      `The locked output angle represented by this section (classification=${classification} keeps only "${onlyAngle}").`,
-    ),
+    angle: z.literal(onlyAngle, { message: foldMessage }),
   }).strict();
 }
 
@@ -721,7 +771,7 @@ function capturedSectionSchemaForClassification(classification: ClassificationVa
  *
  * @remarks
  * BB returns {@link SubmitFindingsBbInputSchema} (no `column_flow`); CT returns
- * {@link SubmitFindingsCtInputSchema} (`column_flow` required; `prune_neighbors` shared with BB). When
+ * {@link SubmitFindingsCtInputSchema} (`column_flow` required with a kept verdict). When
  * `classification` is supplied, `sections[].angle` is further narrowed to the angle(s) that
  * classification keeps ({@link capturedSectionSchemaForClassification}) — a `business` or `technical`
  * lock structurally cannot author the other angle's section, so a surplus angle fails Zod at this
@@ -733,20 +783,21 @@ function capturedSectionSchemaForClassification(classification: ClassificationVa
  *
  * @param mode - Locked active analysis mode used for provider projection.
  * @param classification - Locked output classification; omitted callers get the mode-only schema.
- * @returns The strict provider schema for that mode and classification. Typed against
- * {@link HopFinding} (rather than a bare `z.ZodType`) so the handler that parses the model's actual
- * submission with this same selector — not just the tool-registration caller — keeps a concrete
- * `.data` type without a cast.
+ * @returns The strict provider schema for that mode and classification, parsing to the
+ * {@link HopFinding} union so the handler keeps a concrete `.data` type without a cast.
  */
 export function submitFindingsSchemaForMode(mode: 'bb' | 'ct', classification?: ClassificationValue): z.ZodType<HopFinding> {
-  const base = mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
-  if (!classification || CLASSIFICATION_KEPT_ANGLES[classification].length === 2) return base;
+  if (!classification || CLASSIFICATION_KEPT_ANGLES[classification].length === 2) {
+    return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
+  }
   const cacheKey = `${mode}:${classification}`;
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   const narrowedSections = coercedStringArray(capturedSectionSchemaForClassification(classification), { max: SUBMIT_FINDINGS_SECTIONS_MAX })
-    .describe(`One grounded section for the output angle required by classification=${classification}.`);
-  const schema = base.extend({ sections: narrowedSections }).strict();
+    .optional()
+    .describe('One entry per capture recipe in this hop\'s message.');
+  const base = mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema;
+  const schema = finalizeSubmitFindingsSchema(base.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema, mode);
   submitFindingsSchemaCache.set(cacheKey, schema);
   return schema;
 }
@@ -759,16 +810,8 @@ export function submitFindingsSchemaForMode(mode: 'bb' | 'ct', classification?: 
  * produce a structured validation error instead of crashing the handler.
  */
 export const GetNeighborColumnsInputSchema = z.object({
-  ids: z.array(z.string().min(1)).min(1).describe('Canonical direct-neighbor IDs whose structural columns are hidden by opaque focus DDL.'),
+  ids: z.array(z.string().min(1)).min(1).describe('Neighbor ids, not the focus.'),
 }).strict();
-// ──────────────────────────────────────────────────────────────────────────────
-// Model-facing input schemas
-//
-// Each registered `languageModelTool` advertises ONE input schema to the model.
-// These schemas are the single Zod source for that model-facing contract. Runtime
-// handlers still validate mode-specific payloads at the boundary before mutating
-// session or graph state.
-// ──────────────────────────────────────────────────────────────────────────────
 
 /** `lineage_get_context` takes no input. */
 export const GetContextInputSchema = z.object({}).strict();
@@ -821,18 +864,13 @@ export const SearchDdlInputSchema = z.object({
  * the model-facing JSON Schema has one generated source under the drift guard. `angle`
  * on a section is advisory capture metadata carried in the manifest.
  */
-// GUI-rendered labels carry a SOFT target — advertised exactly once, in the field's own
-// description or in the output-template entry that governs the field — and a HARD cap at ~1.5x for
-// tolerance: a value within tolerance is accepted verbatim (no silent truncation) and only a
-// genuinely layout-breaking overrun rejects. Every cap below reaches the model through
-// `advertisedMax` and is enforced by `validatePresentResult` alone; no parse enforces one.
 /** Hard cap on `name` (graph node label); its soft target is the field's own description. */
 export const PRESENT_RESULT_NAME_MAX = 90;
 /** Hard cap on `title` (report heading); its soft target is the `title` output template. */
 export const PRESENT_RESULT_TITLE_MAX = 120;
 /**
- * Hard cap on a `sections[].label`. The label's shape is owned by `buildPresentationDetailContract`
- * (`prompts.ts`), which states a semantic-pointer shape and deliberately no character target.
+ * Hard cap on a `sections[].label`. The label's shape is owned by the field's own `.describe()`,
+ * which states its role and deliberately no character target.
  */
 export const PRESENT_RESULT_SECTION_LABEL_MAX = 90;
 /** Hard cap on a `highlight_groups[].label`; its soft target is the `highlights` output template. */
@@ -849,8 +887,6 @@ export const PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX = 5;
  * schemes (`good` / `warn` / `fail`).
  */
 const HighlightSchemeSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
-// `summary` is prose CONTENT (the one-line graph purpose), not a fixed-width GUI label: it is uncapped —
-// Output lifetime is provider-native and graph-budgeted, never schema-truncated, so length is not a rejection axis.
 
 /**
  * One model-supplied node id: Unicode format characters stripped, trimmed, required non-empty.
@@ -874,7 +910,7 @@ const NodeIdSchema = z.string()
  */
 const HighlightGroupSchema = z.object({
   label: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_HIGHLIGHT_LABEL_MAX }).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
-  color: HighlightSchemeSchema.describe('Semantic graph color role or status.'),
+  color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
 
@@ -883,12 +919,8 @@ const HighlightGroupSchema = z.object({
  * nodes it explains, and its detail body.
  */
 const PresentResultSectionSchema = z.object({
-  // Role only, no character target: a tool-parameter description outranks the system prompt, so a
-  // soft character target here became the operative ceiling and licensed a full question as a
-  // badge. Shape guidance belongs in `buildPresentationDetailContract`; the cap below is the one
-  // this schema advertises and `validatePresentResult` enforces.
-  label: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_SECTION_LABEL_MAX }).describe('Section heading and graph badge for every linked node.'),
-  node_ids: z.array(NodeIdSchema).optional().describe('A node ID can only appear in ONE section. Do not link a node to multiple sections.'),
+  label: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_SECTION_LABEL_MAX }).describe('Short heading naming the section\'s role, unique in the report; also the badge on every linked node.'),
+  node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put a node in one section — naming it in more than one keeps its text in each but only the first keeps the badge and object link.'),
   text: z.string().describe('Required detail body for this section label.'),
 }).strict();
 
@@ -900,21 +932,20 @@ export const PresentResultModelSchema = z.object({
   summary: z.string().describe('One-line summary shown with the generated view.'),
   title: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_TITLE_MAX }).optional().describe('Optional report heading.'),
   intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
-  // Prose, never a rejection axis (a 400 cap once made the model self-truncate mid-sentence);
-  // bounded at the wire only.
-  closing: z.string().optional().describe('Optional closing synthesis and grounded risks or recommendations. Length is never a rejection axis.'),
+  closing: z.string().optional().describe('Closing synthesis and grounded risks or recommendations. Length is never a rejection axis.'),
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
   highlight_groups: advertisedMax(z.array(HighlightGroupSchema).min(1), { maxItems: PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX }).describe(
     'REQUIRED for new renders, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
-  sections: coercedStringArray(PresentResultSectionSchema, { min: 1 }).describe('Required final report sections; each label maps to exactly one text body.'),
+  sections: coercedStringArray(PresentResultSectionSchema, { min: 1 }).describe(
+    'Required final report sections, at least one. Every node analysed and captured this turn '
+    + '(anything with a detail slot) is linked into a section\'s node_ids, as that field describes — '
+    + 'an analysed node absent from every section fails validation.',
+  ),
   notes: z.array(z.object({
     node_id: NodeIdSchema.describe('Node ID receiving this below-node caption.'),
-    // Stage-neutral on purpose: synthesis grounds a caption in the archive, preview must copy one
-    // contiguous span of the supplied answer. One schema serving both stages can only state what
-    // they share; each stage's own rule belongs in its prompt, next to the validator that enforces it.
     text: z.string().describe('One-sentence caption, grounded in the evidence supplied for this stage.'),
   }).strict()).optional().describe('One-sentence captions below nodes.'),
   is_update: coercedBoolean().optional().describe('True only when updating an existing presentation.'),
@@ -1161,13 +1192,6 @@ export function presentResultRepairPatchSchemaForFields(
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
     }
   });
-  // repairArrayBoundaryArtifacts never introduces a key the picked shape doesn't already declare —
-  // it only rejoins or drops content inside an array the payload already carries — so it runs
-  // unconditionally. hoistSectionNotes DOES add a top-level `notes` key, which only the picked shape
-  // declaring both `sections` and `notes` together can accept; authorized without `notes` (or
-  // without `sections`), the hoist would inject a key this narrower patch never declares and reject
-  // it as unrecognized, so it is skipped rather than applied unconditionally — see
-  // {@link hoistSectionNotes}.
   const preprocess = keys.includes('sections') && keys.includes('notes')
     ? recoverPresentResultPayload
     : repairArrayBoundaryArtifacts;
@@ -1215,30 +1239,28 @@ const PresentResultRetainingLockedGraphBoundarySchema = withRetainableSections(P
  *
  * @remarks
  * VS Code registers ONE `lineage_submit_findings` tool, so the model sees ONE schema —
- * the union of the BB and CT contracts (verdict `analyze | passthrough | prune`, both `prune_neighbors`
- * and `column_flow`). Instruction-plan compilation advertises the strict mode-and-classification-locked
+ * the union of the BB and CT contracts (verdict `analyze | passthrough | end_branch`, `prune_neighbors`,
+ * `questions` and `column_flow`). Instruction-plan compilation advertises the strict mode-and-classification-locked
  * schema (`submitFindingsSchemaForMode`) immediately before model dispatch, and the handler validates
- * the payload against that same contract. This is the model-facing source the drift guard pins
+ * the payload against that same contract, verdict shape included. This is the model-facing source the drift guard pins
  * against `package.json`; it is not a second hand-authored JSON Schema.
  */
 export const SubmitFindingsModelSchema = z.object({
-  focus_node_id: z.string().describe('Exact current focus-node ID supplied by the runtime frame.'),
+  focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
+  verdict: HopVerdictSchema,
   sections: coercedStringArray(z.object({
-    angle: z.enum(['business', 'technical']).describe('The locked output angle represented by this section.'),
-    text: z.string().describe('Grounded analysis for this node under the selected angle.'),
-  }).strict(), { max: SUBMIT_FINDINGS_SECTIONS_MAX }).describe('One grounded section for each output angle required by the locked classification.'),
-  summary: z.string().describe('One-line digest retained for later hops after older turns are wiped. Aim for one line; length is never a rejection axis.'),
-  // The permissive BB∪CT superset registered with VS Code (see remarks above) uses the BB wording:
-  // it is the broader, VS Code-registered surface, and the strict per-mode schema (bb/ct) is what
-  // actually gates the model immediately before dispatch — see submitFindingsSchemaForMode.
-  verdict: hopVerdictSchema('bb'),
-  route_requests: coercedStringArray(RouteRequestSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(ROUTE_REQUESTS_DESCRIPTION),
-  prune_neighbors: coercedStringArray(z.string(), { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
+    angle: z.enum(['business', 'technical']),
+    text: z.string(),
+  }).strict(), { max: SUBMIT_FINDINGS_SECTIONS_MAX }).optional().describe('One entry per capture recipe in this hop\'s message.'),
+  summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
+  prune_neighbors: coercedStringArray(PruneNeighborSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
+  questions: coercedStringArray(NeighborQuestionSchema, { max: AI_MAX_SCOPE_NODE_IDS }).optional().describe(QUESTIONS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
   badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
+  reason: nullAsAbsent(z.string().optional()).describe(END_BRANCH_REASON_DESCRIPTION),
 }).strict();
 
 /**

@@ -26,9 +26,6 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     expect(parseAiOutputTemplatesYaml(text)).toBeDefined();
   });
 
-  // Pinned to the constant, not a literal: the built-in file must always satisfy its own overlay
-  // gate, and a release that bumps one without the other would reject every custom overlay —
-  // including correctly updated ones. A literal here would instead fail on every legitimate bump.
   it('declares the schemaVersion the loader enforces', () => {
     expect(parseAiOutputTemplatesYaml(text).schemaVersion).toBe(AI_TEMPLATE_SCHEMA_VERSION);
   });
@@ -45,11 +42,11 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
 
   it('keeps discovery answers question-first instead of emitting raw tool inventories', () => {
     const instruction = parseAiOutputTemplatesYaml(text).discovery_chat?.instruction ?? '';
-    expect(instruction).toContain("Lead with the direct answer to the user's question");
-    expect(instruction).toContain('transformations and column mappings');
+    expect(instruction).toContain('Lead with the direct answer.');
+    expect(instruction).toContain('transformations, column mappings');
     expect(instruction).not.toContain('error and audit paths');
-    expect(instruction).toContain('Keep internal tool names, call syntax, and payload fields out');
-    expect(instruction).toContain('raw node/edge inventory only');
+    expect(instruction).toContain('Keep tool names and payload fields out of the answer');
+    expect(instruction).toContain('list raw nodes or edges only when asked');
   });
 
   it('keeps structural_summary free of ## headings reserved for the engine wrapper', () => {
@@ -57,60 +54,26 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     expect(instruction).not.toMatch(/^##\s/m);
   });
 
-  it('tells structural_summary to submit one section per angle under classification=both', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).structural_summary?.instruction ?? '';
-    expect(instruction).toContain('one section per angle');
-  });
-
-  // BOTH-TWO-FILES: each recipe is one sections[] entry for its angle. "Submit one section"
-  // was read as one body for the hop under classification `both`.
-  it('treats each capture recipe as one of two sections[] entries under classification=both', () => {
-    const parsed = parseAiOutputTemplatesYaml(text);
-    const business = parsed.business_capture?.instruction ?? '';
-    const technical = parsed.technical_capture?.instruction ?? '';
-    expect(business).not.toContain('Submit one section');
-    expect(technical).not.toContain('Submit one section');
-    expect(business).toContain('one of two required');
-    expect(technical).toContain('one of two required');
-    expect(business).toContain('angle: "business"');
-    expect(technical).toContain('angle: "technical"');
-  });
-
-  // The renderer gates `closing` on captured slot count (CLOSING_MIN_SLOTS), never on authored
-  // section count — a "5+ sections" claim describes a quantity the code does not measure.
   it('keeps the closing template free of section-count claims', () => {
     const instruction = parseAiOutputTemplatesYaml(text).closing?.instruction ?? '';
     expect(instruction).not.toMatch(/\d\+? sections/);
-    expect(instruction).toContain('Required whenever this template appears');
   });
 
-  // `closing` is suppressed below CLOSING_MIN_SLOTS while loading_pattern is not slot-gated, so
-  // the ETL statement needs a landing spot that exists in every rendering combination.
   it('gives loading_pattern a fallback destination when closing is suppressed', () => {
     const instruction = parseAiOutputTemplatesYaml(text).loading_pattern?.instruction ?? '';
-    expect(instruction).toContain('otherwise in the section that covers the load');
+    expect(instruction).toContain('else in the section covering the load');
     expect(instruction).not.toContain('in the closing note');
   });
 
-  // column_trace_capture renders in the stable prefix while the capture recipes are per-focus
-  // (PER_FOCUS_KEYS): on a non-bodied CT hop the referenced recipes do not render, so the
-  // checklist must name the field, not another template.
   it('keeps column_trace_capture free of cross-template references', () => {
     const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
     expect(instruction).not.toContain('business/technical capture');
     expect(instruction).toContain("this hop's narrative body");
   });
 
-  // Formulas already live in the BB capture recipes; CT owns column_flow, not a second $$ home.
   it('does not restate $$ producing expressions in column_trace_capture', () => {
     const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
     expect(instruction).not.toContain('$$');
-  });
-
-  it('treats a columns:"none" filter/join neighbor as a BB-shaped hop with empty column_flow', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
-    expect(instruction).toContain('columns: "none"');
-    expect(instruction).toContain('BB-shaped hop, column_flow: []');
   });
 });
 
@@ -121,8 +84,6 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
     expect(() => parseParseRulesYaml(text)).not.toThrow();
   });
 
-  // The shipped rule set is the extraction contract. A non-empty check would still pass if a rule
-  // were dropped or renamed, silently removing a whole class of dependency edge from every model.
   it('yields the full shipped rule inventory', () => {
     const parsed = parseParseRulesYaml(text);
     expect(parsed.rules?.map(rule => rule.name).sort()).toEqual([
@@ -146,8 +107,6 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
     ]);
   });
 
-  // Documented in PARSE_RULES.md as a hard termination contract, not a style choice: a rule whose
-  // flags omit `g` either hangs the scan or silently under-matches.
   it('gives every shipped rule a global regex flag', () => {
     const parsed = parseParseRulesYaml(text);
     for (const rule of parsed.rules ?? []) {

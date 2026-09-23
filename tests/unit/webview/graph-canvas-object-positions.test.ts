@@ -1,17 +1,3 @@
-// Column-trace nodes carry the same ids as the object nodes they replace, in a different
-// coordinate space. React Flow's `getNodes()` returns whatever is mounted, so a callback that
-// persists or exports positions while the column view is on stage would write column-view
-// coordinates into an object-view artifact — a bookmark restoring to scrambled positions, or a
-// draw.io file whose objects sit where their column boxes were.
-//
-// `objectNodes()` is the accessor that resolves this: it prefers the object-space nodes captured
-// for the column view and falls back to `getNodes()` in the object view. The drag path already
-// guards the same hazard by routing column drags to `columnPositions` instead of `localNodes`.
-//
-// Mounting `GraphCanvas` to assert this behaviourally is not proportionate — it takes 107 props
-// behind `ReactFlowProvider` and the webview's VS Code context — so this asserts the source
-// contract instead: the persist/export callbacks read `objectNodes()`, never `getNodes()`. It
-// catches the regression that matters, which is a later edit reaching for `getNodes()` again.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -65,10 +51,6 @@ describe('GraphCanvas — bookmarks and exports read object-space positions', ()
   });
 
   it('drops the pinned/hovered column thread along with hand-placed positions when the relation set changes', () => {
-    // A bookmark→bookmark switch keeps column mode up but swaps the relation set in one commit, so
-    // the degradation effect never fires; a surviving thread lights rows of the new set (or dims
-    // every row) until the next click. The thread state belongs to the relation set like the
-    // hand-placed positions do.
     const anchor = source.indexOf('const columnRelations = activeAiMetadata?.columnAspect;');
     expect(anchor, 'the relation set is declared once').toBeGreaterThan(-1);
     const end = source.indexOf('}, [columnRelations]);', anchor);

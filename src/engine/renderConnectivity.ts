@@ -75,7 +75,6 @@ export function summarizeRenderedConnectivity(
 
   const knownEdges: Array<readonly [string, string]> = [];
   for (const edge of edges) {
-    // Edges may reference endpoints not in the node set defensively; only group known ones.
     if (!labelOf.has(edge.source) || !labelOf.has(edge.target)) continue;
     knownEdges.push([edge.source, edge.target]);
     degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);

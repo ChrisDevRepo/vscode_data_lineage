@@ -574,7 +574,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const targetKey = targetObj.id.toLowerCase();
     const hopKey = relation.hopNode.toLowerCase();
 
-    // Ahead of every accumulator write, so a repeat counts once: `inbound` is a plain array, and a duplicate push would be counted by any reader of its length or order.
     const identity = [sourceKey, normalizeColName(relation.fromCol), targetKey, normalizeColName(relation.toCol), hopKey].join('->');
     if (seenRelations.has(identity)) return;
     seenRelations.add(identity);
@@ -584,7 +583,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const sourceRowKey = touchRow(sourceAcc, relation.fromCol);
     const targetRowKey = touchRow(targetAcc, relation.toCol);
 
-    // The semantic relation stays source-to-target even when the drawing goes through a hop.
     addOutbound(sourceAcc.outbound, sourceRowKey, `${targetKey}::${targetRowKey}`);
     pushInbound(targetAcc.inbound, targetRowKey, {
       otherNodeKey: sourceKey,
@@ -599,7 +597,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       if (hopObj) {
         viaId = hopObj.id;
         const viaAcc = getAcc(hopObj);
-        // One port per column passing through, under the name it carries on each side.
         const inRowKey = touchRow(viaAcc, relation.fromCol);
         const outRowKey = touchRow(viaAcc, relation.toCol);
         pushInbound(viaAcc.inbound, inRowKey, {
@@ -610,7 +607,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
         });
         addOutbound(viaAcc.outbound, outRowKey, `${targetKey}::${targetRowKey}`);
         if (inRowKey !== outRowKey) {
-          // The two ports are one thread through the hub; nothing is drawn between them, so the link is recorded for whoever follows the thread.
           const bridgeKey = `${hopKey}::${inRowKey}->${outRowKey}`;
           if (!seenBridges.has(bridgeKey)) {
             seenBridges.add(bridgeKey);
@@ -651,7 +647,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       isTransformNode: isTransform,
       rows,
       width: isTransform ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH,
-      // A table card sizes to its header and rows; a transform super node is one fixed-size circle.
       height: isTransform
         ? COLUMN_TRANSFORM_NODE_HEIGHT
         : COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
@@ -673,8 +668,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     transforms?: ColumnTransformClass[],
     note?: string,
   ): void {
-    // Two relations through the same hop share a leg — the shared line carries the union of both
-    // relations' transform classes and notes, so a class on the chip is never left without its note.
     const legKey = `${source.toLowerCase()}::${normalizeColName(sourceCol)}->${target.toLowerCase()}::${normalizeColName(targetCol)}`;
     const shared = edgeByLeg.get(legKey);
     if (shared) {
@@ -692,7 +685,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       targetColumn: targetCol,
       state,
     };
-    // Both legs of a hop-routed relation carry the same classification: the split is a drawing decision, and the value's story is one fact about the original endpoint pair.
     if (transforms) edge.transforms = transforms;
     if (note) edge.note = note;
     edgeByLeg.set(legKey, edge);
@@ -709,9 +701,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state, relation.transforms, relation.note);
   }
 
-  // Laid out by graphBuilder's dagreLayout so the column view shares the object view's
-  // rankdir/separation/margins; only the per-node box differs, and the vertical separation carries
-  // the AI annotation band the node box cannot express.
   const boxes = new Map(nodes.map(n => [n.id, { width: n.width, height: n.height }]));
   const direction = input.layoutDirection ?? input.config.layout.direction;
   const positions = dagreLayout({

@@ -1,17 +1,4 @@
 #!/usr/bin/env node
-// Gate step: every parse rule and every exported core symbol is exercised by the suite.
-//
-// Line coverage answers "was this line run", which is not the same question as "is this case
-// tested". A single fixture can walk most of `parseSqlBody` while leaving a whole rule — an
-// entire class of T-SQL the product claims to understand — matched by nothing at all. That gap
-// reads as covered on a coverage report and is invisible in a green suite.
-//
-// Two structural checks, both necessary-not-sufficient. Passing does not prove a rule is tested
-// well; failing proves it is not tested at all.
-//
-//   1. Every enabled rule in assets/defaultParseRules.yaml matches at least one .sql fixture in
-//      tests/fixtures/sql/targeted/.
-//   2. Every exported symbol of the deterministic core modules is named by at least one test.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as yaml from 'js-yaml';
@@ -35,15 +22,11 @@ const FIXTURE_DIR = 'tests/fixtures/sql/targeted';
  * genuinely untested export — that is what the failure is for.
  */
 const COVERED_INDIRECTLY = new Set([
-  // Layout geometry constants consumed by the webview, asserted through rendered node positions.
   'NODE_WIDTH',
   'NODE_HEIGHT',
   'SCHEMA_NODE_WIDTH',
   'SCHEMA_NODE_HEIGHT',
 
-  // Regex fragments composed into the parse rules and consumed only by sqlBodyParser. The
-  // targeted-fixture corpus drives all of them: sqlRegex.ts measures 100% on every metric.
-  // Asserting a raw pattern here would test the regex against itself rather than against SQL.
   'ANY_IDENT',
   'QUALIFIED_NAME',
   'KEYWORDS_RE',
@@ -54,7 +37,6 @@ const COVERED_INDIRECTLY = new Set([
 
 const problems = [];
 
-// ─── 1. Every enabled parse rule matches at least one fixture ─────────────────
 const fixtures = readdirSync(FIXTURE_DIR)
   .filter((file) => file.endsWith('.sql'))
   .map((file) => readFileSync(join(FIXTURE_DIR, file), 'utf8'));

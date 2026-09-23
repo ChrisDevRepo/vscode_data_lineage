@@ -84,7 +84,6 @@ export function openPanel(
     while (panelDisposables.length > 0) panelDisposables.pop()?.dispose();
 
     const sess = getSession();
-    // Only discard exploration state when there is no active SM — a panel closed mid-exploration preserves the archive for the next panel open.
     if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed') {
       sess.resetExploration();
     }
@@ -109,7 +108,6 @@ export function openPanel(
 
   activeTriggerDemo = triggerDemoLoad;
 
-  // The webview asks `check-mssql` once, on mount, so this re-posts on later install/enable/disable; the listener is panel-scoped, so it is gone before the panel is.
   let mssqlAvailable = isMssqlAvailable();
   vscode.extensions.onDidChange(() => {
     const available = isMssqlAvailable();
@@ -119,13 +117,11 @@ export function openPanel(
     void host.postMessage({ type: 'mssql-status', available });
   }, undefined, panelDisposables);
 
-  // Ensure that database connections and stats caches are released when the panel is closed.
   panel.onDidDispose(() => {
     cleanup().catch(err => bridgeLogger.warn(`Cleanup failed — next session may reuse stale state: ${err}`));
   });
 
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
-    // Envelope check before the payload union: frames are unstamped by contract (only the host's send path stamps), so an absent version is normal and only a present-but-wrong one is a skew from a bundle this host cannot speak to.
     const inboundVersion = (rawMsg as BridgeEnvelope | undefined)?.protocolVersion;
     if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
       notifyError(

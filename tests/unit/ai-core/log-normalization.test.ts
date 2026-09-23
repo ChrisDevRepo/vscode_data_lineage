@@ -59,8 +59,6 @@ describe('safeIdentifier', () => {
   });
 
   it('accepts any extraChars ordering — the class is escaped, never interpolated raw', () => {
-    // Verbatim interpolation makes `'-.'` build `[^A-Za-z0-9_-.]`, where `_-.` is a code-point
-    // range: `new RegExp` throws from inside a helper whose contract is to never break its caller.
     expect(() => safeIdentifier('a.b-c!', { ...options, extraChars: '-.' })).not.toThrow();
     expect(safeIdentifier('a.b-c!', { ...options, extraChars: '-.' })).toBe('a.b-c_');
     expect(safeIdentifier('a^b\\c]d', { ...options, extraChars: '^\\]' })).toBe('a^b\\c]d');

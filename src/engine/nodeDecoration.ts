@@ -231,7 +231,6 @@ export function decorateFlowNodes(
   const present = new Set<string>();
   const decorated = nodes.map((node) => {
     present.add(node.id);
-    // A schema cluster carries callbacks rather than a decoration; every other node is decorated exactly once per pass, and both its retention key and its emitted `data` read that one result.
     if (node.type === 'schemaNode') {
       const callbacks = schemaCallbacks(inputs);
       return reuseOrBuild(

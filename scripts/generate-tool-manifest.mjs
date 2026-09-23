@@ -68,8 +68,6 @@ async function loadCatalog() {
       format: 'esm',
       platform: 'node',
       target: 'node22',
-      // The catalog is VS Code-free by contract; keep `vscode` external so an accidental import
-      // fails loudly here instead of being silently bundled.
       external: ['vscode'],
       logLevel: 'warning',
     });

@@ -85,8 +85,6 @@ function postValidated<S extends z.ZodTypeAny>(
     );
     return Promise.resolve(false);
   }
-  // `parsed.data` is `z.infer<S>` for a generic `S`, which TS will not spread; both callers pass an
-  // object union, so the cast is the narrowing TS cannot do itself.
   return target.webview.postMessage({
     ...(parsed.data as Record<string, unknown>),
     protocolVersion: BRIDGE_PROTOCOL_VERSION,

@@ -26,7 +26,6 @@ export function estimateTokens(chars: number): number {
 /** The heuristic ratio behind {@link estimateTokens} — exported so char caps derived from token caps stay in sync. */
 const CHARS_PER_TOKEN = 4;
 
-// ─── The turn's budget ───────────────────────────────────────────────────────
 
 /** Default node cap for discovery-phase catalog requests — overridden via VS Code `ai.discoveryNodeCap`. */
 export const DEFAULT_DISCOVERY_NODE_CAP = 10;
@@ -120,7 +119,6 @@ export function createTurnTokenBudget(settings: {
  */
 export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget();
 
-// ─── Discovery-phase budget guard ────────────────────────────────────────────
 
 /**
  * Discovery scope budget check — fires per scope-expanding catalog request.
@@ -155,7 +153,6 @@ export function checkScopeBudget(
   };
 }
 
-// ─── Bounded prompt blocks ───────────────────────────────────────────────────
 
 /**
  * Fraction of the selected model's input window one bounded prompt block may claim — the retry
@@ -203,7 +200,6 @@ export function discoveryEvidenceItemBytes(budget: TurnTokenBudget): number {
   return discoveryBlockBytes(budget) - CONTEXT_BLOCK_ITEM_HEADROOM_BYTES;
 }
 
-// ─── Active-phase (exploration) admission guard ──────────────────────────────
 
 /** Fraction of the selected model's input window the discovery budget may claim — the setting is a ceiling, the window share the floor for small BYOK models. */
 export const DISCOVERY_WINDOW_SHARE = 0.125;
@@ -232,7 +228,6 @@ export function checkActiveScopeAdmission(
 ): { ok: true; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } }
   | { ok: false; reason: 'over_active_scope_budget'; counts: { nodes: number; tokens: number }; limits: { node_cap: number; token_budget: number } } {
   const tokens = estimateTokens(projectedDdlChars);
-  // Both arms share the same counts/limits shape, so a run that grew scope comfortably and one that never grew it read identically in the log.
   const counts = { nodes: projectedNodes, tokens };
   const limits = { node_cap: budget.exploration.nodeCap, token_budget: budget.exploration.tokenBudget };
   if (!exceedsPhaseBudget(budget.exploration, projectedNodes, tokens)) return { ok: true, counts, limits };

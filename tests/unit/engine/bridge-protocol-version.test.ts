@@ -58,8 +58,6 @@ describe('bridge protocol envelope', () => {
     await postToWebview(panel as never, { type: 'last-dacpac-gone' }, silentLogger);
     const frame = sent[0];
 
-    // The stamp lives on the envelope, so the payload unions are untouched: Zod strips the extra
-    // key and yields exactly the message the sender passed.
     const parsed = ExtensionToWebviewMsgSchema.safeParse(frame);
     expect(parsed.success).toBe(true);
     expect(parsed.success && parsed.data).toEqual({ type: 'last-dacpac-gone' });
@@ -90,7 +88,6 @@ describe('bridge protocol envelope', () => {
 
     expect(webviewAccepts(sent[0])).toBe(true);
     expect(webviewAccepts({ type: 'detail-closed', protocolVersion: BRIDGE_PROTOCOL_VERSION + 1 })).toBe(false);
-    // An unstamped frame means the host bundle predates the envelope — also a rejection.
     expect(webviewAccepts({ type: 'detail-closed' })).toBe(false);
   });
 

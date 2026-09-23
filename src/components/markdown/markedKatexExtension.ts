@@ -67,11 +67,8 @@ function createRenderer(
         displayMode: token.displayMode,
       });
 
-      // Container attribute keeps the original LaTeX retrievable even without the annotation element.
       out = `<span class="${katexContainerClassName}" ${katexContainerLatexAttributeName}="${htmlAttributeEncodeValue(token.text)}">${html}</span>`;
     } catch {
-      // On failure, degrade to the original source including the wrapping $ or $$. Text-escaped:
-      // the raw markdown is emitted into an HTML stream, so `<` in `$a < b$` must survive as `<`.
       out = htmlAttributeEncodeValue(token.raw);
     }
     return out + (isBlock ? '\n' : '');

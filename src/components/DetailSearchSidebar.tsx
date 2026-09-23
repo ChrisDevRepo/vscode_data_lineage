@@ -191,7 +191,6 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
     return [...bodyResults, ...colResults];
   }, [term, allNodes]);
 
-  // Split flat results into rendered, clustered, and filtered-out states.
   const { visible, clustered, outOfScope } = useMemo(() => {
     if (!visibleNodeIds) return { visible: results, clustered: [] as SearchResult[], outOfScope: [] as SearchResult[] };
     const visible: SearchResult[] = [];

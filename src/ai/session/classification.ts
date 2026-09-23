@@ -5,9 +5,10 @@
  * A mechanical contract (Zod enum): `business` omits the "#### Technical" subsection,
  * `technical` treats the section body as the technical write-up, `both` appends the subsection.
  * Declared by the AI as a REQUIRED `start_exploration` parameter; Zod hard-rejects missing or
- * invalid values, so there is no engine-side fallback. `technical` requires the user to have named
- * a technical lens (performance, indexes, execution plan, query shape, load pattern) as the whole
- * request; `both` is for a request spanning both angles.
+ * invalid values, so there is no engine-side fallback. `business` and `technical` are chosen only
+ * when the user asks for that view; a question in neither terms, or in both, is `both`.
+ * The value is part of the approved contract, so the gate
+ * states it. The selection rule's one model-facing home is the field's `.describe()`.
  */
 
 import { z } from 'zod';

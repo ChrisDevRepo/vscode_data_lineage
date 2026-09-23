@@ -20,9 +20,6 @@ import { normalizeName } from '../modelBuilder';
  * @returns The canonical node id if resolved, otherwise null.
  */
 export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>): string | null {
-  // `trim()` removes ASCII whitespace only. A model that pads an id with a zero-width or other
-  // Unicode format character produces a string that renders identically to a valid id but fails
-  // every lookup, so the rejection it earns is one no human or model can act on.
   const input = (raw ?? '').replace(/\p{Cf}/gu, '').trim();
   if (!input) return null;
 
@@ -30,7 +27,6 @@ export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>): 
   try {
     candidates.add(normalizeName(input));
   } catch {
-    // Keep fallback candidates only.
   }
 
   for (const candidate of candidates) {

@@ -4,6 +4,7 @@
 
 import type { AiOutputTemplates } from '../session/types';
 import type { ClassificationValue } from '../session/classification';
+import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
 
 /**
  * Stages at which a YAML instruction may be injected into the AI system prompt.
@@ -89,6 +90,56 @@ const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'structural_summary',
 ]);
 
+/**
+ * The `sections[].angle` each capture key writes. The per-focus recipe labels its bullet with this
+ * value, never the YAML key, so the label is the literal the `submit_findings` schema accepts.
+ */
+const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business' | 'technical'>>> = {
+  business_capture:  'business',
+  technical_capture: 'technical',
+};
+
+/**
+ * Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the
+ * one-`sections[]`-entry-per-schema-angle rule (`classification_lock_violation` — each capture
+ * bullet is labelled with its `sections[].angle` value), the exact-substring quoting rule and
+ * the `not established` wording, so no capture key restates them.
+ */
+const CAPTURE_RECIPE_HEADER = [
+  '### Capture recipe',
+  'Submit one `sections[]` entry per angle this mission fires, with that angle in `angle`, and put every bullet below — including the ⚠️ callout bullet — inside that entry. Markdown without headings. Back each grain predicate, formula and ⚠️ line with one short ```sql fence of its deciding expression, an exact substring of `bb_ddl`; what the SQL does not establish reads `not established from the available SQL`. Skip an item the SQL lacks.',
+].join('\n\n');
+
+/**
+ * Bare-summary angle clause — the one line the non-bodied per-focus render keeps from
+ * {@link CAPTURE_RECIPE_HEADER} when it drops the rest of that header (its SQL-evidence rules do
+ * not apply to a schema-only node with no body). Without it the model has no cue that
+ * `sections[].angle` is a fixed schema literal and free-labels the entry from the summary's own
+ * bullet names (`Purpose`, `Upstream sources`, …), which `lineage_submit_findings` rejects.
+ *
+ * @remarks
+ * Unlocked (`classification` undefined) states every angle the mode ever accepts, unchanged from
+ * before. A locked classification with one kept angle ({@link CLASSIFICATION_KEPT_ANGLES}) states
+ * only that angle — offering the excluded one here was the CLASSLOCK regression: the per-dispatch
+ * `submit_findings` schema (`toolSchemas.ts` `capturedSectionSchemaForClassification`) already
+ * hard-rejects it, so naming it here only bought the model a rejection it could not act on. `both`
+ * keeps every angle, same as unlocked.
+ */
+const BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED =
+  'Submit this as one `sections[]` entry per angle this mission keeps (`business`, `technical`, or both), with that literal — never a descriptive label — in `angle`.';
+
+/**
+ * Resolves {@link BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED} to the angle(s) the locked classification
+ * actually keeps, reading the same {@link CLASSIFICATION_KEPT_ANGLES} the dispatched schema
+ * narrows to — one source, so the prompt line and the schema can never name different angles.
+ */
+function bareSummaryAngleClause(classification: ClassificationValue | undefined): string {
+  if (!classification) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
+  const kept = CLASSIFICATION_KEPT_ANGLES[classification];
+  if (kept.length === 2) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
+  return `Submit this as one \`sections[]\` entry with \`angle: "${kept[0]}"\` — never a descriptive label.`;
+}
+
 /** Render scope for {@link resolveStagePrompt}: hop-invariant system block vs per-focus hop block. */
 export type StageRenderScope =
   | { readonly scope: 'stable' }
@@ -108,8 +159,13 @@ export interface StagePromptResult {
  * Assembles the stage-scoped template block for the AI system prompt.
  *
  * @remarks
- * Walks `STAGE_BY_KEY` and emits one bullet per active key: `- <key>: <instruction>`. One heading
+ * Walks `STAGE_BY_KEY` and emits one bullet per active key: `- <key>: <instruction>`, a capture key
+ * labelled with its `sections[].angle` instead (`CAPTURE_ANGLE`), and a per-focus recipe key with
+ * no angle of its own (e.g. `structural_callouts`) labelled with neither — it folds into whichever
+ * angle fired, per {@link CAPTURE_RECIPE_HEADER}, never its own `- <key>:` line. One heading
  * hierarchy — no per-key `####` wrappers. The AI parses the bullet list directly.
+ * The non-bodied per-focus render is the exception: `structural_summary` ships bare, with no
+ * `### ` header, keeping only {@link bareSummaryAngleClause} ahead of it.
  *
  * At synthesis, if `classification` is known, a `**Mission type:** <value>` one-liner is emitted
  * before the bullet list. The value is code-resolved; the `intro` template instruction references
@@ -138,8 +194,6 @@ export function resolveStagePrompt(
    */
   render: StageRenderScope = { scope: 'stable' },
 ): StagePromptResult {
-  // `closing` wraps up an analysis with named detail; below this many captured slots the
-  // wrap-up has nothing to summarize and the tokens buy no content.
   const CLOSING_MIN_SLOTS = 3;
 
   const allKeys = Object.keys(STAGE_BY_KEY) as (keyof AiOutputTemplates)[];
@@ -160,7 +214,6 @@ export function resolveStagePrompt(
       gatedOut.push({ key, reason: 'ct_mode' });
       continue;
     }
-    // Keeps the system prompt byte-identical across hops: focus-dependent keys ship only per-focus.
     if (render.scope === 'stable' && PER_FOCUS_KEYS.has(key)) {
       gatedOut.push({ key, reason: 'focus_scope' });
       continue;
@@ -173,7 +226,6 @@ export function resolveStagePrompt(
       gatedOut.push({ key, reason: 'slot_count' });
       continue;
     }
-    // structural_summary replaces business/technical capture for non-bodied (table) focus nodes only.
     if (render.scope === 'per_focus') {
       if (key === 'structural_summary' && render.focusKind !== 'non_bodied') {
         gatedOut.push({ key, reason: 'focus_scope' });
@@ -191,7 +243,14 @@ export function resolveStagePrompt(
     passing.push(key);
   }
 
-  const blocks = passing.map(key => `- ${key}: ${templates[key].trim()}`);
+  const bareSummary = render.scope === 'per_focus' && render.focusKind === 'non_bodied';
+  const blocks = passing.map(key => {
+    if (bareSummary) return templates[key].trim();
+    const angle = CAPTURE_ANGLE[key];
+    if (angle) return `- ${angle}: ${templates[key].trim()}`;
+    if (render.scope === 'per_focus') return `- ${templates[key].trim()}`;
+    return `- ${key}: ${templates[key].trim()}`;
+  });
 
   const missionLine = phase === 'synthesis' && classification
     ? `**Mission type:** ${classification}`
@@ -204,14 +263,18 @@ export function resolveStagePrompt(
   const headerByPhase: Record<TemplateStage, string> = {
     discover:  '### Output templates (discovery)',
     active:    render.scope === 'per_focus'
-      ? '### Capture recipe for THIS focus node (write each key to its target field)'
+      ? CAPTURE_RECIPE_HEADER
       : '### Active-phase templates (write each key to its target field)',
     synthesis: '### Output templates (synthesis)',
   };
 
   const parts: string[] = [];
   if (missionLine) parts.push(missionLine);
-  parts.push(headerByPhase[phase]);
+  if (bareSummary) {
+    parts.push(bareSummaryAngleClause(classification));
+  } else {
+    parts.push(headerByPhase[phase]);
+  }
   parts.push(...blocks);
   return { prompt: parts.join('\n\n'), shippedKeys: passing, gatedOut };
 }

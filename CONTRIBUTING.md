@@ -42,7 +42,10 @@ proof that output is unchanged when the changed syntax has no test case.
   intent is not evident from types and names. Focus on architectural
   constraints and the "why"; do not restate types, and do not use JSDoc
   `{Type}` braces. Plain `.mjs` scripts keep type-bearing JSDoc because that
-  is the only place the type can be stated.
+  is the only place the type can be stated. No `//` narration, no history or
+  decision records, no provenance tags (dates, author names, register/row
+  references, issue links), no commented-out code. Test files carry a 1–3
+  line header stating what the suite pins.
 - **Logging**: Use the standard logger (`src/utils/log.ts`) with category tags (e.g., `[AI]`, `[Parse]`).
 
 ## 5. Dependency Overrides

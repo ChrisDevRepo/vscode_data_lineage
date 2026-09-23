@@ -96,7 +96,6 @@ export function migrateProjectStore(
   }
   const obj = raw as Record<string, unknown>;
   if (obj.schemaVersion !== 1) {
-    // Unknown version — cannot migrate safely; start fresh, but never silently.
     const abandoned = Array.isArray(obj.projects) ? obj.projects.length : 0;
     if (abandoned > 0) onDropped?.({ dropped: abandoned, issuePaths: ['schemaVersion'] });
     return emptyStore();

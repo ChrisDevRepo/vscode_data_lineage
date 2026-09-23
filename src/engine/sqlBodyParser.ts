@@ -186,12 +186,10 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
   }
   if (typeof r.priority !== 'number') return { valid: false, name, error: `${name}: missing or invalid 'priority'` };
   if (typeof r.flags !== 'string') return { valid: false, name, error: `${name}: missing 'flags'` };
-  // Every consumer needs the global flag or it fails differently: a scan spins forever or hits its iteration cap, and a preprocessing `replace` silently rewrites only the first occurrence.
   if (!r.flags.includes('g')) {
     return { valid: false, name, error: `${name}: flags '${r.flags}' must include 'g' — a non-global pattern hangs or silently under-matches` };
   }
 
-  // Test-compile the regex and check for empty-match patterns
   try {
     const testRegex = new RegExp(r.pattern, r.flags);
     if (testRegex.test('')) {
@@ -276,7 +274,6 @@ function resetRules(): void {
  * @returns The schema-qualified table name, unqualified CTE name, or `null` if not found.
  */
 function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
-  // Find CTE body end — paren balancing on cleaned SQL
   let depth = 1;
   let bodyEnd = -1;
   for (let i = bodyStart; i < sql.length; i++) {
@@ -288,11 +285,9 @@ function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
 
   const body = sql.slice(bodyStart, bodyEnd);
 
-  // Schema-qualified FROM first (e.g. FROM [schema].[table])
   const qual = body.match(new RegExp(`\\bFROM\\s+(${QUALIFIED_NAME.source})(?![\\w\\.])`, 'i'));
   if (qual) return qual[1];
 
-  // Fallback: unqualified FROM — another CTE in chain
   const unqual = body.match(new RegExp(`\\bFROM\\s+(${ANY_IDENT.source})(?!\\s*\\.)(?!\\s*\\()`, 'i'));
   if (unqual && !KEYWORDS_RE.test(unqual[1])) return unqual[1];
 
@@ -311,7 +306,6 @@ function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
  * @returns SQL text with CTE aliases substituted for base tables in UPDATE contexts.
  */
 function substituteCteUpdateAliases(sql: string): string {
-  // Find CTE definitions: WITH name AS ( and , name AS ( (multi-CTE syntax)
   const cteMap = new Map<string, string>(); // cteName (lowercase) → base table or CTE ref
   const ctePattern = new RegExp(`(?:\\bWITH\\b|,)\\s*(${ANY_IDENT.source})\\s+AS\\s*\\(`, 'gi');
 
@@ -324,7 +318,6 @@ function substituteCteUpdateAliases(sql: string): string {
     if (ref) cteMap.set(cteName.toLowerCase(), ref);
   }
 
-  // Resolve CTE chains: cte_A → cte_B → [schema].[table]
   for (let pass = 0; pass < 10; pass++) {
     let changed = false;
     for (const [name, target] of cteMap) {
@@ -335,20 +328,17 @@ function substituteCteUpdateAliases(sql: string): string {
     }
     if (!changed) break;
   }
-  // Remove unresolvable entries (still no schema dot after chaining)
   for (const [name, target] of cteMap) {
     if (!target.includes('.')) cteMap.delete(name);
   }
 
   if (cteMap.size === 0) return sql;
 
-  // Rewrite UPDATE CTE_NAME SET → UPDATE [schema].[table] SET
   let result = sql.replace(new RegExp(`\\bUPDATE\\s+(${ANY_IDENT.source})\\s+SET\\b`, 'gi'), (match, alias) => {
     const baseTable = cteMap.get(alias.toLowerCase());
     return baseTable ? `UPDATE ${baseTable} SET` : match;
   });
 
-  // Rewrite FROM CTE_NAME → FROM [schema].[table] for alias UPDATE patterns.
   for (const [cteName, baseTable] of cteMap) {
     result = result.replace(new RegExp(`\\bFROM\\s+${cteName}\\b`, 'gi'), `FROM ${baseTable}`);
   }
@@ -416,10 +406,8 @@ export function parseSqlBody(
   sql: string,
   onRuleFire?: (ruleName: string, category: string, added: number) => void,
 ): ParsedDependencies {
-  // Pass 0: Remove block comments (including nested) before the regex sees the SQL.
   let clean = removeBlockComments(sql);
 
-  // Pass 1: Leftmost-match regex — brackets, strings, and line comments.
   clean = clean.replace(PASS1_CLEANSE_RE, (match) => {
     if (match.startsWith('[')) return match;                         // preserve [bracket identifiers]
     if (match.startsWith('"')) return `[${match.slice(1, -1)}]`;   // "double-quote" → [bracket]
@@ -427,13 +415,10 @@ export function parseSqlBody(
     return ' ';                                                       // remove -- line comments
   });
 
-  // Pass 1.5: Normalize ANSI comma-join FROM clauses to modern JOIN syntax.
   clean = normalizeAnsiCommaJoins(clean);
 
-  // Pass 1.6: Substitute CTE aliases in UPDATE statements with the CTE's base table.
   clean = substituteCteUpdateAliases(clean);
 
-  // Step 1b: Additional user-defined preprocessing rules
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing' && rule.name !== 'clean_sql' && rule.replacement !== undefined) {
       clean = clean.replace(new RegExp(rule.pattern, rule.flags), rule.replacement);
@@ -447,7 +432,6 @@ export function parseSqlBody(
   const crossDbTargets = new Set<string>();
   const cappedRules = new Set<string>();
 
-  // Step 2: Extraction rules
   const udfSources = new Set<string>();
 
   for (const rule of activeRules) {
@@ -465,7 +449,6 @@ export function parseSqlBody(
     if (collectMatches(clean, regex, dest)) cappedRules.add(rule.name);
     const added = dest.size - before;
 
-    // Also collect 3-part+ names (cross-DB refs)
     const crossDbDest = rule.category === 'source' || rule.name === 'extract_udf_calls' ? crossDbSources
       : rule.category === 'target' ? crossDbTargets
       : null;
@@ -474,7 +457,6 @@ export function parseSqlBody(
     if (onRuleFire && added > 0) onRuleFire(rule.name, rule.category, added);
   }
 
-  // Add UDF sources that aren't already targets
   for (const u of udfSources) {
     if (!targets.has(u)) sources.add(u);
   }

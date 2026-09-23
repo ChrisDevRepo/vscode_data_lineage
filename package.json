@@ -700,7 +700,7 @@
         "toolReferenceName": "lineage_get_neighbor_columns",
         "displayName": "Get Neighbor Columns",
         "userDescription": "Inspect a neighbor's columns for pruning decisions during active SM exploration.",
-        "modelDescription": "Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. DDL text is not returned. Pass neighbor ids only, excluding the focus node itself.",
+        "modelDescription": "Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage"
@@ -717,7 +717,7 @@
                 "type": "string",
                 "minLength": 1
               },
-              "description": "Canonical direct-neighbor IDs whose structural columns are hidden by opaque focus DDL."
+              "description": "Neighbor ids, not the focus."
             }
           },
           "required": [

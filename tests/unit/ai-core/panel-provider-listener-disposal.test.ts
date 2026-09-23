@@ -113,10 +113,8 @@ describe('openPanel — webview message listener disposal (A20)', () => {
     expect(vscodeMocks.panelDisposeListeners.length).toBeGreaterThan(0);
     const listenerDisposable = vscodeMocks.messageListenerDisposable;
     expect(listenerDisposable.dispose).not.toHaveBeenCalled();
-    // The bug registered this same disposable against context.subscriptions instead.
     expect(context.subscriptions).not.toContain(listenerDisposable);
 
-    // Fire every onDidDispose listener, as vscode does when the panel's tab closes.
     for (const listener of vscodeMocks.panelDisposeListeners) listener();
 
     expect(listenerDisposable.dispose).toHaveBeenCalledTimes(1);

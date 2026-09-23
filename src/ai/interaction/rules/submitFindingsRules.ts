@@ -39,7 +39,7 @@ const SECTION_RULES: Record<ClassificationValue, {
  * branch already exempts it from the non-empty requirement.
  *
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
- * (`AiMemoryManager.getArchivedAngles`). A CT reopen revisits a node whose earlier sections
+ * (`AiMemoryManager.getArchivedAngles`). A follow-up (`supplementAgenda`) revisits a node whose earlier sections
  * `storeDetail` already appended into the archive (never replaced), so an angle present there
  * satisfies the lock even when this submission does not re-carry it.
  */
@@ -53,12 +53,11 @@ export function validateSectionsAgainstClassification(
   if (!classification) {
     return list.length === 0 ? 'sections[] must contain at least one section when verdict is analyze or pass.' : null;
   }
-  if (verdict === 'prune') return null;
+  if (verdict === 'end_branch') return null;
   const rule = SECTION_RULES[classification];
   const angles = new Set(list.map(s => s.angle));
   const missing = rule.required.filter(req => !angles.has(req) && !archivedAngles?.has(req));
   if (missing.length === 0) return null;
-  // Names the missing angle explicitly, else a model holding one angle can resend the other in its place and be refused again for the angle it just dropped.
   const kept = rule.required.filter(req => angles.has(req));
   const missingText = missing.map(a => `missing angle="${a}"`).join(', ');
   const keepText = kept.length > 0

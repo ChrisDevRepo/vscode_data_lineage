@@ -1,19 +1,9 @@
 #!/usr/bin/env node
-// Gate step: a prompt-surface change may not ship without a prompt-golden regeneration. The
-// prompt-golden suite is maintained outside the tracked tree, so no tracked signal runs it; this
-// manifest pins the sha256 of the prompt-affecting surface as it stood at the last regeneration,
-// and a prompt edit without a matching refresh fails here.
-//
-// After regenerating the goldens and reviewing their diff, refresh the record in the same change:
-//   node tests/tools/assert-golden-sync.mjs --update
-// No goldens are read — the manifest is tracked and the check works on public clones.
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 const MANIFEST = 'tests/tools/golden-sync.json';
-// The prompt-affecting surface set. Extending it (e.g. a new builder module outside
-// src/ai/prompting/) means regenerating goldens and re-recording the manifest in the same change.
 const SURFACES = ['assets/aiOutputTemplates.yaml', 'src/ai/agent/stagePrompts.ts', 'src/ai/prompting'];
 
 /** Line endings differ between the index (LF) and a Windows working copy (CRLF); only content matters. */
@@ -30,9 +20,6 @@ function surfaceFiles() {
     }
   };
   for (const surface of SURFACES) {
-    // A surface renamed or deleted without updating SURFACES would otherwise crash with a bare
-    // ENOENT stack. Fail closed with the repair instead: the list is what the manifest covers, so
-    // an unreadable entry means the gate is no longer measuring what it claims to.
     if (!existsSync(surface)) {
       console.error(
         `FAIL  prompt surface "${surface}" does not exist — it was renamed or removed without ` +

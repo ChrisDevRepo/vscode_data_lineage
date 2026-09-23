@@ -22,7 +22,6 @@ export function buildWebviewCsp({ nonce, cspSource }: CspOptions): string {
   return [
     "default-src 'none'",
     `style-src ${cspSource} 'unsafe-inline'`,
-    // Vite chunk imports require the webview source in addition to the nonce.
     `script-src 'nonce-${nonce}' ${cspSource}`,
     `img-src ${cspSource} data:`,
     `font-src ${cspSource}`

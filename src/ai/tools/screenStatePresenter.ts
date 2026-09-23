@@ -214,7 +214,6 @@ function presentAnalysis(analytics: ScreenStateExtras['analytics']): Record<stri
     type,
     active_group: asString(asRecord(active)?.label),
     ...spreadCapped('active_group_node_ids', activeIds),
-    // `group_count` keeps a large island list's cap visible instead of presenting a truncated list as the whole set.
     group_count: rows.length,
     groups: rows.slice(0, SCREEN_STATE_MAX_IDS),
   };
@@ -236,7 +235,6 @@ function presentBookmark(
     name,
     source,
     nodes: nodeIds.length,
-    // Ids are the recall keys `presentRunRecall` answers by — a count-only card forces a scope walk instead.
     ...spreadCapped('node_ids', nodeIds),
     ai_run: presentAiRun(run, getDdl),
   };
@@ -461,6 +459,5 @@ export function describeScreen(uiState: unknown): string | null {
       ? `the AI bookmark "${name}" (what its run found about each object, the pruning decisions, and the open questions are stored)`
       : `the bookmark "${name}"`);
   }
-  // Raw text: the prompt slot builder is the single escape point; escaping here too would double-encode.
   return parts.length > 0 ? parts.join('; ') : null;
 }

@@ -47,10 +47,40 @@ export const REJECTION_CODES = {
   ctFieldForbiddenInBb: 'ct_field_forbidden_in_bb',
   /** A tool requiring a live exploration session (`stateMachine`) was called with none active. */
   noActiveSession: 'no_active_session',
-  /** A `prune_neighbors` entry would orphan a node kept by already-committed work. */
-  pruneWouldOrphanNoted: 'prune_would_orphan_noted',
-  /** A `prune_neighbors` entry names the immutable exploration origin. */
+  /** A `prune_neighbors` entry, or an `end_branch` focus, carries a tracked column an accepted `column_flow` already named (`smRouteValidation.ts`, `smBase.ts`). */
+  pruneCarriesTrackedColumn: 'prune_carries_tracked_column',
+  /** A `prune_neighbors` entry, or an `end_branch` verdict, names the immutable exploration origin. */
   pruneOriginForbidden: 'prune_origin_forbidden',
   /** `proposalRevision` no longer matches the pending approval gate under refine. */
   staleProposalRevision: 'stale_proposal_revision',
+  /** Prune/column structural fault whose kind carries no specific code, or ≥2 distinct kinds in one submission (`ROUTE_REJECTION_CODE` fallback, `smRouteValidation.ts`). */
+  routeValidationFailed: 'route_validation_failed',
+  /** `column_flow[].out_col` names a column this focus node does not carry (`bad_out_col` kind, `smRouteValidation.ts`). */
+  outColNotOnNode: 'out_col_not_on_node',
+  /** `column_flow[].out_col` names a real node column outside the CT active-column set being traced (`untracked_out_col` kind, `smRouteValidation.ts`). */
+  outColNotTracked: 'out_col_not_tracked',
+  /** `upstream_columns[].col` names a column the contributor node does not itself read (`bad_contributor_col` kind, `smRouteValidation.ts`). */
+  contributorColNotOnSource: 'contributor_col_not_on_source',
+  /** A bodyless focus's `column_flow` names a neighbour other than its own carrier side (`non_writer_continuation` kind, `smRouteValidation.ts`). */
+  continuationNotWriter: 'continuation_not_writer',
+  /** An `upstream_columns` entry names the same node.col as this submission's own `writes_to` target (`self_loop_column` kind, `smRouteValidation.ts`). */
+  columnSelfLoop: 'column_self_loop',
+  /** `writes_to` names a downstream reader rather than the node this hop actually writes (`bad_writes_to_target` kind, `smRouteValidation.ts`). */
+  writesToNamesReader: 'writes_to_names_reader',
+  /** An `upstream_columns` entry names a node already pruned earlier this run (`smRouteValidation.ts`, `columnTracer.ts`). */
+  prunedContributor: 'pruned_contributor',
+  /** A CT active tracked column is left unaccounted by the submitted `column_flow` (`smCompleteness.ts`, `smBase.ts` log line). */
+  columnChainIncomplete: 'column_chain_incomplete',
+  /** A `submit_findings` field (e.g. `badge_label`, a `column_flow` note) exceeds its length bound (`smBase.ts`). */
+  fieldLengthExceeded: 'field_length_exceeded',
+  /** The provider emitted the synthetic structured-output/terminal tool call with empty required arguments (`structuredOutput.ts`, `vscodeModelPort.ts`, `graph.ts`). */
+  emptyStructuredOutput: 'empty_structured_output',
+  /** The provider generated text or nothing instead of the phase's required terminal tool call (`toolAttempt.ts`). */
+  missingRequiredToolCall: 'missing_required_tool_call',
+  /** `submit_findings` carries a classification that no longer matches the locked exploration classification (`submitFindings.ts`). */
+  classificationLockViolation: 'classification_lock_violation',
+  /** A registered tool handler threw; the generic fallback envelope both LM lanes feed back to the model (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
+  toolExecutionError: 'tool_execution_error',
+  /** `readToolError`'s synthesized code for the `{success:false,errors:[]}` shape when no `error` field is present (`toolErrorEnvelope.ts`). */
+  validation: 'validation',
 } as const;

@@ -49,12 +49,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
   logger.info(`Extension activated — built ${buildStamp}`);
 
-  // Load SQL parsing rules for DDL extraction.
   await loadParseRules(outputChannel, context.extensionUri).catch(err => {
     logger.error('load parse rules at activation', err);
   });
 
-  // Validation discards persisted projects it cannot read. That is data loss the user must hear about once — every later load logs at debug so a repeated read cannot turn into toast spam.
   const projectLogger = Logger.create(outputChannel, 'Project');
   let droppedProjectsReported = false;
   const reportDroppedProjects = ({ dropped, issuePaths }: ProjectStoreDropReport): void => {
@@ -90,7 +88,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     },
   });
 
-  // Register all user-facing commands.
   context.subscriptions.push(...registerCommands(
     context,
     getSession,
@@ -112,19 +109,16 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     traceWriter,
   ));
 
-  // Loaded after commands: only the AI turn path reads it, so a stall here cannot cost every command.
   const templates = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
     logger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
     return { ...EMPTY_AI_TEMPLATES };
   });
   getSession().outputTemplates = templates;
 
-  // The kill switch prevents AI registration and turn execution. Imports remain static because the extension is emitted as a single CommonJS bundle without a code-splitting boundary.
   const aiEnabled = vscode.workspace
     .getConfiguration('dataLineageViz.ai')
     .get<boolean>('enabled', DEFAULT_AI_ENABLED);
 
-  // Feature-detect both namespaces and members because editor builds or policy may omit them.
   const missingAiApis = [
     typeof vscode.chat?.createChatParticipant === 'function' ? '' : 'chat participants (vscode.chat)',
     typeof vscode.lm?.registerTool === 'function' ? '' : 'language-model tools (vscode.lm)',
@@ -133,18 +127,14 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   let lineageRuntime: LineageRuntime | undefined;
   let participant: LineageParticipant | undefined;
 
-  // Contain optional AI initialization so a failure cannot disable parsing and visualization.
   try {
     if (aiEnabled && missingAiApis.length > 0) {
-      // Output channel only, never a notification: a host without these namespaces is an editor fork or a policy that switched AI off, and its user would meet the same popup on every window start.
       logger.info(
         `AI surface unavailable — this editor does not provide ${missingAiApis.join(' or ')}. `
         + 'Lineage visualisation, parsing and the graph are unaffected.',
       );
     } else if (aiEnabled) {
-    // Retain contributed language-model tools for external VS Code compatibility, routed through the same canonical strict registry builder; the @lineage runtime dispatches its graph calls directly.
     const runStoreLogger = Logger.create(outputChannel, 'AI');
-    // Resolved once at activation so the graph runtime and the start_exploration scope check read the same value: the hop cap the model is admitted against is the cap the loop enforces.
     const maxRounds = vscode.workspace
       .getConfiguration('dataLineageViz')
       .get<number>('ai.maxRounds', DEFAULT_MAX_ROUNDS);
@@ -156,7 +146,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
     );
 
-    // One native runtime. Every turn receives its exact ChatRequest.model and a lease-bound strict registry for direct dispatch.
     lineageRuntime = new LineageRuntime({
       getSession,
       createRegistry: (lease, model) =>
@@ -166,7 +155,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       traceWriter,
     });
 
-    // Register the thin native Chat Participant.
     participant = new LineageParticipant(
       context,
       getSession,
@@ -182,7 +170,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       );
     }
   } catch (err) {
-    // Degrade visibly, never silently: the core product continues, and the user is told the AI half is unavailable and why.
     lineageRuntime = undefined;
     participant = undefined;
     const detail = err instanceof Error ? err.message : String(err);
@@ -195,7 +182,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     );
   }
 
-  // Watch for configuration changes and trigger reloads where necessary.
   const configLogger = Logger.create(outputChannel, 'Config');
   const RELOAD_KEYS: Array<{ key: string; label: string }> = [
     { key: 'dataLineageViz.parseRulesFile', label: 'Parse rules file' },
@@ -205,7 +191,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     { key: 'dataLineageViz.externalRefs.enabled', label: 'External reference detection' },
   ];
 
-  // Display-only settings that can be applied to an open panel without reloading data.
   const DISPLAY_KEYS = [
     'dataLineageViz.layout.direction',          'dataLineageViz.layout.rankSeparation',
     'dataLineageViz.layout.nodeSeparation',     'dataLineageViz.layout.edgeAnimation',
@@ -223,7 +208,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       if (!e.affectsConfiguration('dataLineageViz')) return;
       configLogger.debug('Settings changed — dataLineageViz.*');
 
-      // The kill switch decides what gets imported at activation, so it can only be applied by a window reload — no hot re-registration.
       if (e.affectsConfiguration('dataLineageViz.ai.enabled')) {
         const nowEnabled = vscode.workspace
           .getConfiguration('dataLineageViz.ai')
@@ -363,7 +347,6 @@ async function loadAiOutputTemplates(
   try {
     const data = await vscode.workspace.fs.readFile(vscode.Uri.file(resolved));
     const parsed = parseAiOutputTemplatesYaml(new TextDecoder().decode(data));
-    // Apply custom templates only when their schema version matches the current contract.
     const customVersion = parsed.schemaVersion;
     if (customVersion !== AI_TEMPLATE_SCHEMA_VERSION) {
       notifyWarning(
@@ -496,7 +479,6 @@ async function loadParseRules(
 
   for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
   logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
-  // Any skipped rule silently narrows extraction, so it is notified — not only the total-failure case. The named per-rule reasons are on the `info` lines above.
   if (result.skipped.length > 0) {
     const allSkipped = result.loaded === 0;
     notifyWarning(

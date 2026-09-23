@@ -27,7 +27,6 @@ import {
 import { stripSensitiveFields } from '../../../src/engine/connectionManager';
 import type { IConnectionInfo } from '../../../src/types/mssql';
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const dacpacConn: DacpacConnection = {
   type: 'dacpac',
@@ -49,7 +48,6 @@ const dbConn: DatabaseConnection = {
   schemas: ['dbo', 'Sales'],
 };
 
-// ─── migrateProjectStore ──────────────────────────────────────────────────────
 
 describe('migrateProjectStore', () => {
   it('returns empty store for invalid inputs', () => {

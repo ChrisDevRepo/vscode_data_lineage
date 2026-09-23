@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-// Gate step: src/engine/** must never import from src/components/**.
-//
-// The deterministic core (SQL parsing, graph build, BFS analysis) has to typecheck and run without
-// a DOM or React in scope. An engine module importing a webview type couples the core to the UI
-// layer it is meant to be reusable without — the defect X1 in the remediation plan fixed by moving
-// the shared types engine code actually needs into src/engine/types.ts. This step is the guard
-// that keeps the same import direction from being reintroduced unnoticed.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 

@@ -19,7 +19,6 @@ describe("Trace Scope Safety Tests", () => {
     return pairs.map(([source, target]) => ({ source, target, type: 'body' as const }));
   }
   it("buildVisibleTraceScope", () => {
-  // Base only — no add, no prune
   const base = new Set(['A', 'B', 'C']);
   const { nodeIds } = buildVisibleTraceScope(base, new Set(), new Set(), []);
   expect(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'base only: all base nodes present').toBe(true);
@@ -27,7 +26,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("add: A B C all present", () => {
-  // Add a node not in base
   const base = new Set(['A', 'B']);
   const added = new Set(['C']);
   const { nodeIds } = buildVisibleTraceScope(base, added, new Set(), []);
@@ -36,7 +34,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("prune: A and C remain", () => {
-  // Prune a node from base
   const base = new Set(['A', 'B', 'C']);
   const pruned = new Set(['B']);
   const { nodeIds } = buildVisibleTraceScope(base, new Set(), pruned, []);
@@ -46,7 +43,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("add+prune: A present", () => {
-  // Add AND prune — pruned wins over added when the same id is in both
   const base = new Set(['A', 'B']);
   const added = new Set(['C', 'D']);
   const pruned = new Set(['B', 'C']); // C added then pruned → absent
@@ -59,12 +55,10 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("edge collection: 3 nodes", () => {
-  // Edge collection: only edges whose endpoints are BOTH in the visible set
   const base = new Set(['A', 'B', 'C']);
   const edgeList = edges(['A', 'B'], ['B', 'C'], ['A', 'C'], ['B', 'D']);
   const { nodeIds, edgeIds } = buildVisibleTraceScope(base, new Set(), new Set(), edgeList);
   expect(nodeIds.size, 'edge collection: 3 nodes').toBe(3);
-  // A→B, B→C, A→C all within scope; B→D excluded (D not in scope)
   expect(edgeIds.has('A→B'), 'edge collection: A→B included').toBe(true);
   expect(edgeIds.has('B→C'), 'edge collection: B→C included').toBe(true);
   expect(edgeIds.has('A→C'), 'edge collection: A→C included').toBe(true);
@@ -73,19 +67,16 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("empty node scope → 0 edges", () => {
-  // Empty scope → no edges
   const result = collectScopeEdgeIds(edges(['A', 'B']), new Set());
   expect(result.size, 'empty node scope → 0 edges').toBe(0);
 });
 
   it("self-loop included when node in scope", () => {
-  // Self-loop edge — both endpoints are the same node, which is in scope
   const result = collectScopeEdgeIds(edges(['A', 'A']), new Set(['A']));
   expect(result.has('A→A'), 'self-loop included when node in scope').toBe(true);
 });
 
   it("bfsReachable", () => {
-  // Linear chain A→B→C: from A, all reachable (undirected BFS)
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set());
   expect(reach.has('A') && reach.has('B') && reach.has('C'), 'chain: A B C reachable from A').toBe(true);
@@ -93,7 +84,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("removed B: A still reachable from A (start)", () => {
-  // B removed → from A: A reachable, B and C not (undirected BFS blocked at B)
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set(['B']));
   expect(reach.has('A'), 'removed B: A still reachable from A (start)').toBe(true);
@@ -102,7 +92,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("candidateId B excluded", () => {
-  // candidateId excluded — equivalent to removing it without adding to removedSet
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set(), 'B');
   expect(!reach.has('B'), 'candidateId B excluded').toBe(true);
@@ -110,7 +99,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("scope A+B: both reachable", () => {
-  // Scope restriction: A→B→C but scope only allows A and B
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set(), undefined, new Set(['A', 'B']));
   expect(reach.has('A') && reach.has('B'), 'scope A+B: both reachable').toBe(true);
@@ -118,42 +106,36 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("missing start → empty set", () => {
-  // Start node not in graph → empty set
   const g = makeGraph([{ id: 'A' }], []);
   const reach = bfsReachable(g, 'MISSING', new Set());
   expect(reach.size, 'missing start → empty set').toBe(0);
 });
 
   it("empty required set → null", () => {
-  // No required nodes → always null
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set());
   expect(result === null, 'empty required set → null').toBe(true);
 });
 
   it("removing bridge B disconnects required C", () => {
-  // A→B→C: remove B. Required = {C}. C becomes disconnected from A.
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['C']));
   expect(result, 'removing bridge B disconnects required C').toBe('C');
 });
 
   it("removing B when C has direct path from A → no disconnection", () => {
-  // A→B, A→C (two paths from A). Removing B leaves C still reachable.
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['A', 'C']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['C']));
   expect(result === null, 'removing B when C has direct path from A → no disconnection').toBe(true);
 });
 
   it("required node already in removedSet is skipped", () => {
-  // removedSet includes a required node — skipped (already removed, not flagged)
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
   const result = firstDisconnectedRequiredNode(g, 'A', new Set(['B']), new Set(['B']));
   expect(result === null, 'required node already in removedSet is skipped').toBe(true);
 });
 
   it("canPruneTraceNode", () => {
-  // Pruning the origin is always rejected with reason 'origin'
   const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'B' }], [['O', 'A'], ['A', 'B']]);
   const visible = new Set(['O', 'A', 'B']);
   const check = canPruneTraceNode(g, 'O', visible, 'O');
@@ -162,7 +144,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("not-visible prune: not safe", () => {
-  // Pruning a node that is not in the visible set → reason 'not-visible'
   const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
   const visible = new Set(['O', 'A']);
   const check = canPruneTraceNode(g, 'O', visible, 'HIDDEN');
@@ -171,7 +152,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("null origin: not safe", () => {
-  // null origin always returns reason 'origin'
   const g = makeGraph([{ id: 'A' }], []);
   const check = canPruneTraceNode(g, null, new Set(['A']), 'A');
   expect(!check.safe, 'null origin: not safe').toBe(true);
@@ -179,10 +159,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("bridge prune: not safe", () => {
-  // Bridge topology: O→B→C. Pruning B disconnects C → reason 'disconnected'
-  //   O is origin, B is bridge, C is downstream leaf.
-  //   graph is undirected for BFS, so: neighbors(O)={B}, neighbors(B)={O,C}, neighbors(C)={B}.
-  //   After removing B, C is only reachable via B which is gone → disconnected.
   const g = makeGraph(
     [{ id: 'O' }, { id: 'B' }, { id: 'C' }],
     [['O', 'B'], ['B', 'C']]
@@ -195,8 +171,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("safe leaf prune: safe=true", () => {
-  // Safe prune: O→A, O→B, A→C. Prune A: C still reachable? No — C only via A.
-  // So instead test a safe leaf: O→A, O→B. Prune A (leaf) — B still reachable.
   const g = makeGraph(
     [{ id: 'O' }, { id: 'A' }, { id: 'B' }],
     [['O', 'A'], ['O', 'B']]
@@ -208,7 +182,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("diamond prune A: safe — C reachable via B", () => {
-  // Safe prune in diamond: O→A, O→B, A→C, B→C. Pruning A leaves C reachable via B.
   const g = makeGraph(
     [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['O', 'A'], ['O', 'B'], ['A', 'C'], ['B', 'C']]
@@ -219,9 +192,7 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("origin not in visible: not safe", () => {
-  // Origin is not in visible set → reason 'origin' (guard at line 143)
   const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
-  // visible does NOT contain O
   const visible = new Set(['A']);
   const check = canPruneTraceNode(g, 'O', visible, 'A');
   expect(!check.safe, 'origin not in visible: not safe').toBe(true);
@@ -229,21 +200,18 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("no-path: disconnected → null", () => {
-  // No-path: disconnected graph → null
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], []); // no edges
   const result = findShortestPathOrdered(g, 'A', 'B');
   expect(result === null, 'no-path: disconnected → null').toBe(true);
 });
 
   it("missing endpoint → null", () => {
-  // Missing endpoint → null
   const g = makeGraph([{ id: 'A' }], []);
   const result = findShortestPathOrdered(g, 'A', 'GHOST');
   expect(result === null, 'missing endpoint → null').toBe(true);
 });
 
   it("forward path: result not null", () => {
-  // Forward directed path A→B→C: direction='source_to_target', correct order
   const g = makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['A', 'B'], ['B', 'C']]
@@ -257,8 +225,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("reverse path: result not null", () => {
-  // Reverse path: edges go C→B→A; calling with (A, C) must find it via reverse retry
-  // → direction='target_to_source', path is C-B-A
   const g = makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['C', 'B'], ['B', 'A']]
@@ -271,7 +237,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
   it("single hop: not null", () => {
-  // Direct single-hop path A→B
   const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
   const result = findShortestPathOrdered(g, 'A', 'B');
   expect(result !== null, 'single hop: not null').toBe(true);
@@ -282,8 +247,6 @@ describe("Trace Scope Safety Tests", () => {
 });
 
 describe("isManualTraceScopeEdit", () => {
-  // Baseline: both editable mode, all compared scalar/set fields identical, no manual delta.
-  // Overrides layer on top per case so each test isolates exactly one field.
   function baseState(overrides: Partial<TraceState> = {}): TraceState {
     return {
       mode: 'applied',
@@ -351,8 +314,6 @@ describe("isManualTraceScopeEdit", () => {
 });
 
   it("mode 'applied' -> 'filtered', otherwise identical: false (both editable, no manual delta)", () => {
-  // Both modes pass isEditableTraceMode individually; the function never compares mode
-  // equality between previous and next, only editability of each side.
   const previous = baseState({ mode: 'applied' });
   const next = baseState({ mode: 'filtered' });
   expect(isManualTraceScopeEdit(previous, next), "mode transition, no manual delta: false").toBe(false);
@@ -407,7 +368,6 @@ describe("isManualTraceScopeEdit", () => {
 });
 
   it("autoPromoted same on both sides (undefined): true when manual delta present", () => {
-  // undefined === undefined passes the strict comparison; only manualAdded/Pruned decide the result.
   const previous = baseState({ autoPromoted: undefined });
   const next = baseState({ autoPromoted: undefined, manualAddedNodeIds: new Set(['C']) });
   expect(isManualTraceScopeEdit(previous, next), 'autoPromoted undefined on both sides: true').toBe(true);

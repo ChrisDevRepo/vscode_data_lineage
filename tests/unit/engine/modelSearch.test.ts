@@ -117,11 +117,6 @@ describe('model search', () => {
   });
 
   it('leaves the scoped "(?i:...)" form untouched — it is a different construct, not a no-op prefix', () => {
-    // Whether the scoped form COMPILES is the engine's answer, not this module's: a V8 with ES2025
-    // regexp modifiers accepts it, an older one raises a SyntaxError — and the extension host's
-    // Node is not this runner's, so pinning either outcome tests the runner, not the product. The
-    // invariant this module owns is that the normalizer never rewrites the scoped form into a bare
-    // prefix, so assert that, and read the engine's capability rather than assuming it.
     const normalizations: string[] = [];
     const scoped = compileSearchRegex('(?i:foo)', msg => normalizations.push(msg));
     expect(normalizations, 'the scoped form is not a redundant prefix — there is nothing to strip').toEqual([]);
@@ -194,8 +189,6 @@ describe('model search', () => {
   });
 
   it('matches a compiled regex against bodies — the lineage_search_ddl contract (T3 loop, 2026-09-06)', () => {
-    // The tool validates the pattern with compileSearchRegex but the body search matched the raw
-    // pattern text as a substring, so `(?i)totalquantity` and `total.*quantity` returned nothing.
     for (const pattern of ['(?i)totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
       const compiled = compileSearchRegex(pattern);
       expect(compiled.ok).toBe(true);
@@ -209,8 +202,6 @@ describe('model search', () => {
   });
 
   it('reports every match in a body with its 1-based line and matched line text', () => {
-    // Grep's contract: one entry per match, located. One entry per object hid the second and
-    // later occurrences, so the model could not tell "mentioned once" from "used throughout".
     const compiled = compileSearchRegex('OrderID');
     if (!compiled.ok) throw new Error('OrderID must compile');
     const hits = searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const));
@@ -311,7 +302,7 @@ describe('model search', () => {
 });
 
 /**
- * A match inside a SQL comment is marked (M0-T3, 2026-09-06).
+ * A match inside a SQL comment is marked.
  *
  * The reported context is a 3-line window, so a match deep inside a block comment arrived
  * indistinguishable from live code: three answers described commented-out SQL as running behaviour.

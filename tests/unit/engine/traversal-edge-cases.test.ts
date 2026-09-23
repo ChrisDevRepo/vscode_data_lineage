@@ -47,7 +47,6 @@ const asymmetricDiamond = () =>
 
 const emptyGraph = () => new Graph({ type: 'directed', multi: false });
 
-// ─── Cycles ──────────────────────────────────────────────────────────────────
 
 describe('traceNodeWithLevels — cycles', () => {
   it('terminates on a two-node cycle and returns both nodes once', () => {
@@ -66,7 +65,6 @@ describe('traceNodeWithLevels — cycles', () => {
   });
 
   it('honours the depth cap inside a cycle rather than looping round to reach it', () => {
-    // One hop downstream of A is B alone, even though C and A itself stay reachable.
     expect(traced(threeCycle(), 'A', 0, 1)).toEqual(['A', 'B']);
   });
 
@@ -82,16 +80,11 @@ describe('traceNodeWithLevels — self-loop', () => {
     expect(traced(selfLoop(), 'X', Infinity, Infinity)).toEqual(['X']);
   });
 
-  // The gate this used to document is gone: collectTraceEdges no longer branches on the depth
-  // maps, so an edge with both endpoints inside the trace is kept whatever the trace direction.
-  // Reached only by a self-referencing object (a procedure that EXECs itself); no self-loop filter
-  // exists in extraction, so the model can carry one.
   it('keeps the self-edge, whose endpoints are both inside the trace', () => {
     expect(traceNodeWithLevels(selfLoop(), 'X', Infinity, Infinity).edgeIds).toEqual(new Set(['X→X']));
   });
 });
 
-// ─── Depth semantics ─────────────────────────────────────────────────────────
 
 describe('traceNodeWithLevels — depth boundary', () => {
   /** `A -> B -> C -> D`. */
@@ -119,7 +112,6 @@ describe('traceNodeWithLevels — depth boundary', () => {
   });
 
   it('admits the convergence node at its shortest depth, not its longest', () => {
-    // D is 2 hops away via B and 3 via C→C2, so a cap of 2 must still include it.
     expect(traced(asymmetricDiamond(), 'A', 0, 2)).toEqual(['A', 'B', 'C', 'C2', 'D']);
   });
 });
@@ -147,7 +139,6 @@ describe('traceNodeWithLevels — disconnected and missing input', () => {
   });
 });
 
-// ─── bfsReachable / firstDisconnectedRequiredNode ────────────────────────────
 
 describe('bfsReachable — cycles and self-reference', () => {
   it('visits each member of a cycle once and terminates', () => {
@@ -174,7 +165,6 @@ describe('bfsReachable — cycles and self-reference', () => {
 
 describe('firstDisconnectedRequiredNode — cyclic topology', () => {
   it('reports nothing disconnected while the cycle keeps an alternate route', () => {
-    // Removing B leaves C reachable from A the other way round the cycle.
     expect(firstDisconnectedRequiredNode(threeCycle(), 'A', new Set(['B']), new Set(['C']))).toBeNull();
   });
 
@@ -184,7 +174,6 @@ describe('firstDisconnectedRequiredNode — cyclic topology', () => {
   });
 });
 
-// ─── findShortestPathOrdered ─────────────────────────────────────────────────
 
 describe('findShortestPathOrdered — cycles and self-reference', () => {
   it('finds a forward path inside a cycle without looping', () => {
@@ -206,7 +195,6 @@ describe('findShortestPathOrdered — cycles and self-reference', () => {
   });
 });
 
-// ─── bfsDepthMap ─────────────────────────────────────────────────────────────
 
 describe('bfsDepthMap', () => {
   it('assigns hop distance along a chain', () => {

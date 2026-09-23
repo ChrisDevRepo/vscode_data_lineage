@@ -15,13 +15,11 @@ describe('DACPAC view column types', () => {
     model.nodes.find(n => n.id === nodeId)?.columns?.find(c => c.name.toLowerCase() === column.toLowerCase())?.type;
 
   it('borrows the source column type for a renamed pass-through column', () => {
-    // ai.vwConsolidatedSales.Qty reads ai.SalesStaging.OrderQty and nothing else.
     expect(columnType('[ai].[salesstaging]', 'OrderQty')).toBeDefined();
     expect(columnType('[ai].[vwconsolidatedsales]', 'Qty')).toBe(columnType('[ai].[salesstaging]', 'OrderQty'));
   });
 
   it('leaves a column with no single source unresolved', () => {
-    // ai.vwPriceList.UnitPrice is an expression over a CTE chain — the model records no source.
     expect(columnType('[ai].[vwpricelist]', 'UnitPrice')).toBe(UNRESOLVED_COLUMN_TYPE);
   });
 

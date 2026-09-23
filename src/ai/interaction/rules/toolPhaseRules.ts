@@ -15,7 +15,7 @@ function offPolicyHint(toolName: string, stage: LmStage): string {
     case 'lineage_get_context':
     case 'lineage_get_screen_state':
     case 'lineage_detect_graph_patterns':
-      return 'Use route_requests with nodeIds taken verbatim from the prior submit_findings result\'s neighbors[] / next_hop. The agenda is delivered explicitly - searching mid-hop is unnecessary.';
+      return 'Submit findings for the current focus: every open neighbor you do not prune is visited next, so the agenda is delivered explicitly - searching mid-hop is unnecessary.';
     case 'lineage_start_exploration':
       return 'Exploration is already in progress. Continue the agenda via submit_findings.';
     case 'lineage_present_result':

@@ -174,7 +174,6 @@ export class ColumnTracer {
     const byNode = new Map<string, string[]>();
     if (hopEdges.length === 0) return byNode;
 
-    // One question per supplier column, naming every column it feeds at this hop.
     const fedByKey = new Map<string, { edge: ColumnEdge; toCols: string[] }>();
     for (const edge of hopEdges) {
       const key = `${edge.from_node}.${edge.from_col}`;
@@ -230,7 +229,7 @@ export class ColumnTracer {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
 
-    const columnFlow = finding.column_flow!;
+    const columnFlow = finding.verdict === 'end_branch' ? [] : finding.column_flow ?? [];
     if (columnFlow.length === 0) {
       return { invalidRoutes, stagedEdges };
     }
@@ -238,8 +237,6 @@ export class ColumnTracer {
     const focusNode = nodeMap.get(focusId);
     if (!focusNode) return { invalidRoutes, stagedEdges };
 
-    // A body-less focus has no logic of its own to attribute from: its column_flow declares
-    // CONTINUATION, attributed on the writer's own hop where the body is in view.
     const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
     const continuationSide = traceDirection === 'downstream' ? 'out' : 'in';
     const continuationNeighbors = focusIsCarrier
@@ -252,12 +249,7 @@ export class ColumnTracer {
     for (let entryIndex = 0; entryIndex < columnFlow.length; entryIndex++) {
       const entry = columnFlow[entryIndex];
       const outNorm = normalizeColName(entry.out_col);
-      // Upstream: out_col must already be a tracked active column. Downstream: out_col is the
-      // focus's OWN resulting column (possibly renamed/derived), so existence on the focus below is the whole test.
       if (traceDirection === 'upstream' && !activeNorm.includes(outNorm)) {
-        // `available_columns` names the tracked set only. A column on the node but off the tracked
-        // spine gets its own kind so the repair stays distinguishable from naming a column the node
-        // does not carry at all.
         const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
         invalidRoutes.push(existsOnNode
           ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, available_columns: [...this.aspect.active_columns] }
@@ -270,9 +262,6 @@ export class ColumnTracer {
         continue;
       }
 
-      // Downstream parity with upstream's "out_col must be active" gate: a non-terminal entry
-      // (upstream_columns non-empty) must carry the active column forward by naming it in at
-      // least one upstream_columns[].col, reusing `untracked_out_col` for the same failure class.
       if (traceDirection === 'downstream' && entry.upstream_columns.length > 0
         && !entry.upstream_columns.some((ref) => activeNorm.includes(normalizeColName(ref.col)))) {
         invalidRoutes.push({
@@ -285,15 +274,12 @@ export class ColumnTracer {
         continue;
       }
 
-      // Resolve the edge's TARGET (writes_to.node, else focus) once — the sole place catching an empty/wrong to_col.
       const toNodeId = entry.writes_to?.node ? resolveModelNodeId(entry.writes_to.node, nodeMap) : focusId;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
       if (entry.writes_to && !toNodeObj) {
         invalidRoutes.push({ kind: 'absent_contributor', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to target "${entry.writes_to.node}" is absent from the loaded model.` });
         continue;
       }
-      // A downstream reader is never a write destination: when every model edge focus→target
-      // reads the focus, the payload mislabels a consumer as the write target — refused here.
       if (entry.writes_to && toNodeObj && toNodeId && toNodeId.toLowerCase() !== focusId.toLowerCase()) {
         const focusLower = focusId.toLowerCase();
         const toLower = toNodeId.toLowerCase();
@@ -304,7 +290,7 @@ export class ColumnTracer {
           }
         }
         if (verbs.size > 0 && [...verbs].every((v) => v === 'read')) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node; declare consumers in route_requests when the question asks for them.` });
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node; every open neighbor you do not prune is visited anyway.` });
           continue;
         }
       }
@@ -327,13 +313,11 @@ export class ColumnTracer {
           continue;
         }
 
-        // The supplier was pruned on an earlier hop. A removed node stays removed by invariant, so staging this edge would hand enqueueHop an undispatchable demand — rejected here, not dropped silently downstream.
         if (removedSet?.has(neighbor.id)) {
           invalidRoutes.push({ kind: 'pruned_contributor', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" was already pruned earlier this run and cannot supply column "${cont.col}" — a removed node stays removed.` });
           continue;
         }
 
-        // A column can't be its own upstream source — checked first so the degenerate self-loop keeps its own kind on carrier and bodied foci alike.
         const fromNode = resolveModelNodeId(cont.node, nodeMap) ?? cont.node.toLowerCase();
         if (fromNode === toNodeForEdge && normalizeColName(cont.col) === normalizeColName(toCol)) {
           invalidRoutes.push({
@@ -345,16 +329,13 @@ export class ColumnTracer {
           continue;
         }
 
-        // A T-SQL literal can never name a column on any neighbour, so it is refused before any column-surface check.
         if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
           invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
           continue;
         }
 
         if (continuationNeighbors) {
-          // Continuation contract: the entry must name a neighbour on the focus's carrier side — a producer for an upstream trace, a consumer for a downstream one.
           if (continuationNeighbors.size === 0) {
-            // No recorded neighbours on the carrier side: nothing to verify against, so the edge is accepted unverified and logged, never rejected for lack of evidence.
             log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded ${continuationSide === 'in' ? 'writers' : 'readers'}, accepting unverified`);
           } else {
             if (!continuationNeighbors.has(neighbor.id.toLowerCase())) {
@@ -396,7 +377,6 @@ export class ColumnTracer {
           to_col: toCol,
           from_node: fromNode,
           from_col: cont.col,
-          // Carried verbatim per contributor, or omitted — the value set is already tool-schema enforced.
           ...(cont.transforms ? { transforms: [...cont.transforms] } : {}),
           ...(cont.note ? { note: cont.note } : {}),
         });

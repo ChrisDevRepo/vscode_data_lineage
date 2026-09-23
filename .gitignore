@@ -16,6 +16,7 @@ test-results/
 # MCP servers so @lineage remains the only AI tool surface while developing this solution.
 tmp/
 PLAN*.md
+TASKLIST*
 
 # Environment
 .env

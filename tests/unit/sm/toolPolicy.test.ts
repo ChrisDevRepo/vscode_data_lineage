@@ -29,8 +29,6 @@ describe("toolPolicy", () => {
       expected: ['lineage_present_result'],
     },
     {
-      // The screen card resolves an origin the user referred to as "this trace", so sm_entry
-      // exposes three tools, not the two the origin-resolution path started with.
       name: 'sm entry',
       stage: { kind: 'sm_entry' },
       expected: [

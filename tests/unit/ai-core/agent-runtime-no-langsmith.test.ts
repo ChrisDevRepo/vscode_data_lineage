@@ -61,7 +61,6 @@ describe('AgentRuntime LangSmith egress boundary', () => {
     expect(runtime.lastFailureDetail?.message).toContain(
       'External LangChain tracing is not supported by @lineage',
     );
-    // Give any accidentally queued transport enough time to attempt egress.
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(graph.invoke).not.toHaveBeenCalled();
@@ -97,7 +96,6 @@ describe('AgentRuntime cancellation truth', () => {
   it('closes as cancelled when the abort fired mid-invoke, even if the graph returned ok', async () => {
     const controller = new AbortController();
     graph.invoke.mockImplementation(async () => {
-      // The user presses Stop while a node is executing; the graph still completes its state.
       controller.abort();
       return { outcome: 'ok' };
     });

@@ -50,9 +50,6 @@ type PortGenerationPart =
       readonly input: unknown;
     };
 
-// Backstop against an unbounded drain when a provider streams prose instead of a real tool call: a recorded runaway hit 3,638,544 chars against a ~33.6 KB legitimate maximum, so 200,000 sits far above any real answer while stopping a runaway drain early.
-//
-// A tool-free chain-of-thought drain of 130,000-140,000 chars slips UNDER this outer bound and still burns minutes until the provider's own token cap cuts it mid-sentence, so tool-bearing phases carry a tighter per-phase ceiling. Every cap sits at or above ~1.5x the ~33.6 KB legitimate maximum above, so no generation inside the legitimate envelope can be cut, while a runaway of that size exceeds its phase cap by at least ~1.3x. Phases without a smaller cap keep the outer bound; an unrecognized phase label always resolves to the outer bound, never to a smaller cap.
 const STREAM_TEXT_CHAR_CEILING = 200_000;
 
 /**
@@ -94,7 +91,6 @@ function streamTextCharCeiling(phase: string | undefined): number {
   return typeof mapped === 'number' ? mapped : STREAM_TEXT_CHAR_CEILING;
 }
 
-// A provider that streams nothing at all is indistinguishable from a hung connection: a recorded generation produced zero chunks for 16m42s until manually cancelled, and neither `vscode.lm` nor Copilot Chat's default fetchers bound that path. The watchdog covers ONLY the zero-output window — the first streamed chunk of any kind disarms it for the rest of the generation, so a model that is thinking or streaming slowly is never interrupted. 600s still bounds that hang while leaving better than 2x margin over the slowest completed generation observed (270.5s): the observed maximum is a sample, not a ceiling, and a margin that thin would abort a slower model that was about to answer.
 const FIRST_OUTPUT_TIMEOUT_MS = 600_000;
 
 /**
@@ -165,7 +161,6 @@ export class VscodeModelPort implements ModelPort {
       family: model.family,
       version: model.version,
     };
-    // Record the selected model before any provider request can fail.
     this.options.debugLog?.(
       `[AI] model id=${model.id} vendor=${model.vendor} family=${model.family} version=${model.version}`,
     );
@@ -268,8 +263,6 @@ export class VscodeModelPort implements ModelPort {
         content.push({ type: 'tool-call', call });
       }
 
-      // An empty generation is how an endpoint commonly answers a tool choice it cannot satisfy, and
-      // also how a quota soft-fail looks; it self-repairs downstream, so it is a signal, not a fault.
       if (content.length === 0) {
         this.options.debugLog?.(
           `[AI] empty-generation phase=${input.phase} call=${this.modelCalls}`,
@@ -277,10 +270,6 @@ export class VscodeModelPort implements ModelPort {
       }
 
       const finishReason = hitCeiling ? 'length' : toolCalls.length > 0 ? 'tool-calls' : 'stop';
-      // Every generation leaves one `[AI] usage` line: without it a completed turn is
-      // indistinguishable from one that never reached the model. Token counts are structurally
-      // unavailable on this lane — `vscode.lm` exposes no usage — hence observed counters plus an
-      // explicit `(provider usage unavailable)` marker rather than omitting the line.
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
@@ -309,8 +298,6 @@ export class VscodeModelPort implements ModelPort {
 
   /** Generates a schema-constrained result through the synthetic structured-output tool. */
   public async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<T> {
-    // Same pre-flight as generateToolTurn: a pre-aborted signal must surface as a clean,
-    // classifiable cancellation before any provider request is attempted.
     if (input.signal?.aborted) throw cancelledError();
     const definitions: ModelToolDefinition[] = [{
       name: STRUCTURED_OUTPUT_TOOL,
@@ -343,7 +330,7 @@ export class VscodeModelPort implements ModelPort {
         : calls.length > 1
         ? `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`
         : structuredRejectReason(calls.length === 1, parsed?.error),
-      emptyRequiredPayload ? 'empty_structured_output' : 'invalid_structured_output',
+      emptyRequiredPayload ? REJECTION_CODES.emptyStructuredOutput : 'invalid_structured_output',
     );
   }
 
@@ -385,13 +372,8 @@ export class VscodeModelPort implements ModelPort {
   ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean; nonTextChars: number }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
-    // Captured now rather than read at emit time: concurrent generations would otherwise all
-    // stamp whichever call happened to increment the counter last.
     const generation = this.modelCalls;
     let requestEmitted = false;
-    // The bridge emits `wire-request` without knowing the system instruction — it only sees the
-    // already-projected leading User turn — so the port, which owns the original, stamps it here.
-    // Gated on wireLog: without a trace sink the hash would be computed and discarded on every call.
     const systemFields = wireLog && system
       ? {
           systemHash: systemPromptHash(system),
@@ -438,20 +420,10 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       const parts: PortGenerationPart[] = [];
       let textChars = 0;
-      // Output the host streamed outside the text channel (reasoning). Reported, never capped: the
-      // text ceilings are calibrated on text alone, and legitimate reasoning exceeds them.
       let nonTextChars = 0;
       let hitCeiling = false;
-      // The phase cap breaks only a tool-free text drain: a chunk that finally delivers a tool
-      // call must never be discarded because earlier prose crossed the cap. The outer bound keeps
-      // today's unconditional behavior. Unknown phase labels resolve to the outer bound, which
-      // makes the phase term inert for them.
       let sawToolCallDelta = false;
       const textCeiling = streamTextCharCeiling(phase);
-      // The degenerate-repeat stop shares the ceiling's protections: it is per-generation, frozen
-      // once a tool-call delta streams, and absent on `compose`, where the text channel is the
-      // deliverable and a cut would be silently delivered (the same rationale that keeps `compose`
-      // at the outer bound in PHASE_STREAM_TEXT_CHAR_CEILINGS).
       const repetition = phase === 'compose' ? undefined : createStreamRepetitionObserver();
       let repetitionStrike: RepetitionStrike | null = null;
       const stream = await runnable.stream(messages, { signal });
@@ -483,11 +455,6 @@ export class VscodeModelPort implements ModelPort {
             input: parseToolInput(call.args),
           });
         }
-        // Breaking here (rather than throwing) closes the underlying stream through the normal
-        // async-generator return path. The caller stamps finishReason `length` so the retry layer
-        // classifies this as `output_limit`, not a missing tool call. A repetition stop breaks on
-        // the same contract: the cut body is partial, so it is retried with the existing
-        // truncation-before-required-call correction rather than dispatched or promoted.
         if (
           textChars >= STREAM_TEXT_CHAR_CEILING
           || (textChars >= textCeiling && !sawToolCallDelta)
@@ -505,15 +472,7 @@ export class VscodeModelPort implements ModelPort {
         }
       }
       if (signal?.aborted) throw cancelledError();
-      // A cancelled underlying stream may end through the normal return path instead of throwing.
       if (watchdogFired) throw firstOutputTimeoutError();
-      // A provider that emits no native tool-call chunk can still answer with a complete,
-      // schema-valid tool payload as prose; without promotion each such answer draws a synthetic
-      // `missing_required_tool_call` rejection. Promotion recovers that call before it is measured,
-      // so a payload the tool's own schema accepts never pays for the miss. Text cut at a stream
-      // ceiling or by the repetition stop is never promoted: it is retried as `output_limit`, not
-      // dispatched as a call.
-      // The recognizer is shared with the harness port so a measured lane cannot diverge from it.
       const promotion = hitCeiling || parts.some((part) => part.type === 'tool-call')
         ? { kind: 'none' as const }
         : matchProseToolCall(
@@ -542,9 +501,6 @@ export class VscodeModelPort implements ModelPort {
           + ` tools=${promotion.tools.join(',')}`,
         );
       }
-      // One measurement row per completed generation, for all three port entry points. `usage` is
-      // omitted rather than zeroed: `vscode.lm` reports no token counts at all, and a zero would be
-      // indistinguishable from a provider that genuinely billed nothing.
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
@@ -555,11 +511,6 @@ export class VscodeModelPort implements ModelPort {
       });
       return { parts: resolvedParts, hitCeiling, nonTextChars };
     } catch (error) {
-      // The watchdog aborts through the shared cancellation token, so the stream surfaces its
-      // expiry as a cancellation — reclassify it here so it reaches callers as a provider timeout
-      // error, never as a silent user cancel. It is logged and charged to the phase's provider-call
-      // budget, and fails the turn: the code is deliberately not transport-classified, so submitted
-      // hops are not salvaged behind it.
       const surfaced = watchdogFired && !signal?.aborted && isCancellation(error)
         ? firstOutputTimeoutError(error)
         : error;

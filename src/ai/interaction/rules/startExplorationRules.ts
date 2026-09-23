@@ -31,8 +31,6 @@ export function resolveCanonicalQuestion(sources: {
   modelQuestion: string | undefined;
   pendingInitQuestion: string | undefined;
 }): string | null {
-  // The placeholder sentinel is "absent" by contract (see DEFAULT_EXPLORATION_QUESTION in
-  // smTypes.ts) — it must never become the canonical question that anchors hops and synthesis.
   const pick = (v: string | null | undefined): string | null =>
     typeof v === 'string' && v.trim().length > 0 && v.trim() !== DEFAULT_EXPLORATION_QUESTION
       ? v

@@ -29,10 +29,11 @@ export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
  * `analyze` = the node applies business logic on the data path (sections stored, featured in the answer);
  * `passthrough` = the node is on the data path but applies no logic (a raw source / bridge / target
  *   table, a SELECT * or synonym) — it is KEPT in the lineage and linked by flow role, and the trace
- *   continues *through* it (its neighbors inherit the same sub-question);
- * `prune` = the node is not part of this lineage answer — the ONLY verdict that removes a node.
+ *   continues *through* it;
+ * `end_branch` = the node is not part of this lineage answer — it leaves the result together with
+ *   every open node reachable from the origin only through it (recorded as node action `prune`).
  */
-export type Verdict = 'analyze' | 'passthrough' | 'prune';
+export type Verdict = 'analyze' | 'passthrough' | 'end_branch';
 
 /** Engine-owned lifecycle action for a node in an SM result. Mirrors {@link Verdict}. */
 export type SmNodeAction = 'analyze' | 'passthrough' | 'prune';
@@ -259,10 +260,31 @@ export interface HopContext {
   mission_brief?: string;
 }
 
+/** One `prune_neighbors` entry: an unvisited neighbor removed on this node's SQL alone. */
+export interface PruneNeighbor {
+  /** Neighbor id from `<hop_context>`. */
+  id: string;
+  /** Why this node's SQL shows the neighbor is off the answer. */
+  reason: string;
+}
+
+/** One `questions` entry: a specific check the neighbor's own hop should establish. */
+export interface NeighborQuestion {
+  /** Neighbor id from `<hop_context>`. */
+  nodeId: string;
+  /** The rule, filter or calculation to establish at that neighbor. */
+  question: string;
+}
+
 /**
- * A single technical finding for a focus node, including analysis and routing.
+ * A kept (`analyze` / `passthrough`) finding for a focus node.
+ *
+ * @remarks
+ * Neighbor decisions are exceptions only: the engine enqueues every open in-scope neighbor not
+ * named in `prune_neighbors`, and `questions` attaches a check to one of them. In CT the column
+ * carry each neighbor receives is derived from this finding's own `column_flow`.
  */
-export interface HopFinding {
+export interface HopFindingKept {
   /** ID of the node that was analyzed. */
   focus_node_id: string;
   /**
@@ -273,20 +295,11 @@ export interface HopFinding {
   /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
   summary: string;
   /** The relevance verdict for the focus node. */
-  verdict: Verdict;
-  /**
-   * Nodes the AI wishes to add to the agenda. A loaded target may be transitively reachable from
-   * the origin in the approved direction; it need not be a direct current-focus neighbor. Unknown
-   * targets are skipped with a visible `unresolved` notice.
-   */
-  route_requests?: RouteRequest[];
-  /**
-   * Requests to omit nodes outside the approved exploration scope, carried by both modes. Unknown, already
-   * processed, and non-required in-scope targets are retained with a visible notice; required
-   * in-scope targets remain subject to the missing-route guard. An out-of-scope target may be
-   * accepted when topology-safe. Origin, same-submit route conflicts, and orphaning prunes are fatal.
-   */
-  prune_neighbors?: string[];
+  verdict: 'analyze' | 'passthrough';
+  /** Unvisited neighbors removed on this node's SQL alone, each with its reason; the cut takes what only they lead to. */
+  prune_neighbors?: PruneNeighbor[];
+  /** Optional per-neighbor checks, attached to that neighbor's queued hop. */
+  questions?: NeighborQuestion[];
   /** Optional hop-time role hint for synthesis; not rendered directly. */
   badge_label?: string;
   /**
@@ -297,37 +310,25 @@ export interface HopFinding {
 }
 
 /**
+ * An `end_branch` finding: the focus and every open node reachable from the origin only through
+ * it leave the result. Carries no findings — only the stated reason.
+ */
+export interface HopFindingEndBranch {
+  /** ID of the node that was analyzed. */
+  focus_node_id: string;
+  /** Discriminator. */
+  verdict: 'end_branch';
+  /** Why this node is off the answer. */
+  reason: string;
+}
+
+/** A single finding for a focus node: a kept finding, or an `end_branch` cut. */
+export type HopFinding = HopFindingKept | HopFindingEndBranch;
+
+/**
  * Data structure used by the AI to submit its findings after analyzing a hop.
  */
 export type HopSubmission = HopFinding;
-
-/**
- * A request to add a specific node to the navigation agenda.
- */
-interface RouteRequest {
-  /** The ID of the node to visit. */
-  nodeId: string;
-  /** The specific question or sub-goal the AI intends to answer at this node. */
-  question: string;
-  /**
-   * Per-neighbor column decision for this route. Required on every CT route request — a
-   * non-empty list, or the literal `'none'` — never an empty array or an omitted field, so a
-   * reader never has to guess a column opinion from silence. Optional here only because this
-   * interface also backs BB's wire shape, whose form carries no `columns` field at all; see
-   * {@link columnCarryFromRoute} for the resulting {@link ColumnCarry}.
-   */
-  columns?: RouteColumns;
-}
-
-/**
- * Wire form of a route request's per-neighbor column decision.
- *
- * @remarks
- * `'none'` is a word rather than `[]` on purpose: the model states a row role explicitly, and a
- * reader of the payload never has to decide what an empty array means. Translated to
- * {@link ColumnCarry} at the engine boundary by `columnCarryFromRoute`.
- */
-export type RouteColumns = string[] | 'none';
 
 /**
  * The per-neighbor column decision travelling with one queued hop.
@@ -337,34 +338,14 @@ export type RouteColumns = string[] | 'none';
  * `carry` — exactly these columns travel to the neighbor (an empty list is the engine's own
  * resolution "none of the traced columns bind on this node", which the tracer may still recover
  * at dispatch);
- * `row_role_only` — the router judged the neighbor to shape rows and carry no traced value, so it
- * is dispatched as a plain whole-object neighbor and no target set is padded back onto it.
- * Every CT route states one of the two explicitly ({@link CtRouteRequestSchema} in
- * `tools/toolSchemas.ts`); nothing constructs a "no opinion" carry.
+ * `row_role_only` — no committed `column_flow` names the neighbor for a traced column, so it is
+ * dispatched as a plain whole-object neighbor and no target set is padded back onto it.
+ * The engine derives one of the two from the committing hop's `column_flow`; nothing constructs
+ * a "no opinion" carry.
  */
 export type ColumnCarry =
   | { readonly kind: 'carry'; readonly columns: readonly string[] }
   | { readonly kind: 'row_role_only' };
-
-/** Shared `row_role_only` carry — the stateless row-role decision, safe to hand out by reference. */
-const ROW_ROLE_ONLY_CARRY: ColumnCarry = { kind: 'row_role_only' };
-
-/**
- * Translates one route request's wire column decision into a {@link ColumnCarry}.
- *
- * @remarks
- * `columns` is required on every CT route request; an `undefined` input can only originate from
- * a BB-mode route, whose wire shape carries no `columns` field at all because BB traces no
- * columns. That structural absence names no traced value, so it maps to the same carry a CT
- * router reaches by writing the literal `'none'`.
- *
- * @param columns - The route request's `columns` field as submitted.
- * @returns The discriminated carry decision.
- */
-export function columnCarryFromRoute(columns: RouteColumns | undefined): ColumnCarry {
-  if (columns === undefined || columns === 'none') return ROW_ROLE_ONLY_CARRY;
-  return { kind: 'carry', columns };
-}
 
 /**
  * How a node served the traced columns at the hop that dispatched it.
@@ -398,13 +379,30 @@ export interface RouteOutcome {
    * - `schema` — route target is outside the approved schema allowlist; user will see it as a follow-up offer.
    * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
    * - `schema_and_depth` — route target breaches both the schema allowlist and the stated depth border.
+   * - `budget` — an auto-enqueued (not model-named) route target is in-border but its addition would push the active scope past the turn's token/node budget; deferred rather than silently dropped.
    * - `depth_contracted_beyond_budget` — a non-bodied (table) target's bipartite contraction reached bodied neighbours outside the active BFS scope, so no hop was enqueued.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
-   * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction.
-   * - `excluded` — route target exists but is outside the user's approved exclude filters.
+   * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer.
+   * - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer.
+   * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was already analyzed on an earlier hop; visit-once, no new hop.
+   * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
+   * - `carries_no_tracked_column` — an engine-auto-opened non-bodied target the committing
+   *   focus purely writes carries no tracked column on any committed column edge, so the
+   *   post-commit walk ends the branch recorded not-kept instead of contracting through it;
+   *   terminal, never deferred. An explicitly routed carrier is never dropped this way.
    */
-  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded';
+  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'budget' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded' | SettledRouteReason;
 }
+
+/**
+ * Why a routed node got no hop: visit-once for the first two (an earlier hop settled them),
+ * and the column-gated contraction drop for the third (a write-only carrier no tracked column
+ * crosses — terminal, recorded through the rejection envelope, never deferred).
+ */
+export type SettledRouteReason = 'already_visited' | 'already_pruned' | 'carries_no_tracked_column';
+
+/** Per-node enqueue disposition recorded while committing one route: settled by an earlier hop, not enqueued for a scope/depth reason, or dropped by the column-gated contraction. */
+export type RouteSkipDisposition = SettledRouteReason | 'not_enqueued';
 
 /**
  * Chain extension of a supplement: walk from each named id in one direction, `depth` steps or to
@@ -452,7 +450,7 @@ export type SubmitResult =
   | {
       /** Indicates the submission was accepted (the `ack` side of the ack/reject contract). */
       ok: true;
-      /** Per-route disposition for every entry in the submitted `route_requests` (accepted vs deferred). */
+      /** Per-neighbor disposition for every neighbor this hop enqueued, deferred or found already settled. */
       route_outcomes?: RouteOutcome[];
       /** Set only on the supplement path when the supplemented agenda was already drained. */
       done?: true;
@@ -505,11 +503,11 @@ export interface DiagnosticsSnapshot {
   summaryChars: number;
   /** Cumulative archive size across the session. */
   archiveChars: number;
-  /** Route_requests accepted this hop. */
+  /** Neighbor hops enqueued this hop. */
   routedNew: number;
-  /** Route_requests rejected this hop (validation, schema gate, depth gate). */
+  /** Neighbor references rejected this hop (validation, schema gate, depth gate). */
   routedRejected: number;
-  /** Route_requests deferred this hop (SM mode — out-of-approved-scope routes captured for synthesis). */
+  /** Neighbors deferred this hop (SM mode — out-of-approved-scope neighbors captured for synthesis). */
   routedDeferred: number;
   /** Cumulative size of the SM deferred-questions bucket across the session. */
   deferredQueued: number;
@@ -521,7 +519,6 @@ export interface DiagnosticsSnapshot {
   scopeExpansions: number;
   /** Count of schemas the user has confirmed mid-session (session allowlist size). */
   allowedSchemaCount: number;
-  // --- CT fields (only present when Column Aspect is active) ---
   /** Cumulative column edges accumulated across the session (CT only). */
   columnEdgeCount?: number;
   /** Number of active target columns for the current hop (CT only). */
@@ -654,7 +651,8 @@ export interface SmResult {
  *
  * @remarks
  * Produced by the engine when a `submit_findings` route targets a node whose schema is
- * outside `approved_border.schemas` or whose depth exceeds `approved_border.depth_cap`.
+ * outside `approved_border.schemas`, whose depth exceeds `approved_border.depth_cap`, or
+ * whose addition would push the active scope past the turn's token/node budget.
  * Derived from typed pending leads for the synthesis evidence envelope and native-chat follow-up
  * action.
  */
@@ -667,8 +665,8 @@ export interface DeferredQuestion {
   fromFocusNodeId: string;
   /** Sub-question the AI wanted to ask at the target. */
   question: string;
-  /** Discriminator for why the route was deferred. */
-  reason: 'schema' | 'depth' | 'schema_and_depth';
+  /** Discriminator for why the route was deferred. `'budget'` — in-border but over the active scope budget. */
+  reason: 'schema' | 'depth' | 'schema_and_depth' | 'budget' | 'direction' | 'excluded';
   /** Depth-from-origin of the target. Populated when `reason` includes 'depth'. */
   depth?: number;
   /** Hop number at which the deferral was recorded. */
@@ -722,7 +720,7 @@ export interface PendingLead {
   /** In-scope node from which the lead was discovered. */
   fromNodeId: string;
   /** Mechanical boundary that prevented exploration in the current run. */
-  reason: 'schema_boundary' | 'depth_boundary' | 'contracted_scope' | 'budget' | 'insufficient_evidence';
+  reason: 'schema_boundary' | 'depth_boundary' | 'contracted_scope' | 'budget' | 'insufficient_evidence' | 'out_of_direction' | 'excluded';
   /** Target schema used by the derived synthesis projection. */
   schema?: string;
   /** Target depth retained when a depth boundary created the lead. */
@@ -826,6 +824,87 @@ export function resolveDepthIntent(
   if (verdict === 'all') return { kind: 'full_frontier' };
   if (typeof verdict === 'number' && verdict > 0) return { kind: 'explicit', levels: verdict };
   throw new Error(`Invalid AI depth verdict: ${String(verdict)}`);
+}
+
+/**
+ * Gates one asymmetric-depth side on provenance, independently of its sibling.
+ *
+ * @remarks
+ * Only a finite positive count is ever ambiguous ("did the user say this, or did the model pick
+ * it?"), so only that shape is dropped when `depthStated` is not `true`. `'all'` and the
+ * direction-disabling `0` (see {@link ExplorationDepthSideSchema} in
+ * `engine/shared/explorationDepthContract.ts`) are unambiguous by construction — `'all'` can only
+ * grow scope and `0` is a permanent, deliberate border a model cannot land on by accident the way
+ * it can invent a plausible level count — so both pass through verbatim regardless of
+ * `depthStated`, and so does an already-unstated `null`/`undefined` side.
+ *
+ * @param side - One raw `upstream`/`downstream` value from the Zod-validated `depth` payload.
+ * @param depthStated - The Zod-validated `depthStated` companion field.
+ * @returns The side verbatim, or `undefined` when a finite positive count lacked provenance.
+ */
+export function gateDepthSide(
+  side: number | 'all' | null | undefined,
+  depthStated: boolean | undefined,
+): number | 'all' | null | undefined {
+  return typeof side === 'number' && side > 0 && depthStated !== true ? undefined : side;
+}
+
+/**
+ * Gates a raw `lineage_start_exploration` depth payload on its `depthStated` companion before
+ * handing it to {@link resolveDepthIntent} — the one production call site
+ * (`startExploration.ts`) that turns Zod-validated tool input into engine-owned intent.
+ *
+ * @remarks
+ * `resolveDepthIntent` itself stays a pure shape mapper (a finite number always becomes
+ * `explicit`/`asymmetric`) so its direct unit coverage keeps testing that mapping in isolation.
+ * The provenance question — is this finite number the user's own literal count, or the model's
+ * starting estimate — is answered here, at the tool-input boundary, because the host never reads
+ * the user's sentence (`AGENTS.md` §Runtime Contract) and so cannot verify it any other way.
+ * `depthStated` is the one place that intent is declared, not inferred from the shape of `depth`
+ * alone: a finite scalar `depth` reaches {@link resolveDepthIntent} only when `depthStated` is
+ * `true`; otherwise it is dropped to `undefined`, resolving to the same soft `default_start` seed
+ * as an omitted `depth` — never a hard stop the model invented on its own. An asymmetric object is
+ * gated per side via {@link gateDepthSide}, never as one unit: `'all'` and the direction-disabling
+ * `0` on either side are exempt and always pass through, so `{upstream:'all',downstream:'all'}` or
+ * `{upstream:0,downstream:'all'}` sent with no `depthStated` keeps its meaning instead of falling
+ * back to a bidirectional `default_start` that reopens a side the model closed. `'all'` needs no
+ * flag at the top level either — it can only ever grow the scope, never truncate it, so an unstated
+ * `'all'` is already safe under the per-side gate.
+ *
+ * When gating leaves BOTH sides `undefined` — no side carried `'all'`, the direction-disabling `0`,
+ * or a `depthStated` finite count — the whole payload collapses to the same `default_start` kind as
+ * an omitted `depth`, not an `'asymmetric'` intent with two engine-defaulted sides: `smBase.ts`'s
+ * `'asymmetric'` branch always binds `depthEnforcement = 'strict'` (a hard border), so two sides that
+ * are really "the model invented these" would silently truncate a chain that only grows
+ * past the default seed — a model-chosen `{upstream:3,downstream:3}` collapsing to a hard
+ * border. An object keeping `'all'` or `0` on either side
+ * never collapses: `effectiveDirection()` (`smBase.ts`) only narrows the live traversal direction
+ * when `depthIntent.kind === 'asymmetric'`, so a genuine per-side `0` needs that kind to reach its
+ * own permanent-disable effect regardless of `depthStated`.
+ *
+ * A demotion is logged by the caller (`startExploration.ts`), never silent.
+ *
+ * @param verdict - The Zod-validated `depth` field, before provenance gating.
+ * @param depthStated - The Zod-validated `depthStated` companion field.
+ * @returns The engine-owned depth intent, hard only when a finite value is user-stated or a side
+ * carries `'all'`/the direction-disabling `0`.
+ */
+export function resolveDepthIntentForBoundary(
+  verdict:
+    | number
+    | 'all'
+    | { upstream?: number | 'all' | null; downstream?: number | 'all' | null }
+    | null
+    | undefined,
+  depthStated: boolean | undefined,
+): DepthIntent {
+  if (verdict && typeof verdict === 'object') {
+    const upstream = gateDepthSide(verdict.upstream, depthStated);
+    const downstream = gateDepthSide(verdict.downstream, depthStated);
+    if (upstream === undefined && downstream === undefined) return resolveDepthIntent(undefined);
+    return resolveDepthIntent({ upstream, downstream });
+  }
+  return resolveDepthIntent(gateDepthSide(verdict, depthStated));
 }
 
 /**
@@ -1006,15 +1085,14 @@ export interface SmState {
    */
   lineageQuestionsLastHop?: string[];
   /**
-   * Focus node IDs the AI pruned via `verdict=prune` while the column aspect was active
+   * Focus node IDs the AI cut via `verdict=end_branch` while the column aspect was active
    * (`ctPrunedFocusIds` on the live engine). Present only when `columnAspect` is non-null.
    */
   ctPrunedNodeIds?: string[];
   /**
-   * Neighbour ids named in an accepted `route_requests` entry, plus the nodes a CT `column_flow`
-   * entry named for a traced column (`declaredRouteIds` on the live engine). Present in both
-   * modes — an accepted route is a routing decision, not a column fact — under a `ct`-prefixed key
-   * kept for compatibility with runs stored before the two modes converged.
+   * Nodes a committed CT `column_flow` entry named for a traced column (`declaredRouteIds` on the
+   * live engine), under a `ct`-prefixed key kept for compatibility with stored runs; a checkpoint
+   * written before the neighbor-decision contract may also hold ids a removed route list declared.
    * Absent on a checkpoint written before the field was persisted; restore treats that as empty.
    */
   ctDeclaredRouteIds?: string[];
@@ -1048,13 +1126,11 @@ export interface HopLogEntry {
  * topology kinds reject atomically. The pure current-hop policy owns route/prune classification;
  * ColumnTracer owns indexed CT content paths.
  */
-export type InvalidRouteKind = | 'absent_route'
-      | 'absent_contributor'
+export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_out_col'
       | 'untracked_out_col'
       | 'bad_contributor_col'
       | 'non_writer_continuation'
-      | 'missing_required_route'
       | 'self_loop_column'
       | 'bad_writes_to_target'
       | 'pruned_contributor'
@@ -1063,10 +1139,9 @@ export type InvalidRouteKind = | 'absent_route'
       | 'prune_noop_visited'
       | 'prune_noop_analyzed'
       | 'prune_noop_queued'
+      | 'prune_noop_out_of_scope'
       | 'prune_origin_forbidden'
-      | 'prune_would_orphan'
-      | 'prune_route_conflict'
-      | 'route_columns_flow_conflict';
+      | 'prune_carries_tracked_column';
 
 /**
  * Represents an invalid route returned during validation.
@@ -1080,11 +1155,9 @@ export interface InvalidRoute {
     reason: string;
     /** Exact submit_findings field path that must be corrected. */
     path?: string;
-    /** On `missing_required_route`: true when the required neighbor was submitted in `prune_neighbors` and that prune was refused. */
-    invalidlyPruned?: boolean;
-    /** Valid column set for a column-content failure; emitted in `detail`. */
+    /** Valid column set for a column-content failure, or the tracked columns a refused prune carries; emitted in `detail`. */
     available_columns?: string[];
-    /** Full required-neighbor set for `missing_required_route`; emitted in `detail`. */
+    /** Carrier-side neighbours a body-less focus may name (`non_writer_continuation`); emitted in `detail`. */
     available_routes?: string[];
 }
 

@@ -1,4 +1,3 @@
-// MAINTENANCE: Content overlaps with docs/FEATURES.md — update both when features change
 import { memo, useEffect, useState } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, type AppShortcutId } from '../ui/keyboardShortcuts';
@@ -381,7 +380,6 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');
 
-  // Capture phase, so the open panel consumes Esc before the document-level mode handlers registered through `useKeyboardShortcut` see it — closing Help never also exits the mode behind it.
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {

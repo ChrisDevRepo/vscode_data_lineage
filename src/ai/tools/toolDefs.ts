@@ -78,13 +78,13 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_start_exploration', inputSchema: StartExplorationProviderInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'session_start',
     userDescription: 'Start an autonomous exploration of database objects for data flow, business rules, or investigations.',
-    modelDescription: 'Proposes approval-gated hop-by-hop exploration. Fresh calls require origin, analysisMode, and classification. BB has no target columns; CT traces named targetColumns. Completed follow-ups use supplement:{nodeIds:[...]}.',
+    modelDescription: 'Proposes a hop-by-hop exploration for the user to approve: a fresh one from origin, or a supplement of named objects after a completed exploration.',
     progressLabel: 'Starting exploration…',
   },
   {
     name: 'lineage_submit_findings', inputSchema: SubmitFindingsModelSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
     userDescription: 'Submit analysis of the current node and propose next routes in the exploration.',
-    modelDescription: 'Submits current focus-node analysis and next-hop route decisions. May prune current-hop neighbors; CT also requires `column_flow`.',
+    modelDescription: 'Commits this hop: the focus node\'s verdict and analysis, and its neighbor decisions.',
   },
   {
     name: 'lineage_present_result', inputSchema: PresentResultModelSchema, tags: ['lineage-presentation'], effect: 'presentation_commit',
@@ -113,7 +113,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_neighbor_columns', inputSchema: GetNeighborColumnsInputSchema, tags: ['lineage'], effect: 'read',
     userDescription: 'Inspect a neighbor\'s columns for pruning decisions during active SM exploration.',
-    modelDescription: 'Returns structural metadata (columns, types, nullability, foreign keys) for direct neighbors. DDL text is not returned. Pass neighbor ids only, excluding the focus node itself.',
+    modelDescription: 'Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.',
     progressLabel: 'Inspecting neighbor columns…',
   },
   {

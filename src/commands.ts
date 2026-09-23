@@ -27,7 +27,6 @@ export function registerCommands(
   const aiLogger = Logger.create(outputChannel, 'AI');
 
   return [
-    // --- Primary Entry Points ---
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 
@@ -52,12 +51,10 @@ export function registerCommands(
       configLogger.debug('dataLineageViz.refresh — pushed rebuild-config');
     }),
 
-    // --- Configuration & Settings ---
     vscode.commands.registerCommand('dataLineageViz.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', 'dataLineageViz')
     ),
 
-    // --- Diagnostics & Debugging ---
     vscode.commands.registerCommand('dataLineageViz.copyDebugInfo', async () => {
       try {
         const dump = buildDebugDump(context);
@@ -82,8 +79,6 @@ export function registerCommands(
 
       const traceRoot = vscode.Uri.joinPath(workspaceFolder.uri, 'tmp').fsPath;
       try {
-        // Origin stays the writer's `extension-host` default; the trace-open record is the
-        // single durable stamp of the producer.
         const tracePath = await traceWriter.enable(traceRoot);
         notifyInfo(
           configLogger,
@@ -152,7 +147,6 @@ export function registerCommands(
     }),
 
 
-    // --- Configuration Scaffolding ---
     vscode.commands.registerCommand('dataLineageViz.createParseRules', () =>
       createYamlScaffold(context, configLogger, 'parseRules.yaml', 'defaultParseRules.yaml', 'parseRulesFile')
     ),
@@ -163,14 +157,11 @@ export function registerCommands(
       createYamlScaffold(context, configLogger, 'aiOutputTemplates.yaml', 'aiOutputTemplates.yaml', 'ai.outputTemplateFile')
     ),
 
-    // --- AI Integration ---
-    // Replays the last validated presentation without another model call.
     vscode.commands.registerCommand('dataLineageViz.aiCreateView', () => {
       const sess = getSession();
       const panel = getActivePanel();
       if (sess.presentationArtifact && panel) {
         const preview = sess.presentationArtifact;
-        // Revealed first, so the webview lays the preview out against a canvas that has a size.
         panel.reveal(vscode.ViewColumn.One);
         void postToWebview(panel, {
           type: 'ai-view-preview',
@@ -246,7 +237,6 @@ export function registerCommands(
         applyModelToSession(sess, model, false, null);
         sess.projectName = path.basename(uri.fsPath, '.dacpac');
 
-        // A forced load has no wizard step to drive the canvas, so push the model itself.
         const panel = getActivePanel();
         if (panel) {
           void postToWebview(panel, { type: 'dacpac-model', model, config, sourceName: sess.projectName, autoVisualize: true }, configLogger);
@@ -278,11 +268,8 @@ async function createYamlScaffold(
 
   const targetUri = vscode.Uri.joinPath(folder.uri, fileName);
 
-  // The command still fails — this only guarantees the detail and stack reach the Output channel,
-  // which VS Code's generic command-failure toast does not do.
   try {
     try {
-      // Preserve an existing scaffold.
       await vscode.workspace.fs.stat(targetUri);
       const doc = await vscode.workspace.openTextDocument(targetUri);
       await vscode.window.showTextDocument(doc);

@@ -1,6 +1,7 @@
 /** Provider-neutral names and corrective messages for forced structured-output calls. */
 import type { z } from 'zod';
 import { rejectionFromZodError } from '../support/toolErrorEnvelope';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Synthetic tool advertised when a provider lacks native JSON-schema output. */
 export const STRUCTURED_OUTPUT_TOOL = 'structured_output';
@@ -12,7 +13,7 @@ export const STRUCTURED_OUTPUT_TOOL_DESCRIPTION =
 /** Stable structured-output rejection classifications used by graph recovery policy. */
 export type StructuredOutputErrorCode =
   | 'invalid_structured_output'
-  | 'empty_structured_output';
+  | typeof REJECTION_CODES.emptyStructuredOutput;
 
 /** Bounded semantic failure returned to LangGraph without retaining raw provider output. */
 export class StructuredOutputError extends Error {

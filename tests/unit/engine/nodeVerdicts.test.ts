@@ -204,7 +204,6 @@ describe('AIViewMetadata.columnAspect edge transforms', () => {
   it('maps every declared class to exactly one direction, and the split matches the contract', () => {
     expect(Object.keys(COLUMN_TRANSFORM_DIRECTION).sort())
       .toEqual([...COLUMN_TRANSFORM_CLASSES].sort());
-    // The DIRECT/INDIRECT split licenses a distinct edge treatment downstream; no class is both.
     expect(COLUMN_TRANSFORM_CLASSES.filter(c => COLUMN_TRANSFORM_DIRECTION[c] === 'DIRECT'))
       .toEqual(['pass_through', 'compute', 'aggregate']);
     expect(COLUMN_TRANSFORM_CLASSES.filter(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT'))

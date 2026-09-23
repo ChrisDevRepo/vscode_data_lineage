@@ -241,7 +241,6 @@ export interface InvalidGeneratedToolCall {
   readonly code:
     | 'invalid_tool_input'
     | 'unknown_tool'
-    // Registry-owned: the value is also taught to the model and drives the non-chargeable set.
     | typeof REJECTION_CODES.duplicateCallId;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
@@ -490,18 +489,9 @@ export interface RepetitionStrike {
   readonly line: string;
 }
 
-// Occurrences of one line that make a generation degenerate: the 3rd identical repeat, not the 50,000th character. Calibrated so every degenerate loop body trips at 3, and no tool-bearing or `stop`-finished response trips at all.
 const REPETITION_STRIKE = 3;
-// Shortest repeated unit in any recorded loop is 37 chars; noise lines (`</parameter>`, `GO`,
-// table rules) are 12 chars or fewer. 32 splits the two, and keeps markdown table rows and DDL
-// boilerplate — legitimate text that may repeat — below the counted floor.
 const REPETITION_MIN_LINE_CHARS = 32;
-// Bounds the counter's memory on adversarial input: past this many distinct substantial lines,
-// new distinct lines are no longer admitted (already-counted lines keep counting), so a hostile
-// body cannot grow the map without bound while a genuine early repeat still fires.
 const REPETITION_MAX_TRACKED_LINES = 2048;
-// A line never terminated by a newline is counted whole once it passes this length, so a degenerate
-// paragraph cycle with no line breaks at all is still caught instead of buffering forever.
 const REPETITION_MAX_BUFFERED_LINE_CHARS = 8192;
 
 /**

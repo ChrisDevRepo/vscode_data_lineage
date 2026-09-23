@@ -332,7 +332,6 @@ export function createMessageHandlers(
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
-  // `pending` single-flights the connection negotiation, since two async table-stats requests can otherwise both observe an empty `uri` and each negotiate their own connection.
   const statsConnState: StatsConnState = { uri: undefined, pending: null };
   async function cleanupStatsConnection(): Promise<void> {
     if (statsConnState.uri) {
@@ -427,7 +426,6 @@ export function createMessageHandlers(
         setDetailPanel(detailPanel);
 
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
-          // Same envelope gate as the main panel: detail→host frames are unstamped, so only a present-but-wrong version proves the two bundles disagree about the message shapes.
           const inboundVersion = (rawM as BridgeEnvelope | undefined)?.protocolVersion;
           if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
             notifyError(
@@ -589,7 +587,6 @@ export function createMessageHandlers(
           }
         }
       } else if (project.connection.type === 'database') {
-        // Capture narrowed connection — TS loses union narrowing across async closures.
         const dbConn = project.connection;
         await withDbProgressHost(host, 'Loading project', async () => {
           const result = await connectDirect(dbConn.connectionInfo as IConnectionInfo, outputChannel);
@@ -603,7 +600,6 @@ export function createMessageHandlers(
             await runDbPhase2Host(host, dbResult.connectionUri, schemas, outputChannel, getSession, dbResult.connectionInfo.database, dbConn.sourceName, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
             });
-            // Re-narrow on write-back: the record must carry only allow-listed fields; `stripSensitiveFields` throws on a record the read side would reject, never silently.
             const refreshed = {
               ...project,
               connection: { ...dbConn, connectionInfo: stripSensitiveFields(dbConn.connectionInfo as IConnectionInfo) },
@@ -629,7 +625,6 @@ export function createMessageHandlers(
     'delete-project': async (msg) => {
       host.log('debug', 'Bridge', `Deleting project: ${msg.id}`);
       const store = loadProjectStore(context);
-      // Captured before the delete: the profiles vanish with the project, and each may file an AI run record.
       const profileIds = (store.projects.find(p => p.id === msg.id)?.filterProfiles ?? []).map(fp => fp.id);
       const updated = deleteProject(store, msg.id);
       await saveProjectStore(context, updated);
@@ -686,7 +681,6 @@ export function createMessageHandlers(
               schemas: msg.schemas,
             });
           } catch (err) {
-            // The graph still loads; only persistence is skipped, and the user learns it now rather than through a silently missing project on the next start.
             notifyWarning(
               Logger.create(outputChannel, 'DB'),
               'Persist database project',
@@ -764,7 +758,6 @@ export function createMessageHandlers(
             const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
             logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
           } else {
-            // A save under an existing id replaces that profile in place, so a record filed under it by an earlier run would survive and be recalled against a scope it no longer describes.
             await clearStoredRun(context.globalState, msg.profile.id);
           }
         } catch (runErr) {
@@ -789,7 +782,6 @@ export function createMessageHandlers(
     },
     'rebuild': async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
-      // The column store is left intact: a rebuild only re-reads configuration, and resetting it belongs to `applyModelToSession`, the model-load path that can refill it.
       const config = await readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },
@@ -864,7 +856,6 @@ export function createMessageHandlers(
     'error': (msg) => {
       const source = msg.source ?? 'unknown';
       const logger = Logger.create(outputChannel, 'Bridge');
-      // Reconstruct an Error carrying the webview's original stack so downstream consumers see the real throw site, not the rethrow point in the extension.
       const err = new Error(msg.error);
       if (msg.stack) err.stack = msg.stack;
       const componentLine = msg.componentStack
@@ -874,7 +865,6 @@ export function createMessageHandlers(
         ? safeStringifyForLog(msg.context, 500)
         : '(no context)';
 
-      // Retain for the debug dump's LAST ERRORS section — the context carries the full current-screen snapshot, so a crash is reproducible from the dump alone.
       recordWebviewError(getSession(), {
         timestamp: msg.timestamp ?? Date.now(),
         source,
@@ -884,12 +874,10 @@ export function createMessageHandlers(
         context: msg.context,
       });
 
-      // A render-boundary crash auto-reloads the panel — say so plainly; other sources just report the failure.
       const userMessage = source === 'error-boundary'
         ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
         : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
 
-      // Full detail is written to the Output channel at error level by notifyError, before the concise toast.
       notifyError(
         logger,
         `Webview ${source}`,
@@ -995,13 +983,11 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const timeoutMs = (host.getConfiguration().get<number>('dmvQueryTimeout') ?? 120) * 1000;
-  // Platform detection and the catalog fetch precede the sweep; the sweep's own 1..N steps shift up by the lead-step count so the counter stays monotonic instead of restarting.
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;
   const totalSteps = queries.filter(isPhase2Query).length + leadSteps;
   host.postMessage({ type: 'db-progress', step: 1, total: totalSteps, label: 'Detecting database platform' });
   const platformMetadata = await loadDatabasePlatform(connectionUri, queries, outputChannel, timeoutMs);
-  // Full object catalog for cross-schema dependency resolution; optional by contract, degrading to unclassified cross-schema references, never to a failed import.
   let allObjectsResult: SimpleExecuteResult | undefined;
   if (allObjectsQuery) {
     host.postMessage({ type: 'db-progress', step: 2, total: totalSteps, label: 'Loading object catalog' });
@@ -1182,7 +1168,6 @@ async function handleTableStatsRequestHost(
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
     const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
     if (!profilingSql) {
-      // The detail panel is in its loading phase and leaves it only on a result or error frame — a bare return here would leave it spinning forever.
       logger.info(`No profileable columns for ${schema}.${objectName} — nothing to query`);
       void postToDetail(panel, {
         type: 'table-stats-error',
@@ -1248,7 +1233,6 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
     }
   }
 
-  // Detailed debug logs for each scripted object
   if (spCount === 0) {
     logger.debug('No scripted objects (procedures/views) with valid definitions found for parsing.');
   }
@@ -1375,7 +1359,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`Webview errors captured: ${uiDiagnostics.lastErrors.length}`);
   add('');
 
-  // ── ENVIRONMENT ──
   add('ENVIRONMENT');
   add(`  Extension:    ${version}`);
   add(`  Build Stamp:  ${buildStamp}`);
@@ -1383,7 +1366,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`  OS:           ${os.type()} ${os.release()} (${os.arch()})`);
   add('');
 
-  // ── DATA SOURCE ──
   add('DATA SOURCE');
   add(`  Project:      ${sess.projectName ?? 'N/A'}`);
   add(`  Source:       ${sess.sourceLabel}`);
@@ -1391,7 +1373,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`  Parse rules:  ${sess.parseRulesLabel}`);
   add('');
 
-  // ── MODEL ──
   if (sess.model) {
     add('MODEL');
     add(`  Nodes total:  ${sess.model.nodes.length}`);
@@ -1402,13 +1383,11 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add(JSON.stringify(sess.model.schemas, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
     add('');
 
-    // ── MODEL CONNECTIVITY (full model, filter-independent) ──
     add('MODEL CONNECTIVITY (full model, filter-independent)');
     add(formatModelConnectivity(summarizeModelConnectivity(sess.model)));
     add('');
   }
 
-  // ── SCHEMA LEGEND ──
   if (sess.model) {
     const names = sess.model.schemas
       .filter(s => !(s.types['external'] > 0 && s.nodeCount === s.types['external']))
@@ -1418,21 +1397,18 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add('');
   }
 
-  // ── PARSE STATS ──
   if (sess.parseStats) {
     add('PARSE STATS');
     add(JSON.stringify(sess.parseStats, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
     add('');
   }
 
-  // ── GUI STATE ──
   if (sess.uiState) {
     add('GUI STATE');
     add(JSON.stringify(sess.uiState, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
     add('');
   }
 
-  // ── RENDER STATE (current on-screen graph) ──
   add('RENDER STATE (current screen)');
   if (uiDiagnostics.renderState) {
     add(JSON.stringify(uiDiagnostics.renderState, null, 2).split('\n').map(l => `    ${l}`).join('\n'));
@@ -1441,7 +1417,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
   add('');
 
-  // ── RENDERED CONNECTIVITY (what the user currently sees) ──
   const renderConnectivity = (uiDiagnostics.renderState as { connectivity?: RenderConnectivity } | undefined)?.connectivity;
   if (renderConnectivity) {
     add('RENDERED CONNECTIVITY (current screen)');
@@ -1449,15 +1424,12 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add('');
   }
 
-  // ── SELECTION & AFFORDANCES / TRACE SCOPE / DETAIL PANEL / ANALYTICS / BOOKMARK ──
-  // Explains why the selected node shows or grays its +/- trace controls, standalone.
   add(formatScreenStateSections(
     uiDiagnostics.renderState as RenderStateSnapshot | null,
     (sess.uiState as { screenState?: ScreenStateExtras } | null)?.screenState ?? null,
     sess.model ?? null,
   ));
 
-  // ── LAST ERRORS (newest last) ──
   add(`LAST ERRORS (${uiDiagnostics.lastErrors.length})`);
   if (uiDiagnostics.lastErrors.length === 0) {
     add('    (none captured this session)');
@@ -1472,7 +1444,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   }
   add('');
 
-  // ── SM SUMMARY (overview only; full dump is a separate command) ──
   add('SM SUMMARY');
   add(`  Phase:        ${sess.phase.kind}`);
   add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
@@ -1482,7 +1453,6 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add('  Full SM dump: use Data Lineage: Dump SM State');
   add('');
 
-  // ── SETTINGS ──
   add('SETTINGS (dataLineageViz.*, excluding ai.*)');
   try {
     const cfg = vscode.workspace.getConfiguration('dataLineageViz');

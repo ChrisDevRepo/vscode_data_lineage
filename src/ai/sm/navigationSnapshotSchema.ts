@@ -32,8 +32,6 @@ const NonEmptyStringTuple = z.tuple([NonEmptyString], NonEmptyString);
 const DepthIntentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('explicit'), levels: z.number().int().positive() }).strict(),
   z.object({ kind: z.literal('full_frontier') }).strict(),
-  // Per-side 0 is valid (a single-direction asymmetric proposal, e.g. {upstream:2,downstream:0});
-  // both sides 0 is rejected, mirroring the boundary check in explorationDepthContract.ts.
   z.object({
     kind: z.literal('asymmetric'),
     upstream: z.union([z.number().int().nonnegative(), z.literal('all')]),
@@ -53,11 +51,7 @@ const ColumnEdgeSchema = z.object({
   from_col: NonEmptyString,
   to_node: NonEmptyString,
   to_col: NonEmptyString,
-  // Absent in a checkpoint written before the classifier existed, or when the model did not
-  // classify the edge; restores unclassified either way.
   transforms: z.array(ColumnTransformClassSchema).optional(),
-  // Absent before the per-edge note existed or when the model offered none; restores noteless
-  // either way. Surface text only — never parsed on restore.
   note: z.string().optional(),
 }).strict();
 
@@ -80,8 +74,6 @@ const NodeStateSchema = z.object({
     'non_bodied_passthrough',
   ]),
   columns: z.array(NonEmptyString).optional(),
-  // Absent before the per-node column role existed, or on any node no hop has dispatched; restores
-  // roleless either way.
   columnRole: z.enum(['carrier', 'row_role_only']).optional(),
   viaNodeId: NonEmptyString.optional(),
   atHop: NonNegativeInt.optional(),
@@ -103,7 +95,6 @@ const MemorySnapshotSchema = z.object({
   detailSlots: z.record(z.string(), DetailSlotSchema),
   slotCount: NonNegativeInt,
   missionBrief: z.string(),
-  // Optional so a checkpoint written before scope notes existed still restores (tolerant read).
   scopeNotes: z.array(z.string()).default([]),
   verdictCounts: z.object({
     analyze: NonNegativeInt,
@@ -149,7 +140,7 @@ const PendingLeadSchema = z.object({
   taskId: NonEmptyString,
   nodeId: NonEmptyString,
   fromNodeId: NonEmptyString,
-  reason: z.enum(['schema_boundary', 'depth_boundary', 'contracted_scope', 'budget', 'insufficient_evidence']),
+  reason: z.enum(['schema_boundary', 'depth_boundary', 'contracted_scope', 'budget', 'insufficient_evidence', 'out_of_direction', 'excluded']),
   schema: z.string().optional(),
   depth: NonNegativeInt.optional(),
   valueToUser: NonEmptyString,
@@ -187,14 +178,7 @@ const AgendaEntrySchema = z.object({
   nodeId: NonEmptyString,
   priority: NonNegativeInt,
   depth: NonNegativeInt,
-  // Aligned with `ColumnAspectSchema.active_columns`, which already permits an empty set: a CT
-  // agenda entry records what the engine resolved on that node, and "none of them" is a resolved
-  // answer.
   activeColumns: z.array(NonEmptyString).optional(),
-  // The router's authored per-neighbor decision, kept beside the resolved projection because only
-  // it can say "this neighbor carries no traced value" — `activeColumns: []` is also what an
-  // engine-resolved empty bind looks like. Absent in an older checkpoint, which restores from
-  // `activeColumns` alone.
   columnCarry: ColumnCarrySchema.optional(),
   lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
@@ -204,21 +188,17 @@ const EngineInternalsSchema = z.object({
   direction: z.enum(['upstream', 'downstream', 'bidirectional']),
   depthBudget: NonNegativeInt.nullable(),
   depthEnforcement: z.enum(['strict', 'soft', 'silent']),
-  // Per-side ceilings; `null` means unbounded (`Infinity` has no JSON form). Absent in a v1
-  // checkpoint, which restores to seed-only routing instead.
   depthLimits: z.object({
     upstream: NonNegativeInt.nullable(),
     downstream: NonNegativeInt.nullable(),
   }).strict().optional(),
   depthFromOrigin: z.array(z.tuple([NonEmptyString, NonNegativeInt])),
-  // Tolerated only so an older record still restores; transformed away before restore. Never written.
   extendedDepthCap: NonNegativeInt.optional(),
   budgetExpansions: z.array(z.object({ nodeId: NonEmptyString, depth: NonNegativeInt, atHop: NonNegativeInt }).strict()),
   bodiedScopeSize: NonNegativeInt,
   totalNodes: NonNegativeInt,
   userSchemas: z.array(z.string()),
   sessionAllowedSchemas: z.array(z.string()),
-  // Absent in a checkpoint written before follow-up consent became id-level; restores as none.
   sessionAllowedNodeIds: z.array(NonEmptyString).optional(),
   excludedTypes: z.array(NonEmptyString),
   excludedSchemas: z.array(NonEmptyString),
@@ -230,7 +210,6 @@ const EngineInternalsSchema = z.object({
   lastCurrentTask: z.string(),
   discoverySummary: z.string().nullable(),
   archiveChars: NonNegativeInt,
-  // Accepted only for v1 checkpoint compatibility; transformed away before restore.
   qualityGuards: z.boolean().optional(),
   lastHopDetailChars: NonNegativeInt,
   lastHopSummaryChars: NonNegativeInt,
@@ -347,9 +326,6 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
     if (init?.analysisMode === 'ct') issue('BB snapshot cannot carry CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
     if (snapshot.lineageQuestionsLastHop !== undefined) issue('BB snapshot cannot carry lineage questions', ['lineageQuestionsLastHop']);
     if (snapshot.ctPrunedNodeIds !== undefined) issue('BB snapshot cannot carry CT pruned nodes', ['ctPrunedNodeIds']);
-    // `ctDeclaredRouteIds` is deliberately absent from this BB-purity list: an accepted route is a
-    // routing decision, not a column fact, so a BB checkpoint carries it too; the `ct` key name is
-    // frozen by every stored run written under the current snapshotVersion.
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
       if (task.kind === 'column_lineage') issue('BB snapshot cannot carry column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
     });

@@ -41,7 +41,6 @@ describe('parse rule regex flags', () => {
     expect(result.skipped).toEqual(['scan_openrowset']);
     expect(result.errors[0]).toContain('scan_openrowset');
     expect(result.errors[0]).toContain("must include 'g'");
-    // Rejecting the only rule leaves no rule set, which is the existing fallback contract.
     expect(result.usedDefaults).toBe(true);
   });
 

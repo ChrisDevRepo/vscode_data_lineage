@@ -215,10 +215,8 @@ export class AiTraceWriter {
     if (this.closed) {
       throw new Error('AiTraceWriter: writer is closed.');
     }
-    // Once a file is open (or opening), its trace-open record has stamped the capture level: a repeat enable returns the existing path and never mutates `verbose`/`origin` mid-file.
     if (this.filePath) return this.filePath;
     if (this.enabling) return this.enabling;
-    // Set before the first await so a port that reads it during the same tick as the enabling call already sees the requested capture level rather than the default.
     this.verbose = options.verbose === true;
     this.origin = options.origin ?? 'extension-host';
 
@@ -270,13 +268,8 @@ export class AiTraceWriter {
     const write = this.pending.then(async () => {
       const handle = await this.openHandle();
       await handle.appendFile(line, { encoding: 'utf8' });
-      // The trace is read while the extension host is still running. Flush the persistent handle
-      // before resolving so a separate analyzer never observes an acknowledged record as 0 bytes.
       await handle.sync();
     });
-    // The serialization chain continues from a settled promise: one failed append (disk full,
-    // permission) must reject THIS caller but never poison every later write for the session —
-    // the diagnostic file the user explicitly enabled has to survive a transient I/O error.
     void write.catch((error) => this.reportWriteFailure(error, consumeOneShot));
     this.pending = write.catch(() => {});
     return write;
@@ -330,8 +323,6 @@ export class AiTraceWriter {
     if (this.closed) return;
     this.closed = true;
     await this.pending;
-    // A handle that never opened has nothing to close — its failure was already reported
-    // to the write() caller that triggered the open.
     const handle = await this.handle?.catch(() => undefined);
     if (handle) await handle.close();
   }
@@ -346,8 +337,6 @@ export class AiTraceWriter {
         return handle;
       });
       this.handle = opening;
-      // A failed open must not stay cached as a permanently rejected handle: clear it so the
-      // next write retries the open instead of failing forever on the first error's ghost.
       opening.catch(() => {
         if (this.handle === opening) this.handle = undefined;
       });
@@ -372,16 +361,11 @@ export class AiTraceWriter {
     });
     const handle = await opening;
     if (this.closed) {
-      // close() ran while the open was in flight: it saw no handle to close, so release it here
-      // and leave the writer disabled instead of publishing a path close() can no longer drain.
       await handle.close().catch(() => {});
       throw new Error('AiTraceWriter: writer is closed.');
     }
     this.filePath = filePath;
     this.handle = Promise.resolve(handle);
-    // Queued before any caller can emit, so the producer is always the file's first line. Not
-    // awaited: enabling diagnostics must not fail because the first append did — the same reason
-    // `write` isolates append failures to their own caller.
     void this.enqueue({ type: 'trace-open', origin: this.origin, verbose: this.verbose }, false).catch(() => {});
     return filePath;
   }
@@ -392,7 +376,6 @@ export class AiTraceWriter {
     try {
       this.onWriteFailure?.(error, firstFailure);
     } catch {
-      // Diagnostic reporting must never create a second unhandled failure.
     }
   }
 }

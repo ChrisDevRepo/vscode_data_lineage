@@ -53,7 +53,6 @@ export function sameExplorationProposal(
   left: Omit<PendingExplorationProposal, 'revision' | 'discoverySummary'>,
   right: PendingExplorationProposal | Omit<PendingExplorationProposal, 'revision'>,
 ): boolean {
-  // `discoverySummary` is excluded on both sides — cached after this comparison runs, so a stale memo must never make an unchanged refine look "changed".
   const { revision: _revision, discoverySummary: _discoverySummary, ...rightRest } = right as PendingExplorationProposal;
   return canonicalJson(left) === canonicalJson(rightRest);
 }
@@ -179,7 +178,6 @@ export class AiSession {
   /** Orchestrates short-term narrative and long-term technical memory. */
   public readonly memory: AiMemoryManager;
 
-  // ── Environment State ──
   /** The current database model (nodes/edges) extracted from DDL. */
   public model: DatabaseModel | null = null;
   /** Topology-only graph used for AI navigation. */
@@ -227,7 +225,6 @@ export class AiSession {
   /** Cache for column-level metadata and profiling results. */
   public columnStore: ColumnStore;
 
-  // ── AI reasoning State ──
   /** The active state machine controlling the exploration loop (hop-by-hop). */
   public stateMachine: IHopStateMachine | null = null;
   /** Latest AI/user-refined proposal awaiting approval; never an active RuntimeFrame. */
@@ -369,7 +366,6 @@ export class AiSession {
   /** Read-only per-wipe memory diagnostics recorded in the current turn. */
   public get memoryWipeEventsThisTurn(): ReadonlyArray<MemoryWipeEvent> { return this._memoryWipeEventsThisTurn; }
 
-  // ── Telemetry / Log Correlation ──
   /** Unix timestamp of session creation. Pinned at creation; used for result-graft windowing. */
   public startTime: number;
   /**
@@ -386,7 +382,6 @@ export class AiSession {
   /** Round id in which start_exploration last succeeded (or was attempted). null when reset. */
   public startExplorationRoundId: number | null = null;
 
-  // ── Notice Queue ──
   /** Set-keyed notice queue to deduplicate messages across parallel tool calls. */
   public pendingUserNotice: Set<string> = new Set();
 
@@ -501,7 +496,6 @@ export class AiSession {
     this.resetMemoryWipeDiagnostics();
     this.pendingUserNotice.clear();
     this.startExplorationRoundId = null;
-    // Internal mid-turn transition — pass the live epoch so it is never a stale-turn no-op.
     this.enterIdle(this._turnEpoch);
     this.classification = undefined;
     this.lastDiscoveryOrigin = null;
@@ -829,11 +823,9 @@ export class AiSession {
     if ('error' in built) return { kind: 'rejected', reason: built.error };
     const priorMemory = this.memory.toJSON();
     try {
-      // Validate before the first session write so a parse throw rejects with the session untouched.
       const classification = ClassificationSchema.parse(proposal.classification);
       built.publishMemoryTo(this.memory);
       this.stateMachine = built;
-      // Minted with the engine, so the run a presentation stamps is the run that produced it.
       this.explorationCounter += 1;
       this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
       this.classification = classification;
@@ -975,7 +967,6 @@ export class AiSession {
   public restoreExplorationFromSnapshot(engine: IHopStateMachine, snapshot: SmState, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'restoreExplorationFromSnapshot');
     if (guard.kind !== 'accepted') return guard;
-    // restoreFromJSON builds a full replacement manager first, so a malformed projection leaves the session intact.
     this.memory.restoreFromJSON(snapshot.memory);
     this.stateMachine = engine;
     this.hopCount = snapshot.hopCount;
@@ -1001,7 +992,6 @@ export class AiSession {
     if (guard.kind !== 'accepted') return guard;
     const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
 
-    // Carry forward synthesized body fields from the existing result graph; see @remarks above.
     const prior = this.resultGraph;
     this.resultGraph = {
       nodeIds: fullResult.fullNodes.map(n => n.id),

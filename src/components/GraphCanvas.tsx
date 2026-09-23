@@ -80,7 +80,6 @@ const AiDescriptionOverlay = lazy(async () => {
   const module = await import('./AiDescriptionOverlay');
   return { default: module.AiDescriptionOverlay };
 });
-// Type-only import keeps the lazy chunk boundary intact while typing the chip-row prop.
 import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
 
 /** The panel's reserved extent before its own `ResizeObserver` has reported a measured size. */
@@ -551,21 +550,16 @@ export function GraphCanvas({
   collapsedSchemaNodeIds,
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getEdges } = useReactFlow();
-  // True only once every node has been measured against an actually-sized pane; the flow's own
-  // `width` falls back to 500 for a zero-sized pane, so it is not a substitute for this.
   const nodesInitialized = useNodesInitialized();
   const vscodeApi = useVsCode();
 
-  // Local state preserves drag positions across highlight changes.
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
   const [columnView, setColumnView] = useState(false);
 
-  // AI metadata comes from the active AI profile or the transient AI preview, whichever is on stage.
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
   const aiDescription = activeAiMetadata?.description;
 
-  // AI report column + section focus, owned by the canvas so it can reserve panel width and dim the graph around a focused section.
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<number | null>(null);
   const aiPanelDefaultOpen = !!(
@@ -573,7 +567,6 @@ export function GraphCanvas({
     (activeAdvancedProfile && (activeAdvancedProfile.filter.allowlistNodeIds?.length ?? 0) === 0)
   );
   const aiViewName = activeAdvancedProfile?.name ?? aiPreview?.name ?? '';
-  // Open state + pinned section survive a re-run of the same view, keyed by origin id + view name.
   const aiLayoutCache = useRef(new Map<string, { open: boolean; section: number | null }>());
   useEffect(() => {
     if (!aiDescription) return;
@@ -585,7 +578,6 @@ export function GraphCanvas({
     if (!aiDescription) return;
     aiLayoutCache.current.set(aiLayoutCacheKey(activeAdvancedProfile?.id, aiViewName), { open: aiPanelOpen, section: activeSection });
   }, [aiDescription, activeAdvancedProfile?.id, aiViewName, aiPanelOpen, activeSection]);
-  // Read by `handleFocusSection`, declared above the sections it needs.
   const aiSectionsRef = useRef<AiReportSection[]>([]);
   /**
    * The report navigated to a section: it lights that section's labels and frames its objects.
@@ -602,7 +594,6 @@ export function GraphCanvas({
     const nodes = nodeIds.map(id => ({ id }));
     requestAnimationFrame(() => { void fitView({ nodes, padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); });
   }, [fitView]);
-  // Which edge the report column docks against, persisted via the webview's getState/setState, merged so this key never clobbers another stored preference.
   const [dockPosition, setDockPositionState] = useState<AiDockPosition>(() => {
     const saved = (vscodeApi.getState() as Record<string, unknown> | undefined)?.[AI_DOCK_STATE_KEY];
     return saved === 'left' || saved === 'bottom' ? saved : 'right';
@@ -611,15 +602,10 @@ export function GraphCanvas({
     setDockPositionState(position);
     vscodeApi.setState({ ...(vscodeApi.getState() ?? {}), [AI_DOCK_STATE_KEY]: position });
   }, [vscodeApi]);
-  // The panel's own measured size, once its ResizeObserver has reported one (native CSS `resize`).
   const [panelSizePx, setPanelSizePx] = useState<{ width: number; height: number } | null>(null);
-  // Stable identity so the overlay's ResizeObserver effect doesn't resubscribe on every render.
   const handleAiPanelResize = useCallback((width: number, height: number) => {
     setPanelSizePx(prev => (prev && prev.width === width && prev.height === height) ? prev : { width, height });
   }, []);
-  // Reserved-space style for the React Flow wrapper, expressed as insets rather than a width — the
-  // wrapper is absolutely positioned, so a left-docked panel must push the canvas's `left` edge in.
-  // Falls back to the CSS default kept in sync with `.ln-ai-description-anchor*`.
   const aiCanvasReserve: CSSProperties = !(aiDescription && aiPanelOpen)
     ? { inset: 0 }
     : dockPosition === 'bottom'
@@ -627,7 +613,6 @@ export function GraphCanvas({
       : dockPosition === 'left'
         ? { top: 0, bottom: 0, right: 0, left: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH }
         : { top: 0, bottom: 0, left: 0, right: panelSizePx ? panelSizePx.width : AI_PANEL_DEFAULT_WIDTH };
-  // The narrowed canvas re-fits once the panel has claimed or released its width, so the graph re-centers instead of leaving nodes under the docked column.
   useEffect(() => {
     if (!aiDescription) return;
     const t = setTimeout(() => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); }, AI_PANEL_REFIT_DELAY);
@@ -645,7 +630,6 @@ export function GraphCanvas({
     const relations = activeAiMetadata?.columnAspect?.edges;
     if (!relations?.length) return null;
     try {
-      // Declared types are backend metadata from the extracted model, never an AI claim.
       const columnTypesByNode = new Map<string, ReadonlyMap<string, string>>();
       for (const node of model?.nodes ?? []) {
         if (node.columns?.length) {
@@ -675,8 +659,6 @@ export function GraphCanvas({
         layoutDirection: activeAiMetadata?.layoutDirection,
       });
     } catch (err) {
-      // A degraded projection is not a failed user action, so this goes to the Output channel, not
-      // a modal — the `error` channel would announce a crash that did not happen.
       vscodeApi.postMessage({
         type: 'log',
         level: 'warn',
@@ -699,7 +681,6 @@ export function GraphCanvas({
    */
   const objectNodes = useCallback(() => (columnViewActive ? localNodes : getNodes()), [columnViewActive, localNodes, getNodes]);
 
-  // Pending actions after overview schema expansion (zoom to the revealed object)
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
   /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
@@ -711,7 +692,6 @@ export function GraphCanvas({
     clearTimeout(pendingZoomTimerRef.current);
     pendingZoomTimerRef.current = null;
   }, []);
-  // Cleanup: clear pending zoom timer on unmount to prevent post-destroy notifyUser calls
   useEffect(() => clearPendingZoomTimer, [clearPendingZoomTimer]);
 
   /**
@@ -728,7 +708,6 @@ export function GraphCanvas({
     pendingZoomRef.current = nodeId;
     pendingClickRef.current = { id: nodeId, searchTerm };
     pendingZoomSetAt.current = Date.now();
-    // The expiry that does not depend on `flowNodes` changing again.
     clearPendingZoomTimer();
     pendingZoomTimerRef.current = window.setTimeout(() => {
       if (!pendingZoomRef.current) return;
@@ -737,7 +716,6 @@ export function GraphCanvas({
       pendingClickRef.current = null;
     }, PENDING_ZOOM_TIMEOUT_MS);
   }, [clearPendingZoomTimer]);
-  // Stable ref for onNodeClick — used inside auto-fit effect without adding to deps
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
   const currentTraceRef = useRef(trace);
@@ -747,7 +725,6 @@ export function GraphCanvas({
   viewportPreserveVersionRef.current = viewportPreserveVersion;
   const consumedViewportPreserveVersionRef = useRef(viewportPreserveVersion);
 
-  // Report sections derived from the bridged "N label" badge chips.
   const aiSections = useMemo((): AiReportSection[] => {
     const badges = activeAiMetadata?.badges;
     if (!badges?.length) return [];
@@ -762,7 +739,6 @@ export function GraphCanvas({
     }
     return [...byNumber.values()].sort((a, b) => a.n - b.n);
   }, [activeAiMetadata]);
-  // Committed, not assigned during render, so writing the ref in an effect keeps render free of side effects without the reader observing a stale list.
   useEffect(() => {
     aiSectionsRef.current = aiSections;
   }, [aiSections]);
@@ -778,11 +754,8 @@ export function GraphCanvas({
         ));
         return;
       }
-      // Direct canvas selection replaces report-section focus: a node badged into the report lands
-      // the pane on that section; a node in no section keeps the plain deselect.
       const matches = sectionsForNode(aiSections, node.id);
       setActiveSection(matches[0] ?? null);
-      // An object click replaces a pinned column thread, as a column click replaces the object.
       setPinnedColumn(null);
       onNodeClick(node.id);
     },
@@ -858,14 +831,12 @@ export function GraphCanvas({
 
   const minimapNodeColor = useCallback(
     (node: FlowNode) => {
-      // Schema nodes (overview mode) carry SchemaNodeData with a pre-computed color
       if (node.type === 'schemaNode') {
         const color = (node.data as SchemaNodeData).color;
         return isExpandedSchemaViewActive
           ? `color-mix(in srgb, ${color} 28%, transparent)`
           : color;
       }
-      // Column nodes keep their identity under `data.view`, not at the top level.
       if (node.type === 'columnTraceNode') {
         const view = (node.data as ColumnTraceNodeData).view;
         return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema);
@@ -876,7 +847,6 @@ export function GraphCanvas({
     [isExpandedSchemaViewActive]
   );
 
-  // Ring only the schema clusters on the minimap so their kind is readable without labels.
   const minimapNodeStrokeColor = useCallback(
     (node: FlowNode) => (node.type === 'schemaNode'
       ? 'var(--ln-minimap-cluster-stroke)'
@@ -884,12 +854,10 @@ export function GraphCanvas({
     []
   );
 
-  // Zoom and center on a specific node
   const zoomToNode = useCallback((nodeId: string) => {
     requestAnimationFrame(() => {
       const targetNode = getNode(nodeId);
       if (targetNode?.position) {
-        // Column cards declare their own box; object nodes declare none, so the object default stands in.
         const width = targetNode.width ?? NODE_WIDTH;
         const height = targetNode.height ?? NODE_HEIGHT;
         void setCenter(
@@ -903,13 +871,11 @@ export function GraphCanvas({
     });
   }, [getNode, setCenter]);
 
-  // Stable identity so the AI report overlay's effects don't resubscribe on every GraphCanvas render.
   const handleAiFocusNode = useCallback((nodeId: string) => {
     zoomToNode(nodeId);
     onNodeClick(nodeId);
   }, [zoomToNode, onNodeClick]);
 
-  // O(1) lookups for search and pending-zoom checks. First-wins maps preserve `.find()` semantics.
   const flowNodeLookup = useMemo(() => {
     const ids = new Set<string>();
     const byLabel = new Map<string, FlowNode>();
@@ -935,7 +901,6 @@ export function GraphCanvas({
     return { byName, bySchemaName };
   }, [model]);
 
-  // Execute search: find node and zoom to it, expanding its schema from overview when needed.
   const handleExecuteSearch = useCallback((name: string, schema?: string) => {
     const label = schema ? `[${schema}].[${name}]` : name;
     const foundNode = schema
@@ -948,7 +913,6 @@ export function GraphCanvas({
       return;
     }
 
-    // Overview mode: node not in flowNodes — expand its schema in expanded schema view (filter untouched).
     if (graphMode === 'overview' && model) {
       const modelNode = schema
         ? modelNodeNameLookup.bySchemaName.get(searchKey(schema, name))
@@ -964,12 +928,10 @@ export function GraphCanvas({
     }
   }, [armPendingZoom, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
 
-  // Export object nodes in detail views and cluster nodes in schema overview; empty exports no-op.
   const handleExportDrawio = useCallback(() => {
     const exportObjectNodes: FlowNode<CustomNodeData>[] = [];
     const clusterNodes: FlowNode<SchemaNodeData>[] = [];
     const exportNodes = objectNodes();
-    // Column view renders column-to-column trace edges; export always uses the object-level graph.
     const exportEdges = columnViewActive ? localEdges : getEdges();
     for (const n of exportNodes) {
       if (n.type === 'schemaNode') clusterNodes.push(n as FlowNode<SchemaNodeData>);
@@ -1002,7 +964,6 @@ export function GraphCanvas({
     void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
   }), [fitView]);
 
-  // Keep pending zoom targets until their node exists; otherwise fitView would consume and lose them.
   useEffect(() => {
     const previousTrace = traceAtLastGraphChangeRef.current;
     const currentTrace = currentTraceRef.current;
@@ -1012,7 +973,6 @@ export function GraphCanvas({
     const zoomTarget = pendingZoomRef.current;
     const clickTarget = pendingClickRef.current;
     if (zoomTarget) {
-      // During overview expansion, flowNodes may still be stale; keep the ref set until the target lands, or expire after timeout.
       const nodeExists = flowNodeLookup.ids.has(zoomTarget);
       const elapsed = Date.now() - pendingZoomSetAt.current;
       if (!nodeExists) {
@@ -1021,7 +981,6 @@ export function GraphCanvas({
           pendingZoomRef.current = null;
           pendingClickRef.current = null;
           clearPendingZoomTimer();
-          // Fall through to fitView
         } else {
           return; // Don't consume — wait for the next flowNodes update (silent; fires every render)
         }
@@ -1030,7 +989,6 @@ export function GraphCanvas({
         pendingClickRef.current = null;
         clearPendingZoomTimer();
         zoomToNode(zoomTarget);
-        // Defer click to next frame so highlight lands after the expanded schema nodes render.
         if (clickTarget) {
           requestAnimationFrame(() => onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm));
         }
@@ -1049,21 +1007,15 @@ export function GraphCanvas({
 
   const [notesVisible, setNotesVisible] = useState(true);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
-  // A clicked row pins its thread so the user can read the answer without holding the pointer still.
   const [pinnedColumn, setPinnedColumn] = useState<{ nodeId: string; column: string } | null>(null);
   const [columnPositions, setColumnPositions] = useState<Record<string, { x: number; y: number }>>({});
 
-  // Retains each node's decorated result so a drag leaves every other node's `data` reference untouched and its `React.memo` intact.
   const nodeDecorationCache = useRef(createNodeDecorationCache());
 
-  // Same retention for the column view, where a stale node object also costs a re-measure.
   const columnNodeCache = useRef(createColumnNodeCache());
 
-  // Which mode the framing on screen belongs to; null until the first render settles. One fit per switch — a later node measurement must not re-frame the canvas.
   const fittedForColumnViewRef = useRef<boolean | null>(null);
 
-  // Latest-ref pattern: this effect fires only on a new node set, so pendingPositions, handleFitView
-  // and onPendingPositionsApplied are read fresh through refs instead of widening the deps array.
   const pendingPositionsRef = useRef(pendingPositions);
   pendingPositionsRef.current = pendingPositions;
   const handleFitViewRef = useRef(handleFitView);
@@ -1134,7 +1086,6 @@ export function GraphCanvas({
     });
   }, []);
 
-  // ── O(1) model node lookup (avoids O(n²) .find() in DetailSearchSidebar) ──
   const modelNodeMap = useMemo(() => {
     if (!model) return new Map<string, DatabaseModel['nodes'][number]>();
     const map = new Map<string, DatabaseModel['nodes'][number]>();
@@ -1148,7 +1099,6 @@ export function GraphCanvas({
     return map;
   }, [modelNodeMap]);
 
-  // ── Display layer: highlight/dim applied on top of local positions ──
 
   const level1Neighbors = useMemo(() => {
     const neighbors = new Set<string>();
@@ -1161,7 +1111,6 @@ export function GraphCanvas({
 
   const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
 
-  // AI highlight + badge lookups read from the active AI profile or the transient AI preview.
   const aiHighlightMap = useMemo((): Map<string, { color: string; glow: string; shadow: string }> => {
     const m = new Map<string, { color: string; glow: string; shadow: string }>();
     const groups = activeAiMetadata?.highlightGroups;
@@ -1175,14 +1124,12 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  // The focused section's node set; null when section focus is off or the section has no nodes.
   const activeSectionNodeIds = useMemo((): Set<string> | null => {
     if (activeSection == null) return null;
     const section = aiSections.find(s => s.n === activeSection);
     return section?.nodeIds.length ? new Set(section.nodeIds) : null;
   }, [aiSections, activeSection]);
 
-  // Section focus lands on the labels alone: node bodies keep the selection and column-thread emphasis they already carry.
   const aiBadgeMap = useMemo((): Map<string, AiBadge> => {
     const m = new Map<string, AiBadge>();
     const badges = activeAiMetadata?.badges;
@@ -1203,7 +1150,6 @@ export function GraphCanvas({
     return m;
   }, [activeAiMetadata]);
 
-  // Built once per view rather than per hover, or a pointer move would re-index every column edge for each row crossed.
   const columnThreadIndex = useMemo(
     () => (columnTraceView ? buildColumnThreadIndex(columnTraceView) : null),
     [columnTraceView],
@@ -1219,7 +1165,6 @@ export function GraphCanvas({
     return columnThread(columnThreadIndex, columnRowKey(active.nodeId, active.column));
   }, [pinnedColumn, hoveredColumn, columnThreadIndex]);
 
-  // Full-model graph backing the shared prune-safety guard; scope is bounded per call.
   const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
 
   const traceControlsByNode = useMemo((): Map<string, TraceNodeControls> => {
@@ -1228,7 +1173,6 @@ export function GraphCanvas({
     if (!model || !modelGraph || !trace.selectedNodeId || !isEditableTrace || !onTraceAddNeighbor || !onTracePruneNode) {
       return controls;
     }
-    // Only the highlighted (clicked) node shows edit controls — bounds the per-node prune-safety BFS to a single node.
     const targetNode = highlightedNodeId
       ? localNodes.find(n => n.id === highlightedNodeId && n.type === 'lineageNode')
       : undefined;
@@ -1249,14 +1193,12 @@ export function GraphCanvas({
     setHoveredColumn(column === null ? null : { nodeId, column });
   }, []);
 
-  // One selection channel at a time: a pinned column takes focus from a selected object or a focused report section.
   const handleColumnSelect = useCallback((nodeId: string, column: string) => {
     setActiveSection(null);
     onClearSelection?.();
     setPinnedColumn(current => (current?.nodeId === nodeId && current.column === column ? null : { nodeId, column }));
   }, [onClearSelection]);
 
-  // Escape releases a pinned thread, the same gesture that closes any other transient focus.
   useEffect(() => {
     if (!pinnedColumn) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1273,7 +1215,6 @@ export function GraphCanvas({
     pinnedRow: pinnedColumn ? columnRowKey(pinnedColumn.nodeId, pinnedColumn.column) : null,
   }), [hoveredColumnPath, handleColumnHover, handleColumnSelect, pinnedColumn]);
 
-  // Leaving column mode drops the active thread, or returning to it would open with an arbitrary thread lit and every other row dimmed.
   const handleToggleColumnView = useCallback((next: boolean) => {
     setColumnView(next);
     setHoveredColumn(null);
@@ -1294,9 +1235,6 @@ export function GraphCanvas({
     onClearSelection?.();
   }, [onClearSelection]);
 
-  // Each view lays out nodes in its own coordinate space, so either direction of the switch is
-  // fitted once the switched-in nodes are measured. The first pass only records the mode, since two
-  // fits racing on one mount frame the canvas twice.
   useEffect(() => {
     if (!nodesInitialized || fittedForColumnViewRef.current === columnViewActive) return;
     const first = fittedForColumnViewRef.current === null;
@@ -1306,7 +1244,6 @@ export function GraphCanvas({
     return () => cancelAnimationFrame(raf);
   }, [columnViewActive, nodesInitialized, fitGraph]);
 
-  // An AI view arrives on its own, not on a click, so framing it waits for measured nodes — the first picture is the whole view, same as the Objects/Detail buttons give.
   const fittedAiViewRef = useRef<string | null>(null);
   useEffect(() => {
     if (!aiDescription) { fittedAiViewRef.current = null; return; }
@@ -1316,10 +1253,6 @@ export function GraphCanvas({
     return () => cancelAnimationFrame(raf);
   }, [aiDescription, nodesInitialized, fitGraph]);
 
-  // Hand-placed column nodes and the pinned/hovered thread belong to the relation set that produced
-  // them, so only a new relation set invalidates them. Keying this on `columnTraceView` instead
-  // would also fire on every re-derivation of the rendered node array, silently discarding the
-  // drags `onColumnNodesChange` exists to keep.
   const columnRelations = activeAiMetadata?.columnAspect;
   useEffect(() => {
     setColumnPositions({});
@@ -1327,8 +1260,6 @@ export function GraphCanvas({
     setPinnedColumn(null);
   }, [columnRelations]);
 
-  // A view with no column findings has no column mode to be in; drop back rather than render empty.
-  // The thread goes with it, since a pin outlives a hover and would light rows of a view that no longer renders once column mode returns.
   useEffect(() => {
     if (!columnTraceView) {
       setColumnView(false);
@@ -1355,9 +1286,6 @@ export function GraphCanvas({
         const state = statesByRow.get(columnRowKey(view.id, row.name));
         if (state) rowLineStates[row.name] = state;
       }
-      // Same selection/AI decoration rule as the object view's decorateFlowNodes (shared via
-      // resolveBaseSelectionState) — column view is the same node, only more drilled into.
-      // Report-section focus is not in this channel, so it cannot overwrite what selection or the column thread says about the bodies.
       const { highlighted: isHighlighted, dimmed } = resolveBaseSelectionState(view.id, highlightedNodeId, level1Neighbors);
       const isTraceOrigin = isTraceOriginNode(view.id, { traceSelectedNodeId: trace.selectedNodeId, traceMode: trace.mode });
       const removable = isBookmarkMode && canRemoveNodeFromScopedView;
@@ -1410,7 +1338,6 @@ export function GraphCanvas({
         !highlightedNodeId || edge.source === highlightedNodeId || edge.target === highlightedNodeId;
 
       return columnTraceView.edges.map(edge => {
-        // Row hover is the drilled-in layer on top of node selection — same rule object-view edges apply, at row precision.
         const lit = hoveredColumnPath ? litByHover(edge) : litBySelection(edge);
         return {
           id: edge.id,
@@ -1458,14 +1385,11 @@ export function GraphCanvas({
     });
   }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
 
-  // Stable allNodes list for autocomplete/search — derived from full model catalog, not displayNodes (which only contains Schema Cluster entries in Schema View).
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),
     [model],
   );
 
-  // IDs of objects in the current filter scope; used by NodeInfoBar to show ⊘ on out-of-scope
-  // neighbors. In Schema View, localNodes are Schema Clusters — use filteredObjectIds instead.
   const visibleNodeIds = useMemo(
     () => (graphMode === 'overview' && filteredObjectIds) ? filteredObjectIds : new Set(localNodes.map(n => n.id)),
     [localNodes, graphMode, filteredObjectIds],
@@ -1476,7 +1400,6 @@ export function GraphCanvas({
     return (displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId;
   }, [trace.selectedNodeId, displayNodes]);
 
-  // Derive visible schemas for the Legend — externals are excluded from the legend list but remain in the underlying model/filters.
   const legendSchemas = useMemo(
     () => deriveLegendSchemas(localNodes, graphMode, trace.mode, renderedSchemas),
     [graphMode, trace.mode, localNodes, renderedSchemas],
@@ -1487,8 +1410,6 @@ export function GraphCanvas({
     [localNodes],
   );
 
-  // Mirror the current-screen snapshot to the host so the debug dump can reproduce what the user
-  // sees. Resync on view, selection, or scope change.
   useEffect(() => {
     if (!graphErrorContext) return;
     const highlighted = highlightedNodeId ?? null;
@@ -1665,7 +1586,6 @@ export function GraphCanvas({
         resetKey={`${graphErrorResetKey ?? ''}|col:${columnViewActive}`}
         context={graphErrorContext}
         onError={() => {
-          // Detail + the VS Code error toast are already emitted by ErrorBoundary.componentDidCatch; here we only auto-reload so the user never stares at a dead canvas.
           setTimeout(() => vscodeApi.postMessage({ type: 'reload' }), 800);
         }}
         fallback={
@@ -1688,7 +1608,6 @@ export function GraphCanvas({
         ) : (
           <div
             style={{
-              // The docked AI report column claims a strip of the canvas; React Flow re-measures on resize, so shrinking its wrapper keeps every node visible beside the panel.
               ...aiCanvasReserve,
               position: 'absolute',
             }}

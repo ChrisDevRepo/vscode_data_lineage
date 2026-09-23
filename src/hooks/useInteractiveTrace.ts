@@ -118,7 +118,6 @@ export function useInteractiveTrace(
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
   const [useFullModel, setUseFullModel] = useState(false);
 
-  // Full (unfiltered) graph for path-finding and unfiltered trace — all model nodes, not just the filtered subset.
   const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
 
   const useFullModelRef = useRef(useFullModel);
@@ -222,7 +221,6 @@ export function useInteractiveTrace(
     }));
   }, [config]);
 
-  // Always prefers fullGraph so paths can traverse nodes hidden by filters.
   const applyPath = useCallback((targetNodeId: string): boolean => {
     if (!trace.selectedNodeId) {
       window.vscode?.postMessage({ type: 'log', text: `[Trace] Path skipped — no selectedNode` });

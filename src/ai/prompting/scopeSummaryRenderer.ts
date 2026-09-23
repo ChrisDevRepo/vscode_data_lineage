@@ -7,6 +7,7 @@
  */
 
 import type { ScopeSummary } from '../sm/smTypes';
+import { CLASSIFICATION_LABEL, type ClassificationValue } from '../session/classification';
 import { pluralize } from '../support/text';
 
 /** Formats a count with its noun; the suffix rule itself lives in the shared `pluralize`. */
@@ -40,9 +41,16 @@ function depthLine(levels: number | 'all', side: string, binding: boolean): stri
  * @param summary - The proposed scope to render.
  * @param revision - Proposal revision; stamped in the heading from the second round on so a
  * re-approval is distinguishable from the first.
+ * @param classification - The proposal's answer angle. It is part of the approved contract, so it
+ * is stated in the plan beside the tracing mode — on the card the user approves and in the summary
+ * a gate refine replays to the model.
  * @returns The assembled scope-summary markdown.
  */
-export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): string {
+export function renderScopeSummaryMd(
+  summary: ScopeSummary,
+  revision?: number,
+  classification?: ClassificationValue,
+): string {
   const lines: string[] = [];
   const direction = summary.direction === 'bidirectional' ? 'bidirectional' : summary.direction;
   const columns = summary.targetColumns?.length
@@ -50,7 +58,6 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
     : '';
   const tracing = summary.analysisMode === 'ct' ? `Column-Trace${columns}` : 'Blackboard';
 
-  // A depth the user stated binds the run, one the assistant inferred does not; the block a line sits in tells the user which it is.
   const intent = summary.depthIntent;
   const depthIsBinding = intent.kind === 'explicit' || intent.kind === 'asymmetric';
   const stated: string[] = [];
@@ -66,7 +73,6 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
     depthTarget.push(depthLine(summary.depth, depthSide, depthIsBinding));
   }
 
-  // A filter is the assistant's mechanization, never the request itself, so it stays out of the "from your question" heading — that origin belongs only to the user's own words.
   const readAs: string[] = [];
   const filters = summary.activeFilters;
   if (filters.nodeIds.length > 0) {
@@ -81,7 +87,6 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
   if (filters.types.length > 0) {
     readAs.push(`- Types excluded: ${filters.types.map(x => `\`${x}\``).join(', ')}`);
   }
-  // The user's own words, verbatim, next to the mechanization above so a misreading is visible before approval; collapsed to one line so a model-supplied newline cannot open a heading or list that breaks the card.
   for (const note of summary.scopeNotes) {
     stated.push(`- Noted: "${note.replace(/\s+/g, ' ').trim()}"`);
   }
@@ -105,6 +110,7 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
   lines.push(...chosen);
   lines.push(`- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${direction}`);
   lines.push(`- **Tracing:** ${tracing}`);
+  if (classification) lines.push(`- **Analysis:** ${CLASSIFICATION_LABEL[classification]}`);
   lines.push('');
 
   const passSet = new Set(summary.activeFilters.passNodeIds.map(nodeId => nodeId.toLowerCase()));
@@ -126,7 +132,6 @@ export function renderScopeSummaryMd(summary: ScopeSummary, revision?: number): 
         return passSet.has(fq) ? `${name} _(pass)_` : name;
       }).join(', ');
       const omitted = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
-      // A type group with no bodied node is auto-passed by the engine, so saying so here shows "keep it but skip it" as already satisfied instead of an edit the user retries.
       const autoPassed = leaf.hops === 0 ? ' · kept, not analysed' : '';
       lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}${autoPassed}): ${names}${omitted}`);
     }

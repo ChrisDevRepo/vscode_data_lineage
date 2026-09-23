@@ -310,9 +310,16 @@ intent:
 **A level count you state is a hard border; a depth the assistant chose is a
 starting point.** When your question names a number of levels, the trace stops
 there — the assistant may not extend past it, and each side of a bidirectional
-ask is bounded independently. When you do not name one, the assistant seeds a
-reasonable default and may follow the lineage further if the question needs it.
-The approval gate labels which of the two applies before you approve.
+ask is bounded independently. When you do not name one — including a phrase
+like "back to its original sources" or "where does X come from", which name no
+count — the assistant seeds a reasonable default and may follow the lineage
+further if the question needs it; a number the assistant picks on its own to
+fill that starting point never becomes a hard border, only a fresh count you
+state, or "all", does. The approval gate labels which of the two applies
+before you approve, and that label is fixed for the whole trace: the
+assistant cannot loosen or tighten it mid-trace, only through a new **Change
+scope** request you send before approving, or a follow-up you ask after the
+answer.
 
 Objects just past a stated border are not discarded: they are reported after
 synthesis as follow-up leads, alongside mission-relevant routes outside the

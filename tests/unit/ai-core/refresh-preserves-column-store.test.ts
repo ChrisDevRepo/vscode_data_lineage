@@ -76,7 +76,6 @@ describe('rebuild preserves the column store', () => {
 
     await handlers.rebuild({ type: 'rebuild' } as never);
 
-    // The detail panel reads both of these; before the fix each came back undefined.
     expect(session.columnStore.getDdl('[dbo].[v]')).toBe(VIEW_DDL);
     expect(session.columnStore.getColumns('[dbo].[v]')).toHaveLength(1);
     expect(host.postMessage).toHaveBeenCalledWith(
@@ -87,7 +86,6 @@ describe('rebuild preserves the column store', () => {
   it('keeps a stored run\'s DDL digest matching after a rebuild, so nothing reports stale', async () => {
     const model = modelWithBody();
     const session = seededSession(model);
-    // The digest a run stores at save time.
     const storedHash = hashDdl(session.columnStore.getDdl('[dbo].[v]'));
     const host = fakeHost();
     const { handlers } = createMessageHandlers(

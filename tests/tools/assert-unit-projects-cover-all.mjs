@@ -1,19 +1,4 @@
 #!/usr/bin/env node
-// Gate step: every unit test file runs in exactly one of the gate's two unit projects.
-//
-// `npm test` runs `tests/unit/**/*.test.ts` and `tests/unit/**/*.test.tsx` from one glob, but
-// the gate runs `coverage:core` and `test:runtime` — two hard-coded path lists. They happen to
-// cover the same files today, and nothing enforces it: a new `tests/unit/<dir>/` would be
-// picked up by `npm test` and silently never run by the gate, so a green gate would stop
-// meaning "the unit suite passed".
-//
-// This compares the two and fails on either half of the mismatch — a file no project claims, or a
-// file two projects both claim (which double-counts a suite total and makes a per-project failure
-// ambiguous). It reads the path lists out of package.json rather than restating them, so the check
-// cannot drift from the scripts it is checking.
-//
-// Usage:
-//   node tests/tools/assert-unit-projects-cover-all.mjs
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -54,7 +54,6 @@ export function useGraphology(): UseGraphologyReturn {
     const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
     const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
 
-    // Fused type + ext refs filter (single node pass)
     const isVirtual = (n: { externalType?: string }) =>
       n.externalType === 'file' || n.externalType === 'db';
     const allExtRefsVisible = filter.showExternalRefs && filter.externalRefTypes.has('file') && filter.externalRefTypes.has('db');
@@ -79,7 +78,6 @@ export function useGraphology(): UseGraphologyReturn {
     const count = allowlistFiltered.nodes.length;
     setFilteredCount(count);
 
-    // Schemas with only external objects stay here so they're selectable in the filter; Legend filters them out for display.
     const schemas = [...new Set(
       allowlistFiltered.nodes.map(n => n.schema)
     )].filter(s => !!s && s.trim().length > 0).sort();
@@ -98,7 +96,6 @@ export function useGraphology(): UseGraphologyReturn {
         };
       });
 
-    // Guard 1: full-object render limit blocks only the React Flow surface; the graphology model stays available to other surfaces.
     if (count > config.renderLimit) {
       log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
       const result = buildGraphNoLayout(allowlistFiltered, config);
@@ -112,7 +109,6 @@ export function useGraphology(): UseGraphologyReturn {
 
     setRenderLimitHit(0);
 
-    // Guard 2: this hook skips layout only when the caller explicitly asks for Schema View.
     if (skipLayout) {
       const result = buildGraphNoLayout(allowlistFiltered, config);
       setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
@@ -123,7 +119,6 @@ export function useGraphology(): UseGraphologyReturn {
       return count;
     }
 
-    // Full mode — dagre runs; fall back to unpositioned graph on any layout failure.
     const t0 = performance.now();
     let result: ReturnType<typeof buildGraph>;
     let layoutFailed = false;

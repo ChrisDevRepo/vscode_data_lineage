@@ -17,6 +17,7 @@ import {
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
 import { quoteIds } from '../support/text';
+import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
 
 /**
@@ -491,11 +492,125 @@ function encodeFocusNodeId(id: string): string {
  * transport line into a small muted paragraph, so the link list reads as a
  * side note at body-small size instead of competing with the section heading.
  *
+ * Captured detail-slot callouts (`opts.detailSlots`) are delivered here for the same reason
+ * badges and numbering are engine-owned: the node-level link check accepts a section that names
+ * the node while omitting individual captured findings, so the assembler restores every absent
+ * callout verbatim into its node's section. The rendered preview then drops no captured
+ * information regardless of how the model phrased the section.
+ *
  * @param sections - AI-authored sections containing labels, node associations, and text.
  * @param opts - Optional wrapper blocks for the final document.
  * @returns The numbered badges for the graph, the fully assembled markdown description, and any
  *   duplicate section links first-wins dropped while assembling them.
  */
+
+/** Minimum normalized length for a backtick-quoted fragment to fingerprint a captured callout. */
+const DETAIL_CALLOUT_FINGERPRINT_MIN = 8;
+
+/**
+ * Normalizes text for callout-presence matching: case, quote/emphasis markers, and whitespace
+ * never distinguish two renderings of the same captured statement.
+ */
+function normalizeCalloutFingerprint(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/⚠️/g, '')
+    .replace(/[`*_#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Extracts the ⚠️ callout lines from captured section text, stripped of any leading list marker.
+ *
+ * @param text - One captured `DetailSlot` section body.
+ * @returns The verbatim callout lines, in authored order.
+ */
+function extractCapturedCallouts(text: string): string[] {
+  const callouts: string[] = [];
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim().replace(/^[-*]\s+/, '');
+    if (line.startsWith('⚠️')) callouts.push(line);
+  }
+  return callouts;
+}
+
+/**
+ * Derives presence fingerprints for one captured callout line.
+ *
+ * @remarks
+ * The capture contract quotes the row-losing statement in backticks, so each quoted fragment long
+ * enough to be distinctive is a fingerprint: a section that re-quotes every quoted statement counts
+ * as carrying the callout even when the surrounding prose is reworded. A callout with no usable
+ * quote falls back to its own normalized line.
+ *
+ * @param callout - One verbatim ⚠️ line from {@link extractCapturedCallouts}.
+ * @returns Normalized fingerprints; empty only when the line carries no matchable text.
+ */
+function calloutFingerprints(callout: string): string[] {
+  const quoted: string[] = [];
+  for (const match of callout.matchAll(/`([^`]+)`/g)) {
+    const fingerprint = normalizeCalloutFingerprint(match[1]);
+    if (fingerprint.length >= DETAIL_CALLOUT_FINGERPRINT_MIN) quoted.push(fingerprint);
+  }
+  if (quoted.length > 0) return quoted;
+  const whole = normalizeCalloutFingerprint(callout);
+  return whole.length > 0 ? [whole] : [];
+}
+
+/**
+ * Groups captured ⚠️ callouts absent from the assembled text by their owning section.
+ *
+ * @remarks
+ * Presence is tested against the whole document, not just the owning section: synthesis may
+ * legitimately group sibling findings across nodes, and a callout discussed under another section
+ * is delivered, not dropped. Only a callout with at least one quoted statement absent everywhere
+ * is restored, verbatim, to its own node's section. A paraphrase that never re-quotes the captured
+ * statement is restored alongside
+ * it — completeness over brevity, since the engine cannot prove the paraphrase covers the quoted
+ * statement and the no-drop ruling collapses only true duplication. Slots with no linked section
+ * are ignored: the caller's unlinked-slot rejection owns that case.
+ *
+ * @param labelToNodeIds - Section-linked node ids per rendered label, first-wins as for badges.
+ * @param haystack - Normalized full-document text used for presence matching.
+ * @param detailSlots - Captured slots for the rendered nodes, if any.
+ * @returns Missing callout lines per rendered label; empty when everything is already present.
+ */
+function findMissingDetailCallouts(
+  labelToNodeIds: ReadonlyMap<string, readonly string[]>,
+  haystack: string,
+  detailSlots: readonly DetailSlot[] | undefined,
+): Map<string, string[]> {
+  const missing = new Map<string, string[]>();
+  if (!detailSlots || detailSlots.length === 0) return missing;
+  const nodeToLabel = new Map<string, string>();
+  for (const [label, ids] of labelToNodeIds) {
+    for (const id of ids) {
+      const key = id.toLowerCase();
+      if (!nodeToLabel.has(key)) nodeToLabel.set(key, label);
+    }
+  }
+  const seen = new Set<string>();
+  for (const slot of detailSlots) {
+    const label = nodeToLabel.get(slot.nodeId.toLowerCase());
+    if (label === undefined) continue;
+    for (const section of slot.sections ?? []) {
+      for (const callout of extractCapturedCallouts(section.text)) {
+        const fingerprints = calloutFingerprints(callout);
+        if (fingerprints.length === 0) continue;
+        if (fingerprints.every(fingerprint => haystack.includes(fingerprint))) continue;
+        const dedupKey = `${label}\n${normalizeCalloutFingerprint(callout)}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        const lines = missing.get(label);
+        if (lines) lines.push(callout);
+        else missing.set(label, [callout]);
+      }
+    }
+  }
+  return missing;
+}
+
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
   opts?: {
@@ -506,36 +621,34 @@ export function orderAndAssemble(
     closing?: string;
     /** Optional node lookup for injecting clickable object-link footnotes per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
+    /**
+     * Captured detail slots for the rendered nodes. Every ⚠️ callout a section-linked slot
+     * carries is guaranteed a place in the assembled description: callouts whose quoted
+     * statements are all present are left alone, the rest are appended verbatim to the owning
+     * section under a `Captured callouts` marker. Slots with no linked section are ignored
+     * here — the caller's unlinked-slot rejection owns that case.
+     */
+    detailSlots?: readonly DetailSlot[];
   },
 ): {
   badges: Array<{ node_id: string; text: string }>;
   description: string;
   droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }>;
 } {
-  // Strip leading "N " or "N. " so AI numbers don't interfere with label matching.
   const stripLeadingNumber = (s: string) => (typeof s === 'string' ? s : '').replace(/^\d+[\.]?\s+/, '').trim();
 
-  // First occurrence index per label — preserves AI's narrative order
   const labelToAiIndex = new Map<string, number>();
   sections.forEach((sec, i) => {
     const norm = stripLeadingNumber(sec.label);
     if (!labelToAiIndex.has(norm)) labelToAiIndex.set(norm, i);
   });
 
-  // Unique labels in AI's sections[] order
   const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
   uniqueLabels.sort((a, b) => (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0));
 
-  // Assign step number N per unique label (1-based, in AI's narrative order)
   const labelToNumber = new Map<string, number>();
   uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
 
-  // One badge per node is a rendering constraint, so the engine resolves it here rather than
-  // charging the model a repair turn for a section split that is factually right. First-wins: the
-  // first section claiming a node owns its badge chip and its object link; a later claim is
-  // dropped from BOTH surfaces, so the chip and the section footnote can never disagree. The
-  // later section's TEXT is untouched — a node participating in several steps stays described in
-  // each of them, it just carries one badge.
   const nodeToLabel = new Map<string, string>();
   const labelToNodeIds = new Map<string, string[]>();
   const droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }> = [];
@@ -554,7 +667,6 @@ export function orderAndAssemble(
     }
   }
 
-  // Emit numbered badge chips, dropping any node whose label has no matching section.
   const numberedBadges = [...nodeToLabel.entries()]
     .map(([node_id, label]) => {
       const n = labelToNumber.get(label);
@@ -564,8 +676,18 @@ export function orderAndAssemble(
     .sort((a, b) => a._n - b._n)
     .map(({ node_id, text }) => ({ node_id, text }));
 
-  // Assemble markdown: title → intro → ## sections → closing
   const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
+
+  const detailHaystack = normalizeCalloutFingerprint(
+    [opts?.title, opts?.intro, opts?.preface, ...sectionMap.values(), opts?.closing]
+      .filter((part): part is string => typeof part === 'string')
+      .join('\n'),
+  );
+  const missingCallouts = findMissingDetailCallouts(labelToNodeIds, detailHaystack, opts?.detailSlots);
+  for (const [label, lines] of missingCallouts) {
+    const body = sectionMap.get(label) ?? '';
+    sectionMap.set(label, `${body}\n\n**Captured callouts:**\n${lines.map(line => `- ${line}`).join('\n')}`);
+  }
 
   const parts: string[] = [];
   if (opts?.title)        parts.push(`# ${opts.title}`);
@@ -767,17 +889,11 @@ export function validatePresentResult(
   nodeIdState?: PresentNodeIdStateLookup,
 ): PresentResultRequest | PresentResultError {
   const errors: string[] = [];
-  // Structural classification — the failed field AND repairability are set once per addError call at the exact site the error is known, never re-derived later by matching error TEXT (see PresentResultError.repairable). A message rewording can therefore never desync the repair-hint field list.
   let allRepairable = true;
   const repairFields = new Set<PresentResultRepairField>();
   const failedFields = new Set<PresentResultFailedField>();
-  // Offending entry paths, collected at the same call sites for the same reason the field list is: a rejection that names a rule but not the offender costs a repair round to locate.
   const issuePaths = new Set<string>();
-  // Offending node ids per path — the same reason the paths are collected, one level finer, so `detail` states which id failed where instead of leaving the model to intersect two lists.
   const pathUnlinkableIds = new Map<string, readonly string[]>();
-  // Offending entries per path for an id-shaped violation (see `PresentResultViolation.entryIds`) —
-  // never a node-resolution offender, so kept out of `pathUnlinkableIds`, whose `state` label does
-  // not apply to an already-resolved entry that is merely uncovered.
   const pathEntryIds = new Map<string, readonly string[]>();
   const addError = (
     field: PresentResultFailedField,
@@ -797,17 +913,14 @@ export function validatePresentResult(
       if (entryIds.length > 0) pathEntryIds.set(path, entryIds);
     }
   };
-  // Set only at the unexplained-highlight addError call below — drives a bespoke hint override instead of the generic single-field template, which would misclassify/foreclose this 3-field class.
   let hasUnexplainedHighlightGap = false;
 
-  // Findings computed by callers that hold context this function does not — the cached discovery answer, the result graph. Reported first so their messages keep the priority they had when each owned its own early return, but through this accumulator so a payload carrying one of them plus a structural defect reports both in one round instead of one per round.
   const soleHints = externalViolations.flatMap(violation => violation.soleHint ?? []);
   for (const violation of externalViolations) {
     for (const message of violation.messages) {
       addError(violation.field, message, violation.repairFields, violation.paths, [], violation.entryIds);
     }
   }
-  // How many of `errors` came from callers — lets a caller's own hint stand while it is the only thing wrong, without assuming one violation means one message.
   const externalErrorCount = errors.length;
 
   /**
@@ -829,17 +942,13 @@ export function validatePresentResult(
     limit: number,
   ): void => {
     if (value.length <= limit) return;
-    // The path is stated in the message as well as in `detail`, which the rejection replay drops.
     addError(field, `${path} is over its length limit: ${value.length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`, [field], [path]);
   };
 
-  // Presence, then the hard cap. `summary` is prose (the one-line graph purpose) and is deliberately
-  // uncapped, so only its presence is checked.
   if (!input.name || input.name.trim().length === 0) addError('name', 'name is required');
   else addLengthError('name', 'name', input.name, PRESENT_RESULT_NAME_MAX);
   if (typeof input.title === 'string') addLengthError('title', 'title', input.title, PRESENT_RESULT_TITLE_MAX);
 
-  // Node set must be non-empty (after resolve + prune)
   if (resolvedNodeIds.length === 0) {
     addError('nodes', 'No nodes in view — the result graph is empty or all nodes were pruned');
   }
@@ -852,14 +961,6 @@ export function validatePresentResult(
   const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
   const sectionLinkedNodeIds = new Set<string>();
 
-  // The node-id contract, computed once for the whole call.
-  //
-  // Every `node_ids` entry was already normalized against the whole loaded model by the dispatcher,
-  // so an id the result graph rejects is either a hallucination or a real object in a state the
-  // engine records — and calling the second one "unknown" tells the model to invent a replacement
-  // instead of moving the fact into prose. The census is call-level, not per-site, because the model
-  // sees only the first reason line: the replay caps it and drops `detail`, so an offender named
-  // solely in the third message never reaches it.
   const resolvedSet = new Set(resolvedNodeIds);
   const nodeIdStateCache = new Map<string, PresentNodeIdState>();
   const stateOf = (nodeId: string): PresentNodeIdState => {
@@ -875,8 +976,6 @@ export function validatePresentResult(
     ...(input.notes ?? []).map(note => note.node_id),
     ...(input.highlight_groups ?? []).flatMap(group => group.node_ids ?? []),
   ].filter(id => !resolvedSet.has(id)))];
-  // A call whose every offender is unresolvable keeps the wording it always had; one real offender
-  // is enough to stop describing the whole set as unknown.
   const allHallucinated = unlinkableNodeIds.every(id => stateOf(id) === 'not_in_model');
   const nodeIdNoun = allHallucinated
     ? 'contains unknown IDs'
@@ -899,17 +998,11 @@ export function validatePresentResult(
       + ` ${presentNodeIdHint(stage)}`;
   };
 
-  // Either AI submitted sections[] (which the engine assembles into a description before
-  // validation) OR an engine-assembled description is supplied. Without one, there's no body.
   if (!hasSections && !hasAssembled) {
     addError('sections', 'sections[] is required — provide at least one section with label and text; node_ids[] is optional.');
   }
 
-  // Markdown/KaTeX formatting is never validated here: a formatting flaw must not reject a call
-  // or kill a session. The webview renderer degrades invalid math to its original source text
-  // and formatting quality is checked by the offline test harness only.
 
-  // Sections validation — final labels/text are 1:1 and mandatory; node links are optional.
   if (hasSections) {
     const labels = new Set<string>();
     for (const [sectionIndex, sec] of input.sections.entries()) {
@@ -918,7 +1011,6 @@ export function validatePresentResult(
       if (!label) {
         addError('sections', 'Section label is required — provide a short final label for this detail section');
       } else {
-        // Label brevity is prompt-owned content quality; the hard cap and structural validity stay here.
         addLengthError('sections', `sections.${sectionIndex}.label`, sec.label, PRESENT_RESULT_SECTION_LABEL_MAX);
         if (labels.has(normalizedLabel)) {
           addError('sections', `Duplicate section label "${label}" — each final label must map to exactly one section text`);
@@ -928,13 +1020,8 @@ export function validatePresentResult(
       if (sec.node_ids?.length) {
         const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
         if (unknownIds.length > 0) {
-          // Scoped repair: an unknown node_ids entry taints only this section's linking, never the
-          // section text or any other section/note/highlight content the model already got right.
           addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
         }
-        // One badge per node is a rendering constraint with a deterministic resolution, so
-        // `orderAndAssemble` applies first-wins and logs the dropped links. Rejecting here charged
-        // the model a repair turn for a byte-identical resend it had no way to improve.
         for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
           sectionLinkedNodeIds.add(nodeId);
         }
@@ -951,8 +1038,6 @@ export function validatePresentResult(
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
-        // Scoped repair: an unknown note node_id taints only the notes[] collection, never
-        // sections or highlight_groups the model already got right.
         addError('notes', `notes[].node_id ${nodeIdNoun}: ${renderNodeIdStates([note.node_id])}.${nodeIdRejectionTail([note.node_id])}`, ['notes'], [`notes.${noteIndex}`], [note.node_id]);
       }
       if (typeof note.text !== 'string' || note.text.trim().length === 0) {
@@ -961,8 +1046,6 @@ export function validatePresentResult(
     }
   }
 
-  // highlight_groups validation — required for new renders; inherited (optional) only when this render
-  // amends an existing one (engine-derived isAmendment), never on the model's raw is_update flag.
   const highlightedNodeIds = new Set<string>();
   if (!input.highlight_groups || input.highlight_groups.length === 0) {
     if (!isAmendment) {
@@ -978,8 +1061,6 @@ export function validatePresentResult(
       if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
       const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
       if (unknownIds.length > 0) {
-        // Scoped repair: an unknown highlight node_ids entry taints only highlight_groups, never
-        // the sections/notes content the model already got right.
         addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
       }
       for (const nodeId of g.node_ids ?? []) {
@@ -988,8 +1069,6 @@ export function validatePresentResult(
     }
   }
 
-  // Highlighted nodes require an explanation, but unhighlighted preview nodes do not require notes.
-  // A repair may add or relink the missing explanation without modifying the locked graph.
   const unexplainedHighlightNodeIds = [...highlightedNodeIds].filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id));
   if (unexplainedHighlightNodeIds.length > 0) {
     hasUnexplainedHighlightGap = true;
@@ -1000,10 +1079,6 @@ export function validatePresentResult(
     );
   }
 
-  // Offending paths, plus — where the offence was a node id — that path's ids with their recorded
-  // state and, once per rejection, the uncapped accepted set. The message states capped versions of
-  // both because `detail` is dropped from the rejection replay; this is the full record for the
-  // first delivery and the diagnostic trace.
   const buildRejectionDetail = (): PresentResultError['detail'] => {
     let acceptedStated = false;
     return [...issuePaths].map(path => {
@@ -1022,9 +1097,7 @@ export function validatePresentResult(
   };
 
   if (errors.length > 0) {
-    // The failed-field list is attached structurally at each addError site above.
     const fieldList = [...failedFields];
-    // The resend list is the same field set that narrows the repair schema.
     const resendList = [...repairFields];
     let hint = fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`
@@ -1032,14 +1105,9 @@ export function validatePresentResult(
     if (failedFields.has('sections')) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }
-    // The unexplained-highlight-coverage gap authorizes three repair fields (sections, notes,
-    // highlight_groups), and its node ids are already resolved, so the generic single-field and
-    // unknown-ID hints above both misfire for it. Override only when it is the sole failure; a
-    // mixed batch keeps the generic hint.
     if (hasUnexplainedHighlightGap && errors.length === 1) {
       hint = "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a note naming it, or drop it from highlight_groups[] if it is uncolored plumbing.";
     }
-    // Same rule for a caller-supplied class: its wording stands only while nothing else is wrong.
     if (soleHints.length === 1 && errors.length === externalErrorCount) {
       hint = soleHints[0];
     }
@@ -1059,10 +1127,6 @@ export function validatePresentResult(
     node_ids: resolvedNodeIds,
     summary: input.summary,
     description: assembledDescription!,
-    // No default: an omitted direction must stay omitted so the renderer falls through to
-    // `config.layout.direction`, the same owner the object view reads. Substituting a literal here
-    // made every AI view top-to-bottom against the shipped left-to-right setting, and the column
-    // node's Left/Right handles and Top/Bottom annotation toolbars are laid out for that setting.
     layout_direction: input.layout_direction,
     highlight_groups: input.highlight_groups ?? [],
     badges: assembledBadges ?? [],

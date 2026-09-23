@@ -160,7 +160,13 @@ The shipped template file groups the public customization surface into:
 
 Business and technical capture follow the locked classification. Column-trace
 capture is available only in CT mode. Structural capture replaces business and
-technical capture on non-bodied focus nodes. The closing instruction may be
+technical capture on non-bodied focus nodes and renders on its own, with no
+header. On a bodied focus the capture recipe opens with an engine-owned header
+that an overlay cannot replace: one `sections[]` entry per angle, SQL quoted
+only as an exact substring of the focus DDL, and the `not established from the
+available SQL` wording. The business, technical and structural-callout keys
+carry only their numbered items and the ⚠️ rule, never a copy of that header.
+The closing instruction may be
 omitted for small results. Empty template values are skipped. Templates are
 self-contained: no template references another template or a slot that its
 own rendering combination can suppress (the ETL loading-pattern statement
@@ -311,21 +317,36 @@ preview is a separate discovery path and does not grant SM mutation authority.
 
 ### Submit findings
 
-`lineage_submit_findings` uses a mode-specific strict schema:
+`lineage_submit_findings` uses a mode-specific strict schema. Every hop states a
+per-hop verdict: `analyze` (transforms data on the answer path), `passthrough`
+(on the path, handing values on unchanged), or `end_branch` (removes this node,
+and every open node reachable only through it, from the result for the rest of
+the run). A kept verdict (`analyze` or `passthrough`) requires `sections` and
+`summary`, and may add `badge_label`; `end_branch` carries only a required
+`reason` and excludes every findings field — the two shapes never mix on one
+submit.
+`end_branch` is refused on the start object (`prune_origin_forbidden`) and on a
+node a committed `column_flow` has already named for a tracked column
+(`prune_carries_tracked_column`).
 
-- BB accepts the focus verdict, classified sections, routing requests, and
-  optional neighbor pruning. Neighbor pruning applies only to topology-safe
-  adjacent objects outside the approved exploration scope; approved in-scope
-  objects remain protected and can be removed only through their own validated
-  focus verdict.
-- CT accepts the same focus verdicts, requires `column_flow`, and keeps the
-  neighbor-pruning field with a per-neighbor column decision. Each active tracked column must be continued
-  or marked terminal; an empty flow is valid only when the focus carries no
-  active tracked-column interaction. CT is BB plus column tracking: the engine
-  verifies every declared column against the loaded model and returns the repair
-  with any rejection, so an unsupported reference is corrected on the next
-  attempt instead of reaching the answer. `column_flow` records provenance and
-  never narrows what the answer retains.
+- BB accepts the focus verdict, classified sections, and two optional
+  neighbor-decision arrays: `prune_neighbors` (`[{id, reason}]`, based on this
+  node's SQL alone) and `questions` (`[{nodeId, question}]`, a specific check
+  attached to that neighbor's queued hop). There is no separate routing field —
+  every remaining open in-scope neighbor not named in `prune_neighbors` is
+  enqueued and visited once, automatically, through the same border checks a
+  route request used to trigger. A prune removes any open neighbor and every
+  node reachable only through it; naming a neighbor already visited, analyzed,
+  queued or removed is a no-op (`prune_noop_visited`, `prune_noop_analyzed`,
+  `prune_noop_queued`, `prune_noop_removed`) and changes nothing.
+- CT accepts the same focus verdicts and neighbor-decision arrays, plus a
+  required `column_flow` on a kept verdict. Each active tracked column must be
+  continued or marked terminal; an empty flow is valid only when the focus
+  carries no active tracked-column interaction. CT is BB plus column tracking:
+  the engine verifies every declared column against the loaded model and
+  returns the repair with any rejection, so an unsupported reference is
+  corrected on the next attempt instead of reaching the answer. `column_flow`
+  records provenance and never narrows what the answer retains.
 - Each upstream column reference in `column_flow` may carry `transforms`: how
   that upstream column reaches the output column, as one or more of
   `pass_through`, `compute`, `aggregate`, `combine` and `filter`. Multi-select,
@@ -335,38 +356,30 @@ preview is a separate discovery path and does not grant SM mutation authority.
   unclassified. The value set and its DIRECT / INDIRECT split have one home,
   `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`, shared by
   the tool schema, the wire contract and the webview.
-- A CT routing request must state `columns` for every routed neighbor — a
-  non-empty list, or the literal `none` — never an empty array and never an
-  omitted field. Two states, kept apart end to end: a non-empty list names the
-  columns to trace through that neighbor; `none` marks a neighbor that only
-  decides which rows the answer returns, so it is explored as a whole object
-  and is not asked about columns it does not supply. `none` is a word rather
-  than an empty array because an empty array and a stated "no columns" would
-  be one payload with two meanings. There is no default reading of an omitted
-  field: a CT route that skips the decision is rejected before commit, and no
-  fallback reapplies the session's original target columns to a node several
-  hops from where they were resolved. The field is BB-unknown and is refused
-  in a BB session by the same rejection that refuses `column_flow` there. A
-  `none` on a node the SAME submission names in `column_flow[].upstream_columns`
-  is one payload contradicting itself, so it is refused
-  (`route_columns_flow_conflict`) with the neighbor and the attributed columns
-  named — the engine states the conflict rather than picking a winner. The
-  check is on the submit, not on whether BB would admit the neighbor; the
-  repair path is `route_requests[].columns`. The refusal is scoped to
-  model-authored routes: the engine synthesizes routes of
-  its own from `column_flow` and from the required-neighbor fill, and states
-  their columns at the point of synthesis. A `none` contradicted by an edge
-  committed at an EARLIER hop is not refused — each statement was correct for
-  the hop that made it — and is honored as submitted; the committed column is
-  recovered at dispatch rather than dropped.
+- A neighbor decision carries no columns. What a kept neighbor carries in CT is
+  derived from the same submit's `column_flow` — the columns `upstream_columns`
+  names on it, and, downstream, the `out_col` a writer focus attributes to its
+  readers via `writes_to` — and a kept neighbor named in no entry is explored as
+  a whole object (`row_role_only`), not asked about columns it does not supply.
+  There is no default reading that reapplies the session's original target
+  columns to a node several hops from where they were resolved; a column edge
+  committed at an earlier hop is recovered at dispatch rather than dropped.
+
+An accepted `end_branch`, or a pruned neighbor, cuts every unvisited node
+reachable from the origin only through it: the engine drops those nodes from
+the open set, logs the cut, and records it as node state — the model is never
+told which nodes a cut removed. The scheduler dispatches the remaining open
+nodes by Kahn readiness (a strongly connected component, found by Tarjan,
+dispatches as one unit) and tie-breaks a ready set by tier, then distance from
+the origin, then id; a node is visited at most once.
 
 The locked answer classification determines which section angles are required.
 Validation requires the locked angles to be present; off-classification
 sections are then dropped deterministically at commit (not rejected — a
 surplus section is not a field-scoped defect the held-draft repair flow could
-patch), so a business-only answer cannot carry technical sections. Route,
+patch), so a business-only answer cannot carry technical sections. Neighbor,
 column, and prune checks run before commit. A rejected submission does
-not partially update findings, lifecycle, or routing state. Rejections return a
+not partially update findings, lifecycle, or scheduling state. Rejections return a
 machine-readable error, corrective hint, and relevant valid-set details.
 Unresolvable external references are recorded as notices and skipped when the
 engine can safely continue. A repeated request for an object already removed
@@ -475,8 +488,8 @@ directly according to the phase policy.
 - Host prompt precedence: through `vscode.lm` the request also carries Copilot
   Chat's own `system` message (keep answers short, Markdown, KaTeX `$`/`$$`,
   mermaid code blocks) while the extension's instruction rides in the first
-  user turn. The extension therefore states its depth contract and its "describe
-  lineage in prose; never draw it as mermaid, ASCII, or DOT" rule explicitly
+  user turn. The extension therefore states its depth contract and its "the extension
+  draws the graph; describe lineage in tables, lists and prose" rule explicitly
   instead of assuming a clean system prompt; KaTeX delimiters agree with the
   host and need no override.
 - Heading ownership: the engine owns the document title, numbered section
@@ -508,13 +521,10 @@ need catalog or runtime evidence.
    hop diagnostics, and structured rejection envelopes.
 6. Verify the final chat answer, graph badges/highlights, and notes together.
 
-Run `npm test` for the full prompt/tool contract suite. Use
-`npm run test:runtime` for the AI-core and navigation/state-machine projects, and run a
-focused file with:
-
-```bash
-node tests/tools/run-vitest.mjs run tests/unit/sm/prompt-composition.test.ts
-```
+`npm run test:runtime` runs the public agent-runtime smoke and contract tests: tool
+registration, security boundaries, session and turn-lease lifecycle, and architecture rule
+gates. Prompt composition, state-machine depth and repair behaviour are covered by the
+internal suite, not the public repository.
 
 Prompt changes must update matching tests or fixtures. Generated trace snapshots
 are diagnostic evidence, not a source of truth.

@@ -23,7 +23,6 @@ import {
 import type { ColumnDef } from '../../../src/engine/types';
 import { ENGINE_EDITION_FABRIC } from '../../../src/engine/types';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function col(
   name: string,
@@ -66,7 +65,6 @@ describe('ProfilingEngine pure functions', () => {
     expect(typeBadgeLabel('uniqueidentifier'), 'uniqueidentifier badge is UUID').toBe('UUID');
     expect(typeBadgeLabel('xml'), 'xml badge is XML').toBe('XML');
     expect(typeBadgeLabel('timestamp'), 'timestamp badge is TS').toBe('TS');
-    // Unknown type falls back to first 4 chars uppercased
     expect(typeBadgeLabel('cursor'), 'unknown type truncates to 4 chars').toBe('CURS');
   });
 
@@ -101,14 +99,12 @@ describe('ProfilingEngine pure functions', () => {
   });
 
   it('buildRowCountQuery escapes ] in identifiers', () => {
-    // Schema/table names containing ] must be escaped
     const q = buildRowCountQuery('my]schema', 'my]table');
     expect(q.includes('[my]]schema]'), 'buildRowCountQuery escapes ] in schema name').toBe(true);
     expect(q.includes('[my]]table]'), 'buildRowCountQuery escapes ] in table name').toBe(true);
   });
 
   it('buildColumnAggregations — quick mode', () => {
-    // Quick mode: only distinct count, no advanced aggregations
     const cols: ColumnDef[] = [col('Id', 'int'), col('Name', 'nvarchar(100)', 'NULL')];
     const aggs = buildColumnAggregations(cols, false, 'quick');
 
@@ -118,12 +114,10 @@ describe('ProfilingEngine pure functions', () => {
     expect(aggs[0].fragments.some(f => f.includes('COUNT(DISTINCT')), 'Id uses COUNT(DISTINCT) when useApprox=false').toBe(true);
     expect(aggs[0].fragments.some(f => f.includes('MIN(')), 'quick mode emits no MIN for integer').toBe(false);
 
-    // Nullable Name column gets null counter
     expect(aggs[1].fragments.some(f => f.includes('IS NULL')), 'nullable column gets null counter fragment').toBe(true);
   });
 
   it('buildColumnAggregations — standard mode, decimal', () => {
-    // Standard mode: integer gets MIN/MAX/AVG/STDEV
     const cols: ColumnDef[] = [col('Amount', 'decimal(18,4)', 'NULL')];
     const aggs = buildColumnAggregations(cols, false, 'standard');
     const frags = aggs[0].fragments;
@@ -136,7 +130,6 @@ describe('ProfilingEngine pure functions', () => {
   });
 
   it('buildColumnAggregations — standard mode, string', () => {
-    // Standard mode: string gets LEN min/max and empty counter
     const cols: ColumnDef[] = [col('Description', 'nvarchar(max)', 'NULL')];
     const aggs = buildColumnAggregations(cols, false, 'standard');
     const frags = aggs[0].fragments;
@@ -146,7 +139,6 @@ describe('ProfilingEngine pure functions', () => {
   });
 
   it('buildColumnAggregations — standard mode, datetime', () => {
-    // Standard mode: datetime gets MIN/MAX only
     const cols: ColumnDef[] = [col('CreatedAt', 'datetime2')];
     const aggs = buildColumnAggregations(cols, false, 'standard');
     const frags = aggs[0].fragments;

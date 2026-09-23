@@ -4,11 +4,12 @@
  * @remarks
  * A pure set difference (`required − accounted`) over `normalizeColName` — the same normalizer
  * `ColumnTracer.validateColumnFlow` accepts a submitted `out_col` under, so a value one guard admits
- * can never be reported unaccounted by the other. BB neighbor completeness (`requiredNeighborIds` →
- * `missing_required_route`) is a separate, unrelated mechanism and does not use this module.
+ * can never be reported unaccounted by the other. Neighbor enqueueing (every open neighbor a hop
+ * does not prune) is a separate, unrelated mechanism and does not use this module.
  */
 
 import { normalizeColName } from '../../utils/sql';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 import type { SubmitResult } from './smTypes';
 
 /**
@@ -57,7 +58,7 @@ export function buildIncompleteRejection(
     ? `${entryRepair}. ${focusId} declares [${contradicted.join(', ')}], so it carries the column and verdict:'passthrough' with column_flow:[] is not available here.`
     : `${entryRepair}, or return verdict:'passthrough' with column_flow:[].`;
   return {
-    error: 'column_chain_incomplete',
+    error: REJECTION_CODES.columnChainIncomplete,
     hint: `Tracked columns [${unaccounted.join(', ')}] are not accounted for at ${focusId}. ${repair}${appendHeldOrder ? ` ${held}` : ''}`,
     detail: contradicted.length > 0
       ? { unaccounted, available_columns: available, declared_here: [...contradicted] }

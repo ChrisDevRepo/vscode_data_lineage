@@ -114,9 +114,6 @@ export function sanitizeProviderErrorDiagnostic(error: unknown, phase: string): 
     const record = value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
     const rawName = value instanceof Error ? value.name : typeof record?.name === 'string' ? record.name : 'Error';
     const rawMessage = value instanceof Error ? value.message : typeof record?.message === 'string' ? record.message : String(value);
-    // A non-empty string code is authoritative. An absent, empty, or numeric code (Electron
-    // attaches the Chromium errno as a number) falls back to the message token, so a dropped
-    // connection is still classified as transport.
     const stringCode = typeof record?.code === 'string' && record.code.trim() !== '' ? record.code : undefined;
     const rawCode = stringCode
       ?? chromiumNetworkCode(rawMessage)
@@ -223,7 +220,6 @@ export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic
   return `The AI provider reported an error (${detail}).`;
 }
 
-// `:` is allowed so a Chromium `net::ERR_*` token survives intact; still a strict allowlist with no whitespace, quotes, or control characters.
 function safeDiagnosticToken(value: string, fallback: string): string {
   return sanitizeProviderError(value).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 100) || fallback;
 }

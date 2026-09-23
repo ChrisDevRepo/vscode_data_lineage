@@ -44,10 +44,8 @@ const DEFAULT_DETAIL_CONFIG: DetailConfig = {
 /** VS Code API acquired once for the detail webview lifecycle. */
 const _vscodeApi = acquireVsCodeApi();
 
-// Expose the VS Code API globally for components that cannot use hooks (e.g., class-based ErrorBoundaries).
 window.vscode = _vscodeApi;
 
-// Register global crash handlers to ensure webview errors are bubbled up to the extension's log channel.
 window.addEventListener('unhandledrejection', (event) => {
   const msg = event.reason instanceof Error ? event.reason.message : String(event.reason);
   _vscodeApi.postMessage({ type: 'error', error: `[Detail] Unhandled rejection: ${msg}` });
@@ -66,16 +64,12 @@ export function DetailApp() {
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
   const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('ddl');
 
-  // Keep ref in sync so the stable message handler can read the current node id.
   nodeIdRef.current = detail?.node?.id;
 
   useEffect(() => {
-    // Handles incoming messages from the VS Code extension host.
     function handler(e: MessageEvent) {
-      // Single validated inbound dispatcher — host→detail messages are Zod-checked here, never read raw.
       const frame = validateBridgeFrame(ExtensionToDetailMsgSchema, e.data);
       if (!frame.ok) {
-        // `postToDetail` stamps every frame, so a version mismatch means the host bundle and this view disagree about the contract — report it instead of half-rendering.
         if (frame.reason === 'version') {
           vscodeApi.current.postMessage({
             type: 'error',
@@ -87,7 +81,6 @@ export function DetailApp() {
       const msg = frame.data;
 
       if (msg.type === 'detail-update') {
-        // Reset statistics state when the node changes.
         setStatsState(prev => nodeIdRef.current !== msg.node?.id ? { phase: 'idle' } : prev);
         setDetail({
           node:      msg.node,
@@ -104,12 +97,10 @@ export function DetailApp() {
       }
     }
     window.addEventListener('message', handler);
-    // Signal to the host that the detail view is ready to receive data.
     vscodeApi.current.postMessage({ type: 'detail-ready' });
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  // Reset toggle to DDL view when switching to a different node.
   useEffect(() => { setDetailMode('ddl'); }, [detail?.node?.id]);
 
   if (!detail) {
@@ -130,7 +121,6 @@ export function DetailApp() {
   const isTable = node.type === 'table' || node.type === 'external';
   const hasColumnsAndDdl = !!(node.columns?.length && node.bodyScript);
 
-  // Dispatches a request to the host to profile the current table/view.
   function handleRequestStats(mode: StatsMode) {
     vscodeApi.current.postMessage({
       type: 'table-stats-request',
@@ -142,12 +132,10 @@ export function DetailApp() {
     setStatsState({ phase: 'loading', mode });
   }
 
-  // Signals the host to close the detail panel.
   function handleClose() {
     vscodeApi.current.postMessage({ type: 'close-detail' });
   }
 
-  // Render for Tables/External Tables (Columns only, no DDL toggle).
   if (isTable) {
     return (
       <TableDetailPanel
@@ -170,7 +158,6 @@ export function DetailApp() {
     );
   }
 
-  // Render for Views/Functions that have both DDL and Column metadata.
   if (hasColumnsAndDdl) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -211,6 +198,5 @@ export function DetailApp() {
     );
   }
 
-  // Render for Stored Procedures and simple functions (DDL only).
   return <MonacoSqlView node={node} findQuery={findQuery} />;
 }

@@ -16,21 +16,12 @@ import type { InvestigationTask } from '../sm/smTypes';
  *
  * @remarks
  * `visual_preview` is the rendering step of a discovery answer, not a lifecycle phase of its own —
- * it keeps the DISCOVERY grounding label. It is listed here because it authors a
+ * it keeps the discovery grounding. It is listed here because it authors a
  * `lineage_present_result` payload and must therefore receive the same presentation contract
  * synthesis receives; a stage that calls the tool without going through {@link buildPhasePrompt} is
  * a stage validated by rules it was never told.
  */
 export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis' | 'completed';
-
-/**
- * The analytical vocabulary a node's logic is read against — the one home, consumed by both forms
- * of `ANALYTICAL_ROUTE_QUESTION` (`smPrompts.ts`) so the BB and CT route questions cannot drift
- * apart on what counts as logic. CT is BB plus columns: a node kept for what it does to the row
- * set is read for the same logic BB reads for, never a narrower "structure only" subset.
- */
-export const ANALYTICAL_LOGIC_VOCABULARY =
-  'rules, transformations, thresholds, guards, and lifecycle';
 
 /**
  * The three stages that author a `lineage_present_result` payload, as seen by
@@ -80,35 +71,24 @@ export interface GeneralPromptContext {
  * tool-agnostic for the same reason — `lineage_present_result` is not available in discovery,
  * so naming it would be a rule the receiving phase cannot act on.
  *
- * @param phase - Current session phase; surfaces as the "Current phase: …" line so the AI knows which protocol applies before the phase-specific block is appended.
+ * The base carries no phase label: the stage block appended after it opens with a heading that
+ * names the stage, and the base stays byte-identical across stages as the shared cacheable prefix.
+ *
  * @param ctx - Grounding context values (one object so call sites can pass their `StagePromptContext` straight through).
  * @returns The assembled base system prompt string.
  */
-export function buildGeneralSystemPrompt(phase: PromptPhase, ctx: GeneralPromptContext): string {
+export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
   const { dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes, screen } = ctx;
   const isFiltered = filterSchemas.length > 0 && filterSchemas.length < totalSchemaCount;
   const schemasLine = isFiltered
     ? `- Schemas: ${filterSchemas.join(', ')} (${filterSchemas.length} of ${totalSchemaCount} schemas)`
     : `- Schemas: All (${totalSchemaCount} schemas)`;
-  // visual_preview renders a discovery answer that is already written, so its grounding phase is
-  // still DISCOVERY — the label is deliberately identical, leaving the base prompt byte-for-byte
-  // unchanged for that stage.
-  const phaseLabel = { discover: 'DISCOVERY', visual_preview: 'DISCOVERY', active: 'ACTIVE EXPLORATION', synthesis: 'SYNTHESIS', completed: 'FOLLOW-UP' }[phase];
 
   return [
     '# Data Lineage Assistant',
     '',
-    'You are the @lineage assistant inside the Data Lineage Viz extension for Visual Studio Code.',
-    'The extension parses SQL objects — tables, views, stored procedures, and functions — into a',
-    'dependency graph and renders it as an interactive diagram in the editor.',
-    'The user sees that graph and can open each object\'s full SQL in the editor.',
-    '',
-    `Current phase: ${phaseLabel}.`,
-    '',
-    '**Grounding rule:** Use only tool-returned IDs, columns, and relationships.',
-    '',
-    '**Rendering rule:** The extension draws the diagram from the structure you supply through its',
-    'tools. Describe lineage in prose; never draw it as mermaid, ASCII, or DOT.',
+    "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects (tables, views, procedures, functions) into a dependency graph the user sees as a diagram; each object's SQL opens in the editor.",
+    'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
@@ -148,8 +128,9 @@ export function buildScreenStateSlot(screen: string): string[] {
  * YAML template guidance is injected separately by `resolveStagePrompt`.
  *
  * @param phase - The runtime phase whose protocol block to render.
- * @param analysisMode - Hop or session analysis mode. Active and synthesis compose CT as the
- *   BB protocol plus a column rider; omitted (and `'bb'`) ship the shared protocol alone.
+ * @param analysisMode - Hop or session analysis mode. Synthesis composes CT as the BB protocol
+ *   plus a column rider; the active protocol is mode-independent (its column aspect renders in
+ *   `buildSmProtocol`).
  * @returns The phase-specific protocol text.
  */
 export function buildPhasePrompt(
@@ -158,12 +139,12 @@ export function buildPhasePrompt(
 ): string {
   if (phase === 'discover') return buildDiscoveryPrompt();
   if (phase === 'visual_preview') return buildVisualPreviewPrompt();
-  if (phase === 'active') return buildActivePhasePrompt(analysisMode);
+  if (phase === 'active') return buildActivePhasePrompt();
   if (phase === 'synthesis') return buildSynthesisPrompt(analysisMode);
   return buildFollowUpPrompt();
 }
 
-/** Markdown formatting rules shared by chat and final-answer prompt surfaces. */
+/** Markdown formatting rules for follow-up chat replies (discovery's home is the YAML `discovery_chat`). */
 export const CHAT_MARKDOWN_FORMAT = [
   'User-facing chat text: Markdown only, no arbitrary HTML.',
   'Use short headings and bullets when they improve scanning; avoid wall-of-text paragraphs.',
@@ -175,70 +156,52 @@ export const CHAT_MARKDOWN_FORMAT = [
  * Constructs the prompt for the Discovery/Idle phase.
  *
  * @remarks
- * Role and phase identity ("Current phase: DISCOVERY") are already established by
- * {@link buildGeneralSystemPrompt}, composed once upstream of this block — this function adds
- * only what that surface doesn't cover: which tool answers which question, and the one
- * AI-decided exception (a named column needs the hop-by-hop walk to trace). The applied-bookmark
- * line leads the list because it selects the evidence source before the kind of ask picks a tool:
- * a question about a bookmarked graph is a read of a run already stored, and answering it with a
- * scope walk is what turned "what do I see here" into a fresh approval gate. No restated
- * phase/state framing, no routing taxonomy. The `over_discovery_budget` guard is deliberately
+ * Role and grounding are established by {@link buildGeneralSystemPrompt}, composed once upstream
+ * of this block, and each tool's modelDescription owns which question it answers — so this block
+ * states only the task, the one lineage call that answers a dependency question, and the
+ * applied-bookmark rule, which selects the evidence source before the kind of ask picks a tool: a
+ * question about a bookmarked graph is a read of a run already stored, and answering it with a
+ * scope walk is what turned "what do I see here" into a fresh approval gate. Chat format has one
+ * home, the YAML `discovery_chat` template. The `over_discovery_budget` guard is deliberately
  * unmentioned — `lineage_get_scope_bundle` is the only place it can fire, that call site always
  * wires the mechanical `detectReroute` detector (`detectOverBudgetFromResult`,
  * `agent/discoveryCapture.ts`), and graph dispatch treats the tool result as a reroute terminal
- * that hands the turn to SM entry and its consent gate, so the model does not receive another
- * discovery attempt to act on it — therefore no prose describing that path is ever reachable.
- * Tool parameter routing and filter-boundary semantics live in each tool's
- * modelDescription — including the scope-depth mechanics this list used to restate, which now have
- * one home in `lineage_get_scope_bundle`'s description and its `.describe()` texts.
+ * that hands the turn to SM entry and its consent gate, so no prose describing that path is ever
+ * reachable. Scope-depth mechanics have one home in `lineage_get_scope_bundle`'s `.describe()`
+ * texts.
  *
  * @returns The assembled discovery-phase prompt string.
  */
 function buildDiscoveryPrompt(): string {
   return [
-    'Answer from these tools, in chat:',
-    '- Applied AI bookmark + a question about what is on screen → `lineage_get_screen_state`; the stored run is the evidence source. Ground one object with `lineage_get_object_detail`.',
-    '- What is loaded, which schemas, the active filter → `lineage_get_context`.',
-    '- Unknown or unresolved object name → `lineage_search_objects`.',
-    "- One object's columns, keys or body → `lineage_get_object_detail`.",
-    '- Which bodies mention X → `lineage_search_ddl`.',
-    '- Dependencies or lineage — upstream sources, downstream consumers, neighbours on either side → `lineage_get_scope_bundle`, scoped to what the question needs, with `include_ddl` when the logic is wanted.',
-    '- Graph-pattern or structural-anomaly question → `lineage_detect_graph_patterns`.',
-    '',
-    '## Response format',
-    '',
-    `${CHAT_MARKDOWN_FORMAT} Match length to the question. Tool calls and tool results remain structured data.`,
+    '## Task: answer in chat from the read tools',
+    'Choose the tool whose description matches the question. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question, with `include_ddl` when the logic matters. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
   ].join('\n');
 }
 
 
 /**
- * Constructs the hop job card for the Active phase.
+ * The active hop's task and deliverable, the same with or without tracked columns; field meanings
+ * — the verdict words, `prune_neighbors`, `questions` and the CT carry — live in the
+ * `submit_findings` schema, their one home.
  *
  * @remarks
- * This hop sees one focus node. Full-catalog inline delivery is a discovery-tool
- * payload decision and is intentionally not an execution mode here.
- * CT appends the attributed-columns rider; BB ships the shared neighbor-flag
- * paragraph alone.
+ * The column aspect of a CT hop is rendered separately (`buildSmProtocol`, `smPrompts.ts`), so the
+ * text here is mode-independent (CT ⊇ BB).
+ *
+ * @returns The active-phase protocol text.
  */
-function buildActivePhasePrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
-  const neighborFlags =
-    'Each `neighbors[]` entry carries the decisions already taken about it. `prune_protected`: an accepted route or `column_flow` named it earlier, so pruning it is refused for the rest of the run and the refusal costs a correction. `already_visited` / `already_removed`: a prune of either is dropped as a no-op.';
-  const attributedColumnsRider =
-    '`attributed_columns`: a committed `column_flow` edge already attributes these columns to it, so a route stating them continues that chain in one hop, and `"none"` for a neighbor THIS submission also names in `column_flow[].upstream_columns` is refused as a self-contradiction.';
-  const neighborParagraph = analysisMode === 'ct'
-    ? `${neighborFlags} ${attributedColumnsRider} Read them before choosing an action.`
-    : `${neighborFlags} Read them before choosing an action.`;
+function buildActivePhasePrompt(): string {
   return [
-    '# Active Exploration Protocol',
-    'This hop is the current focus node.',
+    '# Active hop',
+    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
     '',
-    '1. THINK: Read the node DDL against `<current_task>`.',
-    '2. ANALYZE: Issue a verdict for this node against that task.',
-    '3. FILE: Submit `sections[]` in capture-recipe shape (long memory) and a one-sentence `summary` (short-term memory).',
-    '4. OPEN: For each routed neighbor, write a self-contained `route_requests[].question` — it becomes that node\'s `<current_task>`.',
+    'Deliver one `lineage_submit_findings` call:',
+    '1. `verdict` for the focus node, judged from the focus itself.',
+    '2. With `analyze` or `passthrough`: `sections[]` and a one-sentence `summary`.',
+    '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     '',
-    neighborParagraph,
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; `prune_protected` ones are not pruned; an `out_of_direction` one needs no decision either.',
   ].join('\n');
 }
 
@@ -247,44 +210,32 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
  * Builds the presentation contract shared by every stage that authors a `present_result` payload.
  *
  * @remarks
- * Preview and synthesis use different evidence sources but render through the same tool, validated
- * by the same `validatePresentResult`. Any rule that validator enforces regardless of stage must
- * live here, or a stage is judged by a rule it was never given — which is exactly how a preview
- * turn can spend its whole semantic-failure budget on a link topology nobody asked it to avoid.
+ * Preview, synthesis and follow-up render through the same tool and the same
+ * `validatePresentResult`, so the cross-field rule that validator enforces in every stage — a
+ * highlighted node is explained by a section link or a note — lives here once. Single-field meaning
+ * (the section label, the one-section link, the highlight roles) lives in the
+ * `lineage_present_result` `.describe()` texts, which ship with the tool on every call. Synthesis-only
+ * surfaces (`detail_slots[]`, the Column Trace Chain, the detail-slot coverage rule) stay in
+ * {@link buildSynthesisPrompt}.
  *
- * Stage-specific material stays with its stage: archive surfaces (`detail_slots[]`, `node_states[]`,
- * the Column Trace Chain), hop `badge_label` hints, SM verdicts, and the YAML-owned
- * summary/title/intro/closing templates are all synthesis-only, and the verbatim-reuse rule is
- * preview-only.
+ * The depth line is the one stage-dependent part. Synthesis chooses how much captured evidence
+ * survives; follow-up authors text without the archive in the window, so re-deriving via
+ * `lineage_get_object_detail` is the owner; preview authors none — it partitions a fixed answer that
+ * `findDiscoveryPreviewReuseViolations` re-compares character for character, so a compress-or-drop
+ * rule there would instruct a guaranteed rejection. The heading rule ships to the two stages that
+ * author section text.
  *
- * The `sections[].label` shape lives here, not in the synthesis block, because the label is a
- * property of the badge renderer both stages feed. Its examples carry the length signal instead of
- * a word count: the observed failure was a full question used as a badge, and a count in prose
- * fights the `max()` in `toolSchemas.ts` rather than reinforcing it.
- *
- * The depth rules are the one stage-dependent part, because the depth *decision* is not the same
- * decision in every stage. Synthesis authors text from the captured archive and therefore chooses
- * how much of that evidence survives. Follow-up authors text without that archive in the window —
- * re-derive via `lineage_get_object_detail` is the owner, so the completed depth does not lift
- * `detail_slots[]`. Preview authors none — it partitions a fixed answer that
- * `findDiscoveryPreviewReuseViolations` re-compares character for character, so telling it to
- * compress or drop items would be instructing it into a guaranteed rejection. How deep the
- * surviving synthesis text runs is stated once, at the synthesis hop (`buildSynthesisReminder`),
- * where the captured evidence that sets the depth is in the window.
- *
- * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`. Omitted
- *   for stages whose evidence is described by their own protocol block. Kept as the first parameter
- *   because existing callers pass it positionally.
- * @param mode - Which stage is receiving the contract; selects the depth rules. Defaults to
- *   `'synthesis'` (the text-authoring behaviour every caller had before the parameter existed).
- * @returns The stage-independent linking, captioning, highlighting, and depth-preservation rules.
+ * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`; omitted by
+ *   stages whose own block names it. First parameter because existing callers pass it positionally.
+ * @param mode - Which stage receives the contract; selects the depth line. Defaults to `'synthesis'`.
+ * @returns The shared highlight rule plus the stage's depth and heading lines.
  */
 export function buildPresentationDetailContract(
   evidence?: string,
   mode: PresentationStage = 'synthesis',
 ): string {
   const headingRule =
-    '- Inside section bodies use bold labels for sub-structure, never `#`/`##`/`###` headings, because the engine owns the document title, the numbered section headings, and the object link headers.';
+    '- Inside a section body use bold labels, never `#` headings; the engine owns the title, the section headings and the object headers.';
   const depthRules = mode === 'preview'
     ? [
       '- Depth is already fixed by the supplied answer: copy each span whole and choose only where to cut, because the engine compares your joined sections against that answer character for character.',
@@ -295,24 +246,14 @@ export function buildPresentationDetailContract(
         headingRule,
       ]
       : [
-        '- Preserve captured decision triggers and predicates, thresholds, fallback order, lifecycle/status transitions, audit-trail meaning, and downstream business impact. Keep exact node IDs, parameter names, and formulas intact through every compression — drop whole items that do not help answer <original_question>, never fields within a kept item.',
-        '- Every ⚠️ risk or caveat, every formula, and every backticked SQL predicate (WHERE / JOIN / HAVING condition) captured in the archive (`detail_slots[]`, hop findings) must reappear in a section body, verbatim for the predicate and character-for-character for every formula literal the archive serves with backticks — a captured risk is never one of the whole items the compression rule above may drop.',
-        '- Regroup for question-first clarity and graph linking. Compress repeated phrasing while retaining every grounded evidence item — expressions a switch selects between are one item per branch, not one item per concept — different expressions of the same concept are not repeated phrasing, an aggregated form and its non-aggregated sibling are different branches even when they share a column, and every branch\'s expression reappears.',
+        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth, with the short SQL that grounds them; every captured callout, formula and predicate reappears verbatim. Drop whole nodes the question does not need, never parts of a kept one.',
         headingRule,
       ];
   return [
     '## Presentation contract',
-    '- `sections[].label`: becomes the section heading and the graph badge on every linked node. Write a semantic pointer — "Source Tables", "Revenue Calc", "Report Output" — never a sentence or a question. Give each section a different label, because one label can point at only one body.',
-    '- `sections[].node_ids[]`: a node ID appears in exactly ONE section — the one that tells that node\'s part of the story. Link the nodes the answer presents as its sources, target, or key logic steps; a node the answer does not present as evidence stays unlinked.',
-    '- `notes[]`: one-sentence captions below nodes. Decoration follows documentation — give every node linked in `sections[].node_ids[]` one short caption. A highlighted node must be explained by a section link or a note. Notes create no badges and no sections; a node in neither surface stays bare. Use a note, not a section link or highlight, for a side-context node that sits in the graph but is not evidence for the answer.',
-    '- `highlight_groups[]` (REQUIRED, 1-5 groups, each with a short legend label naming the shared role): `source` for terminal/raw source nodes that supply the base values, `target` for the origin/result/output node, `transform` for the nodes that CREATE or CHANGE the answer\'s values. Carry-through plumbing stays uncolored, and so do the nodes the `node_ids[]` rule above leaves unlinked. For zero-trace or single-node results, include a `target` group for the origin/result node.',
-    '',
-    '## Full-detail section contract',
     ...(evidence ? [`- ${evidence}`] : []),
+    '- Every node in `highlight_groups[]` is linked in a section or has a note.',
     ...depthRules,
-    '- Treat `summary` and `notes[]` as orientation fields; they do not replace the detailed section bodies.',
-    '- Close every ``` fence and every backtick run inside the field that opens it.',
-    '- On rejection, resend only the fields the error names as repairable, with `is_update: true` — unresolved fields are kept from your held draft automatically.',
   ].join('\n');
 }
 
@@ -344,74 +285,41 @@ function buildVisualPreviewPrompt(): string {
 
 
 /**
- * Constructs the synthesis-phase cue.
+ * Constructs the synthesis-phase task block.
  *
  * @remarks
- * Owns the lift+group contract for `present_result.sections[]`; the label's shape is
- * stage-independent and lives in {@link buildPresentationDetailContract}.
- * The active-phase capture rules already wrote each slot body; this cue tells
- * the model how to assemble, group, and frame those bodies — and where
- * the boundary between AI input and engine output lies.
+ * States the task, the evidence surfaces, the fields the model authors and the cross-field rules the
+ * validator enforces at this stage. Single-field meaning lives in the `lineage_present_result`
+ * describes, field wording in the YAML synthesis templates rendered after this block. Three rules are
+ * the pre-emptive copies of synthesis rejections: the detail-slot sentence
+ * (`findUnrenderedDetailSlotIds`), the CT coverage sentence (`findUncoveredCtChainNodes`) and the
+ * id-set sentence (the unknown-node-id rejection).
  *
- * Consolidated here (rather than via a YAML template) to avoid drift between
- * the synthesis cue and the section-assembly rule. The engine-built fields
- * (description, badge numbering, object link headers) are explicitly named so
- * the model never tries to write them.
- *
- * CT is BB plus the column-chain rider: the shared protocol always ships, and a
- * CT session additionally names the Column Trace Chain evidence surface and the
- * chain-linking contract. BB does not see those sentences. Depth is mode-independent:
- * both modes answer at the same full detail; the rider adds provenance, never less.
+ * CT is BB plus the column-chain rider: the shared block always ships, and a CT session additionally
+ * names the Column Trace Chain surface and its coverage rule. Depth is mode-independent.
  */
 function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
-  const evidenceIntro = isCt
-    ? 'The archive is closed. The last tool result may contain three evidence surfaces:'
-    : 'The archive is closed. The last tool result may contain two evidence surfaces:';
-  const evidenceSurfaces = [
-    '- `detail_slots[]`: explanatory text captured for nodes with analyzed detail.',
-    '- `node_states[]`: lifecycle facts for graph nodes (`analyze`, `passthrough`, `prune`) and why the engine/AI/user made that decision.',
-    ...(isCt
-      ? ['- the "Column Trace Chain" block in `synthesis_reminder`: CT provenance edges when tracing columns.']
-      : []),
-  ];
-  const detailEvidence =
-    'The detailed walkthrough belongs in `sections[].text` at the same full depth in both modes — column tracing adds column-provenance detail on top, it never thins object detail. Use `detail_slots[]` for analyzed-node explanation; the kept-passthrough flow facts' +
-    (isCt ? ' and the "Column Trace Chain" block' : '') +
-    ' carry the nodes without detail text.';
-  const suggestedSections =
-    'Use `suggested_sections` from the completion result as a starting skeleton when present.';
-  const ctChainContract =
-    'In CT, every terminal source node named in the "Column Trace Chain" block that `scope.node_ids` carries must appear in a section\'s `node_ids[]` and that section\'s `text` whenever the archive captured a formula or predicate for it; a table with no captured formula may instead be a `source` highlight or a `notes[].node_id` — because a column trace without its origins does not answer the question; a chain node `scope.node_ids` does not carry belongs in `sections[].text` prose only, because the render cannot link an id outside it. The same holds for every other node named in that block that `scope.node_ids` carries: a node with a captured formula or predicate stays on a section; a table without one may use a source highlight or a `notes[].node_id`.';
-  const deferredQuestions =
-    'Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.';
-  const closingLine = isCt
-    ? `${suggestedSections} ${ctChainContract} ${deferredQuestions}`
-    : `${suggestedSections} ${deferredQuestions}`;
+  const evidence =
+    'Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node\'s verdict and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas' +
+    (isCt ? ', plus the Column Trace Chain.' : '.');
   return [
-    '# Synthesis Protocol',
-    evidenceIntro,
-    ...evidenceSurfaces,
+    '## Task: write the report beside the graph',
+    'The exploration is closed. Call `lineage_present_result` once; the engine numbers the sections, draws badges and object headers, and assembles the document from your fields.',
     '',
-    'Your job: call `lineage_present_result` with `summary`, `title`, `intro`, **`sections[]`**, and **`highlight_groups[]`**. `notes` is optional per-node captioning; `closing` follows the closing template when it is rendered. The engine assembles the rendered document (section numbering, badge chips, object link headers, verbatim section bodies) deterministically from your structural decisions.',
+    evidence,
     '',
-    '## sections[] — REQUIRED',
-    'Group QUESTION-FIRST: choose sections that best answer the user\'s question and produce a clear narrative.',
-    '- Final sections are the only authoritative graph/detail link surface.',
-    '- Hop `badge_label` values are advisory hints only; use them when useful, but final labels are authored here.',
-    '- Keep business/technical separation in the text only when it materially improves clarity. The two angles captured the same DDL: serve each fact once, under the angle whose question it answers, and merge rather than restating it in both.',
+    '- `sections[]`: the answer, grouped by what best answers the question (`suggested_sections` is a starting point). Link the nodes each section documents, raw source and target tables included.',
+    '- `highlight_groups[]`, `notes[]`, `summary`, `title`, `intro`, `closing`: per the templates below.',
+    ...(isCt
+      ? ['- In a column trace, every Column Trace Chain node in `result.scope.node_ids` appears in a section, a highlight group or a note; a terminal source whose formula or predicate was captured sits in a section.']
+      : []),
+    '- Id fields take only ids from `result.scope.node_ids`; name any other object in section text.',
+    '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
+    '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences.',
+    '- Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
     '',
-    'Result: section topology is determined by question clarity first, with angle split as optional structure when useful.',
-    '',
-    'For each section:',
-    '- `node_ids[]`: a passthrough VERDICT does not disqualify a node — a raw source or target table is usually passthrough yet is exactly what the answer is about; link and color it by its flow role.',
-    buildPresentationDetailContract(detailEvidence, 'synthesis'),
-    '',
-    '## Other parts',
-    '- `summary` (REQUIRED, one line), `title`, `intro`, `closing`: content and style are owned by each field\'s template rendered below — follow the template; on contradiction the template wins. Put the detailed walkthrough in `sections[].text`, not `intro`.',
-    '- `highlight_groups[]`: scheme choice and glow selectivity are owned by the highlights template.',
-    '',
-    closingLine,
+    buildPresentationDetailContract(undefined, 'synthesis'),
   ].join('\n');
 }
 
@@ -444,20 +352,13 @@ function buildFollowUpPrompt(): string {
     'any node fact you need with `lineage_get_object_detail` or `lineage_search_ddl` before',
     'quoting it. You can browse the catalog or refine the visualization without starting over.',
     '',
-    'Choose one route using this decision order:',
-    '1) DEFAULT: Route A (adjust/extend current graph).',
-    '2) Route B only when the user explicitly changes origin, direction, or scope semantics.',
-    'If uncertain, stay in Route A.',
-    'Section labels remain the authoritative final grouping/linking surface. Treat prior `badge_label` values as advisory hints only.',
-    'A highlighted node must be explained by a section link or a note; nodes left out of both preview surfaces do not need notes or color.',
-    '',
-    'Route A - Adjust the existing graph (same topic):',
+    'Adjust the existing graph (default):',
     '- Re-label or regroup sections: rebuild the full `sections[]` list and call',
     '  `lineage_present_result` with `is_update:true` — the tool replaces the whole list, so an',
     '  omitted section is a deleted section. Badges regenerate from section labels. Change only',
     '  the `label` or `node_ids` you were asked to change; re-derive section text you cannot',
     '  quote exactly.',
-    '- Change graph color/role labels such as `source`, `transform`, or `target`: update `highlight_groups[]` (a highlighted node needs a section link or note)',
+    '- Change graph color/role labels such as `source`, `transform`, or `target`: update `highlight_groups[]`',
     '  and call `lineage_present_result`. `add_node_ids` reveals objects this exploration already',
     '  analysed; an object it has not analysed joins through the supplement below.',
     '- Change description text shown with the graph: update `title`, `intro`,',
@@ -474,13 +375,7 @@ function buildFollowUpPrompt(): string {
     '- Add deferred or nearby nodes the user asked for that need new per-node analysis while staying on the same topic: call',
     '  `lineage_start_exploration` with `supplement` (`supplement.chain` when the user asks to follow them further), then re-render with',
     '  `lineage_present_result`. Do this only for analysis expansion, not for label/color/note/text edits.',
-    '- If supplement opens an active hop, complete required `lineage_submit_findings` capture first; render after the hop loop returns to synthesis/completed.',
-    '',
-    'Route B - Start a new trace (new topic/scope):',
-    '- When the user changes origin, direction, or scope semantics, start a fresh',
-    '  exploration with `lineage_start_exploration` using the new request.',
-    '- The engine decides whether to reuse/retrace prior context or begin a fresh',
-    '  discovery path based on that call shape.',
+    '- A different origin, direction or scope is a new trace the user starts with `/trace`; this stage cannot start one.',
     '',
     'Support tools in follow-up: `lineage_get_object_detail`, `lineage_search_ddl`,',
     'and `lineage_search_objects` for targeted lookups before rendering.',
@@ -594,11 +489,9 @@ function buildRunTraceTriggerPrompt(
     '## Inputs to lineage_start_exploration',
     '',
     `- **origin**: ${JSON.stringify(origin)} (the node walked during discovery).`,
-    '- **direction**: "upstream" | "downstream" | "bidirectional". Rule: Select based on <original_question>. Use "upstream" for source/input questions, "downstream" for usage/impact questions, "bidirectional" when the intent is broad or asks different depths per side.',
-    '- **classification**: "business" | "technical" | "both". Use "business" unless the discovery question named a technical lens (performance, indexes, execution plan, query shape, load pattern); use "technical" when that lens is the whole request; use "both" when the request spans both.',
-    '- **depth**: copy an explicit level or "all" from <original_question>, or a per-side ask as {upstream,downstream}; otherwise omit it so the engine applies its default.',
     '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. If none, pass `[]`.',
     '- **mission_brief**: a 1-sentence placeholder citing the user\'s original question.',
+    '- Every other field: from <original_question>, as its description says.',
     '',
     '## Discovery context',
     '',
@@ -717,8 +610,8 @@ export function buildOriginalQuestionBlock(question: string | null): string {
  * @remarks
  * Names the traced columns and disambiguates the two fields, so the misleading capture-rules
  * header ("submit these as sections[]") does not confuse the model into putting column_flow
- * entries into sections[]. What `column_flow` may hold has one home — the CT addendum on the hop
- * decision contract (`smPrompts.ts`); this block states only what that addendum does not: which
+ * entries into sections[]. What `column_flow` may hold has one home — the CT column-decision
+ * addendum (`smPrompts.ts`); this block states only what that addendum does not: which
  * template writes which field, and the value classes that are not upstream columns at all.
  *
  * @param targetColumns - The columns being traced, as confirmed at gate-approval.
@@ -812,15 +705,11 @@ export function buildCurrentTaskBlock(
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
     lines.push(`  <${tag}>${escapePromptText(task.question.trim())}</${tag}>`);
   }
-  // Length, not presence: the block states a tracked set, and a hop with none is dispatched under
-  // the BB contract, whose submission carries no `column_flow` field for this block to ask for.
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
       `    This list is the whole tracked set for this hop, and it outranks the sub-question above: a column the sub-question names but this list omits is not tracked here — \`column_flow\` may not name it, and what the node does with it belongs in sections[].text.`,
-      `    Hop-specific focus: account for these columns in column_flow using the CT system/capture contract.`,
-      `    To inspect upstream column schemas before declaring upstream_columns, call lineage_get_neighbor_columns for current-hop neighbors.`,
       `  </column_trace>`,
     );
   }

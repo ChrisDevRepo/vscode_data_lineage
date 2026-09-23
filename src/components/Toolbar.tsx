@@ -284,7 +284,6 @@ export const Toolbar = memo(function Toolbar({
       ? ['View: Schema View', 'Graph is shown as schema clusters. Double-click a schema cluster to expand it.']
       : ['View: Object View', 'Graph is shown as individual object nodes.'];
 
-  // Render limit is the hard guard; overview threshold is only the initial-view hint.
   const limitRatio = renderLimit > 0 ? renderedNodeCount / renderLimit : 0;
   const metricColor = limitRatio >= 0.9
     ? 'var(--ln-validation-error-border)'

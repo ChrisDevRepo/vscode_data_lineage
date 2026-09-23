@@ -58,10 +58,6 @@ export function useExpandedSchemaView({
 
   const expandedSchemaViewGraph = useMemo(() => {
     if (graphMode !== 'overview' || !expandedSchemaView || !graph) return null;
-    // The render limit is enforced here, in the layer that owns the projection, because state can
-    // arrive without passing `applyExpandedSchemaViewSchemas` — a restored bookmark whose graph
-    // grew, or whose limit shrank, since it was saved. Over the limit the view degrades to
-    // clusters instead of freezing the webview.
     const projectedCount = countExpandedSchemaViewRenderedNodes(
       graph,
       expandedSchemaView.expandedSchemas,
@@ -163,12 +159,9 @@ export function useExpandedSchemaView({
     });
   }, [preserveViewportOnNextGraphChange, setExpandedSchemaView]);
 
-  // Schema filter is the authoritative schema universe. Prune expanded schemas to those still
-  // present; other filter changes (type, exclusion, external refs) preserve expansion state.
   useEffect(() => {
     setExpandedSchemaView((previous) => {
       if (!previous || previous.expandedSchemas.size === 0) return previous;
-      // Empty filter.schemas means all schemas are active — nothing to prune.
       if (filterSchemas.size === 0) return previous;
       const surviving = new Set([...previous.expandedSchemas].filter((schema) => filterSchemas.has(schema)));
       if (surviving.size === previous.expandedSchemas.size) return previous;

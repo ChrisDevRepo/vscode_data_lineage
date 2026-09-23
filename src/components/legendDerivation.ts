@@ -36,7 +36,6 @@ export function deriveLegendSchemas(
   traceMode: TraceState['mode'],
   renderedSchemas: string[] | undefined,
 ): string[] {
-  // Overview nodes are SchemaNodeData buckets plus object nodes for any expanded schema.
   if (graphMode === 'overview') {
     const schemas = new Set<string>();
     for (const n of nodes) {
@@ -58,7 +57,6 @@ export function deriveLegendSchemas(
   const isTraceActive = traceMode === 'applied' || traceMode === 'path-applied'
     || traceMode === 'filtered' || traceMode === 'analysis';
 
-  // The legend shows only schemas that contain at least one non-external object.
   const schemasWithRealObjects = new Set(
     nodes
       .map(n => n.data as CustomNodeData)

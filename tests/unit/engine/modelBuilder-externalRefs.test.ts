@@ -22,7 +22,6 @@ const procedure = (fullName: string, bodyScript: string): BuildObject =>
   ({ fullName, type: 'procedure' as const, bodyScript }) as BuildObject;
 const table = (fullName: string): BuildObject => ({ fullName, type: 'table' as const }) as BuildObject;
 
-// ─── OPENROWSET file references ───────────────────────────────────────────────
 
 describe('external file references — OPENROWSET', () => {
   const url = 'https://storage.blob.core.windows.net/data/sales_2024.parquet';

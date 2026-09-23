@@ -128,8 +128,6 @@ describe('AiSession lifecycle ownership', () => {
     session.beginTurn();
     expect(session.smOfferAvailable()).toBe(false);
 
-    // One inspected object is not a walk — an oversized scope never reaches this offer at all,
-    // because the discovery budget guard cuts that turn into SM entry and the consent gate.
     session.recordDiscovery('[ai].[FactSalesReport]', 1, 'What feeds FactSalesReport?', 'Summary.');
     expect(session.smOfferAvailable()).toBe(false);
 

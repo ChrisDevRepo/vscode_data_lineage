@@ -21,11 +21,9 @@ const marked = new Marked({ gfm: true, breaks: false })
     renderer: {
       heading(token: Tokens.Heading): string {
         const body = this.parser.parseInline(token.tokens);
-        // Render the trailing `### Objects` transport line as a muted footnote, not a heading.
         if (token.depth === 3 && body.startsWith(OBJECTS_HEADING_PREFIX)) {
           return `<p class="ln-ai-objects"><span class="ln-ai-objects-label">Objects</span>${body.slice(OBJECTS_HEADING_PREFIX.length)}</p>\n`;
         }
-        // Numbered `## N {label}` headings get a stable id for the report's section chips to scroll to.
         if (token.depth === 2) {
           const sectionNumber = /^\s*(\d+)\s/.exec(token.text ?? '');
           if (sectionNumber) return `<h2 id="${AI_SECTION_ID_PREFIX}${sectionNumber[1]}">${body}</h2>\n`;
@@ -35,10 +33,8 @@ const marked = new Marked({ gfm: true, breaks: false })
     },
   });
 
-// `name` is forbidden for the same clobbering reason `id` is filtered below: `<img name=…>` shadows a `window` global.
 const SANITIZE_CONFIG = { FORBID_ATTR: ['name'] };
 
-// Only numbered section headings (`ln-ai-sec-N`) keep their id; any other is stripped so a model-supplied attribute cannot clobber a `window` global.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (!(node instanceof Element)) return;
   const id = node.getAttribute('id');

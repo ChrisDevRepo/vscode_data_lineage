@@ -106,7 +106,6 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
     case 'completed':
       return new Set(COMPLETED_TOOLS);
     case 'active': {
-      // SM hop loop. present_result deferred to synthesis — agenda drains across many hops.
       return new Set(['lineage_submit_findings', 'lineage_get_neighbor_columns']);
     }
     default:

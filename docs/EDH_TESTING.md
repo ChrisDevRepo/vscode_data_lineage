@@ -68,9 +68,11 @@ npm run test:bfs
 
 `test:core` runs parser, non-AI engine, and webview tests
 (`tests/unit/parser`, `tests/unit/engine`, `tests/unit/webview`).
-`test:runtime` runs agent-runtime and state-machine tests
-(`tests/unit/ai-core`, `tests/unit/sm`) — deterministic logic, stubbed
-`vscode`, zero model calls.
+`test:runtime` runs the lean agent-runtime smoke and contract tier
+(`tests/unit/ai-core`, `tests/unit/sm`) — tool registration, security
+boundaries, session lifecycle, architecture rule gates and the BB/CT node-set
+parity invariant; stubbed `vscode`, zero model calls. State-machine depth,
+prompt composition and repair behaviour are tested internally.
 
 `test:parser` covers SQL parsing and dependency extraction. `test:bfs` runs
 all of `tests/unit/engine` — graph construction, traversal, and analysis plus

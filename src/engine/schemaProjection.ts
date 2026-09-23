@@ -111,8 +111,6 @@ function schemaOf(graph: Graph, id: string): string {
 
 function typeOf(graph: Graph, id: string): ObjectType | null {
   const type = graph.getNodeAttribute(id, 'type');
-  // Validate against the canonical set rather than blindly asserting — a corrupted or
-  // unexpected `type` attribute must not propagate as a bogus ObjectType downstream.
   return typeof type === 'string' && OBJECT_TYPE_SET.has(type) ? type as ObjectType : null;
 }
 

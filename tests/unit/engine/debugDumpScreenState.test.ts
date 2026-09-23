@@ -8,7 +8,6 @@ import type {
 
 describe('Debug Dump Screen-State', () => {
   it('screen-state formatter (deterministic)', () => {
-    // proc 'p' inbound: 'b' (origin, in-trace) + 'x' (off-trace). 'u' is the other downstream leaf.
     const model = {
       edges: [
         { source: 'b', target: 'p' },

@@ -1,14 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
-// Core editor API avoids bundling unused language workers. From 0.56 monaco ships an exports
-// map, so the old `monaco-editor/esm/vs/...` deep paths no longer resolve — `./*` maps to
-// `./esm/vs/*.js` and would double the prefix.
 import * as monacoEditor from 'monaco-editor/editor/editor.api';
-// SQL tokenizer only — registerLanguage() with a lazy loader, no worker. editor.api carries no
-// language contributions, so every grammar is opt-in and only SQL is taken here.
 import 'monaco-editor/languages/definitions/sql/register';
-// Editor features are opt-in from 0.56 as well. Only folding is registered, because it is the
-// one feature the options below switch on; leaving it out makes `folding: true` silently inert.
 import 'monaco-editor/features/folding/register';
 import type * as Monaco from 'monaco-editor';
 import type { LineageNode } from '../engine/types';
@@ -47,7 +40,6 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   const [monacoTheme, setMonacoTheme] = useState(getMonacoTheme);
   findQueryRef.current = findQuery;
 
-  // Synchronize Monaco theme whenever the VS Code environment triggers a theme change.
   useEffect(() => {
     const observer = new MutationObserver(() => setMonacoTheme(getMonacoTheme()));
     observer.observe(document.body, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
@@ -78,7 +70,6 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
         options: { inlineClassName: 'monaco-search-highlight' },
       }))
     );
-    // Automatically scroll the first match into the center of the viewport.
     if (matches.length > 0) {
       ed.revealRangeInCenterIfOutsideViewport(matches[0].range);
     }
@@ -90,7 +81,6 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     }
   }, [findQuery]);
 
-  // Ensure decorations and listeners are correctly disposed of when the component unmounts.
   useEffect(() => {
     return () => {
       decorationsRef.current?.clear();

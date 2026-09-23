@@ -1,14 +1,3 @@
-// Structural fingerprint of `assets/aiOutputTemplates.yaml` (and any overlay of it).
-//
-// The schema-version contract exists so a user's old overlay never misbehaves after an upgrade:
-// it bumps only when a previous release's overlay would stop fitting — a template key removed or
-// renamed, a field removed or retyped (`breakingStructureChanges`). Additions are backward
-// compatible: the overlay merges over the built-in file, which fills what the overlay lacks, so
-// they never force a bump. Prose inside `instruction` / `example` is content: an older overlay
-// carrying different wording still parses and renders, so wording never forces a bump.
-//
-// Shared by the release gate (`assert-template-schema-version.mjs`) and its unit test so the two
-// cannot drift.
 import { load } from 'js-yaml';
 
 /** Top-level scalar that is the contract version itself, never part of the structure. */

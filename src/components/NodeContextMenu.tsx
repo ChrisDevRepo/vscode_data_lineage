@@ -85,7 +85,6 @@ export const NodeContextMenu = memo(function NodeContextMenu({
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
 
-  // Virtual reference element at the cursor position
   const virtualRef = useRef({
     getBoundingClientRect() {
       return { x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x };

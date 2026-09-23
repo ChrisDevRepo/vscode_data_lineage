@@ -26,7 +26,6 @@ async function makeExternalRefDacpac(): Promise<Uint8Array> {
   return bytes;
 }
 
-// ─── Extraction ─────────────────────────────────────────────────────────────
 
 async function testExtraction() {
   console.log('\n── DACPAC Extraction ──');
@@ -586,6 +585,51 @@ async function testCrossSchemaCatalogUnderFilter() {
     `Reverse neighbor entry: ${targetId}.in includes ${sourceId}`).toBe(true);
 }
 
+// ─── Predefined XML entities in served text ─────────────────────────────────
+
+/**
+ * Builds a dacpac whose property values carry the five predefined XML entities, a numeric
+ * character reference, and a double-escaped `&amp;lt;`, plus a CDATA body whose literal
+ * entity-like text must be served verbatim.
+ */
+async function makeEntityDacpac(): Promise<Uint8Array> {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  zip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
+      <Model>
+        <Element Type="SqlProcedure" Name="[dbo].[spHeader]">
+          <Property Name="BodyScript">
+            <Value><![CDATA[BEGIN SELECT '&lt;kept&gt; &#x41;' AS Raw END]]></Value>
+          </Property>
+          <Annotation Type="SysCommentsObjectAnnotation">
+            <Property Name="HeaderContents" Value="-- age &lt; 7 days &amp;&amp; qty &gt; 0, &quot;q&quot; &apos;a&apos;&#xA;-- literal &amp;lt;tag&amp;gt; &#65; &#38;lt;" />
+          </Annotation>
+        </Element>
+        <Element Type="SqlView" Name="[dbo].[vText]">
+          <Property Name="QueryScript">
+            <Value>SELECT 1 AS a WHERE 2 &gt; 1 AND 'x' &lt;&gt; 'y'</Value>
+          </Property>
+        </Element>
+      </Model>
+    </DataSchemaModel>`);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+async function testPredefinedEntityDecoding() {
+  const model = await extractDacpac(await makeEntityDacpac());
+  const proc = model.nodes.find(n => n.name === 'spHeader');
+  const view = model.nodes.find(n => n.name === 'vText');
+  expect(proc?.bodyScript).toBeDefined();
+  expect(proc!.bodyScript!.startsWith(
+    `-- age < 7 days && qty > 0, "q" 'a'\n-- literal &lt;tag&gt; A &lt;\nBEGIN`,
+  ), 'HeaderContents attribute value is XML-decoded once').toBe(true);
+  expect(proc!.bodyScript!.includes(`SELECT '&lt;kept&gt; &#x41;' AS Raw`),
+    'CDATA body is served verbatim, never entity-decoded').toBe(true);
+  expect(view?.bodyScript?.includes(`WHERE 2 > 1 AND 'x' <> 'y'`),
+    'Element text value is XML-decoded').toBe(true);
+}
+
 // ─── Run all tests ──────────────────────────────────────────────────────────
 
   it('extracts the AdventureWorks model', async () => { await testExtraction(); });
@@ -597,6 +641,7 @@ async function testCrossSchemaCatalogUnderFilter() {
   });
   it('extracts Fabric DACPACs', testFabricDacpac);
   it('handles numeric XML entities safely', testNumericEntitySecurity);
+  it('decodes predefined XML entities in served text, never inside CDATA', testPredefinedEntityDecoding);
   it('reports import errors', testImportErrorHandling);
   it('extracts constraints', testConstraints);
   it('maps DSP platforms', testParseDspPlatform);

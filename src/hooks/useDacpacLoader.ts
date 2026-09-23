@@ -102,7 +102,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
-  // Info messages auto-clear after 6s; success/warning/error messages persist until replaced.
   useEffect(() => {
     if (status && status.type === 'info' && !isLoading) {
       const timer = setTimeout(() => setStatus(null), 6000);
@@ -139,13 +138,10 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   }, []);
 
-  // Listen for messages from VS Code extension host
   useEffect(() => {
     const handler = (event: MessageEvent) => {
-      // Single validated inbound dispatcher — host→webview messages are Zod-checked here, never read raw.
       const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, event.data);
       if (!frame.ok) {
-        // Same protocol-version gate as the App.tsx/DetailApp.tsx listeners — reject rather than apply a model from an untrusted host bundle.
         if (frame.reason === 'version') {
           window.vscode?.postMessage({
             type: 'error',
@@ -195,7 +191,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // Dacpac Phase 1: schema preview (extraction runs in extension host)
       if (msg.type === 'dacpac-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
@@ -207,7 +202,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // Dacpac Phase 2 + demo + panel restore: full model from extension host
       if (msg.type === 'dacpac-model') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
@@ -223,7 +217,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // DB Phase 1: schema preview received (Create flow — shows schema selector)
       if (msg.type === 'db-schema-preview') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
@@ -233,7 +226,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      // DB Phase 2: full model received
       if (msg.type === 'db-model') {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
@@ -258,10 +250,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     return () => window.removeEventListener('message', handler);
   }, [onConfigReceived, applyModel, applySchemaPreview, vscodeApi]);
 
-  // Phase 2: trigger full extraction for selected schemas
   const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
-    // Dacpac path: request Phase 2 extraction (dacpac-model response handled above).
-    // A blank name is spread away rather than sent empty: the host reads "absent" as "keep the existing label".
     const named = projectName ? { projectName } : {};
     if (schemaPreview !== null && model === null && loadingContext !== 'database') {
       vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named });
@@ -270,7 +259,6 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       return;
     }
 
-    // DB path: send selected schemas to extension host for Phase 2
     vscodeApi.postMessage({ type: 'db-visualize', schemas: Array.from(schemas), ...named });
     setIsLoading(true);
     setLoadingContext('database');

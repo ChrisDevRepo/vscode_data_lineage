@@ -276,8 +276,8 @@ export class AiMemoryManager {
   /**
    * Records one verdict against the running A/P/prune tally.
    *
-   * @param verdict - The verdict the model submitted this hop (`analyze`, `passthrough`, or `prune` — the AI
-   * may self-prune an irrelevant node; BB self-prune is orphan-guarded by the engine, see `submitFindings`).
+   * @param verdict - The verdict recorded this hop (`analyze`, `passthrough`, or `prune` — the internal name of
+   * the wire verdict `end_branch`, see `NavigationEngine.submitFindings`).
    */
   public recordVerdict(verdict: 'analyze' | 'passthrough' | 'prune'): void {
     this.verdictCounts[verdict]++;
@@ -348,14 +348,15 @@ export class AiMemoryManager {
    * @param meta - Optional synthesis metadata — `badge_label`, `reason_for_visit`.
    *
    * @remarks
-   * Sections are stored verbatim. A revisit (a reopened column chain re-enqueues a visited node)
+   * Sections are stored verbatim. A revisit (a post-delivery `supplementAgenda` follow-up re-enqueues a visited node)
    * appends its sections after the earlier visit's — summary and metadata take the latest visit,
    * and {@link appendUniqueSections} drops any re-emitted text as no new evidence. The caller
    * merges `column_flow` notes into `sections` via {@link appendUniqueSectionText} before this
    * write, so a single-accept hop does not lose clauses that sat only on the flow.
    *
-   * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG line
-   * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat.
+   * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG lines: the one
+   * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat, and
+   * the one naming each `summary` / `badge_label` / `reason_for_visit` a revisit replaced.
    */
   public storeDetail(
     node: LineageNode,
@@ -364,7 +365,18 @@ export class AiMemoryManager {
     meta?: { badge_label?: string; reason_for_visit?: string },
     debugLog?: (message: string) => void,
   ): void {
-    const earlier = this.detailSlots.get(node.id)?.sections ?? [];
+    const previous = this.detailSlots.get(node.id);
+    const earlier = previous?.sections ?? [];
+    if (previous) {
+      const replaced = ([
+        ['summary', previous.summary, summary],
+        ['badge_label', previous.badge_label, meta?.badge_label],
+        ['reason_for_visit', previous.reason_for_visit, meta?.reason_for_visit],
+      ] as const).filter(([, before, after]) => before !== after).map(([field]) => field);
+      if (replaced.length > 0) {
+        debugLog?.(`[Memory] revisit replaced ${replaced.join(',')} — node=${node.id}`);
+      }
+    }
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
@@ -382,7 +394,7 @@ export class AiMemoryManager {
    * submission's own sections are merged in by {@link storeDetail}.
    *
    * @remarks
-   * A CT reopen re-enqueues a node `storeDetail` already wrote once; that earlier write's
+   * A follow-up (`supplementAgenda`) re-enqueues a node `storeDetail` already wrote once; that earlier write's
    * sections stay in the archive (appended, never replaced), so a revisit submission does not
    * need to re-carry an angle the archive already holds. Callers use this to credit the archive
    * when checking classification-locked angle coverage.
@@ -518,7 +530,6 @@ export class AiMemoryManager {
     m.scopeNotes = [...snapshot.scopeNotes];
     m.verdictCounts = { ...snapshot.verdictCounts };
     m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
-    // Object key order preserves insertion order for the non-integer node-id keys used here.
     for (const [id, slot] of Object.entries(snapshot.detailSlots)) m.detailSlots.set(id, slot);
     return m;
   }

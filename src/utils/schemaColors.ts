@@ -98,7 +98,6 @@ function hashString(str: string): number {
   return mix32(hash);
 }
 
-// Shifts the lightness of a hex color by `delta` percentage points.
 function shiftL(hex: string, delta: number): string {
   const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
   const max = Math.max(r,g,b), min = Math.min(r,g,b);
@@ -115,7 +114,6 @@ function shiftL(hex: string, delta: number): string {
   return '#'+[h+1/3,h,h-1/3].map(t=>Math.round(c(t)*255).toString(16).padStart(2,'0')).join('');
 }
 
-// 30-slot palettes: base 15 + 15 lightness-shifted variants, computed once at module load.
 const SCHEMA_COLORS_LIGHT_EXT = [
   ...SCHEMA_COLORS_LIGHT,
   ...SCHEMA_COLORS_LIGHT.map(c => shiftL(c, 14)),

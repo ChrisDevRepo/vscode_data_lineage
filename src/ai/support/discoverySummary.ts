@@ -75,7 +75,6 @@ export async function composeDiscoverySummaryText(
     let parsed: z.ZodSafeParseResult<string> | undefined;
     let rejectReason = '';
     for (let attempt = 1; attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS; attempt++) {
-      // Structural reject-with-hint retry: the exact Zod issue is fed back as the repair.
       const prompt = buildDiscoverySummaryComposePrompt(
         lastDiscoveryQuestion,
         lastDiscoveryAnswer,
@@ -86,7 +85,6 @@ export async function composeDiscoverySummaryText(
         kind: 'text',
         phase: 'compose',
         system: DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
-        // Compose folds the discovery Q/A and the approved contract summary into the memo.
         facts: explorationFacts(analysisMode, targetColumns, {
           classification,
           memorySections: ['discovery_question', 'discovery_answer', 'approved_contract'],
@@ -106,7 +104,6 @@ export async function composeDiscoverySummaryText(
     logger?.debug(`[AI] [DiscoveryHandoff] status=composed chars=${parsed.data.length}`);
     return parsed.data;
   } catch (err) {
-    // Re-throw on abort so the caller can surface a clean cancel; other errors are non-fatal.
     if (signal?.aborted) throw err;
     logger?.error('[AI] [DiscoveryHandoff] compose failed unexpectedly', err);
     return undefined;

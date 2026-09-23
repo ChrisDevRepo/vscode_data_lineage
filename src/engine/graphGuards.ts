@@ -186,7 +186,6 @@ export function bfsDepthMap(
   edges: ReadonlyArray<readonly [string, string, string]>,
   originNodeId: string,
 ): Map<string, number> {
-  // Build adjacency list (directed: source → targets)
   const adj = new Map<string, string[]>();
   for (const [s, t] of edges) {
     let targets = adj.get(s);

@@ -73,8 +73,6 @@ describe('notifications', () => {
     const { notifyError, notifyInfo, notifyWarning } = await import('../../../src/utils/notifications');
     const channel = makeChannel();
     const logger = Logger.create(channel as any, 'Bridge');
-    // Longer than the 400-character toast ceiling, so the cut is observable in the toast and the
-    // absence of a cut is observable in the log line beside it.
     const message = 'x'.repeat(1_000);
 
     const shownError = vi.fn();
@@ -91,7 +89,6 @@ describe('notifications', () => {
       expect(text, 'the cut is marked rather than silent').toContain('\u2026');
     }
 
-    // The untruncated message always reaches the log line that accompanies the toast.
     expect(String(channel.error.mock.calls[0]?.[0])).toContain(message);
     expect(String(channel.warn.mock.calls[0]?.[0])).toContain(message);
     expect(String(channel.info.mock.calls[0]?.[0])).toContain(message);

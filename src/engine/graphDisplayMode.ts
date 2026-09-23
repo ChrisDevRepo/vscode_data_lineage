@@ -79,7 +79,6 @@ export function deriveGraphDisplayMode({
           ? (expandedSchemaViewRenderedCount ?? filteredCount)
           : schemaOverviewRenderedCount)
       : (renderLimitHit > 0 ? renderLimitHit : filteredCount);
-  // A scope is measured by its own size, never by the base surface it was cut from.
   if (scopedModeActive) {
     if (scopedRenderedCount !== undefined && scopedRenderedCount > config.renderLimit) {
       return { mode: 'renderLimit', renderedCount: scopedRenderedCount };

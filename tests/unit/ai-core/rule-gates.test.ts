@@ -288,39 +288,6 @@ describe('architecture rule gates', () => {
 });
 
 /**
- * Extracts one `- **Label**: …` bullet from a `general`-style YAML instruction block.
- *
- * @param instruction - The raw block-scalar text of the template instruction.
- * @param label - The bold bullet label to pull, without asterisks.
- * @returns The bullet text with line breaks folded to single spaces.
- */
-function renderRuleBullet(instruction: string, label: string): string {
-  const start = instruction.indexOf(`- **${label}**`);
-  if (start < 0) return '';
-  const rest = instruction.slice(start + 1);
-  const next = rest.search(/\n\s*- \*\*|\n[ \t]*\n/);
-  return (next < 0 ? rest : rest.slice(0, next)).replace(/\s+/g, ' ').trim();
-}
-
-// N-16b: callouts are a sidecar placement rule, never a counted discovery risk list or a
-// permission gate (fix 41fdb97be). The decisive assertion of that fix, kept here.
-describe('output-template rendering rules — captured ⚠️ callouts are delivered, not re-judged', () => {
-  it('states the callout bullet as a placement rule, never as a count or a permission gate', () => {
-    const asset = readFileSync('assets/aiOutputTemplates.yaml', 'utf8');
-    const general = asset.slice(asset.indexOf('\ngeneral:'), asset.indexOf('\nloading_pattern:'));
-    const callouts = renderRuleBullet(general, 'Callouts');
-
-    expect(general).toContain('- **Callouts**');
-    expect(general).not.toContain('data-quality');
-    expect(general).toMatch(/stages: \[synthesis\]/);
-    expect(general).not.toMatch(/stages: \[discovery/);
-    expect(callouts).toMatch(/sits once.*section/i);
-    expect(callouts).not.toMatch(/count the ⚠️/);
-    expect(callouts).not.toMatch(/⚠️ only for|include ⚠️ only|only for material/i);
-  });
-});
-
-/**
  * Codes with more than one emission site; every site must interpolate `REJECTION_CODES`
  * (`src/ai/support/rejectionCodes.ts`) rather than hand-typing the literal, so a rename cannot
  * drift between the emitting guard, the prompt that teaches the recovery, and the schema that

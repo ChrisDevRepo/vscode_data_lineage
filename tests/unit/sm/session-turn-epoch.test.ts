@@ -19,7 +19,6 @@ describe("session turn-epoch guard tests", () => {
     expect(accepted.kind, 'fresh-token enterExploring is accepted').toBe('accepted');
     expect(sess.phase.kind, 'phase advanced to exploring').toBe('exploring');
 
-    // A later turn supersedes t1 without any explicit reset.
     const t2 = sess.beginTurn();
     expect(t2 !== t1, 'beginTurn bumps the epoch (t2 != t1)').toBe(true);
 
@@ -32,7 +31,6 @@ describe("session turn-epoch guard tests", () => {
     }
     expect(sess.phase.kind, 'phase is unchanged after a dropped stale write').toBe('exploring');
 
-    // The live turn's own write still lands.
     const fresh = sess.enterIdle(t2);
     expect(fresh.kind, 'fresh-token enterIdle is accepted').toBe('accepted');
     expect(sess.phase.kind, 'phase advanced to idle on the accepted write').toBe('idle');
@@ -57,7 +55,6 @@ describe("session turn-epoch guard tests", () => {
     const sess = new AiSession();
     const t1 = sess.beginTurn();
 
-    // Fresh-token diagnostics writes land.
     const hopOk = sess.setHopCount(t1, 3);
     expect(hopOk.kind, 'fresh-token setHopCount is accepted').toBe('accepted');
     expect(sess.hopCount, 'hopCount updated by the accepted write').toBe(3);
@@ -66,7 +63,6 @@ describe("session turn-epoch guard tests", () => {
     expect(evtOk.kind, 'fresh-token recordMemoryWipeEvent is accepted').toBe('accepted');
     expect(sess.memoryWipeEventsThisTurn.length, 'wipe event appended by the accepted write').toBe(1);
 
-    // A later turn supersedes t1; the stale writes must be dropped no-ops.
     const t2 = sess.beginTurn();
 
     const hopStale = sess.setHopCount(t1, 99);
@@ -84,7 +80,6 @@ describe("session turn-epoch guard tests", () => {
     }
     expect(sess.memoryWipeEventsThisTurn.length, 'wipe events untouched by a dropped stale write').toBe(1);
 
-    // The live turn's own writes still land.
     expect(sess.setHopCount(t2, 5).kind, 'fresh-token setHopCount (t2) is accepted').toBe('accepted');
     expect(sess.hopCount, 'hopCount advanced on the accepted t2 write').toBe(5);
     expect(sess.recordMemoryWipeEvent(t2, { kind: 'sliding', trigger: 'submit_ok', hop: 5, messagesBefore: 4 }).kind, 'fresh-token recordMemoryWipeEvent (t2) is accepted').toBe('accepted');

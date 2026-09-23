@@ -19,8 +19,6 @@ import { driveEngine, makeModel, makeNode } from './helpers/fixtures';
 import { describe, expect, it } from 'vitest';
 
 describe('Approval binds the engine — hard vs soft, and every approved filter', () => {
-  // n0 → n1 → n2 → n3, one schema, all bodied: anything refused below was refused on the
-  // approved rule alone, never on a schema or non-bodied border.
   const nodes: LineageNode[] = ['n0', 'n1', 'n2', 'n3'].map(id =>
     makeNode({ id, schema: 'dbo', name: id, type: 'view' }),
   );
@@ -53,7 +51,6 @@ describe('Approval binds the engine — hard vs soft, and every approved filter'
     return ids;
   }
 
-  // ── A1/A2: the two rule strengths are distinguishable on the surface the user reads ──
   it('A1: a user-stated depth renders as fixed and the engine refuses to pass it', () => {
     const engine = newEngine();
     engine.init({

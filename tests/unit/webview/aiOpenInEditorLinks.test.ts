@@ -1,9 +1,4 @@
 // @vitest-environment jsdom
-//
-// `stripFocusNodeLinks` is the extension-host side of the "Open in editor" action: a
-// `[label](#focus-node:id)` link only resolves inside the lineage webview's own click handler, so a
-// markdown preview editor tab built from the same text must not carry a link nothing there can
-// follow. Covers the plain case, several links in one document, and text that has none to rewrite.
 import { describe, expect, it } from 'vitest';
 import { stripFocusNodeLinks } from '../../../src/bridge/messageHandlers';
 

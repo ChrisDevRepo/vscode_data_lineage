@@ -122,10 +122,7 @@ function ColumnTraceRowLine({
     gap: 6,
     padding: '0 8px',
     opacity: isDeemphasised ? COLUMN_ROW_DIM_OPACITY : 1,
-    // A row on the thread takes the colour its lit edges carry, so rows and lines read as one thread.
     backgroundColor: isHoveredRow ? THREAD_ROW_BACKGROUND : 'transparent',
-    // Focus ring for the keyboard position; the pinned row keeps the object view's clicked-node
-    // yellow, marking where the thread starts, and every other thread row gets the thread's bar.
     boxShadow: focused ? 'inset 0 0 0 2px var(--ln-focus-border)'
       : isPinnedRow ? 'inset 0 0 0 2px var(--ln-highlight-yellow)'
       : isHoveredRow ? 'inset 3px 0 0 var(--ln-focus-border)'
@@ -133,8 +130,6 @@ function ColumnTraceRowLine({
     transition: ROW_TRANSITION,
   };
 
-  // The state dot is aria-hidden, so the row's label is the only thing announced; it names the object
-  // as well as the column, since a bare column name is ambiguous across a multi-node trace.
   const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}`;
 
   return (
@@ -142,12 +137,9 @@ function ColumnTraceRowLine({
       ref={el => registerRef(row.name, el)}
       style={style}
       role="listitem"
-      // Roving tabindex: the node is one tab stop and the arrow keys move within it — making every
-      // row focusable cost a forty-column table forty tab presses to pass, across many such nodes.
       tabIndex={isTabStop ? 0 : -1}
       aria-label={ariaLabel}
       onKeyDown={event => {
-        // Enter/Space pin the thread, as a click does, so pinning never needs a pointer.
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           event.stopPropagation();
@@ -156,8 +148,6 @@ function ColumnTraceRowLine({
         }
         onKeyDown(event, row.name);
       }}
-      // Claimed before the canvas sees it: React Flow would otherwise read the same click as a node
-      // click, replacing the column thread with the object's neighbourhood.
       onClick={event => { event.stopPropagation(); onColumnSelect(nodeId, row.name); }}
       onMouseEnter={() => onColumnHover(nodeId, row.name)}
       onMouseLeave={() => onColumnHover(nodeId, null)}
@@ -279,8 +269,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   const { hoveredPath: threadPath, pinnedRow } = useColumnHover();
   const { picker, applyTraceAction, closePicker, selectPickerOption } = useTraceNeighborPicker(data.traceControls);
 
-  // Which row currently holds the node's single tab stop; null until the user moves within the node,
-  // so the first row is the default entry point and a re-render never steals the position.
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const rowElements = useRef(new Map<string, HTMLDivElement>());
   const registerRowRef = useCallback((name: string, el: HTMLDivElement | null) => {
@@ -289,7 +277,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
   }, []);
 
   const rowNames = view.rows.map(row => row.name);
-  // A row that has since disappeared from the view must not take the tab stop with it.
   const tabStopRow = activeRow && rowNames.includes(activeRow) ? activeRow : rowNames[0];
 
   const handleRowKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>, name: string) => {
@@ -303,8 +290,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       : event.key === 'End' ? names.length - 1
       : -1;
     if (to < 0) return;
-    // Claimed before the canvas sees it: React Flow binds arrow keys to pan the viewport, which would
-    // scroll the graph out from under a keyboard user stepping through a node's columns.
     event.preventDefault();
     event.stopPropagation();
     const target = names[to];
@@ -319,16 +304,9 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
-  // A column thread carries the same answer one level down as an object selection does, so an object
-  // off the thread takes the object view's dim rather than staying full weight with only rows faded.
   const offThread = !!threadPath && !view.rows.some(r => threadPath.has(columnRowKey(id, r.name)));
-  // The card holding the clicked row takes the object view's yellow click-highlight, so a click at
-  // column level reads like a click at object level; every other card the pinned thread runs through
-  // takes the thread's blue.
   const ownsPin = !!pinnedRow && view.rows.some(r => columnRowKey(id, r.name) === pinnedRow);
   const onPinnedThread = !!pinnedRow && !!threadPath && !offThread;
-  // Shared with CustomNode via resolveNodeHighlightStyle; the scale it adds is dropped here since
-  // edges attach to row handles and a scaled card would move its rows off the lines that end on them.
   const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, zIndex } =
     resolveNodeHighlightStyle(ownsPin ? 'yellow' : onPinnedThread || data.highlighted, data.aiHighlight, data.dimmed || offThread);
 
@@ -358,9 +336,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         position: 'relative',
         width: '100%',
         height: '100%',
-        // A procedure is a process, not a table: the circle IS the node, so it carries no card chrome
-        // — the box stays as layout and port geometry only, and the circle's stroke takes the
-        // selection colour the card border would have taken.
         ...(view.isTransformNode ? {} : {
           borderWidth: COLUMN_NODE_BORDER_WIDTH,
           borderColor: highlighted ? highlightColor : 'var(--ln-node-border)',
@@ -393,8 +368,6 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
               padding: '0 8px',
               flexShrink: 0,
               backgroundColor: 'var(--ln-bg-elevated)',
-              // A double-weight divider is the boundary between the object the card is about and the
-              // columns it carries, so the two halves read as separate zones, not one list with a title.
               borderBottom: '2px solid var(--ln-border-light)',
             }}
           >

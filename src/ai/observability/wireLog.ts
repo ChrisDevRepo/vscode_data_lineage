@@ -179,7 +179,6 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
   ) {
     return value;
   }
-  // `JSON.stringify` drops these silently; the trace records them so the reader sees what was sent.
   if (typeof value === 'symbol' || typeof value === 'function') return String(value);
   if (typeof value !== 'object') return String(value);
   if (ancestors.has(value)) return '[Circular]';
@@ -190,7 +189,6 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
       return value.map((entry) => toJsonSafeValue(entry, ancestors));
     }
 
-    // Built-ins with no own enumerable keys: the generic object path below would record them as `{}` and lose content `JSON.stringify` alone would have kept (a `Date` emits its ISO string through `toJSON`).
     if (value instanceof Date) {
       return Number.isNaN(value.getTime()) ? '[Invalid Date]' : value.toISOString();
     }

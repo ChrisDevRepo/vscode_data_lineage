@@ -1,17 +1,4 @@
 #!/usr/bin/env node
-// Release gate: a BREAKING structure change to `assets/aiOutputTemplates.yaml` may not ship
-// without bumping AI_TEMPLATE_SCHEMA_VERSION — and the version may not move without one.
-//
-// A user's custom overlay (dataLineageViz.ai.outputTemplateFile) is applied only when its
-// schemaVersion equals the constant. That gate is what produces the Output-channel warning and the
-// fallback to built-in templates on upgrade. Its single purpose: an old overlay that no longer
-// fits must be rejected, not silently mis-applied. Breaking is a template key removed or renamed,
-// or a field removed or retyped. Additions are backward compatible — the overlay merges over the
-// built-in file, which fills what the overlay lacks — so an added template key or field passes
-// without a bump, exactly like wording inside `instruction` / `example`, which is the tuning
-// surface the YAML exists for. A bump without a breaking change fails here too: it forces every
-// custom overlay to be re-scaffolded for nothing. The structure comparison lives in
-// `templateStructure.mjs` (shared with its unit test).
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { breakingStructureChanges, structureDiff, templateStructure } from './templateStructure.mjs';
@@ -40,7 +27,6 @@ function baselineRef() {
     const tag = git(['tag', '--list', 'v*', '--sort=-v:refname']).split('\n')[0].trim();
     if (tag) return { ref: tag, label: tag };
   } catch {
-    // fall through to origin/main
   }
   try {
     git(['rev-parse', '--verify', '--quiet', 'origin/main']);

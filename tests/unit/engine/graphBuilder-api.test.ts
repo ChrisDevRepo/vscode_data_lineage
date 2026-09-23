@@ -29,7 +29,6 @@ function chain() {
   );
 }
 
-// ─── computeShortestPath ──────────────────────────────────────────────────────
 
 describe('computeShortestPath', () => {
   it('returns every node and edge along a directed path', () => {
@@ -58,11 +57,9 @@ describe('computeShortestPath', () => {
   });
 });
 
-// ─── getGraphMetrics ──────────────────────────────────────────────────────────
 
 describe('getGraphMetrics', () => {
   it('counts roots by in-degree and leaves by out-degree', () => {
-    // A and D have no inbound edge; C has no outbound. Z is isolated, so it is both.
     expect(getGraphMetrics(chain())).toEqual({
       totalNodes: 5,
       totalEdges: 3,
@@ -78,7 +75,6 @@ describe('getGraphMetrics', () => {
   });
 });
 
-// ─── dagreLayout ──────────────────────────────────────────────────────────────
 
 describe('dagreLayout', () => {
   const input = () => ({
@@ -118,7 +114,6 @@ describe('dagreLayout', () => {
   });
 });
 
-// ─── buildGraphNoLayout ───────────────────────────────────────────────────────
 
 describe('buildGraphNoLayout', () => {
   it('builds the full node and edge set with positions left at the origin', async () => {
@@ -133,7 +128,6 @@ describe('buildGraphNoLayout', () => {
   });
 });
 
-// ─── traceNodeWithLevels — asymmetric depth ───────────────────────────────────
 
 describe('traceNodeWithLevels — directional depth caps', () => {
   it('walks upstream only when the downstream cap is zero', () => {
@@ -166,11 +160,8 @@ describe('traceNodeWithLevels — directional depth caps', () => {
   });
 });
 
-// ─── traceNodeWithLevels — edge membership ────────────────────────────────────
 
 describe('traceNodeWithLevels — edge membership', () => {
-  // Direction decides which nodes a trace admits, not which edges are drawn between them. An edge
-  // between two admitted nodes is a real dependency the user must see, whichever way it points.
   const withBackEdge = () => makeGraph(
     [{ id: 'ORIGIN' }, { id: 'A' }, { id: 'S' }],
     [['A', 'ORIGIN'], ['S', 'A'], ['A', 'S']],

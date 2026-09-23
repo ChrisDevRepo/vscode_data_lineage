@@ -72,7 +72,7 @@ const ToolResultEnvelope = z
  */
 export function buildToolExecutionError(toolName: string): string {
   return JSON.stringify({
-    error: 'tool_execution_error',
+    error: REJECTION_CODES.toolExecutionError,
     hint: `Correct the ${toolName} input and retry the same phase.`,
   });
 }
@@ -109,7 +109,7 @@ export function readToolError(data: unknown): ToolRejection | null {
     ? String(env.error)
     : okFalse
       ? (typeof env.reason === 'string' && env.reason.trim() ? env.reason.trim() : 'ok_false')
-      : 'validation';
+      : REJECTION_CODES.validation;
   let reason = '';
   if (hasErrors) reason = String((errorsArray)[0] ?? '');
   if (!reason && typeof env.message === 'string') reason = env.message;
@@ -127,7 +127,6 @@ export function readToolError(data: unknown): ToolRejection | null {
   }
   const hasExtraFacts = Object.keys(extraFacts).length > 0;
 
-  // No sibling/multi-error facts: keep env.detail as-is (reference-preserving, e.g. an array).
   let detail: unknown = env.detail;
   if (hasExtraFacts) {
     if (env.detail !== undefined && typeof env.detail === 'object' && env.detail !== null && !Array.isArray(env.detail)) {
@@ -407,9 +406,6 @@ function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
  */
 function missingFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
   if (input === undefined) return undefined;
-  // `invalid_type` covers absent fields; Zod v4 reports an absent enum as `invalid_value` instead,
-  // which reads like a wrong value to a model that believes it already sent the field. Both codes
-  // mean "absent" here only when the path resolves to nothing in the rejected payload.
   const isMissingFieldIssue = (issue: z.core.$ZodIssue): boolean =>
     (issue.code === 'invalid_type' || issue.code === 'invalid_value')
     && resolveAtPath(input, issue.path) === undefined && issue.path.length > 0;
@@ -547,9 +543,6 @@ export function rejectionFromZodError(
     }
     return path ? `${path}: ${message}` : message;
   });
-  // The standing invalid_tool_input hint tells the model to resend every field unchanged, which is
-  // the wrong repair for an unrecognized key (the fix is removal) and for a field missing outright
-  // (nothing to "correct" at a path never sent). An explicit `opts.hint` always wins.
   const hint = opts.code === 'invalid_tool_input'
     ? (opts.hint ?? zodFieldRepairHint(error, opts.input) ?? INVALID_TOOL_INPUT_REPAIR_HINT)
     : opts.hint;

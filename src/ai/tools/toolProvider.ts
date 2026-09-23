@@ -81,31 +81,27 @@ export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer
  * `correction` rather than borrowing one of the three named groups.
  */
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
-  // Column mapping
-  out_col_not_tracked: 'column_mapping',
-  bad_out_col: 'column_mapping',
-  bad_contributor_col: 'column_mapping',
-  continuation_not_writer: 'column_mapping',
-  self_loop_column: 'column_mapping',
-  pruned_contributor: 'column_mapping',
-  column_chain_incomplete: 'column_mapping',
-  // Source selection
-  [REJECTION_CODES.pruneWouldOrphanNoted]: 'source_selection',
-  missing_required_route: 'source_selection',
-  route_validation_failed: 'source_selection',
-  prune_route_conflict: 'source_selection',
-  prune_origin_forbidden: 'source_selection',
-  // Answer format
-  validation: 'answer_format',
+  [REJECTION_CODES.outColNotTracked]: 'column_mapping',
+  [REJECTION_CODES.outColNotOnNode]: 'column_mapping',
+  [REJECTION_CODES.contributorColNotOnSource]: 'column_mapping',
+  [REJECTION_CODES.continuationNotWriter]: 'column_mapping',
+  [REJECTION_CODES.columnSelfLoop]: 'column_mapping',
+  [REJECTION_CODES.writesToNamesReader]: 'column_mapping',
+  [REJECTION_CODES.prunedContributor]: 'column_mapping',
+  [REJECTION_CODES.columnChainIncomplete]: 'column_mapping',
+  [REJECTION_CODES.pruneCarriesTrackedColumn]: 'source_selection',
+  [REJECTION_CODES.routeValidationFailed]: 'source_selection',
+  [REJECTION_CODES.pruneOriginForbidden]: 'source_selection',
+  [REJECTION_CODES.validation]: 'answer_format',
   [REJECTION_CODES.invalidInput]: 'answer_format',
   [REJECTION_CODES.ctFieldRequired]: 'answer_format',
   [REJECTION_CODES.ctFieldForbiddenInBb]: 'answer_format',
   [REJECTION_CODES.bbFieldUnknown]: 'answer_format',
   [REJECTION_CODES.missingField]: 'answer_format',
-  field_length_exceeded: 'answer_format',
-  empty_structured_output: 'answer_format',
-  missing_required_tool_call: 'answer_format',
-  classification_lock_violation: 'answer_format',
+  [REJECTION_CODES.fieldLengthExceeded]: 'answer_format',
+  [REJECTION_CODES.emptyStructuredOutput]: 'answer_format',
+  [REJECTION_CODES.missingRequiredToolCall]: 'answer_format',
+  [REJECTION_CODES.classificationLockViolation]: 'answer_format',
 };
 
 /**
@@ -147,9 +143,6 @@ class ToolHandler implements ToolServices {
   public async deliverPreview(message: AiViewPreviewMessage): Promise<boolean> {
     const panel = this.getPanel();
     if (!panel) return false;
-    // Revealed before the send, not after: a hidden panel measures its canvas at zero, so the graph
-    // would be framed against a box that does not exist yet and never re-framed once the tab came
-    // forward.
     panel.reveal();
     return postToWebview(panel, message, this.logger);
   }
@@ -183,14 +176,9 @@ class ToolHandler implements ToolServices {
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';
       const paths = rejectionIssuePaths(rejection.detail);
       const pathPart = paths.length > 0 ? ` issuePaths=${paths.join(',')}` : '';
-      // The consent gate shares the rejection envelope but is the gate firing on plan — labelling
-      // it `[Reject]` made a healthy refine round read as a retry loop in the log.
       const isGate = isConsentGateRejection(rejection.code);
       const label = isGate ? '[Gate]' : '[Reject]';
-      // `group=` only for a genuine rejection — classifying a gate would misleadingly imply a
-      // consent gate is a model correction.
       const groupPart = isGate ? '' : ` group=${classifyRejectionCode(rejection.code)}`;
-      // `reason=` dropped: it duplicated `code=` verbatim, so the prose rides `hint=` instead.
       this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code}${hintPart}${pathPart}`);
     } else {
       this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
@@ -325,8 +313,6 @@ class ToolHandler implements ToolServices {
       if (!parsed.ok) return this.logAndReturn('lineage_get_scope_bundle', parsed.error, input);
       const sess = this.getSession();
       const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore) as Record<string, unknown>;
-      // Normalization-with-log: silence on `include_ddl` is filled by a declared default, so the
-      // decision the model did not make has to be visible. An explicit `false` is never overridden.
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
@@ -476,7 +462,6 @@ export function buildAiToolRegistry(
 ): ToolRegistry<LineageToolOutput> {
   const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.maxRounds, host?.budget);
 
-  // Exhaustive catalog binding: adding or removing a tool requires a matching handler entry.
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
     lineage_get_screen_state: (input) => handler.getScreenState(input),
@@ -565,9 +550,6 @@ export function registerAiTools(
     EXTERNAL_TOOL_NAMES,
   );
 
-  // Dispatches through the filtered view so a mutating name fails as an unknown tool even if a
-  // manifest entry were reintroduced by hand. The model-facing input schema still lives in
-  // `package.json`; the Zod-SSOT drift guard pins that manifest to the catalog so they cannot diverge.
   return external.getTools().map((tool) =>
     vscode.lm.registerTool(tool.name, {
       prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel(tool.name, options.input) }; },

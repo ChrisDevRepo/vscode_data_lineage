@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-// Asserts that `vsce ls` — the actual VSIX file listing — contains the
-// files the packaged extension needs and none of the files it must never
-// ship (source, tests, tmp/, evidence/debug artifacts, internal tooling,
-// secrets, or a stray .vsix).
-//
-// Usage:
-//   node tests/tools/assert-package-contents.mjs
 
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -23,10 +16,6 @@ function runVsce(extraArgs = []) {
   });
 }
 
-// The listing is taken the way `npm run package` builds the VSIX: `--no-dependencies`. The
-// extension ships its bundled `out/` and `dist/`, the lockfile owns dependency resolution, and
-// vsce's own `npm ls` pass would only reject the LangSmith `overrides` stub the containment
-// layer mandates.
 const result = runVsce(['--no-dependencies']);
 if (result.error) {
   console.error(`FATAL: could not run the local @vscode/vsce CLI: ${result.error.message}`);
@@ -70,6 +59,7 @@ const forbidden = [
   { pattern: /^(?:\.env(?:\..*)?|\.?CLAUDE[^/]*|\.?GEMINI[^/]*|\.?GLM[^/]*|\.?AGENTS[^/]*|\.?CODEX[^/]*|\.cursorrules|\.aider[^/]*)$/iu, label: 'environment/agent-instruction file' },
   { pattern: /(?:^|\/)[^/]*internal[^/]*(?:\/|$)/iu, label: '"internal" marker path' },
   { pattern: /(?:^|\/)debug[^/]*\.txt$/iu, label: 'debug*.txt artifact' },
+  { pattern: /^(?:PLAN[^/]*\.md|TASKLIST[^/]*)$/iu, label: 'internal task/plan notes' },
   // `vsce` never reads .gitignore, so an untracked scratch file at the repo root is packaged
   // unless .vscodeignore names it. Tooling drops these with assorted prefixes; the suffix is the
   // only stable part, which is why the pattern keys on it rather than on a name.

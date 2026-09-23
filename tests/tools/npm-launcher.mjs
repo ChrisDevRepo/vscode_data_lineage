@@ -1,5 +1,3 @@
-// Resolve npm-family CLI entry points and spawn them through Node so tooling has identical
-// argument semantics on Windows and POSIX without invoking platform launcher shims.
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';

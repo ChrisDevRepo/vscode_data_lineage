@@ -12,8 +12,6 @@ import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../../.
 import { makeGraph } from '../helpers/testUtils';
 
 describe('partitionBySchema — expanded schemas', () => {
-  // Edges are irrelevant to the partition — membership only — so each graph carries lineage
-  // that would tempt a connectivity-based implementation to leak across the boundary.
   const lineageGraph = () => makeGraph(
     [
       { id: 'A', schema: 'sales' }, { id: 'B', schema: 'sales' },
@@ -98,7 +96,6 @@ describe('countExpandedSchemaViewRenderedNodes', () => {
   );
 
   it('counts expanded objects plus one cluster per collapsed schema', () => {
-    // sales: A, B individual; fin: D individual; aud collapses to one cluster → 4.
     expect(countExpandedSchemaViewRenderedNodes(graph(), new Set(['sales', 'fin']))).toBe(4);
   });
 

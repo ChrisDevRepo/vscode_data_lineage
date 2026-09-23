@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// One command that answers "which gates are green?" — `npm run gate`.
-//
-// Local deterministic gate. Nothing here pushes, publishes, or runs a real
-// model. Scripted internal lanes and real-model T1–T8S measurement both launch
-// outside this process (Electron / a live provider) and are internal-only.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -42,37 +37,18 @@ function runStep(step) {
 const npmRun = (name, script) => ({ name, ...npmCommand('npm', ['run', script]) });
 
 const STEPS = [
-  // Ordered cheapest-first: type errors and derived-artifact drift fail in seconds, before the
-  // suites, and everything needing build output runs after the single build step.
   npmRun('typecheck', 'typecheck'),
   npmRun('typecheck:tests', 'typecheck:tests'),
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
-  // The prompt-golden suite is not tracked, so no other step sees prompt-text drift. The
-  // manifest pins the prompt-affecting surface at the last golden regeneration; a prompt edit
-  // without that regeneration act fails here in seconds, 0 model calls.
   { name: 'prompt golden sync', cmd: nodeBin, args: ['tests/tools/assert-golden-sync.mjs'] },
   { name: 'honest test labels', cmd: nodeBin, args: ['tests/tools/assert-honest-test-labels.mjs'] },
-  // Structural, so it runs with the other seconds-long checks rather than with the suites. Line
-  // coverage cannot answer this: a rule matched by no fixture still reads as covered.
   { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },
-  // Runs before the two unit steps below, because it is what makes them add up to the whole
-  // unit suite. Without it a new tests/unit/ directory is run by `npm test` and by no gate step.
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
-  // src/engine/** is the deterministic core; it must stay independent of the React webview layer
-  // (src/components/**) so it typechecks and tests without a DOM. Guards the X1 layering fix.
   { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },
-  // Runs the same suite as `test:core`, with per-file coverage floors on the deterministic
-  // core — SQL parsing and graph/BFS — so a regression there fails the gate rather than
-  // showing up as a silently smaller number. Floors are measured, never aspirational.
   npmRun('unit: core (+ core coverage floors)', 'coverage:core'),
-  // Not "unit: AI". These cover the agent runtime's own logic — state machine, tool dispatch,
-  // schemas, gates — against a stubbed `vscode` and scripted model doubles. Zero model calls, so
-  // naming them for AI would report inference coverage the step does not have.
   npmRun('unit: agent runtime', 'test:runtime'),
 
-  // `pretest:integration` is `build` plus the integration-test compile, which keeps the optional
-  // E2E tests from rotting without launching a host here.
   npmRun('build + integration tsc', 'pretest:integration'),
   { name: 'package contents', cmd: nodeBin, args: ['tests/tools/assert-package-contents.mjs'] },
   { name: 'no LangSmith in bundle', cmd: nodeBin, args: ['tests/tools/assert-no-langsmith.mjs'] },

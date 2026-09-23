@@ -332,6 +332,7 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string }
     parseTagValue: true,
     trimValues: true,
     processEntities: false,
+    cdataPropName: CDATA_PROP,
   });
 
   let doc: any;
@@ -385,7 +386,6 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
   const objects: ExtractedObject[] = [];
   const seen = new Set<string>();
   const constraintMaps = extractConstraintMaps(constraintElements ?? elements);
-  // Computed column (`[obj]::col`) → the single source column it reads, resolved after the loop.
   const computedSources = new Map<string, string>();
 
   for (const el of elements) {
@@ -460,7 +460,6 @@ function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources:
     return `${normalizeName(owner)}::${normalizeColName(column)}`;
   };
 
-  // Each pass resolves at least one still-unresolved column or stops, so view chains settle in at most one pass per column.
   for (;;) {
     let resolved = 0;
     for (const obj of objects) {
@@ -532,14 +531,12 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
         let scale: string | undefined;
 
         if (isComputed && computedSources) {
-          // A view's columns arrive with no TypeSpecifier; the ExpressionDependency naming the source column stands in for the type, resolved once every object's declared columns are known.
           const refs = asArray(colEl.Relationship)
             .filter(r => r['@_Name'] === 'ExpressionDependencies')
             .flatMap(r => asArray(r.Entry))
             .flatMap(entry => asArray(entry.References))
             .map(ref => ref['@_Name'])
             .filter((n): n is string => !!n);
-          // Exactly one: two or more means an expression over several columns, which has no declared type to borrow.
           if (refs.length === 1) computedSources.set(`${objectId}::${normalizeColName(colName)}`, refs[0]);
         }
 
@@ -565,7 +562,6 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
           }
         }
 
-        // dacpac's TypeSpecifier.Length is already a character count (unlike the DMV's byte-count max_length) — lengthInChars=true tells formatColumnType not to halve it.
         cols.push(buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true));
       }
     }
@@ -816,30 +812,49 @@ function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
   return undefined;
 }
 
+/** Key under which the parser keeps CDATA sections apart from entity-encoded text. */
+const CDATA_PROP = '__cdata';
+
+/** The five entities predefined by XML 1.0 §4.6. */
+const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+
 /**
- * Extracts and decodes a property value, handling XML character references.
+ * Decodes XML character references and the five predefined entities in attribute or text content.
+ *
+ * @remarks
+ * One pass, so decoded text is never decoded again: `&amp;lt;` and `&#38;lt;` both yield the literal `&lt;`.
+ *
+ * @param raw - Entity-encoded text as read from model.xml.
+ * @returns The decoded text.
+ */
+function decodeXmlText(raw: string): string {
+  return raw.replace(/&(?:#x([0-9A-Fa-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/g, (_, hex, dec, name) => {
+    if (name) return PREDEFINED_ENTITIES[name];
+    const cp = hex !== undefined ? parseInt(hex, 16) : parseInt(dec, 10);
+    return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
+  });
+}
+
+/**
+ * Extracts a property value, decoding XML references in attribute and text content.
+ *
+ * @remarks
+ * CDATA content is returned verbatim: it holds no references, so decoding it would corrupt
+ * literal text such as `'&lt;'` inside a SQL string.
  *
  * @param prop - The XML property object.
  * @returns The decoded string value.
  */
 function extractPropertyValue(prop: XmlProperty): string | undefined {
-  let val: string | undefined;
-  if (prop['@_Value']) val = prop['@_Value'];
-  else if (typeof prop.Value === 'string') val = prop.Value;
-  else if (prop.Value && typeof prop.Value === 'object' && '#text' in prop.Value) {
-    val = (prop.Value as any)['#text'];
+  if (prop['@_Value']) return decodeXmlText(prop['@_Value']);
+  const value = prop.Value;
+  if (typeof value === 'string') return value ? decodeXmlText(value) : value;
+  if (value && typeof value === 'object') {
+    const cdata = value[CDATA_PROP];
+    if (cdata !== undefined) return Array.isArray(cdata) ? cdata.join('') : cdata;
+    if (typeof value['#text'] === 'string') return value['#text'] ? decodeXmlText(value['#text']) : value['#text'];
   }
-  if (val) {
-    val = val.replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => {
-      const cp = parseInt(hex, 16);
-      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
-    });
-    val = val.replace(/&#(\d+);/g, (_, dec) => {
-      const cp = parseInt(dec, 10);
-      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
-    });
-  }
-  return val;
+  return undefined;
 }
 
 /**
@@ -882,7 +897,6 @@ export function applyExclusionPatterns(model: DatabaseModel, patterns: string[],
   const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
     onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
   });
-  // Identity means no pattern survived compilation, so nothing was excluded and there is no parse-stat bookkeeping to record.
   if (filtered === model) return model;
 
   const { nodes } = filtered;

@@ -52,8 +52,6 @@ describe('stored connection integrity', () => {
       isActive: true,
       packageJSON: { version: '1.34.0' },
       exports: {
-        // An Entra connection observably comes back carrying an acquired token on the profile it
-        // was given; this fake reproduces that write.
         connect(profile: Record<string, unknown>) {
           received = profile;
           profile.azureAccountToken = 'token-value';
@@ -97,7 +95,6 @@ describe('stored connection integrity', () => {
     expect(sendable.map(p => p.id)).toEqual(['p-db', 'p-dacpac']);
     expect(rejected).toHaveLength(1);
     expect(rejected[0].id).toBe('p-bad');
-    // The summary must name the offending field; its surrounding wording is the summariser's own.
     expect(rejected[0].issues).toContain('azureAccountToken');
     expect(
       ExtensionToWebviewMsgSchema.safeParse({ type: 'projects-list', projects: sendable, lastOpenedId: 'p-db' }).success,

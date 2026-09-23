@@ -19,7 +19,7 @@ export { resolveModelNodeId };
 export type SubmitFindingsInputObject = Record<string, unknown> & {
   focus_node_id?: unknown;
   prune_neighbors?: unknown;
-  route_requests?: unknown;
+  questions?: unknown;
   column_flow?: unknown;
 };
 
@@ -63,8 +63,7 @@ function parseStringEncodedArray(value: unknown): unknown[] | undefined {
  * fields: a string is unwrapped ONLY when it parses to a JSON array; any other value
  * (including a non-JSON string or a string encoding a non-array) passes through untouched so
  * the inner `z.array` rejection surfaces normally. Transparent to `z.toJSONSchema`
- * (`io: 'input'`), so the model-facing tool schema is unchanged (pinned by
- * `tests/unit/sm/strict-tool-arrays.test.ts`).
+ * (`io: 'input'`), so the model-facing tool schema is unchanged.
  *
  * @param element - Element schema for the inner `z.array`.
  * @param bounds - Optional `min`/`max` length bounds applied to the inner array.
@@ -329,6 +328,33 @@ export function hoistSectionNotes(value: unknown): unknown {
   return { ...record, sections: rewrittenSections, notes: hoistedNotes };
 }
 
+/**
+ * Moves a `submit_findings` `summary` placed inside its one carrying section to the top level.
+ *
+ * @remarks
+ * Sibling of {@link hoistSectionNotes} for the per-hop finding: a provider that nests the one-sentence
+ * `summary` inside `sections[N]` (measured on the gated lane, rejected as `sections.0: Unrecognized key`)
+ * sent the same field in another place. Applies only when the top level carries no `summary` and
+ * exactly one section carries one; any other shape passes through untouched so the strict schema still
+ * rejects it with its own issue path. `droppedKeyPaths` reports the vacated section path.
+ *
+ * @param value - Raw model payload before Zod validation.
+ * @returns The payload with that section's `summary` moved to the top level, or `value` unchanged.
+ */
+export function hoistSectionSummary(value: unknown): unknown {
+  if (!isPlainObject(value) || value.summary !== undefined) return value;
+  const sections = value.sections;
+  if (!Array.isArray(sections)) return value;
+  const carriers = sections.filter(section => isPlainObject(section) && 'summary' in section);
+  if (carriers.length !== 1) return value;
+  const rewrittenSections = sections.map((section) => {
+    if (section !== carriers[0]) return section;
+    const { summary: _summary, ...rest } = section as Record<string, unknown>;
+    return rest;
+  });
+  return { ...value, sections: rewrittenSections, summary: (carriers[0] as Record<string, unknown>).summary };
+}
+
 /** Plain object carrying its own `notes` key, regardless of that key's shape. */
 function isRecordWithNotes(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value) && 'notes' in value;
@@ -463,7 +489,6 @@ function extractBalancedJsonObjects(text: string): Record<string, unknown>[] | n
 export function repairArrayBoundaryArtifacts(value: unknown): unknown {
   if (Array.isArray(value)) {
     const walked = value.map(repairArrayBoundaryArtifacts);
-    // A nested-only repair must still set `changed`, or this level returns the original `value`.
     let changed = walked.some((item, index) => item !== value[index]);
     const rebuilt: unknown[] = [];
     for (const item of walked) {
@@ -522,7 +547,6 @@ export function normalizeStartExplorationInput(
 ): StartExplorationNormalizationResult {
   const input = { ...rawInput };
   const normalizations: StartExplorationNormalization[] = [];
-  // Decode before the empty-BB check so a string-encoded "[]" also normalizes to absence.
   const decoded = parseStringEncodedArray(input.targetColumns);
   if (decoded !== undefined) {
     input.targetColumns = decoded;
@@ -534,10 +558,6 @@ export function normalizeStartExplorationInput(
   }
   return { input, normalizations };
 }
-
-type RouteRequestInputObject = Record<string, unknown> & {
-  nodeId?: unknown;
-};
 
 /** One field-level ID canonicalization applied to a cloned `submit_findings` payload. */
 export interface SubmitFindingsIdNormalization {
@@ -614,27 +634,19 @@ export function normalizeSubmitFindingsInputIds(
     }
   }
 
+  const normalizeEntryIds = (list: unknown[], listName: string, key: string): unknown[] => list.map((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    const value = (entry as Record<string, unknown>)[key];
+    if (typeof value !== 'string') return entry;
+    const resolved = resolveModelNodeId(value, nodeMap) ?? value;
+    note(`${listName}.${index}.${key}`, value, resolved);
+    return { ...(entry as Record<string, unknown>), [key]: resolved };
+  });
   if (Array.isArray(rawInput.prune_neighbors)) {
-    input.prune_neighbors = rawInput.prune_neighbors.map((id, index) => {
-      if (typeof id !== 'string') return id;
-      const resolved = resolveModelNodeId(id, nodeMap) ?? id;
-      note(`prune_neighbors.${index}`, id, resolved);
-      return resolved;
-    });
+    input.prune_neighbors = normalizeEntryIds(rawInput.prune_neighbors, 'prune_neighbors', 'id');
   }
-
-  if (Array.isArray(rawInput.route_requests)) {
-    input.route_requests = rawInput.route_requests.map((req, index) => {
-      if (req && typeof req === 'object' && !Array.isArray(req)) {
-        const route = req as RouteRequestInputObject;
-        if (typeof route.nodeId === 'string') {
-          const resolved = resolveModelNodeId(route.nodeId, nodeMap) ?? route.nodeId;
-          note(`route_requests.${index}.nodeId`, route.nodeId, resolved);
-          return { ...route, nodeId: resolved };
-        }
-      }
-      return req;
-    });
+  if (Array.isArray(rawInput.questions)) {
+    input.questions = normalizeEntryIds(rawInput.questions, 'questions', 'nodeId');
   }
 
   return { input, normalizations };
@@ -661,11 +673,8 @@ export function normalizeSearchQueryInput(raw: string): { query: string; schemaH
   const debracket = (s: string): string => s.replace(/^\[|\]$/g, '');
   const parts = input.split('.').map(p => debracket(p.trim())).filter(Boolean);
 
-  // [name] / name
   if (parts.length === 1) return { query: parts[0] };
-  // [schema].[name] / schema.name
   if (parts.length === 2) return { query: parts[1], schemaHint: parts[0] };
-  // [db].[schema].[name] / db.schema.name
   if (parts.length === 3) return { query: parts[2], schemaHint: parts[1] };
 
   return { query: input };

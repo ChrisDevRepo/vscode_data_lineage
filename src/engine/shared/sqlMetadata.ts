@@ -67,14 +67,11 @@ export const XML_METHODS: Set<string> = new Set([
  * @see {@link https://learn.microsoft.com/en-us/sql/t-sql/spatial-geometry/ogc-methods-on-geometry-instances | Geometry Methods}
  */
 export const CLR_TYPE_METHODS: Set<string> = new Set([
-  // HierarchyID
   'getancestor', 'getdescendant', 'getlevel', 'getroot', 'getreparentedvalue',
   'isdescendantof', 'reparent', 'tostring', 'parse',
 
-  // XML data type (also in XML_METHODS)
   'value', 'query', 'exist', 'modify', 'nodes',
 
-  // Geometry / Geography OGC instance methods
   'starea', 'stasbinary', 'stastext', 'stboundary', 'stbuffer', 'stcentroid',
   'stcontains', 'stconvexhull', 'stcrosses', 'stdifference', 'stdimension',
   'stdisjoint', 'stdistance', 'stendpoint', 'stenvelope', 'stequals',
@@ -85,11 +82,9 @@ export const CLR_TYPE_METHODS: Set<string> = new Set([
   'stsrid', 'ststartpoint', 'stsymdifference', 'sttouches', 'stunion',
   'stwithin', 'stx', 'sty',
 
-  // Geometry/Geography static constructors
   'stgeomfromtext', 'stgeomfromwkb', 'stpointfromtext', 'stpointfromwkb',
   'stlinefromtext', 'stlinefromwkb', 'stpolyfromtext', 'stpolyfromwkb',
   'stgeomcollfromtext', 'stgeomcollfromwkb',
 
-  // SQL Server-specific spatial helpers
   'makevalid', 'reduce', 'bufferwithtolerance',
 ]);

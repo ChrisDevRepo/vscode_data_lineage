@@ -38,8 +38,6 @@ function stubIdentityOk(dir) {
 function targetIsUsable() {
   if (!existsSync(stubTarget)) return false;
   try {
-    // A dangling symlink passes existsSync() as false in some Node versions and true in
-    // others — stat through it explicitly: a broken link throws here.
     statSync(stubTarget);
   } catch {
     return false;
@@ -53,11 +51,6 @@ try {
     process.exit(0);
   }
 
-  // Resolve from Node's own resolver as the second opinion: a dangling link or missing
-  // package throws here, confirming the repair is needed even if the filesystem state
-  // above looked ambiguous. Resolving is not on its own a reason to stop — the containment
-  // requires the STUB to be what resolves, so a real `langsmith` that resolves from anywhere
-  // is reported rather than accepted.
   const probe = spawnSync(process.execPath, ['-p', 'require.resolve("langsmith/package.json")'], {
     cwd: repoRoot,
     encoding: 'utf8',
@@ -70,8 +63,6 @@ try {
     process.exit(0);
   }
   if (resolvedDir && path.resolve(resolvedDir) !== path.resolve(stubTarget)) {
-    // Nested under a dependency, so writing the root stub cannot shadow it. Reported, not
-    // silently repaired: `assert-no-langsmith` is the fail-closed gate that must see this.
     console.error(`[repair-langsmith-stub] WARNING: a non-stub "langsmith" resolves from ${resolvedDir}.`);
     console.error('The LangSmith containment is broken there — reinstall with `npm ci` and check the `overrides` entry.');
   }

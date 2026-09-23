@@ -55,7 +55,6 @@ describe('runAnalysis — dispatch', () => {
     const graph = mixedGraph();
     const nodesOf = (type: AnalysisType): string[] =>
       runAnalysis(graph, type, CONFIG).groups.flatMap(group => group.nodeIds).sort();
-    // The hub component (5 nodes) exceeds islandMaxSize; the two 2-node components remain.
     expect(nodesOf('islands')).toEqual(['C1', 'C2', 'I1', 'I2']);
     expect(runAnalysis(graph, 'hubs', CONFIG).groups.map(group => group.id)).toContain('hub-H');
     expect(nodesOf('orphans')).toEqual(['O']);
@@ -67,13 +66,11 @@ describe('runAnalysis — dispatch', () => {
       [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
       [['A', 'B'], ['B', 'C']],
     );
-    // islandMaxSize alone would admit the 3-node component; maxNodes=2 must veto it.
     expect(runAnalysis(graph, 'islands', { ...CONFIG, islandMaxSize: 3 }, 2).groups).toEqual([]);
     expect(runAnalysis(graph, 'islands', { ...CONFIG, islandMaxSize: 3 }, 3).groups).toHaveLength(1);
   });
 
   it('caps how many chains longest-path reports, without displacing the deepest one', () => {
-    // 40 independent 6-node chains, plus one 9-node chain that must survive the cap at rank 0.
     const nodes: Array<{ id: string }> = [];
     const edges: Array<[string, string]> = [];
     for (let chain = 0; chain < 40; chain++) {

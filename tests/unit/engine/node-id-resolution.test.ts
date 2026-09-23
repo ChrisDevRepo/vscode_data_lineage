@@ -21,7 +21,6 @@ describe('resolveModelNodeId', () => {
   });
 
   it('resolves ids carrying other Unicode format characters', () => {
-    // \u200e LEFT-TO-RIGHT MARK, \ufeff ZERO WIDTH NO-BREAK SPACE — both invisible, both survive trim().
     expect(resolveModelNodeId('\ufeff[ai].[saporders]\u200e', nodeMap)).toBe('[ai].[saporders]');
   });
 
