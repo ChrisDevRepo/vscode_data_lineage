@@ -169,16 +169,19 @@ export function declaredKeysOnly<T extends z.ZodObject>(schema: T) {
  * stops where the parse changed a value's kind (a decoded JSON string, a coerced scalar). A raw
  * `null` is not reported: {@link nullAsAbsent} maps it to absence by contract.
  *
- * An array whose parsed length exceeds its raw length is never a plain kind change — the only
- * repair in this module that changes an array's length is {@link repairArrayBoundaryArtifacts}
- * splicing recovered sibling elements in immediately after the raw element that carried the
- * artifact-boundary key. Index-zipping raw and parsed in that case would compare each element
- * against the wrong sibling from the splice point on and report every one of them as a spurious
- * drop. Instead the walk keeps an independent parsed-side cursor that advances past exactly the
- * recovered elements a re-derivation of that same rejoin produces (a pure, deterministic replay of
- * the repair's own extraction, not a second source of truth for what was recovered), and reports the
- * rejoin itself as a distinct entry — `NORMALIZE-WITH-LOG`'s "add" half, alongside the vacated
- * artifact key the object-level walk already reports as a drop. A whitespace-only key that
+ * An array whose parsed length exceeds its raw length is never a plain kind change — a repair
+ * spliced elements in immediately after the raw element that carried them:
+ * {@link repairArrayBoundaryArtifacts} recovered sibling elements from an artifact-boundary key, or
+ * {@link hoistSectionTopLevelFields} flattened a `sections` array nested inside a section.
+ * Index-zipping raw and parsed in that case would compare each element against the wrong sibling
+ * from the splice point on and report every one of them as a spurious drop. Instead the walk keeps
+ * an independent parsed-side cursor that advances past exactly the spliced elements a re-derivation
+ * of that same repair produces (a pure, deterministic replay of the repair's own extraction, not a
+ * second source of truth for what was recovered), and reports the splice itself as a distinct entry
+ * — `NORMALIZE-WITH-LOG`'s "add" half. An artifact rejoin is reported alongside the vacated
+ * artifact key the object-level walk already reports as a drop; a flattened nested `sections` array
+ * is reported in place of that vacated key, and each nested entry is walked against its spliced
+ * counterpart so a key removed from it is named at its own path. A whitespace-only key that
  * {@link rejoinSectionTextBoundaryArtifacts} folded back into `text` is named as a rejoin, not a drop.
  */
 export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): string[] {
@@ -192,8 +195,19 @@ export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): strin
     let parsedIndex = 0;
     for (let rawIndex = 0; rawIndex < raw.length; rawIndex++) {
       const rawItem = raw[rawIndex];
-      paths.push(...droppedKeyPaths(rawItem, parsed[parsedIndex], at(rawIndex)));
+      const parsedItem = parsed[parsedIndex];
+      const itemPaths = droppedKeyPaths(rawItem, parsedItem, at(rawIndex));
       parsedIndex++;
+      if (isPlainObject(rawItem) && Array.isArray(rawItem.sections) && rawItem.sections.length > 0
+        && isPlainObject(parsedItem) && !('sections' in parsedItem)) {
+        const nested = rawItem.sections;
+        const vacated = `${at(rawIndex)}.sections`;
+        paths.push(...itemPaths.map(p => (p === vacated ? `${vacated} (flattened ${nested.length} nested section(s))` : p)));
+        nested.forEach((entry, j) => paths.push(...droppedKeyPaths(entry, parsed[parsedIndex + j], `${vacated}.${j}`)));
+        parsedIndex += nested.length;
+        continue;
+      }
+      paths.push(...itemPaths);
       if (!isPlainObject(rawItem)) continue;
       const artifactKey = Object.keys(rawItem).find((key) => ARRAY_BOUNDARY_ARTIFACT_KEY.test(key));
       if (artifactKey === undefined) continue;
@@ -333,11 +347,14 @@ export function hoistSectionNotes(value: unknown): unknown {
   return { ...record, sections: rewrittenSections, notes: hoistedNotes };
 }
 
+/** The one top-level text field whose differing section copy is folded into that section's `text`. */
+const FOLDED_TEXT_FIELD = 'summary';
+
 /**
- * Top-level `HopFindingBaseSchema` fields observed authored one level too deep, inside a
- * `sections[]` entry, instead of at the payload's flat top level.
+ * Top-level display labels where the first carrying section's value is kept and a differing copy in
+ * a later section is removed; `droppedKeyPaths` reports the removed path.
  */
-const NESTED_TOP_LEVEL_FIELDS = ['summary', 'prune_neighbors', 'questions'] as const;
+const FIRST_WINS_LABEL_FIELDS: ReadonlySet<string> = new Set(['badge_label']);
 
 /** Deep-equality key for deduping a merged array entry so a repeated element is counted once. */
 function dedupeKey(entry: unknown): string {
@@ -360,73 +377,102 @@ function mergeArrayField(top: unknown[], nested: unknown[]): unknown[] {
   return merged;
 }
 
+/** Returns `record` without `key`. */
+function withoutKey(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  const { [key]: _omitted, ...rest } = record;
+  return rest;
+}
+
 /**
- * Moves a `submit_findings` top-level field (`summary`, `prune_neighbors`, `questions`) placed
- * inside its one carrying section to the top level; merges rather than drops when the top level
- * already carries that field.
+ * Appends the entries of a `sections` array nested inside a section right after that section, so a
+ * finding whose remaining sections were authored inside its first section keeps every section.
+ */
+function flattenNestedSections(sections: unknown[]): { sections: unknown[]; changed: boolean } {
+  let changed = false;
+  const flat = sections.flatMap((section) => {
+    if (!isPlainObject(section) || !Array.isArray(section.sections)) return [section];
+    changed = true;
+    return [withoutKey(section, 'sections'), ...section.sections];
+  });
+  return { sections: flat, changed };
+}
+
+/**
+ * Moves `submit_findings` top-level fields authored inside `sections[]` entries to the top level;
+ * merges rather than drops when the top level or another section already carries the field.
  *
  * @remarks
- * Sibling of {@link hoistSectionNotes} for the per-hop finding: a provider that nests a top-level
- * `HopFindingBaseSchema` field inside `sections[N]` (otherwise rejected as `sections.0:
- * Unrecognized key(s)`) sent it in another place. Each field of {@link NESTED_TOP_LEVEL_FIELDS} is
- * repaired by where the top level already stands:
- * - Absent at the top level, exactly one section carries it: relocated whole — nothing exists yet
- *   to merge against.
- * - Present at the top level already, and the field is `prune_neighbors`/`questions`: the two
- *   arrays are concatenated ({@link mergeArrayField}) and the section's copy removed.
- * - Present at the top level already, and the field is `summary`: the top-level sentence is kept as
- *   the finding's summary — the payload never carries two top-level summaries. A section copy
- *   identical to it (ignoring surrounding whitespace) is removed, since the top level already
- *   carries that sentence; a differing copy is folded onto that same section's `text` instead of
- *   discarded (appended, unless `text` already contains it), so the content survives even though
- *   the field does not relocate.
+ * Sibling of {@link hoistSectionNotes} for the per-hop finding: a provider that nests top-level
+ * fields inside `sections[N]` (otherwise rejected as `sections.0: Unrecognized key(s)`) sent them in
+ * another place. A `sections` array nested in a section is flattened in place first. Then each
+ * field is repaired by its shape, over every carrying section in order:
+ * - An array field (`prune_neighbors`, `questions`, `column_flow`): every carried array is
+ *   concatenated onto the top-level one ({@link mergeArrayField}, deduped) and removed from its
+ *   section.
+ * - `summary`: the first copy becomes the top-level summary when none exists; a copy identical to
+ *   the top-level sentence (ignoring surrounding whitespace) is removed; a differing copy is folded
+ *   onto its own section's `text` (appended, unless `text` already contains it).
+ * - Any other string: relocated when absent at the top level, removed when identical to the value
+ *   already there. A differing copy of a display label ({@link FIRST_WINS_LABEL_FIELDS}) is removed,
+ *   the first value kept; any other differing value passes through so the strict schema rejects it.
  *
- * More than one carrying section for a field, or a carried value of the wrong shape, passes that
- * field through untouched so the strict schema still rejects it with its own issue path.
- * `droppedKeyPaths` reports the vacated section path for every field this relocates or folds in.
+ * A carried value of the wrong shape passes through untouched for the same reason. `droppedKeyPaths`
+ * reports the vacated section path for every field this relocates, folds or removes.
  *
  * @param value - Raw model payload before Zod validation.
- * @returns The payload with each field's carrying section repaired, or `value` unchanged.
+ * @param fields - The finding schema's own top-level keys other than `sections`, supplied by the
+ * caller so this module states no schema-owned constant of its own.
+ * @returns The repaired payload, or `value` unchanged.
  */
-export function hoistSectionTopLevelFields(value: unknown): unknown {
+export function hoistSectionTopLevelFields(value: unknown, fields: readonly string[]): unknown {
   if (!isPlainObject(value) || !Array.isArray(value.sections)) return value;
-  let sections = value.sections as unknown[];
+  const flattened = flattenNestedSections(value.sections as unknown[]);
+  let sections = flattened.sections;
   const topPatch: Record<string, unknown> = {};
-  let changed = false;
+  let changed = flattened.changed;
 
-  for (const field of NESTED_TOP_LEVEL_FIELDS) {
+  const replaceSection = (index: number, next: Record<string, unknown>): void => {
+    sections = sections.map((section, i) => (i === index ? next : section));
+    changed = true;
+  };
+
+  for (const field of fields) {
     const carrierIndexes = sections
       .map((section, index) => (isPlainObject(section) && field in section ? index : -1))
       .filter(index => index !== -1);
-    if (carrierIndexes.length !== 1) continue;
-    const [carrierIndex] = carrierIndexes;
-    const carrier = sections[carrierIndex] as Record<string, unknown>;
-    const carrierValue = carrier[field];
-    const topValue = value[field];
+    if (carrierIndexes.length === 0) continue;
 
-    if (topValue === undefined) {
-      const { [field]: _omitted, ...rest } = carrier;
-      sections = sections.map((section, index) => (index === carrierIndex ? rest : section));
-      topPatch[field] = carrierValue;
-      changed = true;
-      continue;
+    for (const carrierIndex of carrierIndexes) {
+      const carrier = sections[carrierIndex] as Record<string, unknown>;
+      const carrierValue = carrier[field];
+      const topValue = field in topPatch ? topPatch[field] : value[field];
+
+      if (Array.isArray(carrierValue)) {
+        if (topValue !== undefined && !Array.isArray(topValue)) continue;
+        topPatch[field] = mergeArrayField(topValue ?? [], carrierValue);
+        replaceSection(carrierIndex, withoutKey(carrier, field));
+        continue;
+      }
+      if (typeof carrierValue !== 'string') continue;
+
+      if (topValue === undefined) {
+        topPatch[field] = carrierValue;
+        replaceSection(carrierIndex, withoutKey(carrier, field));
+        continue;
+      }
+      if (typeof topValue !== 'string') continue;
+      const identical = topValue.trim() === carrierValue.trim();
+
+      if (field === FOLDED_TEXT_FIELD) {
+        if (typeof carrier.text !== 'string') continue;
+        const text = identical || carrier.text.includes(carrierValue) ? carrier.text : `${carrier.text} ${carrierValue}`;
+        replaceSection(carrierIndex, { ...withoutKey(carrier, field), text });
+        continue;
+      }
+      if (identical || FIRST_WINS_LABEL_FIELDS.has(field)) {
+        replaceSection(carrierIndex, withoutKey(carrier, field));
+      }
     }
-
-    if (field === 'summary') {
-      if (typeof carrierValue !== 'string' || typeof carrier.text !== 'string') continue;
-      const alreadyCarried = typeof topValue === 'string' && topValue.trim() === carrierValue.trim();
-      const text = alreadyCarried || carrier.text.includes(carrierValue) ? carrier.text : `${carrier.text} ${carrierValue}`;
-      const { summary: _omittedSummary, ...rest } = carrier;
-      sections = sections.map((section, index) => (index === carrierIndex ? { ...rest, text } : section));
-      changed = true;
-      continue;
-    }
-
-    if (!Array.isArray(topValue) || !Array.isArray(carrierValue)) continue;
-    const { [field]: _omittedArray, ...rest } = carrier;
-    sections = sections.map((section, index) => (index === carrierIndex ? rest : section));
-    topPatch[field] = mergeArrayField(topValue, carrierValue);
-    changed = true;
   }
 
   return changed ? { ...value, ...topPatch, sections } : value;

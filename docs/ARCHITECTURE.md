@@ -331,14 +331,21 @@ in none is visited row-role-only. A node's inbox — every
 note on its incoming edges — is rendered as one templated block built only from
 recorded facts: the sender, the carrier, the columns, and the sender's verbatim
 question. The backend writes no summary, paraphrase, or question of its own
-into it. A note never causes a second visit. A prune of a visited, removed,
-or queued neighbor is a no-op stated to the model in the next hop's
-`recent_rejections`, and so is a question on a neighbor the same submission
-also names in `prune_neighbors`, which drops that question. A question on a
+into it. A note never causes a second visit. A prune of a visited, resolved-
+removed, or queued neighbor is a no-op stated to the model in the next hop's
+`recent_rejections`. A question on a neighbor the same submission also names
+in `prune_neighbors` is never dropped: the prune stands and the question is
+kept as a deferred follow-up (`DeferredQuestion.reason: 'pruned'`), reaching
+`engine.deferredQuestions`, the synthesis completion envelope, and the
+post-answer "Continue at …" chips the same way a schema- or depth-deferred
+question does. A question on a
 queued neighbor joins that neighbor's inbox for its one visit; a question on a
-visited or already pruned neighbor gets no hop and is recorded as the route
-outcome `already_visited` or `already_pruned`. Route outcomes are not returned
-to the model; every non-accepted one is written to the host log.
+visited or resolved-removed neighbor gets no hop and is recorded as the route
+outcome `already_visited` or `already_pruned`. A question on a neighbor whose
+prune vote is still pending is itself a vote — a keep — and queues that
+neighbor, so it is kept (see below). Route
+outcomes are not returned to the model; every non-accepted one is written to
+the host log.
 
 **Node status** is decided at the node's own visit and recorded separately
 from prose:
@@ -353,23 +360,45 @@ from prose:
   declared on it (`prune_carries_tracked_column`, naming the columns). Stored
   internally as node action `prune`.
 
-A neighbor prune is narrower than `end_branch`: it removes an adjacent object
-the hop has not visited, based on the focus's SQL alone. A neighbor that
-already owns a queued hop is never pulled, and a declared column carrier is
-refused with the same code. Repeated attempts against an object already
-removed are accepted as already-pruned no-ops.
+A neighbor prune is narrower than `end_branch`: it targets an adjacent object
+the hop has not visited, based on the focus's SQL alone, and it is one
+sender's vote on that edge, not an immediate removal. A pruned neighbor
+resolves once every live sender — every in-scope, unvisited node that can
+still reach it — has been heard: removed only if every sender that took a
+position on it voted prune, kept the moment any sender routes it, questions
+it, or (in CT) names it in `column_flow`. A sole live sender's vote resolves
+at once, the same immediacy a single-sender prune always had. A vote still
+pending when the agenda empties — its remaining senders reachable only
+through the pruned neighbor itself, as on a cycle — resolves on the votes
+cast, and the unheard senders are logged. A reactivated
+sender casting a fresh verdict on a neighbor it kept or pruned earlier
+replaces its own prior vote, never adds a second one, so a live sender's
+current position, not its first, decides the vote. While a neighbor's vote is
+pending it is offered to every other sender exactly as an untouched one is —
+never disclosed as already-removed — and it is never enqueued on the
+pruner's behalf. A neighbor that already owns a queued hop is never pulled,
+and a declared column carrier is refused with the same code, whether the
+neighbor is untouched or its vote is still pending. Repeated attempts against
+an object already resolved removed are accepted as already-pruned no-ops; an
+attempt against one still pending is a fresh vote.
 
-**The cut.** An accepted `end_branch` or neighbor prune also removes every
-unvisited node reachable from the origin only through the removed node
-(undirected reachability inside scope, before versus after). A visited node is
-never cut. The cut is logged (`[Cut] hop=N via=X dropped=[…]`) and recorded
-as node state `bb_prune_neighbor` with the removing node; it is not returned to
-the model, and no would-orphan refusal exists.
+**The cut.** Once an accepted `end_branch` or a neighbor-prune vote resolves
+removed, it also removes every unvisited node reachable from the origin only
+through the removed node (undirected reachability inside scope, before
+versus after) — the cut runs at that resolution, never at the vote that may
+only be one of several a pending neighbor still owes. A visited node is never
+cut. The cut is logged (`[Cut] hop=N via=X dropped=[…]`) and recorded as node
+state `bb_prune_neighbor` with the removing node; it is not returned to the
+model, and no would-orphan refusal exists.
 
 Tables and other non-bodied nodes are never visited: with no SQL body to read,
 their status is keep or prune only. A note addressed to one is forwarded to
 its bodied writers or readers (bipartite contraction), and readiness is
-computed on that contracted graph. The model is never the owner of a
+computed on that contracted graph. In CT, where the committing focus only
+reads or only writes the carrier, the note's question and columns reach only
+the side the tracked column continues to; a neighbor on the other side is
+still queued, with no question and no columns, and the skipped forward is
+logged. The model is never the owner of a
 completion flag; synthesis starts when the engine reaches its terminal
 condition.
 

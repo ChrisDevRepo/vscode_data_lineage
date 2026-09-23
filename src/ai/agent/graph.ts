@@ -1717,7 +1717,7 @@ function ensureEngine(state: AgentStateType, deps: AgentGraphDeps): NavigationEn
       snapshot,
       sess.model,
       sess.graph,
-      () => {},
+      toEngineLog(deps.logger),
       { activeFilter: sess.filter },
       sess.columnStore,
     );

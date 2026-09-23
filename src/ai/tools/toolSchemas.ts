@@ -467,7 +467,8 @@ const PruneNeighborSchema = z.object({
  */
 const QUESTIONS_DESCRIPTION =
   'Optional: a specific check for one neighbor (a rule, filter or calculation to establish there). '
-  + 'Every open neighbor you do not prune is visited next.';
+  + 'Every open neighbor you do not prune is visited next. '
+  + 'A question on a neighbor you prune is not checked in this run; it is offered to the user as a follow-up.';
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
@@ -597,7 +598,7 @@ const HopVerdictSchema = z.enum(['analyze', 'passthrough', 'end_branch']).descri
 );
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).max(AI_MAX_SCOPE_NODE_IDS).describe(
-  'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries.',
+  'Required with verdict analyze or passthrough, omitted with end_branch: one entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries.',
 );
 
 /**
@@ -647,6 +648,9 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
   .omit({ badge_label: true, prune_neighbors: true, questions: true, reason: true })
   .extend({ column_flow: ColumnFlowSchema.optional(), badge_label, prune_neighbors, questions, reason })
   .strict();
+
+/** Every top-level `submit_findings` key other than `sections`, in BB and CT form alike. */
+const FINDING_TOP_LEVEL_FIELDS = Object.keys(HopFindingCtBaseSchema.shape).filter(key => key !== 'sections');
 
 /** The flat parsed payload, before {@link toHopFinding} narrows it by verdict. */
 type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema> };
@@ -724,6 +728,7 @@ function toHopFinding(value: FlatSubmitFindings): HopFinding {
 function recoverSubmitFindingsPayload(value: unknown): unknown {
   return hoistSectionTopLevelFields(
     splitFlattenedAngleSections(recoverSectionBoundaries(value), CapturedSectionSchema.shape.angle.options),
+    FINDING_TOP_LEVEL_FIELDS,
   );
 }
 
@@ -927,7 +932,7 @@ const NodeIdSchema = z.string()
 const HighlightGroupSchema = z.object({
   label: advertisedMax(z.string(), { maxLength: PRESENT_RESULT_HIGHLIGHT_LABEL_MAX }).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
   color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
-  node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
+  node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status; each is also linked in a section\'s node_ids or named in notes[].'),
 }).strict();
 
 /**

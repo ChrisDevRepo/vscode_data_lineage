@@ -140,7 +140,7 @@ const PendingLeadSchema = z.object({
   taskId: NonEmptyString,
   nodeId: NonEmptyString,
   fromNodeId: NonEmptyString,
-  reason: z.enum(['schema_boundary', 'depth_boundary', 'contracted_scope', 'budget', 'insufficient_evidence', 'out_of_direction', 'excluded']),
+  reason: z.enum(['schema_boundary', 'depth_boundary', 'contracted_scope', 'budget', 'insufficient_evidence', 'out_of_direction', 'excluded', 'pruned_by_ai']),
   schema: z.string().optional(),
   depth: NonNegativeInt.optional(),
   valueToUser: NonEmptyString,

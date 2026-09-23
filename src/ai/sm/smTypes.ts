@@ -665,8 +665,13 @@ export interface DeferredQuestion {
   fromFocusNodeId: string;
   /** Sub-question the AI wanted to ask at the target. */
   question: string;
-  /** Discriminator for why the route was deferred. `'budget'` — in-border but over the active scope budget. */
-  reason: 'schema' | 'depth' | 'schema_and_depth' | 'budget' | 'direction' | 'excluded';
+  /**
+   * Discriminator for why the route was deferred. `'budget'` — in-border but over the active
+   * scope budget. `'pruned'` — the target was named in `prune_neighbors` and `questions` in the
+   * same submission: the prune stands and the question survives as a follow-up instead of being
+   * dropped.
+   */
+  reason: 'schema' | 'depth' | 'schema_and_depth' | 'budget' | 'direction' | 'excluded' | 'pruned';
   /** Depth-from-origin of the target. Populated when `reason` includes 'depth'. */
   depth?: number;
   /** Hop number at which the deferral was recorded. */
@@ -720,7 +725,7 @@ export interface PendingLead {
   /** In-scope node from which the lead was discovered. */
   fromNodeId: string;
   /** Mechanical boundary that prevented exploration in the current run. */
-  reason: 'schema_boundary' | 'depth_boundary' | 'contracted_scope' | 'budget' | 'insufficient_evidence' | 'out_of_direction' | 'excluded';
+  reason: 'schema_boundary' | 'depth_boundary' | 'contracted_scope' | 'budget' | 'insufficient_evidence' | 'out_of_direction' | 'excluded' | 'pruned_by_ai';
   /** Target schema used by the derived synthesis projection. */
   schema?: string;
   /** Target depth retained when a depth boundary created the lead. */
@@ -1210,8 +1215,7 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_out_of_scope'
       | 'prune_origin_forbidden'
       | 'prune_carries_tracked_column'
-      | 'question_not_neighbor'
-      | 'question_on_pruned_neighbor';
+      | 'question_not_neighbor';
 
 /**
  * Represents an invalid route returned during validation.

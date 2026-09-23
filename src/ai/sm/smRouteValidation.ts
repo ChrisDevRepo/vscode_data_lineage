@@ -17,8 +17,7 @@ import { buildIncompleteRejection } from './smCompleteness';
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
   return kind === 'absent_contributor'
     || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
-    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope'
-    || kind === 'question_on_pruned_neighbor';
+    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope';
 }
 
 /**
@@ -63,8 +62,6 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'A committed column_flow names this node for the tracked columns in detail.available_columns, so it stays in the result for the rest of the run. Remove it from prune_neighbors; when it is this focus, submit analyze or passthrough with a column_flow entry for each of those columns (upstream_columns: [] where a column ends here) instead of end_branch.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
-  question_on_pruned_neighbor:
-    'This node was named in both prune_neighbors and questions in one submission, so its question was dropped. Name a neighbor in one of the two, never both.',
 };
 
 /**
@@ -119,7 +116,6 @@ const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_origin_forbidden: REJECTION_CODES.pruneOriginForbidden,
   prune_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
   question_not_neighbor: REJECTION_CODES.routeValidationFailed,
-  question_on_pruned_neighbor: REJECTION_CODES.routeValidationFailed,
 };
 
 /**

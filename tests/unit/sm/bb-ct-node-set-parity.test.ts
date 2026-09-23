@@ -501,3 +501,79 @@ describe('BB <-> CT node-set parity: fixed-direction out_of_direction disclosure
     }
   });
 });
+
+/**
+ * Seventh shape: a diamond where a table has two senders (docs/ARCHITECTURE.md "Message passing" /
+ * "A neighbor prune is narrower than end_branch"). `A -> B -> {C, D, G}`, `D -> F -> G`: `G` is a
+ * non-bodied table reachable both directly from `B` and, deeper, through `D -> F`. `B` prunes `G`
+ * on its own hop, before `F` — the second sender — is even dispatched. Per the message-passing
+ * model a neighbor prune is one sender's vote on its own edge, not a removal: `G` resolves once
+ * every live sender has finished, and a later sender that keeps it (routes it, or — CT — names it
+ * in `column_flow`) overrules an earlier prune vote. Same topology, same vote outcome, both arms.
+ */
+describe('BB <-> CT node-set parity: two-sender neighbor prune (diamond) — a later keep overrules an earlier prune vote', () => {
+  const amountCol = { name: 'amt', type: 'int', nullable: 'NOT NULL', extra: '' };
+  const regionCol = { name: 'region', type: 'varchar', nullable: 'NOT NULL', extra: '' };
+  const nodes: LineageNode[] = [
+    makeNode({ id: 'a', schema: 'dbo', name: 'a', type: 'procedure', columns: [amountCol] }),
+    makeNode({ id: 'b', schema: 'dbo', name: 'b', type: 'view', columns: [amountCol] }),
+    makeNode({ id: 'c', schema: 'dbo', name: 'c', type: 'view', columns: [regionCol] }),
+    makeNode({ id: 'd', schema: 'dbo', name: 'd', type: 'view', columns: [amountCol] }),
+    makeNode({ id: 'f', schema: 'dbo', name: 'f', type: 'view', columns: [amountCol] }),
+    makeNode({ id: 'g', schema: 'dbo', name: 'g', type: 'table', columns: [amountCol] }),
+  ];
+  const edges: Array<[string, string]> = [['b', 'a'], ['c', 'b'], ['d', 'b'], ['g', 'b'], ['f', 'd'], ['g', 'f']];
+  const model = makeModel(nodes, edges, ['dbo']);
+  const ALL_IDS = nodes.map(n => n.id).sort();
+
+  /**
+   * `b` prunes `g` on its own hop; `f` — `g`'s other sender, dispatched later through `d` — keeps
+   * it (BB: an ordinary open route; CT: names it in `column_flow`). Neither submission is rejected,
+   * and `g` survives in both arms.
+   */
+  function run(mode: 'bb' | 'ct'): string[] {
+    const engine = new NavigationEngine(model, makeGraph(nodes, edges), () => {}, {});
+    const ct = mode === 'ct';
+    const init = engine.init({
+      origin: 'a', question: 'trace amt', direction: 'upstream',
+      depthIntent: { kind: 'explicit', levels: 5 },
+      ...(ct ? { analysisMode: 'ct' as const, targetColumns: ['amt'] } : { analysisMode: 'bb' as const }),
+    });
+    expect('ok' in init, `${mode} init must succeed`).toBe(true);
+    for (let hop = 0; hop < 10; hop++) {
+      const ctx = engine.getHopContext() as { done?: boolean; focus_node?: { id: string } };
+      if (ctx.done || !ctx.focus_node) break;
+      const id = ctx.focus_node.id;
+      const base = { focus_node_id: id, sections: [{ angle: 'business' as const, text: id }], summary: id, verdict: 'analyze' as const };
+      const outcome = (() => {
+        switch (id) {
+          case 'a':
+            return engine.submitFindings({ ...base, ...(ct ? { column_flow: [{ out_col: 'amt', upstream_columns: [{ node: 'b', col: 'amt' }] }] } : {}) });
+          case 'b':
+            return engine.submitFindings({
+              ...base,
+              prune_neighbors: [{ id: 'g', reason: 'b joins g only for an unrelated filter key' }],
+              ...(ct ? { column_flow: [{ out_col: 'amt', upstream_columns: [{ node: 'd', col: 'amt' }] }] } : {}),
+            });
+          case 'c':
+            return engine.submitFindings(base);
+          case 'd':
+            return engine.submitFindings({ ...base, ...(ct ? { column_flow: [{ out_col: 'amt', upstream_columns: [{ node: 'f', col: 'amt' }] }] } : {}) });
+          case 'f':
+            return engine.submitFindings({ ...base, ...(ct ? { column_flow: [{ out_col: 'amt', upstream_columns: [{ node: 'g', col: 'amt' }] }] } : {}) });
+          default:
+            throw new Error(`unexpected ${mode} focus ${id}`);
+        }
+      })();
+      expect((outcome as { error?: string; hint?: string }).error, `${mode} hop on ${id} must commit: ${JSON.stringify(outcome)}`).toBeUndefined();
+    }
+    return engine.getResult().fullNodes.map(n => n.id).sort();
+  }
+
+  it('an earlier prune vote on the shared table does not win: the later sender keeps it, in both arms', () => {
+    const bb = run('bb');
+    const ct = run('ct');
+    expect(bb, 'BB keeps every node — f keeps g after b voted to prune it').toEqual(ALL_IDS);
+    expect(ct, 'CT node set equals BB — the same vote resolves the same way').toEqual(bb);
+  });
+});

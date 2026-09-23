@@ -215,6 +215,7 @@ const DEFERRAL_BOUNDARY_LABEL: Readonly<Record<DeferredQuestion['reason'], strin
   budget: 'budget',
   direction: 'direction',
   excluded: 'excluded',
+  pruned: 'pruned',
 };
 
 /** Copies an agenda entry so a snapshot and the live agenda never share an array. */
@@ -309,6 +310,17 @@ export class NavigationEngine implements IHopStateMachine {
   protected visited = new Set<string>();
   /** Set of node identifiers excluded during exploration cascades. */
   protected removedSet = new Set<string>();
+  /**
+   * A neighbor prune not yet resolved: nodeId → each sender's own vote on its edge into the node
+   * (`'prune'` from `prune_neighbors`, `'keep'` from an ordinary route, a question, or — CT — a
+   * `column_flow` reference). One sender casts at most one ballot, keyed by its own focus id, so a
+   * reactivated sender's fresh verdict replaces its own earlier one rather than adding a second
+   * vote — {@link tryResolvePrune} removes the node only once every live sender has finished and
+   * every recorded ballot reads `'prune'`, or when the agenda empties. In-memory only, never
+   * persisted in the navigation snapshot; {@link fromJSON} logs on every restore that pending votes
+   * are not carried.
+   */
+  private pruneBallots = new Map<string, Map<string, 'prune' | 'keep'>>();
   /** Focus nodes the AI cut via `verdict=end_branch` in CT mode. Surfaced as `ctPrunedNodeIds`. */
   protected ctPrunedFocusIds = new Set<string>();
   /**
@@ -536,7 +548,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.taskLedger.pendingLeads.flatMap(lead => {
       if (lead.status !== 'pending'
         || (lead.reason !== 'schema_boundary' && lead.reason !== 'depth_boundary' && lead.reason !== 'budget'
-          && lead.reason !== 'out_of_direction' && lead.reason !== 'excluded')) return [];
+          && lead.reason !== 'out_of_direction' && lead.reason !== 'excluded' && lead.reason !== 'pruned_by_ai')) return [];
       const task = this.taskLedger.getTask(lead.taskId);
       if (!task) return [];
       return [{
@@ -548,6 +560,7 @@ export class NavigationEngine implements IHopStateMachine {
           : lead.reason === 'depth_boundary' ? 'depth' as const
           : lead.reason === 'budget' ? 'budget' as const
           : lead.reason === 'out_of_direction' ? 'direction' as const
+          : lead.reason === 'pruned_by_ai' ? 'pruned' as const
           : 'excluded' as const,
         ...(lead.depth !== undefined ? { depth: lead.depth } : {}),
         atHop: lead.createdHop,
@@ -574,7 +587,8 @@ export class NavigationEngine implements IHopStateMachine {
    */
   protected deferQuestion(entry: DeferredQuestion): void {
     this.recordPendingLead(entry);
-    this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
+    const cause = entry.reason === 'pruned' ? 'pruned in this submission, kept as a follow-up' : `out of approved scope (${entry.reason})`;
+    this.memory.recordRejection(entry.nodeId, `deferred: ${cause}`, entry.atHop);
   }
 
   /**
@@ -582,9 +596,9 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * `'schema_and_depth'` reports as `'schema_boundary'` (the stricter gate); the breaching depth
-   * still rides the lead's own `depth` field. `'budget'`, `'direction'` and `'excluded'` map 1:1 to
-   * their own `PendingLead['reason']` members — every added member is additive, so an older
-   * checkpoint missing them still parses.
+   * still rides the lead's own `depth` field. `'budget'`, `'direction'`, `'excluded'` and `'pruned'`
+   * map 1:1 to their own `PendingLead['reason']` members — every added member is additive, so an
+   * older checkpoint missing them still parses.
    */
   private recordPendingLead(entry: DeferredQuestion): void {
     const task = this.ensureDeferredTask(entry.nodeId, entry.question, entry.atHop);
@@ -592,6 +606,7 @@ export class NavigationEngine implements IHopStateMachine {
       : entry.reason === 'budget' ? 'budget'
       : entry.reason === 'direction' ? 'out_of_direction'
       : entry.reason === 'excluded' ? 'excluded'
+      : entry.reason === 'pruned' ? 'pruned_by_ai'
       : 'schema_boundary';
     this.taskLedger.ensureLead({
       taskId: task.id,
@@ -1833,6 +1848,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     if (!entry) {
+      this.resolvePendingPrunes(true);
       this._status = 'complete';
       this._totalNodes = this.hopCount;
       this.logLabelDiversity();
@@ -2117,13 +2133,8 @@ export class NavigationEngine implements IHopStateMachine {
         return;
       }
       if (pruneNeighborIds.has(nid)) {
-        this.log('debug', `[Agenda] question dropped hop=${this.hopCount} id=${nid} ← ${focusId} reason=pruned_in_same_submit`);
-        invalidRoutes.push({
-          kind: 'question_on_pruned_neighbor',
-          id: nid,
-          path: `questions.${index}.nodeId`,
-          reason: `\`${nid}\` is named in prune_neighbors in this submission, so its question was dropped.`,
-        });
+        this.log('debug', `[Agenda] question deferred hop=${this.hopCount} id=${nid} ← ${focusId} reason=pruned`);
+        deferredRoutes.push({ nodeId: nid, schema: this.nodeMap.get(nid)!.schema, question: q.question, reason: 'pruned', depth: undefined });
         return;
       }
       requested.add(nid);
@@ -2555,6 +2566,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.log('debug', `[Self-Prune] hop=${this.hopCount} id=${focusId} mode=${this.mode.kind}`);
     this.completeTasks(this.currentFocusTaskIds);
     this.cutUnreachable(focusId, removedBefore);
+    this.resolvePendingPrunes();
     this._status = 'exploring';
     this.heldFindingDraft.clear();
     return { ok: true };
@@ -2579,6 +2591,7 @@ export class NavigationEngine implements IHopStateMachine {
     const dropped = [...before].filter(id => !after.has(id) && !this.removedSet.has(id) && !this.visited.has(id));
     for (const id of dropped) {
       this.removedSet.add(id);
+      this.pruneBallots.delete(id);
       const queued = this._agenda.remove(id);
       if (queued) this.completeTasks(queued.taskIds);
       this.markNodeState(id, 'prune', 'engine', 'bb_prune_neighbor', { viaNodeId: cutNodeId, atHop: this.hopCount });
@@ -2630,18 +2643,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Depth] auto-add beyond initial scope id=${nid} depth=${focusDepth + 1} hop=${this.hopCount}`);
     }
 
-    const removedBefore = new Set(this.removedSet);
     for (const nid of prunedNeighborNids) {
-      this.removedSet.add(nid);
-      this.markNodeState(nid, 'prune', 'ai', 'bb_prune_neighbor', {
-        viaNodeId: focusId,
-        atHop: this.hopCount,
-      });
-      if (!this.visited.has(nid) && SCRIPT_TYPES.has(this.nodeMap.get(nid)!.type) && this.scopeNodeIds.has(nid)) {
-        this._totalNodes--;
-        this.log('debug', `[Prune] prune_neighbor ${nid} — bodied scope node (total −1 → ${this._totalNodes})`);
-      }
-      this.log('debug', `[Prune] prune_neighbor hop=${this.hopCount}: ${nid}`);
+      this.castPruneVote(nid, focusId);
     }
     this.memory.storeDetail(
       this.nodeMap.get(focusId)!,
@@ -2685,7 +2688,6 @@ export class NavigationEngine implements IHopStateMachine {
       },
     );
     this.completeTasks(this.currentFocusTaskIds);
-    if (prunedNeighborNids.size > 0) this.cutUnreachable(focusId, removedBefore);
 
     const freshlyExpandedIds = new Set<string>(scopeAddNids);
     for (const req of routeRequests) {
@@ -2745,6 +2747,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (o.accepted) continue;
       this.log('debug', `[Agenda] route outcome hop=${this.hopCount} focus=${focusId} id=${o.nodeId} accepted=false reason=${o.reason ?? 'none'}${o.deferred ? ' deferred=true' : ''}`);
     }
+    this.resolvePendingPrunes();
 
     this._status = 'exploring';
     this.heldFindingDraft.clear();
@@ -2849,18 +2852,23 @@ export class NavigationEngine implements IHopStateMachine {
    * the origin, falling back to the entry's recorded depth when no directed path resolves.
    */
   private worklistView(): WorklistView {
-    const direction = this.effectiveDirection();
-    const allowed: ReadonlyArray<'upstream' | 'downstream'> = direction === 'bidirectional'
-      ? ['upstream', 'downstream']
-      : [direction];
+    const allowed = this.allowedNoteSides();
     return {
       successors: nodeId => this.noteSuccessors(nodeId, allowed),
       distance: entry => this.directedDepthFromOrigin(entry.nodeId)?.depth ?? entry.depth,
     };
   }
 
+  /** The note-graph sides the active direction allows ({@link worklistView}, {@link liveSenders}). */
+  private allowedNoteSides(): ReadonlyArray<'upstream' | 'downstream'> {
+    const direction = this.effectiveDirection();
+    return direction === 'bidirectional' ? ['upstream', 'downstream'] : [direction];
+  }
+
   /**
-   * Unfinished note-graph successors of `nodeId` ({@link worklistView}).
+   * Unfinished note-graph successors of `nodeId` ({@link worklistView}), or — reversed — the
+   * unfinished nodes that can still reach `nodeId` as a receiver ({@link liveSenders}): the same
+   * bipartite contraction walked in the opposite step direction.
    *
    * @remarks
    * A non-bodied, non-origin, unqueued neighbor is a carrier and is walked through on the same
@@ -2868,14 +2876,15 @@ export class NavigationEngine implements IHopStateMachine {
    * other node is a receiver: it is returned when unfinished — queued, or in scope and neither
    * visited nor removed — and never walked through.
    */
-  private noteSuccessors(nodeId: string, allowed: ReadonlyArray<'upstream' | 'downstream'>): string[] {
+  private noteWalk(nodeId: string, allowed: ReadonlyArray<'upstream' | 'downstream'>, reversed: boolean): string[] {
     if (!this.graph.hasNode(nodeId)) return [];
     const sidesOf = (id: string) => (id === this.originNodeId
       ? allowed
       : allowed.filter(side => this.directedDepthsFor(id)?.[side] !== undefined));
     const out = new Set<string>();
     for (const side of sidesOf(nodeId)) {
-      const step = (id: string) => (side === 'upstream' ? this.graph.inNeighbors(id) : this.graph.outNeighbors(id));
+      const followsInNeighbors = reversed ? side === 'downstream' : side === 'upstream';
+      const step = (id: string) => (followsInNeighbors ? this.graph.inNeighbors(id) : this.graph.outNeighbors(id));
       const carriers = new Set<string>();
       const stack = step(nodeId);
       while (stack.length > 0) {
@@ -2896,6 +2905,120 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
     return Array.from(out);
+  }
+
+  /** Unfinished note-graph successors of `nodeId` ({@link worklistView}). */
+  private noteSuccessors(nodeId: string, allowed: ReadonlyArray<'upstream' | 'downstream'>): string[] {
+    return this.noteWalk(nodeId, allowed, false);
+  }
+
+  /**
+   * Live senders of `nodeId` — unfinished nodes whose hop could still cast a neighbor-prune vote
+   * (or a keep) on the edge into `nodeId`: the note-graph walk {@link worklistView} readiness uses,
+   * in the reverse step direction.
+   *
+   * @remarks
+   * A neighbor prune ({@link castPruneVote}) resolves once this returns empty: no live sender
+   * remains that could still vote on `nodeId`, so its fate is decided by the votes already cast.
+   * An unfinished sender reachable only through `nodeId` itself (a cycle) is never dispatched while
+   * the vote is pending; {@link getHopContext} resolves such a vote when the agenda empties.
+   */
+  private liveSenders(nodeId: string): string[] {
+    return this.noteWalk(nodeId, this.allowedNoteSides(), true);
+  }
+
+  /**
+   * Records `focusId`'s own ballot on the edge into `nodeId` and attempts resolution.
+   *
+   * @remarks
+   * One sender casts at most one ballot: a second call from the same `focusId` (a reactivated
+   * hop revising its own earlier verdict) replaces its prior entry rather than adding a second
+   * vote, so a sender's fresh judgement always supersedes its own earlier one. A vote is not a
+   * removal — `nodeId` is cut only once {@link tryResolvePrune} finds no live sender left standing
+   * between it and every focus that could still name it.
+   */
+  private castBallot(nodeId: string, focusId: string, vote: 'prune' | 'keep'): void {
+    if (this.removedSet.has(nodeId)) return;
+    let ballots = this.pruneBallots.get(nodeId);
+    if (!ballots) { ballots = new Map(); this.pruneBallots.set(nodeId, ballots); }
+    ballots.set(focusId, vote);
+    if (vote === 'prune') this.log('debug', `[Prune] vote hop=${this.hopCount} via=${focusId} id=${nodeId}`);
+    this.tryResolvePrune(nodeId);
+  }
+
+  /** Records `focusId`'s neighbor-prune vote on `nodeId` ({@link castBallot}). */
+  private castPruneVote(nodeId: string, focusId: string): void {
+    this.castBallot(nodeId, focusId, 'prune');
+  }
+
+  /**
+   * Records the current focus's keep on `nodeId`: a live route, question, or column declaration
+   * reached it ({@link castBallot}). A keep from the same sender that voted to prune it on an
+   * earlier, reactivated hop supersedes that sender's own earlier vote — it never overrides a
+   * different sender's still-standing vote, which `tryResolvePrune` reads fresh off every ballot
+   * on every resolution attempt.
+   */
+  private resolveKept(nodeId: string): void {
+    const focusId = this.currentFocusNodeId ?? this.originNodeId ?? nodeId;
+    this.castBallot(nodeId, focusId, 'keep');
+  }
+
+  /**
+   * Removes `nodeId` once every live sender has finished and every ballot on record reads
+   * `'prune'` — the resolution point of a neighbor-prune vote ({@link castBallot}).
+   *
+   * @remarks
+   * `cutUnreachable` runs here, at resolution, never at vote time — the same separation
+   * `submitEndBranch`'s own immediate self-prune already keeps for the focus verdict. The ballot
+   * map is read fresh at every attempt, so a sender's ballot decides the outcome for as long as it
+   * stands, and a later, different sender's opposite vote never overrides it.
+   *
+   * @param runEnded - The agenda is empty, so no remaining sender can be dispatched; the vote
+   *   resolves on the ballots cast and the unheard senders are named in the log.
+   */
+  private tryResolvePrune(nodeId: string, runEnded = false): void {
+    const ballots = this.pruneBallots.get(nodeId);
+    if (!ballots || ballots.size === 0) return;
+    if (this.removedSet.has(nodeId) || this.visited.has(nodeId)) {
+      this.pruneBallots.delete(nodeId);
+      return;
+    }
+    const unheard = this.liveSenders(nodeId);
+    if (unheard.length > 0) {
+      if (!runEnded) return;
+      this.log('debug', `[Prune] resolve at run end id=${nodeId} unheard=[${trunc(unheard.join(', '), LOG_TRUNC_CONTENT)}] — agenda empty, no sender left to dispatch`);
+    }
+
+    const voters = Array.from(ballots.keys());
+    const pruneVoters = voters.filter(id => ballots.get(id) === 'prune');
+    this.pruneBallots.delete(nodeId);
+    if (pruneVoters.length < voters.length) {
+      if (pruneVoters.length > 0) {
+        this.log('debug', `[Prune] resolve id=${nodeId} kept votes=${pruneVoters.length}/${voters.length}`);
+      }
+      return;
+    }
+
+    const viaNodeId = voters.at(-1) ?? nodeId;
+    const removedBefore = new Set(this.removedSet);
+    this.removedSet.add(nodeId);
+    this.markNodeState(nodeId, 'prune', 'ai', 'bb_prune_neighbor', { viaNodeId, atHop: this.hopCount });
+    if (!this.visited.has(nodeId) && SCRIPT_TYPES.has(this.nodeMap.get(nodeId)!.type) && this.scopeNodeIds.has(nodeId)) {
+      this._totalNodes--;
+      this.log('debug', `[Prune] prune_neighbor ${nodeId} — bodied scope node (total −1 → ${this._totalNodes})`);
+    }
+    this.log('debug', `[Prune] resolve id=${nodeId} removed votes=${voters.length}/${voters.length}`);
+    this.cutUnreachable(viaNodeId, removedBefore);
+  }
+
+  /**
+   * Re-attempts resolution for every neighbor prune still pending — the end of each hop, and once
+   * more when the agenda empties ({@link tryResolvePrune} `runEnded`).
+   */
+  private resolvePendingPrunes(runEnded = false): void {
+    for (const nodeId of Array.from(this.pruneBallots.keys())) {
+      this.tryResolvePrune(nodeId, runEnded);
+    }
   }
 
   /**
@@ -3079,6 +3202,7 @@ export class NavigationEngine implements IHopStateMachine {
       dispositions?.set(targetId, removed ? 'already_pruned' : 'already_visited');
       return;
     }
+    this.resolveKept(targetId);
     const node = this.nodeMap.get(targetId);
     if (!node) {
       this.log('debug', `[Disposition] enqueue drop ${targetId} — absent from the loaded graph model`);
@@ -3144,7 +3268,10 @@ export class NavigationEngine implements IHopStateMachine {
       const reAnchor = continues && neighbor && SCRIPT_TYPES.has(neighbor.type)
         ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry))
         : '';
-      const forwarded = `${question}${reAnchor}`;
+      if (!continues) {
+        this.log('debug', `[Agenda] question not forwarded hop=${this.hopCount} id=${nid} ← ${targetId} reason=other_side`);
+      }
+      const forwarded = continues ? `${question}${reAnchor}` : '';
       this.enqueueHop(nid, forwarded, depth + 1, priority, { carry: neighborCarry, lineageQuestions: continues ? lineageQuestions : undefined, visitedRefs, parentTaskId, admitContractedBodiedTarget, dispositions });
     }
   }
@@ -3731,6 +3858,7 @@ export class NavigationEngine implements IHopStateMachine {
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
     engine.declaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
     engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);
+    log('debug', '[Prune] restore does not carry pending neighbor-prune votes; a node mid-vote at checkpoint time resolves on the votes cast after this restore.');
 
     return engine;
   }
