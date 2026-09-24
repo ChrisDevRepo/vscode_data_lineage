@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
-// Trace navigator shell: L0 anchor, browsable sides/levels, row activation,
-// relocated full-model toggle in the footer, collapse rail.
+// Trace navigator shell: L0 anchor, browsable sides/levels, widget-owned row activation and
+// selection, find reveal into collapsed levels, focus footer, collapse rail.
 import { StrictMode, act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,11 +12,25 @@ import type { TraceTree } from '../../../src/components/traceTreeModel';
 
 const tree: TraceTree = {
   originId: 'o',
-  upstream: [{ side: 'up', depth: 1, nodeIds: ['a'] }],
+  upstream: [{ side: 'up', depth: 1, nodeIds: ['a'], grow: new Map([['a', ['f']]]) }],
   downstream: [],
+  connected: null,
   totalUpstream: 1,
   totalDownstream: 0,
-  leafGrow: new Map([['a', ['f']]]),
+};
+
+/** Three upstream levels; level 3 starts collapsed. */
+const deepTree: TraceTree = {
+  originId: 'o',
+  upstream: [
+    { side: 'up', depth: 1, nodeIds: ['a'], grow: new Map([['a', []]]) },
+    { side: 'up', depth: 2, nodeIds: ['b'], grow: new Map([['b', []]]) },
+    { side: 'up', depth: 3, nodeIds: ['deep'], grow: new Map([['deep', []]]) },
+  ],
+  downstream: [],
+  connected: null,
+  totalUpstream: 3,
+  totalDownstream: 0,
 };
 
 const resolveNode = (id: string): TraceTreeNodeMeta => ({
@@ -31,16 +45,12 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof TraceTreePan
     originName: 'Origin Object',
     collapsed: false,
     onToggleCollapse: vi.fn(),
-    useFullModel: false,
-    onToggleFullModel: vi.fn(),
-    filteredOutCount: 0,
     resolveNode,
     selectedNodeId: null as string | null,
     onSelectNode: vi.fn(),
     onFocusPaths: vi.fn(() => true),
     onExitFocus: vi.fn(),
     focusActive: false,
-    onPruneNode: vi.fn(),
     onResetTrace: vi.fn(),
     onGrowLevel: vi.fn(),
     removeKind: 'trace-prune' as const,
@@ -80,7 +90,7 @@ describe('TraceTreePanel', () => {
 
   it('shows the canvas type symbol on leaves and the schema color on clusters', () => {
     renderPanel();
-    const leaf = host.querySelector('[data-testid="trace-tree-row-a"]');
+    const leaf = host.querySelector('[data-testid="trace-tree-row-up:a"]');
     expect(leaf?.querySelector('.ln-tree-type')?.textContent).toBe('●');
     const cluster = host.querySelector('[data-testid="trace-tree-row-trace-up-L1-schema-dbo"]') as HTMLElement;
     expect(cluster?.style.getPropertyValue('--ln-tree-schema')).not.toBe('');
@@ -91,7 +101,7 @@ describe('TraceTreePanel', () => {
   it('activates a leaf row on click', () => {
     const props = renderPanel();
     // Sides and schema clusters start open; the leaf label activates selection.
-    const leaf = host.querySelector('[data-testid="trace-tree-row-a"] .ln-tree-label') as HTMLElement;
+    const leaf = host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-label') as HTMLElement;
     expect(leaf?.textContent).toContain('name-a');
     act(() => {
       leaf.click();
@@ -107,7 +117,7 @@ describe('TraceTreePanel', () => {
     expect(cluster?.querySelector('.ln-tree-swatch')).not.toBeNull();
     expect(cluster?.querySelector('.ln-tree-count')?.textContent).toBe('1');
     expect(cluster?.querySelector('.ln-tree-type')).toBeNull();
-    const leafLabel = host.querySelector('[data-testid="trace-tree-row-a"] .ln-tree-label');
+    const leafLabel = host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-label');
     expect(leafLabel?.querySelector('.ln-tree-suffix')).toBeNull();
     expect(leafLabel?.textContent).toContain('name-a');
   });
@@ -126,15 +136,15 @@ describe('TraceTreePanel', () => {
   it('collapses and re-expands a level through its chevron', () => {
     renderPanel();
     const chevron = host.querySelector('[data-testid="trace-tree-row-trace-up-L1"] .ln-tree-chevron') as HTMLElement;
-    expect(host.querySelector('[data-testid="trace-tree-row-a"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).not.toBeNull();
     act(() => {
       chevron.click();
     });
-    expect(host.querySelector('[data-testid="trace-tree-row-a"]')).toBeNull();
+    expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).toBeNull();
     act(() => {
       (host.querySelector('[data-testid="trace-tree-row-trace-up-L1"] .ln-tree-chevron') as HTMLElement).click();
     });
-    expect(host.querySelector('[data-testid="trace-tree-row-a"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).not.toBeNull();
   });
 
   it('collapses a schema cluster without touching its level', () => {
@@ -142,20 +152,8 @@ describe('TraceTreePanel', () => {
     act(() => {
       (host.querySelector('[data-testid="trace-tree-row-trace-up-L1-schema-dbo"] .ln-tree-chevron') as HTMLElement).click();
     });
-    expect(host.querySelector('[data-testid="trace-tree-row-a"]')).toBeNull();
+    expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).toBeNull();
     expect(host.querySelector('[data-testid="trace-tree-row-trace-up-L1"]')).not.toBeNull();
-  });
-
-  it('hosts the relocated full-model toggle in the footer', () => {
-    const props = renderPanel({ filteredOutCount: 3 });
-    const checkbox = host.querySelector('.ln-trace-tree-footer input[type="checkbox"]') as HTMLInputElement;
-    expect(checkbox).not.toBeNull();
-    expect(checkbox.checked).toBe(false);
-    expect(host.querySelector('.ln-trace-tree-footer')?.textContent).toContain('+3');
-    act(() => {
-      checkbox.click();
-    });
-    expect(props.onToggleFullModel).toHaveBeenCalledTimes(1);
   });
 
   it('finds without hiding: count shown, rows intact, Enter selects', () => {
@@ -184,7 +182,7 @@ describe('TraceTreePanel', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(host.querySelector('[data-testid="trace-tree-find-count"]')?.textContent).toBe('0/0');
-    expect(host.querySelector('[data-testid="trace-tree-row-a"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).not.toBeNull();
     act(() => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
@@ -193,7 +191,7 @@ describe('TraceTreePanel', () => {
 
   it('focuses checked paths and clears the checks', () => {
     const props = renderPanel();
-    const box = host.querySelector('[data-testid="trace-tree-row-a"] input[type="checkbox"]') as HTMLInputElement;
+    const box = host.querySelector('[data-testid="trace-tree-row-up:a"] input[type="checkbox"]') as HTMLInputElement;
     act(() => {
       box.click();
     });
@@ -244,7 +242,7 @@ describe('TraceTreePanel', () => {
 
   it('grows one level from a leaf with candidates', () => {
     const props = renderPanel();
-    const grow = host.querySelector('[data-testid="trace-tree-row-a"] .ln-tree-grow') as HTMLButtonElement;
+    const grow = host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-grow') as HTMLButtonElement;
     expect(grow.disabled).toBe(false);
     act(() => {
       grow.click();
@@ -254,38 +252,61 @@ describe('TraceTreePanel', () => {
 
   it('disables growth where the model has no further neighbors', () => {
     renderPanel({
-      tree: { ...tree, leafGrow: new Map([['a', []]]) },
+      tree: { ...tree, upstream: [{ ...tree.upstream[0], grow: new Map([['a', []]]) }] },
     });
-    const grow = host.querySelector('[data-testid="trace-tree-row-a"] .ln-tree-grow') as HTMLButtonElement;
+    const grow = host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-grow') as HTMLButtonElement;
     expect(grow.disabled).toBe(true);
-    expect(grow.title).toContain('No further levels');
+    expect(grow.getAttribute('aria-label')).toContain('No further levels');
   });
 
-  it('prunes the selected row on Delete, never from the find box', () => {
-    const props = renderPanel({ selectedNodeId: 'a' });
-    const section = host.querySelector('[data-testid="trace-tree-panel"]') as HTMLElement;
+  it('reveals a find match inside a collapsed level', () => {
+    renderPanel({ tree: deepTree });
+    expect(host.querySelector('[data-testid="trace-tree-row-up:deep"]')).toBeNull();
+    const input = host.querySelector('[aria-label="Find node in trace"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     act(() => {
-      section.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+      setter?.call(input, 'name-deep');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    expect(props.onPruneNode).toHaveBeenCalledWith('a');
+    expect(host.querySelector('[data-testid="trace-tree-row-up:deep"]')).not.toBeNull();
   });
 
-  it('ignores Delete in non-editable modes', () => {
-    const props = renderPanel({ selectedNodeId: 'a', removeKind: 'none' as const });
-    const section = host.querySelector('[data-testid="trace-tree-panel"]') as HTMLElement;
-    act(() => {
-      section.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
-    });
-    expect(props.onPruneNode).not.toHaveBeenCalled();
+  it('reveals and selects the canvas selection inside a collapsed level', () => {
+    renderPanel({ tree: deepTree, selectedNodeId: 'deep' });
+    const row = host.querySelector('[data-testid="trace-tree-row-up:deep"]');
+    expect(row).not.toBeNull();
+    expect(row?.closest('[role="treeitem"]')?.getAttribute('aria-selected')).toBe('true');
+    expect(row?.className).toContain('ln-tree-row-active');
   });
 
-  it('never prunes from inside the find box', () => {
-    const props = renderPanel({ selectedNodeId: 'a' });
-    const input = host.querySelector('[aria-label="Find node in trace"]') as HTMLElement;
+  it('leaves role and selection state to the widget row', () => {
+    renderPanel({ selectedNodeId: 'a' });
+    const body = host.querySelector('[data-testid="trace-tree-row-up:a"]');
+    expect(body?.getAttribute('role')).toBeNull();
+    expect(body?.parentElement?.getAttribute('role')).toBe('treeitem');
+  });
+
+  it('states a refused focus instead of clearing the checks', () => {
+    renderPanel({ onFocusPaths: vi.fn(() => false) });
     act(() => {
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+      (host.querySelector('[data-testid="trace-tree-row-up:a"] input[type="checkbox"]') as HTMLInputElement).click();
     });
-    expect(props.onPruneNode).not.toHaveBeenCalled();
+    const focus = [...host.querySelectorAll('.ln-trace-tree-actions button')].find(
+      (button) => button.textContent?.startsWith('Focus paths'),
+    ) as HTMLElement;
+    act(() => {
+      focus.click();
+    });
+    expect(host.querySelector('[data-testid="trace-tree-focus-refused"]')).not.toBeNull();
+    expect(focus.textContent).toContain('(1)');
+  });
+
+  it('lists nodes outside both sides under Connected', () => {
+    renderPanel({
+      tree: { ...tree, connected: { side: 'connected', nodeIds: ['s'], grow: new Map([['s', []]]) } },
+    });
+    expect(host.querySelector('[data-testid="trace-tree-row-trace-connected"]')?.textContent).toContain('Connected (1)');
+    expect(host.querySelector('[data-testid="trace-tree-row-connected:s"]')).not.toBeNull();
   });
 
   it('collapses to a rail with an expand affordance', () => {

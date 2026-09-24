@@ -1,8 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist';
-import type { TraceTree } from './traceTreeModel';
+import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist';
+import type { TraceTree, TraceTreeGroup, TraceTreeLevel } from './traceTreeModel';
 import type { ObjectType } from '../engine/types';
 import { TYPE_COLORS, getExternalNodeColor, getSchemaColor } from '../utils/schemaColors';
+import { Tooltip } from './ui/Tooltip';
 
 /** Display metadata for one tree row, resolved from the canvas node lists. */
 export interface TraceTreeNodeMeta {
@@ -34,12 +35,6 @@ export interface TraceTreePanelProps {
   collapsed: boolean;
   /** Collapse toggle. */
   onToggleCollapse: () => void;
-  /** Trace ignores schema/type filters. */
-  useFullModel: boolean;
-  /** Full-model toggle (relocated from the filter banner). */
-  onToggleFullModel: () => void;
-  /** Nodes hidden by active filters, for the footer hint. */
-  filteredOutCount: number;
   /** Label lookup by node id. */
   resolveNode: (id: string) => TraceTreeNodeMeta | undefined;
   /** Canvas selection, mirrored as the active row. */
@@ -52,24 +47,29 @@ export interface TraceTreePanelProps {
   onExitFocus: () => void;
   /** Whether a focus narrowing is on stage. */
   focusActive: boolean;
-  /** Prunes the node, identical to canvas Delete. */
-  onPruneNode: (id: string) => void;
   /** Restores the trace's starting scope. */
   onResetTrace: () => void;
   /** Loads one level from the given grow candidates. */
   onGrowLevel: (candidateIds: string[]) => void;
-  /** Remove intent for the current trace mode; Delete and growth honor it. */
+  /** Remove intent for the current trace mode; growth honors it. */
   removeKind: 'trace-prune' | 'none';
 }
 
 /** Row shape handed to the tree widget; hierarchy only, no trace logic. */
 interface PanelRow {
+  /** Unique row id; a node on both sides of a cycle gets one row per side. */
   id: string;
+  /** Trace node behind a leaf row; absent on group rows. */
+  nodeId?: string;
   name: string;
+  /** Schema-qualified name for the truncation tooltip; leaves only. */
+  fullName?: string;
   /** Canvas type symbol (■ ● ▲ ◆ ⬡); leaves only. */
   typeIcon?: string;
   /** Right-aligned member count on schema clusters. */
   count?: number;
+  /** Hop level of a level row; absent on other rows. */
+  level?: number;
   /** Schema swatch color, consumed by CSS as --ln-tree-schema; clusters only. */
   schemaColor?: string;
   /** Out-of-scope grow candidates for leaf rows; absent on group rows. */
@@ -83,8 +83,6 @@ function schemaOf(meta: TraceTreeNodeMeta | undefined): string {
 }
 
 interface PanelSelection {
-  selectedNodeId: string | null;
-  onSelectNode: (id: string) => void;
   checkedIds: ReadonlySet<string>;
   onToggleCheck: (id: string) => void;
   checksEnabled: boolean;
@@ -93,8 +91,6 @@ interface PanelSelection {
 }
 
 const PanelSelectionContext = createContext<PanelSelection>({
-  selectedNodeId: null,
-  onSelectNode: () => {},
   checkedIds: new Set(),
   onToggleCheck: () => {},
   checksEnabled: true,
@@ -104,11 +100,16 @@ const PanelSelectionContext = createContext<PanelSelection>({
 
 const ROW_HEIGHT = 28;
 const TREE_INDENT = 16;
+/** Hop levels open on first render; deeper levels start collapsed. */
+const INITIAL_OPEN_LEVELS = 2;
 
-/** Fixed row height keeps virtualized scroll positions stable. */
+/**
+ * Row body inside the widget's own `treeitem`, which owns role, selection, expansion and
+ * activation; this renderer adds only the focus checkbox and the +level affordance.
+ */
 const TraceTreeRow = memo(function TraceTreeRow({ node, style }: NodeRendererProps<PanelRow>) {
-  const { selectedNodeId, onSelectNode, checkedIds, onToggleCheck, checksEnabled, onGrowLevel, growsEnabled } = useContext(PanelSelectionContext);
-  const active = node.id === selectedNodeId;
+  const { checkedIds, onToggleCheck, checksEnabled, onGrowLevel, growsEnabled } = useContext(PanelSelectionContext);
+  const nodeId = node.data.nodeId;
   const growIds = node.data.growIds ?? [];
   const canGrow = growsEnabled && growIds.length > 0;
   const rowStyle: CSSProperties = node.data.schemaColor
@@ -117,142 +118,133 @@ const TraceTreeRow = memo(function TraceTreeRow({ node, style }: NodeRendererPro
   return (
     <div
       style={rowStyle}
-      role="treeitem"
-      aria-selected={active}
-      aria-expanded={node.isLeaf ? undefined : node.isOpen}
       data-testid={`trace-tree-row-${node.id}`}
-      data-trace-tree-kind={node.isLeaf ? 'leaf' : 'group'}
-      className={active ? 'ln-tree-row ln-tree-row-active' : 'ln-tree-row'}
+      data-trace-tree-kind={nodeId ? 'leaf' : 'group'}
+      className={node.isSelected ? 'ln-tree-row ln-tree-row-active' : 'ln-tree-row'}
     >
-      {node.isLeaf ? (
-        <input
-          type="checkbox"
-          aria-label={`Focus path through ${node.data.name}`}
-          title={checksEnabled ? 'Focus path through this node' : 'Exit focus to change the selection'}
-          disabled={!checksEnabled}
-          checked={checkedIds.has(node.id)}
-          onChange={() => onToggleCheck(node.id)}
-          onClick={(event) => event.stopPropagation()}
-          className="ln-checkbox"
-        />
+      {nodeId ? (
+        <Tooltip content={checksEnabled ? 'Focus path through this node' : 'Exit focus to change the selection'}>
+          <input
+            type="checkbox"
+            aria-label={`Focus path through ${node.data.name}`}
+            disabled={!checksEnabled}
+            checked={checkedIds.has(nodeId)}
+            onChange={() => onToggleCheck(nodeId)}
+            onClick={(event) => event.stopPropagation()}
+            className="w-4 h-4 rounded-sm cursor-pointer ln-checkbox"
+          />
+        </Tooltip>
       ) : (
-        <button
-          type="button"
-          aria-label={node.isOpen ? `Collapse ${node.data.name}` : `Expand ${node.data.name}`}
-          className="ln-tree-chevron"
-          onClick={(event) => {
-            event.stopPropagation();
-            node.toggle();
-          }}
-        >
-          {node.isOpen ? '▾' : '▸'}
-        </button>
+        <span className="ln-tree-chevron" aria-hidden="true">{node.isOpen ? '▾' : '▸'}</span>
       )}
-      <button
-        type="button"
-        className="ln-tree-label"
-        onClick={() => {
-          if (node.isLeaf) {
-            onSelectNode(node.id);
-          } else {
-            node.toggle();
-          }
-        }}
-      >
+      <span className="ln-tree-label">
         {node.data.schemaColor ? <span className="ln-tree-swatch" aria-hidden="true" /> : null}
         {node.data.typeIcon ? <span className="ln-tree-type" aria-hidden="true">{node.data.typeIcon}</span> : null}
-        <span className="ln-tree-name">{node.data.name}</span>
+        {node.data.fullName ? (
+          <Tooltip content={node.data.fullName} asChild>
+            <span className="ln-tree-name">{node.data.name}</span>
+          </Tooltip>
+        ) : (
+          <span className="ln-tree-name">{node.data.name}</span>
+        )}
         {node.data.count != null ? <span className="ln-tree-count">{node.data.count}</span> : null}
-      </button>
-      {node.isLeaf ? (
-        <button
-          type="button"
-          aria-label={canGrow ? `Load one more level from ${node.data.name}` : `No further levels beyond ${node.data.name}`}
-          title={canGrow ? 'Load one more level' : 'No further levels in the full model'}
-          disabled={!canGrow}
-          className="ln-tree-grow"
-          onClick={(event) => {
-            event.stopPropagation();
-            onGrowLevel(growIds);
-          }}
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-            <path strokeLinecap="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-        </button>
+      </span>
+      {nodeId ? (
+        <Tooltip content="Load one more level" asChild>
+          <button
+            type="button"
+            aria-label={canGrow ? `Load one more level from ${node.data.name}` : `No further levels beyond ${node.data.name}`}
+            disabled={!canGrow}
+            className="ln-btn-icon ln-tree-grow w-7 h-7 flex items-center justify-center rounded-sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              onGrowLevel(growIds);
+            }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+          </button>
+        </Tooltip>
       ) : null}
     </div>
   );
 });
 
 function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNodeMeta | undefined): PanelRow[] {
-  const leaf = (id: string): PanelRow => {
-    const meta = resolveNode(id);
-    return {
-      id,
-      name: meta?.name ?? id,
-      typeIcon: typeIcon(meta?.type),
-      growIds: tree.leafGrow.get(id) ?? [],
-    };
-  };
-  const cluster = (sideId: string, depth: number, ids: string[]): PanelRow[] => {
-    const bySchema = new Map<string, { id: string; name: string }[]>();
-    for (const id of ids) {
-      const meta = resolveNode(id);
+  const cluster = (groupId: string, group: TraceTreeGroup): PanelRow[] => {
+    const bySchema = new Map<string, PanelRow[]>();
+    for (const nodeId of group.nodeIds) {
+      const meta = resolveNode(nodeId);
       const key = schemaOf(meta);
+      const leaf: PanelRow = {
+        id: `${group.side}:${nodeId}`,
+        nodeId,
+        name: meta?.name ?? nodeId,
+        fullName: meta?.detail ? `${meta.detail}.${meta.name}` : meta?.name ?? nodeId,
+        typeIcon: typeIcon(meta?.type),
+        growIds: group.grow.get(nodeId) ?? [],
+      };
       const members = bySchema.get(key);
-      const member = { id, name: meta?.name ?? id };
-      if (members) members.push(member);
-      else bySchema.set(key, [member]);
+      if (members) members.push(leaf);
+      else bySchema.set(key, [leaf]);
     }
     return [...bySchema.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([schema, members]) => {
-        members.sort((a, b) => a.name.localeCompare(b.name));
-        return {
-          id: `${sideId}-L${depth}-schema-${schema}`,
-          name: schema,
-          count: members.length,
-          schemaColor: schema === 'External' ? getExternalNodeColor() : getSchemaColor(schema),
-          children: members.map((member) => leaf(member.id)),
-        };
-      });
+      .map(([schema, members]) => ({
+        id: `${groupId}-schema-${schema}`,
+        name: schema,
+        count: members.length,
+        schemaColor: schemaColor(schema === 'External' ? 'external' : undefined, schema),
+        children: members.sort((a, b) => a.name.localeCompare(b.name)),
+      }));
   };
-  const side = (sideId: string, name: string, levels: TraceTree['upstream']): PanelRow => ({
+  const side = (sideId: string, name: string, levels: TraceTreeLevel[]): PanelRow => ({
     id: sideId,
     name,
     children: levels.map((level) => ({
       id: `${sideId}-L${level.depth}`,
+      level: level.depth,
       name: `L${level.depth} · ${level.nodeIds.length} node${level.nodeIds.length === 1 ? '' : 's'}`,
-      children: cluster(sideId, level.depth, level.nodeIds),
+      children: cluster(`${sideId}-L${level.depth}`, level),
     })),
   });
-  return [
+  const rows = [
     side('trace-up', `↑ Upstream (${tree.totalUpstream})`, tree.upstream),
     side('trace-down', `↓ Downstream (${tree.totalDownstream})`, tree.downstream),
   ];
+  if (tree.connected) {
+    rows.push({
+      id: 'trace-connected',
+      name: `↔ Connected (${tree.connected.nodeIds.length})`,
+      children: cluster('trace-connected', tree.connected),
+    });
+  }
+  return rows;
+}
+
+/** Leaf rows in display order, the find and selection index of the tree. */
+function leafRows(rows: PanelRow[]): PanelRow[] {
+  return rows.flatMap((row) => (row.children ? leafRows(row.children) : [row]));
 }
 
 /**
  * Docked left trace navigator: pinned L0 anchor, widget-owned tree, footer
- * with the relocated full-model toggle. Rendered only while a trace is
- * active; selection and trace state stay owned by the canvas.
+ * with the focus actions. Rendered only while a trace is active; the canvas
+ * selection drives the widget's controlled `selection`, and trace state
+ * stays owned by the canvas.
  */
 export const TraceTreePanel = memo(function TraceTreePanel({
   tree,
   originName,
   collapsed,
   onToggleCollapse,
-  useFullModel,
-  onToggleFullModel,
-  filteredOutCount,
   resolveNode,
   selectedNodeId,
   onSelectNode,
   onFocusPaths,
   onExitFocus,
   focusActive,
-  onPruneNode,
   onResetTrace,
   onGrowLevel,
   removeKind,
@@ -275,22 +267,19 @@ export const TraceTreePanel = memo(function TraceTreePanel({
   }, []);
 
   const data = useMemo(() => toPanelRows(tree, resolveNode), [tree, resolveNode]);
+  const leaves = useMemo(() => leafRows(data), [data]);
+  /** Sides, levels 1–2 and every schema cluster start open; deeper levels start closed. */
   const initialOpenState = useMemo<Record<string, boolean>>(() => {
-    const open: Record<string, boolean> = { 'trace-up': true, 'trace-down': true };
-    const sides: Array<[string, TraceTree['upstream']]> = [
-      ['trace-up', tree.upstream],
-      ['trace-down', tree.downstream],
-    ];
-    for (const [sideId, levels] of sides) {
-      for (const level of levels) {
-        if (level.depth <= 2) open[`${sideId}-L${level.depth}`] = true;
-        for (const id of level.nodeIds) {
-          open[`${sideId}-L${level.depth}-schema-${schemaOf(resolveNode(id))}`] = true;
-        }
+    const open: Record<string, boolean> = {};
+    for (const side of data) {
+      open[side.id] = true;
+      for (const child of side.children ?? []) {
+        if (child.count != null || (child.level ?? 0) <= INITIAL_OPEN_LEVELS) open[child.id] = true;
+        for (const cluster of child.children ?? []) if (cluster.children) open[cluster.id] = true;
       }
     }
     return open;
-  }, [tree, resolveNode]);
+  }, [data]);
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
@@ -315,49 +304,27 @@ export const TraceTreePanel = memo(function TraceTreePanel({
 
   const selection = useMemo<PanelSelection>(
     () => ({
-      selectedNodeId,
-      onSelectNode,
       checkedIds,
       onToggleCheck: toggleCheck,
       checksEnabled: !focusActive,
       onGrowLevel,
       growsEnabled: removeKind === 'trace-prune',
     }),
-    [selectedNodeId, onSelectNode, checkedIds, toggleCheck, focusActive, onGrowLevel, removeKind],
+    [checkedIds, toggleCheck, focusActive, onGrowLevel, removeKind],
   );
 
+  const [focusRefused, setFocusRefused] = useState(false);
   const clearChecks = useCallback(() => setCheckedIds(new Set()), []);
+
+  useEffect(() => {
+    setFocusRefused(false);
+  }, [checkedIds, tree]);
 
   const matches = useMemo(() => {
     const term = findQuery.trim().toLowerCase();
     if (!term) return [];
-    const found: string[] = [];
-    const visit = (rows: PanelRow[]) => {
-      for (const row of rows) {
-        if (row.children) {
-          visit(row.children);
-        } else {
-          const meta = resolveNode(row.id);
-          const haystack = `${meta?.name ?? row.id} ${row.id}`.toLowerCase();
-          if (haystack.includes(term)) found.push(row.id);
-        }
-      }
-    };
-    visit(data);
-    return found;
-  }, [data, findQuery, resolveNode]);
-
-  const reveal = useCallback((id: string) => {
-    const api = treeRef.current;
-    const node = api?.get(id);
-    if (!api || !node) return;
-    let parent = node.parent;
-    while (parent) {
-      api.open(parent.id);
-      parent = parent.parent;
-    }
-    void api.scrollTo(id);
-  }, []);
+    return leaves.filter((row) => `${row.name} ${row.nodeId}`.toLowerCase().includes(term));
+  }, [leaves, findQuery]);
 
   const currentMatch = matches.length > 0 ? matches[Math.min(findIndex, matches.length - 1)] : undefined;
   const originMeta = resolveNode(tree.originId);
@@ -368,18 +335,37 @@ export const TraceTreePanel = memo(function TraceTreePanel({
   }, [findQuery, tree]);
 
   useEffect(() => {
-    if (currentMatch) reveal(currentMatch);
-    else if (selectedNodeId) reveal(selectedNodeId);
-  }, [currentMatch, selectedNodeId, reveal]);
+    if (currentMatch) void treeRef.current?.scrollTo(currentMatch.id);
+  }, [currentMatch]);
+
+  /**
+   * Mirrors the canvas selection into the widget. `setSelection` selects by id even inside a
+   * collapsed level (`select` skips hidden rows) and `scrollTo` opens the parents; a row already
+   * selected for the same node (the other side of a cycle) is kept.
+   */
+  useEffect(() => {
+    const api = treeRef.current;
+    if (!api || api.selectedNodes[0]?.data.nodeId === (selectedNodeId ?? undefined)) return;
+    const rowId = selectedNodeId ? leaves.find((row) => row.nodeId === selectedNodeId)?.id ?? null : null;
+    api.setSelection({ ids: rowId ? [rowId] : [], anchor: rowId, mostRecent: rowId });
+    if (rowId) void api.scrollTo(rowId);
+  }, [selectedNodeId, leaves]);
+
+  const activateRow = useCallback((node: NodeApi<PanelRow>) => {
+    if (node.data.nodeId) onSelectNode(node.data.nodeId);
+    else node.toggle();
+  }, [onSelectNode]);
 
   if (collapsed) {
     return (
       <div className="ln-trace-tree-collapsed" data-testid="trace-tree-collapsed">
-        <button type="button" aria-label="Expand trace navigator" title="Expand trace navigator" onClick={onToggleCollapse} className="ln-trace-tree-collapse">
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-          </svg>
-        </button>
+        <Tooltip content="Expand trace navigator" placement="right" asChild>
+          <button type="button" aria-label="Expand trace navigator" onClick={onToggleCollapse} className="ln-btn-icon w-7 h-7 flex items-center justify-center rounded-sm">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          </button>
+        </Tooltip>
       </div>
     );
   }
@@ -390,47 +376,45 @@ export const TraceTreePanel = memo(function TraceTreePanel({
         aria-label="Trace navigator"
         data-testid="trace-tree-panel"
         className="ln-trace-tree"
-        onKeyDown={(event) => {
-          if (event.key !== 'Delete' || event.target instanceof HTMLInputElement) return;
-          if (removeKind !== 'trace-prune' || !selectedNodeId) return;
-          event.preventDefault();
-          onPruneNode(selectedNodeId);
-        }}
       >
         <header className="ln-trace-tree-header">
           <span className="ln-trace-tree-title">Trace</span>
-          <button type="button" aria-label="Collapse trace navigator" title="Collapse trace navigator" onClick={onToggleCollapse} className="ln-trace-tree-collapse">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-            </svg>
-          </button>
+          <Tooltip content="Collapse trace navigator" asChild>
+            <button type="button" aria-label="Collapse trace navigator" onClick={onToggleCollapse} className="ln-btn-icon w-7 h-7 flex items-center justify-center rounded-sm">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+            </button>
+          </Tooltip>
         </header>
         <div className="ln-trace-tree-anchor" data-testid="trace-tree-anchor">
-          <button
-            type="button"
-            className="ln-trace-tree-recenter"
-            style={originColor ? ({ '--ln-tree-schema': originColor } as CSSProperties) : undefined}
-            aria-label={`Recenter trace origin ${originName}`}
-            title={`Recenter on ${originName}`}
-            onClick={() => onSelectNode(tree.originId)}
-          >
-            <span className="ln-tree-type" aria-hidden="true">{typeIcon(originMeta?.type)}</span>
-            <span className="ln-tree-label-text">
-              <span className="ln-trace-tree-origin">{originName}</span>
-              <span className="ln-tree-detail">L0 · ↑{tree.totalUpstream} ↓{tree.totalDownstream}</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="ln-btn-icon w-7 h-7 flex items-center justify-center rounded-sm"
-            aria-label="Reset trace to its starting scope"
-            title="Reset trace to its starting scope"
-            onClick={onResetTrace}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-            </svg>
-          </button>
+          <Tooltip content={`Recenter on ${originName}`} asChild>
+            <button
+              type="button"
+              className="ln-trace-tree-recenter"
+              style={originColor ? ({ '--ln-tree-schema': originColor } as CSSProperties) : undefined}
+              aria-label={`Recenter trace origin ${originName}`}
+              onClick={() => onSelectNode(tree.originId)}
+            >
+              <span className="ln-tree-type" aria-hidden="true">{typeIcon(originMeta?.type)}</span>
+              <span className="flex flex-col items-start min-w-0">
+                <span className="ln-trace-tree-origin">{originName}</span>
+                <span className="ln-tree-detail">L0 · ↑{tree.totalUpstream} ↓{tree.totalDownstream}</span>
+              </span>
+            </button>
+          </Tooltip>
+          <Tooltip content="Reset trace to its starting scope" asChild>
+            <button
+              type="button"
+              className="ln-btn-icon w-7 h-7 flex items-center justify-center rounded-sm"
+              aria-label="Reset trace to its starting scope"
+              onClick={onResetTrace}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+            </button>
+          </Tooltip>
         </div>
         <div className="ln-trace-tree-find">
           <input
@@ -449,7 +433,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
                 setFindIndex((index) => (index + matches.length - 1) % matches.length);
               } else if (event.key === 'Enter' && currentMatch) {
                 event.preventDefault();
-                onSelectNode(currentMatch);
+                if (currentMatch.nodeId) onSelectNode(currentMatch.nodeId);
               } else if (event.key === 'Escape') {
                 setFindQuery('');
               }
@@ -474,12 +458,22 @@ export const TraceTreePanel = memo(function TraceTreePanel({
             rowHeight={ROW_HEIGHT}
             disableDrag
             disableDrop
-            selectionFollowsFocus={false}
+            disableMultiSelection
+            disableSelect={(row) => !row.nodeId}
+            onActivate={activateRow}
           >
             {TraceTreeRow}
           </Tree>
         </div>
         <footer className="ln-trace-tree-footer">
+          {checkedIds.size === 0 && !focusActive ? (
+            <p className="ln-tree-detail">Check nodes to focus the paths to them.</p>
+          ) : null}
+          {focusRefused && !focusActive ? (
+            <p role="status" className="ln-tree-detail" data-testid="trace-tree-focus-refused">
+              No single-direction path from the origin to every checked node.
+            </p>
+          ) : null}
           <div className="ln-trace-tree-actions">
             {focusActive ? (
               <button
@@ -498,11 +492,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
                   type="button"
                   className="ln-tree-action"
                   disabled={checkedIds.size === 0}
-                  title={checkedIds.size === 0 ? 'Check one or more nodes to focus their paths' : undefined}
-                  onClick={() => {
-                    if (onFocusPaths([...checkedIds])) return;
-                    clearChecks();
-                  }}
+                  onClick={() => setFocusRefused(!onFocusPaths([...checkedIds]))}
                 >
                   Focus paths ({checkedIds.size})
                 </button>
@@ -514,16 +504,6 @@ export const TraceTreePanel = memo(function TraceTreePanel({
               </>
             )}
           </div>
-          <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none whitespace-nowrap">
-            <input
-              type="checkbox"
-              checked={useFullModel}
-              onChange={onToggleFullModel}
-              className="ln-checkbox"
-            />
-            Show all, ignoring filters
-            {!useFullModel && filteredOutCount > 0 ? <span> (+{filteredOutCount})</span> : null}
-          </label>
         </footer>
       </section>
     </PanelSelectionContext.Provider>

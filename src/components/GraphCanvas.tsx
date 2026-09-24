@@ -415,8 +415,8 @@ interface GraphCanvasProps {
   isTraceTreeCollapsed?: boolean;
   /** Callback to toggle the trace navigator. */
   onToggleTraceTreeCollapsed?: () => void;
-  /** Graphology graph of the currently traced elements, for tree path lighting. */
-  traceGraph?: Graph | null;
+  /** Traversal graph over the trace scope, shared by tree path lighting and focus paths. */
+  traceScopeGraph?: Graph | null;
   /** Narrows the trace to the union of origin→target shortest paths. */
   applyFocusPaths?: (targetIds: string[]) => boolean;
   /** Exits an active focus, restoring the full scope. */
@@ -619,7 +619,7 @@ export function GraphCanvas({
   onToggleDetailSearch,
   isTraceTreeCollapsed,
   onToggleTraceTreeCollapsed,
-  traceGraph,
+  traceScopeGraph,
   applyFocusPaths,
   exitFocusPaths,
   isFocusPaths,
@@ -1068,14 +1068,7 @@ export function GraphCanvas({
       setHighlightedPathNodeIds(null);
       return;
     }
-    // The flow-provided trace graph exists only on synthesized traces; the full
-    // model graph answers the same path for every other trace.
-    const graph = traceGraph ?? modelGraph;
-    if (!graph) {
-      setHighlightedPathNodeIds(null);
-      return;
-    }
-    const path = computeShortestPath(graph, originId, nodeId);
+    const path = traceScopeGraph ? computeShortestPath(traceScopeGraph, originId, nodeId) : null;
     if (!path) {
       setHighlightedPathNodeIds(null);
       return;
@@ -1086,7 +1079,7 @@ export function GraphCanvas({
       padding: FIT_VIEW_PADDING,
       duration: FIT_VIEW_DURATION,
     });
-  }, [onNodeClick, trace.selectedNodeId, traceGraph, modelGraph, fitView]);
+  }, [onNodeClick, trace.selectedNodeId, traceScopeGraph, fitView]);
 
   useEffect(() => {
     setHighlightedPathNodeIds(null);
@@ -1851,6 +1844,7 @@ export function GraphCanvas({
           onReset={() => onResetAll()}
           onSaveAsBookmark={onSaveTraceBookmark ? handleSaveTraceAsBookmark : undefined}
           useFullModel={useFullModel ?? false}
+          onToggleFullModel={onToggleFullModel ?? (() => {})}
           filteredOutCount={filteredOutCount ?? 0}
         />
       )}
@@ -1927,16 +1921,12 @@ export function GraphCanvas({
             originName={selectedNodeLabel ?? trace.selectedNodeId}
             collapsed={isTraceTreeCollapsed ?? false}
             onToggleCollapse={onToggleTraceTreeCollapsed}
-            useFullModel={useFullModel ?? false}
-            onToggleFullModel={onToggleFullModel ?? (() => {})}
-            filteredOutCount={filteredOutCount ?? 0}
             resolveNode={resolveTraceTreeNode}
             selectedNodeId={highlightedNodeId ?? null}
             onSelectNode={handleTreeRowSelect}
             onFocusPaths={applyFocusPaths ?? (() => false)}
             onExitFocus={exitFocusPaths ?? (() => {})}
             focusActive={isFocusPaths ?? false}
-            onPruneNode={onTracePruneNode ?? (() => {})}
             onResetTrace={onResetTrace ?? (() => {})}
             onGrowLevel={onAddTraceNeighbors ?? (() => {})}
             removeKind={traceRemoveKind(trace.mode)}

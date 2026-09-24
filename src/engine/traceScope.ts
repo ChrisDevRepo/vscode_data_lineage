@@ -123,34 +123,6 @@ export function buildVisibleTraceScope(
 }
 
 /**
- * Checks whether one visible trace node can be pruned, and what leaves with it.
- *
- * @remarks
- * A self-prune like the AI backend's `end_branch`: the candidate leaves together with its
- * subtree — every node reachable from the origin only through it — computed by
- * {@link nodesCutByRemoval}, the same cut the NavigationEngine applies at a hop resolution. The
- * walk is scoped to the visible trace nodes and undirected: relevance in a trace runs both ways.
- * The result never leaves an island, and the origin is never removable.
- *
- * @param graph - Graphology graph spanning the trace nodes and their edges.
- * @param originNodeId - Origin node ID (anchor, never prunable).
- * @param visibleNodeIds - Currently visible node IDs.
- * @param candidateNodeId - Node ID being tested.
- *
- * @returns Prune verdict; `cutNodeIds` lists the subtree leaving alongside the candidate when safe.
- */
-/**
- * Unions the origin→target shortest paths for a focus set.
- *
- * Returns null when the origin is unknown to the graph or any target is
- * unreachable: focus is all-or-nothing, never a partial union.
- *
- * @param graph - Graph spanning the trace scope.
- * @param originId - Focus anchor (the trace origin).
- * @param targetIds - Checked node ids, origin excluded by the caller.
- * @returns Unioned path node and edge ids, or null when any leg fails.
- */
-/**
  * Builds the traversal graph for a trace scope from the full model.
  *
  * Mirrors the scope graph `applyTraceToFlow` builds when synthesis runs, so
@@ -169,6 +141,17 @@ export function buildTraceScopeGraph(model: DatabaseModel, nodeIds: ReadonlySet<
   });
 }
 
+/**
+ * Unions the origin→target shortest paths for a focus set.
+ *
+ * Returns null when the origin is unknown to the graph or any target is
+ * unreachable: focus is all-or-nothing, never a partial union.
+ *
+ * @param graph - Graph spanning the trace scope.
+ * @param originId - Focus anchor (the trace origin).
+ * @param targetIds - Checked node ids, origin excluded by the caller.
+ * @returns Unioned path node and edge ids, or null when any leg fails.
+ */
 export function unionShortestPaths(
   graph: Graph,
   originId: string,
@@ -187,6 +170,23 @@ export function unionShortestPaths(
   return { nodeIds, edgeIds };
 }
 
+/**
+ * Checks whether one visible trace node can be pruned, and what leaves with it.
+ *
+ * @remarks
+ * A self-prune like the AI backend's `end_branch`: the candidate leaves together with its
+ * subtree — every node reachable from the origin only through it — computed by
+ * {@link nodesCutByRemoval}, the same cut the NavigationEngine applies at a hop resolution. The
+ * walk is scoped to the visible trace nodes and undirected: relevance in a trace runs both ways.
+ * The result never leaves an island, and the origin is never removable.
+ *
+ * @param graph - Graphology graph spanning the trace nodes and their edges.
+ * @param originNodeId - Origin node ID (anchor, never prunable).
+ * @param visibleNodeIds - Currently visible node IDs.
+ * @param candidateNodeId - Node ID being tested.
+ *
+ * @returns Prune verdict; `cutNodeIds` lists the subtree leaving alongside the candidate when safe.
+ */
 export function canPruneTraceNode(
   graph: Graph,
   originNodeId: string | null,

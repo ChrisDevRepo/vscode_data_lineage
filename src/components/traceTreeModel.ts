@@ -1,17 +1,29 @@
 import type Graph from 'graphology';
 import type { TraceState } from '../engine/types';
 
-/** Trace side relative to the origin: `up` follows inbound edges, `down` outbound edges. */
-export type TraceTreeSide = 'up' | 'down';
+/**
+ * Tree placement relative to the origin: `up` follows inbound edges, `down` outbound edges,
+ * `connected` holds visible nodes neither directional walk reaches.
+ */
+export type TraceTreeSide = 'up' | 'down' | 'connected';
+
+/** A group of tree nodes with their per-node grow candidates. */
+export interface TraceTreeGroup {
+  /** Tree placement of this group. */
+  side: TraceTreeSide;
+  /** Visible node ids in first-visit order. */
+  nodeIds: string[];
+  /**
+   * Out-of-scope neighbors per node, in the group's direction (`up` inbound, `down` outbound,
+   * `connected` both), pruned nodes excluded. An empty list disables the node's +level affordance.
+   */
+  grow: ReadonlyMap<string, string[]>;
+}
 
 /** One hop level of a trace side, depth counted outward from the origin. */
-export interface TraceTreeLevel {
-  /** Trace side this level belongs to. */
-  side: TraceTreeSide;
+export interface TraceTreeLevel extends TraceTreeGroup {
   /** Hop distance from the origin; starts at 1. */
   depth: number;
-  /** Visible node ids at exactly this depth, in first-visit order. */
-  nodeIds: string[];
 }
 
 /** L0-anchored projection of a trace scope for the tree navigator. */
@@ -22,16 +34,12 @@ export interface TraceTree {
   upstream: TraceTreeLevel[];
   /** Downstream levels, depth 1 outward. */
   downstream: TraceTreeLevel[];
+  /** Visible nodes reached by neither directional walk; null when every node is placed. */
+  connected: TraceTreeGroup | null;
   /** Total visible upstream node count, origin excluded. */
   totalUpstream: number;
   /** Total visible downstream node count, origin excluded. */
   totalDownstream: number;
-  /**
-   * Per-leaf grow candidates: visible leaf id to out-of-scope neighbor ids
-   * in the full graph, pruned nodes excluded. An empty list means the leaf
-   * cannot grow and its +level affordance renders disabled.
-   */
-  leafGrow: Map<string, string[]>;
 }
 
 /** Minimal trace read for tree shaping; the panel passes the live trace state through. */
@@ -47,10 +55,11 @@ export interface TraceTreeInput {
 /**
  * Shapes a trace scope into an L0-anchored tree.
  *
- * Levels come from a direction-restricted breadth-first walk over the visible
- * set, so they always agree with what the canvas shows. A node reachable from
- * both directions appears on both sides. The walk is cycle-safe. A null
- * origin or an origin outside the visible set yields an empty tree.
+ * Levels come from a direction-restricted breadth-first walk over the visible set, so they
+ * always agree with what the canvas shows. A node reachable from both directions appears on
+ * both sides; a visible node reachable from neither lands in `connected`, so every visible
+ * node appears at least once. The walk is cycle-safe. A null origin or an origin outside the
+ * visible set yields no tree.
  *
  * @param input - Origin, visible scope, and pruned set from the trace state.
  * @param graph - Full graphology graph (a superset of the visible scope) for traversal and grow checks.
@@ -61,21 +70,19 @@ export function buildTraceTree(input: TraceTreeInput, graph: Graph | null): Trac
   if (!originId || !graph || !graph.hasNode(originId) || !visibleNodeIds.has(originId)) {
     return null;
   }
-  const upstream = walkSide(graph, originId, visibleNodeIds, 'up');
-  const downstream = walkSide(graph, originId, visibleNodeIds, 'down');
-  const leafGrow = new Map<string, string[]>();
-  for (const level of [...upstream, ...downstream]) {
-    for (const id of level.nodeIds) {
-      leafGrow.set(id, growCandidates(graph, id, visibleNodeIds, prunedNodeIds));
-    }
-  }
+  const scope = { graph, visibleNodeIds, prunedNodeIds };
+  const upstream = walkSide(scope, originId, 'up');
+  const downstream = walkSide(scope, originId, 'down');
+  const placed = new Set<string>([originId]);
+  for (const level of [...upstream, ...downstream]) level.nodeIds.forEach(id => placed.add(id));
+  const unplaced = [...visibleNodeIds].filter(id => !placed.has(id) && graph.hasNode(id));
   return {
     originId,
     upstream,
     downstream,
+    connected: unplaced.length > 0 ? group(scope, 'connected', unplaced) : null,
     totalUpstream: upstream.reduce((sum, level) => sum + level.nodeIds.length, 0),
     totalDownstream: downstream.reduce((sum, level) => sum + level.nodeIds.length, 0),
-    leafGrow,
   };
 }
 
@@ -83,55 +90,50 @@ export function buildTraceTree(input: TraceTreeInput, graph: Graph | null): Trac
  * Reads the remove intent for a tree row from the live trace state.
  *
  * The tree never decides removability itself; it forwards the mode the
- * canvas already uses, so tree Delete and canvas Delete stay one operation.
+ * canvas already uses, so tree growth and canvas Delete stay one operation.
  */
 export function traceRemoveKind(mode: TraceState['mode']): 'trace-prune' | 'none' {
   return mode === 'applied' || mode === 'filtered' ? 'trace-prune' : 'none';
 }
 
-function neighborsOf(graph: Graph, id: string, side: TraceTreeSide): string[] {
-  return side === 'up' ? graph.inNeighbors(id) : graph.outNeighbors(id);
+interface Scope {
+  graph: Graph;
+  visibleNodeIds: ReadonlySet<string>;
+  prunedNodeIds: ReadonlySet<string>;
 }
 
-function walkSide(
-  graph: Graph,
-  originId: string,
-  visibleNodeIds: ReadonlySet<string>,
-  side: TraceTreeSide,
-): TraceTreeLevel[] {
+function neighborsOf(graph: Graph, id: string, side: TraceTreeSide): string[] {
+  if (side === 'up') return graph.inNeighbors(id);
+  if (side === 'down') return graph.outNeighbors(id);
+  return graph.neighbors(id);
+}
+
+function group(scope: Scope, side: TraceTreeSide, nodeIds: string[]): TraceTreeGroup {
+  const grow = new Map<string, string[]>();
+  for (const id of nodeIds) {
+    grow.set(id, neighborsOf(scope.graph, id, side).filter(
+      neighbor => !scope.visibleNodeIds.has(neighbor) && !scope.prunedNodeIds.has(neighbor),
+    ));
+  }
+  return { side, nodeIds, grow };
+}
+
+function walkSide(scope: Scope, originId: string, side: 'up' | 'down'): TraceTreeLevel[] {
   const levels: TraceTreeLevel[] = [];
   const visited = new Set<string>([originId]);
   let frontier = [originId];
-  let depth = 0;
   while (frontier.length > 0) {
-    depth += 1;
     const next: string[] = [];
     for (const id of frontier) {
-      for (const neighbor of neighborsOf(graph, id, side)) {
-        if (!visibleNodeIds.has(neighbor) || visited.has(neighbor)) continue;
+      for (const neighbor of neighborsOf(scope.graph, id, side)) {
+        if (!scope.visibleNodeIds.has(neighbor) || visited.has(neighbor)) continue;
         visited.add(neighbor);
         next.push(neighbor);
       }
     }
     if (next.length === 0) break;
-    levels.push({ side, depth, nodeIds: next });
+    levels.push({ ...group(scope, side, next), depth: levels.length + 1 });
     frontier = next;
   }
   return levels;
-}
-
-function growCandidates(
-  graph: Graph,
-  id: string,
-  visibleNodeIds: ReadonlySet<string>,
-  prunedNodeIds: ReadonlySet<string>,
-): string[] {
-  if (!graph.hasNode(id)) return [];
-  const candidates = new Set<string>();
-  for (const neighbor of graph.neighbors(id)) {
-    if (!visibleNodeIds.has(neighbor) && !prunedNodeIds.has(neighbor)) {
-      candidates.add(neighbor);
-    }
-  }
-  return [...candidates];
 }

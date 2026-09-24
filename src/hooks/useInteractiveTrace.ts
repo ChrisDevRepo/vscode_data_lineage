@@ -57,6 +57,8 @@ interface UseInteractiveTraceReturn {
   resetTraceToStart: () => void;
   /** Adds a batch of direct scope neighbors in one update (tree level growth). */
   addTraceNeighbors: (nodeIds: string[]) => void;
+  /** Traversal graph over the trace scope, shared by tree path lighting and focus paths; null outside a trace. */
+  traceScopeGraph: Graph | null;
 }
 
 /** Initial trace state factory */
@@ -429,6 +431,13 @@ export function useInteractiveTrace(
     return traceSizeByDepth(bfsGraph, trace.selectedNodeId, upstreamLevels, downstreamLevels);
   }, [graph, fullGraph, trace.selectedNodeId]);
 
+  /** Traversal graph over the trace scope; the flow-provided graph exists only on synthesized traces. */
+  const traceScopeGraph = useMemo(() => {
+    if (traceGraph) return traceGraph;
+    if (!model || !isEditableTraceMode(trace.mode) || trace.tracedNodeIds.size === 0) return null;
+    return buildTraceScopeGraph(model, trace.tracedNodeIds);
+  }, [traceGraph, model, trace.mode, trace.tracedNodeIds]);
+
   /**
    * Narrows the trace to the union of origin→target shortest paths.
    *
@@ -437,16 +446,9 @@ export function useInteractiveTrace(
    * scope instead of ending the trace. Re-focus requires an exit first —
    * `path-applied` is not an editable mode.
    */
-  /** Traversal graph for focus/path operations; the flow-provided graph exists only on synthesized traces. */
-  const focusGraph = useMemo(() => {
-    if (traceGraph) return traceGraph;
-    if (!model || !isEditableTraceMode(trace.mode) || trace.tracedNodeIds.size === 0) return null;
-    return buildTraceScopeGraph(model, trace.tracedNodeIds);
-  }, [traceGraph, model, trace.mode, trace.tracedNodeIds]);
-
   const applyFocusPaths = useCallback((targetIds: string[]): boolean => {
-    if (!trace.selectedNodeId || !isEditableTraceMode(trace.mode) || !focusGraph) return false;
-    const union = unionShortestPaths(focusGraph, trace.selectedNodeId, targetIds);
+    if (!trace.selectedNodeId || !isEditableTraceMode(trace.mode) || !traceScopeGraph) return false;
+    const union = unionShortestPaths(traceScopeGraph, trace.selectedNodeId, targetIds);
     if (!union) {
       window.vscode?.postMessage({ type: 'log', text: `[Trace] Focus paths skipped — a leg is unreachable` });
       return false;
@@ -467,7 +469,7 @@ export function useInteractiveTrace(
       tracedEdgeIds: union.edgeIds,
     }));
     return true;
-  }, [config, trace, focusGraph]);
+  }, [config, trace, traceScopeGraph]);
 
   const exitFocusPaths = useCallback(() => {
     if (focusPrevious) {
@@ -520,5 +522,5 @@ export function useInteractiveTrace(
     });
   }, [model]);
 
-  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, applyFocusPaths, exitFocusPaths, isFocusPaths: focusPrevious !== null, resetTraceToStart, addTraceNeighbors };
+  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, applyFocusPaths, exitFocusPaths, isFocusPaths: focusPrevious !== null, resetTraceToStart, addTraceNeighbors, traceScopeGraph };
 }

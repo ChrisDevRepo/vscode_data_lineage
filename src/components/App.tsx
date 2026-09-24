@@ -183,7 +183,7 @@ export function App() {
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
   const isBaseRenderLimited = renderLimitHit > 0 || filteredCount > config.renderLimit;
-  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, applyFocusPaths, exitFocusPaths, isFocusPaths, resetTraceToStart, addTraceNeighbors } =
+  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, applyFocusPaths, exitFocusPaths, isFocusPaths, resetTraceToStart, addTraceNeighbors, traceScopeGraph } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config, model, isBaseRenderLimited);
 
   /** Updates the global extension configuration, keeping the current object when the host resends identical content. */
@@ -1690,7 +1690,7 @@ export function App() {
         onToggleDetailSearch={() => setIsDetailSearchOpen(prev => !prev)}
         isTraceTreeCollapsed={isTraceTreeCollapsed}
         onToggleTraceTreeCollapsed={() => setIsTraceTreeCollapsed(prev => !prev)}
-        traceGraph={traceGraph}
+        traceScopeGraph={traceScopeGraph}
         applyFocusPaths={applyFocusPaths}
         exitFocusPaths={exitFocusPaths}
         isFocusPaths={isFocusPaths}

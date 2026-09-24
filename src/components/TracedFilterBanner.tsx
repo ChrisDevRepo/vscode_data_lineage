@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { ModeBanner } from './ModeBanner';
+import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface TracedFilterBannerProps {
@@ -27,6 +28,8 @@ interface TracedFilterBannerProps {
   onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
   /** Whether the trace should ignore existing schema/type filters and use the full model. */
   useFullModel: boolean;
+  /** Callback triggered when the "Include objects outside the filters" checkbox is toggled. */
+  onToggleFullModel: () => void;
   /** The number of nodes that are hidden due to active schema/type filters. */
   filteredOutCount: number;
 }
@@ -48,6 +51,7 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
   onReset,
   onSaveAsBookmark,
   useFullModel,
+  onToggleFullModel,
   filteredOutCount,
 }: TracedFilterBannerProps) {
   const formatLevels = (levels: number) =>
@@ -72,6 +76,20 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
     </>
   );
 
+  const filterToggle = (
+    <Tooltip content="When enabled, trace ignores schema/type filters and shows all dependencies">
+      <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none whitespace-nowrap">
+        <input
+          type="checkbox"
+          checked={useFullModel}
+          onChange={onToggleFullModel}
+          className="ln-checkbox"
+        />
+        Include objects outside the filters
+      </label>
+    </Tooltip>
+  );
+
   return (
     <ModeBanner
       variant="trace"
@@ -80,6 +98,7 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
       subtitle={subtitle}
       onClose={mode === 'applied' && onEnd ? onEnd : onReset}
       onSaveAsBookmark={onSaveAsBookmark}
+      extraControls={filterToggle}
     />
   );
 });
