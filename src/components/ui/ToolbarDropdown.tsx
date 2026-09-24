@@ -64,6 +64,7 @@ export function ToolbarDropdown({
             onClick={trigger.onClick}
             variant="icon"
             disabled={trigger.disabled}
+            aria-label={ariaLabel}
             aria-expanded={isOpen}
             aria-haspopup={ariaHaspopup}
             style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}

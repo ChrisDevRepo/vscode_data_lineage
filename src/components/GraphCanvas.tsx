@@ -154,10 +154,10 @@ export function isUserMoveEvent(event: MouseEvent | TouchEvent | null): boolean 
 }
 
 /** Zoom below which AI notes are hidden once they are showing. */
-const NOTES_ZOOM_OUT = 0.45;
+const NOTES_ZOOM_OUT = 0.18;
 
 /** Zoom above which AI notes are shown once they are hidden. */
-const NOTES_ZOOM_IN = 0.55;
+const NOTES_ZOOM_IN = 0.28;
 
 /** Arrow-head width and height, in px, of a column-view edge. */
 const COLUMN_EDGE_MARKER_SIZE = 14;
@@ -1024,16 +1024,18 @@ export function GraphCanvas({
 
   const flowNodeLookup = useMemo(() => {
     const ids = new Set<string>();
+    const byId = new Map<string, FlowNode>();
     const byLabel = new Map<string, FlowNode>();
     const bySchemaLabel = new Map<string, FlowNode>();
     for (const n of flowNodes) {
       ids.add(n.id);
+      if (!byId.has(n.id)) byId.set(n.id, n);
       const label = String(n.data.label ?? '');
       if (!byLabel.has(label)) byLabel.set(label, n);
       const key = searchKey(String(n.data.schema ?? ''), label);
       if (!bySchemaLabel.has(key)) bySchemaLabel.set(key, n);
     }
-    return { ids, byLabel, bySchemaLabel };
+    return { ids, byId, byLabel, bySchemaLabel };
   }, [flowNodes]);
 
   const modelNodeNameLookup = useMemo(() => {
@@ -1598,6 +1600,18 @@ export function GraphCanvas({
     [model],
   );
 
+  const detailSearchNodes = useMemo(
+    () => allNodes.map(n => ({
+      id: n.id,
+      name: n.name,
+      schema: n.schema,
+      type: n.type,
+      bodyScript: modelNodeMap.get(n.id)?.bodyScript,
+      columns: modelNodeMap.get(n.id)?.columns,
+    })),
+    [allNodes, modelNodeMap],
+  );
+
   const visibleNodeIds = useMemo(
     () => (graphMode === 'overview' && filteredObjectIds) ? filteredObjectIds : new Set(localNodes.map(n => n.id)),
     [localNodes, graphMode, filteredObjectIds],
@@ -1605,8 +1619,8 @@ export function GraphCanvas({
 
   const selectedNodeLabel = useMemo(() => {
     if (!trace.selectedNodeId) return null;
-    return (displayNodes.find(n => n.id === trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId;
-  }, [trace.selectedNodeId, displayNodes]);
+    return (flowNodeLookup.byId.get(trace.selectedNodeId)?.data as CustomNodeData | undefined)?.label || trace.selectedNodeId;
+  }, [trace.selectedNodeId, flowNodeLookup]);
 
   const legendSchemas = useMemo(
     () => deriveLegendSchemas(localNodes, graphMode, trace.mode, renderedSchemas),
@@ -1904,14 +1918,7 @@ export function GraphCanvas({
                     ) : onToggleDetailSearch ? (
                         <DetailSearchSidebar
                           onClose={onToggleDetailSearch}
-                          allNodes={allNodes.map(n => ({
-                            id: n.id,
-                            name: n.name,
-                            schema: n.schema,
-                            type: n.type,
-                            bodyScript: modelNodeMap.get(n.id)?.bodyScript,
-                            columns: modelNodeMap.get(n.id)?.columns,
-                          }))}
+                          allNodes={detailSearchNodes}
                           visibleNodeIds={visibleNodeIds}
                           collapsedSchemaNodeIds={collapsedSchemaNodeIds}
                           onResultClick={(nodeId, searchTerm) => {

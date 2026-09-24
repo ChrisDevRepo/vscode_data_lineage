@@ -104,10 +104,10 @@ export function shouldAnimateEdges(renderedEdgeCount: number, configAllowsAnimat
 
 /**
  * Zoom below which `CustomNode` drops its label, badges and trace-control decorations for a plain
- * box — at this scale none of that detail is legible, and skipping it keeps a large, zoomed-out
- * graph cheap to repaint.
+ * box — only once the 11px label renders under ~2px and no one can read it. Labels stay at every
+ * readable zoom; legibility, not repaint cost, decides.
  */
-export const SIMPLE_NODE_ZOOM_THRESHOLD = 0.4;
+export const SIMPLE_NODE_ZOOM_THRESHOLD = 0.15;
 
 /**
  * Floor for React Flow's `minZoom`, so `fitView` can always zoom out far enough to contain every

@@ -137,7 +137,7 @@ describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
 
 describe('clampDeclaredNumericSetting', () => {
   it('holds a value above the declared maximum at the maximum', () => {
-    expect(clampDeclaredNumericSetting('maxNodes', 10000)).toBe(2000);
+    expect(clampDeclaredNumericSetting('maxNodes', 11000)).toBe(5000);
     expect(clampDeclaredNumericSetting('renderLimit', 10000)).toBe(1500);
     expect(clampDeclaredNumericSetting('overview.threshold', 10000)).toBe(1000);
   });

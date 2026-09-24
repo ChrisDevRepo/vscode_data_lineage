@@ -128,6 +128,11 @@ describe('CustomNode — plain box below the zoom threshold', () => {
     expect(host.textContent).toContain('Orders');
   });
 
+  it('keeps the label at mid zoom-outs a user can still read', () => {
+    mountNode(makeNodeData(), 0.3);
+    expect(host.textContent).toContain('Orders');
+  });
+
   it('renders no label text, badge or trace-control decoration below the threshold, keeping both handles', () => {
     mountNode(
       makeNodeData({

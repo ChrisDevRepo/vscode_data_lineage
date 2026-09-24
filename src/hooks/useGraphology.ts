@@ -126,6 +126,17 @@ export function useGraphology(): UseGraphologyReturn {
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
       log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
+      window.setTimeout(() => {
+        const warm = () => {
+          try {
+            buildGraph(allowlistFiltered, config);
+          } catch (e) {
+            log(`[Filter] Idle layout warm skipped (${e instanceof Error ? e.message : String(e)})`, 'debug');
+          }
+        };
+        if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(() => warm());
+        else warm();
+      }, 4000);
       return count;
     }
 
