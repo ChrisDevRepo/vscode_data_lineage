@@ -183,7 +183,7 @@ export function App() {
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
   const isBaseRenderLimited = renderLimitHit > 0 || filteredCount > config.renderLimit;
-  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize } =
+  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, applyFocusPaths, exitFocusPaths, isFocusPaths, resetTraceToStart, addTraceNeighbors } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config, model, isBaseRenderLimited);
 
   /** Updates the global extension configuration, keeping the current object when the host resends identical content. */
@@ -478,6 +478,7 @@ export function App() {
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
+  const [isTraceTreeCollapsed, setIsTraceTreeCollapsed] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
   const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
@@ -1687,6 +1688,14 @@ export function App() {
         onCloseInfoBar={() => setInfoBarNodeId(null)}
         isDetailSearchOpen={isDetailSearchOpen}
         onToggleDetailSearch={() => setIsDetailSearchOpen(prev => !prev)}
+        isTraceTreeCollapsed={isTraceTreeCollapsed}
+        onToggleTraceTreeCollapsed={() => setIsTraceTreeCollapsed(prev => !prev)}
+        traceGraph={traceGraph}
+        applyFocusPaths={applyFocusPaths}
+        exitFocusPaths={exitFocusPaths}
+        isFocusPaths={isFocusPaths}
+        onResetTrace={resetTraceToStart}
+        onAddTraceNeighbors={addTraceNeighbors}
         onNodeClick={handleNodeClick}
         onClearSelection={handleClearSelection}
         onSchemaNodeSelect={handleSchemaNodeSelect}

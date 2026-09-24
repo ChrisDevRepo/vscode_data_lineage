@@ -1,6 +1,5 @@
 import { memo } from 'react';
 import { ModeBanner } from './ModeBanner';
-import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface TracedFilterBannerProps {
@@ -28,14 +27,12 @@ interface TracedFilterBannerProps {
   onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
   /** Whether the trace should ignore existing schema/type filters and use the full model. */
   useFullModel: boolean;
-  /** Callback triggered when the "Include objects outside the filters" checkbox is toggled. */
-  onToggleFullModel: () => void;
   /** The number of nodes that are hidden due to active schema/type filters. */
   filteredOutCount: number;
 }
 
-/** SVG path for the trace/lineage icon. */
-const TRACE_ICON = 'M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5';
+/** SVG path for the trace/lineage icon, shared with the tree focus banner. */
+export const TRACE_ICON = 'M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5';
 
 /**
  * Configures {@link ModeBanner} with active-trace scope, counts, and filter controls.
@@ -51,7 +48,6 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
   onReset,
   onSaveAsBookmark,
   useFullModel,
-  onToggleFullModel,
   filteredOutCount,
 }: TracedFilterBannerProps) {
   const formatLevels = (levels: number) =>
@@ -76,20 +72,6 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
     </>
   );
 
-  const filterToggle = (
-    <Tooltip content="When enabled, trace ignores schema/type filters and shows all dependencies">
-      <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none whitespace-nowrap">
-        <input
-          type="checkbox"
-          checked={useFullModel}
-          onChange={onToggleFullModel}
-          className="ln-checkbox"
-        />
-        Include objects outside the filters
-      </label>
-    </Tooltip>
-  );
-
   return (
     <ModeBanner
       variant="trace"
@@ -98,7 +80,6 @@ export const TracedFilterBanner = memo(function TracedFilterBanner({
       subtitle={subtitle}
       onClose={mode === 'applied' && onEnd ? onEnd : onReset}
       onSaveAsBookmark={onSaveAsBookmark}
-      extraControls={filterToggle}
     />
   );
 });

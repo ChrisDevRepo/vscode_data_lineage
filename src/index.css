@@ -1715,4 +1715,265 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   outline-offset: -2px;
 }
 
+/* Trace tree navigator */
+.ln-trace-tree {
+  width: 288px;
+  flex: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--ln-bg);
+  border-right: 1px solid var(--ln-border);
+}
+.ln-trace-tree-collapsed {
+  width: 40px;
+  flex: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  background: var(--ln-bg);
+  border-right: 1px solid var(--ln-border);
+}
+.ln-trace-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--ln-sidebar-header-bg);
+  border-bottom: 1px solid var(--ln-border-light);
+}
+.ln-trace-tree-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ln-sidebar-header-fg);
+}
+.ln-trace-tree-collapse {
+  background: none;
+  border: 0;
+  padding: 2px;
+  color: var(--ln-fg);
+  opacity: 0.6;
+  cursor: pointer;
+  display: flex;
+}
+.ln-trace-tree-collapse:hover {
+  opacity: 1;
+}
+.ln-trace-tree-anchor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ln-border-light);
+  min-width: 0;
+}
+.ln-trace-tree-recenter {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  box-shadow: inset 3px 0 0 var(--ln-tree-schema, transparent);
+}
+.ln-trace-tree-recenter:hover {
+  background: var(--ln-bg-secondary);
+}
+.ln-trace-tree-origin {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ln-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.ln-trace-tree-recenter:focus-visible,
+.ln-tree-grow:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: -2px;
+}
+/** Level-load action: icon button, revealed on hover like native tree actions. */
+.ln-tree-grow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ln-fg-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.ln-tree-row:hover .ln-tree-grow,
+.ln-tree-grow:focus-visible {
+  opacity: 1;
+}
+.ln-tree-grow:hover:not(:disabled) {
+  background: var(--ln-hover-bg);
+  color: var(--ln-fg);
+}
+.ln-tree-grow:disabled {
+  display: none;
+}
+.ln-trace-tree-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ln-border-light);
+}
+.ln-trace-tree-find .ln-input {
+  flex: 1;
+  min-width: 0;
+}
+.ln-trace-tree-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.ln-trace-tree-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ln-border-light);
+}
+.ln-trace-tree-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ln-trace-tree-actions button {
+  font-size: 12px;
+}
+.ln-trace-tree-actions button:disabled {
+  opacity: 0.5;
+}
+.ln-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+}
+.ln-tree-chevron {
+  width: 20px;
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ln-fg-muted);
+  cursor: pointer;
+}
+.ln-tree-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ln-fg);
+}
+.ln-tree-type {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ln-fg-muted);
+  opacity: 0.6;
+  user-select: none;
+}
+/** Schema swatch on cluster headers; the color arrives as --ln-tree-schema. */
+.ln-tree-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--ln-tree-schema, transparent);
+}
+/** Right-aligned cluster count. */
+.ln-tree-count {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ln-fg-muted);
+}
+/** Focus checkboxes stay out of the way until hover, focus, or checked. */
+.ln-tree-row .ln-checkbox {
+  opacity: 0;
+}
+.ln-tree-row:hover .ln-checkbox,
+.ln-tree-row:focus-within .ln-checkbox,
+.ln-tree-row .ln-checkbox:checked,
+.ln-tree-row .ln-checkbox:focus-visible {
+  opacity: 1;
+}
+.ln-tree-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-size: 12px;
+}
+.ln-tree-detail {
+  font-size: 11px;
+  color: var(--ln-fg-muted);
+}
+.ln-tree-row:hover {
+  background: var(--ln-bg-secondary);
+}
+.ln-tree-row-active,
+.ln-tree-row-active:hover {
+  background: var(--ln-analysis-bg);
+}
+/** Group rows (side and schema-cluster headers) read as section headers. */
+.ln-tree-row[data-trace-tree-kind="group"] .ln-tree-name {
+  font-weight: 600;
+}
+
+/** Footer actions read as sidebar links, matching the analysis "Show all". */
+.ln-tree-action {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--ln-text-link);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ln-tree-action:hover:not(:disabled) {
+  opacity: 0.8;
+}
+.ln-tree-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ln-tree-label:focus-visible,
+.ln-tree-chevron:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: -2px;
+}
+
 /* #endregion */
