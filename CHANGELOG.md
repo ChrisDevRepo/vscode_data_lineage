@@ -21,6 +21,7 @@
 - Trace depth controls show the object count before the click, and the add-neighbour control shows "+N".
 - `dataLineageViz.maxNodes` accepts up to 5,000 objects (default stays 2,000).
 - Large graphs: nodes render as plain boxes when zoomed out, off-screen nodes are skipped above 300 nodes, edge animation stops above 200 edges, and a click re-renders only the nodes it changes.
+- Large graphs: lines fade and thin as the number of rendered edges grows (full strength up to about 100 edges, the floor from 2,000), more in dark themes than in light ones and not in high-contrast themes; highlighted and route lines keep full emphasis.
 - Dependencies updated to their latest patch and minor releases: React 19.3.0, React Flow (`@xyflow/react`) 12.11.6, DOMPurify 3.4.16, fast-xml-parser 5.11.1, js-yaml 5.4.2, JSZip 3.10.2, marked 18.0.14 and Zod 4.6.5.
 
 ## [1.2.0] - 2026-09-21

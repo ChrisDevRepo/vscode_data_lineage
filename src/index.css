@@ -95,8 +95,13 @@
   --ln-highlight-blue-glow: rgba(37, 99, 235, 0.4);
   --ln-highlight-blue-shadow: rgba(37, 99, 235, 0.3);
 
-  /* Edge colors */
-  --ln-edge-color: #94a3b8;
+  /* Edge colors. The canvas fades the base color and thins the stroke by the rendered edge
+     density (`edgeDensity` in src/engine/edgeDecoration.ts) down to these floors; the floor is per
+     theme because the same slate reads far stronger on a dark background than on a light one. */
+  --ln-edge-color-base: #94a3b8;
+  --ln-edge-color: var(--ln-edge-color-base);
+  --ln-edge-min-strength: 0.85;
+  --ln-edge-min-width-scale: 0.75;
 
   /* Shadows */
   --ln-node-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
@@ -166,6 +171,7 @@
 
 /* Dark Theme Overrides */
 body[data-vscode-theme-kind="vscode-dark"] {
+  --ln-edge-min-strength: 0.5;
   --ln-node-bg: rgba(30, 30, 30, 0.95);
   --ln-node-border: rgba(255, 255, 255, 0.2);
   --ln-node-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
@@ -197,6 +203,8 @@ body[data-vscode-theme-kind="vscode-dark"] {
 
 /* High Contrast Theme Overrides */
 body[data-vscode-theme-kind="vscode-high-contrast"] {
+  --ln-edge-min-strength: 1;
+  --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #000000);
   --ln-node-border: var(--vscode-contrastBorder, #6fc3df);
   --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
@@ -228,6 +236,8 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
 }
 body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+  --ln-edge-min-strength: 1;
+  --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
   --ln-node-border: var(--vscode-contrastBorder, #0f4a85);
   --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
@@ -829,9 +839,21 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-ove
   opacity: var(--ln-dim-node-opacity) !important;
 }
 
+/* Edge density: `--ln-edge-density` (0 sparse … 1 dense) on the canvas root fades the edge color —
+   paths, arrowheads and labels alike — and thins every object-view stroke down to the theme floors. */
+.react-flow.ln-edge-density {
+  --ln-edge-strength: calc(1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-strength)));
+  --ln-edge-width-scale: calc(1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-width-scale)));
+  --ln-edge-color: color-mix(in srgb, var(--ln-edge-color-base) calc(var(--ln-edge-strength) * 100%), transparent);
+}
+
+.react-flow.ln-edge-density .react-flow__edge-path {
+  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-edge-width-scale)) !important;
+}
+
 .react-flow.ln-has-selection .react-flow__edge:not(.ln-lit) .react-flow__edge-path {
   opacity: var(--ln-dim-edge-opacity) !important;
-  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-dim-edge-width-scale)) !important;
+  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-dim-edge-width-scale) * var(--ln-edge-width-scale, 1)) !important;
 }
 
 .react-flow.ln-has-selection .react-flow__edge.ln-lit .react-flow__edge-path {

@@ -64,6 +64,8 @@ The extension separates the **webview working graph** (`maxNodes`) from **React 
 
 A selection whose object count exceeds `maxNodes` is refused outright — nothing is loaded or rendered, the prior view stays, and an error names the count, the limit, and the setting. It is never silently truncated. When a selection within `maxNodes` would still render more than `renderLimit` React Flow nodes, the graph shows a "limit reached" message instead of rendering that surface. Schema View and Expanded Schema View count collapsed schemas as one rendered node each, and trace/path/analysis scopes render ahead of the base full-graph limit. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
 
+Lines scale with the graph: up to about 100 rendered edges they keep full color and width; above that they fade and thin gradually, reaching their floor at 2,000 edges, so a dense graph reads as density rather than solid ink. The fade is stronger in dark themes, where the same line color stands out more, and off in high-contrast themes. Highlighted and route lines keep full emphasis.
+
 ---
 
 ## Filters & bookmarks

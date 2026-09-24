@@ -72,7 +72,7 @@ import {
   MIN_CANVAS_ZOOM,
 } from '../engine/nodeDecoration';
 
-import { createEdgeDecorationCache, decorateFlowEdges } from '../engine/edgeDecoration';
+import { createEdgeDecorationCache, decorateFlowEdges, edgeDensity } from '../engine/edgeDecoration';
 import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, unionConnectingPaths, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
@@ -189,6 +189,9 @@ const PENDING_ZOOM_TIMEOUT_MS = 5000;
  * receives this class.
  */
 const SELECTION_ACTIVE_CLASS_NAME = 'ln-has-selection';
+
+/** Canvas-root class that applies the `--ln-edge-density` fade and thinning to object-view edges. */
+const EDGE_DENSITY_CLASS_NAME = 'ln-edge-density';
 
 /** Stable empty route-target list for the navigator outside a focus. */
 const NO_FOCUS_TARGETS: readonly string[] = [];
@@ -1977,7 +1980,8 @@ export function GraphCanvas({
           >
             <ColumnHoverProvider value={columnHover}>
               <ReactFlow
-                className={!columnViewActive && (highlightedNodeId || isFocusPaths) ? SELECTION_ACTIVE_CLASS_NAME : undefined}
+                className={columnViewActive ? undefined : [EDGE_DENSITY_CLASS_NAME, (highlightedNodeId || isFocusPaths) && SELECTION_ACTIVE_CLASS_NAME].filter(Boolean).join(' ')}
+                style={columnViewActive ? undefined : ({ '--ln-edge-density': edgeDensity(displayEdges.length) } as StyleWithVars)}
                 nodes={displayNodes}
                 edges={displayEdges}
                 onlyRenderVisibleElements={shouldVirtualizeCanvas(displayNodes.length)}

@@ -11,6 +11,32 @@ interface EdgeCacheEntry {
 /** Retains the decorated edge produced for each id across renders. */
 type EdgeDecorationCache = Map<string, EdgeCacheEntry>;
 
+/** Rendered edge count up to which edges keep their full color and width. */
+const SPARSE_EDGE_COUNT = 100;
+/** Rendered edge count from which edges sit at the theme's floor color strength and width. */
+const DENSE_EDGE_COUNT = 2000;
+/** Density step; one rounding step keeps a single trimmed or added edge from repainting every edge. */
+const DENSITY_STEP = 0.05;
+
+/**
+ * Edge density of the rendered graph in [0, 1]: 0 up to {@link SPARSE_EDGE_COUNT} edges, 1 from
+ * {@link DENSE_EDGE_COUNT}, log-linear between.
+ *
+ * @remarks
+ * The canvas root carries it as `--ln-edge-density`; the CSS in `src/index.css` fades the edge color
+ * toward transparent and thins the stroke by it, down to per-theme floors, so overlapping lines on a
+ * large graph read as density instead of solid ink while a small graph keeps its full-strength lines.
+ *
+ * @param edgeCount - Edges rendered on the canvas.
+ * @returns The density, rounded to {@link DENSITY_STEP}.
+ */
+export function edgeDensity(edgeCount: number): number {
+  if (edgeCount <= SPARSE_EDGE_COUNT) return 0;
+  if (edgeCount >= DENSE_EDGE_COUNT) return 1;
+  const density = Math.log(edgeCount / SPARSE_EDGE_COUNT) / Math.log(DENSE_EDGE_COUNT / SPARSE_EDGE_COUNT);
+  return Number((Math.round(density / DENSITY_STEP) * DENSITY_STEP).toFixed(2));
+}
+
 /**
  * Creates the retention map {@link decorateFlowEdges} reuses across renders.
  *
