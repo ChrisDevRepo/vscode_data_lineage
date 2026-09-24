@@ -11,9 +11,16 @@ interface LegendProps {
   isExpandedSchemaViewActive?: boolean;
   /** Schemas currently expanded into object nodes in Expanded Schema View. */
   expandedSchemas?: ReadonlySet<string>;
-  /** Optional flag indicating if the main sidebar is open, used for dynamic positioning. */
-  isSidebarOpen?: boolean;
+  /** Left-edge occupant the legend sits beside: an open sidebar, or a collapsed panel's reopen rail. */
+  inset?: 'sidebar' | 'rail';
 }
+
+/** Left offset per inset: clear of an open sidebar, or of the 28px reopen rail at the 15px panel margin. */
+const INSET_LEFT: Record<'none' | 'sidebar' | 'rail', number | string> = {
+  none: 16,
+  sidebar: 'min(380px, calc(100vw - 120px))',
+  rail: 52,
+};
 
 /** The maximum number of schemas to display before showing an "expand" button. */
 const SCHEMA_DISPLAY_LIMIT = 10;
@@ -26,7 +33,7 @@ export const Legend = memo(function Legend({
   schemaColorMap,
   isExpandedSchemaViewActive = false,
   expandedSchemas,
-  isSidebarOpen,
+  inset,
 }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -49,7 +56,7 @@ export const Legend = memo(function Legend({
   return (
     <div
       className="absolute top-4 ln-legend rounded-md overflow-hidden z-10 transition-all duration-200"
-      style={{ left: isSidebarOpen ? 'min(380px, calc(100vw - 120px))' : 16 }}
+      style={{ left: INSET_LEFT[inset ?? 'none'] }}
     >
       <button
         onClick={() => setCollapsed(!collapsed)}

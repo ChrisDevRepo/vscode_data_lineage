@@ -650,6 +650,18 @@ describe('decorateFlowEdges', () => {
     expect(lit).toEqual(['a→b', 'b→c']);
   });
 
+  it('lights and animates every route edge with no node selected', () => {
+    const edges = [
+      { id: 'a→b', source: 'a', target: 'b' },
+      { id: 'b→c', source: 'b', target: 'c' },
+      { id: 'c→a', source: 'c', target: 'a' },
+    ];
+    const lit = decorateFlowEdges(edges, null, true, createEdgeDecorationCache(), new Set(['a→b', 'b→c']))
+      .filter(edge => edge.className === LIT_CLASS_NAME && edge.animated)
+      .map(edge => edge.id);
+    expect(lit).toEqual(['a→b', 'b→c']);
+  });
+
   it('releases cache entries for edges a filter removed', () => {
     const edges = largeFlowEdges();
     const cache = createEdgeDecorationCache();

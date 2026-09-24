@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 //
-// Trace navigator: pinned L0 starting point, fixed sides with +1 level, widget-owned row activation
-// and selection, find reveal into collapsed levels, instant route checkboxes, edit footer, collapse.
+// Trace navigator: pinned L0 starting point, fixed sides with +1 level, leaves directly under levels,
+// widget-owned row activation and selection, find reveal into collapsed levels, instant route
+// checkboxes and Cmd/Ctrl+click, Expand/Collapse all, edit footer, collapse.
 import { StrictMode, act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -93,19 +94,18 @@ describe('TraceTreePanel', () => {
     expect(anchor?.textContent).toContain('↑1');
   });
 
-  it('shows the canvas type symbol on leaves and the schema color on clusters', () => {
+  it('shows the canvas type symbol on leaves in the schema color', () => {
     renderPanel();
-    const leaf = host.querySelector('[data-testid="trace-tree-row-up:a"]');
+    const leaf = host.querySelector('[data-testid="trace-tree-row-up:a"]') as HTMLElement;
     expect(leaf?.querySelector('.ln-tree-type')?.textContent).toBe('●');
-    const cluster = host.querySelector('[data-testid="trace-tree-row-trace-up-L1-schema-dbo"]') as HTMLElement;
-    expect(cluster?.style.getPropertyValue('--ln-tree-schema')).not.toBe('');
+    expect(leaf?.style.getPropertyValue('--ln-tree-schema')).not.toBe('');
     const group = host.querySelector('[data-testid="trace-tree-row-trace-up"]');
     expect(group?.querySelector('.ln-tree-type')).toBeNull();
   });
 
   it('activates a leaf row on click', () => {
     const props = renderPanel();
-    // Sides and schema clusters start open; the leaf label activates selection.
+    // Sides and the first levels start open; the leaf label activates selection.
     const leaf = host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-label') as HTMLElement;
     expect(leaf?.textContent).toContain('name-a');
     act(() => {
@@ -114,15 +114,23 @@ describe('TraceTreePanel', () => {
     expect(props.onSelectNode).toHaveBeenCalledWith('a');
   });
 
-  it('nests level then schema with a swatch, count, and single-line leaves', () => {
-    renderPanel();
+  it('lists leaves directly under their level, sorted by schema then name', () => {
+    const mixed: TraceTree = { ...tree, upstream: [{ side: 'up', depth: 1, nodeIds: ['z', 'm', 'a'], grow: new Map() }], totalUpstream: 3 };
+    renderPanel({
+      tree: mixed,
+      resolveNode: (id) => ({ name: `name-${id}`, detail: id === 'm' ? 'dbo' : 'sales', type: 'table' }),
+    });
     const level = host.querySelector('[data-testid="trace-tree-row-trace-up-L1"] .ln-tree-label');
     expect(level?.querySelector('.ln-tree-name')?.textContent).toBe('L1');
-    expect(level?.querySelector('.ln-tree-count')?.textContent).toBe('1');
-    const cluster = host.querySelector('[data-testid="trace-tree-row-trace-up-L1-schema-dbo"]');
-    expect(cluster?.querySelector('.ln-tree-swatch')).not.toBeNull();
-    expect(cluster?.querySelector('.ln-tree-count')?.textContent).toBe('1');
-    expect(cluster?.querySelector('.ln-tree-type')).toBeNull();
+    expect(level?.querySelector('.ln-tree-count')?.textContent).toBe('3');
+    const kinds = [...host.querySelectorAll('[data-trace-tree-kind]')].map((row) => row.getAttribute('data-trace-tree-kind'));
+    expect(kinds).not.toContain('cluster');
+    const order = [...host.querySelectorAll('[data-trace-tree-kind="leaf"]')].map((row) => row.getAttribute('data-testid'));
+    expect(order).toEqual(['trace-tree-row-up:m', 'trace-tree-row-up:a', 'trace-tree-row-up:z']);
+  });
+
+  it('keeps leaves single-line', () => {
+    renderPanel();
     const leafLabel = host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-label');
     expect(leafLabel?.querySelector('.ln-tree-suffix')).toBeNull();
     expect(leafLabel?.textContent).toContain('name-a');
@@ -164,13 +172,19 @@ describe('TraceTreePanel', () => {
     expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).not.toBeNull();
   });
 
-  it('collapses a schema cluster without touching its level', () => {
-    renderPanel();
+  it('expands and collapses every level from the title bar while the sides stay open', () => {
+    renderPanel({ tree: deepTree });
+    expect(host.querySelector('[data-testid="trace-tree-row-up:deep"]')).toBeNull();
     act(() => {
-      (host.querySelector('[data-testid="trace-tree-row-trace-up-L1-schema-dbo"] .ln-tree-chevron') as HTMLElement).click();
+      (host.querySelector('[aria-label="Expand all"]') as HTMLElement).click();
+    });
+    expect(host.querySelector('[data-testid="trace-tree-row-up:deep"]')).not.toBeNull();
+    act(() => {
+      (host.querySelector('[aria-label="Collapse all"]') as HTMLElement).click();
     });
     expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).toBeNull();
     expect(host.querySelector('[data-testid="trace-tree-row-trace-up-L1"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="trace-tree-row-trace-up"]')?.closest('[role="treeitem"]')?.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('finds without hiding: count shown, rows intact, Enter selects', () => {
@@ -227,6 +241,24 @@ describe('TraceTreePanel', () => {
     expect(props.onFocusTargets).toHaveBeenCalledWith([]);
   });
 
+  it('adds and removes a route with Cmd/Ctrl+click on a row, without a plain selection', () => {
+    const props = renderPanel({ focusTargetIds: ['b'], onStageIds: new Set(['o', 'b']) });
+    const label = host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-label') as HTMLElement;
+    act(() => {
+      label.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+    });
+    expect(props.onFocusTargets).toHaveBeenCalledWith(['b', 'a']);
+    expect(props.onSelectNode).not.toHaveBeenCalled();
+    act(() => root.unmount());
+    root = createRoot(host);
+    const again = renderPanel({ focusTargetIds: ['b', 'a'], onStageIds: new Set(['o', 'a', 'b']) });
+    act(() => {
+      (host.querySelector('[data-testid="trace-tree-row-up:a"] .ln-tree-label') as HTMLElement)
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    });
+    expect(again.onFocusTargets).toHaveBeenCalledWith(['b']);
+  });
+
   it('removes a route when its box is unchecked', () => {
     const props = renderPanel({ focusTargetIds: ['a'], onStageIds: new Set(['o', 'a']) });
     act(() => {
@@ -251,7 +283,7 @@ describe('TraceTreePanel', () => {
   it('offers Reset beside the edit summary only once the scope was edited', () => {
     renderPanel();
     expect(host.querySelector('[data-testid="trace-tree-edits"]')).toBeNull();
-    expect(host.querySelector('.ln-trace-tree-footer')?.textContent).toContain('Del trims a branch');
+    expect(host.querySelector('.ln-trace-tree-footer')?.textContent).toContain('Del: trim');
     act(() => root.unmount());
     root = createRoot(host);
     const props = renderPanel({ editCounts: { added: 2, trimmed: 3 } });

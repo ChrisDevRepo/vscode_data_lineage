@@ -14,12 +14,14 @@ interface SidePanelProps {
   className?: string;
   /** Accessible name of the close button. Default: "Close panel". */
   closeLabel?: string;
+  /** Title-bar actions, rendered before the close button. */
+  actions?: ReactNode;
 }
 
 /**
  * Renders the shared titled, closable sidebar shell.
  */
-export function SidePanel({ title, icon, onClose, children, className, closeLabel = 'Close panel' }: SidePanelProps) {
+export function SidePanel({ title, icon, onClose, children, className, closeLabel = 'Close panel', actions }: SidePanelProps) {
   return (
     <div className={className ? `ln-sidebar ${className}` : 'ln-sidebar'}>
       <div className="flex items-center justify-between px-3 py-2"
@@ -29,12 +31,15 @@ export function SidePanel({ title, icon, onClose, children, className, closeLabe
           <span className="text-xs font-semibold"
                 style={{ color: 'var(--ln-sidebar-header-fg)' }}>{title}</span>
         </div>
-        <button onClick={onClose}
-                aria-label={closeLabel}
-                className="opacity-60 hover:opacity-100 cursor-pointer"
-                style={{ color: 'var(--ln-fg)' }}>
-          <CloseIcon className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1">
+          {actions}
+          <button onClick={onClose}
+                  aria-label={closeLabel}
+                  className="opacity-60 hover:opacity-100 cursor-pointer"
+                  style={{ color: 'var(--ln-fg)' }}>
+            <CloseIcon className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
       {children}
     </div>

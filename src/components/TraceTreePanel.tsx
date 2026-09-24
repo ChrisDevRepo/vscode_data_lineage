@@ -59,7 +59,7 @@ export interface TraceTreePanelProps {
   removeKind: 'trace-prune' | 'none';
 }
 
-type RowKind = 'side' | 'level' | 'cluster' | 'leaf';
+type RowKind = 'side' | 'level' | 'leaf';
 
 /** Row shape handed to the tree widget; hierarchy only, no trace logic. */
 interface PanelRow {
@@ -75,21 +75,17 @@ interface PanelRow {
   fullName?: string;
   /** Canvas type symbol (■ ● ▲ ◆ ⬡); leaves only. */
   typeIcon?: string;
-  /** Right-aligned member count on side and cluster rows. */
+  /** Right-aligned member count on side and level rows. */
   count?: number;
   /** Hop level of a level row. */
   level?: number;
-  /** Schema swatch color, consumed by CSS as --ln-tree-schema; clusters only. */
+  /** Schema color, consumed by CSS as --ln-tree-schema; tints the leaf type symbol. */
   schemaColor?: string;
   /** One more level on this side; side rows only. */
   nextIds?: string[];
   children?: PanelRow[];
 }
 
-/** Cluster key for a leaf; schemaless nodes read as External like the legend. */
-function schemaOf(meta: TraceTreeNodeMeta | undefined): string {
-  return meta?.detail || 'External';
-}
 
 interface PanelContext {
   checkedIds: ReadonlySet<string>;
@@ -107,11 +103,23 @@ const PanelRowContext = createContext<PanelContext>({
   growsEnabled: true,
 });
 
-const ROW_HEIGHT = 28;
-const TREE_INDENT = 16;
+const ROW_HEIGHT = 24;
+const TREE_INDENT = 12;
 /** Hop levels open on first render; deeper levels start collapsed. */
 const INITIAL_OPEN_LEVELS = 2;
 const SIDE_ROW_IDS = new Set(['trace-up', 'trace-down', 'trace-connected']);
+
+const ExpandAllIcon = (
+  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+  </svg>
+);
+
+const CollapseAllIcon = (
+  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M8 5l4 4 4-4M8 19l4-4 4 4" />
+  </svg>
+);
 
 const PlusIcon = (
   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -154,7 +162,10 @@ function SideRow({ row }: { row: PanelRow }) {
   );
 }
 
-/** Leaf: route checkbox plus the object label; muted while routes hide it from the canvas. */
+/**
+ * Leaf: route checkbox plus the object label, the type symbol tinted in the schema color; muted
+ * while routes hide it from the canvas. Cmd/Ctrl+click toggles the route like the checkbox.
+ */
 function LeafRow({ row }: { row: PanelRow }) {
   const { checkedIds, onToggleCheck } = useContext(PanelRowContext);
   const nodeId = row.nodeId!;
@@ -162,7 +173,7 @@ function LeafRow({ row }: { row: PanelRow }) {
   const checked = checkedIds.has(nodeId);
   return (
     <>
-      <Tooltip content={!routable ? 'No route from the starting point' : checked ? 'Remove this route' : 'Show only routes to checked nodes'}>
+      <Tooltip content={!routable ? 'No route from the starting point' : checked ? 'Remove this route' : 'Add the route to this node (⌘/Ctrl+click)'}>
         <input
           type="checkbox"
           aria-label={`Show route to ${row.name}`}
@@ -173,7 +184,14 @@ function LeafRow({ row }: { row: PanelRow }) {
           className="w-4 h-4 rounded-sm cursor-pointer ln-checkbox"
         />
       </Tooltip>
-      <span className="ln-tree-label">
+      <span
+        className="ln-tree-label"
+        onClickCapture={(event) => {
+          if (!routable || !(event.metaKey || event.ctrlKey)) return;
+          event.stopPropagation();
+          onToggleCheck(nodeId);
+        }}
+      >
         <span className="ln-tree-type" aria-hidden="true">{row.typeIcon}</span>
         <Tooltip content={row.fullName} asChild>
           <span className="ln-tree-name">{row.name}</span>
@@ -200,11 +218,10 @@ const TraceTreeRow = memo(function TraceTreeRow({ node, style }: NodeRendererPro
     <div style={rowStyle} data-testid={`trace-tree-row-${node.id}`} data-trace-tree-kind={row.kind} className={className}>
       {row.kind === 'side' ? <SideRow row={row} /> : null}
       {row.kind === 'leaf' ? <LeafRow row={row} /> : null}
-      {row.kind === 'level' || row.kind === 'cluster' ? (
+      {row.kind === 'level' ? (
         <>
           <span className="ln-tree-chevron" aria-hidden="true">{node.isOpen ? '▾' : '▸'}</span>
           <span className="ln-tree-label">
-            {row.schemaColor ? <span className="ln-tree-swatch" aria-hidden="true" /> : null}
             <span className="ln-tree-name">{row.name}</span>
             {row.count != null ? <span className="ln-tree-count">{row.count}</span> : null}
           </span>
@@ -215,12 +232,11 @@ const TraceTreeRow = memo(function TraceTreeRow({ node, style }: NodeRendererPro
 });
 
 function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNodeMeta | undefined): PanelRow[] {
-  const cluster = (groupId: string, group: TraceTreeGroup): PanelRow[] => {
-    const bySchema = new Map<string, PanelRow[]>();
-    for (const nodeId of group.nodeIds) {
+  /** Leaves of a group, sorted by schema then name; schemaless nodes read as External like the legend. */
+  const leaves = (group: TraceTreeGroup): PanelRow[] => group.nodeIds
+    .map((nodeId) => {
       const meta = resolveNode(nodeId);
-      const key = schemaOf(meta);
-      const leaf: PanelRow = {
+      const row: PanelRow = {
         id: `${group.side}:${nodeId}`,
         kind: 'leaf',
         side: group.side,
@@ -228,22 +244,12 @@ function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNode
         name: meta?.name ?? nodeId,
         fullName: meta?.detail ? `${meta.detail}.${meta.name}` : meta?.name ?? nodeId,
         typeIcon: typeIcon(meta?.type),
+        schemaColor: schemaColor(meta?.type, meta?.detail),
       };
-      const members = bySchema.get(key);
-      if (members) members.push(leaf);
-      else bySchema.set(key, [leaf]);
-    }
-    return [...bySchema.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([schema, members]) => ({
-        id: `${groupId}-schema-${schema}`,
-        kind: 'cluster' as const,
-        name: schema,
-        count: members.length,
-        schemaColor: schemaColor(schema === 'External' ? 'external' : undefined, schema),
-        children: members.sort((a, b) => a.name.localeCompare(b.name)),
-      }));
-  };
+      return { schema: meta?.detail || 'External', row };
+    })
+    .sort((a, b) => a.schema.localeCompare(b.schema) || a.row.name.localeCompare(b.row.name))
+    .map(({ row }) => row);
   const side = (sideId: string, sideKey: 'up' | 'down', name: string, total: number, levels: TraceTreeLevel[], nextIds: string[]): PanelRow => ({
     id: sideId,
     kind: 'side',
@@ -257,7 +263,7 @@ function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNode
       level: level.depth,
       name: `L${level.depth}`,
       count: level.nodeIds.length,
-      children: cluster(`${sideId}-L${level.depth}`, level),
+      children: leaves(level),
     })),
   });
   const rows = [
@@ -271,7 +277,7 @@ function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNode
       side: 'connected',
       name: '↔ Connected',
       count: tree.connected.nodeIds.length,
-      children: cluster('trace-connected', tree.connected),
+      children: leaves(tree.connected),
     });
   }
   return rows;
@@ -325,14 +331,13 @@ export const TraceTreePanel = memo(function TraceTreePanel({
 
   const data = useMemo(() => toPanelRows(tree, resolveNode), [tree, resolveNode]);
   const leaves = useMemo(() => leafRows(data), [data]);
-  /** Sides, levels 1–2 and every schema cluster start open; deeper levels start closed. */
+  /** Sides and levels 1–2 start open; deeper levels start closed. */
   const initialOpenState = useMemo<Record<string, boolean>>(() => {
     const open: Record<string, boolean> = {};
     for (const side of data) {
       open[side.id] = true;
       for (const child of side.children ?? []) {
-        if (child.kind === 'cluster' || (child.level ?? 0) <= INITIAL_OPEN_LEVELS) open[child.id] = true;
-        for (const cluster of child.children ?? []) if (cluster.children) open[cluster.id] = true;
+        if (child.kind === 'level' && (child.level ?? 0) <= INITIAL_OPEN_LEVELS) open[child.id] = true;
       }
     }
     return open;
@@ -439,6 +444,20 @@ export const TraceTreePanel = memo(function TraceTreePanel({
         className="ln-trace-tree"
         closeLabel="Hide trace navigator"
         onClose={onToggleCollapse}
+        actions={(
+          <>
+            <Tooltip content="Expand all" asChild>
+              <button type="button" aria-label="Expand all" className="ln-btn-icon w-6 h-6 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.openAll()}>
+                {ExpandAllIcon}
+              </button>
+            </Tooltip>
+            <Tooltip content="Collapse all" asChild>
+              <button type="button" aria-label="Collapse all" className="ln-btn-icon w-6 h-6 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.closeAll()}>
+                {CollapseAllIcon}
+              </button>
+            </Tooltip>
+          </>
+        )}
         icon={(
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" style={{ color: 'var(--ln-sidebar-header-fg)' }} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d={TRACE_ICON} />
@@ -538,7 +557,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
               </div>
             ) : null}
             {routeCount === 0 && !edited ? (
-              <p className="ln-tree-detail">Click a node to see its route · check nodes to show only their routes · Del trims a branch</p>
+              <p className="ln-tree-detail">Click: route · ⌘/Ctrl+click or ☐: add route · Del: trim</p>
             ) : null}
           </footer>
         </section>

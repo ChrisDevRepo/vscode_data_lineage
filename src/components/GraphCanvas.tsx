@@ -1077,12 +1077,13 @@ export function GraphCanvas({
   /**
    * Tree-row activation: existing canvas selection, plus lighting of every
    * origin↔node connecting path with the camera autofit on the route. The origin needs no
-   * override — the trace-origin rule already keeps it lit.
+   * override — the trace-origin rule already keeps it lit. While routes are shown the click only
+   * selects: every shown route stays lit and the camera keeps framing their union.
    */
   const handleTreeRowSelect = useCallback((nodeId: string) => {
     if (highlightedNodeId !== nodeId) onNodeClick(nodeId);
     const originId = trace.selectedNodeId;
-    const path = originId && nodeId !== originId && traceScopeGraph
+    const path = originId && nodeId !== originId && traceScopeGraph && !isFocusPaths
       ? unionConnectingPaths(traceScopeGraph, originId, [nodeId])
       : null;
     if (!path) {
@@ -1095,7 +1096,7 @@ export function GraphCanvas({
       padding: fitPaddingRef.current,
       duration: FIT_VIEW_DURATION,
     });
-  }, [onNodeClick, highlightedNodeId, trace.selectedNodeId, traceScopeGraph, fitView]);
+  }, [onNodeClick, highlightedNodeId, trace.selectedNodeId, traceScopeGraph, isFocusPaths, fitView]);
 
   useEffect(() => {
     setTreeRoute(null);
@@ -1615,7 +1616,7 @@ export function GraphCanvas({
       graphMode,
       highlightedNodeId,
       level1Neighbors,
-      litOverride: activeRoute?.nodeIds,
+      litOverride: activeRoute?.nodeIds ?? (isFocusPaths ? trace.tracedNodeIds : undefined),
       traceMode: trace.mode,
       traceSelectedNodeId: trace.selectedNodeId,
       isBookmarkMode,
@@ -1629,7 +1630,7 @@ export function GraphCanvas({
       onExpandSchema: onExpandExpandedSchemaViewSchema,
       onMakeSchemaCenter: onCenterExpandedSchemaViewSchema,
     }, nodeDecorationCache.current);
-  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, activeRoute, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, activeRoute, isFocusPaths, trace.tracedNodeIds, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
 
   const displayEdges = useMemo(() => {
     if (columnViewActive && columnTraceView) {
@@ -1666,13 +1667,14 @@ export function GraphCanvas({
         };
       });
     }
-    if (!highlightedNodeId) return localEdges;
+    if (!highlightedNodeId && !isFocusPaths) return localEdges;
 
     const isTraceAnimationContext = trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied';
     const configAllowsAnimation = isTraceAnimationContext ? config.layout.edgeAnimation : config.layout.highlightAnimation;
     const litAnimated = shouldAnimateEdges(localEdges.length, configAllowsAnimation);
-    return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current, activeRoute?.edgeIds);
-  }, [localEdges, highlightedNodeId, activeRoute, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
+    const routeEdgeIds = activeRoute?.edgeIds ?? (isFocusPaths ? trace.tracedEdgeIds : undefined);
+    return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current, routeEdgeIds);
+  }, [localEdges, highlightedNodeId, activeRoute, isFocusPaths, trace.tracedEdgeIds, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
 
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),
@@ -1961,7 +1963,7 @@ export function GraphCanvas({
           >
             <ColumnHoverProvider value={columnHover}>
               <ReactFlow
-                className={!columnViewActive && highlightedNodeId ? SELECTION_ACTIVE_CLASS_NAME : undefined}
+                className={!columnViewActive && (highlightedNodeId || isFocusPaths) ? SELECTION_ACTIVE_CLASS_NAME : undefined}
                 nodes={displayNodes}
                 edges={displayEdges}
                 onlyRenderVisibleElements={shouldVirtualizeCanvas(displayNodes.length)}
@@ -2085,7 +2087,7 @@ export function GraphCanvas({
           schemaColorMap={legendColorMap}
           isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
           expandedSchemas={expandedSchemas}
-          isSidebarOpen={isDetailSearchOpen || !!analysisMode || isTraceNavigatorOpen}
+          inset={isDetailSearchOpen || analysisMode || isTraceNavigatorOpen ? 'sidebar' : showTraceNavigator && isTraceTreeCollapsed ? 'rail' : undefined}
         />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}

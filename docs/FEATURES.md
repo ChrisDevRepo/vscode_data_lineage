@@ -152,9 +152,10 @@ Editing applies to Trace Levels results — a computed shortest path is fixed.
 While a trace is on screen, the navigator lists it as a tree in the canvas's top-left panel:
 
 - **Starting point** — pinned at the top (L0) and always visible; click it to recenter.
-- **Upstream / Downstream** — fixed sections of hop levels (L1, L2, …), grouped by schema. Deeper levels start collapsed on large traces. The **+** on a section loads one more level on that side; its tooltip shows how many nodes it adds.
+- **Upstream / Downstream** — fixed sections of hop levels (L1, L2, …); each object's type symbol carries its schema color, as on the canvas and in the legend. Deeper levels start collapsed on large traces; **Expand all** / **Collapse all** in the title bar open or close every level. The **+** on a section loads one more level on that side; its tooltip shows how many nodes it adds.
 - **Click a node** — lights only the route between the starting point and that node — every path connecting them, so both branches of a diamond — animates just those edges and fits the view to the route.
-- **Check nodes** — each checkbox immediately shows only the routes to the checked nodes; rows hidden from the graph stay listed, dimmed, and can be checked to add their route. **Show all** restores the trace.
+- **Check nodes** — each checkbox, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+click on a row, adds that node's route: the graph shows only the routes to the checked nodes, on any level and either side, with every route edge animated and the view fitted to all of them. Rows hidden from the graph stay listed, dimmed, and can be checked to add their route. **Show all** restores the trace.
+- **Hide** — the panel's close button folds it to a button at the top left, beside the legend; click it to reopen.
 - **Trim** — <kbd>Delete</kbd> / <kbd>Backspace</kbd> on a selected node removes it and the branch that hangs only on it. **Reset** beside the edit summary restores the starting scope.
 - **Find** — jumps between matches and opens collapsed levels. Objects reached from neither side are listed under **Connected**.
 

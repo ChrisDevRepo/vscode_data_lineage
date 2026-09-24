@@ -1737,9 +1737,8 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   border: 1px solid var(--ln-widget-border);
   border-radius: 6px;
 }
-/** Pinned L0 starting point: always visible above the scrolling tree. */
+/** Pinned L0 starting point: one row, always visible above the scrolling tree. */
 .ln-trace-tree-root {
-  padding: 4px 6px;
   border-bottom: 1px solid var(--ln-border-light);
 }
 .ln-trace-tree-recenter {
@@ -1748,11 +1747,11 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   gap: 6px;
   width: 100%;
   min-width: 0;
-  padding: 4px 6px;
+  height: 24px;
+  padding: 0 6px;
   background: var(--ln-analysis-bg);
   border: 0;
   border-left: 3px solid var(--ln-tree-schema, var(--ln-analysis-border));
-  border-radius: 2px;
   cursor: pointer;
   text-align: left;
 }
@@ -1788,7 +1787,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 4px 6px;
   border-bottom: 1px solid var(--ln-border-light);
 }
 .ln-trace-tree-find .ln-input {
@@ -1804,7 +1803,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px 10px;
+  padding: 4px 10px;
   font-size: 11px;
   color: var(--ln-fg-muted);
   border-top: 1px solid var(--ln-border-light);
@@ -1867,13 +1866,10 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   opacity: 0.6;
   user-select: none;
 }
-/** Schema swatch on cluster rows; the color arrives as --ln-tree-schema. */
-.ln-tree-swatch {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  background: var(--ln-tree-schema, transparent);
+/** Leaf type symbol in the schema color, the canvas border and legend rule. */
+.ln-tree-row[data-trace-tree-kind="leaf"] .ln-tree-type {
+  color: var(--ln-tree-schema, var(--ln-fg-muted));
+  opacity: 1;
 }
 .ln-tree-count {
   flex: none;
