@@ -3,7 +3,7 @@
 ## [1.2.1] - 2026-09-23
 
 ### Added
-- **Trace navigator** (trace view only): a docked, collapsible left panel showing the trace as an anchored up/down tree. Row click lights and autofits the origin path while the rest dims; find jumps between matches and opens collapsed levels; checkboxes focus checked paths; Delete prunes the selected object; leaf rows load one more level in their own direction; objects reached from neither side are listed under "Connected"; reset restores the start.
+- **Trace navigator** (trace view only): a floating left panel on the Analysis panel's shell. The L0 starting point stays pinned at the top; the fixed Upstream and Downstream sections each load one more level (the node count is in the tooltip); hop levels and schema clusters collapse. Clicking a row lights and animates only the route from the starting point — every connecting path, not just the shortest — and fits the view to it. Each checkbox immediately shows only the checked routes, with hidden rows dimmed in the list and Show all restoring the trace. Delete or Backspace (the macOS delete key) trims the selected node and the branch that hangs only on it, and Reset beside the edit summary restores the starting scope. Find jumps between matches and opens collapsed levels, and objects reached from neither side are listed under Connected.
 
 ### Fixed
 - A selection above `dataLineageViz.maxNodes` stops the load with an error naming the setting; the graph is never silently cut to the first 2,000 objects, and external references are no longer dropped above that size.

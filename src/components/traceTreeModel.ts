@@ -1,4 +1,5 @@
 import type Graph from 'graphology';
+import { bfsFromNode } from 'graphology-traversal';
 import type { TraceState } from '../engine/types';
 
 /**
@@ -15,7 +16,7 @@ export interface TraceTreeGroup {
   nodeIds: string[];
   /**
    * Out-of-scope neighbors per node, in the group's direction (`up` inbound, `down` outbound,
-   * `connected` both), pruned nodes excluded. An empty list disables the node's +level affordance.
+   * `connected` both), pruned nodes excluded.
    */
   grow: ReadonlyMap<string, string[]>;
 }
@@ -40,6 +41,10 @@ export interface TraceTree {
   totalUpstream: number;
   /** Total visible downstream node count, origin excluded. */
   totalDownstream: number;
+  /** Out-of-scope inbound neighbors of every upstream node and the origin: one more upstream level. */
+  nextUpstream: string[];
+  /** Out-of-scope outbound neighbors of every downstream node and the origin: one more downstream level. */
+  nextDownstream: string[];
 }
 
 /** Minimal trace read for tree shaping; the panel passes the live trace state through. */
@@ -83,6 +88,8 @@ export function buildTraceTree(input: TraceTreeInput, graph: Graph | null): Trac
     connected: unplaced.length > 0 ? group(scope, 'connected', unplaced) : null,
     totalUpstream: upstream.reduce((sum, level) => sum + level.nodeIds.length, 0),
     totalDownstream: downstream.reduce((sum, level) => sum + level.nodeIds.length, 0),
+    nextUpstream: nextLevel(scope, originId, 'up', upstream),
+    nextDownstream: nextLevel(scope, originId, 'down', downstream),
   };
 }
 
@@ -118,22 +125,24 @@ function group(scope: Scope, side: TraceTreeSide, nodeIds: string[]): TraceTreeG
   return { side, nodeIds, grow };
 }
 
+/** De-duplicated grow candidates of a side, origin included, in first-seen order. */
+function nextLevel(scope: Scope, originId: string, side: 'up' | 'down', levels: TraceTreeLevel[]): string[] {
+  const next = new Set(group(scope, side, [originId]).grow.get(originId));
+  for (const level of levels) for (const ids of level.grow.values()) ids.forEach(id => next.add(id));
+  return [...next];
+}
+
+/**
+ * Hop levels of one side: the trace's own breadth-first walk (`bfsFromNode`, inbound for `up`,
+ * outbound for `down`), restricted to the visible scope and grouped by depth.
+ */
 function walkSide(scope: Scope, originId: string, side: 'up' | 'down'): TraceTreeLevel[] {
-  const levels: TraceTreeLevel[] = [];
-  const visited = new Set<string>([originId]);
-  let frontier = [originId];
-  while (frontier.length > 0) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const neighbor of neighborsOf(scope.graph, id, side)) {
-        if (!scope.visibleNodeIds.has(neighbor) || visited.has(neighbor)) continue;
-        visited.add(neighbor);
-        next.push(neighbor);
-      }
-    }
-    if (next.length === 0) break;
-    levels.push({ ...group(scope, side, next), depth: levels.length + 1 });
-    frontier = next;
-  }
-  return levels;
+  const byDepth: string[][] = [];
+  bfsFromNode(scope.graph, originId, (id, _attrs, depth) => {
+    if (depth === 0) return false;
+    if (!scope.visibleNodeIds.has(id)) return true;
+    (byDepth[depth - 1] ??= []).push(id);
+    return false;
+  }, { mode: side === 'up' ? 'inbound' : 'outbound' });
+  return byDepth.map((nodeIds, index) => ({ ...group(scope, side, nodeIds), depth: index + 1 }));
 }

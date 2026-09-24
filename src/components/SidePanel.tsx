@@ -10,14 +10,18 @@ interface SidePanelProps {
   onClose: () => void;
   /** Content to be rendered within the panel body. */
   children: ReactNode;
+  /** Extra class on the shell, for panels that size their own body. */
+  className?: string;
+  /** Accessible name of the close button. Default: "Close panel". */
+  closeLabel?: string;
 }
 
 /**
  * Renders the shared titled, closable sidebar shell.
  */
-export function SidePanel({ title, icon, onClose, children }: SidePanelProps) {
+export function SidePanel({ title, icon, onClose, children, className, closeLabel = 'Close panel' }: SidePanelProps) {
   return (
-    <div className="ln-sidebar">
+    <div className={className ? `ln-sidebar ${className}` : 'ln-sidebar'}>
       <div className="flex items-center justify-between px-3 py-2"
            style={{ background: 'var(--ln-sidebar-header-bg)' }}>
         <div className="flex items-center gap-2">
@@ -26,7 +30,7 @@ export function SidePanel({ title, icon, onClose, children }: SidePanelProps) {
                 style={{ color: 'var(--ln-sidebar-header-fg)' }}>{title}</span>
         </div>
         <button onClick={onClose}
-                aria-label="Close panel"
+                aria-label={closeLabel}
                 className="opacity-60 hover:opacity-100 cursor-pointer"
                 style={{ color: 'var(--ln-fg)' }}>
           <CloseIcon className="w-3.5 h-3.5" />

@@ -30,7 +30,7 @@ export const ESC_PRIORITY = {
  * report pane's own local handler while it has focus.
  *
  * @remarks
- * Binding {@link SHORTCUT_KEYS} to `Record<AppShortcutId, string>` turns any drift
+ * Binding {@link SHORTCUT_KEYS} to `Record<AppShortcutId, string | string[]>` turns any drift
  * between the runtime key map and the documented ids into a compile error.
  */
 export type AppShortcutId = Extract<
@@ -53,11 +53,11 @@ export type AppShortcutId = Extract<
  * `useKeyboardShortcut` matches case-insensitively — list each letter key once;
  * never add upper/lowercase duplicates.
  */
-export const SHORTCUT_KEYS: Record<AppShortcutId, string> = {
+export const SHORTCUT_KEYS: Record<AppShortcutId, string | string[]> = {
   quickJump: '/',
   fitView: 'f',
   openHelp: '?',
-  excludeHighlightedNode: 'Delete',
+  excludeHighlightedNode: ['Delete', 'Backspace'],
   exitMode: 'Escape',
   toggleSchemaView: 's',
   hideExpandedSchemaClusters: 'h',
@@ -80,7 +80,7 @@ export const SHORTCUT_DESCRIPTIONS: Record<AppShortcutId, string> = {
   openHelp: 'Open Help',
   toggleSchemaView: 'Toggle Schema View',
   hideExpandedSchemaClusters: 'Hide schema clusters in Expanded Schema View',
-  excludeHighlightedNode: 'Exclude the selected node from the view',
+  excludeHighlightedNode: 'Exclude the selected node from the view; in a trace, trim its branch',
   exitMode: 'Close active input, then exit the current mode',
   aiSectionPrevious: 'Previous AI report section (report pane focused)',
   aiSectionNext: 'Next AI report section (report pane focused)',

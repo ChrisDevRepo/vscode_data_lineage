@@ -3,7 +3,7 @@ import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel, type CustomNodeData } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
-import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, unionShortestPaths } from '../engine/traceScope';
+import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, unionConnectingPaths } from '../engine/traceScope';
 import { directNeighborIds } from '../engine/graphGuards';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
@@ -47,12 +47,19 @@ interface UseInteractiveTraceReturn {
   pruneTraceNode: (nodeId: string) => void;
   /** Node count a trace from the current origin at the given depths would render — BFS only, no layout. */
   estimateTraceSize: (upstreamLevels: number, downstreamLevels: number) => number;
-  /** Narrows the trace to the union of origin→target shortest paths, stashing the pre-focus scope. */
-  applyFocusPaths: (targetIds: string[]) => boolean;
+  /**
+   * Shows only the origin→target routes for the given targets, against the pre-focus scope;
+   * an empty list restores it. False, scope untouched, when a route is unreachable.
+   */
+  setFocusTargets: (targetIds: string[]) => boolean;
   /** Restores the scope stashed by the last focus, or ends the trace when nothing was stashed. */
   exitFocusPaths: () => void;
   /** Whether a tree focus narrowing is on stage. */
   isFocusPaths: boolean;
+  /** Targets whose routes the focus shows; empty outside a focus. */
+  focusTargetIds: readonly string[];
+  /** The pre-focus trace while a focus is on stage, else the trace itself; the navigator lists it. */
+  navigatorTrace: TraceState;
   /** Drops manual add/prune edits, restoring the starting scope while staying in the trace. */
   resetTraceToStart: () => void;
   /** Adds a batch of direct scope neighbors in one update (tree level growth). */
@@ -60,6 +67,8 @@ interface UseInteractiveTraceReturn {
   /** Traversal graph over the trace scope, shared by tree path lighting and focus paths; null outside a trace. */
   traceScopeGraph: Graph | null;
 }
+
+const NO_TARGETS: readonly string[] = [];
 
 /** Initial trace state factory */
 const createInitialTrace = (config: ExtensionConfig): TraceState => ({
@@ -87,11 +96,8 @@ function isDirectNeighborOfScope(
   candidateNodeId: string,
 ): boolean {
   if (visibleNodeIds.has(candidateNodeId)) return false;
-  for (const visibleId of visibleNodeIds) {
-    if (directNeighborIds(model, visibleId, 'in').includes(candidateNodeId)) return true;
-    if (directNeighborIds(model, visibleId, 'out').includes(candidateNodeId)) return true;
-  }
-  return false;
+  return directNeighborIds(model, candidateNodeId, 'in').some(id => visibleNodeIds.has(id))
+    || directNeighborIds(model, candidateNodeId, 'out').some(id => visibleNodeIds.has(id));
 }
 
 /** Pick BFS graph — auto-promotes to fullGraph when node is filtered out. */
@@ -132,7 +138,7 @@ export function useInteractiveTrace(
 ): UseInteractiveTraceReturn {
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
   const [useFullModel, setUseFullModel] = useState(false);
-  const [focusPrevious, setFocusPrevious] = useState<TraceState | null>(null);
+  const [focus, setFocus] = useState<{ previous: TraceState; targetIds: readonly string[] } | null>(null);
   const [, startTransition] = useTransition();
 
   const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
@@ -387,7 +393,7 @@ export function useInteractiveTrace(
   const endTrace = useCallback((onComplete?: () => void) => {
     setTrace(createInitialTrace(config));
     setUseFullModel(false);
-    setFocusPrevious(null);
+    setFocus(null);
     if (onComplete) {
       setTimeout(onComplete, 0);
     }
@@ -438,28 +444,46 @@ export function useInteractiveTrace(
     return buildTraceScopeGraph(model, trace.tracedNodeIds);
   }, [traceGraph, model, trace.mode, trace.tracedNodeIds]);
 
+  /** Scope graph the focus routes resolve against: the pre-focus scope, never the narrowed one. */
+  const focusBaseGraph = useMemo(
+    () => (focus && model ? buildTraceScopeGraph(model, focus.previous.tracedNodeIds) : traceScopeGraph),
+    [focus, model, traceScopeGraph],
+  );
+
+  const exitFocusPaths = useCallback(() => {
+    if (focus) {
+      setFocus(null);
+      setTrace(focus.previous);
+    } else {
+      endTrace();
+    }
+  }, [focus, endTrace]);
+
   /**
-   * Narrows the trace to the union of origin→target shortest paths.
+   * Shows every path connecting the origin and each checked target, unioned.
    *
-   * All-or-nothing: when any leg is unreachable the scope is untouched. The
-   * pre-focus state is stashed so {@link exitFocusPaths} restores the full
-   * scope instead of ending the trace. Re-focus requires an exit first —
-   * `path-applied` is not an editable mode.
+   * All-or-nothing per call: when any route is unreachable the scope is untouched. Routes always
+   * resolve against the pre-focus scope, so a target hidden by the current focus can be added.
    */
-  const applyFocusPaths = useCallback((targetIds: string[]): boolean => {
-    if (!trace.selectedNodeId || !isEditableTraceMode(trace.mode) || !traceScopeGraph) return false;
-    const union = unionShortestPaths(traceScopeGraph, trace.selectedNodeId, targetIds);
+  const setFocusTargets = useCallback((targetIds: string[]): boolean => {
+    const base = focus?.previous ?? trace;
+    if (targetIds.length === 0) {
+      if (focus) exitFocusPaths();
+      return true;
+    }
+    if (!base.selectedNodeId || !isEditableTraceMode(base.mode) || !focusBaseGraph) return false;
+    const union = unionConnectingPaths(focusBaseGraph, base.selectedNodeId, targetIds);
     if (!union) {
-      window.vscode?.postMessage({ type: 'log', text: `[Trace] Focus paths skipped — a leg is unreachable` });
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Focus paths skipped — a route is unreachable`, level: 'debug' });
       return false;
     }
     window.vscode?.postMessage({ type: 'log', text:
-      `[Trace] Focus paths: "${trace.selectedNodeId}" → ${targetIds.length} targets, ${union.nodeIds.size} nodes, ${union.edgeIds.size} edges`
+      `[Trace] Focus paths: "${base.selectedNodeId}" → ${targetIds.length} targets, ${union.nodeIds.size} nodes, ${union.edgeIds.size} edges`
     });
-    setFocusPrevious(trace);
+    setFocus({ previous: base, targetIds });
     setTrace(createTrace(config, {
       mode: 'path-applied',
-      selectedNodeId: trace.selectedNodeId,
+      selectedNodeId: base.selectedNodeId,
       targetNodeId: null,
       upstreamLevels: 0,
       downstreamLevels: 0,
@@ -469,17 +493,7 @@ export function useInteractiveTrace(
       tracedEdgeIds: union.edgeIds,
     }));
     return true;
-  }, [config, trace, traceScopeGraph]);
-
-  const exitFocusPaths = useCallback(() => {
-    if (focusPrevious) {
-      const restored = focusPrevious;
-      setFocusPrevious(null);
-      setTrace(restored);
-    } else {
-      endTrace();
-    }
-  }, [focusPrevious, endTrace]);
+  }, [config, trace, focus, focusBaseGraph, exitFocusPaths]);
 
   const resetTraceToStart = useCallback(() => {
     if (!model) return;
@@ -522,5 +536,5 @@ export function useInteractiveTrace(
     });
   }, [model]);
 
-  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, applyFocusPaths, exitFocusPaths, isFocusPaths: focusPrevious !== null, resetTraceToStart, addTraceNeighbors, traceScopeGraph };
+  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths: focus !== null, focusTargetIds: focus?.targetIds ?? NO_TARGETS, navigatorTrace: focus?.previous ?? trace, resetTraceToStart, addTraceNeighbors, traceScopeGraph };
 }

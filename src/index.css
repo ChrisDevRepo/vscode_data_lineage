@@ -1715,76 +1715,68 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   outline-offset: -2px;
 }
 
-/* Trace tree navigator */
+/* Trace tree navigator — the analysis sidebar's shell, sections, active row and footer */
 .ln-trace-tree {
-  width: 288px;
-  flex: none;
+  width: 320px;
   height: 100%;
+  max-height: none;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: var(--ln-bg);
-  border-right: 1px solid var(--ln-border);
+}
+.ln-trace-tree-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .ln-trace-tree-collapsed {
-  width: 40px;
-  flex: none;
-  height: 100%;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 8px;
-  background: var(--ln-bg);
-  border-right: 1px solid var(--ln-border);
+  padding: 2px;
+  background: var(--ln-widget-bg);
+  border: 1px solid var(--ln-widget-border);
+  border-radius: 6px;
 }
-.ln-trace-tree-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--ln-sidebar-header-bg);
+/** Pinned L0 starting point: always visible above the scrolling tree. */
+.ln-trace-tree-root {
+  padding: 4px 6px;
   border-bottom: 1px solid var(--ln-border-light);
-}
-.ln-trace-tree-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ln-sidebar-header-fg);
-}
-.ln-trace-tree-anchor {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ln-border-light);
-  min-width: 0;
 }
 .ln-trace-tree-recenter {
   display: flex;
-  flex-direction: row;
   align-items: center;
   gap: 6px;
+  width: 100%;
   min-width: 0;
-  flex: 1;
-  background: none;
+  padding: 4px 6px;
+  background: var(--ln-analysis-bg);
   border: 0;
-  padding: 2px 4px;
-  font: inherit;
-  color: inherit;
-  text-align: left;
+  border-left: 3px solid var(--ln-tree-schema, var(--ln-analysis-border));
+  border-radius: 2px;
   cursor: pointer;
-  border-radius: 4px;
-  box-shadow: inset 3px 0 0 var(--ln-tree-schema, transparent);
+  text-align: left;
 }
 .ln-trace-tree-recenter:hover {
-  background: var(--ln-bg-secondary);
+  filter: brightness(1.1);
+}
+.ln-trace-tree-level-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: var(--ln-fg-muted);
+  border: 1px solid var(--ln-border-light);
 }
 .ln-trace-tree-origin {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--ln-fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
 }
 .ln-trace-tree-recenter:focus-visible,
 .ln-trace-tree-body [role="treeitem"]:focus-visible,
@@ -1792,24 +1784,11 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   outline: 2px solid var(--ln-focus-border);
   outline-offset: -2px;
 }
-/** Level-load action (an `ln-btn-icon`), revealed on row hover or focus like native tree actions. */
-.ln-tree-grow {
-  flex: none;
-  opacity: 0;
-}
-.ln-tree-row:hover .ln-tree-grow,
-.ln-trace-tree-body [role="treeitem"]:focus .ln-tree-grow,
-.ln-tree-grow:focus-visible {
-  opacity: 1;
-}
-.ln-tree-grow:disabled {
-  display: none;
-}
 .ln-trace-tree-find {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--ln-border-light);
 }
 .ln-trace-tree-find .ln-input {
@@ -1824,26 +1803,44 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 .ln-trace-tree-footer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--ln-fg-muted);
   border-top: 1px solid var(--ln-border-light);
 }
-.ln-trace-tree-actions {
+.ln-trace-tree-status {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-.ln-trace-tree-actions button {
-  font-size: 12px;
-}
-.ln-trace-tree-actions button:disabled {
-  opacity: 0.5;
+  justify-content: space-between;
 }
 .ln-tree-row {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding-right: 8px;
+  height: 100%;
+  padding-right: 6px;
+}
+/** Side sections read as the analysis section labels and never collapse. */
+.ln-tree-row[data-trace-tree-kind="side"] {
+  padding-left: 10px;
+  background: var(--ln-bg-secondary);
+  border-bottom: 1px solid var(--ln-border-light);
+}
+.ln-tree-section {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ln-fg-muted);
+}
+.ln-tree-grow {
+  flex: none;
+}
+.ln-tree-grow:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 .ln-tree-chevron {
   width: 20px;
@@ -1853,7 +1850,6 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 }
 .ln-tree-label {
   display: flex;
-  flex-direction: row;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -1871,7 +1867,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   opacity: 0.6;
   user-select: none;
 }
-/** Schema swatch on cluster headers; the color arrives as --ln-tree-schema. */
+/** Schema swatch on cluster rows; the color arrives as --ln-tree-schema. */
 .ln-tree-swatch {
   flex: none;
   width: 10px;
@@ -1879,7 +1875,6 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   border-radius: 3px;
   background: var(--ln-tree-schema, transparent);
 }
-/** Right-aligned cluster count. */
 .ln-tree-count {
   flex: none;
   margin-left: auto;
@@ -1895,6 +1890,9 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   max-width: 100%;
   font-size: 12px;
 }
+.ln-tree-row[data-trace-tree-kind="level"] .ln-tree-name {
+  font-weight: 600;
+}
 .ln-tree-detail {
   font-size: 11px;
   color: var(--ln-fg-muted);
@@ -1902,15 +1900,16 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 .ln-tree-row:hover {
   background: var(--ln-bg-secondary);
 }
+/** Active row matches the analysis sidebar's active group: tinted, with an accent bar. */
 .ln-tree-row-active,
 .ln-tree-row-active:hover {
-  background: var(--ln-selection-bg);
+  background: var(--ln-analysis-bg);
+  box-shadow: inset 3px 0 0 var(--ln-analysis-border);
 }
-/** Group rows (side and schema-cluster headers) read as section headers. */
-.ln-tree-row[data-trace-tree-kind="group"] .ln-tree-name {
-  font-weight: 600;
+/** Rows the route view hides from the canvas stay listed, dimmed. */
+.ln-tree-row-offstage .ln-tree-label {
+  opacity: 0.45;
 }
-
 /** Footer actions read as sidebar links, matching the analysis "Show all". */
 .ln-tree-action {
   font-size: 11px;

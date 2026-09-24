@@ -88,7 +88,7 @@ const KEY_CAPTIONS: Partial<Record<AppShortcutId, string>> = { exitMode: 'Esc' }
  */
 const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   ...(Object.keys(SHORTCUT_DESCRIPTIONS) as AppShortcutId[]).map(id => ({
-    keys: [KEY_CAPTIONS[id] ?? SHORTCUT_KEYS[id]],
+    keys: [KEY_CAPTIONS[id] ?? [SHORTCUT_KEYS[id]].flat().join(' / ')],
     label: SHORTCUT_DESCRIPTIONS[id],
   })),
   { keys: ['Enter'], label: 'Select a suggestion or apply the focused action' },

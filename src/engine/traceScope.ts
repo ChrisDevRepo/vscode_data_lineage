@@ -8,7 +8,8 @@
 
 import type Graph from 'graphology';
 import type { DatabaseModel, LineageEdge, TraceState } from './types';
-import { buildGraphologyGraph, computeShortestPath } from './graphBuilder';
+import { bfsFromNode } from 'graphology-traversal';
+import { buildGraphologyGraph } from './graphBuilder';
 import { nodesCutByRemoval } from './graphGuards';
 
 /**
@@ -142,17 +143,23 @@ export function buildTraceScopeGraph(model: DatabaseModel, nodeIds: ReadonlySet<
 }
 
 /**
- * Unions the origin→target shortest paths for a focus set.
+ * Unions every origin↔target connecting path for a route set.
  *
- * Returns null when the origin is unknown to the graph or any target is
- * unreachable: focus is all-or-nothing, never a partial union.
+ * @remarks
+ * A route is every node lying on some directed path between the origin and the target — the
+ * descendants of the source intersected with the ancestors of the sink, both from
+ * `bfsFromNode`, neither walk passing through the other endpoint — plus the edges inside that
+ * set, so both branches of a diamond are kept and a cycle through an endpoint is not. Each
+ * target is tried downstream (`origin → target`) first and upstream (`target → origin`) when no
+ * downstream path exists. Returns null when the origin is unknown to the graph or any target is
+ * unreachable: a route set is all-or-nothing, never a partial union.
  *
  * @param graph - Graph spanning the trace scope.
- * @param originId - Focus anchor (the trace origin).
- * @param targetIds - Checked node ids, origin excluded by the caller.
- * @returns Unioned path node and edge ids, or null when any leg fails.
+ * @param originId - Route anchor (the trace origin).
+ * @param targetIds - Route end node ids; the origin itself is skipped.
+ * @returns Unioned route node and edge ids, or null when any route fails.
  */
-export function unionShortestPaths(
+export function unionConnectingPaths(
   graph: Graph,
   originId: string,
   targetIds: ReadonlyArray<string>,
@@ -162,12 +169,38 @@ export function unionShortestPaths(
   const edgeIds = new Set<string>();
   for (const targetId of targetIds) {
     if (targetId === originId) continue;
-    const leg = computeShortestPath(graph, originId, targetId);
-    if (!leg) return null;
-    for (const id of leg.nodeIds) nodeIds.add(id);
-    for (const id of leg.edgeIds) edgeIds.add(id);
+    if (!graph.hasNode(targetId)) return null;
+    const route = pathsBetween(graph, originId, targetId) ?? pathsBetween(graph, targetId, originId);
+    if (!route) return null;
+    for (const id of route.nodeIds) nodeIds.add(id);
+    for (const id of route.edgeIds) edgeIds.add(id);
   }
   return { nodeIds, edgeIds };
+}
+
+function pathsBetween(graph: Graph, sourceId: string, sinkId: string): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
+  const fromSource = reachable(graph, sourceId, 'outbound', sinkId);
+  if (!fromSource.has(sinkId)) return null;
+  const toSink = reachable(graph, sinkId, 'inbound', sourceId);
+  const nodeIds = new Set([...fromSource].filter((id) => toSink.has(id)));
+  const edgeIds = new Set<string>();
+  for (const id of nodeIds) {
+    if (id === sinkId) continue;
+    graph.forEachOutEdge(id, (edge, _attrs, _source, target) => {
+      if (target !== sourceId && nodeIds.has(target)) edgeIds.add(edge);
+    });
+  }
+  return { nodeIds, edgeIds };
+}
+
+/** Nodes reachable from `startId` in `mode`, never expanding past `stopId`. */
+function reachable(graph: Graph, startId: string, mode: 'inbound' | 'outbound', stopId: string): Set<string> {
+  const seen = new Set<string>();
+  bfsFromNode(graph, startId, (id) => {
+    seen.add(id);
+    return id === stopId;
+  }, { mode });
+  return seen;
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   type OnNodeDrag,
   type OnNodesChange,
   type OnEdgesChange,
+  type FitViewOptions,
   Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -49,7 +50,7 @@ import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
-import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph, computeShortestPath } from '../engine/graphBuilder';
+import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
 import { ColumnTraceNode } from './ColumnTraceNode';
 import {
   buildColumnTraceView,
@@ -73,7 +74,7 @@ import {
 
 import { createEdgeDecorationCache, decorateFlowEdges } from '../engine/edgeDecoration';
 import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
-import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, type TracePruneCheck } from '../engine/traceScope';
+import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, unionConnectingPaths, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
 import { normalizeColName } from '../utils/sql';
@@ -116,6 +117,11 @@ export function aiLayoutCacheKey(originId: string | undefined, viewName: string)
 
 /** Padding factor applied when fitting the graph view. */
 const FIT_VIEW_PADDING = 0.15;
+
+type FitViewPadding = NonNullable<FitViewOptions['padding']>;
+
+/** Fit padding while the trace navigator card covers the canvas's left edge: its width plus a gap. */
+const TRACE_NAVIGATOR_FIT_PADDING: FitViewPadding = { x: FIT_VIEW_PADDING, y: FIT_VIEW_PADDING, left: '360px' };
 
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
@@ -183,6 +189,9 @@ const PENDING_ZOOM_TIMEOUT_MS = 5000;
  * receives this class.
  */
 const SELECTION_ACTIVE_CLASS_NAME = 'ln-has-selection';
+
+/** Stable empty route-target list for the navigator outside a focus. */
+const NO_FOCUS_TARGETS: readonly string[] = [];
 
 /**
  * Name of the per-edge CSS custom property carrying its own base stroke width, set once when an
@@ -411,18 +420,22 @@ interface GraphCanvasProps {
   isDetailSearchOpen?: boolean;
   /** Callback to toggle the detailed search sidebar. */
   onToggleDetailSearch?: () => void;
-  /** Whether the trace navigator is collapsed to its rail. */
+  /** Whether the trace navigator is collapsed to its reopen button. */
   isTraceTreeCollapsed?: boolean;
   /** Callback to toggle the trace navigator. */
   onToggleTraceTreeCollapsed?: () => void;
   /** Traversal graph over the trace scope, shared by tree path lighting and focus paths. */
   traceScopeGraph?: Graph | null;
-  /** Narrows the trace to the union of origin→target shortest paths. */
-  applyFocusPaths?: (targetIds: string[]) => boolean;
+  /** Shows only the routes to the given targets; an empty list restores the full trace. */
+  setFocusTargets?: (targetIds: string[]) => boolean;
   /** Exits an active focus, restoring the full scope. */
   exitFocusPaths?: () => void;
   /** Whether a tree focus narrowing is on stage. */
   isFocusPaths?: boolean;
+  /** Checked route targets while a focus is on stage. */
+  focusTargetIds?: readonly string[];
+  /** The pre-focus trace while routes are shown, else the trace; the navigator lists it. */
+  navigatorTrace?: TraceState;
   /** Restores the trace's starting scope. */
   onResetTrace?: () => void;
   /** Loads one level from the given grow candidates. */
@@ -620,9 +633,11 @@ export function GraphCanvas({
   isTraceTreeCollapsed,
   onToggleTraceTreeCollapsed,
   traceScopeGraph,
-  applyFocusPaths,
+  setFocusTargets,
   exitFocusPaths,
   isFocusPaths,
+  focusTargetIds,
+  navigatorTrace,
   onResetTrace,
   onAddTraceNeighbors,
   model,
@@ -882,6 +897,7 @@ export function GraphCanvas({
   const currentTraceRef = useRef(trace);
   currentTraceRef.current = trace;
   const traceAtLastGraphChangeRef = useRef(trace);
+  const fitPaddingRef = useRef<FitViewPadding>(FIT_VIEW_PADDING);
   const viewportPreserveVersionRef = useRef(viewportPreserveVersion);
   viewportPreserveVersionRef.current = viewportPreserveVersion;
   const consumedViewportPreserveVersionRef = useRef(viewportPreserveVersion);
@@ -918,7 +934,7 @@ export function GraphCanvas({
       const matches = sectionsForNode(aiSections, node.id);
       setActiveSection(matches[0] ?? null);
       setPinnedColumn(null);
-      setHighlightedPathNodeIds(null);
+      setTreeRoute(null);
       onNodeClick(node.id);
     },
     [graphMode, onNodeClick, onSchemaNodeSelect, aiSections]
@@ -944,7 +960,7 @@ export function GraphCanvas({
   );
 
   const handleFitView = useCallback(() => {
-    void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION });
+    void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION });
   }, [fitView]);
 
   const handleSaveTraceAsBookmark = useCallback((name: string, withPositions: boolean) => {
@@ -1050,40 +1066,40 @@ export function GraphCanvas({
     onNodeClick(nodeId);
   }, [zoomToNode, onNodeClick]);
 
-  /** Origin→node path lit by the trace tree; null when no tree path is active. */
-  const [highlightedPathNodeIds, setHighlightedPathNodeIds] = useState<ReadonlySet<string> | null>(null);
+  /** Origin→node route lit by a trace tree row; null when no row route is active. */
+  const [treeRoute, setTreeRoute] = useState<{ targetId: string; nodeIds: ReadonlySet<string>; edgeIds: ReadonlySet<string> } | null>(null);
+  /** The row route while its row is still the selection; a canvas click elsewhere drops it. */
+  const activeRoute = treeRoute && treeRoute.targetId === highlightedNodeId ? treeRoute : null;
 
   /** Full-model traversal graph backing the tree and row path lighting. */
   const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
 
   /**
-   * Tree-row activation: existing canvas selection, plus origin→node path
-   * lighting with the camera autofit on the path. The origin needs no
+   * Tree-row activation: existing canvas selection, plus lighting of every
+   * origin↔node connecting path with the camera autofit on the route. The origin needs no
    * override — the trace-origin rule already keeps it lit.
    */
   const handleTreeRowSelect = useCallback((nodeId: string) => {
-    onNodeClick(nodeId);
+    if (highlightedNodeId !== nodeId) onNodeClick(nodeId);
     const originId = trace.selectedNodeId;
-    if (!originId || nodeId === originId) {
-      setHighlightedPathNodeIds(null);
-      return;
-    }
-    const path = traceScopeGraph ? computeShortestPath(traceScopeGraph, originId, nodeId) : null;
+    const path = originId && nodeId !== originId && traceScopeGraph
+      ? unionConnectingPaths(traceScopeGraph, originId, [nodeId])
+      : null;
     if (!path) {
-      setHighlightedPathNodeIds(null);
+      setTreeRoute(null);
       return;
     }
-    setHighlightedPathNodeIds(path.nodeIds);
+    setTreeRoute({ targetId: nodeId, nodeIds: path.nodeIds, edgeIds: path.edgeIds });
     void fitView({
       nodes: [...path.nodeIds].map(id => ({ id })),
-      padding: FIT_VIEW_PADDING,
+      padding: fitPaddingRef.current,
       duration: FIT_VIEW_DURATION,
     });
-  }, [onNodeClick, trace.selectedNodeId, traceScopeGraph, fitView]);
+  }, [onNodeClick, highlightedNodeId, trace.selectedNodeId, traceScopeGraph, fitView]);
 
   useEffect(() => {
-    setHighlightedPathNodeIds(null);
-  }, [trace.mode, trace.selectedNodeId]);
+    setTreeRoute(null);
+  }, [trace.mode, trace.selectedNodeId, trace.tracedNodeIds]);
 
   const flowNodeLookup = useMemo(() => {
     const ids = new Set<string>();
@@ -1174,7 +1190,7 @@ export function GraphCanvas({
    */
   const fitGraph = useCallback((): (() => void) => scheduleFit(
     fitGenerationRef,
-    () => { void fitView({ padding: FIT_VIEW_PADDING, duration: FIT_VIEW_DURATION }); },
+    () => { void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION }); },
     (run) => requestAnimationFrame(run),
     (id) => cancelAnimationFrame(id),
   ), [fitView]);
@@ -1507,7 +1523,7 @@ export function GraphCanvas({
     setActiveSection(null);
     setPinnedColumn(null);
     setHoveredColumn(null);
-    setHighlightedPathNodeIds(null);
+    setTreeRoute(null);
     onClearSelection?.();
   }, [onClearSelection]);
 
@@ -1599,7 +1615,7 @@ export function GraphCanvas({
       graphMode,
       highlightedNodeId,
       level1Neighbors,
-      litOverride: highlightedPathNodeIds ?? undefined,
+      litOverride: activeRoute?.nodeIds,
       traceMode: trace.mode,
       traceSelectedNodeId: trace.selectedNodeId,
       isBookmarkMode,
@@ -1613,7 +1629,7 @@ export function GraphCanvas({
       onExpandSchema: onExpandExpandedSchemaViewSchema,
       onMakeSchemaCenter: onCenterExpandedSchemaViewSchema,
     }, nodeDecorationCache.current);
-  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, highlightedPathNodeIds, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
+  }, [localNodes, graphMode, onExpandExpandedSchemaViewSchema, onCenterExpandedSchemaViewSchema, highlightedNodeId, level1Neighbors, activeRoute, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, aiHighlightMap, aiBadgeMap, aiNoteMap, notesVisible, trace.mode, trace.selectedNodeId, columnViewActive, columnTraceView, columnNodeData, columnPositions]);
 
   const displayEdges = useMemo(() => {
     if (columnViewActive && columnTraceView) {
@@ -1655,8 +1671,8 @@ export function GraphCanvas({
     const isTraceAnimationContext = trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied';
     const configAllowsAnimation = isTraceAnimationContext ? config.layout.edgeAnimation : config.layout.highlightAnimation;
     const litAnimated = shouldAnimateEdges(localEdges.length, configAllowsAnimation);
-    return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current);
-  }, [localEdges, highlightedNodeId, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
+    return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current, activeRoute?.edgeIds);
+  }, [localEdges, highlightedNodeId, activeRoute, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
 
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),
@@ -1675,10 +1691,20 @@ export function GraphCanvas({
     [allNodes, modelNodeMap],
   );
 
+  const listedTrace = navigatorTrace ?? trace;
   const traceTree = useMemo(() => buildTraceTree(
-    { originId: trace.selectedNodeId, visibleNodeIds: trace.tracedNodeIds, prunedNodeIds: trace.manualPrunedNodeIds },
+    { originId: listedTrace.selectedNodeId, visibleNodeIds: listedTrace.tracedNodeIds, prunedNodeIds: listedTrace.manualPrunedNodeIds },
     modelGraph,
-  ), [trace.selectedNodeId, trace.tracedNodeIds, trace.manualPrunedNodeIds, modelGraph]);
+  ), [listedTrace.selectedNodeId, listedTrace.tracedNodeIds, listedTrace.manualPrunedNodeIds, modelGraph]);
+
+  const showTraceNavigator = (trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied')
+    && !!trace.selectedNodeId && !!traceTree && !!onToggleTraceTreeCollapsed;
+  const isTraceNavigatorOpen = showTraceNavigator && !isDetailSearchOpen && !analysisMode && !isTraceTreeCollapsed;
+  fitPaddingRef.current = isTraceNavigatorOpen ? TRACE_NAVIGATOR_FIT_PADDING : FIT_VIEW_PADDING;
+  const traceEditCounts = useMemo(
+    () => ({ added: listedTrace.manualAddedNodeIds.size, trimmed: listedTrace.manualPrunedNodeIds.size }),
+    [listedTrace.manualAddedNodeIds, listedTrace.manualPrunedNodeIds],
+  );
 
   const traceTreeLabels = useMemo(() => {
     const map = new Map<string, { name: string; detail?: string; type?: ObjectType }>();
@@ -1854,11 +1880,11 @@ export function GraphCanvas({
         <ModeBanner
           variant="trace"
           icon={TRACE_ICON}
-          title="Focus paths"
+          title="Routes"
           subtitle={
             <>
               Showing <span className="font-bold">{trace.tracedNodeIds.size} nodes</span>
-              {' '}on focused paths from <span className="font-mono font-semibold">"{selectedNodeLabel ?? trace.selectedNodeId}"</span>
+              {' '}on routes from <span className="font-mono font-semibold">"{selectedNodeLabel ?? trace.selectedNodeId}"</span>
             </>
           }
           onClose={exitFocusPaths}
@@ -1915,23 +1941,6 @@ export function GraphCanvas({
         }
       >
       <div className="flex-1 flex flex-row overflow-hidden min-h-0">
-        {(trace.mode === 'applied' || trace.mode === 'filtered' || trace.mode === 'path-applied') && trace.selectedNodeId && traceTree && onToggleTraceTreeCollapsed && (
-          <TraceTreePanel
-            tree={traceTree}
-            originName={selectedNodeLabel ?? trace.selectedNodeId}
-            collapsed={isTraceTreeCollapsed ?? false}
-            onToggleCollapse={onToggleTraceTreeCollapsed}
-            resolveNode={resolveTraceTreeNode}
-            selectedNodeId={highlightedNodeId ?? null}
-            onSelectNode={handleTreeRowSelect}
-            onFocusPaths={applyFocusPaths ?? (() => false)}
-            onExitFocus={exitFocusPaths ?? (() => {})}
-            focusActive={isFocusPaths ?? false}
-            onResetTrace={onResetTrace ?? (() => {})}
-            onGrowLevel={onAddTraceNeighbors ?? (() => {})}
-            removeKind={traceRemoveKind(trace.mode)}
-          />
-        )}
         <div className="flex-1 relative overflow-hidden min-w-0">
         {renderLimitNotice}
         {isRebuilding && (
@@ -2016,8 +2025,11 @@ export function GraphCanvas({
                     ariaLabel="Graph minimap"
                   />
                 )}
-                {(isDetailSearchOpen || analysisMode) && (
-                  <Panel position="top-left">
+                {(isDetailSearchOpen || analysisMode || showTraceNavigator) && (
+                  <Panel
+                    position="top-left"
+                    style={isTraceNavigatorOpen ? { bottom: 0 } : undefined}
+                  >
                     {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
                       <AnalysisSidebar
                         analysis={analysisMode}
@@ -2027,7 +2039,7 @@ export function GraphCanvas({
                         onClose={onCloseAnalysis}
                         onSwitchAnalysis={onOpenAnalysis}
                       />
-                    ) : onToggleDetailSearch ? (
+                    ) : isDetailSearchOpen && onToggleDetailSearch ? (
                         <DetailSearchSidebar
                           onClose={onToggleDetailSearch}
                           allNodes={detailSearchNodes}
@@ -2043,6 +2055,23 @@ export function GraphCanvas({
                             zoomToNode(nodeId);
                           }}
                       />
+                    ) : showTraceNavigator && traceTree && trace.selectedNodeId && onToggleTraceTreeCollapsed ? (
+                      <TraceTreePanel
+                        tree={traceTree}
+                        originName={selectedNodeLabel ?? trace.selectedNodeId}
+                        collapsed={isTraceTreeCollapsed ?? false}
+                        onToggleCollapse={onToggleTraceTreeCollapsed}
+                        resolveNode={resolveTraceTreeNode}
+                        selectedNodeId={highlightedNodeId ?? null}
+                        onSelectNode={handleTreeRowSelect}
+                        focusTargetIds={focusTargetIds ?? NO_FOCUS_TARGETS}
+                        onFocusTargets={setFocusTargets ?? (() => false)}
+                        onStageIds={isFocusPaths ? trace.tracedNodeIds : null}
+                        editCounts={traceEditCounts}
+                        onResetTrace={onResetTrace ?? (() => {})}
+                        onGrowLevel={onAddTraceNeighbors ?? (() => {})}
+                        removeKind={traceRemoveKind(trace.mode)}
+                      />
                     ) : null}
                   </Panel>
                 )}
@@ -2056,7 +2085,7 @@ export function GraphCanvas({
           schemaColorMap={legendColorMap}
           isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
           expandedSchemas={expandedSchemas}
-          isSidebarOpen={isDetailSearchOpen || !!analysisMode}
+          isSidebarOpen={isDetailSearchOpen || !!analysisMode || isTraceNavigatorOpen}
         />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}

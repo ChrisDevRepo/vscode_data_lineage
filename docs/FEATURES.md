@@ -26,7 +26,7 @@ global keybindings, so none of these can conflict with your editor bindings.
 | <kbd>?</kbd> | Open Help |
 | <kbd>s</kbd> | Toggle Schema View |
 | <kbd>h</kbd> | Hide schema clusters in Expanded Schema View |
-| <kbd>Delete</kbd> | Exclude the selected node from the view |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Exclude the selected node from the view; in a trace, trim it and the branch hanging only on it |
 | <kbd>Esc</kbd> | Close active input, then exit the current mode |
 
 Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text,
@@ -109,7 +109,7 @@ Hide nodes from the graph using pattern-based rules. Rules apply in real time �
 
 1. Open the exclusion dropdown (ban icon in toolbar) and type a pattern.
 2. Right-click any node and select **Exclude from view**.
-3. Select a node and press <kbd>Delete</kbd>.
+3. Select a node and press <kbd>Delete</kbd> (<kbd>Backspace</kbd> on macOS).
 
 ### Pattern syntax
 
@@ -142,10 +142,21 @@ After running **Trace Levels**, refine the result directly on the graph without 
 
 - **Add a neighbour** — the **+** control on a node pulls in one of its direct upstream/downstream neighbours that the trace did not already include.
 - **Prune a node** — the **−** control drops a node from the current trace scope.
-- **Safety gating** — the trace origin is an anchor and cannot be pruned, and a prune is rejected when it would disconnect any remaining node from the origin, so the trace always stays connected. Only safe actions are offered.
+- **Safety gating** — the trace origin is an anchor and cannot be pruned. A pruned node leaves together with the branch that hangs only on it, so the trace always stays connected.
 - Edits layer on top of the original trace and never change your filters; re-run **Trace Levels** or press <kbd>Esc</kbd> to discard them.
 
 Editing applies to Trace Levels results — a computed shortest path is fixed.
+
+### Trace navigator
+
+While a trace is on screen, the navigator lists it as a tree in the canvas's top-left panel:
+
+- **Starting point** — pinned at the top (L0) and always visible; click it to recenter.
+- **Upstream / Downstream** — fixed sections of hop levels (L1, L2, …), grouped by schema. Deeper levels start collapsed on large traces. The **+** on a section loads one more level on that side; its tooltip shows how many nodes it adds.
+- **Click a node** — lights only the route between the starting point and that node — every path connecting them, so both branches of a diamond — animates just those edges and fits the view to the route.
+- **Check nodes** — each checkbox immediately shows only the routes to the checked nodes; rows hidden from the graph stay listed, dimmed, and can be checked to add their route. **Show all** restores the trace.
+- **Trim** — <kbd>Delete</kbd> / <kbd>Backspace</kbd> on a selected node removes it and the branch that hangs only on it. **Reset** beside the edit summary restores the starting scope.
+- **Find** — jumps between matches and opens collapsed levels. Objects reached from neither side are listed under **Connected**.
 
 ### Find path
 

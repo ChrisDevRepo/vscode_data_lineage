@@ -636,6 +636,20 @@ describe('decorateFlowEdges', () => {
     expect(new Set(changed)).toEqual(expectedChurn);
   });
 
+  it('lights only route edges when a route is given, in either stored direction', () => {
+    const edges = [
+      { id: 'a→b', source: 'a', target: 'b' },
+      { id: 'b→c', source: 'b', target: 'c' },
+      { id: 'b→x', source: 'b', target: 'x' },
+      { id: 'c→b2', source: 'c', target: 'b2' },
+    ];
+    const route = new Set(['a→b', 'c→b']);
+    const lit = decorateFlowEdges(edges, 'b', true, createEdgeDecorationCache(), route)
+      .filter(edge => edge.className === LIT_CLASS_NAME)
+      .map(edge => edge.id);
+    expect(lit).toEqual(['a→b', 'b→c']);
+  });
+
   it('releases cache entries for edges a filter removed', () => {
     const edges = largeFlowEdges();
     const cache = createEdgeDecorationCache();

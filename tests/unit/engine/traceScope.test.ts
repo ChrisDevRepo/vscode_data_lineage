@@ -5,7 +5,7 @@ import {
   canPruneTraceNode,
   collectScopeEdgeIds,
   isManualTraceScopeEdit,
-  unionShortestPaths,
+  unionConnectingPaths,
 } from '../../../src/engine/traceScope';
 import {
   bfsReachable,
@@ -236,15 +236,44 @@ describe("Trace Scope Safety Tests", () => {
     [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['O', 'A'], ['A', 'B'], ['O', 'C']]
   );
-  const union = unionShortestPaths(g, 'O', ['B', 'C', 'O']);
+  const union = unionConnectingPaths(g, 'O', ['B', 'C', 'O']);
   expect(union !== null, 'union: legs resolve').toBe(true);
   expect(new Set(union!.nodeIds), 'union: O A B C merged').toEqual(new Set(['O', 'A', 'B', 'C']));
 });
 
+  it("union: a diamond keeps both branches and every edge between them", () => {
+  const g = makeGraph(
+    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'T' }, { id: 'S' }],
+    [['O', 'A'], ['O', 'B'], ['A', 'T'], ['B', 'T'], ['O', 'S']]
+  );
+  const union = unionConnectingPaths(g, 'O', ['T']);
+  expect([...union!.nodeIds].sort(), 'diamond: both branches, side branch excluded').toEqual(['A', 'B', 'O', 'T']);
+  expect([...union!.edgeIds].sort(), 'diamond: all four branch edges').toEqual(['A→T', 'B→T', 'O→A', 'O→B']);
+});
+
+  it("union: an upstream target resolves against the reverse direction", () => {
+  const g = makeGraph(
+    [{ id: 'U' }, { id: 'M1' }, { id: 'M2' }, { id: 'O' }, { id: 'D' }],
+    [['U', 'M1'], ['U', 'M2'], ['M1', 'O'], ['M2', 'O'], ['O', 'D']]
+  );
+  const union = unionConnectingPaths(g, 'O', ['U']);
+  expect([...union!.nodeIds].sort(), 'upstream diamond: both branches').toEqual(['M1', 'M2', 'O', 'U']);
+});
+
+  it("union: a cycle through the origin stays off the route", () => {
+  const g = makeGraph(
+    [{ id: 'P' }, { id: 'O' }, { id: 'C1' }, { id: 'C2' }],
+    [['P', 'O'], ['O', 'C1'], ['C1', 'C2'], ['C2', 'O']]
+  );
+  const union = unionConnectingPaths(g, 'O', ['P']);
+  expect([...union!.nodeIds].sort(), 'cycle: only the P → O route').toEqual(['O', 'P']);
+  expect([...union!.edgeIds], 'cycle: only the route edge').toEqual(['P→O']);
+});
+
   it("union: any unreachable leg fails the whole union", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'X' }], [['O', 'A']]);
-  expect(unionShortestPaths(g, 'O', ['A', 'X']) === null, 'union: island leg → null').toBe(true);
-  expect(unionShortestPaths(g, 'MISSING', ['A']) === null, 'union: missing origin → null').toBe(true);
+  expect(unionConnectingPaths(g, 'O', ['A', 'X']) === null, 'union: island leg → null').toBe(true);
+  expect(unionConnectingPaths(g, 'MISSING', ['A']) === null, 'union: missing origin → null').toBe(true);
 });
 
   it("no-path: disconnected → null", () => {
@@ -515,9 +544,9 @@ describe('buildTraceScopeGraph', () => {
   it('answers the same focus union as the flow-provided graph', () => {
     const scope = new Set(['[dbo].[A]', '[dbo].[B]', '[dbo].[C]']);
     const graph = buildTraceScopeGraph(model, scope);
-    const union = unionShortestPaths(graph, '[dbo].[A]', ['[dbo].[C]']);
+    const union = unionConnectingPaths(graph, '[dbo].[A]', ['[dbo].[C]']);
     expect(union, 'in-scope leg unions').not.toBeNull();
     expect([...union!.nodeIds].sort(), 'union path nodes').toEqual(['[dbo].[A]', '[dbo].[B]', '[dbo].[C]']);
-    expect(unionShortestPaths(graph, '[dbo].[A]', ['[dbo].[D]']), 'out-of-scope leg fails').toBeNull();
+    expect(unionConnectingPaths(graph, '[dbo].[A]', ['[dbo].[D]']), 'out-of-scope leg fails').toBeNull();
   });
 });

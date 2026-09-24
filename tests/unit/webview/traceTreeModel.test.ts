@@ -59,6 +59,19 @@ describe('buildTraceTree', () => {
     expect(tree?.downstream[1].grow.get('d')).toEqual([]);
   });
 
+  it('collects one more level per side from every node on it, pruned excluded', () => {
+    const graph = fixture();
+    for (const id of ['f', 'g', 'h', 'p']) graph.addNode(id, {});
+    graph.addEdgeWithKey('e→f', 'e', 'f', {});
+    graph.addEdgeWithKey('d→g', 'd', 'g', {});
+    graph.addEdgeWithKey('d→f', 'd', 'f', {});
+    graph.addEdgeWithKey('h→a', 'h', 'a', {});
+    graph.addEdgeWithKey('p→origin', 'p', 'origin', {});
+    const tree = buildTraceTree({ originId: 'origin', visibleNodeIds: allVisible, prunedNodeIds: new Set(['p']) }, graph);
+    expect(tree?.nextDownstream.sort()).toEqual(['f', 'g']);
+    expect(tree?.nextUpstream).toEqual(['h']);
+  });
+
   it('places visible nodes neither walk reaches in the Connected group', () => {
     const graph = fixture();
     graph.addNode('s', {});

@@ -38,6 +38,8 @@ export function createEdgeDecorationCache(): EdgeDecorationCache {
  * @param litAnimated - Whether a lit edge animates, already resolved from config and the rendered
  * edge count.
  * @param cache - Retention map from {@link createEdgeDecorationCache}, mutated in place.
+ * @param routeEdgeIds - `source→target` keys of a lit route; when given, only route edges are lit
+ * (either direction, matching the bidirectional-edge aliasing) instead of every incident edge.
  * @returns The decorated edges, in the order given.
  */
 export function decorateFlowEdges(
@@ -45,11 +47,14 @@ export function decorateFlowEdges(
   connectedTo: string | null | undefined,
   litAnimated: boolean,
   cache: EdgeDecorationCache,
+  routeEdgeIds?: ReadonlySet<string>,
 ): FlowEdge[] {
   const present = new Set<string>();
   const decorated = edges.map((edge) => {
     present.add(edge.id);
-    const connected = !!connectedTo && (edge.source === connectedTo || edge.target === connectedTo);
+    const connected = routeEdgeIds
+      ? routeEdgeIds.has(`${edge.source}→${edge.target}`) || routeEdgeIds.has(`${edge.target}→${edge.source}`)
+      : !!connectedTo && (edge.source === connectedTo || edge.target === connectedTo);
     const key = [connected, connected && litAnimated] as const;
     const cached = cache.get(edge.id);
     if (cached && cached.source === edge && sameKey(cached.key, key)) {
