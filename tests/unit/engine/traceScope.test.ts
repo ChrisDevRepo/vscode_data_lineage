@@ -1,9 +1,11 @@
 import { makeGraph } from '../helpers/testUtils';
 import {
+  buildTraceScopeGraph,
   buildVisibleTraceScope,
   canPruneTraceNode,
   collectScopeEdgeIds,
   isManualTraceScopeEdit,
+  unionShortestPaths,
 } from '../../../src/engine/traceScope';
 import {
   bfsReachable,
@@ -11,7 +13,7 @@ import {
   nodesCutByRemoval,
 } from '../../../src/engine/graphGuards';
 import type { TraceState } from '../../../src/engine/types';
-import type { LineageEdge } from '../../../src/engine/types';
+import type { DatabaseModel, LineageEdge, LineageNode } from '../../../src/engine/types';
 import { describe, expect, it } from 'vitest';
 
 describe("Trace Scope Safety Tests", () => {
@@ -227,6 +229,22 @@ describe("Trace Scope Safety Tests", () => {
   const check = canPruneTraceNode(g, 'O', visible, 'A');
   expect(!check.safe, 'origin not in visible: not safe').toBe(true);
   expect(check.reason, "origin not in visible: reason='origin'").toBe('origin');
+});
+
+  it("union: origin-anchored legs merge, origin target skipped", () => {
+  const g = makeGraph(
+    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
+    [['O', 'A'], ['A', 'B'], ['O', 'C']]
+  );
+  const union = unionShortestPaths(g, 'O', ['B', 'C', 'O']);
+  expect(union !== null, 'union: legs resolve').toBe(true);
+  expect(new Set(union!.nodeIds), 'union: O A B C merged').toEqual(new Set(['O', 'A', 'B', 'C']));
+});
+
+  it("union: any unreachable leg fails the whole union", () => {
+  const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'X' }], [['O', 'A']]);
+  expect(unionShortestPaths(g, 'O', ['A', 'X']) === null, 'union: island leg → null').toBe(true);
+  expect(unionShortestPaths(g, 'MISSING', ['A']) === null, 'union: missing origin → null').toBe(true);
 });
 
   it("no-path: disconnected → null", () => {
@@ -469,4 +487,37 @@ describe("isManualTraceScopeEdit", () => {
   expect(isManualTraceScopeEdit(previous, next), 'no manual delta despite non-empty sets: false').toBe(false);
 });
 
+});
+
+describe('buildTraceScopeGraph', () => {
+  function node(name: string): LineageNode {
+    return { id: `[dbo].[${name}]`, schema: 'dbo', name, fullName: `[dbo].[${name}]`, type: 'table' };
+  }
+  function edge(source: string, target: string): LineageEdge {
+    return { source: `[dbo].[${source}]`, target: `[dbo].[${target}]`, type: 'body' };
+  }
+  const model: DatabaseModel = {
+    nodes: [node('A'), node('B'), node('C'), node('D')],
+    edges: [edge('A', 'B'), edge('B', 'C'), edge('C', 'D')],
+    schemas: [],
+    catalog: {},
+    neighborIndex: {},
+  };
+
+  it('keeps only scope members and internal edges', () => {
+    const graph = buildTraceScopeGraph(model, new Set(['[dbo].[A]', '[dbo].[B]']));
+    expect(graph.hasNode('[dbo].[A]') && graph.hasNode('[dbo].[B]'), 'scope members present').toBe(true);
+    expect(!graph.hasNode('[dbo].[C]'), 'out-of-scope node absent').toBe(true);
+    expect(graph.order, 'exact node count 2').toBe(2);
+    expect(graph.size, 'only the internal edge survives').toBe(1);
+  });
+
+  it('answers the same focus union as the flow-provided graph', () => {
+    const scope = new Set(['[dbo].[A]', '[dbo].[B]', '[dbo].[C]']);
+    const graph = buildTraceScopeGraph(model, scope);
+    const union = unionShortestPaths(graph, '[dbo].[A]', ['[dbo].[C]']);
+    expect(union, 'in-scope leg unions').not.toBeNull();
+    expect([...union!.nodeIds].sort(), 'union path nodes').toEqual(['[dbo].[A]', '[dbo].[B]', '[dbo].[C]']);
+    expect(unionShortestPaths(graph, '[dbo].[A]', ['[dbo].[D]']), 'out-of-scope leg fails').toBeNull();
+  });
 });

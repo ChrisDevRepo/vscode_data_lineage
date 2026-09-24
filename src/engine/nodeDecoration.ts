@@ -18,6 +18,12 @@ export interface NodeDecorationInputs {
   highlightedNodeId: string | null | undefined;
   /** Direct neighbors of the highlighted node, which stay undimmed. */
   level1Neighbors: ReadonlySet<string>;
+  /**
+   * Explicit lit set replacing click-selection lighting, e.g. a trace-tree
+   * path. Unset or empty disables the override; the trace origin stays lit
+   * either way.
+   */
+  litOverride?: ReadonlySet<string>;
   /** Current trace mode, which decides whether the trace origin keeps its highlight. */
   traceMode: TraceState['mode'];
   /** Origin node of the active trace. */
@@ -222,11 +228,15 @@ export function computeNodeDecoration(
 ): NodeDecoration {
   const { highlighted: isHighlighted, isNeighbor, dimmed: baseDimmed } = resolveBaseSelectionState(nodeId, inputs.highlightedNodeId, inputs.level1Neighbors);
   const isTraceOrigin = isTraceOriginNode(nodeId, inputs);
+  const override = inputs.litOverride?.size ? inputs.litOverride : undefined;
+  const lit = override
+    ? override.has(nodeId) || isTraceOrigin
+    : isHighlighted || isNeighbor || isTraceOrigin;
   const removable = inputs.isBookmarkMode && inputs.canRemoveNodeFromScopedView;
   return {
     highlighted: isTraceOrigin ? true : isHighlighted ? 'yellow' : ownHighlight,
-    dimmed: baseDimmed && !isTraceOrigin,
-    lit: isHighlighted || isNeighbor || isTraceOrigin,
+    dimmed: override ? !lit : baseDimmed && !isTraceOrigin,
+    lit,
     removable,
     onRemoveFromView: removable ? inputs.onRemoveFromView : undefined,
     traceControls: inputs.traceControlsByNode.get(nodeId),

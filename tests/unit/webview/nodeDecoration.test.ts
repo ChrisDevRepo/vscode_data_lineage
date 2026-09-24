@@ -139,6 +139,42 @@ describe('decorateFlowNodes — decoration correctness', () => {
     expect(decorated[3].className).toBe(LIT_CLASS_NAME);
   });
 
+  it('lights exactly the override set and dims the rest', () => {
+    const nodes = largeFlowNodes();
+    const cache = createNodeDecorationCache();
+    const path = new Set([nodes[5].id, nodes[6].id]);
+
+    const decorated = decorateFlowNodes(nodes, baseInputs({ litOverride: path }), cache);
+
+    expect(decorated[5].className).toBe(LIT_CLASS_NAME);
+    expect(decorated[6].className).toBe(LIT_CLASS_NAME);
+    expect(decorated[7].className).toBeUndefined();
+  });
+
+  it('keeps the trace origin lit under an override that omits it', () => {
+    const nodes = largeFlowNodes();
+    const cache = createNodeDecorationCache();
+    const origin = nodes[3].id;
+
+    const decorated = decorateFlowNodes(nodes, baseInputs({
+      traceMode: 'applied',
+      traceSelectedNodeId: origin,
+      litOverride: new Set([nodes[9].id]),
+    }), cache);
+
+    expect(decorated[3].className).toBe(LIT_CLASS_NAME);
+    expect(decorated[9].className).toBe(LIT_CLASS_NAME);
+  });
+
+  it('treats an empty override as no override', () => {
+    const nodes = largeFlowNodes();
+    const cache = createNodeDecorationCache();
+
+    const decorated = decorateFlowNodes(nodes, baseInputs({ litOverride: new Set() }), cache);
+
+    expect(decorated.every(node => node.className !== LIT_CLASS_NAME)).toBe(true);
+  });
+
   it('drops AI notes when the zoom hides them and restores them when it does not', () => {
     const nodes = largeFlowNodes();
     const cache = createNodeDecorationCache();

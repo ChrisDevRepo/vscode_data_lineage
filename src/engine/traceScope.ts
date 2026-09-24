@@ -7,7 +7,8 @@
  */
 
 import type Graph from 'graphology';
-import type { LineageEdge, TraceState } from './types';
+import type { DatabaseModel, LineageEdge, TraceState } from './types';
+import { buildGraphologyGraph, computeShortestPath } from './graphBuilder';
 import { nodesCutByRemoval } from './graphGuards';
 
 /**
@@ -138,6 +139,54 @@ export function buildVisibleTraceScope(
  *
  * @returns Prune verdict; `cutNodeIds` lists the subtree leaving alongside the candidate when safe.
  */
+/**
+ * Unions the origin→target shortest paths for a focus set.
+ *
+ * Returns null when the origin is unknown to the graph or any target is
+ * unreachable: focus is all-or-nothing, never a partial union.
+ *
+ * @param graph - Graph spanning the trace scope.
+ * @param originId - Focus anchor (the trace origin).
+ * @param targetIds - Checked node ids, origin excluded by the caller.
+ * @returns Unioned path node and edge ids, or null when any leg fails.
+ */
+/**
+ * Builds the traversal graph for a trace scope from the full model.
+ *
+ * Mirrors the scope graph `applyTraceToFlow` builds when synthesis runs, so
+ * focus and path operations see the same node/edge membership on every trace,
+ * not only on synthesized ones.
+ *
+ * @param model - The full database model.
+ * @param nodeIds - Trace scope membership; edges leaving the scope are dropped.
+ * @returns Graphology graph over the scope.
+ */
+export function buildTraceScopeGraph(model: DatabaseModel, nodeIds: ReadonlySet<string>): Graph {
+  return buildGraphologyGraph({
+    ...model,
+    nodes: model.nodes.filter((n) => nodeIds.has(n.id)),
+    edges: model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target)),
+  });
+}
+
+export function unionShortestPaths(
+  graph: Graph,
+  originId: string,
+  targetIds: ReadonlyArray<string>,
+): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
+  if (!graph.hasNode(originId)) return null;
+  const nodeIds = new Set<string>([originId]);
+  const edgeIds = new Set<string>();
+  for (const targetId of targetIds) {
+    if (targetId === originId) continue;
+    const leg = computeShortestPath(graph, originId, targetId);
+    if (!leg) return null;
+    for (const id of leg.nodeIds) nodeIds.add(id);
+    for (const id of leg.edgeIds) edgeIds.add(id);
+  }
+  return { nodeIds, edgeIds };
+}
+
 export function canPruneTraceNode(
   graph: Graph,
   originNodeId: string | null,
