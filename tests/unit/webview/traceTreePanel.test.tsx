@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
-// Trace navigator: pinned L0 starting point, fixed sides with +1 level, leaves directly under levels,
-// widget-owned row activation and selection, find reveal into collapsed levels, instant route
-// checkboxes and Cmd/Ctrl+click, Expand/Collapse all, edit footer, collapse.
+// Trace navigator: L0 starting point as the title, fixed sides with +1 level, leaves directly under
+// levels, widget-owned row activation and selection, find on demand with reveal into collapsed levels,
+// instant route checkboxes and Cmd/Ctrl+click, Expand/Collapse all, content-sized card, status footer, collapse.
 import { StrictMode, act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,6 +53,7 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof TraceTreePan
     resolveNode,
     selectedNodeId: null as string | null,
     onSelectNode: vi.fn(),
+    onShowWhole: vi.fn(),
     focusTargetIds: [] as readonly string[],
     onFocusTargets: vi.fn((_ids: string[]) => true),
     onStageIds: null as ReadonlySet<string> | null,
@@ -72,6 +73,14 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof TraceTreePan
   return props;
 }
 
+/** Opens find from the title bar and returns its input. */
+function openFind(): HTMLInputElement {
+  act(() => {
+    (host.querySelector('button[aria-label="Find node"]') as HTMLButtonElement).click();
+  });
+  return host.querySelector('[aria-label="Find node in trace"]') as HTMLInputElement;
+}
+
 let host: HTMLDivElement;
 let root: Root;
 
@@ -87,11 +96,38 @@ afterEach(() => {
 });
 
 describe('TraceTreePanel', () => {
-  it('pins the L0 anchor with origin name and counts', () => {
+  it('titles the panel with the L0 starting point, find closed until asked for', () => {
     renderPanel();
     const anchor = host.querySelector('[data-testid="trace-tree-anchor"]');
+    expect(anchor?.textContent).toContain('L0');
     expect(anchor?.textContent).toContain('Origin Object');
-    expect(anchor?.textContent).toContain('↑1');
+    expect(host.querySelector('[aria-label="Find node in trace"]')).toBeNull();
+  });
+
+  it('opens find with Cmd/Ctrl+F and closes it on Escape', () => {
+    renderPanel();
+    const panel = host.querySelector('[data-testid="trace-tree-panel"]') as HTMLElement;
+    act(() => {
+      panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true }));
+    });
+    const input = host.querySelector('[aria-label="Find node in trace"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(host.querySelector('[aria-label="Find node in trace"]')).toBeNull();
+  });
+
+  it('sizes the card to its visible rows', () => {
+    renderPanel({ tree: deepTree });
+    const body = host.querySelector('.ln-trace-tree-body') as HTMLElement;
+    // Up side, L1, a, L2, b, L3 (closed), down side.
+    expect(body.style.height).toBe(`${7 * 22}px`);
+    act(() => {
+      (host.querySelector('button[aria-label="Collapse all"]') as HTMLButtonElement).click();
+    });
+    // Up side, L1, L2, L3, down side.
+    expect(body.style.height).toBe(`${5 * 22}px`);
   });
 
   it('shows the canvas type symbol on leaves in the schema color', () => {
@@ -189,7 +225,7 @@ describe('TraceTreePanel', () => {
 
   it('finds without hiding: count shown, rows intact, Enter selects', () => {
     const props = renderPanel();
-    const input = host.querySelector('[aria-label="Find node in trace"]') as HTMLInputElement;
+    const input = openFind();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     act(() => {
       setter?.call(input, 'name-a');
@@ -206,7 +242,7 @@ describe('TraceTreePanel', () => {
 
   it('shows 0/0 for a miss and clears on Escape', () => {
     renderPanel();
-    const input = host.querySelector('[aria-label="Find node in trace"]') as HTMLInputElement;
+    const input = openFind();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     act(() => {
       setter?.call(input, 'zzz-no-such-node');
@@ -272,18 +308,19 @@ describe('TraceTreePanel', () => {
     expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')?.className).toContain('ln-tree-row-offstage');
   });
 
-  it('activates the origin through the anchor', () => {
+  it('shows the whole trace from the starting point, without selecting it', () => {
     const props = renderPanel();
     act(() => {
-      (host.querySelector('[data-testid="trace-tree-anchor"] .ln-trace-tree-recenter') as HTMLElement).click();
+      (host.querySelector('[data-testid="trace-tree-anchor"]') as HTMLElement).click();
     });
-    expect(props.onSelectNode).toHaveBeenCalledWith('o');
+    expect(props.onShowWhole).toHaveBeenCalledTimes(1);
+    expect(props.onSelectNode).not.toHaveBeenCalled();
   });
 
   it('offers Reset beside the edit summary only once the scope was edited', () => {
     renderPanel();
     expect(host.querySelector('[data-testid="trace-tree-edits"]')).toBeNull();
-    expect(host.querySelector('.ln-trace-tree-footer')?.textContent).toContain('Del: trim');
+    expect(host.querySelector('.ln-trace-tree-footer')).toBeNull();
     act(() => root.unmount());
     root = createRoot(host);
     const props = renderPanel({ editCounts: { added: 2, trimmed: 3 } });
@@ -323,7 +360,7 @@ describe('TraceTreePanel', () => {
   it('reveals a find match inside a collapsed level', () => {
     renderPanel({ tree: deepTree });
     expect(host.querySelector('[data-testid="trace-tree-row-up:deep"]')).toBeNull();
-    const input = host.querySelector('[aria-label="Find node in trace"]') as HTMLInputElement;
+    const input = openFind();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     act(() => {
       setter?.call(input, 'name-deep');

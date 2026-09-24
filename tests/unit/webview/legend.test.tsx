@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 //
-// Legend placement: beside an open sidebar, beside a collapsed panel's reopen rail, or at the edge.
+// Legend placement: beside an open sidebar, the navigator card, a collapsed panel's reopen rail, or at the edge.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Legend } from '../../../src/components/Legend';
+import { TRACE_NAVIGATOR_WIDTH } from '../../../src/components/TraceTreePanel';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,7 +21,7 @@ afterEach(() => {
   act(() => root.unmount());
 });
 
-function legendLeft(inset?: 'sidebar' | 'rail'): string {
+function legendLeft(inset?: 'sidebar' | 'navigator' | 'rail'): string {
   act(() => root.render(<Legend schemas={['dbo']} inset={inset} />));
   return (host.querySelector('.ln-legend') as HTMLElement).style.left;
 }
@@ -33,5 +34,9 @@ describe('Legend inset', () => {
   it('sits at the edge with no inset and beside an open sidebar', () => {
     expect(legendLeft()).toBe('16px');
     expect(legendLeft('sidebar')).toContain('380px');
+  });
+
+  it('follows the navigator card width', () => {
+    expect(legendLeft('navigator')).toBe(`${TRACE_NAVIGATOR_WIDTH + 24}px`);
   });
 });

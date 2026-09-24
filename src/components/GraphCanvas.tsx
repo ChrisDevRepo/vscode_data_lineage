@@ -37,7 +37,7 @@ import { InlineTraceControls } from './InlineTraceControls';
 import { TracedFilterBanner, TRACE_ICON } from './TracedFilterBanner';
 import { ModeBanner } from './ModeBanner';
 import { PathFinderBar } from './PathFinderBar';
-import { TraceTreePanel } from './TraceTreePanel';
+import { TRACE_NAVIGATOR_WIDTH, TraceTreePanel } from './TraceTreePanel';
 import { buildTraceTree, traceRemoveKind } from './traceTreeModel';
 import { AnalysisBanner } from './AnalysisBanner';
 import { AnalysisSidebar } from './AnalysisSidebar';
@@ -121,7 +121,7 @@ const FIT_VIEW_PADDING = 0.15;
 type FitViewPadding = NonNullable<FitViewOptions['padding']>;
 
 /** Fit padding while the trace navigator card covers the canvas's left edge: its width plus a gap. */
-const TRACE_NAVIGATOR_FIT_PADDING: FitViewPadding = { x: FIT_VIEW_PADDING, y: FIT_VIEW_PADDING, left: '360px' };
+const TRACE_NAVIGATOR_FIT_PADDING: FitViewPadding = { x: FIT_VIEW_PADDING, y: FIT_VIEW_PADDING, left: `${TRACE_NAVIGATOR_WIDTH + 40}px` };
 
 /** Animation duration in ms for fitting the graph view. */
 const FIT_VIEW_DURATION = 250;
@@ -1098,6 +1098,13 @@ export function GraphCanvas({
     });
   }, [onNodeClick, highlightedNodeId, trace.selectedNodeId, traceScopeGraph, isFocusPaths, fitView]);
 
+  /** Starting-point activation: no selection, so nothing dims, and every node on stage framed. */
+  const handleTraceShowWhole = useCallback(() => {
+    onClearSelection?.();
+    setTreeRoute(null);
+    void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION });
+  }, [onClearSelection, fitView]);
+
   useEffect(() => {
     setTreeRoute(null);
   }, [trace.mode, trace.selectedNodeId, trace.tracedNodeIds]);
@@ -1703,6 +1710,13 @@ export function GraphCanvas({
     && !!trace.selectedNodeId && !!traceTree && !!onToggleTraceTreeCollapsed;
   const isTraceNavigatorOpen = showTraceNavigator && !isDetailSearchOpen && !analysisMode && !isTraceTreeCollapsed;
   fitPaddingRef.current = isTraceNavigatorOpen ? TRACE_NAVIGATOR_FIT_PADDING : FIT_VIEW_PADDING;
+  /** Hiding or showing the navigator card changes the free canvas width: the trace is reframed at the new padding. */
+  const traceTreeCollapsedRef = useRef(isTraceTreeCollapsed);
+  useEffect(() => {
+    if (traceTreeCollapsedRef.current === isTraceTreeCollapsed) return;
+    traceTreeCollapsedRef.current = isTraceTreeCollapsed;
+    if (showTraceNavigator) return fitGraph();
+  }, [isTraceTreeCollapsed, showTraceNavigator, fitGraph]);
   const traceEditCounts = useMemo(
     () => ({ added: listedTrace.manualAddedNodeIds.size, trimmed: listedTrace.manualPrunedNodeIds.size }),
     [listedTrace.manualAddedNodeIds, listedTrace.manualPrunedNodeIds],
@@ -2030,7 +2044,7 @@ export function GraphCanvas({
                 {(isDetailSearchOpen || analysisMode || showTraceNavigator) && (
                   <Panel
                     position="top-left"
-                    style={isTraceNavigatorOpen ? { bottom: 0 } : undefined}
+                    style={isTraceNavigatorOpen ? { bottom: 0, pointerEvents: 'none' } : undefined}
                   >
                     {analysisMode && onCloseAnalysis && onSelectAnalysisGroup && onClearAnalysisGroup ? (
                       <AnalysisSidebar
@@ -2066,6 +2080,7 @@ export function GraphCanvas({
                         resolveNode={resolveTraceTreeNode}
                         selectedNodeId={highlightedNodeId ?? null}
                         onSelectNode={handleTreeRowSelect}
+                        onShowWhole={handleTraceShowWhole}
                         focusTargetIds={focusTargetIds ?? NO_FOCUS_TARGETS}
                         onFocusTargets={setFocusTargets ?? (() => false)}
                         onStageIds={isFocusPaths ? trace.tracedNodeIds : null}
@@ -2087,7 +2102,7 @@ export function GraphCanvas({
           schemaColorMap={legendColorMap}
           isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
           expandedSchemas={expandedSchemas}
-          inset={isDetailSearchOpen || analysisMode || isTraceNavigatorOpen ? 'sidebar' : showTraceNavigator && isTraceTreeCollapsed ? 'rail' : undefined}
+          inset={isDetailSearchOpen || analysisMode ? 'sidebar' : isTraceNavigatorOpen ? 'navigator' : showTraceNavigator && isTraceTreeCollapsed ? 'rail' : undefined}
         />
 
         {/* Bookmark info card — floating bottom-left, in advanced bookmark or AI preview mode */}

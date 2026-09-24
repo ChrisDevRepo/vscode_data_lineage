@@ -43,6 +43,8 @@ export interface TraceTreePanelProps {
   selectedNodeId: string | null;
   /** Row activation; the canvas owns selection and route lighting. */
   onSelectNode: (id: string) => void;
+  /** Starting-point activation: clears the selection and frames every node on stage. */
+  onShowWhole: () => void;
   /** Checked route targets; owned by the trace. */
   focusTargetIds: readonly string[];
   /** Shows only the routes to the given targets (empty restores); false when a route is unreachable. */
@@ -103,8 +105,10 @@ const PanelRowContext = createContext<PanelContext>({
   growsEnabled: true,
 });
 
-const ROW_HEIGHT = 24;
-const TREE_INDENT = 12;
+/** Navigator card width in px; the canvas fit padding and the legend offset derive from it. */
+export const TRACE_NAVIGATOR_WIDTH = 280;
+const ROW_HEIGHT = 22;
+const TREE_INDENT = 8;
 /** Hop levels open on first render; deeper levels start collapsed. */
 const INITIAL_OPEN_LEVELS = 2;
 const SIDE_ROW_IDS = new Set(['trace-up', 'trace-down', 'trace-connected']);
@@ -118,6 +122,12 @@ const ExpandAllIcon = (
 const CollapseAllIcon = (
   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
     <path strokeLinecap="round" strokeLinejoin="round" d="M8 5l4 4 4-4M8 19l4-4 4 4" />
+  </svg>
+);
+
+const FindIcon = (
+  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.2-5.2M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
   </svg>
 );
 
@@ -148,7 +158,7 @@ function SideRow({ row }: { row: PanelRow }) {
             type="button"
             aria-label={hint}
             disabled={!canGrow}
-            className="ln-btn-icon ln-tree-grow w-7 h-7 flex items-center justify-center rounded-sm"
+            className="ln-btn-icon ln-tree-grow w-5 h-5 flex items-center justify-center rounded-sm"
             onClick={(event) => {
               event.stopPropagation();
               onGrowLevel(next);
@@ -181,7 +191,7 @@ function LeafRow({ row }: { row: PanelRow }) {
           checked={checked}
           onChange={() => onToggleCheck(nodeId)}
           onClick={(event) => event.stopPropagation()}
-          className="w-4 h-4 rounded-sm cursor-pointer ln-checkbox"
+          className="w-3.5 h-3.5 rounded-sm cursor-pointer ln-checkbox"
         />
       </Tooltip>
       <span
@@ -283,16 +293,21 @@ function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNode
   return rows;
 }
 
+/** Rows the widget renders: every top-level row plus the children of each open row. */
+function countVisibleRows(rows: PanelRow[], isOpen: (id: string) => boolean): number {
+  return rows.reduce((total, row) => total + 1 + (row.children && isOpen(row.id) ? countVisibleRows(row.children, isOpen) : 0), 0);
+}
+
 /** Leaf rows in display order, the find and selection index of the tree. */
 function leafRows(rows: PanelRow[]): PanelRow[] {
   return rows.flatMap((row) => (row.children ? leafRows(row.children) : [row]));
 }
 
 /**
- * Trace navigator on the shared {@link SidePanel} shell: pinned L0 starting point, fixed
- * upstream/downstream sections, widget-owned tree, footer with the route and edit status.
- * The canvas selection drives the widget's controlled `selection`; trace state stays owned by
- * the canvas.
+ * Trace navigator on the shared {@link SidePanel} shell: the L0 starting point as the title, find
+ * on demand, fixed upstream/downstream sections, widget-owned tree, and a footer only while a route
+ * or edit status exists. The card is as tall as its visible rows, up to the canvas height. The
+ * canvas selection drives the widget's controlled `selection`; trace state stays owned by the canvas.
  */
 export const TraceTreePanel = memo(function TraceTreePanel({
   tree,
@@ -302,6 +317,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
   resolveNode,
   selectedNodeId,
   onSelectNode,
+  onShowWhole,
   focusTargetIds,
   onFocusTargets,
   onStageIds,
@@ -314,6 +330,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
   const treeRef = useRef<TreeApi<PanelRow> | undefined>(undefined);
   const focusIndexRef = useRef<number | null>(null);
   const [viewportHeight, setViewportHeight] = useState(320);
+  const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findIndex, setFindIndex] = useState(0);
   const [routeRefused, setRouteRefused] = useState(false);
@@ -342,6 +359,14 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     }
     return open;
   }, [data]);
+
+  const [visibleRowCount, setVisibleRowCount] = useState(() => countVisibleRows(data, (id) => !!initialOpenState[id]));
+  /** Re-reads the widget's open state; its store updates before `onToggle` fires. */
+  const refreshVisibleRows = useCallback(() => {
+    const api = treeRef.current;
+    if (api) setVisibleRowCount(countVisibleRows(data, (id) => api.isOpen(id)));
+  }, [data]);
+  useEffect(refreshVisibleRows, [refreshVisibleRows]);
 
   const checkedIds = useMemo(() => new Set(focusTargetIds), [focusTargetIds]);
 
@@ -411,9 +436,15 @@ export const TraceTreePanel = memo(function TraceTreePanel({
   }, [onSelectNode]);
 
   /** Side sections are fixed: a keyboard collapse reopens at once. */
-  const keepSidesOpen = useCallback((id: string) => {
+  const handleToggle = useCallback((id: string) => {
     const api = treeRef.current;
     if (api && SIDE_ROW_IDS.has(id) && !api.isOpen(id)) api.open(id);
+    else refreshVisibleRows();
+  }, [refreshVisibleRows]);
+
+  const closeFind = useCallback(() => {
+    setFindQuery('');
+    setFindOpen(false);
   }, []);
 
   if (collapsed) {
@@ -436,89 +467,114 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     editCounts.trimmed > 0 ? `${editCounts.trimmed} trimmed` : null,
     editCounts.added > 0 ? `${editCounts.added} added` : null,
   ].filter(Boolean).join(' · ');
+  const hasStatus = routeRefused || routeCount > 0 || edited;
 
   return (
     <PanelRowContext.Provider value={rowContext}>
       <SidePanel
-        title="Trace"
+        title={(
+          <Tooltip
+            multiline
+            content={`Starting point (L0) · click to show the whole trace\nRow click: route · ⌘/Ctrl+click or ☐: add route · Del: trim`}
+            asChild
+          >
+            <button
+              type="button"
+              data-testid="trace-tree-anchor"
+              className="ln-trace-tree-recenter"
+              style={originColor ? ({ '--ln-tree-schema': originColor } as CSSProperties) : undefined}
+              aria-label={`Show the whole trace from ${originName}`}
+              onClick={onShowWhole}
+            >
+              <span className="ln-trace-tree-level-badge">L0</span>
+              <span className="ln-tree-type" aria-hidden="true">{typeIcon(originMeta?.type)}</span>
+              <span className="ln-trace-tree-origin">{originName}</span>
+            </button>
+          </Tooltip>
+        )}
         className="ln-trace-tree"
+        style={{ width: TRACE_NAVIGATOR_WIDTH }}
         closeLabel="Hide trace navigator"
         onClose={onToggleCollapse}
         actions={(
           <>
+            <Tooltip content="Find node (⌘/Ctrl+F)" asChild>
+              <button
+                type="button"
+                aria-label="Find node"
+                aria-pressed={findOpen}
+                className="ln-btn-icon w-5 h-5 flex items-center justify-center rounded-sm"
+                onClick={() => (findOpen ? closeFind() : setFindOpen(true))}
+              >
+                {FindIcon}
+              </button>
+            </Tooltip>
             <Tooltip content="Expand all" asChild>
-              <button type="button" aria-label="Expand all" className="ln-btn-icon w-6 h-6 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.openAll()}>
+              <button type="button" aria-label="Expand all" className="ln-btn-icon w-5 h-5 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.openAll()}>
                 {ExpandAllIcon}
               </button>
             </Tooltip>
             <Tooltip content="Collapse all" asChild>
-              <button type="button" aria-label="Collapse all" className="ln-btn-icon w-6 h-6 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.closeAll()}>
+              <button type="button" aria-label="Collapse all" className="ln-btn-icon w-5 h-5 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.closeAll()}>
                 {CollapseAllIcon}
               </button>
             </Tooltip>
           </>
         )}
-        icon={(
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" style={{ color: 'var(--ln-sidebar-header-fg)' }} aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d={TRACE_ICON} />
-          </svg>
-        )}
       >
-        <section aria-label="Trace navigator" data-testid="trace-tree-panel" className="ln-trace-tree-content">
-          <div className="ln-trace-tree-root" data-testid="trace-tree-anchor">
-            <Tooltip content={`Starting point · recenter on ${originName}`} asChild>
-              <button
-                type="button"
-                className="ln-trace-tree-recenter"
-                style={originColor ? ({ '--ln-tree-schema': originColor } as CSSProperties) : undefined}
-                aria-label={`Recenter on starting point ${originName}`}
-                onClick={() => onSelectNode(tree.originId)}
-              >
-                <span className="ln-trace-tree-level-badge">L0</span>
-                <span className="ln-tree-type" aria-hidden="true">{typeIcon(originMeta?.type)}</span>
-                <span className="ln-trace-tree-origin">{originName}</span>
-                <span className="ln-tree-count">↑{tree.totalUpstream} ↓{tree.totalDownstream}</span>
-              </button>
-            </Tooltip>
-          </div>
-          <div className="ln-trace-tree-find">
-            <input
-              type="text"
-              role="searchbox"
-              aria-label="Find node in trace"
-              placeholder="Find node…"
-              value={findQuery}
-              onChange={(event) => setFindQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowDown' && matches.length > 0) {
-                  event.preventDefault();
-                  setFindIndex((index) => (index + 1) % matches.length);
-                } else if (event.key === 'ArrowUp' && matches.length > 0) {
-                  event.preventDefault();
-                  setFindIndex((index) => (index + matches.length - 1) % matches.length);
-                } else if (event.key === 'Enter' && currentMatch) {
-                  event.preventDefault();
-                  if (currentMatch.nodeId) onSelectNode(currentMatch.nodeId);
-                } else if (event.key === 'Escape') {
-                  setFindQuery('');
-                }
-              }}
-              className="ln-input"
-            />
-            {findQuery.trim() ? (
-              <span className="ln-tree-detail" data-testid="trace-tree-find-count">
-                {matches.length > 0 ? `${Math.min(findIndex, matches.length - 1) + 1}/${matches.length}` : '0/0'}
-              </span>
-            ) : null}
-          </div>
-          <div ref={containerRef} className="ln-trace-tree-body">
+        <section
+          aria-label="Trace navigator"
+          data-testid="trace-tree-panel"
+          className="ln-trace-tree-content"
+          onKeyDown={(event) => {
+            if (event.key.toLowerCase() === 'f' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              setFindOpen(true);
+            }
+          }}
+        >
+          {findOpen ? (
+            <div className="ln-trace-tree-find">
+              <input
+                type="text"
+                role="searchbox"
+                aria-label="Find node in trace"
+                placeholder="Find node…"
+                autoFocus
+                value={findQuery}
+                onChange={(event) => setFindQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown' && matches.length > 0) {
+                    event.preventDefault();
+                    setFindIndex((index) => (index + 1) % matches.length);
+                  } else if (event.key === 'ArrowUp' && matches.length > 0) {
+                    event.preventDefault();
+                    setFindIndex((index) => (index + matches.length - 1) % matches.length);
+                  } else if (event.key === 'Enter' && currentMatch) {
+                    event.preventDefault();
+                    if (currentMatch.nodeId) onSelectNode(currentMatch.nodeId);
+                  } else if (event.key === 'Escape') {
+                    event.stopPropagation();
+                    closeFind();
+                  }
+                }}
+                className="ln-input"
+              />
+              {findQuery.trim() ? (
+                <span className="ln-tree-detail" data-testid="trace-tree-find-count">
+                  {matches.length > 0 ? `${Math.min(findIndex, matches.length - 1) + 1}/${matches.length}` : '0/0'}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <div ref={containerRef} className="ln-trace-tree-body" style={{ height: visibleRowCount * ROW_HEIGHT }}>
             <Tree<PanelRow>
               ref={treeRef}
               data={data}
               openByDefault={false}
               initialOpenState={initialOpenState}
               width="100%"
-              height={viewportHeight}
+              height={Math.min(viewportHeight, visibleRowCount * ROW_HEIGHT)}
               indent={TREE_INDENT}
               rowHeight={ROW_HEIGHT}
               disableDrag
@@ -526,40 +582,39 @@ export const TraceTreePanel = memo(function TraceTreePanel({
               disableMultiSelection
               disableSelect={(row) => !row.nodeId}
               onActivate={activateRow}
-              onToggle={keepSidesOpen}
+              onToggle={handleToggle}
               onFocus={(node) => { focusIndexRef.current = node.rowIndex; }}
             >
               {TraceTreeRow}
             </Tree>
           </div>
-          <footer className="ln-trace-tree-footer">
-            {routeRefused ? (
-              <p role="status" className="ln-tree-detail" data-testid="trace-tree-focus-refused">
-                No route from the starting point to that node.
-              </p>
-            ) : null}
-            {routeCount > 0 ? (
-              <div className="ln-trace-tree-status">
-                <span>Viewing {routeCount} route{routeCount === 1 ? '' : 's'}</span>
-                <button type="button" className="ln-tree-action" onClick={() => onFocusTargets([])}>
-                  Show all
-                </button>
-              </div>
-            ) : null}
-            {edited ? (
-              <div className="ln-trace-tree-status" data-testid="trace-tree-edits">
-                <span>{editSummary}</span>
-                <Tooltip content="Restore the trace's starting scope" asChild>
-                  <button type="button" className="ln-tree-action" onClick={onResetTrace}>
-                    Reset
+          {hasStatus ? (
+            <footer className="ln-trace-tree-footer">
+              {routeRefused ? (
+                <p role="status" className="ln-tree-detail" data-testid="trace-tree-focus-refused">
+                  No route from the starting point to that node.
+                </p>
+              ) : null}
+              {routeCount > 0 ? (
+                <div className="ln-trace-tree-status">
+                  <span>Viewing {routeCount} route{routeCount === 1 ? '' : 's'}</span>
+                  <button type="button" className="ln-tree-action" onClick={() => onFocusTargets([])}>
+                    Show all
                   </button>
-                </Tooltip>
-              </div>
-            ) : null}
-            {routeCount === 0 && !edited ? (
-              <p className="ln-tree-detail">Click: route · ⌘/Ctrl+click or ☐: add route · Del: trim</p>
-            ) : null}
-          </footer>
+                </div>
+              ) : null}
+              {edited ? (
+                <div className="ln-trace-tree-status" data-testid="trace-tree-edits">
+                  <span>{editSummary}</span>
+                  <Tooltip content="Restore the trace's starting scope" asChild>
+                    <button type="button" className="ln-tree-action" onClick={onResetTrace}>
+                      Reset
+                    </button>
+                  </Tooltip>
+                </div>
+              ) : null}
+            </footer>
+          ) : null}
         </section>
       </SidePanel>
     </PanelRowContext.Provider>

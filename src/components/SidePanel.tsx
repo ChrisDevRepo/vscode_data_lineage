@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { CloseIcon } from './ui/CloseIcon';
 
 interface SidePanelProps {
-  /** The title text displayed in the header. */
-  title: string;
+  /** The header title; plain text or a control such as the trace starting point. */
+  title: ReactNode;
   /** Optional icon displayed next to the title. */
   icon?: ReactNode;
   /** Callback function triggered when the close button is clicked. */
@@ -16,22 +16,24 @@ interface SidePanelProps {
   closeLabel?: string;
   /** Title-bar actions, rendered before the close button. */
   actions?: ReactNode;
+  /** Inline style on the shell, for panels that own their width. */
+  style?: CSSProperties;
 }
 
 /**
  * Renders the shared titled, closable sidebar shell.
  */
-export function SidePanel({ title, icon, onClose, children, className, closeLabel = 'Close panel', actions }: SidePanelProps) {
+export function SidePanel({ title, icon, onClose, children, className, closeLabel = 'Close panel', actions, style }: SidePanelProps) {
   return (
-    <div className={className ? `ln-sidebar ${className}` : 'ln-sidebar'}>
-      <div className="flex items-center justify-between px-3 py-2"
+    <div className={className ? `ln-sidebar ${className}` : 'ln-sidebar'} style={style}>
+      <div className="flex items-center justify-between gap-2 px-3 py-2"
            style={{ background: 'var(--ln-sidebar-header-bg)' }}>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           {icon}
-          <span className="text-xs font-semibold"
+          <span className="flex min-w-0 text-xs font-semibold"
                 style={{ color: 'var(--ln-sidebar-header-fg)' }}>{title}</span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-none">
           {actions}
           <button onClick={onClose}
                   aria-label={closeLabel}

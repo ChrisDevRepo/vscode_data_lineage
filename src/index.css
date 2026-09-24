@@ -1716,13 +1716,13 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 }
 
 /* Trace tree navigator — the analysis sidebar's shell, sections, active row and footer */
+/** Card as tall as its rows, up to the canvas height; the transparent panel beneath passes pointer events through. */
 .ln-trace-tree {
-  width: 320px;
-  height: 100%;
-  max-height: none;
+  max-height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  pointer-events: auto;
 }
 .ln-trace-tree-content {
   flex: 1;
@@ -1737,26 +1737,24 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   border: 1px solid var(--ln-widget-border);
   border-radius: 6px;
 }
-/** Pinned L0 starting point: one row, always visible above the scrolling tree. */
-.ln-trace-tree-root {
-  border-bottom: 1px solid var(--ln-border-light);
-}
+/** L0 starting point as the panel title: badge, schema-colored type symbol, origin name. */
 .ln-trace-tree-recenter {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
   min-width: 0;
-  height: 24px;
-  padding: 0 6px;
-  background: var(--ln-analysis-bg);
+  padding: 0;
+  background: none;
   border: 0;
-  border-left: 3px solid var(--ln-tree-schema, var(--ln-analysis-border));
   cursor: pointer;
   text-align: left;
 }
-.ln-trace-tree-recenter:hover {
-  filter: brightness(1.1);
+.ln-trace-tree-recenter .ln-tree-type {
+  color: var(--ln-tree-schema, var(--ln-fg-muted));
+  opacity: 1;
+}
+.ln-trace-tree-recenter:hover .ln-trace-tree-origin {
+  text-decoration: underline;
 }
 .ln-trace-tree-level-badge {
   flex: none;
@@ -1795,7 +1793,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   min-width: 0;
 }
 .ln-trace-tree-body {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow: hidden;
 }

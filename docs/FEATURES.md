@@ -149,15 +149,15 @@ Editing applies to Trace Levels results — a computed shortest path is fixed.
 
 ### Trace navigator
 
-While a trace is on screen, the navigator lists it as a tree in the canvas's top-left panel:
+A trace opens with the whole graph visible and nothing dimmed; the navigator starts folded to a button at the top left, beside the legend. Opened, it lists the trace as a tree in a compact top-left card that is only as tall as its rows, and the graph is refitted beside it:
 
-- **Starting point** — pinned at the top (L0) and always visible; click it to recenter.
+- **Starting point** — the panel title (L0); click it to clear the selection and fit the whole trace. Its tooltip lists the row gestures.
 - **Upstream / Downstream** — fixed sections of hop levels (L1, L2, …); each object's type symbol carries its schema color, as on the canvas and in the legend. Deeper levels start collapsed on large traces; **Expand all** / **Collapse all** in the title bar open or close every level. The **+** on a section loads one more level on that side; its tooltip shows how many nodes it adds.
 - **Click a node** — lights only the route between the starting point and that node — every path connecting them, so both branches of a diamond — animates just those edges and fits the view to the route.
 - **Check nodes** — each checkbox, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+click on a row, adds that node's route: the graph shows only the routes to the checked nodes, on any level and either side, with every route edge animated and the view fitted to all of them. Rows hidden from the graph stay listed, dimmed, and can be checked to add their route. **Show all** restores the trace.
-- **Hide** — the panel's close button folds it to a button at the top left, beside the legend; click it to reopen.
+- **Hide** — the panel's close button folds it back to the button beside the legend; click it to reopen. The choice holds for later traces in the session.
 - **Trim** — <kbd>Delete</kbd> / <kbd>Backspace</kbd> on a selected node removes it and the branch that hangs only on it. **Reset** beside the edit summary restores the starting scope.
-- **Find** — jumps between matches and opens collapsed levels. Objects reached from neither side are listed under **Connected**.
+- **Find** — the magnifier in the title bar, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd> inside the panel, opens it; it jumps between matches and opens collapsed levels, and <kbd>Esc</kbd> closes it. Objects reached from neither side are listed under **Connected**.
 
 ### Find path
 

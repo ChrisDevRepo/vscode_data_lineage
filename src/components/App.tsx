@@ -478,7 +478,7 @@ export function App() {
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
-  const [isTraceTreeCollapsed, setIsTraceTreeCollapsed] = useState(false);
+  const [isTraceTreeCollapsed, setIsTraceTreeCollapsed] = useState(true);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
   const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
@@ -699,10 +699,17 @@ export function App() {
     if (isDetailOpen) vscodeApi.postMessage({ type: 'update-detail' });
   }, [isDetailOpen, vscodeApi]);
 
-  /** Applies a lineage trace from a specific node. */
+  /** Applies a lineage trace from a specific node; the trace opens unselected, so no node dims. */
   const handleTraceApply = useCallback((config: { upstreamLevels: number; downstreamLevels: number }) => {
+    handleClearSelection();
     applyTrace(config.upstreamLevels, config.downstreamLevels);
-  }, [applyTrace]);
+  }, [applyTrace, handleClearSelection]);
+
+  /** Starts a trace with the default levels; the trace opens unselected, so no node dims. */
+  const handleStartTraceImmediate = useCallback((nodeId: string) => {
+    handleClearSelection();
+    startTraceImmediate(nodeId);
+  }, [startTraceImmediate, handleClearSelection]);
 
   /** Displays the context menu at the specified coordinates for a node. */
   const handleNodeContextMenu = useCallback(
@@ -1703,7 +1710,7 @@ export function App() {
         onSchemaNodeSelect={handleSchemaNodeSelect}
         onNodeContextMenu={handleNodeContextMenu}
         onShowDetails={setInfoBarNodeId}
-        onStartTraceImmediate={startTraceImmediate}
+        onStartTraceImmediate={handleStartTraceImmediate}
         onTraceApply={handleTraceApply}
         onTraceEnd={endTrace}
         onResetAll={handleResetAll}
