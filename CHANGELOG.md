@@ -2,6 +2,9 @@
 
 ## [1.2.1] - 2026-09-23
 
+### Added
+- **Trace navigator** (trace view only): a docked, collapsible left panel showing the trace as an anchored up/down tree. Row click lights and autofits the origin path while the rest dims; find jumps between matches; checkboxes focus checked paths; Delete prunes; leaf rows offer one more level; reset restores the start; the full-model toggle moved into the panel footer.
+
 ### Fixed
 - A selection above `dataLineageViz.maxNodes` stops the load with an error naming the setting; the graph is never silently cut to the first 2,000 objects, and external references are no longer dropped above that size.
 - Leaving a trace, analysis, bookmark, AI view or path finder restores the exact previous view: filters, Object/Schema View, expanded schemas, focus and camera. Refresh and settings changes keep expanded schemas.
