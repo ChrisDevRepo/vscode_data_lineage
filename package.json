@@ -812,6 +812,7 @@
     "marked": "18.0.14",
     "monaco-editor": "0.56.0",
     "react": "19.3.0",
+    "react-arborist": "3.16.0",
     "react-dom": "19.3.0",
     "zod": "4.6.5"
   },
