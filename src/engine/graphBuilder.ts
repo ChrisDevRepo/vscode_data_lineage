@@ -542,7 +542,7 @@ export function applyTraceToFlow(
  * `direction` and `sizeOf` exist for callers that lay out a non-object view — the column view
  * carries its own direction and variable row heights. Both participate in the layout cache key.
  */
-interface LayoutInput {
+export interface LayoutInput {
   nodeIds: string[];
   edges: Array<{ source: string; target: string }>;
   config: ExtensionConfig;
@@ -571,7 +571,6 @@ function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf }: L
  * @returns Top-left position per node, or an empty map when Dagre fails.
  */
 export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: number }> {
-  const { nodeIds, edges, config, ranker, direction, sizeOf } = input;
   const key = layoutCacheKey(input);
   const cached = layoutCache.find(e => e.key === key);
   if (cached) {
@@ -579,7 +578,19 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
     layoutCache.unshift(cached);
     return cached.positions;
   }
+  const positions = runDagre(input);
+  seedLayoutCache(input, positions, key);
+  return positions;
+}
 
+/**
+ * Runs Dagre on one layout input without touching the cache — the unit of work a layout
+ * worker executes off the UI thread.
+ *
+ * @param input - Nodes, edges, and layout configuration; see {@link LayoutInput}.
+ * @returns Top-left position per node, or an empty map when Dagre fails.
+ */
+export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf }: LayoutInput): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: direction ?? config.layout.direction,
@@ -606,11 +617,32 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
     const n = g.node(id);
     if (n) positions.set(id, { x: n.x - n.width / 2, y: n.y - n.height / 2 });
   }
+  return positions;
+}
 
+/**
+ * Stores positions computed elsewhere (a layout worker) under the input's cache key, so the
+ * next {@link dagreLayout} call for the same input returns without running Dagre.
+ *
+ * @param input - The layout input the positions were computed for.
+ * @param positions - Top-left position per node.
+ * @param key - Precomputed cache key; derived from `input` when omitted.
+ */
+export function seedLayoutCache(
+  input: LayoutInput,
+  positions: Map<string, { x: number; y: number }>,
+  key: string = layoutCacheKey(input),
+): void {
+  const existing = layoutCache.findIndex(e => e.key === key);
+  if (existing >= 0) layoutCache.splice(existing, 1);
   layoutCache.unshift({ key, positions });
   if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
+}
 
-  return positions;
+/** Whether {@link dagreLayout} would answer this input from the cache. */
+export function hasCachedLayout(input: LayoutInput): boolean {
+  const key = layoutCacheKey(input);
+  return layoutCache.some(e => e.key === key);
 }
 
 /**
@@ -821,14 +853,11 @@ export function buildSchemaGraph(
 }
 
 /**
- * Computes spatial layout for the object graph.
- *
- * @remarks
- * Disconnected singletons (e.g. cross-DB virtual nodes whose only counterpart is outside the
- * current schema filter) are placed in a row below the Dagre layout rather than passed to
- * Dagre, whose longest-path ranker crashes on fully disconnected components.
+ * Splits an object graph into the Dagre input for its connected nodes and the isolated nodes
+ * placed on a grid row below — the one definition {@link buildGraph} and a layout worker share,
+ * so both produce the same cache key.
  */
-function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): Map<string, { x: number; y: number }> {
+function objectLayoutPlan(graph: Graph, config: ExtensionConfig): { input: LayoutInput; isolatedIds: string[] } {
   const seen = new Set<string>();
   const edges: Array<{ source: string; target: string }> = [];
 
@@ -845,10 +874,34 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
   const connectedIds = new Set<string>();
   for (const { source, target } of edges) { connectedIds.add(source); connectedIds.add(target); }
   const allIds = graph.nodes();
-  const isolatedIds = allIds.filter(id => !connectedIds.has(id));
-  const layoutIds  = allIds.filter(id =>  connectedIds.has(id));
+  return {
+    input: { nodeIds: allIds.filter(id => connectedIds.has(id)), edges, config, ranker: 'longest-path' },
+    isolatedIds: allIds.filter(id => !connectedIds.has(id)),
+  };
+}
 
-  const positions = dagreLayout({ nodeIds: layoutIds, edges, config, ranker: 'longest-path' });
+/**
+ * Dagre input {@link buildGraph} lays out for a model — structured-cloneable (no `sizeOf`), so
+ * a layout worker can compute it and {@link seedLayoutCache} can store the result.
+ *
+ * @param model - Database model to visualize.
+ * @param config - Extension configuration.
+ */
+export function objectLayoutInput(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): LayoutInput {
+  return objectLayoutPlan(buildGraphologyGraph(model), config).input;
+}
+
+/**
+ * Computes spatial layout for the object graph.
+ *
+ * @remarks
+ * Disconnected singletons (e.g. cross-DB virtual nodes whose only counterpart is outside the
+ * current schema filter) are placed in a row below the Dagre layout rather than passed to
+ * Dagre, whose longest-path ranker crashes on fully disconnected components.
+ */
+function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): Map<string, { x: number; y: number }> {
+  const { input, isolatedIds } = objectLayoutPlan(graph, config);
+  const positions = dagreLayout(input);
 
   if (isolatedIds.length > 0) {
     let maxY = 0;

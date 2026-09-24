@@ -25,6 +25,7 @@ export function buildWebviewCsp({ nonce, cspSource }: CspOptions): string {
     `script-src 'nonce-${nonce}' ${cspSource}`,
     `img-src ${cspSource} data:`,
     `font-src ${cspSource}`,
+    "worker-src blob:",
     "form-action 'none'"
   ].join('; ') + ';';
 }

@@ -800,6 +800,7 @@
     "@langchain/langgraph": "1.4.10",
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "12.11.6",
+    "comlink": "4.4.2",
     "dompurify": "3.4.16",
     "fast-xml-parser": "5.11.1",
     "graphology": "0.26.0",

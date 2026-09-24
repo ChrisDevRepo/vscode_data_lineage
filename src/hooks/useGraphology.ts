@@ -2,10 +2,30 @@ import { useState, useCallback } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
-import { buildGraph, buildGraphNoLayout, getGraphMetrics } from '../engine/graphBuilder';
+import { wrap, type Remote } from 'comlink';
+import { buildGraph, buildGraphNoLayout, getGraphMetrics, hasCachedLayout, objectLayoutInput, seedLayoutCache } from '../engine/graphBuilder';
 import { filterBySchemas } from '../engine/dacpacExtractor';
 import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter, checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
+import LayoutWorker from '../utils/layout.worker?worker&inline';
+import type { LayoutWorkerApi } from '../utils/layout.worker';
+
+let layoutWorker: Remote<LayoutWorkerApi> | undefined;
+
+/**
+ * Lays out the Object View graph in a worker and seeds the layout cache, so the later
+ * Schema View → Object View switch finds its positions without running Dagre on the UI thread.
+ */
+function prewarmObjectLayout(model: DatabaseModel, config: ExtensionConfig): void {
+  if (typeof Worker === 'undefined') return;
+  const input = objectLayoutInput(model, config);
+  if (hasCachedLayout(input)) return;
+  layoutWorker ??= wrap<LayoutWorkerApi>(new LayoutWorker());
+  layoutWorker.runDagre(input).then(
+    (positions) => seedLayoutCache(input, positions),
+    (e: unknown) => window.vscode?.postMessage({ type: 'log', text: `[Filter] Layout prewarm skipped (${e instanceof Error ? e.message : String(e)})`, level: 'debug' }),
+  );
+}
 
 /**
  * Return type for the useGraphology hook, encapsulating graph data and builders.
@@ -126,17 +146,7 @@ export function useGraphology(): UseGraphologyReturn {
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
       log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
-      window.setTimeout(() => {
-        const warm = () => {
-          try {
-            buildGraph(allowlistFiltered, config);
-          } catch (e) {
-            log(`[Filter] Idle layout warm skipped (${e instanceof Error ? e.message : String(e)})`, 'debug');
-          }
-        };
-        if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(() => warm());
-        else warm();
-      }, 4000);
+      prewarmObjectLayout(allowlistFiltered, config);
       return count;
     }
 

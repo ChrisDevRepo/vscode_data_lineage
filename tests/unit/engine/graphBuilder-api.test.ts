@@ -1,6 +1,7 @@
 /**
  * Covers the host-side exported `graphBuilder` surface that no test named: pathfinding,
- * the layout engine and its cache, graph metrics, and the no-layout build.
+ * the layout engine and its cache (including worker-computed seeding), graph metrics, and
+ * the no-layout build.
  *
  * These sit between the BFS trace and what the user sees. A defect here shows as a
  * correct trace rendered wrongly — a node missing from the view, an edge dropped —
@@ -12,12 +13,18 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  buildGraph,
   buildGraphNoLayout,
   computeShortestPath,
   dagreLayout,
   getGraphMetrics,
+  hasCachedLayout,
+  objectLayoutInput,
+  runDagre,
+  seedLayoutCache,
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
+import { buildWebviewCsp } from '../../../src/utils/cspBuilder';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { loadAdventureWorksModel, makeGraph } from '../helpers/testUtils';
 
@@ -75,6 +82,28 @@ describe('getGraphMetrics', () => {
   });
 });
 
+
+describe('layout cache seeding (worker prewarm)', () => {
+  it('serves buildGraph from positions computed outside the cache', async () => {
+    const model = await loadAdventureWorksModel();
+    const config = { ...DEFAULT_CONFIG, layout: { ...DEFAULT_CONFIG.layout, nodeSeparation: DEFAULT_CONFIG.layout.nodeSeparation + 7 } };
+    const input = objectLayoutInput(model, config);
+    expect(hasCachedLayout(input)).toBe(false);
+    const computed = runDagre(structuredClone(input));
+    for (const pos of computed.values()) pos.x += 100_000;
+    seedLayoutCache(input, computed);
+    expect(hasCachedLayout(input)).toBe(true);
+    const built = buildGraph(model, config);
+    for (const node of built.flowNodes) {
+      const seeded = computed.get(node.id);
+      if (seeded) expect(node.position).toEqual(seeded);
+    }
+  });
+
+  it('allows the inline layout worker in the webview CSP', () => {
+    expect(buildWebviewCsp({ nonce: 'n', cspSource: 'vscode-resource:' })).toContain('worker-src blob:');
+  });
+});
 
 describe('dagreLayout', () => {
   const input = () => ({
