@@ -32,6 +32,7 @@
 - Reload on a settings notice reloads the demo when it was opened from the Open Demo command or Quick Actions, instead of asking to reopen a .dacpac file; a project opened after the demo is never replaced by the demo on Reload.
 - With Schema View turned off (`dataLineageViz.overview.enabled`), a graph over the render limit shows the limit message instead of switching to the disabled Schema View.
 - The version label in the Help panel meets WCAG AA contrast.
+- Closing the trace banner, the trace configuration bar or the Path Finder bar no longer triggers a blocked-script security warning in the webview.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.

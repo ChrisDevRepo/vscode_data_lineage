@@ -130,7 +130,7 @@ export const InlineTraceControls = memo(function InlineTraceControls({
         <Tooltip content="Close Trace Configuration">
           <button
             aria-label="Close Trace Configuration"
-            onClick={onClose}
+            onClick={() => onClose()}
             className="h-8 w-8 flex items-center justify-center rounded-sm transition-colors ln-btn-secondary"
           >
             <CloseIcon />
