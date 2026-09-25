@@ -16,6 +16,7 @@
 - Numeric settings are clamped to their declared minimum and maximum.
 - Switching from Schema View to Object View no longer freezes on large graphs: the object layout is computed in a background worker while Schema View is shown.
 - The Bookmarks and Exclusion rules toolbar buttons have accessible names for screen readers, and the toolbar's node count label meets WCAG AA contrast in light and dark themes.
+- **Data Lineage: Search Objects** now focuses the picked object in the graph; before, choosing a result did nothing.
 - Icon-only buttons (close buttons on the mode banner, trace configuration, Path Finder and Help, the Quick Jump start-trace button, the Saved Projects back and delete buttons), the schema focus stars, the filter checkboxes and the trace depth inputs have accessible names for screen readers.
 
 ### Changed

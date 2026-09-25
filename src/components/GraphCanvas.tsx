@@ -97,6 +97,7 @@ const AiDescriptionOverlay = lazy(async () => {
   return { default: module.AiDescriptionOverlay };
 });
 import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
+import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 
 /** The panel's reserved extent before its own `ResizeObserver` has reported a measured size. */
 const AI_PANEL_DEFAULT_WIDTH = 'min(440px, 55vw)';
@@ -1165,6 +1166,16 @@ export function GraphCanvas({
       notifyUser(`"${label}" is not visible in the current view. Adjust your schema or type filters to include it.`);
     }
   }, [armPendingZoom, flowNodeLookup, zoomToNode, onNodeClick, graphMode, model, modelNodeNameLookup, onOpenExpandedSchemaViewForNode]);
+
+  /** Host `focus-object` requests (the Search Objects quick pick) take the same path as Quick Jump. */
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, e.data);
+      if (frame.ok && frame.data.type === 'focus-object') handleExecuteSearch(frame.data.name, frame.data.schema);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [handleExecuteSearch]);
 
   const handleExportDrawio = useCallback(() => {
     const exportObjectNodes: FlowNode<CustomNodeData>[] = [];

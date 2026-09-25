@@ -201,7 +201,21 @@ export function registerCommands(
           label:       n.name,
           description: `[${n.schema}]`,
           detail:      n.type,
+          schema:      n.schema,
         }));
+      });
+
+      qp.onDidAccept(() => {
+        const picked = qp.selectedItems[0] as (vscode.QuickPickItem & { schema: string }) | undefined;
+        if (!picked) return;
+        qp.hide();
+        const panel = getActivePanel();
+        if (!panel) {
+          notifyWarning(configLogger, 'Search objects', 'Open the Data Lineage view to focus an object.', { command: 'dataLineageViz.searchObjects' });
+          return;
+        }
+        panel.reveal();
+        void postToWebview(panel, { type: 'focus-object', schema: picked.schema, name: picked.label }, configLogger);
       });
 
       qp.onDidHide(() => qp.dispose());

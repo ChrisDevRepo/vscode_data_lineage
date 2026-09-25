@@ -111,8 +111,14 @@ describe('bridge protocol envelope', () => {
     expect(validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'not-a-message' })).toMatchObject({ ok: false, reason: 'parse' });
   });
 
+  it('accepts a focus-object request only with both schema and name', () => {
+    const frame = { type: 'focus-object', schema: 'Sales', name: 'Customer', protocolVersion: BRIDGE_PROTOCOL_VERSION };
+    expect(validateBridgeFrame(ExtensionToWebviewMsgSchema, frame)).toMatchObject({ ok: true, data: { type: 'focus-object', schema: 'Sales', name: 'Customer' } });
+    expect(validateBridgeFrame(ExtensionToWebviewMsgSchema, { ...frame, name: undefined })).toMatchObject({ ok: false, reason: 'parse' });
+  });
+
   it('routes every webview receive site through validateBridgeFrame — one home for the check', () => {
-    const sites = ['../../../src/components/App.tsx', '../../../src/detail/DetailApp.tsx', '../../../src/hooks/useDacpacLoader.ts'];
+    const sites = ['../../../src/components/App.tsx', '../../../src/components/GraphCanvas.tsx', '../../../src/detail/DetailApp.tsx', '../../../src/hooks/useDacpacLoader.ts'];
     for (const site of sites) {
       const source = readFileSync(new URL(site, import.meta.url), 'utf8');
       expect(source, site).toContain('validateBridgeFrame(');
