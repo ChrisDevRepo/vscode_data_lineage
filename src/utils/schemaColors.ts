@@ -265,6 +265,23 @@ export function getSchemaDisplayColor(
     : getSchemaColorFromMap(schema, colorMap);
 }
 
+function relativeLuminance(hex: string): number {
+  const channel = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+/**
+ * Picks black or white text for a `#rrggbb` background, whichever has the higher WCAG 2
+ * contrast ratio against it.
+ */
+export function getReadableTextColor(background: string): '#000000' | '#ffffff' {
+  const l = relativeLuminance(background);
+  return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? '#000000' : '#ffffff';
+}
+
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
 const EXTERNAL_NODE_COLOR_LIGHT = '#6B7A8D';
 /** Fixed color for external nodes in dark theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */

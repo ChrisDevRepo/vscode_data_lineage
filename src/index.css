@@ -1352,7 +1352,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   color: var(--ln-wizard-fg);
 }
 .ln-modal .ln-text-muted {
-  opacity: 0.7;
+  color: rgba(255, 255, 255, 0.7);
 }
 .ln-modal .ln-text-link {
   color: var(--ln-wizard-link, #60a5fa);
@@ -1702,7 +1702,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 
 .ln-detail-search-result mark {
   background: var(--vscode-editor-findMatchHighlightBackground, #ea5c0055);
-  color: inherit;
+  color: var(--ln-fg);
   border-radius: 2px;
   padding: 0 1px;
 }

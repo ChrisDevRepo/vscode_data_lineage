@@ -183,7 +183,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
         className="rounded-lg py-1 min-w-[180px] ln-dropdown"
         {...getFloatingProps()}
       >
-        <div className="px-3 py-1.5 text-xs truncate ln-text-dim ln-border-bottom">
+        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom">
           {schema}.{nodeName}
         </div>
 
@@ -330,7 +330,7 @@ export const SchemaContextMenu = memo(function SchemaContextMenu({
         className="rounded-lg py-1 min-w-[180px] ln-dropdown"
         {...getFloatingProps()}
       >
-        <div className="px-3 py-1.5 text-xs truncate ln-text-dim ln-border-bottom">{schema}</div>
+        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom">{schema}</div>
         <MenuButton onClick={() => { (isExpanded ? onCollapse : onExpand)(schema); onClose(); }} disabled={!!disabledReason} reason={disabledReason}>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
             <path strokeLinecap="round" strokeLinejoin="round" d={isExpanded ? 'M5 12h14M4.5 4.5h15v15h-15v-15Z' : 'M12 4.5v15m7.5-7.5h-15'} />
