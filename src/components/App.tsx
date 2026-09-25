@@ -1689,7 +1689,7 @@ export function App() {
         renderLimitNotice={renderLimitNotice}
         flowNodes={renderNodes}
         flowEdges={renderEdges}
-        graphMode={graphMode}
+        graphMode={effectiveDisplayMode === 'schemaOverview' ? 'overview' : graphMode}
         onGraphModeChange={config.overview.enabled ? handleGraphModeChange : undefined}
         schemaViewSoftDisabled={schemaViewSoftDisabled}
         filteredObjectIds={filteredObjectIds}
