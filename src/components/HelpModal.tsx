@@ -394,13 +394,14 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay" onClick={onClose}>
-      <FloatingFocusManager context={context}>
+      <FloatingFocusManager context={context} initialFocus={refs.floating}>
       <div
         ref={refs.setFloating}
         role="dialog"
         aria-modal="true"
         aria-label="Data Lineage help"
-        className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh]"
+        tabIndex={-1}
+        className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh] outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 shrink-0 ln-help-sep-bottom">

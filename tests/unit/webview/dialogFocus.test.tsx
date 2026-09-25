@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /**
- * Pins focus handling of the Help panel (a modal dialog: focus moves in on open and back to the
- * opener on close) and the exclusion-rules popup (focus lands in its input and returns on Escape).
+ * Pins focus handling of the Help panel (a modal dialog: focus moves in on open, the first Escape
+ * closes it, focus returns to the opener) and the exclusion-rules popup (focus lands in its input
+ * and returns on Escape).
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HelpModal } from '../../../src/components/HelpModal';
 import { ExclusionDropdown } from '../../../src/components/ExclusionDropdown';
 import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
@@ -50,6 +51,22 @@ describe('Help panel focus', () => {
     await flush();
     expect(document.activeElement).toBe(opener);
     opener.remove();
+  });
+});
+
+describe('Help panel Escape', () => {
+  it('closes on the first Escape pressed where focus lands on open', async () => {
+    const onClose = vi.fn();
+    act(() => {
+      root.render(
+        <VsCodeProvider api={{ postMessage: () => {} } as never}>
+          <HelpModal isOpen onClose={onClose} />
+        </VsCodeProvider>
+      );
+    });
+    await flush();
+    act(() => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
