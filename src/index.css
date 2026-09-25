@@ -1274,7 +1274,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   font-size: 0.75rem;           /* text-xs */
   font-weight: 600;             /* font-semibold */
   letter-spacing: 0.08em;       /* tracking-wider */
-  color: var(--ln-fg-dim);
+  color: var(--ln-fg-muted);
 }
 
 /* Counter badge (filter count, exclusion count) */

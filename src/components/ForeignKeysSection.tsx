@@ -45,7 +45,7 @@ export function ForeignKeysSection({ fks, findQuery }: ForeignKeysSectionProps) 
                   [{highlightText(fk.refSchema, findQuery)}].[{highlightText(fk.refTable, findQuery)}]
                 </td>
               </Tooltip>
-              <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
+              <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-muted)' }}>
                 {fk.onDelete}
               </td>
             </tr>

@@ -25,7 +25,7 @@ interface ColumnTableProps {
 export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: ColumnTableProps) {
   if (columns.length === 0) {
     return (
-      <div className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>
+      <div className="text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
         {isVirtualExt ? 'Virtual reference — column metadata not available.' : 'No column metadata available.'}
       </div>
     );
@@ -64,10 +64,10 @@ export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: Colum
                   {col.type}
                 </td>
               </Tooltip>
-              {!compact && <td className="py-0.5 text-xs" style={{ color: col.nullable === 'NULL' ? 'var(--ln-fg-dim)' : 'var(--ln-fg-muted)' }}>
+              {!compact && <td className="py-0.5 text-xs" style={{ color: 'var(--ln-fg-muted)' }}>
                 {col.nullable === 'NULL' ? 'null' : ''}
               </td>}
-              {!compact && <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-dim)' }}>
+              {!compact && <td className="py-0.5 text-xs font-mono" style={{ color: 'var(--ln-fg-muted)' }}>
                 {flags}
               </td>}
             </tr>
