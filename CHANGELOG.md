@@ -15,6 +15,7 @@
 - Deleting a node in a trace removes its now-unreachable subtree, the same cut the assistant uses.
 - Numeric settings are clamped to their declared minimum and maximum.
 - Switching from Schema View to Object View no longer freezes on large graphs: the object layout is computed in a background worker while Schema View is shown.
+- The Bookmarks and Exclusion rules toolbar buttons have accessible names for screen readers, and the toolbar's node count label meets WCAG AA contrast in light and dark themes.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.

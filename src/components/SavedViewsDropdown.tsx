@@ -69,6 +69,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
           onClick={() => isEnabled && toggle()}
           variant="icon"
           disabled={!isEnabled}
+          aria-label="Bookmarks"
           aria-expanded={isOpen}
           aria-haspopup="menu"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}

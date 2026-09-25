@@ -579,7 +579,7 @@ export const Toolbar = memo(function Toolbar({
                   ) : (
                     <>
                       <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(metrics.totalNodes)}</span>
-                      <span className="opacity-60">nodes</span>
+                      <span>nodes</span>
                     </>
                   )}
                 </span>

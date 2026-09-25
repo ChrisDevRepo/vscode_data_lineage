@@ -87,8 +87,9 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             onClick={trigger.onClick}
             variant="icon"
             disabled={trigger.disabled}
+            aria-label="Exclusion rules"
             aria-expanded={isOpen}
-          aria-haspopup="true"
+            aria-haspopup="true"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
           {/* no-symbol icon */}
