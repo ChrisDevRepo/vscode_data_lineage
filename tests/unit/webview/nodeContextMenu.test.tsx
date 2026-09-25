@@ -2,7 +2,8 @@
 //
 // A7.3: the context menu's Remove item is always rendered — disabled with a stated reason when
 // refused, never removed from the menu — and dispatches to the caller matching `removeAction.kind`.
-// Schema boxes get one Expand/Collapse item reflecting `isExpanded`.
+// Schema boxes get one Expand/Collapse item reflecting `isExpanded`. Both menus are ARIA menus that
+// take focus on open and move between enabled items with the arrow keys.
 import { StrictMode, act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,5 +121,37 @@ describe('SchemaContextMenu — one Expand/Collapse item, reflecting isExpanded'
     const btn = Array.from(document.querySelectorAll('button')).find(b => /schema$/.test(b.textContent ?? '')) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(btn.title).toBe('Exit the active mode to change schema expansion');
+  });
+});
+
+const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+
+function key(k: string): void {
+  const target = document.activeElement ?? document.body;
+  act(() => { target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); });
+}
+
+describe('context menus — keyboard', () => {
+  it('node menu takes focus on open, ArrowDown walks the items and skips a refused Remove', async () => {
+    mount(<NodeContextMenu {...BASE_PROPS} removeAction={{ kind: 'refuse', reason: 'locked' }} />);
+    await flush();
+    const menu = document.querySelector('[role="menu"]');
+    expect(menu?.getAttribute('aria-label')).toBe('sales.Orders');
+    expect(menu?.contains(document.activeElement)).toBe(true);
+    const labels: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      key('ArrowDown');
+      labels.push((document.activeElement?.textContent ?? '').trim());
+    }
+    expect(labels).toEqual(['Trace Levels', 'Find Path', 'Show Table Details', 'Show Details', 'Copy Qualified Name', 'Trace Levels']);
+    expect(Array.from(document.querySelectorAll('[role="menuitem"]')).every((el) => el.classList.contains('ln-list-item') || (el as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it('schema menu takes focus on open and ArrowDown focuses its item', async () => {
+    mount(<SchemaContextMenu x={10} y={10} schema="sales" isExpanded={false} onClose={vi.fn()} onExpand={vi.fn()} onCollapse={vi.fn()} />);
+    await flush();
+    expect(document.querySelector('[role="menu"]')?.contains(document.activeElement)).toBe(true);
+    key('ArrowDown');
+    expect((document.activeElement?.textContent ?? '').trim()).toBe('Expand schema');
   });
 });

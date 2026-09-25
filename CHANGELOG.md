@@ -34,6 +34,7 @@
 - The version label in the Help panel meets WCAG AA contrast.
 - Closing the trace banner, the trace configuration bar or the Path Finder bar no longer triggers a blocked-script security warning in the webview.
 - Toolbar popups (schema, type and external-reference filters, Bookmarks) move keyboard focus into the popup when opened and back to their button on Escape, announce themselves as dialogs, and a click on a filter row's text toggles its checkbox. The Graph Analysis menu opens with the arrow keys, moves between items with Up/Down and announces its open state.
+- The node and schema right-click menus take keyboard focus when they open, move between enabled items with Up/Down/Home/End, are announced as menus, and every item highlights the same way on hover.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.

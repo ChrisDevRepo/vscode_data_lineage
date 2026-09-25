@@ -1,19 +1,25 @@
-import { memo, useState, useEffect, useRef, type ReactNode } from 'react';
+import { memo, useState, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import {
   useFloating,
   useInteractions,
   useDismiss,
+  useListNavigation,
   flip,
   shift,
   offset,
+  FloatingFocusManager,
+  FloatingPortal,
 } from '@floating-ui/react';
-import { FloatingPortal } from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
 import type { RemoveAction } from '../engine/modeCapabilities';
 import { disabledControl } from './ui/disabledControl';
 import { escapeRegexLiteral } from '../utils/sql';
 
-/** Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas. */
+/**
+ * Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas: the menu takes
+ * focus when it opens, Up/Down/Home/End move between its enabled `menuitem`s, Escape or an outside
+ * press closes it.
+ */
 function useContextMenuFloating(x: number, y: number, onClose: () => void) {
   const virtualRef = useRef({
     getBoundingClientRect() {
@@ -41,10 +47,17 @@ function useContextMenuFloating(x: number, y: number, onClose: () => void) {
     refs.setReference(virtualRef.current);
   }, [refs]);
 
-  const dismiss = useDismiss(context, { referencePress: true });
-  const { getFloatingProps } = useInteractions([dismiss]);
+  const listRef = useRef<Array<HTMLElement | null>>([]);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    listRef.current = Array.from(refs.floating.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+  });
 
-  return { refs, floatingStyles, getFloatingProps };
+  const dismiss = useDismiss(context, { referencePress: true });
+  const listNavigation = useListNavigation(context, { listRef, activeIndex, onNavigate: setActiveIndex, loop: true });
+  const { getFloatingProps } = useInteractions([dismiss, listNavigation]);
+
+  return { refs, floatingStyles, context, getFloatingProps };
 }
 
 interface NodeContextMenuProps {
@@ -99,6 +112,8 @@ function MenuButton({ onClick, disabled, reason, children }: { onClick: () => vo
   const trigger = disabledControl(onClick, disabled, reason);
   return (
     <button
+      role="menuitem"
+      tabIndex={-1}
       onClick={trigger.onClick}
       disabled={trigger.disabled}
       title={trigger.tooltip}
@@ -157,7 +172,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   onCollapseSchema,
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
-  const { refs, floatingStyles, getFloatingProps } = useContextMenuFloating(x, y, onClose);
+  const { refs, floatingStyles, context, getFloatingProps } = useContextMenuFloating(x, y, onClose);
 
   const isExternal = externalType === 'file' || externalType === 'db';
   const effectiveRemoveAction: RemoveAction = removeAction.kind === 'exclude' && isExternal
@@ -177,19 +192,24 @@ export const NodeContextMenu = memo(function NodeContextMenu({
 
   return (
     <FloatingPortal>
+      <FloatingFocusManager context={context} initialFocus={refs.floating}>
       <div
         ref={refs.setFloating}
+        role="menu"
+        aria-label={`${schema}.${nodeName}`}
         style={{ ...floatingStyles, zIndex: 50, boxShadow: 'var(--ln-dropdown-shadow)' }}
-        className="rounded-lg py-1 min-w-[180px] ln-dropdown"
+        className="rounded-lg py-1 min-w-[180px] ln-dropdown outline-none"
         {...getFloatingProps()}
       >
-        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom">
+        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom" aria-hidden="true">
           {schema}.{nodeName}
         </div>
 
         {!isTracing && (
           <>
             <button
+              role="menuitem"
+              tabIndex={-1}
               onClick={() => { onTrace(nodeId); onClose(); }}
               className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
             >
@@ -199,6 +219,8 @@ export const NodeContextMenu = memo(function NodeContextMenu({
               Trace Levels
             </button>
             <button
+              role="menuitem"
+              tabIndex={-1}
               onClick={() => { onFindPath(nodeId); onClose(); }}
               className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
             >
@@ -207,14 +229,16 @@ export const NodeContextMenu = memo(function NodeContextMenu({
               </svg>
               Find Path
             </button>
-            <div className="my-1 ln-border-top" />
+            <div role="separator" className="my-1 ln-border-top" />
           </>
         )}
 
         {(objectType === 'table' || objectType === 'external') ? (
           <button
+            role="menuitem"
+            tabIndex={-1}
             onClick={() => { onViewDdl(nodeId); onClose(); }}
-            className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+            className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125v1.5m2.25-2.625c.621 0 1.125.504 1.125 1.125v1.5m-2.25 0v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M11.25 15v-1.5" />
@@ -223,8 +247,10 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           </button>
         ) : (
           <button
+            role="menuitem"
+            tabIndex={-1}
             onClick={() => { onViewDdl(nodeId); onClose(); }}
-            className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+            className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
@@ -235,8 +261,10 @@ export const NodeContextMenu = memo(function NodeContextMenu({
         )}
 
         <button
+          role="menuitem"
+          tabIndex={-1}
           onClick={() => { onShowDetails(nodeId); onClose(); }}
-          className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+          className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
             <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
@@ -246,8 +274,10 @@ export const NodeContextMenu = memo(function NodeContextMenu({
 
         {onCollapseSchema && (
           <>
-            <div className="my-1 ln-border-top" />
+            <div role="separator" className="my-1 ln-border-top" />
             <button
+              role="menuitem"
+              tabIndex={-1}
               onClick={() => { onCollapseSchema(schema); onClose(); }}
               className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
             >
@@ -259,7 +289,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           </>
         )}
 
-        <div className="my-1 ln-border-top" />
+        <div role="separator" className="my-1 ln-border-top" />
         <MenuButton onClick={handleRemove} disabled={effectiveRemoveAction.kind === 'refuse'} reason={effectiveRemoveAction.kind === 'refuse' ? effectiveRemoveAction.reason : undefined}>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
             <path strokeLinecap="round" strokeLinejoin="round" d={REMOVE_ICON} />
@@ -267,9 +297,11 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           {removeActionLabel(effectiveRemoveAction)}
         </MenuButton>
 
-        <div className="my-1 ln-border-top" />
+        <div role="separator" className="my-1 ln-border-top" />
 
         <button
+          role="menuitem"
+          tabIndex={-1}
           onClick={() => {
             const copyText = externalType === 'file' ? (externalUrl ?? nodeName)
               : externalType === 'db' ? (fullName ?? `[${schema}].[${nodeName}]`)
@@ -278,7 +310,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
               .then(() => onClose())
               .catch((_err) => { setCopyFailed(true); setTimeout(() => setCopyFailed(false), 2000); });
           }}
-          className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 ln-text flex items-center gap-2"
+          className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
@@ -286,6 +318,7 @@ export const NodeContextMenu = memo(function NodeContextMenu({
           {copyFailed ? 'Copy failed' : 'Copy Qualified Name'}
         </button>
       </div>
+      </FloatingFocusManager>
     </FloatingPortal>
   );
 });
@@ -320,17 +353,20 @@ export const SchemaContextMenu = memo(function SchemaContextMenu({
   onExpand,
   onCollapse,
 }: SchemaContextMenuProps) {
-  const { refs, floatingStyles, getFloatingProps } = useContextMenuFloating(x, y, onClose);
+  const { refs, floatingStyles, context, getFloatingProps } = useContextMenuFloating(x, y, onClose);
 
   return (
     <FloatingPortal>
+      <FloatingFocusManager context={context} initialFocus={refs.floating}>
       <div
         ref={refs.setFloating}
+        role="menu"
+        aria-label={schema}
         style={{ ...floatingStyles, zIndex: 50, boxShadow: 'var(--ln-dropdown-shadow)' }}
-        className="rounded-lg py-1 min-w-[180px] ln-dropdown"
+        className="rounded-lg py-1 min-w-[180px] ln-dropdown outline-none"
         {...getFloatingProps()}
       >
-        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom">{schema}</div>
+        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom" aria-hidden="true">{schema}</div>
         <MenuButton onClick={() => { (isExpanded ? onCollapse : onExpand)(schema); onClose(); }} disabled={!!disabledReason} reason={disabledReason}>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
             <path strokeLinecap="round" strokeLinejoin="round" d={isExpanded ? 'M5 12h14M4.5 4.5h15v15h-15v-15Z' : 'M12 4.5v15m7.5-7.5h-15'} />
@@ -338,6 +374,7 @@ export const SchemaContextMenu = memo(function SchemaContextMenu({
           {isExpanded ? 'Collapse schema' : 'Expand schema'}
         </MenuButton>
       </div>
+      </FloatingFocusManager>
     </FloatingPortal>
   );
 });
