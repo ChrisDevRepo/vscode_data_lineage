@@ -414,6 +414,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <button
               key={id}
               onClick={() => setTab(id)}
+              aria-pressed={tab === id}
               className={`px-3 py-1.5 text-xs rounded-sm transition-colors ${tab === id ? 'ln-btn-primary font-medium' : 'ln-text-muted hover:ln-list-item'}`}
             >
               {label}

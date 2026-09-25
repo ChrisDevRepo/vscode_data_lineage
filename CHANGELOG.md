@@ -25,6 +25,7 @@
 - Saved Projects rows open through a native button separate from the delete button (no nested interactive controls), and their schema and bookmark lines meet WCAG AA contrast.
 - Esc in a filled Quick Jump box clears the box only; the next Esc exits the active trace or mode.
 - The graph webview no longer reports a Content Security Policy violation from schema validation.
+- The Help panel's tab buttons announce which tab is selected.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.
