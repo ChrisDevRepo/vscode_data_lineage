@@ -35,6 +35,19 @@ the active input, dropdown, or help panel first, then exits one graph mode per p
 (AI preview → bookmark → analysis → trace). Press <kbd>?</kbd> in the webview for the
 same list in the app.
 
+Menus and popups follow the standard keyboard pattern:
+
+- **Right-click menus** on a node or schema cluster, and the **Graph Analysis** menu, take
+  focus when they open. <kbd>↑</kbd>/<kbd>↓</kbd> and <kbd>Home</kbd>/<kbd>End</kbd> move
+  between items, <kbd>Enter</kbd> runs one, <kbd>Esc</kbd> closes.
+- **Toolbar popups** (Schema, Type and External refs filters, Bookmarks, Exclusion rules) move
+  focus into the popup and return it to their button on <kbd>Esc</kbd>. A whole filter row is
+  clickable, not only its checkbox.
+- **Help** is a modal dialog: focus stays inside while it is open and the first <kbd>Esc</kbd>
+  closes it.
+- An inline delete or leave confirmation moves focus to **Cancel**, so <kbd>Enter</kbd> never
+  confirms a destructive action by accident.
+
 ---
 
 ## Schema View
