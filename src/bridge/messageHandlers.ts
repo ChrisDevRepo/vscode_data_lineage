@@ -508,7 +508,16 @@ export function createMessageHandlers(
         const data = await host.readFile(uris[0]);
         if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
         const config = await readExtensionConfig(host);
-        const { preview, elements, dspName } = await extractSchemaPreview(data);
+        let extracted: Awaited<ReturnType<typeof extractSchemaPreview>>;
+        try {
+          extracted = await extractSchemaPreview(data);
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          host.log('error', 'Dacpac', `Open ${uris[0].fsPath}`, err);
+          host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
+          return;
+        }
+        const { preview, elements, dspName } = extracted;
         cachedElements = elements; cachedDspName = dspName;
         host.postMessage({
           type: 'dacpac-schema-preview',
