@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 /**
  * Pins that when the render limit falls back to Schema View, the canvas is told it shows Schema
- * View, so the Schema View toggle, schema-node clicks, search and legend match what is drawn.
+ * View, so the Schema View toggle, schema-node clicks, search and legend match what is drawn; with
+ * Schema View disabled in settings, the limit notice replaces the graph instead.
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -68,5 +69,27 @@ describe('render-limit fallback to Schema View', () => {
 
     expect(canvasProps?.flowNodes.every((n) => n.type === 'schemaNode')).toBe(true);
     expect(canvasProps?.graphMode).toBe('overview');
+  }, 15000);
+
+  it('shows the render-limit notice, not Schema View, when Schema View is disabled in settings', async () => {
+    const { App } = await import('../../../src/components/App');
+    act(() => {
+      root.render(
+        <VsCodeProvider api={{ postMessage: () => {} } as never}>
+          <App />
+        </VsCodeProvider>
+      );
+    });
+    const noOverview = { ...DEFAULT_CONFIG, overview: { ...DEFAULT_CONFIG.overview, enabled: false } };
+    const { model } = generateDwhModel({ objectCount: 60, seed: 1, profile: { externalRefCount: 0 } });
+    post({ type: 'dacpac-model', model, config: noOverview, sourceName: 'm.dacpac', autoVisualize: true });
+    await settle();
+    expect(canvasProps?.flowNodes.length).toBeGreaterThan(0);
+
+    post({ type: 'rebuild-config', config: { ...noOverview, renderLimit: 10 } });
+    await settle();
+
+    expect(canvasProps?.flowNodes).toEqual([]);
+    expect(canvasProps?.graphMode).toBe('full');
   }, 15000);
 });

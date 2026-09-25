@@ -1588,7 +1588,7 @@ export function App() {
         isScoped: isTraceActive || !!aiPreview,
         renderedCount,
         renderLimit: config.renderLimit,
-        hasSchemaOverview: schemaNodes.length > 0,
+        hasSchemaOverview: config.overview.enabled && schemaNodes.length > 0,
       })
     : null;
   const showRenderLimitNotice = !!renderLimitFallback && renderLimitFallback.fallbackMode === null;
