@@ -44,13 +44,12 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
       isNarrowed={isNarrowed}
       icon={TYPE_ICON}
       panelWidth="w-56"
-      panelRole="listbox"
       ariaLabel="Filter object types"
       disabled={disabled}
       disabledReason={disabledReason}
     >
       {ALL_TYPES.map((type) => (
-        <div key={type} className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item">
+        <label key={type} className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item cursor-pointer">
           <input
             type="checkbox"
             checked={types.has(type)}
@@ -60,7 +59,7 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
           />
           <span className="text-sm" style={{ color: 'var(--ln-fg-dim)' }}>{TYPE_COLORS[type].icon}</span>
           <span className="text-sm ln-text">{TYPE_LABELS[type]}</span>
-        </div>
+        </label>
       ))}
     </ToolbarDropdown>
   );

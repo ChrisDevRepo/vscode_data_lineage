@@ -70,7 +70,6 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
       isNarrowed={isNarrowed}
       icon={SCHEMA_ICON}
       panelWidth="w-96"
-      panelRole="listbox"
       ariaLabel="Filter schemas"
       panelClassName="max-h-96 flex flex-col"
       disabled={disabled}
@@ -104,7 +103,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
 
       <div className="overflow-y-auto flex-1">
         {filteredSchemas.map((schema) => (
-          <div key={schema} className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item">
+          <label key={schema} className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item cursor-pointer">
             {onToggleSchema && (
               <input
                 type="checkbox"
@@ -126,7 +125,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
               </button>
             </Tooltip>
             <span className="flex-1 text-sm ln-text">{schema}</span>
-          </div>
+          </label>
         ))}
       </div>
     </ToolbarDropdown>

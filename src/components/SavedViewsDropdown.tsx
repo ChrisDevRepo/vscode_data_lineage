@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { FloatingPortal } from '@floating-ui/react';
+import { FloatingFocusManager, FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import type { FilterProfile } from '../engine/projectStore';
@@ -35,7 +35,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   onDeleteView,
   onUpdateView,
 }: SavedViewsDropdownProps) {
-  const { isOpen, toggle, close, refs, floatingStyles, getFloatingProps } = useDropdown();
+  const { isOpen, toggle, close, refs, floatingStyles, context, getFloatingProps } = useDropdown();
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -71,7 +71,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
           disabled={!isEnabled}
           aria-label="Bookmarks"
           aria-expanded={isOpen}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
         {activeViewId ? (
@@ -88,11 +88,12 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
 
       <FloatingPortal>
         {isOpen && (
+          <FloatingFocusManager context={context} modal={false}>
           <div
             ref={refs.setFloating}
             style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
             className="w-72 rounded-md shadow-lg z-50 p-2 ln-dropdown"
-            role="menu"
+            role="dialog"
             aria-label="Bookmarks"
             {...getFloatingProps()}
           >
@@ -166,7 +167,6 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                       <div
                         key={profile.id}
                         className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
-                        role="menuitem"
                         style={isActive ? { background: 'var(--ln-selection-bg)' } : undefined}
                       >
                         {/* Fixed-width icon slot for vertical alignment */}
@@ -249,6 +249,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
               </>
             )}
           </div>
+          </FloatingFocusManager>
         )}
       </FloatingPortal>
     </>
