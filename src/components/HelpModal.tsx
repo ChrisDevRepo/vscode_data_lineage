@@ -1,4 +1,5 @@
 import { memo, useState } from 'react';
+import { FloatingFocusManager, useFloating } from '@floating-ui/react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, ESC_PRIORITY, type AppShortcutId } from '../ui/keyboardShortcuts';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
@@ -383,6 +384,8 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');
 
+  const { refs, context } = useFloating({ open: isOpen, onOpenChange: (open) => { if (!open) onClose(); } });
+
   useKeyboardShortcut(SHORTCUT_KEYS.exitMode, onClose, false, { priority: ESC_PRIORITY.help, active: isOpen });
 
   if (!isOpen) return null;
@@ -391,8 +394,11 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay" onClick={onClose}>
+      <FloatingFocusManager context={context}>
       <div
+        ref={refs.setFloating}
         role="dialog"
+        aria-modal="true"
         aria-label="Data Lineage help"
         className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
@@ -444,6 +450,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           </div>
         </div>
       </div>
+      </FloatingFocusManager>
     </div>
   );
 });

@@ -1,5 +1,5 @@
 import { memo, useState, useRef, useCallback, useEffect } from 'react';
-import { FloatingPortal } from '@floating-ui/react';
+import { FloatingFocusManager, FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { disabledControl } from './ui/disabledControl';
@@ -36,16 +36,14 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
   disabled = false,
   disabledReason,
 }: ExclusionDropdownProps) {
-  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown('bottom-end');
+  const { isOpen, toggle, refs, floatingStyles, context, getFloatingProps } = useDropdown('bottom-end');
   const [inputValue, setInputValue] = useState('');
   const [inputError, setInputError] = useState(false);
   const [tipsOpen, setTipsOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => inputRef.current?.focus(), 50); // defer past dropdown paint
-    } else {
+    if (!isOpen) {
       setInputValue('');
       setInputError(false);
     }
@@ -89,7 +87,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             disabled={trigger.disabled}
             aria-label="Exclusion rules"
             aria-expanded={isOpen}
-            aria-haspopup="true"
+            aria-haspopup="dialog"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
           {/* no-symbol icon */}
@@ -110,6 +108,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
 
       <FloatingPortal>
         {!disabled && isOpen && (
+          <FloatingFocusManager context={context} modal={false} initialFocus={inputRef}>
           <div
             ref={refs.setFloating}
             style={{ ...floatingStyles, width: '288px', boxShadow: 'var(--ln-dropdown-shadow)' }}
@@ -224,6 +223,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
               )}
             </div>
           </div>
+          </FloatingFocusManager>
         )}
       </FloatingPortal>
     </>
