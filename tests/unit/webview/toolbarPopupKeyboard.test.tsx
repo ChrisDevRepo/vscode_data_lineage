@@ -2,7 +2,8 @@
 /**
  * Pins keyboard and click behaviour of toolbar popups: a filter row toggles from its text as well as
  * its checkbox, a filter panel takes focus on open and returns it to its trigger on Escape, and the
- * Graph Analysis menu moves between items with the arrow keys.
+ * Graph Analysis menu moves between items with the arrow keys; the schema clusters toggle keeps one
+ * label and carries its state in aria-pressed.
  */
 import { act, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -60,30 +61,32 @@ describe('filter panel', () => {
   });
 });
 
+function toolbarProps(extra: Record<string, unknown>): ComponentProps<typeof Toolbar> {
+  return {
+    types: new Set(['table']),
+    onToggleType: () => {},
+    hideIsolated: false,
+    onToggleIsolated: () => {},
+    focusSchemas: new Set(),
+    onToggleFocusSchema: () => {},
+    onRefresh: () => {},
+    onBack: () => {},
+    visibleNodeIds: new Set(),
+    metrics: { totalNodes: 0, totalEdges: 0, rootNodes: 0, leafNodes: 0 },
+    renderedNodeCount: 0,
+    overviewThreshold: 150,
+    renderLimit: 750,
+    ...extra,
+  } as unknown as ComponentProps<typeof Toolbar>;
+}
+
 describe('Graph Analysis menu', () => {
   it('opens with ArrowDown on its trigger and moves between items with the arrow keys', async () => {
     const onOpenAnalysis = vi.fn();
     act(() => {
       root.render(
         <VsCodeProvider api={{ postMessage: () => {} } as never}>
-        <Toolbar
-          {...({
-            types: new Set(['table']),
-            onToggleType: () => {},
-            hideIsolated: false,
-            onToggleIsolated: () => {},
-            focusSchemas: new Set(),
-            onToggleFocusSchema: () => {},
-            onRefresh: () => {},
-            onBack: () => {},
-            visibleNodeIds: new Set(),
-            metrics: { totalNodes: 0, totalEdges: 0, rootNodes: 0, leafNodes: 0 },
-            renderedNodeCount: 0,
-            overviewThreshold: 150,
-            renderLimit: 750,
-            onOpenAnalysis,
-          } as unknown as ComponentProps<typeof Toolbar>)}
-        />
+        <Toolbar {...toolbarProps({ onOpenAnalysis })} />
         </VsCodeProvider>
       );
     });
@@ -103,5 +106,21 @@ describe('Graph Analysis menu', () => {
 
     act(() => (document.activeElement as HTMLElement).click());
     expect(onOpenAnalysis).toHaveBeenCalledWith('hubs');
+  });
+});
+
+describe('schema clusters toggle', () => {
+  it('keeps one label and reports hidden clusters through aria-pressed', () => {
+    const render = (show: boolean) => act(() => {
+      root.render(
+        <VsCodeProvider api={{ postMessage: () => {} } as never}>
+          <Toolbar {...toolbarProps({ graphMode: 'overview', isExpandedSchemaViewActive: true, onResetExpandedSchemaView: () => {}, onToggleExpandedSchemaClusters: () => {}, showExpandedSchemaClusters: show })} />
+        </VsCodeProvider>
+      );
+    });
+    render(true);
+    expect(document.querySelector('button[aria-label="Hide schema clusters"]')?.getAttribute('aria-pressed')).toBe('false');
+    render(false);
+    expect(document.querySelector('button[aria-label="Hide schema clusters"]')?.getAttribute('aria-pressed')).toBe('true');
   });
 });

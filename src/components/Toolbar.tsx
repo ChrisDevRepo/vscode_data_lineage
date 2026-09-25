@@ -520,7 +520,7 @@ export const Toolbar = memo(function Toolbar({
                   onClick={onToggleExpandedSchemaClusters}
                   variant="icon"
                   className={!showExpandedSchemaClusters ? 'ln-btn-icon-active' : ''}
-                  aria-label={showExpandedSchemaClusters ? 'Hide schema clusters' : 'Show schema clusters'}
+                  aria-label="Hide schema clusters"
                   aria-pressed={!showExpandedSchemaClusters}
                 >
                   {showExpandedSchemaClusters ? (

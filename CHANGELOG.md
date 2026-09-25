@@ -36,6 +36,7 @@
 - Toolbar popups (schema, type and external-reference filters, Bookmarks) move keyboard focus into the popup when opened and back to their button on Escape, announce themselves as dialogs, and a click on a filter row's text toggles its checkbox. The Graph Analysis menu opens with the arrow keys, moves between items with Up/Down and announces its open state.
 - The node and schema right-click menus take keyboard focus when they open, move between enabled items with Up/Down/Home/End, are announced as menus, and every item highlights the same way on hover.
 - The Help panel moves keyboard focus into itself when opened, keeps Tab inside the panel and returns focus on close; the exclusion rules popup focuses its pattern field, announces itself as a dialog and returns focus to its button on Escape.
+- The schema clusters button in Expanded Schema View keeps the label "Hide schema clusters" and reports hidden clusters as pressed, like the Hide Isolated Nodes button, instead of swapping its label while also reporting a pressed state.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.
