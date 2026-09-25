@@ -415,6 +415,18 @@ export function App() {
     setView('visualizing');
   }, [dacpacLoader.loadDemo]);
 
+  /**
+   * Re-runs the load that produced the current graph so a reload-class setting (max nodes, exclusion
+   * patterns, external references, parse rules) takes effect; a source with no stored path is warned.
+   */
+  const reloadSourceRef = useRef<() => void>(() => {});
+  reloadSourceRef.current = () => {
+    if (view !== 'graph') return;
+    if (activeProjectId) handleOpenProject(activeProjectId);
+    else if (dacpacLoader.isDemo) handleDemoClick();
+    else vscodeApi.postMessage({ type: 'show-warning', text: 'Reopen the .dacpac file to apply the changed setting.' });
+  };
+
   /** Returns to the start screen and resets exploration state. */
   const handleBack = useCallback(() => {
     dacpacLoader.resetToStart();
@@ -1245,6 +1257,8 @@ export function App() {
             setTimeout(() => setIsRebuilding(false), MIN_REBUILD_SPINNER_MS - elapsed);
           }
         }
+      } else if (msg.type === 'reload-source') {
+        reloadSourceRef.current();
       } else if (msg.type === 'ai-view-preview') {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;

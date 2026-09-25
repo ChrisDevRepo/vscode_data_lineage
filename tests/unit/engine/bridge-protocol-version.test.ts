@@ -117,6 +117,10 @@ describe('bridge protocol envelope', () => {
     expect(validateBridgeFrame(ExtensionToWebviewMsgSchema, { ...frame, name: undefined })).toMatchObject({ ok: false, reason: 'parse' });
   });
 
+  it('accepts a payload-free reload-source request', () => {
+    expect(validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'reload-source', protocolVersion: BRIDGE_PROTOCOL_VERSION })).toMatchObject({ ok: true, data: { type: 'reload-source' } });
+  });
+
   it('routes every webview receive site through validateBridgeFrame — one home for the check', () => {
     const sites = ['../../../src/components/App.tsx', '../../../src/components/GraphCanvas.tsx', '../../../src/detail/DetailApp.tsx', '../../../src/hooks/useDacpacLoader.ts'];
     for (const site of sites) {

@@ -239,7 +239,15 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
           const msg = `${label} changed. Reload your data source to apply.`;
           configLogger.info(`Config changed — notification="${msg}"`);
           const pick = await vscode.window.showInformationMessage(msg, 'Reload');
-          if (pick === 'Reload') void vscode.commands.executeCommand('dataLineageViz.open');
+          if (pick === 'Reload') {
+            const panel = getActivePanel();
+            if (panel) {
+              panel.reveal();
+              void postToWebview(panel, { type: 'reload-source' }, configLogger);
+            } else {
+              void vscode.commands.executeCommand('dataLineageViz.open');
+            }
+          }
           break;
         }
       }

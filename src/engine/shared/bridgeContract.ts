@@ -698,6 +698,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mssql-status'), available: z.boolean() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
+  z.object({ type: z.literal('reload-source') }),
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
   z.object({
     type: z.literal('error'),
