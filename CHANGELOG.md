@@ -23,6 +23,8 @@
 - Opening a project right after a display setting changed no longer leaves the previous project's graph on screen.
 - Schema View node headers pick black or white text by WCAG contrast against the schema color; the Graph Analysis type buttons have accessible names; the node context-menu header, Detail Search match highlights and the Help panel's docs link meet WCAG AA contrast.
 - Saved Projects rows open through a native button separate from the delete button (no nested interactive controls), and their schema and bookmark lines meet WCAG AA contrast.
+- Esc in a filled Quick Jump box clears the box only; the next Esc exits the active trace or mode.
+- The graph webview no longer reports a Content Security Policy violation from schema validation.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.

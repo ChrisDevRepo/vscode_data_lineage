@@ -1,6 +1,11 @@
 import { createRoot } from 'react-dom/client';
+import { z } from 'zod';
 import './index.css';
 import { notifyUser } from './utils/notify';
+
+// The webview CSP has no 'unsafe-eval': Zod's JIT probe (`new Function`) would be reported as a
+// securitypolicyviolation even though Zod catches it, so schemas run on the interpreted path.
+z.config({ jitless: true });
 
 const root = document.getElementById('root');
 if (!root) {
