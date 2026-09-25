@@ -120,6 +120,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
               executeSearch(searchTerm.trim());
             }
           } else if (e.key === 'Escape') {
+            if (searchTerm || isOpen) e.stopPropagation();
             closeSearch();
           }
         }}

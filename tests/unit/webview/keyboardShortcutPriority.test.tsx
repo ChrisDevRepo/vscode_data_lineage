@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 //
 // Esc follows one step-back order: a higher-priority active registration for the same key wins
-// over a lower-priority one, instead of independent capture-phase listeners racing each other.
+// over a lower-priority one, instead of independent capture-phase listeners racing each other, and
+// the Esc a filled text field consumes never also exits the surrounding mode.
 import { StrictMode, act, useState, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useKeyboardShortcut } from '../../../src/hooks/useKeyboardShortcut';
+import { SearchWithAutocomplete } from '../../../src/components/SearchWithAutocomplete';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -126,5 +128,51 @@ describe('Esc step-back order — a non-empty text field blocks mode-exit, an em
       field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
     expect(exited, 'an empty field no longer blocks — Esc reaches the mode-exit step').toBe(1);
+  });
+});
+
+/** Stands in for App's mode-exit Esc step: passes the text-entry guard once the focused field is empty. */
+function ModeExitHost({ onExit }: { onExit: () => void }) {
+  useKeyboardShortcut('Escape', onExit, false, { allowEmptyTextEntry: true });
+  return null;
+}
+
+describe('Esc step-back order — Quick Jump inside an active mode', () => {
+  it('the Esc that clears a filled Quick Jump stops at the field; Esc in the empty field exits the mode', () => {
+    let exited = 0;
+    mount(
+      <>
+        <SearchWithAutocomplete visibleNodeIds={new Set()} onExecuteSearch={() => {}} />
+        <ModeExitHost onExit={() => { exited++; }} />
+      </>
+    );
+    const input = host.querySelector<HTMLInputElement>('input[placeholder="Quick Jump..."]')!;
+    input.focus();
+    act(() => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setValue.call(input, 'abc');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // A trusted keydown gets a microtask checkpoint between listeners, so React has already cleared
+    // the field when the document-level shortcut listener runs; the clearing Esc must not reach it.
+    let reachedDocument = 0;
+    const probe = (e: KeyboardEvent) => { if (e.key === 'Escape') reachedDocument++; };
+    document.addEventListener('keydown', probe);
+    try {
+      const pressInInput = () => act(() => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      });
+
+      pressInInput();
+      expect(input.value, 'first Esc clears the field').toBe('');
+      expect(reachedDocument, 'the clearing Esc stops at the field').toBe(0);
+      expect(exited, 'the clearing Esc does not exit the mode').toBe(0);
+
+      pressInInput();
+      expect(reachedDocument, 'Esc in the empty field propagates').toBe(1);
+      expect(exited, 'Esc in the empty field steps back out of the mode').toBe(1);
+    } finally {
+      document.removeEventListener('keydown', probe);
+    }
   });
 });
