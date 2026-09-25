@@ -400,7 +400,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
         <div className="flex items-center justify-between px-5 py-3 shrink-0 ln-help-sep-bottom">
           <div className="flex items-center gap-2">
             <img src={window.LOGO_URI} alt="" className="h-8 w-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-            <span className="text-xs ln-text-muted opacity-60">v{__APP_VERSION__}</span>
+            <span className="text-xs ln-text-muted">v{__APP_VERSION__}</span>
           </div>
           <Tooltip content="Close">
             <button onClick={onClose} aria-label="Close help" className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text">
