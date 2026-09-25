@@ -212,12 +212,15 @@ export const StartScreen = memo(function StartScreen({
             return (
               <div
                 key={project.id}
-                className="flex items-center gap-3 px-3 py-2 rounded-sm cursor-pointer ln-file-picker ln-list-item"
-                onClick={() => !isLoading && onOpenProject(project.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenProject(project.id); }}
+                className="flex items-center gap-3 pr-3 rounded-sm ln-file-picker ln-list-item"
               >
+                <button
+                  type="button"
+                  className="flex items-center gap-3 flex-1 min-w-0 pl-3 py-2 text-left cursor-pointer"
+                  onClick={() => onOpenProject(project.id)}
+                  disabled={isLoading}
+                  aria-busy={isLoading}
+                >
                 <span className="text-base shrink-0" aria-hidden="true">
                   {isLoading ? <Spinner className="w-4 h-4" /> : (
                     <span style={{
@@ -233,16 +236,17 @@ export const StartScreen = memo(function StartScreen({
                     </span>
                   )}
                 </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{project.name}</div>
-                  <div className="text-xs truncate" style={{ opacity: 0.55 }}>{detail}</div>
+                <span className="block flex-1 min-w-0">
+                  <span className="block text-sm font-medium truncate">{project.name}</span>
+                  <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{detail}</span>
                   {schemas && (
-                    <div className="text-xs truncate" style={{ opacity: 0.40 }}>{schemas}</div>
+                    <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{schemas}</span>
                   )}
                   {bm && (
-                    <div className="text-xs truncate" style={{ opacity: 0.40 }}>{bm}</div>
+                    <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{bm}</span>
                   )}
-                </div>
+                </span>
+                </button>
                 {!isLoading && (
                   <Tooltip content={`Delete "${project.name}"`} className="ln-tooltip--wizard">
                     <Button
