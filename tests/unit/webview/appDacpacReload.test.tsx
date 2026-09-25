@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
  * Pins the reload contract: a second `dacpac-model` frame into an already-open panel renders that
- * second model, never the one it replaces — with identical settings and with changed settings in the
- * same frame. `GraphCanvas` is mocked to its `flowNodes` prop.
+ * second model, never the one it replaces — with identical settings, with changed settings in the
+ * same frame, and with a `rebuild-config` frame landing mid-load. `GraphCanvas` is mocked to its
+ * `flowNodes` prop.
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -86,5 +87,41 @@ describe('reload into an already-open panel', () => {
     const { firstCount, secondCount } = await loadTwice(objectViewConfig);
     expect(firstCount).toBeGreaterThan(0);
     expect(secondCount).toBeGreaterThan(firstCount);
+  }, 15000);
+
+  it('renders the second model when rebuild-config lands between its build and the next render', async () => {
+    const { App } = await import('../../../src/components/App');
+    let armed = false;
+    const w = window as unknown as { vscode?: { postMessage: (m: unknown) => void } };
+    w.vscode = {
+      postMessage: (m: unknown) => {
+        const text = (m as { text?: string }).text ?? '';
+        if (!armed || !text.startsWith('[Filter] Graph built')) return;
+        armed = false;
+        window.dispatchEvent(new MessageEvent('message', {
+          data: { protocolVersion: BRIDGE_PROTOCOL_VERSION, type: 'rebuild-config', config: { ...objectViewConfig } },
+        }));
+      },
+    };
+    try {
+      act(() => {
+        root.render(
+          <VsCodeProvider api={{ postMessage: vi.fn() } as never}>
+            <App />
+          </VsCodeProvider>
+        );
+      });
+      postDacpacModel(40, 1, 'first.dacpac');
+      await act(async () => { await new Promise((r) => setTimeout(r, 1300)); });
+      const firstCount = lastFlowNodeCount;
+      armed = true;
+      postDacpacModel(90, 2, 'second.dacpac');
+      await act(async () => { await new Promise((r) => setTimeout(r, 1300)); });
+      expect(armed).toBe(false);
+      expect(firstCount).toBeGreaterThan(0);
+      expect(lastFlowNodeCount).toBeGreaterThan(firstCount);
+    } finally {
+      delete w.vscode;
+    }
   }, 15000);
 });

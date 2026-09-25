@@ -255,10 +255,14 @@ export function App() {
         return;
       }
 
-      setModel(trimmed);
       const f = getResetFilter(trimmed);
-      setFilter(f);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: trimmed.nodes.length, config });
+      modelRef.current = trimmed;
+      filterRef.current = f;
+      graphModeRef.current = initialGraphMode;
+      expandedSchemaViewRef.current = null;
+      setModel(trimmed);
+      setFilter(f);
       setGraphMode(initialGraphMode);
       setSchemaViewSoftDisabled(trimmed.nodes.length <= config.overview.threshold);
       setExpandedSchemaView(null);
@@ -1246,7 +1250,7 @@ export function App() {
             rebuildRef.current(modelRef.current, f, merged, mode === 'full', mode);
           } else if (modelRef.current && rebuildRef.current) {
             reconcileExpandedSchemaView(modelRef.current);
-            rebuildRef.current(modelRef.current, filterRef.current, merged);
+            rebuildRef.current(modelRef.current, filterRef.current, merged, false, graphModeRef.current);
           }
 
           const elapsed = Date.now() - rebuildStartRef.current;

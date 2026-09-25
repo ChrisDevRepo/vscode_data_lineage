@@ -20,6 +20,7 @@
 - The **Reload** action on a "changed — reload your data source" settings notice now reloads the open project or demo, so the changed setting applies; before, it only brought the panel to the front.
 - Icon-only buttons (close buttons on the mode banner, trace configuration, Path Finder and Help, the Quick Jump start-trace button, the Saved Projects back and delete buttons), the schema focus stars, the filter checkboxes and the trace depth inputs have accessible names for screen readers.
 - The trace configuration and Path Finder bars use the editor widget background, so their object count and start-object name meet WCAG AA contrast.
+- Opening a project right after a display setting changed no longer leaves the previous project's graph on screen.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.
