@@ -599,7 +599,7 @@ export const Toolbar = memo(function Toolbar({
         <div className="px-4 py-1.5 flex items-center gap-2 text-xs" style={{ background: 'var(--ln-bg-secondary)', borderBottom: '1px solid var(--ln-border)' }}>
           <span className="ln-text-muted">Leave current view? Unsaved changes will be lost.</span>
           <Button variant="ghost" className="h-6 px-2 text-xs" style={{ color: 'var(--ln-warning-fg)' }} onClick={() => { setConfirmingBack(false); onBack(); }}>Leave</Button>
-          <Button variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmingBack(false)}>Cancel</Button>
+          <Button variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmingBack(false)} autoFocus>Cancel</Button>
         </div>
       )}
 

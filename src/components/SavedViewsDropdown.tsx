@@ -155,6 +155,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                             variant="ghost"
                             className="h-6 px-1.5 text-xs"
                             onClick={() => setConfirmDeleteId(null)}
+                            autoFocus
                           >
                             Cancel
                           </Button>

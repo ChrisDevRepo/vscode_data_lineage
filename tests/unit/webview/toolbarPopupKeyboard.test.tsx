@@ -3,7 +3,7 @@
  * Pins keyboard and click behaviour of toolbar popups: a filter row toggles from its text as well as
  * its checkbox, a filter panel takes focus on open and returns it to its trigger on Escape, and the
  * Graph Analysis menu moves between items with the arrow keys; the schema clusters toggle keeps one
- * label and carries its state in aria-pressed.
+ * label and carries its state in aria-pressed; the leave confirmation focuses Cancel.
  */
 import { act, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -122,5 +122,20 @@ describe('schema clusters toggle', () => {
     expect(document.querySelector('button[aria-label="Hide schema clusters"]')?.getAttribute('aria-pressed')).toBe('false');
     render(false);
     expect(document.querySelector('button[aria-label="Hide schema clusters"]')?.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('leave confirmation', () => {
+  it('focuses Cancel when Load New Project asks to leave a modified view', async () => {
+    act(() => {
+      root.render(
+        <VsCodeProvider api={{ postMessage: () => {} } as never}>
+          <Toolbar {...toolbarProps({ isFilterDirty: true })} />
+        </VsCodeProvider>
+      );
+    });
+    act(() => (document.querySelector('button[aria-label="Load New Project"]') as HTMLButtonElement).click());
+    await flush();
+    expect(document.activeElement?.textContent?.trim()).toBe('Cancel');
   });
 });

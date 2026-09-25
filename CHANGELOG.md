@@ -37,6 +37,7 @@
 - The node and schema right-click menus take keyboard focus when they open, move between enabled items with Up/Down/Home/End, are announced as menus, and every item highlights the same way on hover.
 - The Help panel moves keyboard focus into itself when opened, keeps Tab inside the panel and returns focus on close; the exclusion rules popup focuses its pattern field, announces itself as a dialog and returns focus to its button on Escape.
 - The schema clusters button in Expanded Schema View keeps the label "Hide schema clusters" and reports hidden clusters as pressed, like the Hide Isolated Nodes button, instead of swapping its label while also reporting a pressed state.
+- Delete confirmations for a saved project, all saved projects or a bookmark, and the leave confirmation of Load New Project, move keyboard focus to Cancel instead of dropping it when the button pressed is replaced.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.

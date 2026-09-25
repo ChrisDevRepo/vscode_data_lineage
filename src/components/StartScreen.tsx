@@ -176,6 +176,7 @@ export const StartScreen = memo(function StartScreen({
               <button
                 className="text-xs ln-text-muted hover:underline"
                 onClick={() => setConfirmDeleteAll(false)}
+                autoFocus
               >
                 Cancel
               </button>
@@ -203,6 +204,7 @@ export const StartScreen = memo(function StartScreen({
                     <button
                       className="text-xs px-2 py-1 rounded-sm ln-list-item"
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                      autoFocus
                     >Cancel</button>
                   </div>
                 </div>
