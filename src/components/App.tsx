@@ -242,14 +242,14 @@ export function App() {
     (dacpacModel: DatabaseModel, selectedSchemas: Set<string>) => {
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas);
       trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, (msg) => {
-        vscodeApi.postMessage({ type: 'error', error: msg });
+        vscodeApi.postMessage({ type: 'show-warning', text: msg });
       });
       trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
 
       const limitCheck = checkObjectLimit(trimmed, config.maxNodes);
       if (!limitCheck.ok) {
         const text = formatObjectLimitMessage(limitCheck.count, limitCheck.limit);
-        vscodeApi.postMessage({ type: 'error', error: text });
+        vscodeApi.postMessage({ type: 'show-warning', text });
         window.vscode?.postMessage({ type: 'log', text: `[Visualize] Refused — ${text}`, level: 'info' });
         setLoadingError(text);
         return;
@@ -348,7 +348,8 @@ export function App() {
   /**
    * Rebuilds the shown graph when the settings change. A load in flight owns its own rebuild with
    * the new settings, so this effect stands down while one is pending — it would otherwise rebuild
-   * the model that load is replacing.
+   * the model that load is replacing. A `rebuild-config` frame rebuilds in its own handler and marks
+   * its config as seen here, so one settings change builds the graph once.
    */
   const prevConfigRef = useRef(config);
   const isLoadPending = dacpacLoader.pendingAutoVisualize || dacpacLoader.pendingVisualize;
@@ -813,7 +814,7 @@ export function App() {
 
   /**
    * Refuses a candidate schema selection that would exceed `dataLineageViz.maxNodes`, surfacing
-   * the shared refusal message through the webview error channel. The single guard every
+   * the shared refusal message as a warning notification. The single guard every
    * in-canvas schema-filter handler calls before committing its next filter state.
    *
    * @returns `true` when the selection is within the configured limit.
@@ -822,7 +823,7 @@ export function App() {
     const check = checkObjectLimit(filterBySchemas(m, schemas), config.maxNodes);
     if (check.ok) return true;
     const text = formatObjectLimitMessage(check.count, check.limit);
-    vscodeApi.postMessage({ type: 'error', error: text });
+    vscodeApi.postMessage({ type: 'show-warning', text });
     window.vscode?.postMessage({ type: 'log', text: `[Filter] Refused — ${text}`, level: 'info' });
     return false;
   }, [config, vscodeApi]);
@@ -1234,6 +1235,7 @@ export function App() {
             analysis: { ...DEFAULT_CONFIG.analysis, ...msg.config.analysis },
           };
           setConfig(merged);
+          prevConfigRef.current = merged;
 
           if (pendingRefreshReset.current && modelRef.current) {
             pendingRefreshReset.current = false;

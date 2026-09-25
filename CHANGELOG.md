@@ -27,6 +27,7 @@
 - The graph webview no longer reports a Content Security Policy violation from schema validation.
 - The Help panel's tab buttons announce which tab is selected.
 - Picking a file that is not a valid .dacpac in the wizard shows the file name and the reason in the wizard, instead of a generic failure notification.
+- A graph refused for exceeding `dataLineageViz.maxNodes` inside the panel, or an invalid exclude pattern, shows its own message once as a warning instead of an "unexpected error" notification; a settings change now builds the open graph once instead of twice.
 
 ### Changed
 - Filters are locked during a trace, with the reason shown; right-click menu items are shown disabled with a reason instead of disappearing; schema boxes get Expand/Collapse in the right-click menu; double-click on an object opens Show Details; Esc steps back one level, including collapsing the last expanded schema.

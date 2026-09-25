@@ -78,7 +78,7 @@ export function useGraphology(): UseGraphologyReturn {
     const limitCheck = checkObjectLimit(schemaFiltered, config.maxNodes);
     if (!limitCheck.ok) {
       const text = formatObjectLimitMessage(limitCheck.count, limitCheck.limit);
-      window.vscode?.postMessage({ type: 'error', error: text });
+      window.vscode?.postMessage({ type: 'show-warning', text });
       log(`[Filter] Refused — ${text}`, 'info');
       return -1;
     }
