@@ -55,6 +55,7 @@ export const TypeFilterDropdown = memo(function TypeFilterDropdown({
             type="checkbox"
             checked={types.has(type)}
             onChange={() => onToggleType(type)}
+            aria-label={TYPE_LABELS[type]}
             className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
           />
           <span className="text-sm" style={{ color: 'var(--ln-fg-dim)' }}>{TYPE_COLORS[type].icon}</span>

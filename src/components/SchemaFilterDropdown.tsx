@@ -110,12 +110,15 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
                 type="checkbox"
                 checked={selectedSchemas.has(schema)}
                 onChange={() => onToggleSchema(schema)}
+                aria-label={schema}
                 className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
               />
             )}
             <Tooltip content={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}>
               <button
                 onClick={() => onToggleFocusSchema(schema)}
+                aria-label={`Focus schema ${schema}`}
+                aria-pressed={focusSchemas.has(schema)}
                 className="p-1 rounded-sm transition-colors"
                 style={{ color: focusSchemas.has(schema) ? 'var(--vscode-symbolIcon-functionForeground)' : 'var(--ln-fg-muted)' }}
               >

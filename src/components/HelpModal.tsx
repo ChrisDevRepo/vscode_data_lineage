@@ -403,7 +403,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <span className="text-xs ln-text-muted opacity-60">v{__APP_VERSION__}</span>
           </div>
           <Tooltip content="Close">
-            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text">
+            <button onClick={onClose} aria-label="Close help" className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text">
             <CloseIcon className="w-4 h-4" />
           </button>
           </Tooltip>

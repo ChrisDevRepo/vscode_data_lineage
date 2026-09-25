@@ -145,6 +145,7 @@ export const StartScreen = memo(function StartScreen({
         <div className="flex items-center gap-2">
           <Tooltip content="Back" className="ln-tooltip--wizard">
             <button
+              aria-label="Back"
               className="ln-list-item rounded-sm p-1 shrink-0"
               onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
             >
@@ -245,6 +246,7 @@ export const StartScreen = memo(function StartScreen({
                 {!isLoading && (
                   <Tooltip content={`Delete "${project.name}"`} className="ln-tooltip--wizard">
                     <Button
+                      aria-label={`Delete ${project.name}`}
                       variant="icon"
                       style={{ width: 28, height: 28 }}
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(project.id); }}

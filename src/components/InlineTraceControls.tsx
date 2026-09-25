@@ -50,10 +50,13 @@ function DepthInput({
         value={value}
         onChange={(event) => onChange(parseInt(event.target.value) || 0)}
         disabled={isAll}
+        aria-label={`${label} levels`}
         className="w-16 h-9 px-2 text-sm text-center rounded-sm transition-colors focus:outline-hidden disabled:opacity-50 ln-input"
       />
       <button
         onClick={onToggleAll}
+        aria-label={`All ${label.toLowerCase()} levels`}
+        aria-pressed={isAll}
         className={`h-9 px-3 rounded-sm text-sm font-medium transition-colors ${isAll ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
       >
         All
@@ -126,6 +129,7 @@ export const InlineTraceControls = memo(function InlineTraceControls({
         </button>
         <Tooltip content="Close Trace Configuration">
           <button
+            aria-label="Close Trace Configuration"
             onClick={onClose}
             className="h-8 w-8 flex items-center justify-center rounded-sm transition-colors ln-btn-secondary"
           >

@@ -144,6 +144,7 @@ export const PathFinderBar = memo(function PathFinderBar({
 
       <Tooltip content="Close Path Finder">
         <button
+          aria-label="Close Path Finder"
           onClick={onClose}
           className="h-8 w-8 flex items-center justify-center rounded-sm transition-colors ln-btn-secondary shrink-0"
         >

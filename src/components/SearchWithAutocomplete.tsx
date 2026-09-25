@@ -173,6 +173,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
                   <button
                     onClick={trigger.onClick}
                     disabled={trigger.disabled}
+                    aria-label={`Start Trace from ${node.name}`}
                     className="shrink-0 w-7 h-7 flex items-center justify-center rounded-sm hover:opacity-70 ln-text-link disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40"
                   >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
