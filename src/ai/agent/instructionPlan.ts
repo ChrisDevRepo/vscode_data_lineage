@@ -30,6 +30,7 @@ import { getAllowedLmToolNames, type LmStage } from '../tools/toolPolicy';
 import {
   presentResultSchemaForPhase,
   submitFindingsSchemaForMode,
+  type SubmitFindingsHopColumns,
   type PresentResultRepairField,
 } from '../tools/toolSchemas';
 
@@ -123,9 +124,9 @@ interface ConversePlanInput {
   readonly detectGate?: (toolName: string, resultText: string) => unknown | null;
   readonly isPhaseComplete?: () => boolean;
   readonly detectReroute?: (toolName: string, resultText: string) => boolean;
+  readonly detectRefusal?: (toolName: string, resultText: string) => string | null;
   readonly toolChoice?: ModelToolChoice;
   readonly requiredTerminalTool?: string;
-  readonly requiresToolEvidence?: boolean;
   readonly onToolResult?: (toolName: string, input: unknown, isError: boolean, resultText: string) => void;
   readonly proseGate?: 'buffer-until-tool';
   readonly phase: InstructionPhase;
@@ -144,6 +145,10 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
   /** Whether a committed report from this run exists for `present_result` to amend; read live. */
   readonly presentResultRetainableSections?: () => boolean;
+  /** Whether the active hop's next `submit_findings` is fresh, with no held draft or archived angle; read live, `true` when absent. */
+  readonly freshSubmission?: () => boolean;
+  /** The active CT hop's tracked-column facts that narrow the served `column_flow`; read live, absent serves the general schema. */
+  readonly hopColumns?: () => SubmitFindingsHopColumns;
 };
 
 type TextPlanDraft = Omit<CompleteTextInput, 'phase' | 'instructionContext'> & {
@@ -214,17 +219,16 @@ function phaseOf(stage: LmStage): InstructionPhase {
 }
 
 /**
- * True for the two stages whose `lineage_present_result` schema may be swapped for a
- * live-resolved repair-patch schema (session-authorized held-draft repair).
+ * True for every stage whose `lineage_present_result` schema may be swapped for a live-resolved
+ * repair-patch schema (session-authorized held-draft repair).
  *
  * @remarks
- * `completed` amends through its own `is_update` handler path instead of this live-resolver
- * mechanism, so it is never part of this set. Colocated here rather than in `toolPolicy.ts`
- * (which owns per-stage tool exposure generally) because this predicate is specific to the
- * present-result repair-authorization wiring this compiler owns.
+ * The handler holds a repair draft on a repairable validation failure in each of these stages, and
+ * the caller arms the live resolver by this same predicate, so no stage offers the full schema while
+ * the handler validates a narrower authorization.
  */
 function stageSupportsPresentResultRepair(stage: LmStage): boolean {
-  return stage.kind === 'synthesis' || stage.kind === 'visual_preview';
+  return stage.kind === 'synthesis' || stage.kind === 'visual_preview' || stage.kind === 'completed';
 }
 
 function freezeStrings(values: readonly string[] | undefined): readonly string[] {
@@ -318,6 +322,8 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     facts,
     toolSchemaOverrides,
     presentResultRepairFields,
+    freshSubmission,
+    hopColumns,
     presentResultRetainableSections,
     ...input
   } = draft;
@@ -331,30 +337,33 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     }
   }
   if (presentResultRepairFields && !stageSupportsPresentResultRepair(stage)) {
-    throw new Error('InstructionPlan: present_result repair authorization is valid only in synthesis or visual preview.');
+    throw new Error('InstructionPlan: present_result repair authorization is valid only in synthesis, visual preview, or completed.');
   }
   const allowed = getAllowedLmToolNames(stage);
   const filteredRegistry = filterRegistry(sourceRegistry, allowed);
   const schemaOverrides = new Map(toolSchemaOverrides ?? []);
+  const liveResolvers = new Map<string, () => z.ZodType>();
   if (stage.kind === 'active') {
-    schemaOverrides.set(
+    const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
+    liveResolvers.set(
       'lineage_submit_findings',
-      submitFindingsSchemaForMode(stage.mode === 'sm_ct' ? 'ct' : 'bb', frozenFacts?.classification),
+      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.()),
     );
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
-  if ((stage.kind === 'completed' || stageSupportsPresentResultRepair(stage)) && !liveRepairResolver) {
+  if (stageSupportsPresentResultRepair(stage) && !liveRepairResolver) {
     schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false));
   }
   let registry = schemaOverrides.size
     ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
     : filteredRegistry;
   if (liveRepairResolver) {
-    registry = resolveRegistrySchemas(registry, new Map([[
+    liveResolvers.set(
       'lineage_present_result',
       () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields(), presentResultRetainableSections?.() ?? false),
-    ]]));
+    );
   }
+  if (liveResolvers.size) registry = resolveRegistrySchemas(registry, liveResolvers);
   const toolNames = registry.getTools().map(tool => tool.name);
   if (input.requiredTerminalTool && !registry.has(input.requiredTerminalTool)) {
     throw new Error(`InstructionPlan: required terminal tool ${input.requiredTerminalTool} is not available in ${phase}.`);

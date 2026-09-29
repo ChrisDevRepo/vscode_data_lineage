@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SystemMessage, type BaseMessage } from '@langchain/core/messages';
+import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
 import {
   type CompleteTextInput,
   type GeneratedToolCall,
@@ -7,12 +7,8 @@ import {
   type ModelPort,
   type ModelIdentity,
   ModelPortError,
-  matchProseToolCall,
-  PROSE_PROMOTED_CALL_ID,
-  createStreamRepetitionObserver,
   type ModelToolChoice,
   type ModelToolDefinition,
-  type RepetitionStrike,
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
@@ -20,9 +16,10 @@ import {
   errorToolTurnResult,
   isHostCancellationError,
   isPortCancellation,
+  messageContentToText,
+  messageProviderParts,
 } from './modelPort';
-import type { InstructionPhase } from '../agent/instructionPlan';
-import { VscodeLangChainBridge } from './vscodeLangChainBridge';
+import { VscodeLangChainBridge, type VscodeBridgeRunnable } from './vscodeLangChainBridge';
 import { systemPromptHash, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import {
@@ -30,68 +27,15 @@ import {
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
-import { rejectionFromZodError } from '../support/toolErrorEnvelope';
-import { droppedKeyPaths } from '../support/inputNormalization';
+import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
+import { rejectionFromZodError, zodIssuePaths, zodUnrecognizedKeys } from '../support/toolErrorEnvelope';
+import { coerceStringifiedArguments, droppedKeyPaths } from '../support/inputNormalization';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
-  STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
   StructuredOutputError,
   structuredRejectReason,
 } from '../providers/structuredOutput';
-
-type PortGenerationPart =
-  | { readonly type: 'text'; readonly text: string }
-  | {
-      readonly type: 'tool-call';
-      readonly callId: string;
-      readonly toolName: string;
-      readonly input: unknown;
-    };
-
-const STREAM_TEXT_CHAR_CEILING = 200_000;
-
-/**
- * Streamed-text ceiling per {@link InstructionPhase}, calibrating
- * {@link STREAM_TEXT_CHAR_CEILING} instead of adding a second guard site.
- *
- * Each cap is anchored on the ~33.6 KB global legitimate maximum documented on
- * {@link STREAM_TEXT_CHAR_CEILING}, never on a phase's own observed maximum alone:
- *
- * - `detect_entry`, `sm_entry`, `visual_preview`, `synthesis` 100,000 — legitimate text on these
- *   phases is a few hundred chars at most, far too thin to tighten below the legitimate envelope,
- *   so each is anchored at 3x the global maximum.
- * - `discover`, `active` 50,000 — the two phases that legitimately stream prose, at ~1.5x the
- *   global maximum, which is still an order of magnitude above their own legitimate maxima.
- * - `compose` 200,000 — the text channel IS the deliverable there (`completeText` discards
- *   `hitCeiling`), so a cut would be delivered silently with no retry behind it; it keeps the
- *   outer bound.
- * - `completed` 200,000 — no model call is issued under the label; outer bound.
- *
- * Total over {@link InstructionPhase} by construction: a new phase member fails to compile until
- * it is mapped here. An unrecognized phase string resolves through {@link streamTextCharCeiling}
- * to the outer bound, never to a smaller cap.
- */
-const PHASE_STREAM_TEXT_CHAR_CEILINGS: Readonly<Record<InstructionPhase, number>> = {
-  detect_entry: 100_000,
-  discover: 50_000,
-  visual_preview: 100_000,
-  sm_entry: 100_000,
-  active: 50_000,
-  compose: STREAM_TEXT_CHAR_CEILING,
-  synthesis: 100_000,
-  completed: STREAM_TEXT_CHAR_CEILING,
-};
-
-/** Resolves the streamed-text ceiling for one call: its phase cap, or the outer bound when unknown. */
-function streamTextCharCeiling(phase: string | undefined): number {
-  if (phase === undefined) return STREAM_TEXT_CHAR_CEILING;
-  const mapped = PHASE_STREAM_TEXT_CHAR_CEILINGS[phase as InstructionPhase];
-  return typeof mapped === 'number' ? mapped : STREAM_TEXT_CHAR_CEILING;
-}
-
-const FIRST_OUTPUT_TIMEOUT_MS = 600_000;
 
 /**
  * Request-scoped model port over the exact native model selected in Chat UI.
@@ -166,6 +110,29 @@ export class VscodeModelPort implements ModelPort {
     );
   }
 
+  /**
+   * {@inheritDoc SingleGenerationModelPort.getNumTokens} — delegates to the selected model's own
+   * `countTokens`.
+   *
+   * @remarks
+   * Carries no cancellation token: the caller is `trimMessages`' token counter, run outside any
+   * single generation's request-scoped `CancellationTokenSource` — there is no live token in
+   * scope to pass. A rejecting `countTokens` call (a BYOK provider whose counter throws) falls
+   * back to the shared chars-per-token estimate rather than failing the node.
+   */
+  public async getNumTokens(content: MessageContent): Promise<number> {
+    const text = messageContentToText(content);
+    try {
+      return await this.model.countTokens(text);
+    } catch (error) {
+      this.options.debugLog?.(
+        `[AI] count-tokens-fallback model=${this.model.id}`
+        + ` error=${error instanceof Error ? error.message : String(error)}`,
+      );
+      return estimateTokens(text.length);
+    }
+  }
+
   /** Executes one tool-capable generation and validates emitted calls against the supplied tools. */
   public async generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult> {
     if (input.signal?.aborted) return cancelledToolTurnResult();
@@ -185,7 +152,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const { parts: response, hitCeiling, nonTextChars } = await this.collectGeneration(
+      const { message, nonTextChars } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -193,70 +160,68 @@ export class VscodeModelPort implements ModelPort {
         input.signal,
         input.onTextDelta,
         input.phase,
-        input.requiresToolCall === true,
       );
-      const content: ToolGenerationContent[] = [];
+      const text = messageContentToText(message.content);
+      const providerParts = messageProviderParts(message);
+      const content: ToolGenerationContent[] = text ? [{ type: 'text', text }] : [];
       const toolCalls: GeneratedToolCall[] = [];
       const callIds = new Set<string>();
-      let text = '';
 
-      for (const part of response) {
-        if (part.type === 'text') {
-          text += part.text;
-          content.push(part);
-          continue;
-        }
-        const duplicate = callIds.has(part.callId);
-        callIds.add(part.callId);
-        const definition = definitionsByName.get(part.toolName);
+      for (const { id: callId = '', name: toolName, args } of message.tool_calls ?? []) {
+        const duplicate = callIds.has(callId);
+        callIds.add(callId);
+        const definition = definitionsByName.get(toolName);
         let call: GeneratedToolCall;
         if (duplicate) {
           call = {
             valid: false,
-            callId: part.callId,
-            toolName: part.toolName,
-            input: part.input,
+            callId,
+            toolName,
+            input: args,
             code: REJECTION_CODES.duplicateCallId,
             reason: 'The provider repeated a tool call identifier.',
           };
         } else if (!definition) {
           call = {
             valid: false,
-            callId: part.callId,
-            toolName: part.toolName,
-            input: part.input,
+            callId,
+            toolName,
+            input: args,
             code: REJECTION_CODES.unknownTool,
             reason: 'Tool is not available in this phase.',
           };
         } else {
-          const parsed = definition.inputSchema.safeParse(part.input);
-          const dropped = parsed.success ? droppedKeyPaths(part.input, parsed.data) : [];
+          const decodedArgs = this.decodeStringifiedArguments(toolName, args, toModelJsonSchema(definition.inputSchema));
+          const parsed = definition.inputSchema.safeParse(decodedArgs);
+          const dropped = parsed.success ? droppedKeyPaths(decodedArgs, parsed.data) : [];
           if (dropped.length > 0) {
             this.options.debugLog?.(
-              `[AI] tool-input-keys-dropped tool=${part.toolName} paths=${trunc(sanitizeForLog(dropped.join(',')), 200)}`,
+              `[AI] tool-input-keys-dropped tool=${toolName} paths=${trunc(sanitizeForLog(dropped.join(',')), 200)}`,
             );
           }
           if (parsed.success) {
             call = {
               valid: true,
-              callId: part.callId,
-              toolName: part.toolName,
+              callId,
+              toolName,
               input: parsed.data,
             };
           } else {
             const rejection = rejectionFromZodError(
               parsed.error,
-              { code: REJECTION_CODES.invalidToolInput, input: part.input },
+              { code: REJECTION_CODES.invalidToolInput, input: decodedArgs },
             );
+            const unrecognizedKeys = zodUnrecognizedKeys(parsed.error);
             call = {
               valid: false,
-              callId: part.callId,
-              toolName: part.toolName,
-              input: part.input,
+              callId,
+              toolName,
+              input: args,
               code: REJECTION_CODES.invalidToolInput,
               reason: rejection.reason,
               hint: rejection.hint,
-              issuePaths: parsed.error.issues.map((issue) => issue.path.join('.')),
+              issuePaths: zodIssuePaths(parsed.error),
+              ...(unrecognizedKeys.length > 0 ? { unrecognizedKeys } : {}),
             };
           }
         }
@@ -270,16 +235,17 @@ export class VscodeModelPort implements ModelPort {
         );
       }
 
-      const finishReason = hitCeiling ? 'length' : toolCalls.length > 0 ? 'tool-calls' : 'stop';
+      const finishReason = toolCalls.length > 0 ? 'tool-calls' : 'stop';
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
-        + ` observed_nontext_chars=${nonTextChars}`
+        + ` observed_nontext_chars=${nonTextChars} provider_parts=${providerParts.length}`
         + ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}`
         + ' (provider usage unavailable)',
       );
       return {
         status: 'completed',
+        message,
         content,
         text,
         toolCalls,
@@ -297,35 +263,28 @@ export class VscodeModelPort implements ModelPort {
     }
   }
 
-  /** Generates a schema-constrained result through the synthetic structured-output tool. */
+  /** Generates a schema-constrained result through the bridge's forced structured-output tool. */
   public async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<T> {
     if (input.signal?.aborted) throw cancelledError();
-    const definitions: ModelToolDefinition[] = [{
-      name: STRUCTURED_OUTPUT_TOOL,
-      description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
-      inputSchema: input.schema,
-    }];
     this.modelCalls += 1;
-    const { parts: response } = await this.collectGeneration(
+    const outputSchema = toModelJsonSchema(input.schema);
+    const { message } = await this.collectGeneration(
       input.messages,
       input.system,
-      definitions,
-      { type: 'tool', toolName: STRUCTURED_OUTPUT_TOOL },
+      [],
+      undefined,
       input.signal,
       undefined,
       input.phase,
-      true,
+      (bridge) => bridge.bindStructuredOutputTool(outputSchema, STRUCTURED_OUTPUT_TOOL),
     );
-    const calls = response.filter(
-      (part): part is Extract<PortGenerationPart, { type: 'tool-call' }> =>
-        part.type === 'tool-call' && part.toolName === STRUCTURED_OUTPUT_TOOL,
-    );
+    const calls = (message.tool_calls ?? []).filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
     const parsed = calls.length === 1
-      ? input.schema.safeParse(calls[0].input)
+      ? input.schema.safeParse(this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema))
       : undefined;
     if (parsed?.success) return parsed.data;
     const emptyRequiredPayload = calls.length === 1
-      && isEmptyRecord(calls[0].input);
+      && isEmptyRecord(calls[0].args);
     throw new StructuredOutputError(
       emptyRequiredPayload
         ? `${STRUCTURED_OUTPUT_TOOL} arguments were empty`
@@ -336,11 +295,22 @@ export class VscodeModelPort implements ModelPort {
     );
   }
 
+  /** Decodes JSON-string array/object arguments against the tool's schema and logs each decode. */
+  private decodeStringifiedArguments(toolName: string, args: unknown, jsonSchema: unknown): unknown {
+    const decoded = coerceStringifiedArguments(args, jsonSchema);
+    if (decoded.paths.length > 0) {
+      this.options.debugLog?.(
+        `[AI] tool-input-decoded tool=${toolName} paths=${trunc(sanitizeForLog(decoded.paths.join(',')), 200)}`,
+      );
+    }
+    return decoded.value;
+  }
+
   /** Completes text without exposing tools. */
   public async completeText(input: CompleteTextInput): Promise<string> {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
-    const { parts: response } = await this.collectGeneration(
+    const { message } = await this.collectGeneration(
       input.messages,
       input.system,
       [],
@@ -348,20 +318,14 @@ export class VscodeModelPort implements ModelPort {
       input.signal,
       undefined,
       input.phase,
-      false,
     );
-    if (response.some((part) => part.type !== 'text')) {
+    if ((message.tool_calls ?? []).length > 0) {
       throw new ModelPortError(
         'unsupported_response',
         'Text completion returned a tool call.',
       );
     }
-    return response
-      .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> =>
-        part.type === 'text')
-      .map((part) => part.text)
-      .join('')
-      .trim();
+    return messageContentToText(message.content).trim();
   }
 
   private async collectGeneration(
@@ -372,8 +336,16 @@ export class VscodeModelPort implements ModelPort {
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
-    requiresToolCall = false,
-  ): Promise<{ parts: readonly PortGenerationPart[]; hitCeiling: boolean; nonTextChars: number }> {
+    /**
+     * Overrides the bound runnable this streams, for a caller (structured output) whose tool
+     * binding the bridge already owns ({@link VscodeLangChainBridge.bindStructuredOutputTool});
+     * `definitions`/`choice` are unused when supplied.
+     */
+    buildRunnable?: (bridge: VscodeLangChainBridge) => VscodeBridgeRunnable,
+  ): Promise<{
+    message: AIMessageChunk;
+    nonTextChars: number;
+  }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
     const generation = this.modelCalls;
@@ -394,15 +366,6 @@ export class VscodeModelPort implements ModelPort {
       });
     });
     const startedAt = Date.now();
-    let watchdogFired = false;
-    const watchdog = setTimeout(() => {
-      watchdogFired = true;
-      this.options.debugLog?.(
-        `[AI] generation-timeout phase=${phase ?? 'unknown'} call=${generation}`
-        + ` zero output after ${FIRST_OUTPUT_TIMEOUT_MS}ms — cancelling the request`,
-      );
-      cancellation.source.cancel();
-    }, FIRST_OUTPUT_TIMEOUT_MS);
     try {
       const bridge = new VscodeLangChainBridge({
         model: this.model,
@@ -414,119 +377,55 @@ export class VscodeModelPort implements ModelPort {
         description: definition.description,
         inputSchema: toModelJsonSchema(definition.inputSchema),
       }));
-      const runnable = tools.length > 0
-        ? bridge.bindTools(tools, {
-            tool_choice: toLangChainToolChoice(choice),
-          })
-        : bridge;
+      const runnable = buildRunnable
+        ? buildRunnable(bridge)
+        : tools.length > 0
+          ? bridge.bindTools(tools, {
+              tool_choice: toLangChainToolChoice(choice),
+            })
+          : bridge;
       const messages = system
         ? [new SystemMessage(system), ...history]
         : [...history];
-      const parts: PortGenerationPart[] = [];
-      let textChars = 0;
+      let message = new AIMessageChunk({ content: '' });
       let nonTextChars = 0;
-      let hitCeiling = false;
-      let sawToolCallDelta = false;
-      const textCeiling = streamTextCharCeiling(phase);
-      const repetition = requiresToolCall ? createStreamRepetitionObserver() : undefined;
-      let repetitionStrike: RepetitionStrike | null = null;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
-        clearTimeout(watchdog);
         if (signal?.aborted) throw cancelledError();
-        if (typeof chunk.content === 'string' && chunk.content) {
-          onTextDelta?.(chunk.content);
-          parts.push({ type: 'text', text: chunk.content });
-          textChars += chunk.content.length;
-          if (!sawToolCallDelta && repetitionStrike === null) {
-            repetitionStrike = repetition?.observe(chunk.content) ?? null;
-          }
-        }
+        message = message.concat(chunk);
+        if (typeof chunk.content === 'string' && chunk.content) onTextDelta?.(chunk.content);
         const streamedNonText = chunk.response_metadata?.nonTextChars;
         if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
-        for (const call of chunk.tool_call_chunks ?? []) {
-          sawToolCallDelta = true;
-          if (!call.id || !call.name || typeof call.args !== 'string') {
-            throw new ModelPortError(
-              'unsupported_response',
-              'Language model returned an incomplete tool call.',
-            );
-          }
-          parts.push({
-            type: 'tool-call',
-            callId: call.id,
-            toolName: call.name,
-            input: parseToolInput(call.args),
-          });
-        }
-        if (
-          textChars >= STREAM_TEXT_CHAR_CEILING
-          || (textChars >= textCeiling && !sawToolCallDelta)
-          || (repetitionStrike !== null && !sawToolCallDelta)
-        ) {
-          hitCeiling = true;
-          this.options.debugLog?.(
-            repetitionStrike
-              ? `[AI] stream-repetition phase=${phase ?? 'unknown'} call=${generation}`
-                + ` chars=${textChars} repeats=${repetitionStrike.repeats}`
-                + ` line=${trunc(sanitizeForLog(repetitionStrike.line), 120)}`
-              : `[AI] stream-ceiling phase=${phase ?? 'unknown'} call=${generation} chars=${textChars} nontext=${nonTextChars} cap=${textCeiling}`,
-          );
-          break;
-        }
       }
       if (signal?.aborted) throw cancelledError();
-      if (watchdogFired) throw firstOutputTimeoutError();
-      const promotion = hitCeiling || parts.some((part) => part.type === 'tool-call')
-        ? { kind: 'none' as const }
-        : matchProseToolCall(
-            parts
-              .filter((part): part is Extract<PortGenerationPart, { type: 'text' }> => part.type === 'text')
-              .map((part) => part.text)
-              .join(''),
-            definitions,
-          );
-      const resolvedParts: readonly PortGenerationPart[] = promotion.kind === 'promoted'
-        ? [{
-            type: 'tool-call',
-            callId: PROSE_PROMOTED_CALL_ID,
-            toolName: promotion.toolName,
-            input: promotion.input,
-          }]
-        : parts;
-      if (promotion.kind === 'promoted') {
-        this.options.debugLog?.(
-          `[AI] prose-tool-call-promoted phase=${phase ?? 'unknown'} call=${generation}`
-          + ` tool=${promotion.toolName}`,
+      if ((message.invalid_tool_calls?.length ?? 0) > 0) {
+        throw new ModelPortError(
+          'unsupported_response',
+          'Language model returned non-object tool input.',
         );
-      } else if (promotion.kind === 'ambiguous') {
-        this.options.debugLog?.(
-          `[AI] prose-tool-call-ambiguous phase=${phase ?? 'unknown'} call=${generation}`
-          + ` tools=${promotion.tools.join(',')}`,
+      }
+      if ((message.tool_calls ?? []).some((call) => !call.id)) {
+        throw new ModelPortError(
+          'unsupported_response',
+          'Language model returned an incomplete tool call.',
         );
       }
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
-        finishReason: hitCeiling
-          ? 'length'
-          : resolvedParts.some((part) => part.type === 'tool-call') ? 'tool-calls' : 'stop',
+        finishReason: (message.tool_calls?.length ?? 0) > 0 ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
       });
-      return { parts: resolvedParts, hitCeiling, nonTextChars };
+      return { message, nonTextChars };
     } catch (error) {
-      const surfaced = watchdogFired && !signal?.aborted && isCancellation(error)
-        ? firstOutputTimeoutError(error)
-        : error;
-      if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(surfaced)) {
+      if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(error)) {
         emitWire({
           type: 'wire-error',
-          diagnostic: sanitizeProviderErrorDiagnostic(surfaced, phase ?? 'unknown'),
+          diagnostic: sanitizeProviderErrorDiagnostic(error, phase ?? 'unknown'),
         });
       }
-      throw surfaced;
+      throw error;
     } finally {
-      clearTimeout(watchdog);
       cancellation.dispose();
     }
   }
@@ -546,17 +445,6 @@ function toLangChainToolChoice(
   if (choice === 'none') return 'none';
   if (typeof choice === 'object') return choice.toolName;
   return 'auto';
-}
-
-function parseToolInput(serialized: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(serialized);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new ModelPortError(
-      'unsupported_response',
-      'Language model returned non-object tool input.',
-    );
-  }
-  return parsed as Record<string, unknown>;
 }
 
 function bindCancellation(signal?: AbortSignal): {
@@ -582,13 +470,4 @@ function isCancellation(error: unknown): boolean {
 
 function cancelledError(): ModelPortError {
   return new ModelPortError('cancelled', 'Language model request was cancelled.');
-}
-
-/** Timeout raised when a generation produced no output at all within {@link FIRST_OUTPUT_TIMEOUT_MS}. */
-function firstOutputTimeoutError(cause?: unknown): ModelPortError {
-  return new ModelPortError(
-    'provider_error',
-    `The language model produced no output within ${FIRST_OUTPUT_TIMEOUT_MS / 1000}s; the request was aborted (first-output timeout).`,
-    cause,
-  );
 }

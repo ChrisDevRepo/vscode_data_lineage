@@ -41,7 +41,7 @@ export interface ToolServices {
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */
   readonly logger: Logger;
   /** Turn-neutral text-completion capability; absent on the external `vscode.lm` read-only registration. */
-  readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>;
+  readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
   /** Cooperative host cancellation, mirrored from the owning turn's lease. */
   readonly signal?: AbortSignal;
   /**
@@ -53,8 +53,6 @@ export interface ToolServices {
    * registration, which serves callers outside any turn, carries the shipped defaults.
    */
   readonly budget: TurnTokenBudget;
-  /** The hop cap the host resolved once at activation — the same value the graph runtime bounds the active loop with. */
-  readonly maxRounds: number;
   /** Current turn epoch — the turn lease wins over the session field so stale-turn writes are rejectable. */
   turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, throwing the standard no-model error when none is loaded. */

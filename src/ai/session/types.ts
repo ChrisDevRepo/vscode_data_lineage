@@ -3,7 +3,10 @@ import type { AIViewMetadata } from '../../engine/projectStore';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
 export interface DiscoveryScopeArtifact {
-  /** Epoch of the host turn that captured this scope; consumers require it to match the live turn. */
+  /**
+   * Epoch of the host turn that captured (or, for a preview, re-armed) this scope; a consumer that
+   * renders it requires the live turn's epoch, and discovery tells its own walk from an earlier one.
+   */
   readonly turnEpoch: number;
   /** Canonical id of the node the BFS walked from. */
   readonly origin: string;
@@ -61,7 +64,11 @@ export interface ResultGraph {
   intro?: string;
   /** AI-supplied closing note from `present_result.input.closing`. */
   closing?: string;
-  /** AI-supplied report sections from `present_result.input.sections[]`. */
+  /**
+   * AI-supplied report sections from `present_result.input.sections[]`, with evidence references
+   * already expanded — ids number the captured archive in slot order, so a later capture could
+   * renumber them before an amendment retains the section.
+   */
   sections?: Array<{ label: string; node_ids?: string[]; text?: string }>;
   /** The `explorationRunId` that authored {@link sections} — distinguishes sections a later render may retain from ones left over from a previous run. */
   sectionsRunId?: string;

@@ -9,6 +9,7 @@
 
 import { buildColumnAspectPrompt } from '../prompting/prompts';
 import { escapePromptText } from '../support/text';
+import { assignEvidenceIds, requiredDetailSlotIds } from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 
 /**
@@ -25,10 +26,14 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
  * @param mode - The mode of the BRANCH this question is forwarded on, not of the session: the
  *   column clause is answerable only where a traced column is actually carried, and a CT session
  *   reaches branches that carry none.
- * @returns The suffix to append to the forwarded question (leading newline included).
+ * @param questioned - Whether the forwarded question has text. When it has none, the suffix is the
+ *   whole sub-question, so it names the original question instead of pointing at a question that
+ *   is not there, and carries no leading newline.
+ * @returns The suffix to append to the forwarded question (leading newline included when questioned).
  */
-export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct'): string {
-  const reAnchor = `\n(Inherited through passthrough ${passthroughId}; re-anchor this question to ${focusId}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.`;
+export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct', questioned = true): string {
+  const anchor = questioned ? `re-anchor this question to ${focusId}` : `continue the original question at ${focusId}`;
+  const reAnchor = `${questioned ? '\n' : ''}(Inherited through passthrough ${passthroughId}; ${anchor}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.`;
   return mode === 'ct' ? `${reAnchor} Ground that in the traced column.)` : `${reAnchor})`;
 }
 
@@ -44,7 +49,7 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 const COLUMN_DECISION_ADDENDUM = [
   'CT is column-first on top of those same decisions — these add the column aspect:',
   '- `column_flow[].upstream_columns` holds real upstream node+column refs only — the value path the engine carries to the next hop, derived from the DDL. Resolve hidden column names with `lineage_get_neighbor_columns`.',
-  '- `<lineage_questions>` already carries the column A→B continuation; the analytical answer goes in `sections[].text`.',
+  '- `<lineage_questions>` already carries the column A→B continuation; the analytical answer goes in `sections`.',
 ] as const;
 
 /**
@@ -438,8 +443,9 @@ const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
  *
  * @remarks
  * Every other mandatory-carry class at synthesis is enumerated as a checklist; formulas and
- * predicates otherwise reach the model only inside slot prose it must re-scan. Content, not the
- * capture delimiter, decides what is enumerable: a fenced line or inline span qualifies when it
+ * predicates otherwise reach the model only inside slot prose it must re-scan. Only delimited
+ * artifacts are read — a formula the hop writer left in plain prose is not enumerated. Within a
+ * delimited artifact, content decides what is enumerable: a fenced line or inline span qualifies when it
  * carries a {@link CALL_TOKEN} or opens with a {@link PREDICATE_START} keyword and is not a whole
  * {@link STATEMENT_START} statement; a fenced block is read line by line since one body mixes both
  * classes. Enumeration only — sorted by capture order and de-duplicated per node for byte-stable
@@ -526,6 +532,11 @@ interface SmCompletionEnvelope {
  * candidates are filtered to it. An id the render dropped or the depth border cut still reaches
  * the model through the recorded evidence, in prose, never in a `node_ids` field.
  *
+ * `detail_slots` is delivered with a citation id appended to every fenced code block's own fence
+ * info string ({@link assignEvidenceIds}, e.g. `sql S7`), numbered by detail-slot order then block
+ * order — `present_result` recomputes the same id set from the same archive to expand an empty
+ * ```` ```sql S7 ```` fence in place, so a reference resolves without any id persisted across the call.
+ *
  * @param result - The completed `engine.getResult()` archive (full `detail_slots` across all hops).
  * @param userQuestion - The verbatim mission question anchoring the synthesis reminder.
  * @param deferred - BFS-skipped questions, surfaced once at the end if material.
@@ -546,6 +557,8 @@ export function buildSmCompletionEnvelope(
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
   const formulaFacts = buildCapturedFormulaFacts(result);
   const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
+  const mustLink = requiredDetailSlotIds(result.detail_slots.map(slot => slot.nodeId), presented);
+  const mustLinkBlock = mustLink.length > 0 ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}` : '';
   const envelope: SmCompletionEnvelope = {
     ok: true,
     done: true,
@@ -555,10 +568,10 @@ export function buildSmCompletionEnvelope(
       scope: { nodes: presentedNodeIds.length, edges: result.edges.length, node_ids: presentedNodeIds },
       suggested_sections: result.suggested_sections,
       node_states: result.node_states.filter(state => presented.has(state.nodeId)),
-      detail_slots: result.detail_slots,
+      detail_slots: assignEvidenceIds(result.detail_slots).slots,
     },
     deferred_questions: deferred,
-    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock,
+    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock + mustLinkBlock,
   };
   return envelope;
 }

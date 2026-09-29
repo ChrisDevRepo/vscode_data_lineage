@@ -2,10 +2,37 @@ import { useState, useCallback } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
-import { buildGraph, buildGraphNoLayout, getGraphMetrics } from '../engine/graphBuilder';
+import { buildGraph, buildGraphNoLayout, getGraphMetrics, hasCachedLayout, layoutCacheKey, objectLayoutInputForGraph, seedLayoutCache } from '../engine/graphBuilder';
+import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
 import { filterBySchemas } from '../engine/dacpacExtractor';
 import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
+import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
+import LayoutWorker from '../utils/layout.worker?worker&inline';
+
+const logPrewarmSkipped = (reason: string): void => {
+  window.vscode?.postMessage({ type: 'log', text: `[Filter] Layout prewarm skipped (${reason})`, level: 'debug' });
+};
+
+const layoutWorker = createLayoutWorkerClient(() => new LayoutWorker(), logPrewarmSkipped);
+
+/**
+ * Lays out the Object View graph in a worker and seeds the layout cache, so the later
+ * Schema View → Object View switch finds its positions without running Dagre on the UI thread.
+ * Without a usable worker the switch simply lays out on the main thread as before.
+ */
+function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
+  if (typeof Worker === 'undefined') return;
+  const input = objectLayoutInputForGraph(graph, config);
+  const key = layoutCacheKey(input);
+  if (hasCachedLayout(input, key)) return;
+  layoutWorker.runDagre(input)?.then(
+    (positions) => {
+      if (!seedLayoutCache(input, positions, key)) logPrewarmSkipped('incomplete layout');
+    },
+    (e: unknown) => logPrewarmSkipped(e instanceof Error ? e.message : String(e)),
+  );
+}
 
 /**
  * Return type for the useGraphology hook, encapsulating graph data and builders.
@@ -29,9 +56,19 @@ interface UseGraphologyReturn {
    * Rebuilds the graph from the database model based on the current filter and configuration.
    *
    * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
-   * @returns The total number of nodes in the resulting graph.
+   * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so Dagre reserves the
+   *   vertical band those overlays need; see `AI_BADGE_BAND`/`AI_NOTE_BAND` in `graphBuilder.ts`.
+   * @returns The total number of nodes in the resulting graph, or `-1` when the schema selection's
+   *   object count exceeds `dataLineageViz.maxNodes` — nothing is built and the prior render state
+   *   is left untouched.
    */
-  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean) => number;
+  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean, annotatedNodeIds?: readonly string[]) => number;
+  /**
+   * Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns
+   * `true` and posts the refusal warning when the build would be refused, so a caller that defers the
+   * build into a transition can still learn about the refusal synchronously.
+   */
+  refusesBuild: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig) => boolean;
 }
 
 /**
@@ -50,9 +87,13 @@ export function useGraphology(): UseGraphologyReturn {
   const [filteredCount, setFilteredCount] = useState(0);
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
-  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false): number => {
+  const refusesBuild = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG): boolean =>
+    refuseOverObjectLimit(filterBySchemas(model, filter.schemas), config.maxNodes, 'Filter') !== null, []);
+
+  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false, annotatedNodeIds?: readonly string[]): number => {
     const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
-    const filtered = filterBySchemas(model, filter.schemas, config.maxNodes);
+    const filtered = filterBySchemas(model, filter.schemas);
+    if (refuseOverObjectLimit(filtered, config.maxNodes, 'Filter') !== null) return -1;
 
     const isVirtual = (n: { externalType?: string }) =>
       n.externalType === 'file' || n.externalType === 'db';
@@ -116,6 +157,7 @@ export function useGraphology(): UseGraphologyReturn {
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
       log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
+      prewarmObjectLayout(result.graph, config);
       return count;
     }
 
@@ -123,7 +165,7 @@ export function useGraphology(): UseGraphologyReturn {
     let result: ReturnType<typeof buildGraph>;
     let layoutFailed = false;
     try {
-      result = buildGraph(allowlistFiltered, config);
+      result = buildGraph(allowlistFiltered, config, annotatedNodeIds);
     } catch (e) {
       layoutFailed = true;
       log(`[Filter] Layout failed (${e instanceof Error ? e.message : String(e)}) — rendering without positions`, 'info');
@@ -146,7 +188,7 @@ export function useGraphology(): UseGraphologyReturn {
       log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
     }
     return count;
-  }, []);
+  }, [refusesBuild]);
 
-  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel };
+  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel, refusesBuild };
 }

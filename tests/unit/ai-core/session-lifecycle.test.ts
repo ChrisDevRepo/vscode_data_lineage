@@ -32,9 +32,6 @@ describe('AiSession lifecycle ownership', () => {
     expect(session.presentResultCalledThisTurn).toBe(true);
     expect(session.lastPresentResultDescription).toBe('Rendered detail');
     expect(session.lastPresentResultSummary).toBe('Rendered summary');
-    expect(session.lastPresentResultHighlightGroups).toEqual([
-      { label: 'Source', color: 'source', nodeIds: ['[dbo].[Source]'] },
-    ]);
 
     const secondTurn = session.beginTurn();
     expect(secondTurn).not.toBe(firstTurn);
@@ -101,7 +98,6 @@ describe('AiSession lifecycle ownership', () => {
     expect(session.presentResultLastFailureReasonThisTurn).toBeNull();
     expect(session.lastPresentResultDescription).toBeNull();
     expect(session.lastPresentResultSummary).toBeNull();
-    expect(session.lastPresentResultHighlightGroups).toBeNull();
   });
 
   it('retains preview scope across a turn and resets auto-dispatch with presentation state', () => {
@@ -122,25 +118,63 @@ describe('AiSession lifecycle ownership', () => {
     session.clearPresentResultFlag();
     expect(session.presentResultAutoDispatched).toBe(false);
   });
+});
 
-  it('lights the SM-offer only after a completed multi-object walk', () => {
+describe('post-discovery offers', () => {
+  const scope = (turnEpoch: number, nodeIds: string[]) => ({
+    turnEpoch,
+    origin: nodeIds[0],
+    direction: 'upstream' as const,
+    nodeIds,
+    edges: [],
+  });
+
+  function walkedSession() {
     const session = new AiSession();
-    session.beginTurn();
-    expect(session.smOfferAvailable()).toBe(false);
+    const walkTurn = session.beginTurn();
+    session.discoveryScopeArtifact = scope(walkTurn, ['[dbo].[Orders]', '[stg].[Orders]']);
+    expect(session.settleDiscoveryTurn(walkTurn, 'where does Orders come from?', 'From stg.Orders.', null, true).kind).toBe('accepted');
+    expect(session.previewOfferAvailable()).toBe(true);
+    return session;
+  }
 
-    session.recordDiscovery('[ai].[FactSalesReport]', 1, 'What feeds FactSalesReport?', 'Summary.');
-    expect(session.smOfferAvailable()).toBe(false);
+  it('a direct answer keeps the last walk\'s preview and deeper-analysis offers', () => {
+    const session = walkedSession();
+    const directTurn = session.beginTurn();
+    session.settleDiscoveryTurn(directTurn, 'thanks, what is a view?', 'A view is a stored query.', null, false);
 
-    session.recordDiscovery(
-      '[ai].[FactSalesReport]',
-      2,
-      'What feeds FactSalesReport?',
-      'A detailed analysis would be needed.',
-    );
-
+    expect(session.previewOfferAvailable()).toBe(true);
     expect(session.smOfferAvailable()).toBe(true);
-    expect(session.lastDiscoveryOrigin).toBe('[ai].[FactSalesReport]');
-    expect(session.lastDiscoveryWalkCount).toBe(2);
-    expect(session.lastDiscoveryAnswer).toBe('A detailed analysis would be needed.');
+    expect(session.lastDiscoveryQuestion).toBe('where does Orders come from?');
+    expect(session.lastDiscoveryAnswer).toBe('From stg.Orders.');
+  });
+
+  it('a turn that read the catalog without walking a scope drops the stale preview', () => {
+    const session = walkedSession();
+    const readTurn = session.beginTurn();
+    session.settleDiscoveryTurn(readTurn, 'what does dbo.Customers do?', 'It stores customers.', null, true);
+
+    expect(session.discoveryScopeArtifact).toBeNull();
+    expect(session.previewOfferAvailable()).toBe(false);
+    expect(session.lastDiscoveryQuestion).toBe('where does Orders come from?');
+  });
+
+  it('a new walk replaces the recorded discovery; a one-node scope offers no preview', () => {
+    const session = walkedSession();
+    const detailTurn = session.beginTurn();
+    session.discoveryScopeArtifact = scope(detailTurn, ['[dbo].[Customers]']);
+    session.settleDiscoveryTurn(detailTurn, 'compare A and B', 'A feeds B.', { origin: '[dbo].[A]', walkCount: 2 }, true);
+
+    expect(session.lastDiscoveryOrigin).toBe('[dbo].[A]');
+    expect(session.lastDiscoveryAnswer).toBe('A feeds B.');
+    expect(session.previewOfferAvailable()).toBe(false);
+  });
+
+  it('refuses a write from a turn that no longer owns the session', () => {
+    const session = walkedSession();
+    const staleTurn = session.beginTurn();
+    session.beginTurn();
+    expect(session.settleDiscoveryTurn(staleTurn, 'q', 'a', null, true).kind).toBe('dropped_stale_turn');
+    expect(session.previewOfferAvailable()).toBe(true);
   });
 });

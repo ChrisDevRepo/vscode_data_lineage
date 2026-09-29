@@ -19,12 +19,7 @@ import { z } from 'zod';
  * events.
  */
 export const PendingGateSchema = z.object({
-  gate: z.enum([
-    'confirm_sm_start',
-    'schema_out_of_filter',
-    'depth_cap_exceeded',
-    'schema_and_depth',
-  ]),
+  gate: z.literal('confirm_sm_start'),
   classes: z.array(z.string()),
   nodeIds: z.array(z.string()),
   detail: z.string(),
@@ -47,9 +42,9 @@ export type PendingGate = z.infer<typeof PendingGateSchema>;
  * - `idle` — no exploration in progress; next turn enters discovery.
  * - `awaiting_gate` — engine paused on a consent gate; next turn resolves the user's reply (yes / no / redirect).
  * - `exploring` — engine is running hops; next turn continues or completes.
- * - `completed` — synthesis turn finished, archive survives on the session singleton. Next turn is a refinement
- *   (text edit, node prune, or explicit-node supplement) handled by the follow-up protocol without starting a
- *   fresh exploration.
+ * - `completed` — synthesis turn finished, archive survives on the session singleton. Next turn runs the
+ *   follow-up protocol: a refinement (text edit, node prune, or explicit-node supplement), an answer from a graph
+ *   walk, or a fresh proposal that opens a new approval card.
  */
 export type SessionPhase =
   /** No exploration active. Next turn goes through discovery. */

@@ -8,10 +8,10 @@
  * |---------------------------|--------------------------------------------------------------------------------------------------|
  * | `discover`                | get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl, get_object_detail, detect_graph_patterns |
  * | `visual_preview`          | present_result (restructures the cached discovery answer)                                  |
- * | `sm_entry`                | get_screen_state, search_objects, start_exploration (resolve origin + open the consent gate)      |
+ * | `sm_entry`                | get_screen_state, search_objects, get_object_detail (resolve all columns for a CT start), start_exploration (resolve origin + open the consent gate) |
  * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | present_result                                                                                    |
- * | `completed`               | present_result, get_object_detail, get_screen_state, search_ddl, search_objects, start_exploration (supplement-only) |
+ * | `completed`               | present_result, start_exploration (a supplement on the completed engine, or a fresh proposal), and every discovery read tool |
  *
  * SM keeps `present_result` synthesis-only because the agenda drains across many hops.
  */
@@ -28,13 +28,13 @@ export type LmStage =
   | { kind: 'discover' }
   /** Bounded discovery rendering through the shared presentation commit path. */
   | { kind: 'visual_preview' }
-  /** SM entry: resolve the origin and open the consent gate (`get_screen_state`, `search_objects`, `start_exploration`). */
+  /** SM entry: resolve the origin and open the consent gate (`get_screen_state`, `search_objects`, `get_object_detail`, `start_exploration`). */
   | { kind: 'sm_entry' }
   /** Hop loop. `mode` scopes the tool set to SM BB, or SM CT. */
   | { kind: 'active'; mode: ActiveMode }
   /** Post-agenda-drain report authoring. */
   | { kind: 'synthesis' }
-  /** Post-synthesis follow-up: refinement plus explicit-node supplements. */
+  /** Post-synthesis follow-up: refinement, explicit-node supplements, or a fresh proposal. */
   | { kind: 'completed' };
 
 /** Tools visible when the session is idle or answering ad-hoc questions. */
@@ -53,10 +53,17 @@ const VISUAL_PREVIEW_TOOLS: readonly string[] = [
   'lineage_present_result',
 ];
 
-/** Tools visible while resolving the SM origin and opening the consent gate; the screen card resolves an origin the user referred to as "this trace". */
+/**
+ * Tools visible while resolving the SM origin and opening the consent gate; the screen card
+ * resolves an origin the user referred to as "this trace". `get_object_detail` is included so the
+ * CT missing-columns rejection's hint ("read them with `lineage_get_object_detail`") names a tool
+ * the model can actually call at this stage, letting it resolve "all columns" for a CT start
+ * instead of abandoning the trace.
+ */
 const SM_ENTRY_TOOLS: readonly string[] = [
   'lineage_get_screen_state',
   'lineage_search_objects',
+  'lineage_get_object_detail',
   'lineage_start_exploration',
 ];
 
@@ -69,18 +76,16 @@ const SYNTHESIS_TOOLS: readonly string[] = [
  * Tools visible in the post-synthesis follow-up phase.
  *
  * @remarks
- * The follow-up phase handles refinement without a fresh exploration: text edits
- * and prunes re-render via `present_result`; explicit node additions go through
- * `start_exploration` with its `supplement` field (see {@link StartExplorationInputSchema}).
- * Catalog-lookup tools stay available for "what does node X do" questions the user
- * may ask after reading the report.
+ * The follow-up phase refines the report: text edits and prunes re-render via `present_result`;
+ * explicit node additions go through `start_exploration` with its `supplement` field (see
+ * {@link StartExplorationInputSchema}), and a different origin or scope is a fresh
+ * `start_exploration` proposal that opens a new approval card. Every discovery read tool stays
+ * available, so a question beyond the report — another object, a wider neighbourhood — is answered
+ * by walking the loaded graph instead of starting over.
  */
 const COMPLETED_TOOLS: readonly string[] = [
+  ...DISCOVERY_TOOLS,
   'lineage_present_result',
-  'lineage_get_object_detail',
-  'lineage_get_screen_state',
-  'lineage_search_ddl',
-  'lineage_search_objects',
   'lineage_start_exploration',
 ];
 

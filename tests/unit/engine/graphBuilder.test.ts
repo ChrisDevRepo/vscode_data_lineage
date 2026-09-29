@@ -17,7 +17,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import dagre from '@dagrejs/dagre';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
-import { buildGraph, dagreLayout, setGraphLogSink, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
+import { AI_BADGE_BAND, AI_NOTE_BAND, NODE_HEIGHT, buildGraph, dagreLayout, setGraphLogSink, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../../src/engine/types';
 import { loadAdventureWorksModel, testPath } from '../helpers/testUtils';
 
@@ -257,5 +257,36 @@ describe('dagreLayout — layout failure', () => {
 
   it('swallows the failure when no sink is installed', () => {
     expect(() => layoutThrowing(['default.a', 'default.b'])).not.toThrow();
+  });
+});
+
+describe('dagreLayout — AI badge/footnote band', () => {
+  /** Two same-rank siblings under one root, so `nodesep` alone governs their vertical gap. */
+  function siblingLayout(annotatedNodeIds?: string[]): Map<string, { x: number; y: number }> {
+    return dagreLayout({
+      nodeIds: ['root', 'a', 'b'],
+      edges: [{ source: 'root', target: 'a' }, { source: 'root', target: 'b' }],
+      config: DEFAULT_CONFIG,
+      direction: 'LR',
+      ...(annotatedNodeIds && { annotatedNodeIds }),
+    });
+  }
+
+  /** Vertical space between the two nodes' real boxes, independent of which one dagre stacked on top. */
+  function realGap(positions: Map<string, { x: number; y: number }>): number {
+    const a = positions.get('a')!;
+    const b = positions.get('b')!;
+    const [top, bottom] = a.y <= b.y ? [a, b] : [b, a];
+    return bottom.y - (top.y + NODE_HEIGHT);
+  }
+
+  const band = AI_BADGE_BAND + AI_NOTE_BAND;
+
+  it('leaves only the configured node separation between stacked nodes with no annotation', () => {
+    expect(realGap(siblingLayout())).toBeLessThan(band);
+  });
+
+  it('reserves the badge-plus-footnote band between stacked annotated nodes', () => {
+    expect(realGap(siblingLayout(['a', 'b']))).toBeGreaterThanOrEqual(band);
   });
 });

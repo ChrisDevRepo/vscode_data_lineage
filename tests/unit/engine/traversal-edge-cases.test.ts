@@ -18,7 +18,6 @@ import {
   bfsDepthMap,
   bfsReachable,
   findShortestPathOrdered,
-  firstDisconnectedRequiredNode,
 } from '../../../src/engine/graphGuards';
 import { makeGraph } from '../helpers/testUtils';
 
@@ -162,18 +161,6 @@ describe('bfsReachable — cycles and self-reference', () => {
     expect(bfsReachable(emptyGraph(), 'A', NONE)).toEqual(new Set());
   });
 });
-
-describe('firstDisconnectedRequiredNode — cyclic topology', () => {
-  it('reports nothing disconnected while the cycle keeps an alternate route', () => {
-    expect(firstDisconnectedRequiredNode(threeCycle(), 'A', new Set(['B']), new Set(['C']))).toBeNull();
-  });
-
-  it('names the node cut off once the only route is broken', () => {
-    const graph = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-    expect(firstDisconnectedRequiredNode(graph, 'A', new Set(['B']), new Set(['C']))).toBe('C');
-  });
-});
-
 
 describe('findShortestPathOrdered — cycles and self-reference', () => {
   it('finds a forward path inside a cycle without looping', () => {

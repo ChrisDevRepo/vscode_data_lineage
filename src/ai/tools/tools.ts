@@ -18,6 +18,7 @@ import {
 import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
+import { applyIsolationFilter } from '../../engine/shared/modelFilters';
 import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, scanBodyMatches, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
@@ -34,13 +35,16 @@ import {
   checkScopeBudget,
   estimateTokens,
   REGEX_MAX_LENGTH,
+  type DiscoveryBudgetRejection,
   type TurnTokenBudget,
 } from '../support/tokenBudget';
+import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { cursorOffset, nextCursor } from '../support/text';
 
-/** Hard cap on `search_columns` results — prevents unbounded enumeration on wide schemas. */
-const COLUMN_SEARCH_LIMIT = 50;
+/** Column-match rows one `lineage_search_objects` page carries; the rest is read with `cursor`. */
+const COLUMN_SEARCH_PAGE = 50;
 
 /** Builds an id→type lookup for {@link edgeApiType}'s `sourceNodeType` argument. */
 function buildNodeTypeById(model: DatabaseModel): Map<string, string> {
@@ -142,6 +146,22 @@ export function buildHopFocusNode(
 }
 
 
+/** Objects the user's filter shows — schema (case-insensitive) and type, then Hide Isolated. */
+function countVisibleNodes(model: DatabaseModel, activeFilter: SerializedFilterState): number {
+  const scoped = model.nodes.filter(n => {
+    const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => s.toLowerCase() === n.schema.toLowerCase());
+    const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type);
+    return schemaOk && typeOk;
+  });
+  const scopedIds = new Set(scoped.map(n => n.id));
+  const scopedModel = {
+    ...model,
+    nodes: scoped,
+    edges: model.edges.filter(e => scopedIds.has(e.source) && scopedIds.has(e.target)),
+  };
+  return applyIsolationFilter(scopedModel, activeFilter.hideIsolated ?? false).nodes.length;
+}
+
 /**
  * Retrieves the high-level context of the current project for the AI.
  *
@@ -162,13 +182,7 @@ export function getContext(
   projectName: string | null,
 ) {
   const visibleNodes = activeFilter
-    ? model.nodes.filter(n => {
-        const schemas = new Set(activeFilter.schemas);
-        const types   = new Set(activeFilter.types);
-        if (schemas.size > 0 && !schemas.has(n.schema)) return false;
-        if (types.size > 0 && !types.has(n.type)) return false;
-        return true;
-      }).length
+    ? countVisibleNodes(model, activeFilter)
     : model.nodes.length;
 
   return {
@@ -222,17 +236,17 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
  * them.
  *
  * @param query - The user-provided search string.
- * @returns Success status or an error with a hint.
+ * @returns `null` for a usable query; otherwise the rejection naming the fix.
  */
-function validateQuery(query: string): { ok: true } | { ok: false; error: string; hint: string } {
+function validateQuery(query: string): ToolRejection | null {
   const trimmed = query.trim();
   if (trimmed.length < 1) {
-    return { ok: false, error: 'query_too_short', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` };
+    return makeRejection({ code: 'query_too_short', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
-    return { ok: false, error: 'query_not_a_name', hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` };
+    return makeRejection({ code: 'query_not_a_name', hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
   }
-  return { ok: true };
+  return null;
 }
 
 
@@ -254,6 +268,8 @@ function validateQuery(query: string): { ok: true } | { ok: false; error: string
  * @param schemas - Optional filter for schemas.
  * @param mode - Search mode ('substring' or 'regex').
  * @param activeFilter - Current UI filter state to tag results.
+ * @param onDebug - Optional debug sink; logged when `normalizeSearchQueryInput` splits a
+ * schema-qualified query (e.g. `dbo.FactSales`) into a schema hint and a bare name.
  * @returns A list of matches with metadata, the `by_type` breakdown of that list, and AI hints.
  */
 export function searchObjects(
@@ -263,9 +279,14 @@ export function searchObjects(
   schemas?: string[],
   mode: 'substring' | 'regex' = 'substring',
   activeFilter?: SerializedFilterState | null,
+  onDebug?: (msg: string) => void,
+  cursor?: string,
 ) {
   const isRegex = mode === 'regex';
   const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
+  if (normalizedQuery.schemaHint) {
+    onDebug?.(`[AI] search-query-normalized raw=${JSON.stringify(query)} schema=${normalizedQuery.schemaHint} name=${normalizedQuery.query}`);
+  }
   const normalizedSchemas =
     schemas && schemas.length > 0
       ? schemas
@@ -275,30 +296,29 @@ export function searchObjects(
     && WILDCARD_ALL_TOKENS.has((isRegex ? query : normalizedQuery.query).trim());
 
   if (!isWildcardAllQuery && normalizedQuery.query.length > REGEX_MAX_LENGTH) {
-    return { error: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const effectiveQuery = isWildcardAllQuery ? '' : (isRegex ? normalizedQuery.query : normalizedQuery.query.trim());
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
-      return { error: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) };
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) });
     }
   }
   const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
 
   if (!isRegex && !listAllInSchemas) {
-    const validation = validateQuery(normalizedQuery.query);
-    if (!validation.ok) {
-      return { error: validation.error, hint: validation.hint };
-    }
+    const rejection = validateQuery(normalizedQuery.query);
+    if (rejection) return rejection;
   }
 
   const typeSet   = types?.length ? new Set<ObjectType>(types) : undefined;
   const schemaSet = appliedSchemaFilter ? new Set<string>(normalizedSchemas) : undefined;
   const schemaSetLower = appliedSchemaFilter ? new Set(appliedSchemaFilter.map(s => s.toLowerCase())) : undefined;
 
-  const nameHits = listAllInSchemas
+  const offset = cursorOffset(cursor);
+  const nameHits = offset > 0 ? [] : listAllInSchemas
     ? (model.nodes as SearchableNode[]).filter(n =>
         (!schemaSetLower || schemaSetLower.has(n.schema.toLowerCase())) &&
         (!typeSet || typeSet.has(n.type)))
@@ -314,9 +334,11 @@ export function searchObjects(
   let columnNodes = model.nodes as SearchableNode[];
   if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
   if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
-  const columnHits = !isRegex && !listAllInSchemas
-    ? searchColumns(columnNodes, effectiveQuery, COLUMN_SEARCH_LIMIT)
+  const allColumnHits = !isRegex && !listAllInSchemas
+    ? searchColumns(columnNodes, effectiveQuery, Number.MAX_SAFE_INTEGER)
     : [];
+  const columnHits = allColumnHits.slice(offset, offset + COLUMN_SEARCH_PAGE);
+  const columnCursor = nextCursor(offset + COLUMN_SEARCH_PAGE, allColumnHits.length);
   const seenIds = new Set(nameHits.map(n => n.id));
 
   const nameMatchLabel: 'name' | 'schema' = listAllInSchemas ? 'schema' : 'name';
@@ -352,11 +374,7 @@ export function searchObjects(
   );
 
   const visibleNodeCount = activeFilter
-    ? model.nodes.filter(n => {
-        const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => s.toLowerCase() === n.schema.toLowerCase());
-        const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type);
-        return schemaOk && typeOk;
-      }).length
+    ? countVisibleNodes(model, activeFilter)
     : model.nodes.length;
   const filterContext = {
     active_schemas: activeFilter?.schemas?.length ? activeFilter.schemas : null,
@@ -373,6 +391,7 @@ export function searchObjects(
     total: taggedResults.length,
     by_type: byType,
     filter_context: filterContext,
+    ...(columnCursor !== undefined ? { next_cursor: columnCursor } : {}),
   };
 
   if (taggedResults.length === 0) {
@@ -405,7 +424,8 @@ export function searchObjects(
 }
 
 
-const NEIGHBOR_CAP = 25;
+/** Neighbours per direction one `lineage_get_object_detail` page carries; the rest is read with `cursor`. */
+const NEIGHBOR_PAGE = 25;
 
 /** Corrective hint on every per-id `not_found` rejection that names an object id — points the model at the search tool instead of leaving it to guess a corrected id. */
 const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
@@ -415,8 +435,8 @@ const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact objec
  *
  * @remarks
  * This is the primary "drill-down" tool for the AI. It provides a high-fidelity view of a single node,
- * including its schema, name, type, and relationships. Upstream and downstream neighbors are capped
- * to prevent token overflow, but DDL and column lists are always delivered in full.
+ * including its schema, name, type, and relationships. Upstream and downstream neighbors are paged
+ * with `cursor`; DDL and column lists are always delivered in full on the first page.
  *
  * @param model - The full database model.
  * @param id - The unique identifier of the object (e.g., "schema.name").
@@ -427,12 +447,13 @@ export function getObjectDetail(
   model: DatabaseModel,
   id: string,
   store?: import('../../engine/columnStore').ColumnStore,
+  cursor?: string,
 ): object {
   const normalizedId = normalizeName(id);
   const nodeMap   = buildNodeMap(model);
   const node      = nodeMap.get(normalizedId);
   if (!node) {
-    return { error: REJECTION_CODES.notFound, id, hint: SEARCH_OBJECTS_HINT };
+    return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { id } });
   }
 
   const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
@@ -440,10 +461,23 @@ export function getObjectDetail(
 
   const upRaw  = neighbors.in;
   const dnRaw  = neighbors.out;
-  const up     = upRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, true));
-  const dn     = dnRaw.slice(0, NEIGHBOR_CAP).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, false));
-  const upMore = Math.max(0, upRaw.length - NEIGHBOR_CAP);
-  const dnMore = Math.max(0, dnRaw.length - NEIGHBOR_CAP);
+  const offset = cursorOffset(cursor);
+  const up     = upRaw.slice(offset, offset + NEIGHBOR_PAGE).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, true));
+  const dn     = dnRaw.slice(offset, offset + NEIGHBOR_PAGE).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, false));
+  const upMore = Math.max(0, upRaw.length - offset - NEIGHBOR_PAGE);
+  const dnMore = Math.max(0, dnRaw.length - offset - NEIGHBOR_PAGE);
+  const neighborCursor = nextCursor(offset + NEIGHBOR_PAGE, Math.max(upRaw.length, dnRaw.length));
+
+  if (offset > 0) {
+    return strip({
+      id: node.id,
+      up: up.length > 0 ? up : undefined,
+      dn: dn.length > 0 ? dn : undefined,
+      up_more: upMore > 0 ? upMore : undefined,
+      dn_more: dnMore > 0 ? dnMore : undefined,
+      next_cursor: neighborCursor,
+    });
+  }
 
   const cols = getNodeColumns(node.id, nodeMap, store);
   const columns    = cols?.map(c => presentColumn(c)) ?? undefined;
@@ -462,6 +496,7 @@ export function getObjectDetail(
     dn:            dn.length > 0 ? dn : undefined,
     up_more:       upMore > 0 ? upMore : undefined,
     dn_more:       dnMore > 0 ? dnMore : undefined,
+    next_cursor:   neighborCursor,
   });
 
   const ddl = getNodeDdl(node.id, nodeMap, store) ?? null;
@@ -500,7 +535,7 @@ export function getScopeBundle(
   const origin = normalizeName(input.origin);
   const originNode = nodeMap.get(origin);
   if (!originNode) {
-    return { error: REJECTION_CODES.notFound, origin: input.origin, hint: 'Call lineage_search_objects to resolve the canonical origin ID.' };
+    return makeRejection({ code: REJECTION_CODES.notFound, hint: 'Call lineage_search_objects to resolve the canonical origin ID.', detail: { origin: input.origin } });
   }
 
   const direction = input.direction ?? 'bidirectional';
@@ -511,10 +546,10 @@ export function getScopeBundle(
   const singleDepth = input.depth ?? 3;
 
   if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
-    return {
-      error: ASYMMETRIC_DEPTH_BOTH_ZERO,
+    return makeRejection({
+      code: ASYMMETRIC_DEPTH_BOTH_ZERO,
       hint: 'upstream_depth and downstream_depth are both 0, which would return only the origin node with no neighbors. Set at least one side above 0, or call lineage_get_object_detail for a single object.',
-    };
+    });
   }
 
   const scopeIds = new Set<string>([origin]);
@@ -533,7 +568,7 @@ export function getScopeBundle(
       const id = String(key).toLowerCase();
       scopeIds.add(id);
       distance?.set(id, depth);
-      if (!checkScopeBudget(budget, scopeIds.size, 0).ok) nodeBudgetExceeded = true;
+      if (checkScopeBudget(budget, scopeIds.size, 0)) nodeBudgetExceeded = true;
       return false;
     }, { mode });
   };
@@ -547,22 +582,23 @@ export function getScopeBundle(
     walkWithCap('outbound', downstreamDepth!, downstreamDistance);
   }
 
-  const overBudgetScopeReply = (
-    admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
-  ): Record<string, unknown> => ({
+  const overBudgetScopeReply = (admission: DiscoveryBudgetRejection): ToolRejection => ({
     ...admission,
-    scope_proposal: {
-      origin: originNode.id,
-      direction,
-      depth: singleDepth,
-      upstream_depth: upstreamDepth,
-      downstream_depth: downstreamDepth,
+    detail: {
+      ...admission.detail,
+      scope_proposal: {
+        origin: originNode.id,
+        direction,
+        depth: singleDepth,
+        upstream_depth: upstreamDepth,
+        downstream_depth: downstreamDepth,
+      },
     },
   });
 
   if (nodeBudgetExceeded) {
     const admission = checkScopeBudget(budget, scopeIds.size, 0);
-    if (!admission.ok) return overBudgetScopeReply(admission);
+    if (admission) return overBudgetScopeReply(admission);
   }
 
   let ddlChars = 0;
@@ -570,10 +606,10 @@ export function getScopeBundle(
     const ddl = getNodeDdl(id, nodeMap, store);
     if (ddl) ddlChars += ddl.length;
   }
-  const ddlFits = checkScopeBudget(budget, 0, ddlChars).ok;
+  const ddlFits = checkScopeBudget(budget, 0, ddlChars) === null;
   if (includeDdl && !ddlFits) {
     const admission = checkScopeBudget(budget, scopeIds.size, ddlChars);
-    if (!admission.ok) return overBudgetScopeReply(admission);
+    if (admission) return overBudgetScopeReply(admission);
   }
   const effectiveIncludeDdl = includeDdl === false
     ? false
@@ -648,7 +684,8 @@ export function getScopeBundle(
  * @param model - Loaded database model.
  * @param ids - Node ids to inspect (pre-validated by the engine).
  * @param store - Optional column store for high-fidelity column data.
- * @returns `{ results: [...], total }` — one row per input id, columns and FKs only.
+ * @returns `{ results: [...], total }` — one row per input id, columns and FKs only. `columns` is
+ * always present, `[]` for an object with none (a procedure), so an empty answer reads as an answer.
  */
 export function getNeighborColumns(
   model: DatabaseModel,
@@ -663,14 +700,16 @@ export function getNeighborColumns(
     }
     const cols = getNodeColumns(id, nodeMap, store);
     const foreignKeys = presentForeignKeys(node.fks);
-    return strip({
-      id:           node.id,
-      schema:       node.schema,
-      name:         node.name,
-      type:         node.type,
-      columns:      cols?.length ? cols.map(c => presentColumn(c)) : undefined,
-      foreign_keys: foreignKeys?.length ? foreignKeys : undefined,
-    });
+    return {
+      ...strip({
+        id:           node.id,
+        schema:       node.schema,
+        name:         node.name,
+        type:         node.type,
+        foreign_keys: foreignKeys?.length ? foreignKeys : undefined,
+      }),
+      columns: (cols ?? []).map(c => presentColumn(c)),
+    };
   });
   return { results, total: results.length };
 }
@@ -711,7 +750,7 @@ export function runAnalysis(
   const result = runGraphAnalysis(graph, type, analysisConfig, DEFAULT_CONFIG.maxNodes);
 
   const groupChars = JSON.stringify(result.groups).length;
-  if (!checkScopeBudget(budget, 0, groupChars).ok) {
+  if (checkScopeBudget(budget, 0, groupChars)) {
     const narrowByType: Partial<Record<AnalysisType, string>> = {
       hubs:    'Raise min_degree',
       islands: 'Lower max_size',
@@ -765,6 +804,9 @@ function toLineRanges(lines: number[]): string {
  */
 const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({ id: '', name: '', type: '', line: 0, text: '', context: '' }).length;
 
+/** Hint on a located long line: the row is not served as text, the DDL read shows the line whole. */
+const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_CHARS} characters, so no row shows them. Read the object's DDL with lineage_get_object_detail and go to the line number; match_offset is where the match starts within the line.`;
+
 /**
  * Searches the DDL/source code of scriptable objects with a regular expression.
  *
@@ -790,12 +832,12 @@ const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({ id: '', name: '', type: '', li
  * rows. `objects` is this list's length, so the count and the
  * breakdown cannot disagree. Additive: every hit stays in `results` with its own flag.
  *
- * Matching is per line, over at most `SEARCH_LINE_MAX_CHARS` characters of each line, which bounds
- * what one regex execution can cost. A line past that cap is named in `searched.truncated_lines`
- * — object id and line ranges — in every result shape, empty and over-budget included, since a
- * hit past the cap is exactly the one the result cannot show. Omitted when no line is cut. The list
- * is measured with the reply it ships in; where it would push that reply past the discovery budget
- * it is stated as counts (`object_count`, `line_count`, `objects_omitted`) with a hint instead.
+ * Matching is per line, over the whole line. A matching line longer than `SEARCH_LINE_MAX_CHARS`
+ * is not served as a row: it is located in `searched.long_lines` — object id, line number, line
+ * length and match offset, with a hint naming the DDL read that shows the line whole — in every
+ * result shape, empty and over-budget included. Omitted when no matching line is that long. The
+ * list is measured with the reply it ships in; where it would push that reply past the discovery
+ * budget it is stated as counts (`object_count`, `line_count`, `objects_omitted`) with a hint instead.
  *
  * @param model - The database model.
  * @param query - The regex pattern.
@@ -815,12 +857,12 @@ export function searchDdl(
   onDebug?: (msg: string) => void,
 ): object {
   if (query.length > REGEX_MAX_LENGTH) {
-    return { error: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` };
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const compiled = compileSearchRegex(query, onDebug);
   if (!compiled.ok) {
-    return { error: REJECTION_CODES.invalidRegex, hint: regexRejectHint(query, compiled) };
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(query, compiled) });
   }
 
   const ddlTypes: ObjectType[] = types
@@ -833,21 +875,22 @@ export function searchDdl(
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
   const rowAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_ROW_CHARS);
-  const scanned = scanBodyMatches(searchableNodes, compiled.regex, typeSet, count => rowAdmission(count).ok);
+  const scanned = scanBodyMatches(searchableNodes, compiled.regex, typeSet, count => rowAdmission(count) === null);
 
   const bodies = searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length;
-  const cutLineCount = scanned.truncated.reduce((sum, t) => sum + t.lines.length, 0);
+  const cutLineCount = scanned.oversized.reduce((sum, t) => sum + t.lines.length, 0);
   if (cutLineCount > 0) {
-    onDebug?.(`searchDdl: ${cutLineCount} lines in ${scanned.truncated.length} objects exceed ${SEARCH_LINE_MAX_CHARS} characters — searched up to that cap, stated as searched.truncated_lines, pattern="${query}"`);
+    onDebug?.(`searchDdl: ${cutLineCount} matching lines in ${scanned.oversized.length} objects exceed ${SEARCH_LINE_MAX_CHARS} characters — located in searched.long_lines, pattern="${query}"`);
   }
   const searchedListing = {
     bodies,
     types: ddlTypes,
     ...(cutLineCount > 0
       ? {
-        truncated_lines: {
+        long_lines: {
           max_chars: SEARCH_LINE_MAX_CHARS,
-          objects:   scanned.truncated.map(t => ({ id: t.node.id, lines: toLineRanges(t.lines) })),
+          objects:   scanned.oversized.map(t => ({ id: t.node.id, lines: t.lines })),
+          hint:      LONG_LINE_HINT,
         },
       }
       : {}),
@@ -855,30 +898,30 @@ export function searchDdl(
   const searchedCounted = {
     bodies,
     types: ddlTypes,
-    truncated_lines: {
+    long_lines: {
       max_chars:       SEARCH_LINE_MAX_CHARS,
-      object_count:    scanned.truncated.length,
+      object_count:    scanned.oversized.length,
       line_count:      cutLineCount,
       objects_omitted: true as const,
-      hint: 'The objects with cut lines exceed the discovery token budget and were not listed. Restrict types[] to list them.',
+      hint: 'The objects with long matching lines exceed the discovery token budget and were not listed. Restrict types[] to list them.',
     },
   };
-  const fitsBudget = (reply: object) => checkScopeBudget(budget, 0, JSON.stringify(reply).length).ok;
+  const fitsBudget = (reply: object) => checkScopeBudget(budget, 0, JSON.stringify(reply).length) === null;
   const withSearched = <T extends object>(build: (searched: typeof searchedListing | typeof searchedCounted) => T): T => {
     const listed = build(searchedListing);
     if (cutLineCount === 0 || fitsBudget(listed)) return listed;
-    onDebug?.(`searchDdl: the ${scanned.truncated.length} objects with cut lines exceed the discovery token budget — stated as counts, pattern="${query}"`);
+    onDebug?.(`searchDdl: the ${scanned.oversized.length} objects with long matching lines exceed the discovery token budget — stated as counts, pattern="${query}"`);
     return build(searchedCounted);
   };
 
   const overBudget = (
-    admission: Extract<ReturnType<typeof checkScopeBudget>, { ok: false }>,
+    admission: DiscoveryBudgetRejection,
     total: number,
     objects: number,
   ) => withSearched(searched => ({
     reason:          admission.reason,
-    counts:          admission.counts,
-    limits:          admission.limits,
+    counts:          admission.detail.counts,
+    limits:          admission.detail.limits,
     total,
     objects,
     searched,
@@ -887,7 +930,7 @@ export function searchDdl(
   }));
 
   const countAdmission = rowAdmission(scanned.total);
-  if (!countAdmission.ok) {
+  if (countAdmission) {
     onDebug?.(`searchDdl: ${scanned.total} matches in ${scanned.objects} objects exceed the discovery token budget before every row is built — matches omitted, pattern="${query}"`);
     return overBudget(countAdmission, scanned.total, scanned.objects);
   }
@@ -933,8 +976,8 @@ export function searchDdl(
   }));
   const resultChars = JSON.stringify(payload).length;
   const admission = checkScopeBudget(budget, 0, resultChars);
-  if (!admission.ok) {
-    onDebug?.(`searchDdl: ${results.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${admission.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
+  if (admission) {
+    onDebug?.(`searchDdl: ${results.length} matches in ${objects} objects exceed the discovery token budget (${estimateTokens(resultChars)} > ${admission.detail.limits.token_budget} tokens) — matches omitted, pattern="${query}"`);
     return overBudget(admission, results.length, objects);
   }
   return payload;

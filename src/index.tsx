@@ -1,6 +1,9 @@
 import { createRoot } from 'react-dom/client';
+import { z } from 'zod';
 import './index.css';
 import { notifyUser } from './utils/notify';
+
+z.config({ jitless: true });
 
 const root = document.getElementById('root');
 if (!root) {

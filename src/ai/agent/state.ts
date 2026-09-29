@@ -1,42 +1,13 @@
-import { Annotation } from '@langchain/langgraph';
-import {
-  modelSystemMessage,
-  type ModelMessage,
-} from '../model/modelPort';
+import { Annotation, messagesStateReducer } from '@langchain/langgraph';
+import type { ModelMessage } from '../model/modelPort';
 import { z } from 'zod';
 import { AiGateRefineSchema, type AiGateRefine } from '../../engine/shared/bridgeContract';
-import { coercedStringArray, coercedStringNull } from '../support/inputNormalization';
 import { ColumnIdentifierSchema } from '../tools/toolSchemas';
 import type { TurnOutcome } from '../core/agentCore';
 import type { StagePromptContext } from '../prompting/hostPrompts';
 import type { PendingGate } from '../session/sessionPhase';
 import type { SmState } from '../sm/smTypes';
 import type { ToolPhaseAttemptState } from './toolAttempt';
-
-/**
- * Sentinel first element of a `messages` update that makes the reducer replace prior history.
- *
- * @remarks
- * Identity-compared, frozen, and stripped by the reducer so it never reaches the model.
- */
-export const RESET_HISTORY: ModelMessage = Object.freeze(
-  modelSystemMessage('__RESET_HISTORY__'),
-);
-
-/**
- * Reduces LangGraph `messages` updates by appending deltas unless {@link RESET_HISTORY} is present.
- *
- * @remarks
- * The replace path prevents active-hop prompt history from accumulating across sliding-memory wipes.
- *
- * @param left - Current channel value.
- * @param right - Channel update emitted by the current graph node.
- * @returns The appended or replacement message history for the next graph state.
- */
-function messagesReducer(left: ModelMessage[], right: ModelMessage[]): ModelMessage[] {
-  const reset = right.indexOf(RESET_HISTORY);
-  return reset >= 0 ? right.slice(reset + 1) : left.concat(right);
-}
 
 /**
  * Explicit entry route chosen before phase execution starts.
@@ -61,17 +32,14 @@ export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 
 export const EntryDetectionSchema = z.object({
   entry: z.enum(['column_trace', 'visual_render', 'discovery'])
     .describe('Discrete entry route selected from the user request.'),
-  targetColumns: z.preprocess(
-    value => (Array.isArray(value) && value.length === 0 ? null : value),
-    coercedStringNull(coercedStringArray(ColumnIdentifierSchema).nullable().default(null)),
-  )
+  targetColumns: z.array(ColumnIdentifierSchema).nullish()
     .describe('Explicit user-named columns for column_trace; null for discovery or visual_render.'),
 }).strict().superRefine((value, ctx) => {
   if (value.entry === 'column_trace' && (!value.targetColumns || value.targetColumns.length === 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'column_trace requires at least one explicitly named column.' });
   }
-  if (value.entry !== 'column_trace' && value.targetColumns !== null) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry} forbids targetColumns.` });
+  if (value.entry !== 'column_trace' && value.targetColumns != null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry === 'discovery' ? 'Discovery' : 'Visual render'} does not take \`targetColumns\`. Call detect_entry again with \`targetColumns\` omitted.` });
   }
 });
 /**
@@ -96,6 +64,18 @@ export const GateDecisionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('cancel') }).strict(),
 ]);
 
+/**
+ * Structured reading of one typed chat reply while an approval gate is pending.
+ *
+ * @remarks
+ * The model — never a keyword match — decides what the user's free text asks the pending
+ * proposal to do; the verbatim text then rides the decision as the refinement instruction.
+ */
+export const GateReplySchema = z.object({
+  action: z.enum(['approve', 'change', 'cancel', 'other'])
+    .describe('What the typed reply asks of the pending exploration proposal.'),
+}).strict();
+
 /** Lifecycle marker for the production LangGraph runtime. */
 type AgentGraphPhase =
   | 'init'
@@ -105,6 +85,8 @@ type AgentGraphPhase =
   | 'sm_entry'
   | 'gate'
   | 'gate_refine'
+  | 'gate_approve'
+  | 'gate_cancel'
   | 'active_coordinator'
   | 'active_worker'
   | 'synthesis'
@@ -114,7 +96,6 @@ type AgentGraphPhase =
 /** Stable machine-readable graph failures that callers may diagnose without parsing prose. */
 export type AgentErrorCode =
   | 'invalid_engine_checkpoint'
-  | 'model_output_truncated'
   | 'incompatible_tool_call_format';
 
 const lastValue = <T>(_current: T, next: T): T => next;
@@ -130,7 +111,7 @@ const lastValue = <T>(_current: T, next: T): T => next;
 export const AgentState = Annotation.Root({
   prompt: Annotation<string>({ reducer: lastValue, default: () => '' }),
   ctx: Annotation<StagePromptContext | null>({ reducer: lastValue, default: () => null }),
-  messages: Annotation<ModelMessage[]>({ reducer: messagesReducer, default: () => [] }),
+  messages: Annotation<ModelMessage[]>({ reducer: messagesStateReducer, default: () => [] }),
   entry: Annotation<AgentEntryRoute | null>({ reducer: lastValue, default: () => null }),
   executionTrigger: Annotation<AgentExecutionTrigger>({ reducer: lastValue, default: () => 'free_text' }),
   targetColumns: Annotation<string[] | null>({ reducer: lastValue, default: () => null }),

@@ -6,12 +6,12 @@ import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { rootPath } from '../helpers/testUtils';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
+import { DEFAULT_AI_ENABLED } from '../../../src/configCore';
 import { DEFAULT_MAX_ROUNDS } from '../../../src/ai/core/agentCore';
 import {
   DEFAULT_DISCOVERY_NODE_CAP,
   DEFAULT_DISCOVERY_TOKEN_BUDGET,
-  DEFAULT_EXPLORATION_NODE_CAP,
-  DEFAULT_EXPLORATION_TOKEN_BUDGET,
+  DEFAULT_MAX_TRACE_COLUMNS,
 } from '../../../src/ai/support/tokenBudget';
 
 type Setting = { default?: unknown };
@@ -47,12 +47,11 @@ const runtimeDefaults: Record<string, unknown> = {
   'dataLineageViz.renderLimit': DEFAULT_CONFIG.renderLimit,
   'dataLineageViz.parseRulesFile': '',
   'dataLineageViz.dmvQueriesFile': '',
-  'dataLineageViz.ai.enabled': true,
+  'dataLineageViz.ai.enabled': DEFAULT_AI_ENABLED,
   'dataLineageViz.ai.maxRounds': DEFAULT_MAX_ROUNDS,
+  'dataLineageViz.ai.maxTraceColumns': DEFAULT_MAX_TRACE_COLUMNS,
   'dataLineageViz.ai.discoveryNodeCap': DEFAULT_DISCOVERY_NODE_CAP,
   'dataLineageViz.ai.discoveryTokenBudget': DEFAULT_DISCOVERY_TOKEN_BUDGET,
-  'dataLineageViz.ai.explorationNodeCap': DEFAULT_EXPLORATION_NODE_CAP,
-  'dataLineageViz.ai.explorationTokenBudget': DEFAULT_EXPLORATION_TOKEN_BUDGET,
   'dataLineageViz.ai.outputTemplateFile': '',
 };
 

@@ -6,18 +6,14 @@ import { announceLaneTier } from './laneTier';
  * Drives a real `@lineage` participant turn through public API and observes what it streams.
  *
  * @remarks
- * Replaces the former `chat-automation` lane, which reached the same conclusion through the
- * internal `workbench.action.chat.open` command and a CDP scrape of the rendered chat panel. The
- * seam used here needs no production change and no internal API: `activate()` returns the
- * participant ({@link file://./../../src/extensionRuntime.ts} `:278`) and `handleChatRequest` is
- * public ({@link file://./../../src/ai/participant/lineageParticipant.ts} `:213`).
+ * Needs no production change and no internal API: `activate()` returns the participant
+ * ({@link file://./../../src/extensionRuntime.ts} `:278`) and `handleChatRequest` is public
+ * ({@link file://./../../src/ai/participant/lineageParticipant.ts} `:213`).
  *
  * Known limit, stated rather than hidden: the recording stream below is a double, so this asserts
  * that the participant *called* `stream.markdown` / `progress` / `button`, not that VS Code
- * rendered them. The deleted CDP probe was the only check that ever observed the real renderer;
- * that specific observation is now UAT-only. Everything it asserted that did not depend on CDP —
- * that Copilot is genuinely absent, and that the fixture model resolves from the public API — is
- * preserved below.
+ * rendered them. That Copilot is genuinely absent, and that the fixture model resolves from the
+ * public API, is asserted directly; rendering fidelity is out of scope for this suite.
  */
 suite('Participant turn — public API, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';

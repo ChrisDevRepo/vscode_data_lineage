@@ -2,10 +2,11 @@ import type { InteractionRuleResult } from '../types';
 import type { ZodError, ZodIssue } from 'zod';
 import { DEFAULT_EXPLORATION_QUESTION } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import { makeRejection } from '../../support/toolErrorEnvelope';
 import {
   ASYMMETRIC_DEPTH_BOTH_ZERO,
-  ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
 } from '../../../engine/shared/explorationDepthContract';
+import { CT_TARGET_COLUMNS_RECOVERY } from '../../tools/toolSchemas';
 
 type StartRejectIssue = { code: string; path: string; message: string; action: string };
 
@@ -41,31 +42,37 @@ export function resolveCanonicalQuestion(sources: {
     ?? pick(sources.modelQuestion);
 }
 
-const BB_ACTION = 'Omit targetColumns and resubmit the BB specification. If the provider emits an empty array, the encoding boundary normalizes it automatically.';
-const CT_ACTION = 'Provide at least one named targetColumns value and resubmit CT.';
+const BB_ACTION = 'Omit targetColumns and resubmit the BB specification.';
 
 function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartRejectIssue {
   const path = issue.path.join('.') || '(root)';
   const tag = issue.code === 'custom' ? issue.params?.startIssue : undefined;
   if (tag === 'bb_target_columns_forbidden') return { code: REJECTION_CODES.ctFieldForbiddenInBb, path, message: issue.message, action: BB_ACTION };
-  if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message: issue.message, action: CT_ACTION };
+  if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message: issue.message, action: CT_TARGET_COLUMNS_RECOVERY };
   if (tag === ASYMMETRIC_DEPTH_BOTH_ZERO) return { code: ASYMMETRIC_DEPTH_BOTH_ZERO, path, message: issue.message, action: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' };
-  if (tag === ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL) return { code: ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL, path, message: issue.message, action: 'Asymmetric upstream/downstream depth requires direction "bidirectional". For one direction only, use direction "upstream"/"downstream" with a symmetric depth (a hard border); or keep "bidirectional" and set the other side to 0 to permanently exclude it.' };
   if (issue.code === 'unrecognized_keys') return { code: 'unknown_field', path: issue.keys.join(',') || path, message: issue.message, action: 'Remove the unknown field and resubmit.' };
   if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message: issue.message, action: `Correct ${path} and resubmit.` };
-  if (issue.code === 'invalid_value' && ['analysisMode', 'classification', 'direction'].includes(path)) {
+  if (issue.code === 'invalid_value' && ['analysisMode', 'classification'].includes(path)) {
     if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message: issue.message, action: `Provide ${path} and resubmit.` };
     return { code: 'invalid_enum', path, message: issue.message, action: `Use an allowed ${path} value and resubmit.` };
   }
-  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message: issue.message, action: `Correct ${path} and resubmit.` };
+  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' || tag === 'depth_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message: issue.message, action: `Correct ${path} and resubmit.` };
+}
+
+/** One reason line: the issue's path with its message and own action, minus text the hint already serves. */
+function startIssueLine(issue: StartRejectIssue, hint: string): string {
+  const parts = [...new Set([issue.message, issue.action])].filter(part => part !== hint);
+  return parts.length > 0 ? `${issue.path}: ${parts.join(' ')}` : issue.path;
 }
 
 /**
  * Builds a stable, bounded rejection envelope from start-exploration Zod issues.
  *
  * @param error - Strict schema failure whose issue meaning must be preserved.
- * @param input - Normalized payload used to distinguish absent enum fields from invalid values.
- * @returns A compatible rejection envelope containing at most three unique field issues.
+ * @param input - Raw payload used to distinguish absent enum fields from invalid values.
+ * @returns A compatible rejection envelope containing at most three unique field issues; the
+ * `reason` states every issue (with its own action when it differs from the top one) and the top
+ * issue's action is served once, as `hint`.
  */
 export function buildStartExplorationReject(error: ZodError, input?: Record<string, unknown>): NonNullable<InteractionRuleResult> {
   const unique = new Map<string, StartRejectIssue>();
@@ -76,7 +83,13 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
   }
   const issues = [...unique.values()];
   const top = issues[0] ?? { code: 'invalid_value', path: '(root)', message: 'Invalid input.', action: 'Correct the input and resubmit.' };
-  return { error: top.code, hint: top.action, next_action: top.action, detail: { issues } };
+  return makeRejection({
+    code: top.code,
+    reason: issues.length > 0 ? issues.map(issue => startIssueLine(issue, top.action)).join('\n') : top.message,
+    hint: top.action,
+    detail: { issues: issues.map(({ action, ...issue }) => (action === top.action ? issue : { ...issue, action })) },
+    issuePaths: issues.map(issue => issue.path),
+  });
 }
 
 /**
@@ -87,7 +100,7 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
  */
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
-  return { error: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_ACTION, next_action: BB_ACTION };
+  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_ACTION });
 }
 
 /**
@@ -105,11 +118,11 @@ export function evaluateAlreadyStartedRule(
   isRefining: boolean,
 ): InteractionRuleResult {
   if (!(hasLiveEngine && sameSession && !isRefining)) return null;
-  return {
-    error: REJECTION_CODES.alreadyStarted,
+  return makeRejection({
+    code: REJECTION_CODES.alreadyStarted,
     hint: 'start_exploration is one-shot per turn. Use submit_findings to continue the current agenda. After complete_rejected, the unvisited neighbors are already queued at priority 3 - the next submit_findings will present one of them.',
-    next_action: 'submit_findings',
-  };
+    detail: { next_action: 'submit_findings' },
+  });
 }
 
 /**
@@ -124,11 +137,11 @@ export function evaluateParallelStartRule(
   currentRoundId: number,
 ): InteractionRuleResult {
   if (priorStartRoundId === null || priorStartRoundId !== currentRoundId) return null;
-  return {
-    error: 'parallel_call_forbidden',
+  return makeRejection({
+    code: 'parallel_call_forbidden',
     hint: 'start_exploration is strictly serial and one-shot per round. Use submit_findings for the queued neighbors - after complete_rejected they are queued at priority 3 and will be served on the next submit_findings.',
-    next_action: 'submit_findings',
-  };
+    detail: { next_action: 'submit_findings' },
+  });
 }
 
 /**
@@ -139,32 +152,8 @@ export function evaluateParallelStartRule(
  */
 export function evaluateSupplementPrereqRule(engineStatus: string | null): InteractionRuleResult {
   if (engineStatus === 'complete') return null;
-  return {
-    error: REJECTION_CODES.supplementRequiresCompleteEngine,
+  return makeRejection({
+    code: REJECTION_CODES.supplementRequiresCompleteEngine,
     hint: `supplement requires a completed prior exploration. Current engine status: ${engineStatus ?? 'none'}. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').`,
-  };
-}
-
-/**
- * Scope-to-round-budget guard result payload.
- *
- * @param scopeSize - The size of the proposed scope.
- * @param safeMaxHops - The maximum number of hops allowed within budget.
- * @param maxRounds - The maximum rounds allowed for the session.
- * @returns A rule result error if scope exceeds budget, otherwise null.
- */
-export function evaluateScopeBudgetRule(
-  scopeSize: number,
-  safeMaxHops: number,
-  maxRounds: number,
-): InteractionRuleResult {
-  if (scopeSize <= safeMaxHops) return null;
-  return {
-    error: 'scope_exceeds_budget',
-    scope_size: scopeSize,
-    max_rounds: maxRounds,
-    safe_max_hops: safeMaxHops,
-    hint: `Scope has ${scopeSize} nodes; sliding-memory budget allows ~${safeMaxHops} hops (of ${maxRounds} with 30% reserve). Narrow structurally with excludeSchemas/excludeNodeIds (or passNodeIds), or ask the user which subset of the lineage they want. Do not invent a depth.`,
-    next_action: 'narrow_scope',
-  };
+  });
 }

@@ -19,6 +19,7 @@ import {
   UNKNOWN_DB_PLATFORM,
 } from '../engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
+import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import {
   promptForConnection, connectDirect, stripSensitiveFields,
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
@@ -51,6 +52,7 @@ import {
   stripFocusNodeLinks,
 } from '../engine/shared/bridgeContract';
 import { summarizeZodError, postToDetail } from './host';
+import { readDeclaredNumericSetting } from '../configCore';
 
 /**
  * Maps each main-panel message type to a handler whose `msg` parameter is
@@ -506,7 +508,16 @@ export function createMessageHandlers(
         const data = await host.readFile(uris[0]);
         if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
         const config = await readExtensionConfig(host);
-        const { preview, elements, dspName } = await extractSchemaPreview(data);
+        let extracted: Awaited<ReturnType<typeof extractSchemaPreview>>;
+        try {
+          extracted = await extractSchemaPreview(data);
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          host.log('error', 'Dacpac', `Open ${uris[0].fsPath}`, err);
+          host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
+          return;
+        }
+        const { preview, elements, dspName } = extracted;
         cachedElements = elements; cachedDspName = dspName;
         host.postMessage({
           type: 'dacpac-schema-preview',
@@ -554,8 +565,8 @@ export function createMessageHandlers(
             const logger = Logger.create(outputChannel, 'Parse');
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
               externalRefsEnabled: config.externalRefs.enabled,
-              maxNodes: config.maxNodes,
             });
+            if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
             logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
             setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
             if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
@@ -572,7 +583,9 @@ export function createMessageHandlers(
             host.log('warn', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
             host.postMessage({ type: 'last-dacpac-gone' });
           } else {
-            throw err;
+            const reason = err instanceof Error ? err.message : String(err);
+            host.log('error', 'Bridge', `Load project ${project.connection.path}`, err);
+            host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}`, phase: 'extract' });
           }
         }
       } else if (project.connection.type === 'database') {
@@ -638,10 +651,18 @@ export function createMessageHandlers(
       }
       const config = await readExtensionConfig(host);
       const logger = Logger.create(outputChannel, 'Parse');
-      const model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-        externalRefsEnabled: config.externalRefs.enabled,
-        maxNodes: config.maxNodes,
-      });
+      let model: DatabaseModel;
+      try {
+        model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+          externalRefsEnabled: config.externalRefs.enabled,
+        });
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        host.log('error', 'Dacpac', 'Dacpac visualize', err);
+        host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}`, phase: 'extract' });
+        return;
+      }
+      if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
       logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
@@ -908,17 +929,50 @@ export function createMessageHandlers(
 
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 
+/** Toast sink for a failure the webview already shows inline through `db-error`: log it, show it once. */
+const SHOWN_INLINE = (): void => {};
+
+/**
+ * Refuses a dacpac over {@link MAX_DACPAC_BYTES}. Like {@link isModelOverLimit}, the refusal is
+ * posted as a `db-error`, so the loader shows it inline and leaves its loading state instead of
+ * spinning to its timeout.
+ */
 function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode.LogOutputChannel): boolean {
   if (bytes <= MAX_DACPAC_BYTES) return false;
   const mb = (bytes / 1024 / 1024).toFixed(1);
+  const message = `Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`;
   notifyError(
     Logger.create(outputChannel, 'Dacpac'),
     'Validate dacpac size',
-    `Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`,
+    message,
     new Error(`DACPAC size ${bytes} exceeds ${MAX_DACPAC_BYTES}`),
     { bytes, maxBytes: MAX_DACPAC_BYTES },
-    host.showErrorMessage,
+    SHOWN_INLINE,
   );
+  host.postMessage({ type: 'db-error', message, phase: 'extract' });
+  return true;
+}
+
+/**
+ * Refuses a built model that exceeds `dataLineageViz.maxNodes` — the shared `checkObjectLimit`
+ * gate for every model load path, webview-bridge or command. When a webview bridge is present the
+ * refusal is posted to it as a `db-error` — shown inline, and the loader leaves its loading state at
+ * once instead of spinning to the generic "Processing timed out" notice. `host` is omitted where
+ * there is no webview bridge; the refusal is then a `vscode.window.showErrorMessage` toast.
+ */
+export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger: Logger, host?: BridgeHost): boolean {
+  const check = checkObjectLimit(model, maxNodes);
+  if (check.ok) return false;
+  const message = formatObjectLimitMessage(check.count, check.limit);
+  notifyError(
+    logger,
+    'Validate object count',
+    message,
+    new Error(`Model object count ${check.count} exceeds maxNodes ${check.limit}`),
+    { count: check.count, limit: check.limit },
+    host ? SHOWN_INLINE : undefined,
+  );
+  host?.postMessage({ type: 'db-error', message, phase: 'extract' });
   return true;
 }
 
@@ -932,12 +986,12 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     const logger = Logger.create(outputChannel, 'Parse');
     const model = await extractDacpac(data, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
       externalRefsEnabled: config.externalRefs.enabled,
-      maxNodes: config.maxNodes,
     });
+    if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
     onModelBuilt?.(model);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
     host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
-    host.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true });
+    host.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true, isDemo: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     notifyError(
@@ -946,8 +1000,9 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
       `Data Lineage: Failed to load demo — ${msg}`,
       err,
       { asset: 'assets/demo.dacpac' },
-      host.showErrorMessage,
+      SHOWN_INLINE,
     );
+    host.postMessage({ type: 'db-error', message: `Failed to load demo — ${msg}`, phase: 'extract' });
   }
 }
 
@@ -956,7 +1011,7 @@ async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connecti
   const previewQuery = queries.find(q => q.name === 'schema-preview');
   if (!previewQuery) throw new Error('Missing schema-preview query');
   host.log('info', 'DB', 'Running schema preview query');
-  const timeoutMs = (host.getConfiguration().get<number>('dmvQueryTimeout') ?? 120) * 1000;
+  const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const resultMap = await executeDmvQueries(connectionUri, [previewQuery], outputChannel, undefined, timeoutMs);
   const result = resultMap.get('schema-preview');
   if (!result) throw new Error('No schema preview result');
@@ -969,7 +1024,7 @@ async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connecti
 async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas: string[], outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
-  const timeoutMs = (host.getConfiguration().get<number>('dmvQueryTimeout') ?? 120) * 1000;
+  const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;
   const totalSteps = queries.filter(isPhase2Query).length + leadSteps;
@@ -1004,9 +1059,10 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const logger = Logger.create(outputChannel, 'Parse');
   logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
 
-  const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, config.maxNodes, (msg) => {
+  const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, (msg) => {
     logger.debug(msg);
   });
+  if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
   logger.info(`Extraction Complete — ${model.nodes.length} nodes, ${model.edges.length} deps`);
 
   onModelBuilt?.(model);
@@ -1118,7 +1174,7 @@ async function handleTableStatsRequestHost(
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Stats');
   const cfg = host.getConfiguration();
-  if (!cfg.get('tableStatistics.enabled', true)) {
+  if (!cfg.get('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled)) {
     logger.info(`Profiling disabled — rejected request for ${schema}.${objectName}`);
     void postToDetail(panel, {
       type: 'table-stats-error',
@@ -1126,11 +1182,11 @@ async function handleTableStatsRequestHost(
     }, logger);
     return;
   }
-  const sampleThreshold = cfg.get('tableStatistics.sampleThreshold', DEFAULT_CONFIG.tableStatistics.sampleThreshold);
-  const sampleSize = cfg.get('tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize);
+  const sampleThreshold = readDeclaredNumericSetting(cfg, 'tableStatistics.sampleThreshold', DEFAULT_CONFIG.tableStatistics.sampleThreshold);
+  const sampleSize = readDeclaredNumericSetting(cfg, 'tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize);
   const useApprox = cfg.get('tableStatistics.useApproxDistinct', DEFAULT_CONFIG.tableStatistics.useApproxDistinct);
-  const maxColumns = cfg.get('tableStatistics.maxColumns', DEFAULT_CONFIG.tableStatistics.maxColumns);
-  const timeoutSec = cfg.get('tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout);
+  const maxColumns = readDeclaredNumericSetting(cfg, 'tableStatistics.maxColumns', DEFAULT_CONFIG.tableStatistics.maxColumns);
+  const timeoutSec = readDeclaredNumericSetting(cfg, 'tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout);
   const timeoutMs = timeoutSec * 1000;
   const t0 = Date.now();
 
@@ -1236,19 +1292,21 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
 
 /**
  * Reads display and behaviour settings from a VS Code workspace configuration
- * and returns the serialisable config snapshot sent to the webview.
+ * and returns the serialisable config snapshot sent to the webview. Numeric settings are
+ * clamped to their declared manifest range.
  *
  * @param cfg - Workspace configuration scoped to `dataLineageViz`.
  * @returns Config snapshot for the webview (same shape as {@link ExtensionConfigSchema}).
  */
 export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record<string, any> {
+  const num = (key: string) => readDeclaredNumericSetting(cfg, key);
   return {
     excludePatterns: cfg.get<string[]>('excludePatterns'),
-    maxNodes: cfg.get<number>('maxNodes'),
+    maxNodes: num('maxNodes'),
     layout: {
       direction: cfg.get<string>('layout.direction'),
-      rankSeparation: cfg.get<number>('layout.rankSeparation'),
-      nodeSeparation: cfg.get<number>('layout.nodeSeparation'),
+      rankSeparation: num('layout.rankSeparation'),
+      nodeSeparation: num('layout.nodeSeparation'),
       edgeAnimation: cfg.get<boolean>('layout.edgeAnimation'),
       highlightAnimation: cfg.get<boolean>('layout.highlightAnimation'),
       minimapEnabled: cfg.get<boolean>('layout.minimapEnabled'),
@@ -1257,18 +1315,18 @@ export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record
     externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled') },
     overview: {
       enabled: cfg.get<boolean>('overview.enabled'),
-      threshold: cfg.get<number>('overview.threshold'),
+      threshold: num('overview.threshold'),
       schemaDoubleClickBehavior: cfg.get<string>('overview.schemaDoubleClickBehavior'),
     },
-    renderLimit: cfg.get<number>('renderLimit'),
+    renderLimit: num('renderLimit'),
     trace: {
-      defaultUpstreamLevels: cfg.get<number>('trace.defaultUpstreamLevels'),
-      defaultDownstreamLevels: cfg.get<number>('trace.defaultDownstreamLevels'),
+      defaultUpstreamLevels: num('trace.defaultUpstreamLevels'),
+      defaultDownstreamLevels: num('trace.defaultDownstreamLevels'),
     },
     analysis: {
-      hubMinDegree: cfg.get<number>('analysis.hubMinDegree'),
-      islandMaxSize: cfg.get<number>('analysis.islandMaxSize'),
-      longestPathMinNodes: cfg.get<number>('analysis.longestPathMinNodes'),
+      hubMinDegree: num('analysis.hubMinDegree'),
+      islandMaxSize: num('analysis.islandMaxSize'),
+      longestPathMinNodes: num('analysis.longestPathMinNodes'),
     },
   };
 }
@@ -1437,7 +1495,7 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`  Hops:         ${sess.hopCount}`);
   add(`  Pending gate: ${sess.phase.kind === 'awaiting_gate' ? sess.phase.gate.gate : 'none'}`);
   add(`  Result nodes: ${sess.resultGraph?.nodeIds.length ?? 0}`);
-  add('  Full SM dump: use Data Lineage: Dump SM State');
+  add('  Full SM dump: use Data Lineage: Dump AI State Machine');
   add('');
 
   add('SETTINGS (dataLineageViz.*, excluding ai.*)');

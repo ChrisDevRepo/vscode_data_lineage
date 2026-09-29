@@ -4,6 +4,7 @@ import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
 import { Spinner } from './ui/Spinner';
+import { useReturnFocus } from '../hooks/useReturnFocus';
 import type { Project, FilterProfile } from '../engine/projectStore';
 
 interface StartScreenProps {
@@ -116,6 +117,8 @@ export const StartScreen = memo(function StartScreen({
 }: StartScreenProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const deleteFocus = useReturnFocus<string>();
+  const deleteAllFocus = useReturnFocus<'all'>();
   const [showProjects, setShowProjects] = useState(initialShowProjects);
 
   const switchView = (to: 'main' | 'projects') => {
@@ -145,6 +148,7 @@ export const StartScreen = memo(function StartScreen({
         <div className="flex items-center gap-2">
           <Tooltip content="Back" className="ln-tooltip--wizard">
             <button
+              aria-label="Back"
               className="ln-list-item rounded-sm p-1 shrink-0"
               onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
             >
@@ -157,6 +161,7 @@ export const StartScreen = memo(function StartScreen({
           <span className="text-xs mr-2" style={{ opacity: 0.45 }}>{sorted.length}</span>
           {sorted.length > 1 && !confirmDeleteAll && (
             <button
+              ref={deleteAllFocus.triggerRef('all')}
               className="text-xs ln-text-muted hover:underline"
               style={{ opacity: 0.55 }}
               onClick={() => setConfirmDeleteAll(true)}
@@ -174,7 +179,8 @@ export const StartScreen = memo(function StartScreen({
               </button>
               <button
                 className="text-xs ln-text-muted hover:underline"
-                onClick={() => setConfirmDeleteAll(false)}
+                onClick={() => { setConfirmDeleteAll(false); deleteAllFocus.returnFocus('all'); }}
+                autoFocus
               >
                 Cancel
               </button>
@@ -201,7 +207,8 @@ export const StartScreen = memo(function StartScreen({
                     >Delete</button>
                     <button
                       className="text-xs px-2 py-1 rounded-sm ln-list-item"
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); deleteFocus.returnFocus(project.id); }}
+                      autoFocus
                     >Cancel</button>
                   </div>
                 </div>
@@ -211,12 +218,15 @@ export const StartScreen = memo(function StartScreen({
             return (
               <div
                 key={project.id}
-                className="flex items-center gap-3 px-3 py-2 rounded-sm cursor-pointer ln-file-picker ln-list-item"
-                onClick={() => !isLoading && onOpenProject(project.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpenProject(project.id); }}
+                className="flex items-center gap-3 pr-3 rounded-sm ln-file-picker ln-list-item"
               >
+                <button
+                  type="button"
+                  className="flex items-center gap-3 flex-1 min-w-0 pl-3 py-2 text-left cursor-pointer"
+                  onClick={() => onOpenProject(project.id)}
+                  disabled={isLoading}
+                  aria-busy={isLoading}
+                >
                 <span className="text-base shrink-0" aria-hidden="true">
                   {isLoading ? <Spinner className="w-4 h-4" /> : (
                     <span style={{
@@ -232,19 +242,22 @@ export const StartScreen = memo(function StartScreen({
                     </span>
                   )}
                 </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{project.name}</div>
-                  <div className="text-xs truncate" style={{ opacity: 0.55 }}>{detail}</div>
+                <span className="block flex-1 min-w-0">
+                  <span className="block text-sm font-medium truncate">{project.name}</span>
+                  <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{detail}</span>
                   {schemas && (
-                    <div className="text-xs truncate" style={{ opacity: 0.40 }}>{schemas}</div>
+                    <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{schemas}</span>
                   )}
                   {bm && (
-                    <div className="text-xs truncate" style={{ opacity: 0.40 }}>{bm}</div>
+                    <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{bm}</span>
                   )}
-                </div>
+                </span>
+                </button>
                 {!isLoading && (
                   <Tooltip content={`Delete "${project.name}"`} className="ln-tooltip--wizard">
                     <Button
+                      ref={deleteFocus.triggerRef(project.id)}
+                      aria-label={`Delete ${project.name}`}
                       variant="icon"
                       style={{ width: 28, height: 28 }}
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(project.id); }}

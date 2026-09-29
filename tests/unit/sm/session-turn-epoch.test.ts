@@ -108,7 +108,7 @@ describe("session turn-epoch guard tests", () => {
         origin: '[dbo].[origin]',
         analysisMode: 'bb' as const,
         direction: 'bidirectional' as const,
-        depthIntent: { kind: 'asymmetric' as const, upstream: 'all' as const, downstream: 1 },
+        depthIntent: { upstream: { levels: 'all' as const, exactness: 'exact' as const }, downstream: { levels: 1, exactness: 'exact' as const } },
       },
       classification: 'technical' as const,
       activeFilter: {
@@ -120,7 +120,7 @@ describe("session turn-epoch guard tests", () => {
         scopeCount: 3,
         origin: '[dbo].[origin]',
         depth: null,
-        depthIntent: { kind: 'asymmetric' as const, upstream: 'all' as const, downstream: 1 },
+        depthIntent: { upstream: { levels: 'all' as const, exactness: 'exact' as const }, downstream: { levels: 1, exactness: 'exact' as const } },
         direction: 'bidirectional' as const,
         analysisMode: 'bb' as const,
         columnAspectActive: false,
@@ -148,7 +148,7 @@ describe("session turn-epoch guard tests", () => {
     expect(sess.stateMachine, 'stale approval leaves active engine untouched').toBe(null);
     expect(sess.pendingExploration?.revision, 'stale approval preserves the reviewable proposal').toBe(1);
 
-    const failed = sess.activatePendingExploration(1, token, () => ({ error: 'init_failed' }));
+    const failed = sess.activatePendingExploration(1, token, () => ({ code: 'init_failed', reason: 'init_failed' }));
     expect(failed.kind, 'failed engine initialization rejects activation').toBe('rejected');
     expect(sess.stateMachine, 'failed activation publishes no partial engine').toBe(null);
     expect(sess.pendingExploration?.revision, 'failed activation preserves the proposal for review/retry').toBe(1);
@@ -174,7 +174,7 @@ describe("session turn-epoch guard tests", () => {
       },
     } as any;
     const approved = sess.activatePendingExploration(1, token, (reviewed) => {
-      expect(reviewed.init.depthIntent?.kind, 'factory receives the exact reviewed depth intent').toBe('asymmetric');
+      expect(reviewed.init.depthIntent, 'factory receives the exact reviewed depth intent').toEqual({ upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 1, exactness: 'exact' } });
       return approvedEngine;
     });
     expect(approved.kind, 'matching proposal revision activates').toBe('accepted');
@@ -195,12 +195,12 @@ describe("session turn-epoch guard tests", () => {
     sess.enterCompleted(token);
     const completedResult = sess.resultGraph;
     const proposal = {
-      init: { question: 'replacement', origin: 'origin', analysisMode: 'bb' as const, direction: 'upstream' as const },
+      init: { question: 'replacement', origin: 'origin', analysisMode: 'bb' as const, direction: 'upstream' as const, depthIntent: { upstream: { levels: 3, exactness: 'approximate' as const }, downstream: { levels: 3, exactness: 'approximate' as const } } },
       classification: 'business' as const,
       activeFilter: { schemas: [], types: [], hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [] },
       summary: {
         hopCount: 1, scopeCount: 1, origin: 'origin', depth: 3,
-        depthIntent: { kind: 'default_start' as const }, direction: 'upstream' as const,
+        depthIntent: { upstream: { levels: 3, exactness: 'approximate' as const }, downstream: { levels: 3, exactness: 'approximate' as const } }, direction: 'upstream' as const,
         analysisMode: 'bb' as const, columnAspectActive: false,
         estimatedDdlChars: 0, estimatedDdlTokens: 0, bySchema: {},
         scopeNotes: [],
@@ -226,14 +226,14 @@ describe("session turn-epoch guard tests", () => {
   it('proposal equality ignores object key insertion order', () => {
     const summary = {
       hopCount: 1, scopeCount: 1, origin: 'o', depth: 3,
-      depthIntent: { kind: 'default_start' as const }, direction: 'upstream' as const,
+      depthIntent: { upstream: { levels: 3, exactness: 'approximate' as const }, downstream: { levels: 3, exactness: 'approximate' as const } }, direction: 'upstream' as const,
       analysisMode: 'bb' as const, columnAspectActive: false,
       estimatedDdlChars: 0, estimatedDdlTokens: 0, bySchema: {},
       scopeNotes: [],
       activeFilters: { schemas: [], types: [], nodeIds: [], passNodeIds: [] },
     };
     const left = {
-      init: { question: 'q', origin: 'o', analysisMode: 'bb' as const, direction: 'upstream' as const },
+      init: { question: 'q', origin: 'o', analysisMode: 'bb' as const, direction: 'upstream' as const, depthIntent: { upstream: { levels: 3, exactness: 'approximate' as const }, downstream: { levels: 3, exactness: 'approximate' as const } } },
       classification: 'business' as const,
       activeFilter: { schemas: [], types: [], hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [] },
       summary,
@@ -244,12 +244,12 @@ describe("session turn-epoch guard tests", () => {
         activeFilters: { passNodeIds: [], nodeIds: [], types: [], schemas: [] },
         bySchema: {}, estimatedDdlTokens: 0, estimatedDdlChars: 0, columnAspectActive: false,
         analysisMode: 'bb' as const, direction: 'upstream' as const,
-        depthIntent: { kind: 'default_start' as const }, depth: 3,
+        depthIntent: { upstream: { levels: 3, exactness: 'approximate' as const }, downstream: { levels: 3, exactness: 'approximate' as const } }, depth: 3,
         origin: 'o', scopeCount: 1, hopCount: 1,
       },
       activeFilter: { externalRefTypes: [], showExternalRefs: false, focusSchemas: [], hideIsolated: false, types: [], schemas: [] },
       classification: 'business' as const,
-      init: { direction: 'upstream' as const, analysisMode: 'bb' as const, origin: 'o', question: 'q' },
+      init: { direction: 'upstream' as const, analysisMode: 'bb' as const, origin: 'o', question: 'q', depthIntent: { upstream: { levels: 3, exactness: 'approximate' as const }, downstream: { levels: 3, exactness: 'approximate' as const } } },
     };
     expect(sameExplorationProposal(left, reordered), 'key insertion order alone is not a proposal change').toBe(true);
     expect(!sameExplorationProposal(left, { ...reordered, init: { ...reordered.init, question: 'other' } }), 'a real content change is still detected').toBe(true);

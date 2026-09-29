@@ -21,17 +21,44 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   exploration loop.
 - The outer graph owns phase transitions, model generations, semantic retries,
   interrupts, synthesis, and turn settlement.
+- The agent runtime uses LangGraph and LangChain as designed: the model
+  adapter is a custom `BaseChatModel` over `vscode.lm`, history is LangChain
+  messages under LangGraph's message reducer, and cancellation rides the run
+  config. Own code covers product rules only; the sequential tool executor is
+  the one deliberate departure from the library default, because gates, the
+  turn lease and ordered effects forbid parallel tool execution.
+- Own code carries only product rules no library provides (phase rules, turn
+  lease, approval gate, id resolution, memory policy). Zod is the single schema
+  source for tool input, its model-facing JSON Schema and its error text; the
+  VS Code language-model API supplies model facts such as token counts. A
+  malformed model call is rejected by its schema with a hint rather than
+  repaired by a special case, and a rejection is the tool result of the call it
+  rejects, in one shape emitted where the rule is checked.
 - `NavigationEngine` owns agenda, scope, lifecycle state, route/prune checks,
   graph closure, and completion.
-- **Backend and model roles.** The backend routes, schedules hops, guards,
-  verifies that objects are correct, and drives the defined process: phase
-  changes (discovery → consent → hop-by-hop → synthesis) and the
-  metadata-driven prompt for each phase. It applies only stated, deterministic
-  rules and never authors content, infers intent, guesses what a node needs,
-  defers on speculation, judges relevance, or rewrites the model's findings.
-  Content judgement belongs to the model alone: a node's status and findings at
-  its own visit, and an optional note per not-yet-visited neighbor (a prune or
-  a question, plus columns in CT). Every backend response to model output is
+- **Backend and model roles.** In hop-by-hop, the backend alone routes: it
+  schedules hops, guards, verifies that objects are correct, and drives the
+  defined process — phase changes (discovery → consent → hop-by-hop →
+  synthesis) and the metadata-driven prompt for each phase. It tracks which
+  neighbors it has routed and which still owe one, and ends hop-by-hop only
+  when the agenda drains or a bounded stop is reached — never when the model
+  calls it finished (§Conversation lifecycle). It applies only stated,
+  deterministic rules and never authors content, infers intent, guesses what a
+  node needs, defers on speculation, judges relevance, or rewrites the
+  model's findings. Content judgement belongs to the model alone: a node's
+  status and findings at its own visit, and, per not-yet-visited neighbor, one
+  action — a prune, a question, or (by omission) inclusion, plus columns in
+  CT. The backend's own bookkeeping name for that included outcome is a
+  route; that name is not a routing decision, since routing names only the
+  backend's agenda, which the model neither reads nor sets. The model names
+  an object to visit next only in the completed phase, past the AI preview,
+  as a follow-up that supplements the existing exploration or opens a fresh
+  one (§Synthesis and completed follow-ups). In CT the backend checks every
+  declared column against the loaded model and carries tracked columns
+  forward as context (§BB and column-trace modes); where a chain starts or
+  ends, which columns join, and whether the columns are complete are the
+  model's calls, and a tracked column not yet accounted for is served back to
+  it as data, never enforced. Every backend response to model output is
   ACCEPT, REJECT (code plus recovery hint), or NORMALIZE-WITH-LOG; a rejection
   reaches the model with its hint, a normalization is written to the host log,
   and each non-accepted per-route outcome is written to the host log as one
@@ -55,6 +82,14 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   `lineage_submit_findings`, `lineage_present_result`) stay on the participant
   dispatcher and are never `vscode.lm.registerTool`. Phase availability is
   [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
+- **Model bridge.** `vscode.lm` has no system role, so
+  [`toVscodeMessage`](../src/ai/model/vscodeLangChainBridge.ts) sends a
+  `SystemMessage` to the model as a User turn. Tool choice is projected across
+  the two type systems: LangChain `any` or a named tool becomes
+  `LanguageModelChatToolMode.Required` (a named choice exposes only that tool),
+  and `none` sends no tools. An unsupported choice, an unavailable named tool
+  or an assistant tool call without an ID throws a `ModelPortError` before the
+  request is sent.
 - Extension-host/webview messages cross the Zod schemas in
   [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)
   before handlers consume them.
@@ -163,8 +198,11 @@ verdict included, starts in discovery.
 Discovery is the default chat state: it answers bounded catalog or lineage
 questions with snapshot tools and does not publish a `NavigationEngine`.
 Answers lead with the user's question, then organize supported facts by
-lineage flow. A discovery answer cannot complete until the turn has accepted
-at least one trusted tool observation.
+lineage flow. Tool choice is the model's: it calls a read tool when the
+conversation does not already hold the facts, and replies directly when it
+does, or when the question needs no lineage facts (a greeting, a capability
+question, a decline of a request outside the graph). Grounding is a prompt
+rule — only ids, columns and relationships tools returned — not a forced call.
 
 `visual_render` is a semantic label only: a free-text graph/render request
 enters this same discovery loop. The bounded transient preview is a later,
@@ -176,9 +214,13 @@ captions. The existing presentation validator, held-draft repair store,
 description assembler, and webview commit remain the shared path.
 
 A completed discovery answer can also offer to continue as an exploration.
-When accepted observations show at least two distinct objects inspected
-through `lineage_get_object_detail`, the walk is treated as multi-object and
-the SM-offer pill is seeded from its first object and final answer.
+A `lineage_get_scope_bundle` walk of two or more nodes, or two or more distinct
+objects read through `lineage_get_object_detail`, is recorded as the discovery
+walk: it seeds the SM-offer pill, and a walked scope also backs the **Show graph
+preview** offer. A later answer that reads nothing (a direct reply) keeps both
+offers for the last walk; one that reads the catalog without walking a scope
+drops the preview offer, so a preview never pairs an old scope with a new
+answer.
 
 Only a mechanical trigger opens SM entry: the `/trace` command, the user's
 SM-offer pill, or the discovery budget guard. Every free-text request, including
@@ -189,7 +231,9 @@ rejection with the `scope_proposal` it measured. Graph dispatch treats that
 result as a reroute terminal: discovery is cut, the turn is handed to SM entry
 as `discovery_budget`, and `lineage_start_exploration` opens the consent gate
 there, where the user approves or cancels. The model is never given another
-discovery attempt to answer inline from the rejection. Tool availability is
+discovery attempt to answer inline from the rejection. SM entry names no
+required terminal tool: a text-only reply, such as a clarifying question, is
+streamed as the turn's answer and ends the turn without a gate. Tool availability is
 defined only in [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
 
 Which traversal mode runs, BB or CT, is settled at the consent gate, never by
@@ -198,22 +242,35 @@ this routing step.
 ### Consent gate
 
 Every fresh SM proposal pauses at `confirm_sm_start`. The engine owns the
-scope summary and renders every in-scope object for approval or cancellation.
+scope summary; the full plan lists every in-scope object for approval or
+cancellation.
 The native chat gate exposes three participant buttons and no notifications:
-**Approve & Proceed** resumes with the proposed classes, **Cancel** clears the
+**Approve & Proceed** runs the proposed filters and limits, **Cancel** clears the
 pending proposal without creating an engine, and **Change scope** resumes with
-a `hold` decision. Scope-expansion gates omit **Change scope**.
+a `hold` decision. `confirm_sm_start` is the only gate a run raises. A plain
+Approve does not lift a schema exclusion. Change scope pauses for a new plan;
+it does not admit a schema by itself. A route that reaches past the border
+during the run is deferred and offered after the answer as a follow-up lead.
+Asking for that object after the answer opens a new consent card. It is not
+added to the finished run.
 
-`hold` routes to `hold_gate`, which ends the turn with `outcome: 'ok'` while
-leaving the session in `awaiting_gate` with `pendingExploration` intact.
-Ending the turn releases the Copilot chat input. The host then prefills the
-input with the participant mention, so the user types the change as an
-ordinary chat message.
+The participant resolves every card with `hold` the moment it renders, so
+`hold_gate` ends the turn with `outcome: 'ok'` while leaving the session in
+`awaiting_gate` with `pendingExploration` intact. Ending the turn releases the
+Copilot chat input. The card stays live while the session holds its proposal:
+**Approve & Proceed** and **Cancel** submit a trigger prompt naming the plan
+revision the card shows, as a fresh turn that `detect_entry` routes straight to
+`approve_gate` / `cancel_gate` without a model call — a trigger for a revision
+no longer pending gets a fixed reply; **Change scope** prefills the input with
+the participant mention.
 
-`detect_entry` claims that next free-text prompt for the held proposal and
-routes it to `gate_refine`. A stated slash command outranks the hold: it
-clears the pending proposal and runs fresh. A new chat still cancels the gate
-at the history boundary.
+`detect_entry` reads any other prompt typed while a proposal is held with one
+structured model call (`GateReplySchema`): approve, change (routed to
+`gate_refine` with the text as the instruction), cancel, or other — a separate
+question, answered like any chat turn while the proposal and its card stay
+pending. A stated slash command outranks the hold: it clears the pending
+proposal and runs fresh. A new chat still cancels the gate at the history
+boundary.
 
 A refinement — from a held gate, or in-turn by a `refine` decision — runs the
 revision-bound `gate_refine` phase. That phase may use `lineage_search_objects`
@@ -223,41 +280,81 @@ a strict patch through the refine-only `lineage_start_exploration` schema.
 The handler preserves omitted proposal fields and the original GUI filter
 snapshot, computes the candidate on an unpublished preview engine, and
 re-emits the approval gate at the next revision. A failed or no-op patch
-leaves the previous revision pending. Every gate emission mints a new gate
+leaves the previous revision pending. A text-only reply, such as a clarifying
+question, is streamed as the turn's answer and ends the turn with the reviewed
+revision still pending. Every gate emission mints a new gate
 id, so a superseded card's buttons resolve nothing. No `NavigationEngine` is
 published as active until approval succeeds.
 
-The gate card splits rules by source: **From your question** is what the user
-stated; **How I read it** is the assistant's mechanization (exclusions,
-passthroughs, schema/type filters); **My plan** is what the assistant chose
-(hop and scope counts, tracing mode, an estimated depth). Which strength a
+The card is a summarized view, fact lines only — no AI-authored prose reaches it,
+so the goal, the discovery summary and noted constraints stay full-plan-only.
+It states depth per side (`≈` marks an estimate; no separate direction line, the
+depth line names the side(s) it covers), estimated hop and node counts, schemas
+in whichever wording is shortest, tracing mode and columns, analysis angle,
+in-scope objects grouped by type and capped at three lines (the rest folded into
+one `…` line), exclusions (schemas and objects; excluded object types are
+full-plan-only), passthroughs and a removed filter, each list rendered in full.
+Its **Show full plan** follow-up is the only follow-up offered while the gate is
+open, and the card's closing line sits above the buttons so that the card stays
+the response's last markdown (VS Code folds every part before it). The follow-up
+renders, from the held proposal and without a model call, the discovery summary (when the proposal carries one) ahead of the
+plan, then every in-scope object uncut, with the card's buttons again — the
+same underlying scope data the model's own gate copy carries, reordered and
+never folded for the user, while the model-facing copy (discovery summary
+trailing) keeps its own order and cap unchanged. The plan splits rules by
+source: **From the question** is what the user stated; **Read as** is the
+assistant's mechanization (exclusions, passthroughs, schema/type filters);
+**Plan** is what the assistant chose (hop and scope counts, tracing mode, an
+estimated depth), followed by every in-scope object. Which strength a
 rule carries is a typed field — the host enforces it and never guesses from
-prose. Depth is the concrete instance: `depthStated` (`toolSchemas.ts`) is a
-field the model sets alongside `depth`, never inferred from whether `depth`
-carries a number — a finite `depth` without `depthStated: true` resolves to
-the same soft, growing default as an omitted one
-(`resolveDepthIntentForBoundary`, `smTypes.ts`), so a level count the model
-picks on its own can never bind as a hard border. Once approved, the border a rule carries
+prose. Depth is the concrete instance: `depth` (`ExplorationDepthSelectionSchema`,
+`src/engine/shared/explorationDepthContract.ts`) is a required per-side shape,
+both `upstream` and `downstream` always present, each carrying its own `levels`
+and `exactness` — `'exact'` for a count the user stated, `'approximate'` for
+the model's own estimate — never inferred from whether `levels` carries a
+number, and never a backend-supplied default for an unstated side. `levels: 0`
+permanently closes that direction for the session whatever its `exactness`, and
+both sides `0` is rejected at the schema (`asymmetric_depth_both_zero`). An
+`'exact'` side is enforced as a border per direction: a node inside either
+side's own ceiling is admitted. An `'approximate'` side is shown on the plan
+but does not bound the scope. A missing
+`depth` is rejected at the tool boundary (`startExploration.ts`,
+`missingField`). Once approved, the border a rule carries
 holds for the whole hop-by-hop run; the model may extend a hard value only
 after synthesis, as a deferred lead or `supplement` follow-up, or through a
 fresh refine at this same gate carrying the user's own correction — never by
 its own initiative mid-run.
+
+The approval is a contract over rules, never over individual objects: schemas,
+the level up and the level down, object types, exclusions, and the discovery
+summary. The full plan's object list is the dry-run result of those rules. The
+discovery summary is composed once at proposal time, shown in the full plan, and
+reused verbatim at approval (`NavigationEngine.setDiscoverySummary`), never
+recomposed. On Approve the card's values fill the BFS call and the backend
+guards unchanged, and hop-by-hop acts on those values and on nothing else.
 
 `approveGateNode` builds the engine with `init(proposal.init)` — the same
 object that produced the summary the user read. `activatePendingExploration`
 is the sole site that publishes a navigation engine: it refuses a stale
 revision before construction and restores session memory on any failure.
 Afterwards one predicate, `checkBorder`, is consulted at every admission
-purpose (seed BFS, routing, supplement, column-trace contraction, display),
-with the sole scope-add write site behind it. Naming an object in a follow-up
-admits that object, never its schema siblings.
+purpose (seed BFS, routing, supplement, column-trace contraction).
+Its schema border is the exclusion set fixed at `init`: every schema the GUI
+selection hides is excluded by default, except the origin's own schema and any
+schema the proposal stopped excluding. Naming an origin in a hidden or
+excluded schema removes that schema from the exclusion set — the card lists it
+under "Filter removed" — so the schema's other objects are admitted under the
+remaining borders. Naming an origin also drops its own id from
+`excludeNodeIds`. A type exclusion is copied through unchanged.
 
 The consent gate authorizes one hop-by-hop run and is spent when that run's
-result is presented. A follow-up asking for an object is therefore the user's
-own consent to add it: the object is admitted by name, whether or not the run
-deferred it and whether or not the assistant pruned it. Objects the user
-excluded are the one exception — that removal was theirs, and it stays a hard
-wall.
+result is presented. A follow-up that names an object the border kept out is
+a new proposal at this same gate, not an addition to the finished run.
+
+Hop-by-hop scope is that approved depth BFS. The webview's route focus answers
+a different question: `unionConnectingPaths` (`src/engine/traceScope.ts`) keeps
+every node on a directed path between the origin and the chosen targets,
+including both branches of a diamond.
 
 An instruction that maps to no filter field is carried as `scopeNotes` into
 every hop, but it is prose addressed to the model: the engine has no field to
@@ -316,14 +413,12 @@ the queue is non-empty; no stalemate fallback exists or is needed.
 and, for not-yet-visited neighbors only, a note: a prune (`prune_neighbors`,
 with a reason) or a question (`questions`, one specific check). It never sends
 a route. Every open neighbor the hop does not prune, and that `admitsRoute`
-admits (inside the exclusion, direction and schema-allowlist borders and the
-depth border), is enqueued by the backend and visited exactly once. An open
-neighbor the hop does not name is deferred as a lead on two axes only: past
-the depth border (`depth`), or admitted but over the active scope budget
-(`budget`); one outside the exclusion, direction or schema-allowlist border is
+admits (inside the exclusion and direction borders and the depth border), is enqueued by the backend and visited exactly once. An open
+neighbor the hop does not name is deferred as a lead on one axis only: past
+the depth border (`depth`); one outside the exclusion or direction border is
 neither visited nor deferred. A neighbor the hop names in a question or in
 `column_flow` is deferred on every axis `admitsRoute` fails: `excluded`,
-`direction`, `schema`, `depth`, or `schema_and_depth`. A question shapes what
+`direction`, or `depth`. A question shapes what
 that hop is asked, never whether it happens. In CT, what a kept neighbor carries comes from the
 hop's `column_flow` — the columns `upstream_columns` names on it (and, on the
 downstream side, what the focus writes to its readers); a kept neighbor named
@@ -337,8 +432,8 @@ removed, or queued neighbor is a no-op stated to the model in the next hop's
 in `prune_neighbors` is never dropped: the prune stands and the question is
 kept as a deferred follow-up (`DeferredQuestion.reason: 'pruned'`), reaching
 `engine.deferredQuestions`, the synthesis completion envelope, and the
-post-answer "Continue at …" chips the same way a schema- or depth-deferred
-question does. A question on a
+post-answer generic "Follow-up questions" badge the same way a schema- or
+depth-deferred question does. A question on a
 queued neighbor joins that neighbor's inbox for its one visit; a question on a
 visited or resolved-removed neighbor gets no hop and is recorded as the route
 outcome `already_visited` or `already_pruned`. A question on a neighbor whose
@@ -417,14 +512,17 @@ archive, node lifecycle, deferred questions, and CT provenance when present.
 The AI authors structured presentation fields; the engine validates them,
 assembles the Markdown, derives badges, and commits the result graph.
 Contracted in-scope objects remain part of that graph and are labeled as
-retained supporting objects. Deferred follow-up work carries one of six
-reasons: `schema`, `depth`, `schema_and_depth`, `budget`, `direction`, or
-`excluded`. Every deferred question reaches the completion envelope; an
+retained supporting objects. Deferred follow-up work carries one of five
+reasons: `depth`, `direction`, `pruned`, `excluded`, or `contracted`; a lead restored from
+an older record may still carry `schema` or `budget`. Every deferred question reaches the completion envelope; an
 `excluded` one is not offered as a follow-up.
 
 Completed follow-ups can update presentation, supplement the existing
 exploration with explicit nodes, begin a fresh exploration, or answer
-directly. Supplements retain the existing archive and return through the
+directly. Every discovery read tool stays available, so a question beyond the
+report is answered by walking the loaded graph; a follow-up walk never backs a
+preview offer, and the rendered graph changes only through an update or a
+supplement. Supplements retain the existing archive and return through the
 active loop, so a named object is analyzed as a hop in the same engine,
 against the same origin, with no second approval. The approval covers the
 first run up to its presented result; a later request is the user's own and
@@ -437,7 +535,13 @@ exploration follows the consent path and establishes new state.
 
 A follow-up that exhausts its correction budget still delivers the answer it
 already wrote, with a plain statement that the graph did not change — the
-mirror of synthesis's held-draft salvage.
+mirror of synthesis's held-draft render: when synthesis's breaker trips with a
+held, repairable `lineage_present_result` draft, or the panel/preview dispatch
+throws after a committed result, the held draft's own intro, sections and
+closing render straight into the chat stream through the existing assembler,
+followed by one plain line that the AI preview could not be rendered; the
+cause is in the debug log and a warning toast is raised once, from the
+participant.
 
 ## Memory and state ownership
 
@@ -467,6 +571,17 @@ malformed mutations reject with correction data. Any phase that declares a
 required terminal tool never streams model prose to the chat: a text-only
 finish there is a rejected attempt (`missing_required_tool_call`).
 
+Within one tool phase a rejection is answered by the rejected call's own tool
+result (code, reason, hint); only a generation that produced no tool call is
+followed by a user-role correction. A replayed assistant turn carries the
+provider's own stream parts (thinking parts and their signatures) verbatim
+ahead of its text and calls, so a provider that validates signatures on the
+current turn accepts the history. A read that an earlier generation already had
+accepted and the model asks for again is answered with a `duplicate_read`
+rejection naming the accepted call ID; a duplicate inside the same batch is
+reused silently. A phase stops after `MAX_TOOL_PROVIDER_CALLS` model replies
+that add no accepted observation — rejected, duplicate, empty or text-only.
+
 ## BB and column-trace modes
 
 BB is whole-object analysis. It supports focus verdicts and engine-validated
@@ -491,7 +606,12 @@ column already gets.
 
 The engine's role over `column_flow` is verification, not authorship. It
 checks every declared column against the loaded model and rejects a reference
-the model cannot support. Validated upstream column edges drive continuation
+the model cannot support. The engine stores the tracked columns, hands them on
+to the next object as served context, carries a tracked column across a table
+by name, and checks that every column link the model records joins two real
+columns. Where a chain starts or ends, whether a new column joins, and whether
+the accounted columns are complete are the model's decisions: tracked columns
+not yet accounted for are served as data, never enforced as an obligation. Validated upstream column edges drive continuation
 and emphasis; they never bound the result. The result scope is the approved
 BFS scope in both modes, so an object that restricts the row set, sets the
 grain, or feeds a sibling column is retained even though it carries no column
@@ -569,14 +689,21 @@ to judge at its own focus, and the seed, supplement and user pass-through
 forwarding are never gated. The implementation is `columnFreeSinkVia` in
 [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts).
 
+Independently of BB and CT, the answer's classification decides how an
+operational sink is described, never whether it is traversed: a business answer
+folds a run-audit sink (which procedure ran, when, with what outcome) into a
+one-line mention on the node it hangs off, a technical answer describes it in
+full, and `both` is the union of the two. A question that names neither angle is
+classified `both`.
+
 Given identical routing decisions, the two modes reach an identical node set,
 the write-sink gate above excepted: nothing else in CT's column handling can
 exclude a neighbor BB would keep, because every CT route now states an explicit column decision (`carry`
-or `row_role_only`) and no fallback exists to reinterpret a missing one. This
-is pinned by `tests/unit/sm/bb-ct-node-set-parity.test.ts`, which drives one
-fixture through independent BB and CT engine instances and asserts their
-`getResult().fullNodes` id sets are equal, including a column-less branch
-reachable only through a `row_role_only` hop. That two independently-run
+or `row_role_only`) and no fallback exists to reinterpret a missing one. The
+internal state-machine suite pins this by driving one fixture through
+independent BB and CT engine instances and asserting their `getResult().fullNodes`
+id sets are equal, including a column-less branch reachable only through a
+`row_role_only` hop. That two independently-run
 traces of the *same question* issue matching routing decisions in the first
 place is a property of the model's own behaviour, not something any engine
 mechanism enforces. The internal state-machine suite ("CT chain connectivity") pins a
@@ -610,20 +737,42 @@ its original source text. Nodes may remain visible without a badge or
 highlight; pruning is the only operation that removes them from the answer
 graph.
 
-A content cap — an authored label's length, the legend-group count — is
-advertised, not parsed. The JSON schema the model reads states every one of them
-as a typed constraint; the model port validates structure only; and
-`validatePresentResult` enforces them, rejecting the overrun with the measured
-size, the limit, and the single field to resend — a repairable failure that
-holds the draft and is repaired as a field patch. `submit_findings` follows the
-same rule through the held finding draft: `badge_label` and
-`column_flow[].upstream_columns[].note` are checked in `NavigationEngine` ahead
-of every mutation, and the retry may omit `sections` to keep the prose already
-authored. Parsed instead, a label two words too long would reject the whole call
-at the port, with no held draft, and charge a full resend of an answer that was
-otherwise correct. Nothing is silently truncated on either path;
+A `present_result` bound — an authored label's length, the legend-group count,
+a blank required field, a repeated section label — is one Zod declaration on the
+model schema. The JSON schema the model reads states it as a typed constraint
+(`maxLength`, `maxItems`, `minLength`), the model port rejects a violation with
+the measured size against the limit, and the handler's boundary parse enforces
+the same schema. `validatePresentResult` keeps only what a schema cannot
+express: node-id resolution against the result graph and highlight, section and
+note coverage. `submit_findings` advertises its caps without parsing them:
+`badge_label` and `column_flow[].upstream_columns[].note` are checked in
+`NavigationEngine` ahead of every mutation as a repairable single-field
+rejection against a held finding draft, and the retry may omit `sections` to keep
+the prose already authored. Nothing is silently truncated on either path;
 engine-authored prose is fitted to the cap where it is written, never submitted
 over it.
+
+A held `present_result` repair merges `sections` under a policy the validator
+records with the draft, so the merge, the held-draft view shown to the model
+and the rejection hint all read one stored fact instead of re-deriving it. By
+label (the default), a resent section replaces the held section with that
+label, a new label appends, and every unnamed held section is kept; a resent section may
+omit `text` or `node_ids` to keep the held values, so the view shows labels
+and node ids only. Whole-list applies only
+where the fix cannot be addressed by label: the discovery preview, whose
+section texts must jointly reproduce one cached answer, and a failure inside one
+held section (an unlinkable node id), where the omission must be able to drop
+it. `notes`
+and `highlight_groups` always resend as a whole list.
+
+Every captured SQL fence served to synthesis carries an evidence id in its
+info string (```` ```sql S7 ````). Section text may reuse a block by writing
+that opening line with an empty body; the handler expands it in place, at the
+same position and indentation, before validation, assembly and persistence,
+so committed text never depends on ids. A fence that carries an id and a body
+keeps the model's body; a reference to SQL the section already shows renders
+once; an unknown id is a repairable `sections` rejection. References are
+optional — SQL written out is never rejected.
 
 In CT, the synthesis prompt requires validated terminal source nodes to remain
 visible in the final source presentation surface so the rendered answer cannot
@@ -645,8 +794,7 @@ the real client is not shipped.
 Each model-port operation makes exactly one `vscode.lm.sendRequest` call. The
 extension does not add a transport retry, model fallback, or duplicate retry
 UI: VS Code owns Stop/cancellation and the native whole-request Retry action.
-A generation that streams nothing at all is cancelled rather than left to
-hold the turn open indefinitely; the first streamed chunk disarms that
-watchdog for the rest of that generation. Provider failures settle once
+No generation is cut by the extension: the provider's own limits and the
+user's Stop end a call, however long a reasoning phase runs. Provider failures settle once
 through `ChatResult.errorDetails`; graph loops remain limited to semantic
 repair with fresh model generations.

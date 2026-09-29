@@ -45,6 +45,14 @@ let ctColumnAssignment = new Map();
  * has no access to it.
  */
 const DEFAULT_CASES = {
+  /**
+   * Signed turn: the first request answers with a reasoning part carrying provider metadata and a
+   * tool call; every later request records what came back and answers in text.
+   */
+  SIGNED: {
+    kind: 'signed-turn',
+    signature: 'fixture-signature-001',
+  },
   S1: {
     entry: 'discovery',
     kind: 'discovery-tool',
@@ -83,8 +91,7 @@ const DEFAULT_CASES = {
     mode: 'bb',
     origin: '[ai].[FactSalesReport]',
     classification: 'business',
-    direction: 'upstream',
-    depth: 'all',
+    depth: { upstream: { levels: 'all', exactness: 'approximate' }, downstream: { levels: 0, exactness: 'exact' } },
   },
   S7: {
     entry: null, // pinned by '/trace [schema].[object].[column]' — no entry-detector call for this case
@@ -93,8 +100,7 @@ const DEFAULT_CASES = {
     origin: '[ai].[FactSalesReport]',
     targetColumns: ['TotalRevenue'],
     classification: 'business',
-    direction: 'upstream',
-    depth: 'all',
+    depth: { upstream: { levels: 'all', exactness: 'approximate' }, downstream: { levels: 0, exactness: 'exact' } },
   },
 };
 
@@ -105,6 +111,9 @@ function normalizePart(part) {
   }
   if (part instanceof vscode.LanguageModelToolResultPart) {
     return { type: 'tool-result', callId: part.callId, content: part.content.map(normalizePart) };
+  }
+  if (part instanceof vscode.LanguageModelThinkingPart) {
+    return { type: 'thinking', value: part.value, id: part.id, metadata: part.metadata };
   }
   return { type: part?.constructor?.name ?? typeof part };
 }
@@ -172,7 +181,8 @@ function latestEnvelope(request) {
     .filter((part) => part.type === 'text');
   for (let i = userMessages.length - 1; i >= 0; i -= 1) {
     try {
-      const parsed = JSON.parse(userMessages[i].value);
+      const wrapped = userMessages[i].value.match(/<synthesis_envelope>[^{]*(\{[\s\S]*\})\s*<\/synthesis_envelope>/);
+      const parsed = JSON.parse(wrapped ? wrapped[1] : userMessages[i].value);
       if (parsed && typeof parsed === 'object' && parsed.result && typeof parsed.result === 'object') {
         return parsed;
       }
@@ -232,31 +242,6 @@ function priorAvailableColumns(request, nodeId) {
 }
 
 /**
- * Reads the CURRENT hop's `column_chain_incomplete` rejection, if any — the engine's own
- * declaration of which real columns this exact focus node must account for.
- *
- * @remarks
- * Fallback only: the per-hop `<column_trace>` block (`readDeclaredActiveColumns`) is the primary
- * channel and normally makes this unnecessary. When a hop renders no such block, this rejection's
- * `detail.unaccounted` (`buildIncompleteRejection`, smCompleteness.ts) is the ground truth, IF it
- * rides back as a native tool-call/tool-result pair (`renderRejectionExchange` in toolAttempt.ts)
- * the way every other rejection this fixture reads (`priorAvailableColumns`) does.
- *
- * The key is `code`, not `error`: the engine emits `{error:'column_chain_incomplete', hint, detail}`
- * (`buildIncompleteRejection`), but `readToolError` (toolErrorEnvelope.ts) renames `error` to `code`
- * before `renderRejectionExchange` puts `{code, reason, hint, detail, issuePaths}` on the wire.
- */
-function priorUnaccountedColumns(request) {
-  for (const obj of collectResultJson(request)) {
-    if (obj && obj.code === 'column_chain_incomplete' && obj.detail && Array.isArray(obj.detail.unaccounted)
-      && obj.detail.unaccounted.length > 0) {
-      return obj.detail.unaccounted;
-    }
-  }
-  return null;
-}
-
-/**
  * Builds one CT `column_flow` array for the current hop.
  *
  * @remarks
@@ -280,7 +265,6 @@ function priorUnaccountedColumns(request) {
  * (src/ai/prompting/prompts.ts) renders it into every CT hop's `<current_task>` as
  * `<column_trace>  Active columns: [...]`, which `readDeclaredActiveColumns` reads. Using it is
  * what a compliant model does, so the fixture does the same — no probe, no rejection.
- * `priorUnaccountedColumns` remains as a fallback for a hop that renders no such block, and
  * `ctColumnAssignment` still remembers any column name guessed for a node while naming it as some
  * OTHER hop's `upstream_columns` contributor.
  *
@@ -313,12 +297,12 @@ function buildCtColumnFlow(request, cfg, focusId, hop) {
     // column actually being traced, rather than guessing one.
     if (outCols.length > 0) ctColumnAssignment.set(focusKey, outCols[0]);
   } else {
-    // Engine-declared active columns only. When neither channel names a column for this hop, the
-    // node carries nothing this trace follows — an object can be upstream of the origin without
-    // contributing to the traced column (spArchiveOldOrders is a documented dead end). Submitting an
-    // empty column_flow is what a real model does there; guessing a column from an earlier hop's
+    // Engine-declared active columns only. When the hop renders no such block, the node carries
+    // nothing this trace follows — an object can be upstream of the origin without contributing to
+    // the traced column (spArchiveOldOrders is a documented dead end). Submitting an empty
+    // column_flow is what a real model does there; guessing a column from an earlier hop's
     // reference invents lineage and strands a chain that never reaches the traced column.
-    outCols = readDeclaredActiveColumns(request) ?? priorUnaccountedColumns(request) ?? [];
+    outCols = readDeclaredActiveColumns(request) ?? [];
   }
   if (outCols.length === 0) return [];
 
@@ -350,14 +334,16 @@ function buildCtColumnFlow(request, cfg, focusId, hop) {
     // engine's own real column list (e.g. a stored procedure's actual inbound-source columns,
     // which HopNeighbor.cols does not carry; see the module doc comment above). Otherwise reuse
     // whatever this fixture already assigned this node (from an earlier hop's reference to it, or
-    // from this same loop moments ago), and only guess from HopNeighbor.cols as a last resort.
+    // from this same loop moments ago), and only guess from HopNeighbor.cols as a last resort. A
+    // procedure neighbor carries no HopNeighbor.cols; the column it writes here is the traced
+    // out_col, and a wrong guess is corrected by the engine's rejection on the retry.
     const corrected = priorAvailableColumns(request, neighbor.id);
     const assigned = corrected
       ? corrected[0]
       : ctColumnAssignment.get(neighborKey)
-        ?? (Array.isArray(neighbor.cols) && neighbor.cols.length > 0 ? neighbor.cols[0] : null);
-    // No column can be established for this neighbor from any channel. Routing the focus node's own
-    // out_col onto it would claim a column it may not have — the neighbor is simply not a
+        ?? (Array.isArray(neighbor.cols) && neighbor.cols.length > 0 ? neighbor.cols[0] : null)
+        ?? (neighbor.t === 'procedure' ? outCols[0] : null);
+    // No column can be established for this non-procedure neighbor from any channel: it is not a
     // contributor to this trace, and a real model would leave it out.
     if (!assigned) continue;
     ctColumnAssignment.set(neighborKey, assigned);
@@ -572,6 +558,16 @@ function activate(context) {
       const caseId = activeCase && activeCase.id;
       const cfg = activeCase ? activeCase.cfg : null;
 
+      if (cfg && cfg.kind === 'signed-turn') {
+        if (request.messages.some(message => message.role === vscode.LanguageModelChatMessageRole.Assistant)) {
+          progress.report(new vscode.LanguageModelTextPart('SCRIPTED_SIGNED_TURN_COMPLETE'));
+          return;
+        }
+        progress.report(new vscode.LanguageModelThinkingPart('', undefined, { signature: cfg.signature }));
+        progress.report(new vscode.LanguageModelToolCallPart('signed-call-001', 'lineage_search_objects', { query: 'orders' }));
+        return;
+      }
+
       // ── structured_output: the narrow entry-detector call ───────────────────
       if (toolNames.includes('structured_output')) {
         const verdict = cfg
@@ -611,8 +607,7 @@ function activate(context) {
             origin: cfg.origin,
             question: `Scripted ${caseId} exploration.`,
             analysisMode: cfg.mode,
-            direction: cfg.direction ?? 'upstream',
-            depth: cfg.depth ?? 'all',
+            depth: cfg.depth,
             classification: cfg.classification ?? 'business',
             ...(cfg.mode === 'ct' ? { targetColumns: cfg.targetColumns } : {}),
           };
@@ -638,7 +633,7 @@ function activate(context) {
         // scripted provider prunes nothing and authors no per-neighbor question.
         const input = {
           focus_node_id: focusId,
-          sections: [{ angle: 'business', text: `Scripted ${caseId} analysis of ${focusId}.` }],
+          sections: { business: `Scripted ${caseId} analysis of ${focusId}.` },
           summary: `${focusId} passes data through unchanged.`,
           verdict: 'analyze',
           ...(isCt ? { column_flow: buildCtColumnFlow(request, cfg, focusId, hop) } : {}),
@@ -699,7 +694,7 @@ function activate(context) {
     // (e.g. { origin: '[dbo].[MyFact]' } to point a case at a caller-built synthetic graph).
     vscode.commands.registerCommand('lineageTestModel.setCase', (caseId, overrides) => {
       const base = DEFAULT_CASES[caseId];
-      if (!base) throw new Error(`lineageTestModel.setCase: unknown case "${caseId}". Expected one of S1..S7.`);
+      if (!base) throw new Error(`lineageTestModel.setCase: unknown case "${caseId}". Expected one of ${Object.keys(DEFAULT_CASES).join(', ')}.`);
       activeCase = { id: caseId, cfg: { ...base, ...(overrides || {}) } };
       hopSeq = 0;
       ctColumnAssignment = new Map();

@@ -88,7 +88,7 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '# Data Lineage Assistant',
     '',
     "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects (tables, views, procedures, functions) into a dependency graph the user sees as a diagram; each object's SQL opens in the editor.",
-    'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose.',
+    'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose. You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
@@ -158,10 +158,11 @@ const CHAT_MARKDOWN_FORMAT = [
  * @remarks
  * Role and grounding are established by {@link buildGeneralSystemPrompt}, composed once upstream
  * of this block, and each tool's modelDescription owns which question it answers — so this block
- * states only the task, the one lineage call that answers a dependency question, and the
- * applied-bookmark rule, which selects the evidence source before the kind of ask picks a tool: a
- * question about a bookmarked graph is a read of a run already stored, and answering it with a
- * scope walk is what turned "what do I see here" into a fresh approval gate. Chat format has one
+ * states only the task (when to answer directly and when to call a read tool), the one lineage call
+ * that answers a dependency question, and the applied-bookmark rule, which selects the evidence
+ * source before the kind of ask picks a tool: a question about a bookmarked graph is a read of a
+ * run already stored, and answering it with a scope walk is what turned "what do I see here" into a
+ * fresh approval gate. Chat format has one
  * home, the YAML `discovery_chat` template. The `over_discovery_budget` guard is deliberately
  * unmentioned — `lineage_get_scope_bundle` is the only place it can fire, that call site always
  * wires the mechanical `detectReroute` detector (`detectOverBudgetFromResult`,
@@ -174,8 +175,8 @@ const CHAT_MARKDOWN_FORMAT = [
  */
 function buildDiscoveryPrompt(): string {
   return [
-    '## Task: answer in chat from the read tools',
-    'Choose the tool whose description matches the question. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question, with `include_ddl` when the logic matters. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
+    '## Task: answer in chat',
+    'Facts about this database come from what the read tools returned in this conversation. When those facts already answer the question, or it needs none (a greeting, what you can do, general SQL or data-modelling knowledge), reply directly without a tool call; otherwise choose the tool whose description matches the question. A column trace naming columns on more than one object gets a short reply asking which object to trace first. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question, with `include_ddl` when the logic matters. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
   ].join('\n');
 }
 
@@ -198,10 +199,10 @@ function buildActivePhasePrompt(): string {
     '',
     'Deliver one `lineage_submit_findings` call:',
     '1. `verdict` for the focus node, judged from the focus itself.',
-    '2. With `analyze` or `passthrough`: `sections[]` and a one-sentence `summary`.',
+    '2. With `analyze` or `passthrough`: `sections` and a one-sentence `summary`.',
     '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     '',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; `prune_protected` ones are not pruned; an `out_of_direction` one needs no decision either.',
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; `prune_protected` ones are not pruned; a neighbor served `in_approved_scope: false` (which subsumes `out_of_direction`) needs no decision either.',
   ].join('\n');
 }
 
@@ -246,7 +247,7 @@ export function buildPresentationDetailContract(
         headingRule,
       ]
       : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth, with the short SQL that grounds them; every captured callout, formula and predicate reappears verbatim. Drop whole nodes the question does not need, never parts of a kept one.',
+        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth, with the short SQL that grounds them; every captured callout, formula and predicate appears exactly once — stated in words, or, where its detail_slots fence shows an id, cited by that id (```sql S<n>) and expanded verbatim after the text — never both, and never an id that no served fence shows. Never drop part of a linked node\'s captured detail.',
         headingRule,
       ];
   return [
@@ -277,7 +278,7 @@ function buildVisualPreviewPrompt(): string {
     'Call `lineage_present_result` once. Do not call discovery or scope tools; the supplied answer and scope are authoritative.',
     'Partition the complete `answer_body` across `sections[].text` in its original order. Copy it verbatim: no rewriting, summarizing, new claims, or omissions.',
     'Choose cut points so each section answers one part of the user\'s question. Add only section labels and canonical node links.',
-    'Every `notes[].text` must be one unbroken span copied from the supplied answer — quote a single continuous passage; never stitch separated phrases together, and never invent caption text.',
+    'Every `notes[].caption` must be one unbroken span copied from the supplied answer — quote a single continuous passage; never stitch separated phrases together, and never invent caption text.',
     '',
     buildPresentationDetailContract('The detailed walkthrough belongs in `sections[].text`, taken from the supplied `answer_body` — the preview is a regrouping of that answer, never a lighter retelling of it.', 'preview'),
   ].join('\n');
@@ -309,14 +310,16 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     '',
     evidence,
     '',
-    '- `sections[]`: the answer, grouped by what best answers the question (`suggested_sections` is a starting point). Link the nodes each section documents, raw source and target tables included.',
+    '- `sections[]`: the answer, grouped by what best answers the question (`suggested_sections` is a starting point) — regroup freely, but carry every id from every starting-point section along; none may go missing in the reshaping. Link the nodes each section documents, raw source and target tables included.',
     '- `highlight_groups[]`, `notes[]`, `summary`, `title`, `intro`, `closing`: per the templates below.',
+    '- Every node with a `detail_slots[]` entry appears in a section (`sections[].node_ids`); a highlight group or a note does not cover it.',
     ...(isCt
-      ? ['- In a column trace, every Column Trace Chain node in `result.scope.node_ids` appears in a section, a highlight group or a note; a terminal source whose formula or predicate was captured sits in a section.']
+      ? ['- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section, a highlight group or a note.']
       : []),
     '- Id fields take only ids from `result.scope.node_ids`; name any other object in section text.',
     '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
     '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences.',
+    '- Each captured SQL fence in `detail_slots[]` shows an id on its opening line (```sql S7). To reuse that SQL unchanged, write only the opening line with its id and close the fence with no body; the engine inserts the captured SQL at that spot. Writing SQL out yourself is always allowed.',
     '- Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
     '',
     buildPresentationDetailContract(undefined, 'synthesis'),
@@ -331,10 +334,12 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
  * Fires when `sess.phase.kind === 'completed'` on a subsequent user turn. History replay carries
  * the conversation — earlier user turns and the assistant's own markdown — and nothing else: the
  * per-node archive and the engine-assembled section bodies are not replayed into this stage. The
- * protocol therefore points at `lineage_get_object_detail` and `lineage_search_ddl` (both in the
- * completed-phase tool policy) to re-derive node facts, instead of inviting the model to quote an
- * archive it cannot read. Tells the model to refine the existing answer — text edits, prunes, and
- * explicit-node supplements — without starting a fresh exploration.
+ * protocol therefore points at `lineage_get_object_detail` and `lineage_search_ddl` to re-derive
+ * node facts, instead of inviting the model to quote an archive it cannot read. Tells the model to
+ * refine the existing answer — text edits, prunes, and explicit-node supplements — to answer a
+ * question beyond the report by walking the graph with the discovery read tools, and, for a
+ * different origin, direction or scope, to send a fresh proposal that runs only after the user
+ * approves it.
  *
  * Receives {@link buildPresentationDetailContract} like every other stage that authors a
  * `present_result` payload: linking, labels, colors, and `is_update` are the same rules
@@ -350,20 +355,22 @@ function buildFollowUpPrompt(): string {
     'Your context holds the conversation only — earlier user turns and your own replies;',
     'the per-node archive and the rendered section bodies are not replayed here. Re-derive',
     'any node fact you need with `lineage_get_object_detail` or `lineage_search_ddl` before',
-    'quoting it. You can browse the catalog or refine the visualization without starting over.',
+    'quoting it. You can walk the loaded graph or refine the visualization without starting over.',
     '',
     'Adjust the existing graph (default):',
     '- Re-label or regroup sections: rebuild the full `sections[]` list and call',
     '  `lineage_present_result` with `is_update:true` — the tool replaces the whole list, so an',
-    '  omitted section is a deleted section. Badges regenerate from section labels. Change only',
-    '  the `label` or `node_ids` you were asked to change; re-derive section text you cannot',
-    '  quote exactly.',
+    '  omitted section is a deleted section. On a repair turn (a `held_draft_repair_state` block is',
+    '  present) the resend rule in that block governs instead. Badges regenerate from section',
+    '  labels. List a section you keep under its committed label with no `text`: it keeps',
+    '  its body. Send `text` only for a section you rewrite or a new or renamed',
+    '  label, re-deriving what you cannot quote exactly; change only the `node_ids` you were asked to.',
     '- Change graph color/role labels such as `source`, `transform`, or `target`: update `highlight_groups[]`',
     '  and call `lineage_present_result`. `add_node_ids` reveals objects this exploration already',
     '  analysed; an object it has not analysed joins through the supplement below.',
     '- Change description text shown with the graph: update `title`, `intro`,',
     '  `sections[].text`, and/or `closing` in `lineage_present_result`.',
-    '- Change note text below the graph: update `notes[]` (`node_id`, `text`) in',
+    '- Change note text below the graph: update `notes[]` (`node_id`, `caption`) in',
     '  `lineage_present_result`.',
     '- Prune nodes from the current graph: use `prune_node_ids` in',
     '  `lineage_present_result`.',
@@ -375,10 +382,12 @@ function buildFollowUpPrompt(): string {
     '- Add deferred or nearby nodes the user asked for that need new per-node analysis while staying on the same topic: call',
     '  `lineage_start_exploration` with `supplement` (`supplement.chain` when the user asks to follow them further), then re-render with',
     '  `lineage_present_result`. Do this only for analysis expansion, not for label/color/note/text edits.',
-    '- A different origin, direction or scope is a new trace the user starts with `/trace`; this stage cannot start one.',
+    '- A different origin, direction or scope is a new trace: send a fresh `lineage_start_exploration` proposal (origin and scope,',
+    '  no `supplement`); it runs only after the user approves it.',
     '',
-    'Support tools in follow-up: `lineage_get_object_detail`, `lineage_search_ddl`,',
-    'and `lineage_search_objects` for targeted lookups before rendering.',
+    'Answer a question beyond the report — another object, a wider neighbourhood — in chat by walking',
+    'the loaded graph with the read tools (`lineage_get_scope_bundle` for sources, consumers and',
+    'neighbours); the rendered graph changes only through the edits and supplements above.',
     '',
     '## Chat response format',
     '',
@@ -400,6 +409,68 @@ export const RUN_TRACE_TRIGGER = 'Run trace';
 /** Post-discovery action that asks the semantic router for a bounded graph preview. */
 export const SHOW_GRAPH_PREVIEW_TRIGGER = 'Show graph preview';
 
+/**
+ * Prompt the approval card's **Approve & Proceed** or **Cancel** button submits for the plan revision
+ * that card shows.
+ *
+ * @remarks
+ * The gate turn ends when the card renders so VS Code frees the chat input; a button therefore
+ * re-enters as a fresh chat turn carrying this text, which `detectEntryNode` resolves against the
+ * held proposal from session state (see {@link parseGateTrigger}) without a model call. The
+ * revision ties the click to the plan the user saw, so a stale card never acts on a newer plan.
+ */
+export function gateTriggerPrompt(action: 'approve' | 'cancel', revision: number): string {
+  return `${action === 'approve' ? 'Approve' : 'Cancel'} exploration plan revision ${revision}`;
+}
+
+const GATE_TRIGGER_PATTERN = /^(Approve|Cancel) exploration plan revision (\d+)$/;
+
+/** Reads a {@link gateTriggerPrompt} back; `null` for any other prompt. */
+export function parseGateTrigger(prompt: string): { action: 'approve' | 'cancel'; revision: number } | null {
+  const match = GATE_TRIGGER_PATTERN.exec(prompt.trim());
+  return match ? { action: match[1] === 'Approve' ? 'approve' : 'cancel', revision: Number(match[2]) } : null;
+}
+
+/** Reply to a card button whose plan revision is no longer the one pending. */
+export const STALE_GATE_TRIGGER_REPLY = 'That plan is no longer pending — use the buttons on the latest plan, or ask again.';
+
+/**
+ * System prompt for the structured reading of one typed reply at a pending approval gate.
+ *
+ * @remarks
+ * One call, four outcomes: the user's free text approves the plan as shown, changes it (the reply
+ * names the change), cancels it, or is about something else. A change is delivered verbatim as the
+ * refinement instruction; `other` is answered like any chat turn while the proposal and its card
+ * stay pending, so no typed reply is ever a dead end.
+ */
+export function buildGateReplySystemPrompt(): string {
+  return [
+    'The user typed a chat reply while an exploration proposal awaits their approval.',
+    'Classify what the reply asks of the proposal:',
+    '- approve — the reply accepts the plan as shown (agreement, confirmation, "go ahead").',
+    '- change — the reply asks for a change to the plan (add, remove, narrow, redirect, re-column, a new depth), whether or not the plan already matches it.',
+    '- cancel — the reply abandons the exploration.',
+    '- other — the reply is not about this proposal (a separate question or request).',
+    'Answer with exactly one action; never quote or restate the plan.',
+  ].join('\n');
+}
+
+/**
+ * User message for the typed-reply classification: the reviewed plan, then the verbatim reply.
+ *
+ * @param scopeMd - The scope summary the user is looking at on the approval card.
+ * @param reply - The user's typed chat text, verbatim.
+ */
+export function buildGateReplyUserPrompt(scopeMd: string, reply: string): string {
+  return [
+    '## Proposal awaiting approval',
+    scopeMd,
+    '',
+    '## The user\'s typed reply',
+    reply,
+  ].join('\n');
+}
+
 /** Stable host-owned marker that keeps the explicit preview action on the lightweight route. */
 export const PREVIEW_REQUEST_MARKER = 'The user clicked the post-discovery "Show graph preview" link.';
 
@@ -412,6 +483,12 @@ export const PREVIEW_REQUEST_MARKER = 'The user clicked the post-discovery "Show
  * depending on the model choosing to narrate it again after `present_result`.
  */
 export const SHOW_FULL_DESCRIPTION_TRIGGER = 'Show the full description';
+
+/**
+ * Prompt of the approval card's **Show full plan** follow-up. The participant answers it from the
+ * held proposal without a model call and without resolving the gate.
+ */
+export const SHOW_FULL_PLAN_TRIGGER = 'Show the full exploration plan';
 
 /**
  * Stable first line of the seeded trace envelope, matched by the graph to route straight to SM.
@@ -464,23 +541,21 @@ export function expandShowGraphPreviewPrompt(prompt: string, ctx: DiscoveryPillC
 export function expandRunTracePrompt(prompt: string, ctx: DiscoveryPillContext): string {
   if (prompt !== RUN_TRACE_TRIGGER) return prompt;
   if (ctx.lastDiscoveryOrigin && ctx.lastDiscoveryQuestion && ctx.lastDiscoveryAnswer) {
-    return buildRunTraceTriggerPrompt(ctx.lastDiscoveryQuestion, ctx.lastDiscoveryAnswer, ctx.lastDiscoveryOrigin);
+    return buildRunTraceTriggerPrompt(ctx.lastDiscoveryQuestion, ctx.lastDiscoveryAnswer);
   }
   return prompt;
 }
 
 /**
- * Builds the User-message envelope that drives a forced `lineage_start_exploration`.
+ * Builds the User-message envelope that asks the SM-entry turn for a `lineage_start_exploration` call.
  *
  * @param question - The user's verbatim discovery question.
  * @param answer - The AI's discovery chat answer (Markdown).
- * @param origin - The first walked node id from the discovery turn.
  * @returns Effective-prompt text fed into the next LM round.
  */
 function buildRunTraceTriggerPrompt(
   question: string,
   answer: string,
-  origin: string,
 ): string {
   return [
     TRACE_REQUEST_MARKER,
@@ -488,10 +563,8 @@ function buildRunTraceTriggerPrompt(
     '',
     '## Inputs to lineage_start_exploration',
     '',
-    `- **origin**: ${JSON.stringify(origin)} (the node walked during discovery).`,
     '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. If none, pass `[]`.',
-    '- **mission_brief**: a 1-sentence placeholder citing the user\'s original question.',
-    '- Every other field: from <original_question>, as its description says.',
+    '- Every field, including **origin** and **mission_brief**: derive from <original_question> and the discovery answer below, as each field\'s description says.',
     '',
     '## Discovery context',
     '',
@@ -609,7 +682,7 @@ export function buildOriginalQuestionBlock(question: string | null): string {
  *
  * @remarks
  * Names the traced columns only. What `column_flow` holds and how it differs from
- * `sections[]` is owned by the `column_trace_capture` template and the `upstream_columns`
+ * `sections` is owned by the `column_trace_capture` template and the `upstream_columns`
  * schema description.
  *
  * @param targetColumns - The columns being traced, as confirmed at gate-approval.
@@ -707,7 +780,7 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
-      `    This list is the whole tracked set for this hop, and it outranks the sub-question above: a column the sub-question names but this list omits is not tracked here — \`column_flow\` may not name it, and what the node does with it belongs in sections[].text.`,
+      `    This list is the whole tracked set for this hop, and it outranks the sub-question above: a column the sub-question names but this list omits is not tracked here — \`column_flow\` may not name it, and what the node does with it belongs in \`sections\`.`,
       `  </column_trace>`,
     );
   }

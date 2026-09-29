@@ -14,7 +14,7 @@ import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
 import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
-import { readToolError, rejectionIssuePaths, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
@@ -263,7 +263,7 @@ function instrumentRegistry(
       try {
         const result = await registry.invoke(name, payload);
         const rejection = parseRejection(result);
-        const issuePaths = rejection ? rejectionIssuePaths(rejection.detail) : [];
+        const issuePaths = rejection?.issuePaths ?? [];
         void instrumentation.writer.write({
           ...base,
           status: rejection

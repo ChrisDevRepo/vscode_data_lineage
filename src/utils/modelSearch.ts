@@ -103,6 +103,17 @@ const REDOS_SAMPLE_MAX_CHARS = 200;
  */
 const REDOS_SAMPLE_STEP_CHARS = 4;
 
+/**
+ * Longest probe input, in characters, of the scale sweep that follows the growth sweep.
+ *
+ * @remarks
+ * A polynomial pattern (`.*.*x`, `a*a*x`) stays cheap on a 200-character probe yet costs minutes on
+ * a minified DDL line, and a line is matched whole. The sweep doubles the input from
+ * {@link REDOS_SAMPLE_MAX_CHARS} to this size and refuses the pattern at the first over-budget run,
+ * so the cost of the probe is bounded by the last size that still fit the budget.
+ */
+const REDOS_SCALE_MAX_CHARS = 6400;
+
 /** Whether one probe run of `regex` over `sample` exceeds the ReDoS guard budget. */
 function probeExceedsBudget(regex: RegExp, sample: string): boolean {
   const start = performance.now();
@@ -129,6 +140,10 @@ function exceedsRedosBudget(regex: RegExp): boolean {
       const sample = unit.repeat(Math.ceil(chars / unit.length));
       if (confirmedOverBudget(regex, sample)) return true;
     }
+    for (let chars = REDOS_SAMPLE_MAX_CHARS * 2; chars <= REDOS_SCALE_MAX_CHARS; chars *= 2) {
+      const sample = unit.repeat(Math.ceil(chars / unit.length));
+      if (confirmedOverBudget(regex, sample)) return true;
+    }
   }
   return false;
 }
@@ -149,17 +164,25 @@ type SearchRegexResult =
   | { ok: false; reason: 'redos' };
 
 /**
- * Longest stretch of one body line, in characters, a search pattern is executed against.
+ * Longest body line, in characters, a search result serves as text.
  *
  * @remarks
- * The ReDoS probe measures a pattern only up to {@link REDOS_SAMPLE_MAX_CHARS}, and a polynomial
- * pattern it accepts (`a.*a.*x`) grows by a power of the input length past that point — seconds on
- * one generated line of a few thousand characters. Matching runs per line and never past this cap,
- * so one execution's cost stays bounded; the cap sits well above hand-written SQL line widths. A
- * longer line is searched in its first this-many characters and reported as such by
- * {@link scanBodyMatches}, never skipped silently.
+ * Matching runs over the whole line. A matching line longer than this is not served as a result
+ * row: {@link scanBodyMatches} reports it as an {@link OversizedLineHit} locator (line number,
+ * length, match offset) and the caller names the DDL read that shows the line whole — a line is
+ * never cut to an excerpt.
  */
 export const SEARCH_LINE_MAX_CHARS = 1000;
+
+/** Locator for a matching body line longer than {@link SEARCH_LINE_MAX_CHARS}. */
+export interface OversizedLineHit {
+  /** 1-based line number in the body. */
+  readonly line: number;
+  /** Length of the line in characters. */
+  readonly length: number;
+  /** 0-based offset of the first match within the line. */
+  readonly match_offset: number;
+}
 
 /** Flags every search regex compiles with: grep's contract — case-insensitive, `^`/`$` per line. */
 const SEARCH_REGEX_FLAGS = 'im';
@@ -268,7 +291,7 @@ export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexR
     return `Fix the pattern: ${message.replace(/^Invalid regular expression: .*?: /, '')}.`;
   }
 
-  return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") that can backtrack catastrophically.';
+  return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") and stacked or leading unbounded repeats (e.g. ".*.*x", ".*x") that backtrack heavily on a long line; use a literal anchor or a bounded repeat such as "{0,40}".';
 }
 
 /**
@@ -341,9 +364,9 @@ export function searchCatalog(
  * case-insensitive substring: one match per object, the panel's line width applied, and its own
  * display cap. A RegExp is the pattern `compileSearchRegex` accepted for `lineage_search_ddl`,
  * whose contract is grep's: every match in every body, with its line number, and no truncation —
- * neither a per-line window nor a result cap. A RegExp matches one line at a time, over at most
- * {@link SEARCH_LINE_MAX_CHARS} characters of it; {@link scanBodyMatches} names the lines that cap
- * cut.
+ * neither a per-line window nor a result cap. A RegExp matches one whole line at a time; a
+ * matching line longer than {@link SEARCH_LINE_MAX_CHARS} yields no row here, and
+ * {@link scanBodyMatches} locates it.
  */
 export function searchBodyScripts(
   nodes: SearchableNode[],
@@ -397,26 +420,25 @@ export function searchBodyScripts(
  * @param admits - Whether a given match count may still be built; once it returns `false` for a
  * count it must return `false` for every larger one.
  * @returns The rows, the total match count, how many objects produced at least one match, and
- * every searched body line longer than {@link SEARCH_LINE_MAX_CHARS} (1-based, per object, in
- * body order). `matches` holds every match exactly when `admits(total)` holds; otherwise it holds
+ * every matching body line longer than {@link SEARCH_LINE_MAX_CHARS} as a locator (per object, in
+ * body order); such a line adds no row and no count to `matches`/`total`. `matches` holds every match exactly when `admits(total)` holds; otherwise it holds
  * only the rows built before the count first failed, which the caller must not serve.
  *
  * @remarks
  * Lets `lineage_search_ddl` answer an over-budget pattern from counts alone in the same regex pass
  * that builds a fitting result: a pattern that matches nearly every character would otherwise
  * allocate one row, snippet and mask set per character of every body, only for the budget check to
- * discard them all. `truncated` is reported whether or not the pattern matched, since a hit past
- * the cap is exactly the one the result cannot show.
+ * discard them all. `oversized` holds the locators the rows cannot show.
  */
 export function scanBodyMatches(
   nodes: SearchableNode[],
   regex: RegExp,
   types: Set<ObjectType> | undefined,
   admits: (count: number) => boolean,
-): { matches: BodyMatch[]; total: number; objects: number; truncated: { node: SearchableNode; lines: number[] }[] } {
+): { matches: BodyMatch[]; total: number; objects: number; oversized: { node: SearchableNode; lines: OversizedLineHit[] }[] } {
   const scanner = globalScanner(regex);
   const matches: BodyMatch[] = [];
-  const truncated: { node: SearchableNode; lines: number[] }[] = [];
+  const oversized: { node: SearchableNode; lines: OversizedLineHit[] }[] = [];
   let building = true;
   let total = 0;
   let objects = 0;
@@ -425,16 +447,16 @@ export function scanBodyMatches(
     if (!body || (types && types.size > 0 && !types.has(node.type))) continue;
     const matchAt = bodyMatcher(node, body, DEFAULT_SNIPPET_CONTEXT_LINES, Number.POSITIVE_INFINITY);
     const before = total;
-    const cutLines: number[] = [];
+    const longLines: OversizedLineHit[] = [];
     forEachLineMatch(scanner, body, (index, text) => {
       total++;
       building &&= admits(total);
       if (building) matches.push(matchAt(index, text));
-    }, line => cutLines.push(line));
+    }, hit => longLines.push(hit));
     if (total > before) objects++;
-    if (cutLines.length > 0) truncated.push({ node, lines: cutLines });
+    if (longLines.length > 0) oversized.push({ node, lines: longLines });
   }
-  return { matches, total, objects, truncated };
+  return { matches, total, objects, oversized };
 }
 
 /**
@@ -478,30 +500,34 @@ function globalScanner(regex: RegExp): RegExp {
  * order, until `visit` returns `false`.
  *
  * @param visit - Receives the match's offset in `body` and the matched text.
- * @param onTruncated - Receives the 1-based number of each line longer than
- * {@link SEARCH_LINE_MAX_CHARS}, which is matched over its first that-many characters only.
+ * @param onOversized - Receives one locator for each matching line longer than
+ * {@link SEARCH_LINE_MAX_CHARS}; `visit` is not called for that line.
  *
  * @remarks
- * Per line is grep's contract: no match spans a line break, and one execution never runs over more
- * than the cap. A zero-length match (`x*`, `^`) advances nothing on its own: the position is skipped
+ * Per line is grep's contract: no match spans a line break. A zero-length match (`x*`, `^`) advances nothing on its own: the position is skipped
  * rather than the line, or the first empty match would hide every real match later on it.
  */
 function forEachLineMatch(
   scanner: RegExp,
   body: string,
   visit: (index: number, text: string) => boolean | void,
-  onTruncated?: (line: number) => void,
+  onOversized?: (hit: OversizedLineHit) => void,
 ): void {
   let lineStart = 0;
   for (let line = 1; ; line++) {
     const newline = body.indexOf('\n', lineStart);
     const lineEnd = newline < 0 ? body.length : newline;
-    if (lineEnd - lineStart > SEARCH_LINE_MAX_CHARS) onTruncated?.(line);
-    const segment = body.slice(lineStart, Math.min(lineEnd, lineStart + SEARCH_LINE_MAX_CHARS));
+    const length = lineEnd - lineStart;
+    const oversized = length > SEARCH_LINE_MAX_CHARS;
+    const segment = body.slice(lineStart, lineEnd);
     scanner.lastIndex = 0;
     let hit: RegExpExecArray | null;
     while ((hit = scanner.exec(segment)) !== null) {
       if (hit[0].length === 0) { scanner.lastIndex++; continue; }
+      if (oversized) {
+        onOversized?.({ line, length, match_offset: hit.index });
+        break;
+      }
       if (visit(lineStart + hit.index, hit[0]) === false) return;
     }
     if (newline < 0) return;

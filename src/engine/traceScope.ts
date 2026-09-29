@@ -2,13 +2,15 @@
  * Pure helpers for interactive trace scope edits.
  *
  * These functions keep the webview trace UX aligned with SM graph-integrity
- * rules: the origin is an anchor, prune is disabled when it would disconnect
- * the remaining trace, and traversal is cycle-safe.
+ * rules: the origin is an anchor, a prune takes the subtree reachable only
+ * through the pruned node with it, and traversal is cycle-safe.
  */
 
 import type Graph from 'graphology';
-import type { LineageEdge, TraceState } from './types';
-import { firstDisconnectedRequiredNode } from './graphGuards';
+import type { DatabaseModel, LineageEdge, TraceState } from './types';
+import { bfsFromNode } from 'graphology-traversal';
+import { buildGraphologyGraph } from './graphBuilder';
+import { bfsReachable, nodesCutByRemoval } from './graphGuards';
 
 /**
  * Whether a trace mode permits manual add/prune edits.
@@ -58,14 +60,20 @@ export function isManualTraceScopeEdit(previous: TraceState, next: TraceState): 
     || !sameIdSet(previous.manualPrunedNodeIds, next.manualPrunedNodeIds);
 }
 
-/** Result of validating whether a visible trace node can be pruned safely. */
+/**
+ * Result of validating whether a visible trace node can be pruned.
+ *
+ * @remarks
+ * A prune takes its subtree with it, so only the origin and a node outside the visible scope
+ * are refused.
+ */
 export interface TracePruneCheck {
-  /** True when pruning preserves origin reachability for all remaining visible trace nodes. */
+  /** True when the candidate is prunable — the origin and every out-of-scope node are the only refusals. */
   safe: boolean;
   /** Stable reason code when pruning is rejected. */
-  reason?: 'origin' | 'not-visible' | 'disconnected';
-  /** First remaining node that would become disconnected from the origin. */
-  disconnectedNodeId?: string;
+  reason?: 'origin' | 'not-visible';
+  /** Node ids that leave together with the candidate (its subtree). Present only when `safe`. */
+  cutNodeIds?: string[];
 }
 
 function edgeId(source: string, target: string): string {
@@ -116,36 +124,130 @@ export function buildVisibleTraceScope(
 }
 
 /**
- * Checks whether removing one visible trace node preserves origin reachability.
+ * Builds the traversal graph for a trace scope from the full model.
+ *
+ * Mirrors the scope graph `applyTraceToFlow` builds when synthesis runs, so
+ * focus and path operations see the same node/edge membership on every trace,
+ * not only on synthesized ones.
+ *
+ * @param model - The full database model.
+ * @param nodeIds - Trace scope membership; edges leaving the scope are dropped.
+ * @returns Graphology graph over the scope.
+ */
+export function buildTraceScopeGraph(model: DatabaseModel, nodeIds: ReadonlySet<string>): Graph {
+  return buildGraphologyGraph({
+    ...model,
+    nodes: model.nodes.filter((n) => nodeIds.has(n.id)),
+    edges: model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target)),
+  });
+}
+
+/**
+ * Unions every origin↔target connecting path for a route set.
  *
  * @remarks
- * Delegates to {@link firstDisconnectedRequiredNode}, the same disconnect guard
- * the NavigationEngine applies to hop-by-hop prunes. The walk is scoped to the
- * visible trace nodes and undirected: pruning a connector is unsafe when any
- * remaining visible node would no longer be reachable from the origin,
- * irrespective of lineage edge direction.
+ * A route is every node lying on some directed path between the origin and the target — the
+ * descendants of the source intersected with the ancestors of the sink, both from
+ * `bfsFromNode`, neither walk passing through the other endpoint — plus the edges inside that
+ * set, so both branches of a diamond are kept and a cycle through an endpoint is not. Each
+ * target is tried downstream (`origin → target`) first and upstream (`target → origin`) when no
+ * downstream path exists. Returns null when the origin is unknown to the graph or any target is
+ * unreachable: a route set is all-or-nothing, never a partial union.
+ *
+ * @param graph - Graph spanning the trace scope.
+ * @param originId - Route anchor (the trace origin).
+ * @param targetIds - Route end node ids; the origin itself is skipped.
+ * @returns Unioned route node and edge ids, or null when any route fails.
+ */
+export function unionConnectingPaths(
+  graph: Graph,
+  originId: string,
+  targetIds: ReadonlyArray<string>,
+): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
+  if (!graph.hasNode(originId)) return null;
+  const nodeIds = new Set<string>([originId]);
+  const edgeIds = new Set<string>();
+  for (const targetId of targetIds) {
+    if (targetId === originId) continue;
+    if (!graph.hasNode(targetId)) return null;
+    const route = pathsBetween(graph, originId, targetId) ?? pathsBetween(graph, targetId, originId);
+    if (!route) return null;
+    for (const id of route.nodeIds) nodeIds.add(id);
+    for (const id of route.edgeIds) edgeIds.add(id);
+  }
+  return { nodeIds, edgeIds };
+}
+
+function pathsBetween(graph: Graph, sourceId: string, sinkId: string): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
+  const fromSource = reachable(graph, sourceId, 'outbound', sinkId);
+  if (!fromSource.has(sinkId)) return null;
+  const toSink = reachable(graph, sinkId, 'inbound', sourceId);
+  const nodeIds = new Set([...fromSource].filter((id) => toSink.has(id)));
+  const edgeIds = new Set<string>();
+  for (const id of nodeIds) {
+    if (id === sinkId) continue;
+    graph.forEachOutEdge(id, (edge, _attrs, _source, target) => {
+      if (target !== sourceId && nodeIds.has(target)) edgeIds.add(edge);
+    });
+  }
+  return { nodeIds, edgeIds };
+}
+
+/** Nodes reachable from `startId` in `mode`, never expanding past `stopId`. */
+function reachable(graph: Graph, startId: string, mode: 'inbound' | 'outbound', stopId: string): Set<string> {
+  const seen = new Set<string>();
+  bfsFromNode(graph, startId, (id) => {
+    seen.add(id);
+    return id === stopId;
+  }, { mode });
+  return seen;
+}
+
+/**
+ * Checks whether one visible trace node can be pruned, and what leaves with it.
+ *
+ * @remarks
+ * A self-prune like the AI backend's `end_branch`: the candidate leaves together with its
+ * subtree — every node reachable from the origin only through it — computed by
+ * {@link nodesCutByRemoval}, the same cut the NavigationEngine applies at a hop resolution. The
+ * walk is scoped to the visible trace nodes and undirected: relevance in a trace runs both ways.
+ * The result never leaves an island, and the origin is never removable.
  *
  * @param graph - Graphology graph spanning the trace nodes and their edges.
  * @param originNodeId - Origin node ID (anchor, never prunable).
  * @param visibleNodeIds - Currently visible node IDs.
  * @param candidateNodeId - Node ID being tested.
+ * @param reachableFromOrigin - Optional {@link traceReachableFromOrigin} result, shared across many candidates.
  *
- * @returns Prune verdict with a stable rejection reason when unsafe.
+ * @returns Prune verdict; `cutNodeIds` lists the subtree leaving alongside the candidate when safe.
  */
 export function canPruneTraceNode(
   graph: Graph,
   originNodeId: string | null,
   visibleNodeIds: ReadonlySet<string>,
   candidateNodeId: string,
+  reachableFromOrigin?: ReadonlySet<string>,
 ): TracePruneCheck {
   if (!originNodeId || candidateNodeId === originNodeId) return { safe: false, reason: 'origin' };
   if (!visibleNodeIds.has(candidateNodeId)) return { safe: false, reason: 'not-visible' };
   if (!visibleNodeIds.has(originNodeId)) return { safe: false, reason: 'origin' };
 
-  const required = new Set(visibleNodeIds);
-  required.delete(candidateNodeId);
-  const removed = new Set<string>([candidateNodeId]);
-  const disconnected = firstDisconnectedRequiredNode(graph, originNodeId, removed, required, visibleNodeIds);
-  if (disconnected) return { safe: false, reason: 'disconnected', disconnectedNodeId: disconnected };
-  return { safe: true };
+  const cutNodeIds = nodesCutByRemoval(
+    graph,
+    originNodeId,
+    new Set<string>(),
+    new Set<string>([candidateNodeId]),
+    visibleNodeIds,
+    undefined,
+    reachableFromOrigin,
+  );
+  return { safe: true, cutNodeIds };
+}
+
+/**
+ * Nodes the origin reaches inside the visible scope with nothing removed — the "before" state
+ * every {@link canPruneTraceNode} probe compares against, computed once per scope.
+ */
+export function traceReachableFromOrigin(graph: Graph, originNodeId: string, visibleNodeIds: ReadonlySet<string>): ReadonlySet<string> {
+  return bfsReachable(graph, originNodeId, new Set<string>(), undefined, visibleNodeIds);
 }

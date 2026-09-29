@@ -1,27 +1,42 @@
 /**
- * Single typed channel for tool-result error envelopes.
+ * Single typed channel for tool-result rejections.
  *
  * @remarks
- * Normalizes the three legitimate error shapes a tool result carries across the graph dispatch
- * boundary as a JSON string: engine-rejection (`{ error, hint?, message?, detail? }`),
- * validation-failure (`{ success: false, errors: […], hint? }`), and budget-guard
- * (`{ ok: false, reason, counts, limits, hint? }`, code read from `reason`). Provider-pure.
+ * Every tool, guard and engine refusal is emitted by {@link makeRejection} in one shape —
+ * `{ code, reason, hint?, detail?, issuePaths?, entryIds?, lengthOverruns? }` — and serialized as the
+ * tool result. {@link readToolError} reads that shape back. The one other shape it recognizes is the
+ * `lineage_present_result` validator's `{ success: false, errors: […] }`, which that tool still emits
+ * itself. Provider-pure.
  */
 import { z } from 'zod';
 import { REJECTION_CODES } from './rejectionCodes';
 
-/** Normalized, typed read of either error envelope. A `null` reader result means "not an error". */
+/** One length offender a rejection names: the field path, its measured length, and its cap. */
+export interface RejectionLengthOverrun {
+  /** Dotted field path of the over-long value. */
+  readonly path: string;
+  /** Measured character length of the rejected value. */
+  readonly length: number;
+  /** The hard cap `length` exceeds. */
+  readonly limit: number;
+}
+
+/** The one rejection shape: what was wrong (`reason`), how to repair it (`hint`), and typed machine facts. */
 export interface ToolRejection {
-  /** Stable machine code — the engine `error` code, `'validation'` for the `success:false` shape, or the `reason` code (fallback `ok_false`) for the budget-guard shape. */
+  /** Stable machine code. */
   code: string;
-  /** First human-readable reason line (resolved `errors[0]` → `message` → `detail` → `code`). */
+  /** Human-readable reason line; equals `code` when the emit site states nothing more. */
   reason: string;
   /** Optional remediation hint the model should act on next round. */
   hint?: string;
   /** Structured dispatcher facts retained for bounded graph-owned correction projection. */
   detail?: unknown;
-  /** Dotted paths of the offending fields, when derived from a Zod error; downstream correction-echo and observability read these. */
+  /** Dotted paths of the offending fields; downstream correction-echo and observability read these. */
   issuePaths?: string[];
+  /** Exact offending entry ids, for a violation whose offender is an id rather than a field path. */
+  entryIds?: readonly string[];
+  /** Length offenders with their measured size and cap. */
+  lengthOverruns?: RejectionLengthOverrun[];
 }
 
 /**
@@ -47,257 +62,169 @@ export function isConsentGateRejection(code: string): boolean {
   return code === CONSENT_GATE_CODE;
 }
 
-/**
- * Zod view of the untrusted tool-result payload — parsed once at the boundary. All fields optional and
- * `passthrough`; the readers below derive the typed verdict from this single parse.
- */
-const ToolResultEnvelope = z
-  .object({
-    error: z.unknown().optional(),
-    success: z.unknown().optional(),
-    errors: z.unknown().optional(),
-    ok: z.unknown().optional(),
-    reason: z.unknown().optional(),
-    hint: z.unknown().optional(),
-    message: z.unknown().optional(),
-    detail: z.unknown().optional(),
-  })
-  .passthrough();
+/** Zod view of the {@link makeRejection} shape, parsed once at the read boundary. */
+const RejectionShape = z.object({
+  code: z.string(),
+  reason: z.string().trim().min(1),
+  hint: z.string().optional(),
+  detail: z.unknown().optional(),
+  issuePaths: z.array(z.string()).optional(),
+  entryIds: z.array(z.string()).optional(),
+  lengthOverruns: z.array(z.object({ path: z.string(), length: z.number(), limit: z.number() })).optional(),
+});
+
+/** Zod view of the `lineage_present_result` validator's `{ success: false, errors: […] }` failure. */
+const PresentResultFailureShape = z.object({
+  success: z.literal(false),
+  errors: z.array(z.unknown()).optional(),
+  hint: z.string().optional(),
+  detail: z.unknown().optional(),
+}).passthrough();
 
 /**
  * Write-side builder for the one tool-execution failure envelope both LM lanes feed back to the
  * model when a handler throws. Owning it here keeps the graph-owned dispatch result provider-neutral.
  * @param toolName - Canonical tool name whose handler threw.
- * @returns Generic JSON error envelope safe to project into graph retry state.
+ * @returns Generic JSON rejection safe to project into graph retry state.
  */
 export function buildToolExecutionError(toolName: string): string {
-  return JSON.stringify({
-    error: REJECTION_CODES.toolExecutionError,
+  return JSON.stringify(makeRejection({
+    code: REJECTION_CODES.toolExecutionError,
     hint: `Correct the ${toolName} input and retry the same phase.`,
+  }));
+}
+
+/** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
+export const NO_PROJECT_LOADED_MESSAGE =
+  'No project is loaded in the Data Lineage panel (closed or not opened yet); open the project and ask again.';
+
+/**
+ * Thrown by a tool host's `requireModel`/`requireGraph` when no model/graph is loaded — the panel
+ * closed mid-turn and cleared them (`panelProvider.ts`'s `onDidDispose`, the one site that nulls
+ * them), or an externally registered read tool ran with no project ever opened. Both causes are one
+ * true statement, so this is one class and one code rather than a guess at which applied.
+ * Distinguished from a generic tool-execution failure so the dispatcher returns a stable,
+ * non-retryable rejection instead of a hint that invites correcting input that was never the
+ * problem.
+ */
+export class NoProjectLoadedError extends Error {
+  constructor() {
+    super(NO_PROJECT_LOADED_MESSAGE);
+    this.name = 'NoProjectLoadedError';
+  }
+}
+
+/**
+ * Rejection for a tool call dispatched with no project loaded.
+ * @returns JSON rejection carrying {@link REJECTION_CODES.noProjectLoaded} and the stable hint.
+ */
+export function buildNoProjectLoadedError(): string {
+  return JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, hint: NO_PROJECT_LOADED_MESSAGE }));
+}
+
+/**
+ * Reads the `lineage_present_result` validator failure into a {@link ToolRejection}.
+ *
+ * @remarks
+ * `detail` folds in every offender the validator attached: its per-path records, the full `errors[]`
+ * array when it has more than one entry, and every sibling key (`repairFields`, `repairable`, …).
+ * The typed `issuePaths`, `entryIds` and `lengthOverruns` are read from the flat per-path record
+ * list the validator emits in `detail`.
+ */
+function readPresentResultFailure(data: unknown): ToolRejection | null {
+  const parsed = PresentResultFailureShape.safeParse(data);
+  if (!parsed.success) return null;
+  const { success: _success, errors, hint, detail, ...siblings } = parsed.data;
+  const reason = String(errors?.[0] ?? '').trim() || 'tool returned failure envelope';
+  const extraFacts: Record<string, unknown> = {};
+  if (errors && errors.length > 1) extraFacts.errors = errors;
+  Object.assign(extraFacts, siblings);
+  const hasExtraFacts = Object.keys(extraFacts).length > 0;
+  const mergedDetail = !hasExtraFacts
+    ? detail
+    : detail === undefined
+      ? extraFacts
+      : typeof detail === 'object' && detail !== null && !Array.isArray(detail)
+        ? { ...detail, ...extraFacts }
+        : { detail, ...extraFacts };
+
+  const records = (Array.isArray(detail) ? detail : []).filter(
+    (record): record is Record<string, unknown> => typeof record === 'object' && record !== null,
+  );
+  const entryIds = [...new Set(records.flatMap((record) => (Array.isArray(record.entry_ids) ? record.entry_ids : [])))]
+    .filter((id): id is string => typeof id === 'string');
+  const overrunByPath = new Map<string, RejectionLengthOverrun>();
+  for (const { path, length, limit } of records) {
+    if (typeof path === 'string' && Number.isInteger(length) && Number.isInteger(limit) && (length as number) > (limit as number) && !overrunByPath.has(path)) {
+      overrunByPath.set(path, { path, length: length as number, limit: limit as number });
+    }
+  }
+  const lengthOverruns = [...overrunByPath.values()];
+  return makeRejection({
+    code: REJECTION_CODES.validation,
+    reason,
+    hint,
+    detail: mergedDetail,
+    issuePaths: records.flatMap((record) => (typeof record.path === 'string' ? [record.path] : [])),
+    entryIds,
+    lengthOverruns,
   });
 }
 
-/** Well-known envelope keys already surfaced as first-class `ToolRejection` fields or resolved into `reason`/`code`. */
-const RECOGNIZED_ENVELOPE_KEYS = new Set(['error', 'success', 'errors', 'ok', 'reason', 'hint', 'message', 'detail']);
-
 /**
- * Rich reader: normalize any error shape into `{ code, reason, hint }`, or `null` when the payload
- * is not an error. Recognizes the engine-rejection shape (`{ error }`), an explicit `{ success:false }`,
- * a non-empty `{ errors[] }` list, and the budget-guard `{ ok: false }` marker. Used for rejection
- * logging and per-turn failure counting.
+ * Reader: the typed {@link ToolRejection} a tool result carries, or `null` when the payload is not
+ * a refusal. Recognizes exactly two shapes — the {@link makeRejection} shape every emit site uses,
+ * and the `lineage_present_result` validator's own `{ success: false, errors: […] }` failure.
  *
- * @remarks
- * `detail` folds in every offender the emit site attached: any existing `env.detail`, the full
- * `errors[]` array when it has more than one entry, and any unrecognized top-level sibling key
- * (e.g. a budget guard's `counts`/`limits`).
  * @param data - Parsed untrusted tool result.
- * @returns Normalized rejection, or `null` for a successful/non-envelope result.
+ * @returns The rejection, or `null` for a successful/non-rejection result.
  */
 export function readToolError(data: unknown): ToolRejection | null {
-  const parsed = ToolResultEnvelope.safeParse(data);
-  if (!parsed.success) return null;
-  const env = parsed.data;
-
-  const hasError = typeof env.error === 'string';
-  const hasFailedSuccess = env.success === false;
-  const errorsArray = Array.isArray(env.errors) ? env.errors as unknown[] : undefined;
-  const hasErrors = !!errorsArray && errorsArray.length > 0;
-  const okFalse = env.ok === false;
-  if (!hasError && !hasFailedSuccess && !hasErrors && !okFalse) return null;
-
-  const code = hasError
-    ? String(env.error)
-    : okFalse
-      ? (typeof env.reason === 'string' && env.reason.trim() ? env.reason.trim() : 'ok_false')
-      : REJECTION_CODES.validation;
-  let reason = '';
-  if (hasErrors) reason = String((errorsArray)[0] ?? '');
-  if (!reason && typeof env.message === 'string') reason = env.message;
-  if (!reason && typeof env.detail === 'string') reason = env.detail;
-  if (!reason && hasError) reason = String(env.error);
-  if (!reason && okFalse) reason = code;
-  if (!reason) reason = 'tool returned failure envelope';
-  const hint = typeof env.hint === 'string' ? env.hint : undefined;
-
-  const extraFacts: Record<string, unknown> = {};
-  if (errorsArray && errorsArray.length > 1) extraFacts.errors = errorsArray;
-  for (const [key, value] of Object.entries(env as Record<string, unknown>)) {
-    if (RECOGNIZED_ENVELOPE_KEYS.has(key)) continue;
-    extraFacts[key] = value;
+  const parsed = RejectionShape.safeParse(data);
+  if (parsed.success) {
+    const { detail, ...rest } = parsed.data;
+    return { ...rest, ...(detail !== undefined ? { detail } : {}) };
   }
-  const hasExtraFacts = Object.keys(extraFacts).length > 0;
-
-  let detail: unknown = env.detail;
-  if (hasExtraFacts) {
-    if (env.detail !== undefined && typeof env.detail === 'object' && env.detail !== null && !Array.isArray(env.detail)) {
-      detail = { ...(env.detail as Record<string, unknown>), ...extraFacts };
-    } else if (env.detail !== undefined) {
-      detail = { detail: env.detail, ...extraFacts };
-    } else {
-      detail = extraFacts;
-    }
-  }
-
-  return { code, reason, hint, ...(detail !== undefined ? { detail } : {}) };
+  return readPresentResultFailure(data);
 }
 
+/** Longest one dotted-path segment: an identifier, or an index. */
+const MAX_PATH_SEGMENT_CHARS = 100;
+/** One dotted-path segment: an identifier of at most {@link MAX_PATH_SEGMENT_CHARS} chars, or an index. */
+const PATH_SEGMENT = `(?:[A-Za-z_][A-Za-z0-9_-]{0,${MAX_PATH_SEGMENT_CHARS - 1}}|\\d+)`;
+/** Dotted identifier grammar every recorded issue path must match: safe to log where prose is not allowed. */
+const ISSUE_PATH_GRAMMAR = new RegExp(`^${PATH_SEGMENT}(?:\\.${PATH_SEGMENT})*$`);
+
 /**
- * Fail-closed factory for a {@link ToolRejection} — the one producer that normalizes and validates
- * a reason before it can be constructed. Trims `reason` and throws when the trimmed value is empty:
- * an empty-reason reject is unrepresentable (make-illegal-states-unrepresentable), since a rejection
- * the model cannot read is indistinguishable from a silent hang.
- * @param input - Raw rejection fields; `reason` is trimmed before validation and storage.
+ * The one producer of a {@link ToolRejection}. Trims `reason` (default: the `code`) and throws when
+ * the trimmed value is empty — an empty-reason reject is unrepresentable
+ * (make-illegal-states-unrepresentable), since a rejection the model cannot read is indistinguishable
+ * from a silent hang. `issuePaths` keep only dotted-identifier paths, deduped and bounded, so a
+ * model-controlled key can never reach a record that forbids prose.
+ * @param input - Raw rejection fields.
  * @returns A normalized {@link ToolRejection}.
  */
-export function makeRejection(input: { code: string; reason: string; hint?: string; detail?: unknown; issuePaths?: string[] }): ToolRejection {
-  const reason = input.reason.trim();
+export function makeRejection(input: {
+  code: string;
+  reason?: string;
+  hint?: string;
+  detail?: unknown;
+  issuePaths?: readonly string[];
+  entryIds?: readonly string[];
+  lengthOverruns?: readonly RejectionLengthOverrun[];
+}): ToolRejection {
+  const reason = (input.reason ?? input.code).trim();
   if (!reason) throw new Error('makeRejection: reason must not be empty');
+  const issuePaths = [...new Set(input.issuePaths ?? [])].filter((path) => ISSUE_PATH_GRAMMAR.test(path));
   return {
     code: input.code,
     reason,
     ...(input.hint !== undefined ? { hint: input.hint } : {}),
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
-    ...(input.issuePaths !== undefined ? { issuePaths: input.issuePaths } : {}),
+    ...(issuePaths.length > 0 ? { issuePaths } : {}),
+    ...(input.entryIds?.length ? { entryIds: [...input.entryIds] } : {}),
+    ...(input.lengthOverruns?.length ? { lengthOverruns: [...input.lengthOverruns] } : {}),
   };
-}
-
-/**
- * Extracts exact field paths from structured rejection detail without interpreting reason prose.
- *
- * @remarks
- * Lives beside the envelope it reads, not in any one consumer, so the retry path and the diagnostic
- * trace derive paths from one shape instead of two drifting copies. Bounded (64 nodes, 16 paths);
- * every accepted value matches the dotted identifier grammar, safe to record where prose is not allowed.
- *
- * @param detail - The rejection's `detail` field, in any nesting the producing tool chose.
- * @returns Deduped dotted paths, in first-seen order; empty when the detail names none.
- */
-export function rejectionIssuePaths(detail: unknown): string[] {
-  const paths: string[] = [];
-  walkRejectionDetail(detail, 'path', (record) => {
-    if (
-      typeof record.path === 'string'
-      && record.path.length <= MAX_ISSUE_PATH_CHARS
-      && /^(?:[A-Za-z_][A-Za-z0-9_-]{0,99}|\d+)(?:\.(?:[A-Za-z_][A-Za-z0-9_-]{0,99}|\d+))*$/.test(record.path)
-    ) {
-      paths.push(record.path);
-    }
-    return paths.length >= MAX_ISSUE_PATHS;
-  });
-  return [...new Set(paths)];
-}
-
-/** Records the rejection-detail walk inspects before it stops, arrays and objects alike. */
-const MAX_DETAIL_NODES = 64;
-/** Elements of one detail array the walk enqueues; the rest are never read. */
-const MAX_DETAIL_ARRAY_FANOUT = 32;
-/** Collected `path` values, counted before dedupe, at which {@link rejectionIssuePaths} stops. */
-const MAX_ISSUE_PATHS = 16;
-/** Longest `path` string {@link rejectionIssuePaths} will test against the dotted grammar. */
-const MAX_ISSUE_PATH_CHARS = 512;
-/** Distinct ids at which {@link rejectionEntryIds} stops. */
-const MAX_ENTRY_IDS = 64;
-/** Longest id {@link rejectionEntryIds} keeps; a longer one is skipped. */
-const MAX_ENTRY_ID_CHARS = 200;
-
-/**
- * Bounded breadth-first walk over a rejection's `detail`, shared by every collector that mines it.
- *
- * @param detail - The rejection's `detail` field, in any nesting.
- * @param collectedKey - The key the collector reads; its value is never descended into.
- * @param visit - Called once per non-array object record; returns true once the collector is full,
- *   which ends the walk.
- */
-function walkRejectionDetail(
-  detail: unknown,
-  collectedKey: string,
-  visit: (record: Record<string, unknown>) => boolean,
-): void {
-  const queue: unknown[] = [detail];
-  let visited = 0;
-  while (queue.length > 0 && visited < MAX_DETAIL_NODES) {
-    const value = queue.shift();
-    visited++;
-    if (!value || typeof value !== 'object') continue;
-    if (Array.isArray(value)) {
-      queue.push(...value.slice(0, MAX_DETAIL_ARRAY_FANOUT));
-      continue;
-    }
-    const record = value as Record<string, unknown>;
-    if (visit(record)) return;
-    for (const [key, child] of Object.entries(record)) {
-      if (key !== collectedKey && child && typeof child === 'object') queue.push(child);
-    }
-  }
-}
-
-/**
- * Extracts exact offending entry ids from structured rejection detail without interpreting reason
- * prose — the sibling of {@link rejectionIssuePaths} for a violation whose offender is an id rather
- * than a field path (e.g. an uncovered detail-slot or CT-chain node id, `PresentResultViolation.entryIds`
- * in `presentResult.ts`). Any tool's `detail` naming `entry_ids` (a string array) at any nesting
- * contributes, so a producer opts in by emitting that one field — no per-tool reader, no path
- * grammar: unlike a dotted path, a node id may legally carry brackets, dots, `%`, or spaces.
- *
- * @param detail - The rejection's `detail` field, in any nesting the producing tool chose.
- * @returns Deduped ids, in first-seen order; bounded (64 nodes, 64 ids, 200 chars each); empty when
- *   the detail names none.
- */
-export function rejectionEntryIds(detail: unknown): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  walkRejectionDetail(detail, 'entry_ids', (record) => {
-    if (Array.isArray(record.entry_ids)) {
-      for (const id of record.entry_ids) {
-        if (ids.length >= MAX_ENTRY_IDS) break;
-        if (typeof id === 'string' && id.length <= MAX_ENTRY_ID_CHARS && !seen.has(id)) {
-          seen.add(id);
-          ids.push(id);
-        }
-      }
-    }
-    return ids.length >= MAX_ENTRY_IDS;
-  });
-  return ids;
-}
-
-/** One length offender a rejection's `detail` names: the field path, its measured length, and its cap. */
-export interface RejectionLengthOverrun {
-  /** Dotted field path of the over-long value. */
-  readonly path: string;
-  /** Measured character length of the rejected value. */
-  readonly length: number;
-  /** The hard cap `length` exceeds. */
-  readonly limit: number;
-}
-
-/**
- * Extracts length offenders from structured rejection detail without interpreting reason prose —
- * the sibling of {@link rejectionIssuePaths} for a violation that carries its measured size. A
- * record contributes when it names a string `path` together with integer `length` and `limit`,
- * `length > limit`, at any nesting, so a producer opts in by emitting those two fields beside the path.
- *
- * @param detail - The rejection's `detail` field, in any nesting the producing tool chose.
- * @returns Offenders keyed by path in first-seen order; bounded like {@link rejectionIssuePaths};
- *   empty when the detail names none.
- */
-export function rejectionLengthOverruns(detail: unknown): RejectionLengthOverrun[] {
-  const overruns = new Map<string, RejectionLengthOverrun>();
-  walkRejectionDetail(detail, 'path', (record) => {
-    const { path, length, limit } = record;
-    if (
-      typeof path === 'string'
-      && path.length <= MAX_ISSUE_PATH_CHARS
-      && Number.isInteger(length)
-      && Number.isInteger(limit)
-      && (length as number) > (limit as number)
-      && !overruns.has(path)
-    ) {
-      overruns.set(path, { path, length: length as number, limit: limit as number });
-    }
-    return overruns.size >= MAX_ISSUE_PATHS;
-  });
-  return [...overruns.values()];
 }
 
 /**
@@ -318,7 +245,8 @@ function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): strin
     return describeSizeIssue(issue, received) ?? issue.message;
   }
   const echo = scalarEcho(received);
-  return echo !== undefined ? `${issue.message}; sent: ${echo}` : issue.message;
+  const message = baseIssueMessage(issue);
+  return echo !== undefined ? `${message}; sent: ${echo}` : message;
 }
 
 /**
@@ -384,10 +312,37 @@ function flattenUnionBranches(
 }
 
 /**
+ * Shared fragment naming a field the model never sent at all, reused by every rejection surface
+ * that tells a missing field apart from one merely typed wrong ({@link missingFieldRepairHint},
+ * {@link describeInvalidUnion}) — one wording, not a second phrase invented per call site.
+ */
+const MISSING_FIELD_FRAGMENT = 'missing entirely from this call';
+
+/**
+ * One union branch's rendered text: the plain comma-joined descriptor listing, except a branch
+ * that reduces to exactly one bare (missing) field, which states plainly that the field is
+ * required and absent rather than leaving a lone dotted name to be read as the defect. A branch
+ * naming several fields, or one present-but-wrong-type field, keeps the bare/enriched listing
+ * {@link describeUnionBranch} already produced — only a single missing name is ambiguous enough
+ * to need the extra words.
+ */
+function describeUnionBranchText(descriptors: string[]): string {
+  if (descriptors.length === 0) return '(no field detail)';
+  if (descriptors.length === 1 && !descriptors[0].includes(':')) {
+    return `${descriptors[0]} is required and ${MISSING_FIELD_FRAGMENT}`;
+  }
+  return descriptors.join(', ');
+}
+
+/**
  * Expands one `invalid_union` issue into a mechanical "no variant matched" reason naming every
  * union branch's required fields, plus the flattened, first-branch-first field paths for
  * `issuePaths`. Purely derived from the ZodError's own issue tree — no hand-authored per-tool text,
  * so it stays generic across every union schema (BB/CT `submit_findings`, entry-detection, etc.).
+ * Branches whose rendered text is byte-identical (the same field, or fields, reported the same way
+ * by more than one candidate shape — e.g. every provider variant that carries the same required
+ * nested field) collapse to one numbered entry: repeating an identical line under a second variant
+ * number tells the model nothing beyond what the first already said.
  * @param issue - The narrowed `invalid_union` issue.
  * @param input - The value that failed parsing, when available — enables the per-field defect
  * enrichment in {@link unionBranchFieldDescriptor}; absent fields keep their bare-name listing.
@@ -395,11 +350,14 @@ function flattenUnionBranches(
  */
 function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line: string; paths: string[] } {
   const allPaths: string[] = [];
-  const branches = flattenUnionBranches(issue).map((branchIssues, i) => {
+  const branchTexts: string[] = [];
+  for (const branchIssues of flattenUnionBranches(issue)) {
     const { fields, descriptors } = describeUnionBranch(branchIssues, issue.path, input);
     for (const field of fields) if (!allPaths.includes(field)) allPaths.push(field);
-    return `variant ${i + 1}: ${descriptors.length ? descriptors.join(', ') : '(no field detail)'}`;
-  });
+    const text = describeUnionBranchText(descriptors);
+    if (!branchTexts.includes(text)) branchTexts.push(text);
+  }
+  const branches = branchTexts.map((text, i) => `variant ${i + 1}: ${text}`);
   const prefix = issue.path.length ? `${issue.path.join('.')}: ` : '';
   return {
     line: `${prefix}input matched no variant; supply all required fields of one variant — ${branches.join('; ')}`,
@@ -416,28 +374,51 @@ export const INVALID_TOOL_INPUT_REPAIR_HINT
   = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
 
 /**
+ * The distinct offending key(s) of every `unrecognized_keys` issue on `error`.
+ *
+ * @returns The offending key names, empty when `error` carries no `unrecognized_keys` issue.
+ */
+export function zodUnrecognizedKeys(error: z.ZodError): string[] {
+  return [...new Set(
+    error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? issue.keys : [])),
+  )];
+}
+
+/**
+ * The message of one Zod issue, with an `unrecognized_keys` echo of every offending key whole.
+ */
+function baseIssueMessage(issue: z.core.$ZodIssue): string {
+  return issue.code === 'unrecognized_keys'
+    ? `Unrecognized key${issue.keys.length > 1 ? 's' : ''}: ${issue.keys.map(quoteKey).join(', ')}`
+    : issue.message;
+}
+
+/**
  * Repair hint for an `invalid_tool_input` rejection carrying at least one `unrecognized_keys` issue.
  *
  * @remarks
  * The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} says "keep every other field unchanged" —
  * wrong for a key the schema rejects outright, since resending it reproduces the same failure.
- * This names the offending key(s) and directs removal, stated alongside any other flagged field's repair.
+ * This names the offending key(s) and directs removal, stated alongside any other flagged field's
  *
  * @param error - The Zod validation failure under {@link rejectionFromZodError}.
  * @returns The removal-directed hint when any issue is `unrecognized_keys`; `undefined` otherwise,
  * so the caller falls back to {@link INVALID_TOOL_INPUT_REPAIR_HINT} unchanged.
  */
 function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
-  const offendingKeys = [...new Set(
-    error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? issue.keys : [])),
-  )];
+  const offendingKeys = zodUnrecognizedKeys(error);
   if (offendingKeys.length === 0) return undefined;
 
   const plural = offendingKeys.length > 1;
-  const keyList = offendingKeys.map((key) => `"${key}"`).join(', ');
-  const removal = `Resend the tool call with the unrecognized field${plural ? 's' : ''} ${keyList} removed entirely — `
-    + `${plural ? 'they are' : 'it is'} not part of this tool's input schema at all, so do not resend `
-    + `${plural ? 'them' : 'it'} under any name or nesting; keep every other field unchanged.`;
+  const keyList = offendingKeys.map(quoteKey).join(', ');
+  const nested = error.issues.some((issue) => issue.code === 'unrecognized_keys' && issue.path.length > 0);
+  const removal = nested
+    ? `Resend the tool call without the unrecognized field${plural ? 's' : ''} ${keyList} where ${plural ? 'they were' : 'it was'} `
+      + 'nested — a field this tool defines at another level goes at that level; anything else is not part of '
+      + 'this tool\'s input. Keep every other field unchanged.'
+    : `Resend the tool call with the unrecognized field${plural ? 's' : ''} ${keyList} removed entirely — `
+      + `${plural ? 'they are' : 'it is'} not part of this tool's input schema at all, so do not resend `
+      + `${plural ? 'them' : 'it'} under any name or nesting; keep every other field unchanged.`;
 
   const hasOtherIssues = error.issues.some((issue) => issue.code !== 'unrecognized_keys');
   return hasOtherIssues
@@ -476,7 +457,7 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown): string | und
 
   const plural = missingFields.length > 1;
   const fieldList = missingFields.map((field) => `"${field}"`).join(', ');
-  const addition = `Field${plural ? 's' : ''} ${fieldList} ${plural ? 'are' : 'is'} missing entirely from this call, `
+  const addition = `Field${plural ? 's' : ''} ${fieldList} ${plural ? 'are' : 'is'} ${MISSING_FIELD_FRAGMENT}, `
     + `not present with the wrong type — resend the full tool call with ${plural ? 'them' : 'it'} added at the `
     + 'required type; keep every other field unchanged.';
 
@@ -501,7 +482,22 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown): string | und
  * @returns The first applicable repair hint, or `undefined` when neither chain link applies.
  */
 export function zodFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
-  return unrecognizedKeyRepairHint(error) ?? missingFieldRepairHint(error, input);
+  return issueOwnedRepairHint(error) ?? unrecognizedKeyRepairHint(error) ?? missingFieldRepairHint(error, input);
+}
+
+/**
+ * The repair instruction a schema refinement states itself, on `params.hint` of its custom issue.
+ *
+ * @returns The first such hint, so a refinement that names its own concrete repair is never
+ * followed by the generic instruction it would contradict; `undefined` when no issue carries one.
+ */
+function issueOwnedRepairHint(error: z.ZodError): string | undefined {
+  for (const issue of error.issues) {
+    if (issue.code !== 'custom') continue;
+    const hint = (issue.params as { hint?: unknown } | undefined)?.hint;
+    if (typeof hint === 'string') return hint;
+  }
+  return undefined;
 }
 
 /**
@@ -518,11 +514,19 @@ export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered i
 export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
 
 /**
- * Bounded verbatim echo of one offending scalar. Objects and arrays are never echoed — a scalar
- * leaf is a bounded correction fragment; anything larger would re-open the full-payload re-echo
- * the minimal-delta repair contract forbids.
+ * Longest scalar echoed verbatim. A longer string is reported by path and length only — never a
+ * prefix — and objects and arrays are never echoed, so the full-payload re-echo the minimal-delta
+ * repair contract forbids stays closed.
  */
 const SCALAR_ECHO_MAX_CHARS = 120;
+
+/**
+ * Quoted echo of one offending object key; a key longer than {@link SCALAR_ECHO_MAX_CHARS} is
+ * reported by length alone, never as a prefix.
+ */
+function quoteKey(key: string): string {
+  return key.length > SCALAR_ECHO_MAX_CHARS ? `a ${key.length}-character key` : `"${key}"`;
+}
 
 /** Walks `input` down one Zod issue path; `undefined` when the path leaves the object graph. */
 function resolveAtPath(input: unknown, path: readonly PropertyKey[]): unknown {
@@ -542,10 +546,10 @@ function measuredSize(value: unknown): string | undefined {
   return undefined;
 }
 
-/** JSON-quoted echo of a scalar leaf, hard-capped; non-scalars return `undefined` and are never echoed. */
+/** JSON-quoted echo of a short scalar leaf; long strings and non-scalars return `undefined`. */
 function scalarEcho(value: unknown): string | undefined {
   if (typeof value === 'string') {
-    return JSON.stringify(value.length > SCALAR_ECHO_MAX_CHARS ? `${value.slice(0, SCALAR_ECHO_MAX_CHARS)}…` : value);
+    return value.length > SCALAR_ECHO_MAX_CHARS ? undefined : JSON.stringify(value);
   }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return undefined;
@@ -569,6 +573,19 @@ function describeSizeIssue(
 }
 
 /**
+ * Dotted issue paths for a raw `ZodError`. An `unrecognized_keys` issue yields one path per
+ * offending key, since Zod's own `issue.path` stops at the containing object; every other issue
+ * keeps `path.join('.')`.
+ */
+export function zodIssuePaths(error: z.ZodError): string[] {
+  return error.issues.flatMap((issue) => {
+    if (issue.code !== 'unrecognized_keys') return [issue.path.join('.')];
+    const base = issue.path.join('.');
+    return issue.keys.map((key) => (key.length > SCALAR_ECHO_MAX_CHARS ? base : base ? `${base}.${key}` : key));
+  });
+}
+
+/**
  * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error.
  *
  * @remarks
@@ -579,7 +596,8 @@ function describeSizeIssue(
  * bounds reach this function; a content cap is enforced and reported separately by the validator
  * or engine.
  * @param error - The Zod validation failure.
- * @param opts - `code` to stamp on the rejection; optional remediation `hint`; optional `input`
+ * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
+ * {@link zodFieldRepairHint}, then {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input`
  * (the value that failed parsing) enabling measured-size and scalar-echo enrichment.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
  */
@@ -596,19 +614,15 @@ export function rejectionFromZodError(
     }
     const path = issue.path.join('.');
     if (path) issuePaths.push(path);
-    let message = issue.message;
-    if (opts.input !== undefined) {
-      message = enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path));
-    }
+    const message = opts.input !== undefined
+      ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
+      : baseIssueMessage(issue);
     return path ? `${path}: ${message}` : message;
   });
-  const hint = opts.code === REJECTION_CODES.invalidToolInput
-    ? (opts.hint ?? zodFieldRepairHint(error, opts.input) ?? INVALID_TOOL_INPUT_REPAIR_HINT)
-    : opts.hint;
   return makeRejection({
     code: opts.code,
     reason: lines.join('; '),
-    hint,
+    hint: opts.hint ?? zodFieldRepairHint(error, opts.input) ?? INVALID_TOOL_INPUT_REPAIR_HINT,
     issuePaths,
   });
 }

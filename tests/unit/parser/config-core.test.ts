@@ -6,12 +6,15 @@
  *     REQUIRED_AI_TEMPLATE_KEYS entry present with a non-empty instruction; schemaVersion
  *     readable; negative cases (scalar-under-key rejected, bare schemaVersion accepted)
  *   parseParseRulesYaml — real assets/defaultParseRules.yaml parses with a non-empty rules[]
+ *   clampDeclaredNumericSetting — numeric settings are held to their package.json min/max
  */
 
 import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { rootPath } from '../helpers/testUtils';
 import {
+  clampDeclaredNumericSetting,
+  readDeclaredNumericSetting,
   parseAiOutputTemplatesYaml,
   parseParseRulesYaml,
   REQUIRED_AI_TEMPLATE_KEYS,
@@ -130,5 +133,36 @@ describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
     expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: "1"\n'); }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(1);
+  });
+});
+
+describe('clampDeclaredNumericSetting', () => {
+  it('holds a value above the declared maximum at the maximum', () => {
+    expect(clampDeclaredNumericSetting('maxNodes', 11000)).toBe(5000);
+    expect(clampDeclaredNumericSetting('renderLimit', 10000)).toBe(1500);
+    expect(clampDeclaredNumericSetting('overview.threshold', 10000)).toBe(1000);
+  });
+
+  it('holds a value below the declared minimum at the minimum', () => {
+    expect(clampDeclaredNumericSetting('maxNodes', 1)).toBe(10);
+    expect(clampDeclaredNumericSetting('trace.defaultUpstreamLevels', -5)).toBe(0);
+  });
+
+  it('rounds a fractional value of an integer setting', () => {
+    expect(clampDeclaredNumericSetting('tableStatistics.sampleSize', 1000.5)).toBe(1001);
+    expect(clampDeclaredNumericSetting('trace.defaultUpstreamLevels', 2.4)).toBe(2);
+  });
+
+  it('reads through readDeclaredNumericSetting with the manifest default for an unset or non-numeric value', () => {
+    const cfg = (value: unknown) => ({ get: <T,>() => value as T | undefined });
+    expect(readDeclaredNumericSetting(cfg(undefined), 'renderLimit')).toBe(750);
+    expect(readDeclaredNumericSetting(cfg('1000'), 'renderLimit')).toBe(750);
+    expect(readDeclaredNumericSetting(cfg(99999), 'renderLimit')).toBe(1500);
+  });
+
+  it('passes an in-range value, an unset value and an undeclared key through unchanged', () => {
+    expect(clampDeclaredNumericSetting('renderLimit', 750)).toBe(750);
+    expect(clampDeclaredNumericSetting('renderLimit', undefined)).toBeUndefined();
+    expect(clampDeclaredNumericSetting('notDeclared', 123456)).toBe(123456);
   });
 });

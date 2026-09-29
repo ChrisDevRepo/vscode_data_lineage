@@ -101,8 +101,14 @@ export const PathFinderBar = memo(function PathFinderBar({
                   handleSelect(suggestions[selectedIndex].id);
                 }
               } else if (e.key === 'Escape') {
-                setInput('');
-                setIsOpen(false);
+                if (input) {
+                  e.stopPropagation();
+                  setInput('');
+                  setIsOpen(false);
+                } else {
+                  setIsOpen(false);
+                  (e.target as HTMLInputElement).blur();
+                }
               }
             }}
             placeholder="Type target node..."
@@ -138,7 +144,8 @@ export const PathFinderBar = memo(function PathFinderBar({
 
       <Tooltip content="Close Path Finder">
         <button
-          onClick={onClose}
+          aria-label="Close Path Finder"
+          onClick={() => onClose()}
           className="h-8 w-8 flex items-center justify-center rounded-sm transition-colors ln-btn-secondary shrink-0"
         >
           <CloseIcon />

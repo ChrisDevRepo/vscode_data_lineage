@@ -2,7 +2,7 @@ import React, { memo } from 'react';
 import { Handle, Position, NodeToolbar, type NodeProps } from '@xyflow/react';
 import type { SchemaNodeData, ObjectType } from '../engine/types';
 import { SCHEMA_NODE_WIDTH, SCHEMA_NODE_HEIGHT } from '../engine/graphBuilder';
-import { TYPE_COLORS } from '../utils/schemaColors';
+import { TYPE_COLORS, getReadableTextColor } from '../utils/schemaColors';
 
 type SchemaNodeUiData = SchemaNodeData & {
   onExpandSchema?: (schemaName: string) => void;
@@ -90,7 +90,7 @@ export const SchemaNode = memo(function SchemaNode({ data, selected }: NodeProps
             padding: '4px 8px',
             fontSize: 10,
             fontWeight: 700,
-            color: 'var(--ln-button-fg)',
+            color: isExpandedSchemaViewCluster ? 'var(--ln-button-fg)' : getReadableTextColor(d.color),
             letterSpacing: '0.02em',
             display: 'flex',
             alignItems: 'center',

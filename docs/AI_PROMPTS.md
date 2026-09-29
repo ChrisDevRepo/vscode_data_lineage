@@ -44,14 +44,13 @@ otherwise in the field's own `.describe()` (`name`, and the per-hop tool fields
 `badge_label` and `column_flow[].upstream_columns[].note`, which are not
 template content). The **hard cap** is a named constant in
 [`toolSchemas.ts`](../src/ai/tools/toolSchemas.ts), stated to the model as a
-typed JSON-Schema constraint (`maxLength` / `maxItems`, through `advertisedMax`)
-and nowhere else in prose. Its **enforcement** is the validator —
-`validatePresentResult`, or `NavigationEngine` for the `submit_findings` fields —
-never a parse: the model port validates structure only, so an overrun is a
-repairable single-field rejection against a held draft instead of a rejection of
-the whole call at the wire. The same split covers a count cap
-(`highlight_groups`), while structural constraints — a required field, a floor,
-an enum — stay real parse-time checks. `sections[].label` carries a hard cap and deliberately no
+typed JSON-Schema constraint (`maxLength` / `maxItems`) and nowhere else in
+prose. Its **enforcement** is the same Zod declaration for a `present_result`
+field — a real `.max()` the model port and the handler boundary both parse — and
+`NavigationEngine` for the `submit_findings` fields (`advertisedMax`), whose
+overrun is a repairable single-field rejection against a held draft. The same
+split covers a count cap (`highlight_groups`), while structural constraints — a
+required field, a floor, an enum — are parse-time checks on both. `sections[].label` carries a hard cap and deliberately no
 character target: a tool-parameter description outranks the system prompt, so a
 number there became the operative ceiling; its shape is owned by
 `buildPresentationDetailContract`. Prose fields (`summary`, `intro`, `closing`)
@@ -85,8 +84,8 @@ support a single tool in that mode. The official Copilot sample sends Required
 only after narrowing to one tool; otherwise Auto. `compileInstructionPlan`
 keeps `required` when the phase exposes only its terminal tool (synthesis /
 preview), and demotes to Auto on the two-tool active hop. The graph still
-names `requiredTerminalTool` and retries a tool-less generation;
-`matchProseToolCall` promotes a fenced JSON body. Do not send Required with
+names `requiredTerminalTool` and retries a tool-less generation; a tool
+payload written as text stays text. Do not send Required with
 two tools on the participant path.
 
 ## Assembly and memory contract
@@ -100,7 +99,8 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   actually holds: the archive and rendered result graph are not replayed,
   detail is re-derived through the phase-valid read tools, and a presentation
   update replaces the section list wholesale — an omitted section is a deleted
-  section.
+  section, while a section listed under its committed label without text keeps
+  its body and cited SQL blocks.
 - The discovery-summary compose round runs under its own system prompt:
   every memo clause must come from the supplied question and discovery answer,
   plain prose, authored for later hops rather than for the user. The memo
@@ -132,8 +132,8 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   or one flagging a scalar field replays the whole bounded submitted call, never
   `{}`. For `present_result`, whose rejected draft the session holds and renders
   as its own block, the replayed call carries the name and call id only, so no
-  section text is sent twice in one attempt. The replayed exchange closes on a
-  user-role continuation note so the next generation is a new turn. Hop context
+  section text is sent twice in one attempt. The replayed exchange ends on the
+  rejection's tool result; no host-authored user turn follows it. Hop context
   is node-proportional and non-cumulative: a large focus-node DDL raises one
   hop's message and is gone the next.
 - Synthesis starts from a fresh completion envelope containing the archived
@@ -246,8 +246,9 @@ own tool:
   `NavigationEngine` for the rest of the run. `lineage_submit_findings`,
   `lineage_present_result`, and `lineage_get_neighbor_columns` operate inside
   it; nothing widens it silently — a follow-up that names an object is the
-  consent that admits exactly that object, never its schema, and a
-  scope-expansion gate is the consent that admits a schema.
+  consent that admits exactly that object, never its schema, and the schema
+  classes approved on the `confirm_sm_start` card are the consent that admits a
+  schema.
 - **`full_model`** — every parsed object in the loaded snapshot.
   `lineage_get_context`, `lineage_search_objects`, `lineage_search_ddl`,
   `lineage_get_object_detail`, `lineage_get_scope_bundle`, and
@@ -301,7 +302,7 @@ new request to trace or walk a named column. Under-choosing a column trace
 costs nothing: the approval gate still lets the user switch `analysisMode`
 before anything runs.
 Pending-gate refinements are strict patch requests tied to the gate revision.
-Omitted origin, question, mission brief, direction, depth, filters, mode,
+Omitted origin, question, mission brief, depth (direction is derived from it), filters, mode,
 classification, and columns are inherited mechanically. The refine stage may
 search objects to resolve a typo, pattern, ambiguity, or newly named object, but
 does not re-resolve the unchanged origin or rerun discovery;
@@ -423,7 +424,7 @@ their findings into the same accumulator instead of rejecting on their own, so a
 payload that breaks two rules is told about both in one round. Rejections name
 the offending entry paths, not only the rule, so a repair does not have to
 locate the defect by elimination. Both matter to the attempt budget: each defect
-class disclosed on its own round costs its own semantic-failure charge.
+class disclosed on its own round is one more reply without progress.
 
 For a new render, sections and highlights are required. A node can belong to at
 most one final section; highlighted nodes must be explained by a section or
@@ -447,7 +448,8 @@ phase/tool map. Discovery answers from snapshot tools and does not publish a
 `NavigationEngine`; `lineage_get_scope_bundle` still stores discovery evidence
 and is therefore participant-internal, not a `vscode.lm` tool. Visual preview,
 SM entry, active submission, synthesis, and completed follow-ups each receive
-only their phase-valid tools. Production dispatch is direct through the local
+only their phase-valid tools; completed follow-ups keep every discovery read
+tool so they can walk the graph beyond the report. Production dispatch is direct through the local
 registry and does not call `vscode.lm.invokeTool`.
 
 After a preview is accepted by the active graph webview, chat emits only a short

@@ -20,6 +20,9 @@ export default defineConfig({
     // (Chromium, ~1 MB but different growth) and a plain Node process both succeed. Give the
     // layout engine the headroom the product runtime effectively has.
     execArgv: ['--stack-size=8000'],
+    // Hang backstop only: no test asserts wall-clock time. The 1500-node dagre layout in
+    // largeGraph.test.ts takes minutes on a loaded machine, so the 5 s default would fail on load.
+    testTimeout: 300_000,
     // `.tsx` alongside `.ts` for the component tests that mount a webview leaf; the unit tsconfig
     // already includes `**/*.tsx` and inherits `jsx: react-jsx`. Same lane, not a new one.
     include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],

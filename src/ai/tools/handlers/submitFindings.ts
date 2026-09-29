@@ -11,9 +11,11 @@ import type { Verdict } from '../../sm/smTypes';
 import { sanitizeForLog } from '../../../utils/log';
 import {
   submitFindingsSchemaForMode,
+  toHopFinding,
 } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
-import { rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
+import { assignEvidenceIds } from '../../tools/presentResult';
+import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
@@ -21,7 +23,6 @@ import {
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import {
   extractRawSectionAngles,
-  mapSubmitFindingsEngineGuard,
   validateSectionsAgainstClassification,
 } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
@@ -37,11 +38,11 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
       const sess = s.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
-      if (!engine) return s.logAndReturn('lineage_submit_findings', {
-        error: REJECTION_CODES.noActiveSession,
+      if (!engine) return s.logAndReturn('lineage_submit_findings', makeRejection({
+        code: REJECTION_CODES.noActiveSession,
         hint: 'No active exploration. Call lineage_start_exploration first.',
-        next_action: 'start_exploration',
-      }, input);
+        detail: { next_action: 'start_exploration' },
+      }), input);
 
       const rawInput: SubmitFindingsInputObject =
         input && typeof input === 'object' && !Array.isArray(input)
@@ -49,10 +50,10 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           : {};
 
       if (!engine.columnAspect && rawInput.column_flow !== undefined) {
-        return s.logAndReturn('lineage_submit_findings', {
-          error: REJECTION_CODES.bbFieldUnknown,
+        return s.logAndReturn('lineage_submit_findings', makeRejection({
+          code: REJECTION_CODES.bbFieldUnknown,
           hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional prune_neighbors/questions.',
-        }, rawInput);
+        }), rawInput);
       }
 
       const modelNodeMap = getModelNodeMap(s.requireModel());
@@ -83,35 +84,31 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           typeof rawFocus === 'string' ? sess.memory.getArchivedAngles(rawFocus) : undefined,
         );
         const hint = [summary, repairHint, angleHint].filter(Boolean).join(' ');
-        return s.logAndReturn('lineage_submit_findings', {
-          error: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
+        return s.logAndReturn('lineage_submit_findings', makeRejection({
+          code: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
           hint,
-        }, normalizedInput);
+        }), normalizedInput);
       }
 
-      const finding = engine.applyHeldContent(parsed.data);
+      const finding = engine.applyHeldContent(toHopFinding(parsed.data));
 
       const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
       const violation = validateSectionsAgainstClassification(finding.verdict === 'end_branch' ? [] : finding.sections, sess.classification, finding.verdict, archivedAngles);
       if (violation) {
-        return s.logAndReturn('lineage_submit_findings', {
-          error: REJECTION_CODES.classificationLockViolation,
+        return s.logAndReturn('lineage_submit_findings', makeRejection({
+          code: REJECTION_CODES.classificationLockViolation,
           hint: violation,
-        }, normalizedInput);
+        }), normalizedInput);
       }
 
-      const result = engine.submitFindings(finding, s.budget);
-      if ('error' in result) {
-        const detail = (result as { detail?: Array<{ id?: string; reason?: string }> }).detail;
+      const result = engine.submitFindings(finding);
+      if ('code' in result) {
+        const detail = result.detail as Array<{ id?: string; reason?: string }> | undefined;
         if (Array.isArray(detail)) {
           for (const d of detail) {
             if (d.reason) s.logger.debug(`[CT] rejection: id=${d.id ?? '?'} — ${d.reason}`);
           }
         }
-
-        const guardEnvelope = mapSubmitFindingsEngineGuard(result);
-        if (guardEnvelope) return s.logAndReturn('lineage_submit_findings', guardEnvelope, normalizedInput);
-
         return s.logAndReturn('lineage_submit_findings', result, normalizedInput);
       }
 
@@ -123,7 +120,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           scope: { nodes: result.result.fullNodes.length, edges: result.result.edges.length },
           suggested_sections: result.result.suggested_sections,
           node_states: result.result.node_states,
-          detail_slots: result.result.detail_slots,
+          detail_slots: assignEvidenceIds(result.result.detail_slots).slots,
         };
         return s.logAndReturn('lineage_submit_findings', { ...result, result: lmResult }, normalizedInput);
       }
@@ -157,6 +154,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         accepted_focus: finding.focus_node_id,
         hop: nextHop.hop,
         next_focus: nextHop.focus_node?.id,
+        ...(result.unaccounted_columns ? { unaccounted_columns: result.unaccounted_columns } : {}),
       }, normalizedInput);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

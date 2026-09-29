@@ -9,7 +9,43 @@
  */
 
 import { DatabaseModel } from './types';
-import { compileExclusionPattern } from '../utils/sql';
+import { compileExclusionMatcher } from '../utils/sql';
+
+export { applyIsolationFilter } from './shared/modelFilters';
+
+/** Result of {@link checkObjectLimit}: the model admitted, or the count that refused it. */
+export type ObjectLimitCheck =
+  | { ok: true; model: DatabaseModel }
+  | { ok: false; count: number; limit: number };
+
+/**
+ * Verifies a model's object count against `dataLineageViz.maxNodes` before it is loaded or
+ * rendered. This is the single owner of the admit/refuse decision — every surface that can
+ * exceed the limit (host load paths, the wizard, in-canvas schema filters) calls it instead of
+ * re-deriving the comparison.
+ *
+ * @param model - The candidate model, already filtered to the selection under evaluation.
+ * @param limit - The configured `dataLineageViz.maxNodes` value.
+ * @returns `ok: true` with the model when its node count is within `limit`; otherwise `ok: false`
+ *   with the node count and the limit that refused it.
+ */
+export function checkObjectLimit(model: DatabaseModel, limit: number): ObjectLimitCheck {
+  const count = model.nodes.length;
+  if (count > limit) return { ok: false, count, limit };
+  return { ok: true, model };
+}
+
+/**
+ * Builds the one user-facing message for an object-count refusal, shared by every surface that
+ * reports it (the host's error toast or inline `db-error`, the wizard, the webview's warning).
+ *
+ * @param count - The refused object count.
+ * @param limit - The configured `dataLineageViz.maxNodes` value.
+ */
+export function formatObjectLimitMessage(count: number, limit: number): string {
+  return `${count.toLocaleString()} objects selected (limit ${limit.toLocaleString()}). `
+    + `Select fewer schemas, or raise the limit in Settings: dataLineageViz.maxNodes.`;
+}
 
 /**
  * Filters the model by removing nodes that match any of the provided regex exclusion patterns.
@@ -28,46 +64,12 @@ export function applyExclusionFilter(
 ): DatabaseModel {
   if (!patterns || patterns.length === 0) return model;
 
-  const regexes: RegExp[] = [];
-  for (const p of patterns) {
-    try {
-      regexes.push(compileExclusionPattern(p));
-    } catch (err) {
-      onInvalidPattern?.(p, err);
-    }
-  }
+  const isExcluded = compileExclusionMatcher(patterns, onInvalidPattern);
+  if (!isExcluded) return model;
 
-  if (regexes.length === 0) return model;
-
-  const nodes = model.nodes.filter((n) => {
-    const name = `${n.schema}.${n.name}`;
-    return !regexes.some((r) => r.test(name) || r.test(n.fullName));
-  });
+  const nodes = model.nodes.filter((n) => !isExcluded(n));
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-  return { ...model, nodes, edges };
-}
-
-/**
- * Filters the model by removing isolated nodes (nodes with a total degree of zero).
- *
- * @param model - The database model to filter.
- * @param hideIsolated - If `true`, isolation filtering is applied.
- * @returns A filtered DatabaseModel instance.
- */
-export function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean): DatabaseModel {
-  if (!hideIsolated) return model;
-
-  const connectedIds = new Set<string>();
-  for (const e of model.edges) {
-    connectedIds.add(e.source);
-    connectedIds.add(e.target);
-  }
-
-  const nodes = model.nodes.filter((n) => connectedIds.has(n.id));
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-
   return { ...model, nodes, edges };
 }
 

@@ -14,7 +14,6 @@
  */
 import * as vscode from 'vscode';
 import type Graph from 'graphology';
-import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
 import { Logger, trunc, sanitizeForLog, LOG_TRUNC_JSON, LOG_TRUNC_REJECTION } from '../../utils/log';
@@ -34,13 +33,14 @@ import {
   GetContextInputSchema,
   GetScreenStateInputSchema,
 } from '../tools/toolSchemas';
-import { type DatabaseModel } from '../../engine/types';
+import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
+import { readDeclaredNumericSetting } from '../../configCore';
 import { type SerializedFilterState } from '../../engine/projectStore';
 import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../tools/toolPolicy';
 import { ToolRegistry, filterRegistry } from '../tools/registry';
 import { TOOL_DEFS, type ToolName } from '../tools/toolDefs';
 import { getToolInvocationLabel } from '../tools/toolLabels';
-import { readToolError, rejectionIssuePaths, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import { readToolError, isConsentGateRejection, makeRejection, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
@@ -48,6 +48,7 @@ import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
 import { resolveModelNodeId } from '../support/inputNormalization';
+import { cursorOffset } from '../support/text';
 import { getModelNodeMap, type AiViewPreviewMessage, type ToolServices } from './handlers/toolServices';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
@@ -88,7 +89,6 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.columnSelfLoop]: 'column_mapping',
   [REJECTION_CODES.writesToNamesReader]: 'column_mapping',
   [REJECTION_CODES.prunedContributor]: 'column_mapping',
-  [REJECTION_CODES.columnChainIncomplete]: 'column_mapping',
   [REJECTION_CODES.pruneCarriesTrackedColumn]: 'source_selection',
   [REJECTION_CODES.routeValidationFailed]: 'source_selection',
   [REJECTION_CODES.pruneOriginForbidden]: 'source_selection',
@@ -128,9 +128,8 @@ class ToolHandler implements ToolServices {
     private readonly getPanel: () => vscode.WebviewPanel | undefined,
     private readonly turnLease?: TurnLease,
     public readonly getStoredRun?: StoredRunReader,
-    public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText'>,
+    public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>,
     public readonly signal?: AbortSignal,
-    public readonly maxRounds: number = DEFAULT_MAX_ROUNDS,
     public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
@@ -149,13 +148,13 @@ class ToolHandler implements ToolServices {
 
   public requireModel(): DatabaseModel {
     const m = this.getSession().model;
-    if (!m) throw new Error('No database loaded. Open a .dacpac file or connect to a database first.');
+    if (!m) throw new NoProjectLoadedError();
     return m;
   }
 
   public requireGraph(): Graph {
     const g = this.getSession().graph;
-    if (!g) throw new Error('No database loaded. Open a .dacpac file or connect to a database first.');
+    if (!g) throw new NoProjectLoadedError();
     return g;
   }
 
@@ -174,7 +173,7 @@ class ToolHandler implements ToolServices {
     const rejection = readToolError(data);
     if (rejection) {
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';
-      const paths = rejectionIssuePaths(rejection.detail);
+      const paths = rejection.issuePaths ?? [];
       const pathPart = paths.length > 0 ? ` issuePaths=${paths.join(',')}` : '';
       const isGate = isConsentGateRejection(rejection.code);
       const label = isGate ? '[Gate]' : '[Reject]';
@@ -202,20 +201,25 @@ class ToolHandler implements ToolServices {
 
   public toolError(toolName: string, err: unknown): string {
     const msg = err instanceof Error ? err.message : String(err);
+    const noProject = err instanceof NoProjectLoadedError;
     if (toolName === 'present_result') {
       const sess = this.getSession();
       sess.recordPresentResultFailure(
         this.turnEpoch(sess),
-        trunc(sanitizeForLog(`internal_error: ${msg}`), 240),
+        sanitizeForLog(`${noProject ? 'no_project_loaded' : 'internal_error'}: ${msg}`),
       );
     }
+    if (noProject) {
+      this.logger.info(`Tool ${toolName} ran with no project loaded`);
+      return buildNoProjectLoadedError();
+    }
     this.logger.error(`Tool ${toolName} failed unexpectedly`, err);
-    return JSON.stringify({
-      error: 'internal_error',
-      tool: toolName,
-      message: msg,
+    return JSON.stringify(makeRejection({
+      code: 'internal_error',
+      reason: msg || undefined,
       hint: `Unexpected internal error running ${toolName}. Retry once with the same input; if it repeats, simplify the payload.`,
-    });
+      detail: { tool: toolName },
+    }));
   }
 
   /**
@@ -271,18 +275,26 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const model = this.requireModel();
       const getDdl = (id: string) => sess.columnStore.getDdl(id);
-      const { ids, filter } = parsed.data;
+      const { ids, filter, cursor } = parsed.data;
       if (ids || filter) {
         const nodeMap = getModelNodeMap(model);
+        const resolvedIds = ids?.map(id => {
+          const resolved = resolveModelNodeId(id, nodeMap);
+          if (resolved && resolved !== id) {
+            this.logger.debug(`[AI] get_screen_state id resolved raw=${sanitizeForLog(id)} resolved=${sanitizeForLog(resolved)}`);
+          }
+          return resolved ?? id;
+        });
         return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
           liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
           budget: this.budget,
-          ids: ids?.map(id => resolveModelNodeId(id, nodeMap) ?? id),
+          ids: resolvedIds,
           filter,
           getDdl,
           isInModel: id => nodeMap.has(id),
+          hasPendingProposal: sess.pendingExploration !== null,
         }), input);
       }
       const screen = presentScreenState({
@@ -293,6 +305,7 @@ class ToolHandler implements ToolServices {
         totalNodes: model.nodes.length,
         getStoredRun: this.getStoredRun,
         getDdl,
+        offset: cursorOffset(cursor),
       });
       return this.logAndReturn('lineage_get_screen_state', screen, input);
     } catch (err) { return this.toolError('get_screen_state', err); }
@@ -302,8 +315,8 @@ class ToolHandler implements ToolServices {
     try {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
-      const { query, types, schemas, mode } = parsed.data;
-      return this.logAndReturn('lineage_search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter), input);
+      const { query, types, schemas, mode, cursor } = parsed.data;
+      return this.logAndReturn('lineage_search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor), input);
     } catch (err) { return this.toolError('search_objects', err); }
   }
 
@@ -316,7 +329,10 @@ class ToolHandler implements ToolServices {
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
-      if (!Array.isArray(bundle.nodes) || !Array.isArray(bundle.edges) || typeof bundle.origin !== 'string') {
+      if (
+        !Array.isArray(bundle.nodes) || !Array.isArray(bundle.edges) || typeof bundle.origin !== 'string'
+        || this.deriveLmStage(sess).kind !== 'discover'
+      ) {
         return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
       }
       const nodeIds = bundle.nodes.flatMap((node) => {
@@ -334,7 +350,7 @@ class ToolHandler implements ToolServices {
         edges,
       }, this.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return this.logAndReturn('lineage_get_scope_bundle', { error: REJECTION_CODES.staleTurn, hint: 'The turn no longer owns this session. Do not render this scope.' }, input);
+        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, hint: 'The turn no longer owns this session. Do not render this scope.' }), input);
       }
       return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
@@ -358,8 +374,8 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const parsed = parseToolInput(GetObjectDetailInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_object_detail', parsed.error, input);
-      const { id } = parsed.data;
-      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore) as Record<string, unknown>;
+      const { id, cursor } = parsed.data;
+      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore, cursor) as Record<string, unknown>;
 
       return this.logAndReturn('lineage_get_object_detail', detail, input);
     } catch (err) { return this.toolError('get_object_detail', err); }
@@ -371,9 +387,9 @@ class ToolHandler implements ToolServices {
       if (!parsed.ok) return this.logAndReturn('lineage_detect_graph_patterns', parsed.error, input);
       const { type, min_degree, max_size } = parsed.data;
       const anaCfg = vscode.workspace.getConfiguration('dataLineageViz');
-      const resolvedMinDegree = min_degree ?? anaCfg.get<number>('analysis.hubMinDegree');
-      const resolvedMaxSize   = max_size   ?? anaCfg.get<number>('analysis.islandMaxSize');
-      const resolvedLongestPath = anaCfg.get<number>('analysis.longestPathMinNodes');
+      const resolvedMinDegree = min_degree ?? readDeclaredNumericSetting(anaCfg, 'analysis.hubMinDegree', DEFAULT_CONFIG.analysis.hubMinDegree);
+      const resolvedMaxSize   = max_size   ?? readDeclaredNumericSetting(anaCfg, 'analysis.islandMaxSize', DEFAULT_CONFIG.analysis.islandMaxSize);
+      const resolvedLongestPath = readDeclaredNumericSetting(anaCfg, 'analysis.longestPathMinNodes', DEFAULT_CONFIG.analysis.longestPathMinNodes);
       return this.logAndReturn('lineage_detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
     } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
@@ -402,10 +418,10 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) {
-        return this.logAndReturn('lineage_get_neighbor_columns', {
-          error: REJECTION_CODES.noActiveSession,
+        return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
+          code: REJECTION_CODES.noActiveSession,
           hint: 'No active exploration. Call lineage_start_exploration first.',
-        }, input);
+        }), input);
       }
 
       const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
@@ -413,11 +429,11 @@ class ToolHandler implements ToolServices {
 
       const invalidIds = engine.validateNeighborIds(parsed.data.ids);
       if (invalidIds.length > 0) {
-        return this.logAndReturn('lineage_get_neighbor_columns', {
-          error: 'out_of_scope_or_not_neighbor',
-          invalid_ids: invalidIds,
+        return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
+          code: 'out_of_scope_or_not_neighbor',
           hint: `These ids are not direct neighbors of the current focus node and/or not in the active scope: ${invalidIds.join(', ')}. This tool only inspects direct neighbors for pruning verification.`,
-        }, input);
+          detail: { invalid_ids: invalidIds },
+        }), input);
       }
 
       return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
@@ -458,9 +474,9 @@ export function buildAiToolRegistry(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
   turnLease?: TurnLease,
-  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText'>; signal?: AbortSignal; maxRounds?: number; budget?: TurnTokenBudget },
+  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget?: TurnTokenBudget },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.maxRounds, host?.budget);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.budget);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),

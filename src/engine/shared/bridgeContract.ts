@@ -14,8 +14,8 @@ import { OBJECT_TYPES, type ExtensionConfig, type TraceAffordanceSnapshot } from
 /** Zod schema defining the valid types of database objects in the lineage graph. */
 const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
-/** Upper bound on scope arrays carried across the bridge (DoS / payload guard). */
-export const AI_MAX_SCOPE_NODE_IDS = 500;
+/** Upper bound on a list of object ids carried in a tool call or across the bridge — an input-size check, never a scope limit. */
+export const MAX_ID_LIST_LENGTH = 500;
 
 /**
  * Upper bound, in characters, on the assembled AI report markdown the webview hands back to the
@@ -66,7 +66,7 @@ export const SCREEN_STATE_MAX_IDS = 20;
  */
 export const TRACE_ALL_LEVELS = Number.MAX_SAFE_INTEGER;
 
-const AiScopeListSchema = z.array(z.string()).max(AI_MAX_SCOPE_NODE_IDS);
+const AiScopeListSchema = z.array(z.string()).max(MAX_ID_LIST_LENGTH);
 
 /** Typed structural and free-text edits accepted when revising a pending exploration gate. */
 export const AiGateRefineSchema = z.object({
@@ -111,15 +111,37 @@ const ColumnDefSchema = z.object({
   pkOrdinal: z.number().optional(),
 });
 
-/** Strict IPC boundary schema for lineage nodes sent between the extension host and webview. */
+/** Zod schema for a table's foreign key constraint, mirroring `ForeignKeyInfo`. */
+const ForeignKeyInfoSchema = z.object({
+  name: z.string(),
+  columns: z.array(z.string()),
+  refSchema: z.string(),
+  refTable: z.string(),
+  refColumns: z.array(z.string()),
+  onDelete: z.string(),
+});
+
+/**
+ * Strict IPC boundary schema for lineage nodes sent between the extension host and webview.
+ *
+ * @remarks
+ * Declares every `LineageNode` field: Zod strips undeclared keys, so a field missing here is
+ * silently dropped from every model the host sends (external-reference icons, detail-panel FKs).
+ */
 const LineageNodeSchema = z.object({
   id: z.string(),
   name: z.string(),
   schema: z.string(),
   fullName: z.string(),
   type: ObjectTypeSchema,
-  columns: z.array(ColumnDefSchema).optional(),
+  hasDdl: z.boolean().optional(),
   bodyScript: z.string().optional(),
+  hasColumns: z.boolean().optional(),
+  columns: z.array(ColumnDefSchema).optional(),
+  fks: z.array(ForeignKeyInfoSchema).optional(),
+  externalType: z.enum(['et', 'file', 'db']).optional(),
+  externalUrl: z.string().optional(),
+  externalDatabase: z.string().optional(),
 });
 
 /** Zod schema defining a directed dependency or execution relationship between two lineage nodes. */
@@ -685,7 +707,7 @@ export type UiStateSnapshot = z.infer<typeof UiStateSnapshotSchema>;
  * All outgoing communication from the extension is validated against this schema.
  */
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional() }),
+  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional() }),
   z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
   z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
   z.object({ type: z.literal('detail-closed') }),
@@ -697,6 +719,8 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('last-dacpac-gone') }),
   z.object({ type: z.literal('mssql-status'), available: z.boolean() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
+  z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
+  z.object({ type: z.literal('reload-source') }),
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
   z.object({
     type: z.literal('error'),

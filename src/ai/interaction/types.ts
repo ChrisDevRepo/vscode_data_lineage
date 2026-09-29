@@ -6,12 +6,7 @@
  * own phase/state-dependent constraints that cannot be expressed as static
  * schemas (engine status, focus alignment, per-round invariants).
  */
-type InteractionRuleFailure = {
-  error: string;
-  hint: string;
-  next_action?: string;
-  [key: string]: unknown;
-};
+import type { ToolRejection } from '../support/toolErrorEnvelope';
 
 /** `null` means the rule passed. */
-export type InteractionRuleResult = InteractionRuleFailure | null;
+export type InteractionRuleResult = ToolRejection | null;

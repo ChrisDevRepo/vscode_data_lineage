@@ -1,0 +1,106 @@
+[
+  {
+    "file": "src/ai/agent/graph.ts",
+    "text": "+ ` rejectReason=${trunc(sanitizeForLog(last.reason), LOG_TRUNC_REJECTION)}`,"
+  },
+  {
+    "file": "src/ai/model/vscodeModelPort.ts",
+    "text": "`[AI] tool-input-keys-dropped tool=${toolName} paths=${trunc(sanitizeForLog(dropped.join(',')), 200)}`,"
+  },
+  {
+    "file": "src/ai/model/vscodeModelPort.ts",
+    "text": "`[AI] tool-input-decoded tool=${toolName} paths=${trunc(sanitizeForLog(decoded.paths.join(',')), 200)}`,"
+  },
+  {
+    "file": "src/ai/session/session.ts",
+    "text": "const toolName = observation.toolName ? trunc(sanitizeForLog(observation.toolName), 64) : '(missing)';"
+  },
+  {
+    "file": "src/ai/session/session.ts",
+    "text": "debugLog?.(`[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`);"
+  },
+  {
+    "file": "src/ai/sm/smBase.ts",
+    "text": "const excludeNodeIdsLine = excludeIds.resolved.length > 0 ? ` excludeNodeIds=[${trunc(excludeIds.resolved, 10)}]` : '';"
+  },
+  {
+    "file": "src/ai/support/text.ts",
+    "text": "const detail = trunc(`${diagnostic.name}${codes.length ? ` [${codes.join(' → ')}]` : ''}: ${diagnostic.message}`, 200);"
+  },
+  {
+    "file": "src/ai/tools/handlers/presentResult.ts",
+    "text": "const expanded = expand(sec.text, `section \"${trunc(sec.label, 60)}\"`);"
+  },
+  {
+    "file": "src/ai/tools/handlers/presentResult.ts",
+    "text": "`[Presentation] Output assembled — title=\"${trunc(presentInput.title ?? '(none)', 60)}\" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`"
+  },
+  {
+    "file": "src/ai/tools/toolProvider.ts",
+    "text": "const preview = trunc(sanitizeForLog(json), LOG_TRUNC_JSON);"
+  },
+  {
+    "file": "src/ai/tools/toolProvider.ts",
+    "text": "const inputJson = trunc(sanitizeForLog(JSON.stringify(input)), LOG_TRUNC_JSON);"
+  },
+  {
+    "file": "src/ai/tools/toolProvider.ts",
+    "text": "const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';"
+  },
+  {
+    "file": "src/bridge/debugDumpScreenState.ts",
+    "text": "return trunc([...ids], cap);"
+  },
+  {
+    "file": "src/bridge/host.ts",
+    "text": "return `${issues.length} validation issues: ${issues.slice(0, 3).join(', ')}${issues.length > 3 ? '...' : ''}`;"
+  },
+  {
+    "file": "src/bridge/messageHandlers.ts",
+    "text": "? trunc(sanitizeForLog(msg.componentStack), LOG_TRUNC_JSON)"
+  },
+  {
+    "file": "src/bridge/messageHandlers.ts",
+    "text": "stack: msg.stack ? trunc(sanitizeForLog(msg.stack), 600) : undefined,"
+  },
+  {
+    "file": "src/bridge/messageHandlers.ts",
+    "text": "if (e.context !== undefined) add(`    context:   ${trunc(JSON.stringify(e.context), 800)}`);"
+  },
+  {
+    "file": "src/engine/modelBuilder.ts",
+    "text": "const sqlPreview = trunc(sanitizeForLog((node.bodyScript ?? '').trim()), 200);"
+  },
+  {
+    "file": "src/engine/renderConnectivity.ts",
+    "text": "? [...members.slice(0, MAX_MEMBERS_PER_COMPONENT), `… +${members.length - MAX_MEMBERS_PER_COMPONENT} more`]"
+  },
+  {
+    "file": "src/utils/notifications.ts",
+    "text": "return trunc(value.map((item) => ("
+  },
+  {
+    "file": "src/utils/notifications.ts",
+    "text": "if (value instanceof Error) return trunc(sanitizeForLog(value.message), LOG_TRUNC_JSON);"
+  },
+  {
+    "file": "src/utils/notifications.ts",
+    "text": "return trunc(sanitizeForLog(String(value)), LOG_TRUNC_JSON);"
+  },
+  {
+    "file": "src/utils/notifications.ts",
+    "text": "? ` — ${trunc(parts.join('; '), MAX_NOTIFICATION_CONTEXT)}`"
+  },
+  {
+    "file": "src/utils/notifications.ts",
+    "text": "showErrorMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));"
+  },
+  {
+    "file": "src/utils/notifications.ts",
+    "text": "showInformationMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));"
+  },
+  {
+    "file": "src/utils/notifications.ts",
+    "text": "showWarningMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));"
+  }
+]

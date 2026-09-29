@@ -95,14 +95,28 @@
   --ln-highlight-blue-glow: rgba(37, 99, 235, 0.4);
   --ln-highlight-blue-shadow: rgba(37, 99, 235, 0.3);
 
-  /* Edge colors */
-  --ln-edge-color: #94a3b8;
+  /* Edge colors. The canvas fades the base color and thins the stroke by the rendered edge
+     density (`edgeDensity` in src/engine/edgeDecoration.ts) down to these floors; the floor is per
+     theme because the same slate reads far stronger on a dark background than on a light one. */
+  --ln-edge-color-base: #94a3b8;
+  --ln-edge-color: var(--ln-edge-color-base);
+  --ln-edge-min-strength: 0.85;
+  --ln-edge-min-width-scale: 0.75;
 
   /* Shadows */
   --ln-node-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.05);
   --ln-node-shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.18);
   --ln-dropdown-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+
+  /* Selection dim (object view) — read by the `.ln-has-selection` / `.ln-lit` rules in the React
+     Flow Overrides region below; see `SELECTION_ACTIVE_CLASS_NAME` in GraphCanvas.tsx and
+     `LIT_CLASS_NAME` in src/engine/nodeDecoration.ts. */
+  --ln-dim-node-opacity: 0.25;
+  --ln-dim-edge-opacity: 0.35;
+  --ln-dim-edge-width-scale: 0.6;
+  --ln-lit-edge-width-boost: 0.6px;
+  --ln-lit-edge-min-width: 2px;
 
   /* Wizard (start screen) — always dark/black palette regardless of VS Code theme.
      Use --ln-wizard-* for ALL start screen + modal colors. Never use --vscode-* tokens
@@ -117,6 +131,7 @@
   --ln-wizard-hover-bg: rgba(255, 255, 255, 0.06);
   --ln-wizard-link: #60a5fa;
   --ln-wizard-fg-dim: rgba(255, 255, 255, 0.55);
+  --ln-wizard-fg-muted: rgba(255, 255, 255, 0.7); /* muted text that must meet AA on black */
   --ln-wizard-error: #f87171;   /* red-400 — legible on black, no theme fallback needed */
   --ln-wizard-warning: #fbbf24; /* amber-400 */
   --ln-wizard-success: #34d399; /* emerald-400 */
@@ -157,6 +172,7 @@
 
 /* Dark Theme Overrides */
 body[data-vscode-theme-kind="vscode-dark"] {
+  --ln-edge-min-strength: 0.5;
   --ln-node-bg: rgba(30, 30, 30, 0.95);
   --ln-node-border: rgba(255, 255, 255, 0.2);
   --ln-node-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
@@ -188,6 +204,8 @@ body[data-vscode-theme-kind="vscode-dark"] {
 
 /* High Contrast Theme Overrides */
 body[data-vscode-theme-kind="vscode-high-contrast"] {
+  --ln-edge-min-strength: 1;
+  --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #000000);
   --ln-node-border: var(--vscode-contrastBorder, #6fc3df);
   --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #6fc3df);
@@ -219,6 +237,8 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
 }
 body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+  --ln-edge-min-strength: 1;
+  --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
   --ln-node-border: var(--vscode-contrastBorder, #0f4a85);
   --ln-node-shadow: 0 0 0 2px var(--vscode-contrastBorder, #0f4a85);
@@ -292,13 +312,15 @@ body.vscode-reduce-motion *::after {
 
 /* #region Tooltips */
 
-/* AI badge — monochrome chip above node */
+/* AI badge — monochrome chip above node. Capped to the rendered node's 180px width
+   (`CustomNode.tsx`), matching `.ln-ai-note-label` below; the `Tooltip` wrapper carries the
+   full text so a truncated chip never loses information, only screen width. */
 .ln-ai-badge {
   font-size: 10px;
   font-weight: 600;
   padding: 1px 8px;
   border-radius: 4px;
-  max-width: 160px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -339,12 +361,13 @@ body.vscode-reduce-motion *::after {
   outline: none;
 }
 
-/* AI note — title line visible below node, full text on hover */
+/* AI note — title line visible below node, full text on hover. Capped to the rendered node's
+   180px width (`CustomNode.tsx`), not the wider Dagre layout box the graph reserves per node. */
 .ln-ai-note-label {
   font-size: 9px;
   line-height: 1.3;
   color: var(--ln-fg-muted);
-  max-width: 220px;
+  max-width: 180px;
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -802,6 +825,46 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-ove
   outline-offset: 2px;
 }
 
+/* Selection dim: while `.ln-has-selection` is on the canvas root, every node/edge the click
+   selection didn't mark `.ln-lit` (the clicked node, its neighbours, or an edge between two lit
+   nodes) is de-emphasised by this one rule pair rather than by a per-node/per-edge style, so an
+   unrelated node or edge never needs a new object identity just because a different node was
+   clicked. `--ln-edge-w` is each edge's own base stroke width, stamped on once when the edge is
+   built (`withEdgeBaseWidthVar` in GraphCanvas.tsx) since graphBuilder.ts assigns different edges
+   different base widths. */
+.react-flow.ln-has-selection .react-flow__node:not(.ln-lit) .ln-node-card {
+  box-shadow: var(--ln-node-shadow-dimmed) !important;
+}
+
+/* `:not(:hover)` so the `.ln-node-card:hover` rule earlier in this file still wins on hover without
+   a specificity fight — this selector is more specific and would otherwise always win regardless of
+   source order. */
+.react-flow.ln-has-selection .react-flow__node:not(.ln-lit) .ln-node-card:not(:hover) {
+  opacity: var(--ln-dim-node-opacity) !important;
+}
+
+/* Edge density: `--ln-edge-density` (0 sparse … 1 dense) on the canvas root fades the edge color —
+   paths, arrowheads and labels alike — and thins every object-view stroke down to the theme floors. */
+.react-flow.ln-edge-density {
+  --ln-edge-strength: calc(1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-strength)));
+  --ln-edge-width-scale: calc(1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-width-scale)));
+  --ln-edge-color: color-mix(in srgb, var(--ln-edge-color-base) calc(var(--ln-edge-strength) * 100%), transparent);
+}
+
+.react-flow.ln-edge-density .react-flow__edge-path {
+  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-edge-width-scale)) !important;
+}
+
+.react-flow.ln-has-selection .react-flow__edge:not(.ln-lit) .react-flow__edge-path {
+  opacity: var(--ln-dim-edge-opacity) !important;
+  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-dim-edge-width-scale) * var(--ln-edge-width-scale, 1)) !important;
+}
+
+.react-flow.ln-has-selection .react-flow__edge.ln-lit .react-flow__edge-path {
+  stroke: var(--ln-focus-border) !important;
+  stroke-width: max(calc(var(--ln-edge-w, 1.2) + var(--ln-lit-edge-width-boost)), var(--ln-lit-edge-min-width)) !important;
+}
+
 .react-flow__minimap {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--ln-border) 60%, transparent);
@@ -950,6 +1013,22 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 .ln-trace-node-action--prune {
   top: 31px;
   background: var(--vscode-charts-red, #c5221f);
+}
+.ln-trace-node-action-count {
+  position: absolute;
+  top: 2px;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--ln-fg-muted);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 12;
+}
+.ln-trace-node-action-count--in {
+  left: -20px;
+}
+.ln-trace-node-action-count--out {
+  right: -20px;
 }
 
 .ln-trace-node-picker {
@@ -1199,7 +1278,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   font-size: 0.75rem;           /* text-xs */
   font-weight: 600;             /* font-semibold */
   letter-spacing: 0.08em;       /* tracking-wider */
-  color: var(--ln-fg-dim);
+  color: var(--ln-fg-muted);
 }
 
 /* Counter badge (filter count, exclusion count) */
@@ -1277,7 +1356,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   color: var(--ln-wizard-fg);
 }
 .ln-modal .ln-text-muted {
-  opacity: 0.7;
+  color: var(--ln-wizard-fg-muted);
 }
 .ln-modal .ln-text-link {
   color: var(--ln-wizard-link, #60a5fa);
@@ -1370,16 +1449,6 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   color: var(--ln-fg);
 }
 
-/* Trace banner */
-/* Advanced bookmark banner (slim top bar) */
-.ln-bookmark-banner {
-  background: var(--ln-bg-secondary);
-  border-bottom: 1px solid var(--ln-border);
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ln-border) transparent;
-}
-
 /* Advanced bookmark info card (floating bottom-left) */
 .ln-bookmark-info-card {
   background: var(--ln-widget-bg);
@@ -1404,7 +1473,7 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 
 /* Trace config bar */
 .ln-trace-config {
-  background: var(--vscode-editor-inactiveSelectionBackground, rgba(0, 0, 0, 0.04));
+  background: var(--vscode-editorWidget-background, var(--ln-bg));
   border-bottom: 1px solid var(--ln-border);
   overflow-x: auto;
   scrollbar-width: thin;
@@ -1637,7 +1706,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 
 .ln-detail-search-result mark {
   background: var(--vscode-editor-findMatchHighlightBackground, #ea5c0055);
-  color: inherit;
+  color: var(--ln-fg);
   border-radius: 2px;
   padding: 0 1px;
 }
@@ -1670,6 +1739,214 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
 .ln-analysis-group-item:focus-visible {
   outline: 2px solid var(--ln-focus-border);
   outline-offset: -2px;
+}
+
+/* Trace tree navigator — the analysis sidebar's shell, sections, active row and footer */
+/** Card as tall as its rows, up to the canvas height; the transparent panel beneath passes pointer events through. */
+.ln-trace-tree {
+  max-height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+}
+.ln-trace-tree-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ln-trace-tree-collapsed {
+  display: flex;
+  padding: 2px;
+  background: var(--ln-widget-bg);
+  border: 1px solid var(--ln-widget-border);
+  border-radius: 6px;
+}
+/** L0 starting point as the panel title: badge, schema-colored type symbol, origin name. */
+.ln-trace-tree-recenter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.ln-trace-tree-recenter .ln-tree-type {
+  color: var(--ln-tree-schema, var(--ln-fg-muted));
+  opacity: 1;
+}
+.ln-trace-tree-recenter:hover .ln-trace-tree-origin {
+  text-decoration: underline;
+}
+.ln-trace-tree-level-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: var(--ln-fg-muted);
+  border: 1px solid var(--ln-border-light);
+}
+.ln-trace-tree-origin {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ln-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ln-trace-tree-recenter:focus-visible,
+.ln-trace-tree-body [role="treeitem"]:focus-visible,
+.ln-tree-row .ln-checkbox:focus-visible {
+  outline: 2px solid var(--ln-focus-border);
+  outline-offset: -2px;
+}
+.ln-trace-tree-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--ln-border-light);
+}
+.ln-trace-tree-find .ln-input {
+  flex: 1;
+  min-width: 0;
+}
+.ln-trace-tree-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.ln-trace-tree-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--ln-fg-muted);
+  border-top: 1px solid var(--ln-border-light);
+}
+.ln-trace-tree-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ln-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding-right: 6px;
+}
+/** Side sections read as the analysis section labels and never collapse. */
+.ln-tree-row[data-trace-tree-kind="side"] {
+  padding-left: 10px;
+  background: var(--ln-bg-secondary);
+  border-bottom: 1px solid var(--ln-border-light);
+}
+.ln-tree-section {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ln-fg-muted);
+}
+.ln-tree-grow {
+  flex: none;
+}
+.ln-tree-grow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ln-tree-chevron {
+  width: 20px;
+  flex: none;
+  text-align: center;
+  color: var(--ln-fg-muted);
+}
+.ln-tree-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--ln-fg);
+}
+.ln-tree-type {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ln-fg-muted);
+  opacity: 0.6;
+  user-select: none;
+}
+/** Leaf type symbol in the schema color, the canvas border and legend rule. */
+.ln-tree-row[data-trace-tree-kind="leaf"] .ln-tree-type {
+  color: var(--ln-tree-schema, var(--ln-fg-muted));
+  opacity: 1;
+}
+.ln-tree-count {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ln-fg-muted);
+}
+.ln-tree-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-size: 12px;
+}
+.ln-tree-row[data-trace-tree-kind="level"] .ln-tree-name {
+  font-weight: 600;
+}
+.ln-tree-detail {
+  font-size: 11px;
+  color: var(--ln-fg-muted);
+}
+.ln-tree-row:hover {
+  background: var(--ln-bg-secondary);
+}
+/** Active row matches the analysis sidebar's active group: tinted, with an accent bar. */
+.ln-tree-row-active,
+.ln-tree-row-active:hover {
+  background: var(--ln-analysis-bg);
+  box-shadow: inset 3px 0 0 var(--ln-analysis-border);
+}
+/** Rows the route view hides from the canvas stay listed, dimmed. */
+.ln-tree-row-offstage .ln-tree-label {
+  opacity: 0.45;
+}
+/** Footer actions read as sidebar links, matching the analysis "Show all". */
+.ln-tree-action {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--ln-text-link);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ln-tree-action:hover:not(:disabled) {
+  opacity: 0.8;
+}
+.ln-tree-action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* #endregion */

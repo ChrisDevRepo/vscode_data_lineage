@@ -59,6 +59,30 @@ export function setGraphLogSink(sink: GraphLogSink): void {
 export const NODE_WIDTH = 220;
 /** Height of a standard graph node in pixels. */
 export const NODE_HEIGHT = 80;
+/**
+ * Vertical space reserved above an annotated node for its AI badge (`.ln-ai-badge` in
+ * `src/index.css`, rendered by `AiBadgeToolbar` in `src/components/AiNodeAnnotations.tsx`), so
+ * two annotated nodes stacked in the same rank never let one node's badge run into the node
+ * above it.
+ *
+ * @remarks
+ * Covers the toolbar's node gap (`AI_ANNOTATION_NODE_GAP` in `AiNodeAnnotations.tsx`) plus the
+ * chip's own rendered height, with a small margin so the reservation does not track the chip's
+ * exact pixel height.
+ */
+export const AI_BADGE_BAND = 26;
+/**
+ * Vertical space reserved below an annotated node for its AI footnote (`.ln-ai-note-label` in
+ * `src/index.css`, rendered by `AiNoteToolbar` in `src/components/AiNodeAnnotations.tsx`), so
+ * two annotated nodes stacked in the same rank never let one node's footnote run into the node
+ * below it.
+ *
+ * @remarks
+ * Covers the toolbar's node gap (`AI_ANNOTATION_NODE_GAP` in `AiNodeAnnotations.tsx`) plus the
+ * footnote's own rendered height, with a small margin so the reservation does not track the
+ * label's exact pixel height.
+ */
+export const AI_NOTE_BAND = 20;
 /** Width of a schema-level node in pixels. */
 export const SCHEMA_NODE_WIDTH = 200;
 /** Height of a schema-level node in pixels. */
@@ -224,11 +248,12 @@ function toFlowResult(
  *
  * @param model - Database model to visualize.
  * @param config - Extension configuration.
+ * @param annotatedNodeIds - Ids carrying an AI badge or footnote; see {@link computeLayout}.
  * @returns Complete graph result.
  */
-export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
+export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): GraphResult {
   const graph = buildGraphologyGraph(model);
-  const positions = computeLayout(graph, config);
+  const positions = computeLayout(graph, config, annotatedNodeIds);
   return toFlowResult(model, graph, positions, config);
 }
 
@@ -263,7 +288,21 @@ export function traceNodeWithLevels(
   upstreamLevels: number,
   downstreamLevels: number
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  if (!graph.hasNode(nodeId)) return { nodeIds: new Set<string>(), edgeIds: new Set<string>() };
+  const nodeIds = traceNodeIdsWithLevels(graph, nodeId, upstreamLevels, downstreamLevels);
+  return { nodeIds, edgeIds: collectTraceEdges(graph, nodeIds) };
+}
+
+/**
+ * The node half of {@link traceNodeWithLevels}: the reachable node ids alone, without the O(E)
+ * edge collection, for callers that only count or probe a scope.
+ */
+export function traceNodeIdsWithLevels(
+  graph: Graph,
+  nodeId: string,
+  upstreamLevels: number,
+  downstreamLevels: number
+): Set<string> {
+  if (!graph.hasNode(nodeId)) return new Set<string>();
 
   const nodeIds = new Set<string>([nodeId]);
 
@@ -281,7 +320,7 @@ export function traceNodeWithLevels(
     }, { mode: 'outbound' });
   }
 
-  return { nodeIds, edgeIds: collectTraceEdges(graph, nodeIds) };
+  return nodeIds;
 }
 
 /**
@@ -540,27 +579,35 @@ export function applyTraceToFlow(
  *
  * @remarks
  * `direction` and `sizeOf` exist for callers that lay out a non-object view — the column view
- * carries its own direction and variable row heights. Both participate in the layout cache key.
+ * carries its own direction and variable row heights. `annotatedNodeIds` is a plain id list
+ * rather than a function so it stays structured-cloneable, like the rest of this input, for a
+ * layout worker. An annotated node's Dagre box includes its bands, and its returned position is
+ * the node's own top edge, not the top of the reserved box. All four participate in the layout
+ * cache key.
  */
-interface LayoutInput {
+export interface LayoutInput {
   nodeIds: string[];
   edges: Array<{ source: string; target: string }>;
   config: ExtensionConfig;
+  /** Dagre ranking algorithm; omitted uses Dagre's default (`network-simplex`). */
   ranker?: string;
   /** Overrides `config.layout.direction`. */
   direction?: string;
   /** Per-node box; defaults to the uniform object-view node size. */
   sizeOf?: (id: string) => { width: number; height: number };
+  /** Ids whose box grows by {@link AI_BADGE_BAND} above and {@link AI_NOTE_BAND} below. */
+  annotatedNodeIds?: readonly string[];
 }
 
 const LAYOUT_CACHE_SIZE = 12;
 const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
 
-function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf }: LayoutInput): string {
+export function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf, annotatedNodeIds }: LayoutInput): string {
   const sortedNodes = [...nodeIds].sort();
   const sortedEdges = edges.map(e => `${e.source}→${e.target}`).sort();
   const sizes = sizeOf ? sortedNodes.map(id => { const s = sizeOf(id); return `${s.width}x${s.height}`; }).join(',') : '';
-  return `${direction ?? config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}|${sizes}`;
+  const annotated = annotatedNodeIds ? [...annotatedNodeIds].sort().join(',') : '';
+  return `${direction ?? config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}|${sizes}|${annotated}`;
 }
 
 /**
@@ -571,7 +618,6 @@ function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf }: L
  * @returns Top-left position per node, or an empty map when Dagre fails.
  */
 export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: number }> {
-  const { nodeIds, edges, config, ranker, direction, sizeOf } = input;
   const key = layoutCacheKey(input);
   const cached = layoutCache.find(e => e.key === key);
   if (cached) {
@@ -579,7 +625,27 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
     layoutCache.unshift(cached);
     return cached.positions;
   }
+  const positions = runDagre(input);
+  storeLayout(key, positions);
+  return positions;
+}
 
+/** Inserts one layout at the front of the LRU cache, evicting the oldest entry past its size. */
+function storeLayout(key: string, positions: Map<string, { x: number; y: number }>): void {
+  const existing = layoutCache.findIndex(e => e.key === key);
+  if (existing >= 0) layoutCache.splice(existing, 1);
+  layoutCache.unshift({ key, positions });
+  if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
+}
+
+/**
+ * Runs Dagre on one layout input without touching the cache — the unit of work a layout
+ * worker executes off the UI thread.
+ *
+ * @param input - Nodes, edges, and layout configuration; see {@link LayoutInput}.
+ * @returns Top-left position per node, or an empty map when Dagre fails.
+ */
+export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, annotatedNodeIds }: LayoutInput): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: direction ?? config.layout.direction,
@@ -591,7 +657,14 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
   });
   g.setDefaultEdgeLabel(() => ({}));
 
-  for (const id of nodeIds) g.setNode(id, sizeOf ? sizeOf(id) : { width: NODE_WIDTH, height: NODE_HEIGHT });
+  const annotated = annotatedNodeIds && annotatedNodeIds.length > 0 ? new Set(annotatedNodeIds) : undefined;
+  const topBandOf = (id: string): number => (annotated?.has(id) ? AI_BADGE_BAND : 0);
+  const bottomBandOf = (id: string): number => (annotated?.has(id) ? AI_NOTE_BAND : 0);
+
+  for (const id of nodeIds) {
+    const box = sizeOf ? sizeOf(id) : { width: NODE_WIDTH, height: NODE_HEIGHT };
+    g.setNode(id, { width: box.width, height: box.height + topBandOf(id) + bottomBandOf(id) });
+  }
   for (const { source, target } of edges) g.setEdge(source, target);
 
   try {
@@ -604,13 +677,39 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
   const positions = new Map<string, { x: number; y: number }>();
   for (const id of g.nodes()) {
     const n = g.node(id);
-    if (n) positions.set(id, { x: n.x - n.width / 2, y: n.y - n.height / 2 });
+    if (n) positions.set(id, { x: n.x - n.width / 2, y: n.y - n.height / 2 + topBandOf(id) });
   }
-
-  layoutCache.unshift({ key, positions });
-  if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
-
   return positions;
+}
+
+/**
+ * Stores positions computed elsewhere (a layout worker) under the input's cache key, so the
+ * next {@link dagreLayout} call for the same input returns without running Dagre.
+ *
+ * @param input - The layout input the positions were computed for.
+ * @param positions - Top-left position per node.
+ * @param key - Precomputed cache key; derived from `input` when omitted.
+ * @returns Whether the positions were stored. A result missing any input node (a failed worker
+ *   layout returns an empty map) is not, so the view lays out on the main thread instead of
+ *   serving a layout with no positions.
+ */
+export function seedLayoutCache(
+  input: LayoutInput,
+  positions: Map<string, { x: number; y: number }>,
+  key: string = layoutCacheKey(input),
+): boolean {
+  if (!input.nodeIds.every(id => positions.has(id))) return false;
+  storeLayout(key, positions);
+  return true;
+}
+
+/**
+ * Whether {@link dagreLayout} would answer this input from the cache.
+ *
+ * @param key - Precomputed cache key; derived from `input` when omitted.
+ */
+export function hasCachedLayout(input: LayoutInput, key: string = layoutCacheKey(input)): boolean {
+  return layoutCache.some(e => e.key === key);
 }
 
 /**
@@ -821,14 +920,11 @@ export function buildSchemaGraph(
 }
 
 /**
- * Computes spatial layout for the object graph.
- *
- * @remarks
- * Disconnected singletons (e.g. cross-DB virtual nodes whose only counterpart is outside the
- * current schema filter) are placed in a row below the Dagre layout rather than passed to
- * Dagre, whose longest-path ranker crashes on fully disconnected components.
+ * Splits an object graph into the Dagre input for its connected nodes and the isolated nodes
+ * placed on a grid row below — the one definition {@link buildGraph} and a layout worker share,
+ * so both produce the same cache key.
  */
-function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): Map<string, { x: number; y: number }> {
+function objectLayoutPlan(graph: Graph, config: ExtensionConfig, annotatedNodeIds?: readonly string[]): { input: LayoutInput; isolatedIds: string[] } {
   const seen = new Set<string>();
   const edges: Array<{ source: string; target: string }> = [];
 
@@ -845,10 +941,48 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): 
   const connectedIds = new Set<string>();
   for (const { source, target } of edges) { connectedIds.add(source); connectedIds.add(target); }
   const allIds = graph.nodes();
-  const isolatedIds = allIds.filter(id => !connectedIds.has(id));
-  const layoutIds  = allIds.filter(id =>  connectedIds.has(id));
+  return {
+    input: {
+      nodeIds: allIds.filter(id => connectedIds.has(id)),
+      edges,
+      config,
+      ranker: 'longest-path',
+      ...(annotatedNodeIds && annotatedNodeIds.length > 0 && { annotatedNodeIds }),
+    },
+    isolatedIds: allIds.filter(id => !connectedIds.has(id)),
+  };
+}
 
-  const positions = dagreLayout({ nodeIds: layoutIds, edges, config, ranker: 'longest-path' });
+/**
+ * Dagre input {@link buildGraph} lays out for a model — structured-cloneable (no `sizeOf`), so
+ * a layout worker can compute it and {@link seedLayoutCache} can store the result.
+ *
+ * @param model - Database model to visualize.
+ * @param config - Extension configuration.
+ */
+export function objectLayoutInput(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): LayoutInput {
+  return objectLayoutInputForGraph(buildGraphologyGraph(model), config);
+}
+
+/** {@link objectLayoutInput} for a graph already built from the model, so it is not built twice. */
+export function objectLayoutInputForGraph(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): LayoutInput {
+  return objectLayoutPlan(graph, config, annotatedNodeIds).input;
+}
+
+/**
+ * Computes spatial layout for the object graph.
+ *
+ * @remarks
+ * Disconnected singletons (e.g. cross-DB virtual nodes whose only counterpart is outside the
+ * current schema filter) are placed in a row below the Dagre layout rather than passed to
+ * Dagre, whose longest-path ranker crashes on fully disconnected components.
+ *
+ * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so their rank reserves the
+ * vertical band those overlays need; see {@link AI_BADGE_BAND} and {@link AI_NOTE_BAND}.
+ */
+function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): Map<string, { x: number; y: number }> {
+  const { input, isolatedIds } = objectLayoutPlan(graph, config, annotatedNodeIds);
+  const positions = dagreLayout(input);
 
   if (isolatedIds.length > 0) {
     let maxY = 0;

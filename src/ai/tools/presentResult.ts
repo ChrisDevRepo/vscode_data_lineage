@@ -1,18 +1,11 @@
 /**
  * AI `present_result` contract: input/output types, validation, and the deterministic
- * markdown assembly. Extracted from `tools.ts` so the (large) presentation/validation
- * surface lives apart from the retrieval operations. Zero VS Code imports — pure functions
- * consumed directly by `toolProvider.ts` and the present-result unit tests.
+ * markdown assembly. Zero VS Code imports.
  */
 import {
   PresentResultModelSchema,
   PresentResultRepairPatchSchema,
-  PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX,
-  PRESENT_RESULT_HIGHLIGHT_LABEL_MAX,
-  PRESENT_RESULT_NAME_MAX,
-  PRESENT_RESULT_REPAIR_FIELDS,
-  PRESENT_RESULT_SECTION_LABEL_MAX,
-  PRESENT_RESULT_TITLE_MAX,
+  normalizePresentSectionLabel,
   type PresentResultRepairField,
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
@@ -20,6 +13,9 @@ import { quoteIds } from '../support/text';
 import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
+import { marked } from 'marked';
+import Graph from 'graphology';
+import { connectedComponents } from 'graphology-components';
 
 /**
  * Input field a validation error is attributed to, declared structurally at each `addError`
@@ -38,12 +34,6 @@ type PresentResultFailedField = 'name' | 'summary' | 'title' | 'intro' | 'closin
  */
 export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
 
-/** Offenders named inline in a node-id rejection; the complete list rides in `detail`. */
-const NODE_ID_OFFENDERS_SHOWN = 3;
-
-/** Accepted result-graph ids named inline in a node-id rejection; the complete set rides in `detail`. */
-const NODE_ID_ACCEPTED_SHOWN = 5;
-
 /**
  * The state the engine already records for a node id the current result graph cannot link.
  *
@@ -51,8 +41,7 @@ const NODE_ID_ACCEPTED_SHOWN = 5;
  * The id check runs over the whole loaded model before this contract sees it (the dispatcher
  * normalizes every `node_ids` entry with `resolveModelNodeId`), so exactly one member of this union
  * is a hallucination and the rest are real objects the render does not carry. A real object rejected
- * as "unknown" tells the model to invent a replacement instead of moving the fact into prose, which
- * is what has run a synthesis into the semantic-failure breaker. The classification itself belongs
+ * as "unknown" tells the model to invent a replacement instead of moving the fact into prose. The classification itself belongs
  * to the caller — only the session holds the engine snapshot — so it arrives as
  * {@link PresentNodeIdStateLookup}.
  */
@@ -81,8 +70,7 @@ export const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, str
  *
  * @remarks
  * Invoked only for ids the result graph rejects, so a passing call pays nothing for it. A caller
- * that holds no engine state omits it and every offender is reported as `not_in_model` — the
- * pre-existing behaviour.
+ * that holds no engine state omits it and every offender is reported as `not_in_model`.
  */
 export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
 
@@ -117,21 +105,9 @@ const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
 function presentNodeIdHint(stage: PresentResultStage): string {
   const hasSearchObjects = getAllowedLmToolNames({ kind: stage }).has('lineage_search_objects');
   return hasSearchObjects
-    ? 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically; if still unresolved, resolve canonical IDs with lineage_search_objects. If no loaded node matches the fact, state it in sections[].text rather than a node_ids field.'
+    ? 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically; if still unresolved, resolve canonical IDs with lineage_search_objects. If no loaded node matches the fact, state it in sections[].text rather than a node_ids field. Remove only the named ids from node_ids; keep every other id, section, note and group unchanged.'
     : 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically. If a fact has no matching loaded node, state it in sections[].text instead of a node_ids field — no other tool is available this stage.';
 }
-
-/**
- * Semantic role tag for one of the (≤5) `highlight_groups` the AI may attach
- * to a `present_result` view. Drives the colour swatch on the graph chip.
- *
- * @remarks
- * Two consistent palettes — `source` / `transform` / `target` (lineage) or
- * `good` / `warn` / `fail` (diagnostic). The synthesis prompt instructs the
- * AI to pick one palette per result and not mix them. Validated by
- * `AI_HIGHLIGHT_ROLES` in `validatePresentResult`.
- */
-type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fail';
 
 /**
  * The AI's submission to `lineage_present_result`.
@@ -146,9 +122,9 @@ type AIHighlightRole = 'source' | 'transform' | 'target' | 'good' | 'warn' | 'fa
  *     labels, node links, captions, or section text.
  *
  * Final `sections[]` is the authoritative graph/detail link surface. A final
- * section label maps to exactly one section text body; its optional `node_ids[]`
- * links zero or more graph nodes to that section badge. Nodes omitted from
- * `node_ids[]` intentionally have no final section badge.
+ * section label maps to exactly one section text body; its required `node_ids[]`
+ * links zero or more graph nodes to that section badge. A node absent from every
+ * `node_ids[]` (including an empty one) intentionally has no final section badge.
  *
  * `description` is intentionally absent because it is engine output, not AI input.
  */
@@ -159,6 +135,31 @@ export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
  * so it can never hand-drift out of sync with the fields a full author may emit.
  */
 export type PresentResultRepairPatch = z.infer<typeof PresentResultRepairPatchSchema>;
+
+/**
+ * How a resent `sections` list merges into the held draft — decided once by
+ * {@link validatePresentResult} when the draft is held, and read from the stored
+ * {@link PresentResultRepairAuthorization} by every surface after that (merge, held-draft view,
+ * hint wording), so no caller re-derives it.
+ *
+ * - `by_label`: a resent label replaces the held section with that label in place, a new label
+ *   appends, every held section the patch does not name is kept as authored.
+ * - `whole_list`: the resent list is the complete new list; a held section it omits is dropped.
+ *   Used when the fix cannot be addressed by label — the discovery-preview partition, whose section
+ *   texts must jointly reproduce one cached answer, and a failure inside one held section (a
+ *   `sections.N` path — an unlinkable node_id, a label over its cap): a section the resend leaves
+ *   out is the repair, so the omission must be able to drop it.
+ */
+export type PresentResultSectionsMerge = 'by_label' | 'whole_list';
+
+/** What a held-draft rejection authorized: the repairable fields and the sections merge policy. */
+export interface PresentResultRepairAuthorization {
+  readonly fields: readonly PresentResultRepairField[];
+  readonly sectionsMerge: PresentResultSectionsMerge;
+}
+
+type PresentSection = NonNullable<PresentResultInput['sections']>[number];
+type PresentSectionPatch = NonNullable<PresentResultRepairPatch['sections']>[number];
 
 /**
  * The validated, engine-assembled result ready for the UI.
@@ -177,9 +178,9 @@ type PresentResultRequest = {
   description: string;
   /** Absent when the model omitted it — the view then follows the user's configured direction. */
   layout_direction?: 'LR' | 'TB';
-  highlight_groups: Array<{ label: string; color: AIHighlightRole; node_ids: string[] }>;
+  highlight_groups: NonNullable<PresentResultInput['highlight_groups']>;
   badges: Array<{ node_id: string; text: string }>;
-  notes: Array<{ node_id: string; text: string }>;
+  notes: Array<{ node_id: string; caption: string }>;
 };
 
 /**
@@ -195,14 +196,16 @@ export type PresentResultError = {
   hint: string;
   repairable: boolean;
   repairFields: PresentResultRepairField[];
+  /** Merge policy a held repair of this failure uses for `sections` — see {@link PresentResultSectionsMerge}. */
+  sectionsMerge: PresentResultSectionsMerge;
   /**
    * Offending field paths, as `{ path }` entries the shared correction reader understands.
    *
    * @remarks
    * A rejection that names a rule but not the offender costs a whole repair round to locate — the
-   * model has to guess which of N captions or sections failed. `rejectionIssuePaths` already mines
-   * this exact shape out of any tool's `detail`, so emitting it here reaches both the model's
-   * correction envelope and the diagnostic trace without a second channel.
+   * model has to guess which of N captions or sections failed. The rejection reader mines
+   * this exact shape out of `detail` into the typed `issuePaths`, so emitting it here reaches both
+   * the model's tool result and the diagnostic trace without a second channel.
    *
    * A node-id entry additionally carries every offending id at that path with its recorded state,
    * and the first such entry carries the uncapped accepted set — the message states both, capped, so
@@ -216,10 +219,6 @@ export type PresentResultError = {
     readonly accepted_node_ids?: readonly string[];
     /** See {@link PresentResultViolation.entryIds} — carried through verbatim, id offenders only. */
     readonly entry_ids?: readonly string[];
-    /** Measured character length of a label over its hard cap; present with `limit`, length offenders only. */
-    readonly length?: number;
-    /** The hard cap `length` exceeds; present with `length`, length offenders only. */
-    readonly limit?: number;
   }>;
 };
 
@@ -227,21 +226,25 @@ export type PresentResultError = {
  * Splits the cached discovery answer into engine-owned title/summary and verbatim section source.
  *
  * @param answer - The cached discovery chat answer (Markdown), title already inline if present.
- * @returns The split-off `title` (absent when the answer has no leading heading), the remaining
- *   `body`, and a one-line `summary` derived from the title or first non-empty body line.
+ * @returns The split-off `title` (absent when the answer has no leading level-1 heading, ATX or
+ *   Setext, closing `#`s stripped), the remaining `body`, and a one-line `summary`: the first line
+ *   of the first non-code block's text (a list item, blockquote or task item without its `[ ]`
+ *   marker), else the title. A fenced code block is never the summary; absent when neither exists
+ *   — the caller degrades to a rejection, never invented prose.
  */
 export function discoveryPreviewNarrative(answer: string): {
   title?: string;
   body: string;
-  summary: string;
+  summary?: string;
 } {
   const normalized = answer.replace(/\r\n?/g, '\n').trim();
-  const titleMatch = /^#\s+(.+?)\s*(?:\n|$)/.exec(normalized);
-  const title = titleMatch?.[1]?.trim();
-  const body = titleMatch ? normalized.slice(titleMatch[0].length).trim() : normalized;
-  const summary = body.split('\n')
-    .map(line => line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/, '').trim())
-    .find(Boolean) ?? title ?? 'Lineage graph preview';
+  const [lead] = marked.lexer(normalized);
+  const heading = lead?.type === 'heading' && lead.depth === 1 ? lead : undefined;
+  const title = heading?.text.trim();
+  const body = heading ? normalized.slice(heading.raw.length).trim() : normalized;
+  const first = marked.lexer(body).find(token => token.type !== 'space' && token.type !== 'code');
+  const text: string | undefined = first?.type === 'list' ? first.items[0]?.text : first && 'text' in first ? first.text : first?.raw;
+  const summary = text?.split('\n').find(line => line.trim())?.trim() || title;
   return { ...(title ? { title } : {}), body, summary };
 }
 
@@ -250,10 +253,7 @@ export function discoveryPreviewNarrative(answer: string): {
  *
  * @remarks
  * Checks that need context the validator does not hold — the cached discovery answer, the result
- * graph — used to reject on their own and return before the structural rules ever ran. A payload
- * carrying one of those defects *and* a structural one therefore reported only the first, and the
- * second stayed latent until a later round, costing one semantic-failure charge per masked defect.
- * Passing findings in instead keeps every rule on one accumulator and one rejection.
+ * graph — are passed in instead, so every rule reports through one accumulator and one rejection.
  */
 export interface PresentResultViolation {
   /** Input field the violation is attributed to. */
@@ -292,9 +292,7 @@ export interface PresentResultViolation {
  *
  * @remarks
  * Returns findings rather than a finished rejection so {@link validatePresentResult} can report
- * them through the same accumulator as every structural rule. Reporting reuse separately — and
- * returning early on it — hid whatever structural defect the same submission also carried until a
- * later round, spending one semantic-failure charge per masked defect.
+ * them through the same accumulator as every structural rule.
  *
  * Notes are matched as a **contiguous** span of the whitespace-compacted answer: a caption stitched
  * from separated fragments is a new claim about adjacency, which is exactly what verbatim reuse
@@ -313,7 +311,7 @@ export function findDiscoveryPreviewReuseViolations(
   const source = compact(sourceBody);
   const sectionText = compact((input.sections ?? []).map(section => section.text).join('\n\n'));
   const badNoteIndexes = (input.notes ?? []).flatMap(
-    (note, index) => (source.includes(compact(note.text)) ? [] : [index]),
+    (note, index) => (source.includes(compact(note.caption)) ? [] : [index]),
   );
   const violations: PresentResultViolation[] = [];
   if (!source || sectionText !== source) {
@@ -327,53 +325,156 @@ export function findDiscoveryPreviewReuseViolations(
   if (badNoteIndexes.length > 0) {
     violations.push({
       field: 'notes',
-      messages: [`notes[].text must each be one unbroken span copied verbatim from the cached discovery answer. Offending entries: ${badNoteIndexes.map(index => `notes[${index}]`).join(', ')}. For each listed note, replace its text with one continuous verbatim passage from the answer, or remove the note.`],
+      messages: [`notes[].caption must each be one unbroken span copied verbatim from the cached discovery answer. Offending entries: ${badNoteIndexes.map(index => `notes[${index}]`).join(', ')}. For each listed note, replace its caption with one continuous verbatim passage from the answer, or remove the note.`],
       repairFields: ['notes'],
-      paths: badNoteIndexes.map(index => `notes.${index}`),
+      paths: badNoteIndexes.map(index => `notes.${index}.caption`),
     });
   }
   return violations;
 }
 
 /**
- * Determines whether a failed `present_result` can safely hold its full draft for patch repair.
+ * Completes one resent section from the held section under the same label: an omitted `node_ids`
+ * or `text` keeps the held value, so a repair that adds one node id never retypes a body the
+ * held-draft view does not show. A label not on file has nothing to inherit — the handler rejects a
+ * text-less new label before this runs, so the empty-text fallback is a type fact, not a path.
+ */
+function fillSectionPatch(resent: PresentSectionPatch, held: PresentSection | undefined): PresentSection {
+  return {
+    label: resent.label,
+    node_ids: resent.node_ids ?? held?.node_ids ?? [],
+    text: resent.text ?? held?.text ?? '',
+  };
+}
+
+/** Held sections indexed by their {@link normalizePresentSectionLabel} key. */
+function indexSectionsByLabel(sections: readonly PresentSection[]): Map<string, number> {
+  return new Map(sections.map((section, index) => [normalizePresentSectionLabel(section.label), index]));
+}
+
+/**
+ * Merges a resent `sections` list into the held one under the recorded {@link PresentResultSectionsMerge}.
  *
  * @remarks
- * Reads the structural flag {@link validatePresentResult} computed while building the failure —
- * true only when every accumulated error was itself marked repairable at its `addError` call site.
- * Covers structural presentation gaps where the authored prose is otherwise valuable and the repair
- * can add or relink sections/notes/highlights without changing the locked graph. Shape errors, graph
- * edits, disconnected views, duplicate labels, and missing required body fields remain full
- * rejections and clear any held draft.
+ * Both modes fill each resent section from its held namesake ({@link fillSectionPatch}); they differ
+ * only in what happens to a held section the patch does not name — kept in place (`by_label`) or
+ * dropped (`whole_list`). The patch schema rejects a label repeated inside one patch, so no label
+ * resolves last-wins.
  */
-export function isRepairablePresentResultFailure(failure: PresentResultError): boolean {
-  return failure.repairable;
+function mergeSections(
+  held: readonly PresentSection[],
+  resent: readonly PresentSectionPatch[],
+  mode: PresentResultSectionsMerge,
+): PresentSection[] {
+  const heldIndex = indexSectionsByLabel(held);
+  const heldFor = (section: PresentSectionPatch): PresentSection | undefined => {
+    const index = heldIndex.get(normalizePresentSectionLabel(section.label));
+    return index === undefined ? undefined : held[index];
+  };
+  if (mode === 'whole_list') return resent.map(section => fillSectionPatch(section, heldFor(section)));
+  const merged = [...held];
+  for (const section of resent) {
+    const index = heldIndex.get(normalizePresentSectionLabel(section.label));
+    if (index === undefined) merged.push(fillSectionPatch(section, undefined));
+    else merged[index] = fillSectionPatch(section, merged[index]);
+  }
+  return merged;
+}
+
+/**
+ * Labels in a resent `sections` patch that match no held section and carry no text.
+ *
+ * @remarks
+ * Such a section has nothing to inherit under {@link fillSectionPatch}; the handler rejects it with
+ * the draft still held, rather than letting the validator's non-repairable "missing text" error
+ * discard the whole draft over a label the model most likely mistyped.
+ */
+export function findTextlessNewSectionLabels(
+  held: readonly PresentSection[] | undefined,
+  resent: readonly PresentSectionPatch[],
+): string[] {
+  const heldIndex = indexSectionsByLabel(held ?? []);
+  return resent
+    .filter(section => !heldIndex.has(normalizePresentSectionLabel(section.label)) && !(section.text?.trim()))
+    .map(section => section.label);
+}
+
+/**
+ * Projects held `sections` to the shape the held-draft repair view shows the model.
+ *
+ * @remarks
+ * Under `by_label` a section the model does not resend keeps its text, so the view carries only what
+ * the model needs to target a section and judge coverage — `label` and `node_ids`. Under
+ * `whole_list` the model must resend every section, so it sees each one in full. Lives beside
+ * {@link mergeSections}, the module that owns the label key, so the view and the merge cannot drift.
+ */
+export function projectHeldSectionsForRepair(
+  sections: PresentResultInput['sections'],
+  sectionsMerge: PresentResultSectionsMerge,
+): PresentResultInput['sections'] | Array<{ label: string; node_ids: string[] }> {
+  if (sectionsMerge === 'whole_list' || !sections) return sections;
+  return sections.map(section => ({ label: section.label, node_ids: section.node_ids }));
+}
+
+/**
+ * The one sentence every surface (rejection hint, held-draft view) states for how a resent
+ * `sections` list merges — so the model never reads two contracts for the same call.
+ */
+export function presentResultSectionsResendRule(sectionsMerge: PresentResultSectionsMerge): string {
+  return sectionsMerge === 'by_label'
+    ? 'sections: resend only the section(s) you add or change, each under its held label; omit a resent section\'s text or node_ids to keep the held value; a label not on file appends a new section and needs text; every held section you do not name is kept as authored.'
+    : 'sections: resend the complete list — a held section you leave out is dropped; a resent section may omit text or node_ids to keep the held values under that label; a label not on file needs text.';
+}
+
+/** Issue path inside one held section (`sections.N`, `sections.N.label`) — a failure only that section's resend or omission can clear. */
+const HELD_SECTION_ISSUE_PATH = /^sections\.\d+(\.|$)/;
+
+/**
+ * Decides the {@link PresentResultSectionsMerge} for a failure, from the stage and the structural
+ * issue paths the validator recorded — never from message text.
+ */
+function presentResultSectionsMergeFor(stage: PresentResultStage, issuePaths: ReadonlySet<string>): PresentResultSectionsMerge {
+  if (stage === 'visual_preview') return 'whole_list';
+  for (const path of issuePaths) {
+    if (HELD_SECTION_ISSUE_PATH.test(path)) return 'whole_list';
+  }
+  return 'by_label';
+}
+
+/** The repair-call sentence a repairable rejection carries, stated once here for every failure. */
+function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[]): string {
+  return `You may repair the held draft by calling lineage_present_result with is_update:true and only these corrected fields: ${resendList.join(', ')}.`;
 }
 
 /**
  * Merges a strict repair patch into a held full `present_result` draft.
  *
  * @remarks
- * Patch fields replace whole presentation collections by design. The model does not send partial
- * array operations; it sends the corrected sections/notes/highlight_groups collection, and the
- * normal validation/assembly path checks the merged full draft.
+ * `sections` merges under the authorization's recorded {@link PresentResultSectionsMerge}
+ * ({@link mergeSections}). Every other collection (`notes`, `highlight_groups`) replaces whole by
+ * design: the model does not send partial array operations for those, it sends the corrected
+ * collection, and the normal validation/assembly path checks the merged full draft.
  *
  * @param draft - The held full `present_result` draft the patch amends.
  * @param patch - The repair patch fields sent by the model.
- * @param allowedFields - The fields this rejection authorized for repair.
- * @returns The draft with `allowedFields` keys from `patch` merged in.
- * @throws When `patch` names a key outside `allowedFields`.
+ * @param authorization - What the rejection that held the draft authorized.
+ * @returns The draft with the authorized keys from `patch` merged in.
+ * @throws When `patch` names a key outside the authorized fields.
  */
 export function mergePresentResultRepairPatch(
   draft: PresentResultInput,
   patch: PresentResultRepairPatch,
-  allowedFields: readonly PresentResultRepairField[],
+  authorization: PresentResultRepairAuthorization,
 ): PresentResultInput {
-  const allowed = new Set<string>(allowedFields);
+  const allowed = new Set<string>(authorization.fields);
   const updates: Partial<PresentResultInput> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (key === 'is_update') continue;
     if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
+    if (key === 'sections' && Array.isArray(value)) {
+      updates.sections = mergeSections(draft.sections ?? [], value as PresentSectionPatch[], authorization.sectionsMerge);
+      continue;
+    }
     Object.assign(updates, { [key]: value });
   }
   return {
@@ -381,77 +482,6 @@ export function mergePresentResultRepairPatch(
     ...updates,
     is_update: draft.is_update,
   };
-}
-
-/** Structural (not textual) deep-equality: key order, whitespace, and number literal form never matter. */
-function deepValueEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length
-      && a.every((item, index) => deepValueEqual(item, b[index]));
-  }
-  if (a && b && typeof a === 'object' && typeof b === 'object') {
-    const aEntries = Object.entries(a as Record<string, unknown>);
-    const bMap = b as Record<string, unknown>;
-    return aEntries.length === Object.keys(bMap).length
-      && aEntries.every(([key, value]) => deepValueEqual(value, bMap[key]));
-  }
-  return false;
-}
-
-/**
- * Pre-Zod L1 normalization for a `present_result` repair-turn payload: drops an unauthorized
- * envelope key (a {@link PRESENT_RESULT_REPAIR_FIELDS} member outside this turn's `allowedFields`,
- * e.g. `title`/`intro`/`closing`/`summary`) ONLY when the resent value is structurally identical to
- * the held draft's current value for that key.
- *
- * @remarks
- * A repair-turn model that cannot see its own held draft tends to blindly re-author the FULL prior
- * envelope rather than a scoped patch (the "blind regeneration" trap) — the resent value is usually
- * unchanged, and the strict repair-patch schema would otherwise hard-reject the whole call for
- * touching a field this turn was never authorized to change. Stripping only an unchanged value keeps
- * the reject meaningful: a value that structurally DIFFERS from the held draft is left in place so
- * the Zod boundary still rejects it — the model is not authorized to change that field this turn, and
- * silently accepting a changed-but-unauthorized value would be exactly the silent-overwrite class the
- * middleware contract forbids.
- *
- * @param rawInput - The model's raw repair-turn payload, not yet Zod-parsed.
- * @param heldDraft - The full draft currently on hold for this session.
- * @param allowedFields - The exact fields this repair turn is authorized to change.
- * @returns The (possibly narrowed) input and the list of keys stripped as unchanged.
- */
-export function stripUnchangedRepairEnvelopeKeys(
-  rawInput: Record<string, unknown>,
-  heldDraft: PresentResultInput,
-  allowedFields: readonly PresentResultRepairField[],
-): { input: Record<string, unknown>; stripped: PresentResultRepairField[] } {
-  const allowed = new Set<string>(allowedFields);
-  const stripped: PresentResultRepairField[] = [];
-  const next: Record<string, unknown> = { ...rawInput };
-  for (const key of PRESENT_RESULT_REPAIR_FIELDS) {
-    if (allowed.has(key) || !Object.prototype.hasOwnProperty.call(next, key)) continue;
-    if (deepValueEqual(next[key], (heldDraft as Record<string, unknown>)[key])) {
-      delete next[key];
-      stripped.push(key);
-    }
-  }
-  return { input: next, stripped };
-}
-
-const AI_HIGHLIGHT_ROLES = new Set<string>(['source', 'transform', 'target', 'good', 'warn', 'fail']);
-
-/**
- * Normalizes AI-authored final section labels for uniqueness checks and assembly.
- *
- * @remarks
- * Final `present_result.sections[].label` is the authoritative graph/detail
- * pointer: the same string becomes the detail heading and the badge shown on
- * every node listed in that section's `node_ids[]`. The normalizer strips only
- * engine numbering artifacts and whitespace/case differences; it does not
- * rewrite semantics or synthesize labels.
- */
-function normalizePresentSectionLabel(label: string): string {
-  return (typeof label === 'string' ? label : '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
@@ -472,24 +502,6 @@ function encodeFocusNodeId(id: string): string {
   return encodeURIComponent(id).replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
-/** Minimum normalized length for a backtick-quoted fragment to fingerprint a captured callout. */
-const DETAIL_CALLOUT_FINGERPRINT_MIN = 8;
-
-/**
- * Normalizes text for captured-item presence matching: case, quote/emphasis markers, and
- * whitespace — including spacing around operators and punctuation — never distinguish two
- * renderings of the same captured statement or formula.
- */
-function normalizeCalloutFingerprint(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/⚠️/g, '')
-    .replace(/[`*_#]/g, '')
-    .replace(/\s+/g, ' ')
-    .replace(/\s*([=(),<>+\-\/|])\s*/g, '$1')
-    .trim();
-}
-
 /**
  * A ```sql fence at the start of the matched text: closed on its own opening line, or else on a
  * later line — where the closing marker may share a line with the last line of code.
@@ -508,231 +520,190 @@ function sqlFenceAt(text: string, openIndex: number): string | undefined {
   return SQL_FENCE_AT_START.exec(text.slice(openIndex))?.[0];
 }
 
-/**
- * Returns the ```sql fence that opens at the start of the line right after `lineEnd`, if any.
- *
- * @param text - One captured `DetailSlot` section body.
- * @param lineEnd - Offset of the newline ending the line the fence must follow, or -1.
- * @returns The fence, closed; `undefined` when none follows.
- */
-function sqlFenceAfter(text: string, lineEnd: number): string | undefined {
-  if (lineEnd === -1) return undefined;
-  const rest = text.slice(lineEnd + 1);
-  const indent = /^[ \t]*/.exec(rest)?.[0] ?? '';
-  if (!rest.startsWith('```sql', indent.length)) return undefined;
-  return sqlFenceAt(text, lineEnd + 1 + indent.length);
+/** One fenced code block captured in a detail slot, addressable by a deterministic citation id. */
+export interface EvidenceBlock {
+  /** Citation id, e.g. `S7` — carried in the fence info string the envelope shows (`sql S7`). */
+  readonly id: string;
+  /** Owning node id. */
+  readonly nodeId: string;
+  /** The captured ```sql fence closed on a line of its own — body de-indented out of its list or block-quote container, `sql S7` annotation excluded — rendered verbatim. */
+  readonly raw: string;
 }
 
-/** A line opening a new block: list item, heading, fence, or another callout. */
-const BLOCK_START_LINE = /^\s*(?:[-*+]\s|\d+[.)]\s|#|```|⚠️)/;
+/** Container prefix of a line: block-quote markers, indentation and a list marker. */
+const CONTAINER_PREFIX = /^(?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?/;
 
-/**
- * Extracts the ⚠️ callouts from captured section text, each in its full extent.
- *
- * @remarks
- * A callout that opens its own line runs from that line, stripped of any list marker, through
- * every following line that continues it — a line inside a backtick span the callout opened, or a
- * non-blank line indented deeper than the callout's own line that opens no new block — and then
- * takes the ```sql fence that immediately follows, by the same boundary rule a formula uses. A ⚠️
- * that opens mid-sentence, inside a line some other text already opened, runs instead from that
- * marker through the next ⚠️ on the same line or the line's end, whichever comes first; only the
- * last such callout on its line takes a fence — one whose ```sql marker opens later on that same
- * line, by the rule a formula uses, or else one opening the next line.
- *
- * @param text - One captured `DetailSlot` section body.
- * @returns Per callout, the prose (fence excluded, for fingerprints) and the verbatim block, in authored order.
- */
-function extractCapturedCallouts(text: string): Array<{ line: string; block: string }> {
-  const callouts: Array<{ line: string; block: string }> = [];
-  const lines = text.split('\n');
-  const indentOf = (line: string) => line.length - line.trimStart().length;
-  let lineEnd = -1;
-  for (let i = 0; i < lines.length; i++) {
-    lineEnd += lines[i].length + 1;
-    const rawLine = lines[i];
-    const head = rawLine.trim().replace(/^[-*]\s+/, '');
-    if (head.startsWith('⚠️')) {
-      const indent = indentOf(rawLine);
-      const extent = [head];
-      while (i + 1 < lines.length) {
-        const next = lines[i + 1];
-        const spanOpen = (extent.join('\n').match(/`/g)?.length ?? 0) % 2 === 1;
-        const continues = next.trim() !== '' && (spanOpen || (indentOf(next) > indent && !BLOCK_START_LINE.test(next)));
-        if (!continues) break;
-        extent.push(next.trim());
-        i++;
-        lineEnd += next.length + 1;
-      }
-      const line = extent.join('\n');
-      const fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
-      callouts.push({ line, block: fence ? `${line}\n${fence}` : line });
-      continue;
-    }
-    const lineStart = lineEnd - rawLine.length;
-    const markers = [...rawLine.matchAll(/⚠️/g)].map(marker => marker.index ?? -1);
-    for (let k = 0; k < markers.length; k++) {
-      const isLast = k === markers.length - 1;
-      const segmentEnd = isLast ? rawLine.length : markers[k + 1];
-      const openInSegment = isLast ? rawLine.slice(markers[k], segmentEnd).search(/```sql/i) : -1;
-      const prose = rawLine.slice(markers[k], openInSegment === -1 ? segmentEnd : markers[k] + openInSegment).trim();
-      if (prose.length === 0) continue;
-      let fence: string | undefined;
-      if (openInSegment !== -1) fence = sqlFenceAt(text, lineStart + markers[k] + openInSegment);
-      else if (isLast) fence = sqlFenceAfter(text, lineEnd < text.length ? lineEnd : -1);
-      callouts.push({ line: prose, block: fence ? `${prose}\n${fence}` : prose });
-    }
-  }
-  return callouts;
-}
+/** Info string of an evidence reference: optional info words, then the id (group 1). */
+const EVIDENCE_ID_INFO = /^[ \t]*(?:[^\s`]+[ \t]+)*?(S\d+)[ \t]*$/;
 
-/** Display-math span as the capture templates author a formula. */
-const DISPLAY_MATH_SPAN = /\$\$([^$]+?)\$\$/g;
-
-/**
- * Extracts the display-math formulas from captured section text, each with the SQL fence that
- * immediately follows its line, if any.
- *
- * @remarks
- * The fence is attached only to the last formula on its line, so a line listing several formulas
- * never repeats one fence under each. The fence's own ```sql marker may open on the formula's own
- * line, after its description, or at the start of the line right after — both count as
- * "immediately follows".
- *
- * @param text - One captured `DetailSlot` section body.
- * @returns Normalized formula bodies with their restorable block (`$$ … $$` plus fence), in order.
- */
-function extractCapturedFormulas(text: string): Array<{ body: string; block: string }> {
-  const formulas: Array<{ body: string; block: string }> = [];
-  for (const match of text.matchAll(DISPLAY_MATH_SPAN)) {
-    const body = match[1].trim();
-    if (body.length === 0) continue;
-    const spanEnd = (match.index ?? 0) + match[0].length;
-    const lineEnd = text.indexOf('\n', spanEnd);
-    const restOfLine = lineEnd === -1 ? text.slice(spanEnd) : text.slice(spanEnd, lineEnd);
-    let fence: string | undefined;
-    if (!restOfLine.includes('$$')) {
-      const openInLine = restOfLine.search(/```sql/i);
-      fence = openInLine !== -1 ? sqlFenceAt(text, spanEnd + openInLine) : sqlFenceAfter(text, lineEnd);
-    }
-    const formula = `$$ ${body} $$`;
-    formulas.push({ body, block: fence ? `${formula}\n${fence}` : formula });
-  }
-  return formulas;
+/** One ```sql fence located by the {@link sqlFenceAt} rule. */
+interface LocatedSqlFence {
+  /** Offset of the ```sql marker. */
+  readonly start: number;
+  /** Offset just past the closing marker. */
+  readonly end: number;
+  /** Text after ```sql on the opening line; for a one-line fence, everything between the markers. */
+  readonly info: string;
+  /** Code lines, de-indented out of the opening line's container; empty for a one-line or empty fence. */
+  readonly lines: readonly string[];
+  /** Container prefix of the opening line. */
+  readonly container: string;
 }
 
 /**
- * Derives presence fingerprints for one captured callout.
- *
- * @remarks
- * The capture contract quotes the row-losing statement in backticks, so each quoted fragment long
- * enough to be distinctive is a fingerprint: a section that re-quotes every quoted statement counts
- * as carrying the callout even when the surrounding prose is reworded. A callout with no usable
- * quote falls back to its own normalized line.
- *
- * @param callout - One ⚠️ callout's prose from {@link extractCapturedCallouts}, fence excluded.
- * @returns Normalized fingerprints; empty only when the line carries no matchable text.
+ * Every ```sql fence in `text`, in order, by the {@link sqlFenceAt} rule: the marker may open
+ * mid-line after prose or a formula, and the closing marker may share a line with code or with
+ * prose after it. An unclosed marker yields nothing.
  */
-function calloutFingerprints(callout: string): string[] {
-  const quoted: string[] = [];
-  for (const match of callout.matchAll(/`([^`]+)`/g)) {
-    const fingerprint = normalizeCalloutFingerprint(match[1]);
-    if (fingerprint.length >= DETAIL_CALLOUT_FINGERPRINT_MIN) quoted.push(fingerprint);
-  }
-  if (quoted.length > 0) return quoted;
-  const whole = normalizeCalloutFingerprint(callout);
-  return whole.length > 0 ? [whole] : [];
-}
-
-/** Kind of captured detail content the assembler guarantees a place in the preview. */
-export type CapturedDetailKind = 'callout' | 'formula';
-
-/** One captured item restored into a section because the authored text omitted it. */
-export type RestoredDetailItem = {
-  /** Rendered section label the item was appended to. */
-  label: string;
-  /** Captured content kind. */
-  kind: CapturedDetailKind;
-  /** Verbatim restored text: the ⚠️ callout in its full extent or the `$$ … $$` formula, each with its SQL fence. */
-  text: string;
-};
-
-/**
- * Lists the restorable captured items of one section body with their presence fingerprints.
- *
- * @param text - One captured `DetailSlot` section body.
- * @returns Callouts and formulas, each with its dedup key and the fingerprints that prove presence.
- */
-function extractCapturedDetailItems(
-  text: string,
-): Array<{ kind: CapturedDetailKind; text: string; key: string; fingerprints: string[] }> {
-  const callouts = extractCapturedCallouts(text).map(({ line, block }) => ({
-    kind: 'callout' as const,
-    text: block,
-    key: normalizeCalloutFingerprint(line),
-    fingerprints: calloutFingerprints(line),
-  }));
-  const formulas = extractCapturedFormulas(text).map(({ body, block }) => {
-    const fingerprint = normalizeCalloutFingerprint(body);
-    return {
-      kind: 'formula' as const,
-      text: block,
-      key: fingerprint,
-      fingerprints: fingerprint.length > 0 ? [fingerprint] : [],
+function* locateSqlFences(text: string): Generator<LocatedSqlFence> {
+  const opener = /```sql/gi;
+  for (let match = opener.exec(text); match; match = opener.exec(text)) {
+    const fence = sqlFenceAt(text, match.index);
+    if (!fence) continue;
+    const inner = fence.slice('```sql'.length, -'```'.length);
+    const newline = inner.indexOf('\n');
+    const lineStart = text.lastIndexOf('\n', match.index - 1) + 1;
+    const container = CONTAINER_PREFIX.exec(text.slice(lineStart, match.index))?.[0] ?? '';
+    const lines = newline === -1 ? [] : inner.slice(newline + 1).split('\n')
+      .map(line => (container.includes('>') ? line.replace(/^(?:[ \t]*>)+[ \t]?/, '') : line));
+    if (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+    const indent = Math.min(...lines.filter(line => line.trim()).map(line => line.length - line.trimStart().length));
+    yield {
+      start: match.index,
+      end: match.index + fence.length,
+      info: newline === -1 ? inner : inner.slice(0, newline),
+      lines: lines.some(line => line.trim()) ? lines.map(line => line.slice(indent)) : [],
+      container,
     };
-  });
-  return [...callouts, ...formulas];
+    opener.lastIndex = match.index + fence.length;
+  }
 }
 
 /**
- * Lists captured ⚠️ callouts and `$$ … $$` formulas absent from the assembled text, per owning
- * section.
+ * Assigns one deterministic citation id to every captured ```sql fence with a body in detail-slot
+ * text — numbered by detail-slot order, then block order — carried in the envelope as an addition
+ * to the fence's own info string (```` ```sql S7 ````), never a separate inline marker (a bracketed
+ * marker collides with T-SQL bracket identifiers and Markdown link syntax).
  *
  * @remarks
- * Presence is tested against the whole document, not just the owning section: synthesis may
- * legitimately group sibling findings across nodes, and an item discussed under another section
- * is delivered, not dropped. A callout counts as present when every quoted statement is present;
- * a formula when its body is present in any normalized form. An absent item is restored,
- * verbatim, to its own node's section — a formula together with the SQL fence that followed it.
- * A paraphrase that never re-quotes the captured statement is restored alongside
- * it — completeness over brevity, since the engine cannot prove the paraphrase covers the quoted
- * statement and the no-drop ruling collapses only true duplication. Slots with no linked section
- * are ignored: the caller's unlinked-slot rejection owns that case.
+ * Fences are located by {@link locateSqlFences}, so a capture that opens its fence mid-line (`⚠️ ```sql`, `$$ … $$ ```sql`) still carries its id on the
+ * opening marker and its block is that fence, closed. The function is pure and depends only on
+ * `detailSlots` content, so the envelope builder (which needs the annotated slots) and the
+ * `present_result` handler (which needs only the id lookup) each call it on the same archive and
+ * agree on every id without sharing state. `EvidenceBlock.raw` is the block unannotated — the id
+ * exists only in the copy delivered to the model.
  *
- * @param labelToNodeIds - Section-linked node ids per rendered label, first-wins as for badges.
- * @param haystack - Normalized full-document text used for presence matching.
- * @param detailSlots - Captured slots for the rendered nodes, if any.
- * @returns Missing items in capture order; empty when everything is already present.
+ * @param detailSlots - Captured archive to scan; returned slots are a new array, the input is
+ * unchanged.
+ * @returns `slots` — the detail slots with each fenced block's info string carrying its id, for the
+ * envelope the model reads; `blocks` — the id → block lookup {@link expandEvidenceRefs} resolves.
  */
-function findMissingDetailItems(
-  labelToNodeIds: ReadonlyMap<string, readonly string[]>,
-  haystack: string,
-  detailSlots: readonly DetailSlot[] | undefined,
-): RestoredDetailItem[] {
-  const missing: RestoredDetailItem[] = [];
-  if (!detailSlots || detailSlots.length === 0) return missing;
-  const nodeToLabel = new Map<string, string>();
-  for (const [label, ids] of labelToNodeIds) {
-    for (const id of ids) {
-      const key = id.toLowerCase();
-      if (!nodeToLabel.has(key)) nodeToLabel.set(key, label);
-    }
-  }
-  const seen = new Set<string>();
-  for (const slot of detailSlots) {
-    const label = nodeToLabel.get(slot.nodeId.toLowerCase());
-    if (label === undefined) continue;
-    for (const section of slot.sections ?? []) {
-      for (const item of extractCapturedDetailItems(section.text)) {
-        if (item.fingerprints.length === 0) continue;
-        if (item.fingerprints.every(fingerprint => haystack.includes(fingerprint))) continue;
-        const dedupKey = `${label}\n${item.kind}\n${item.key}`;
-        if (seen.has(dedupKey)) continue;
-        seen.add(dedupKey);
-        missing.push({ label, kind: item.kind, text: item.text });
+export function assignEvidenceIds(
+  detailSlots: readonly DetailSlot[],
+): { readonly slots: DetailSlot[]; readonly blocks: ReadonlyMap<string, EvidenceBlock> } {
+  const blocks = new Map<string, EvidenceBlock>();
+  let n = 0;
+  const slots = detailSlots.map(slot => ({
+    ...slot,
+    sections: slot.sections.map(section => {
+      let cursor = 0;
+      let text = '';
+      for (const fence of locateSqlFences(section.text)) {
+        if (fence.lines.length === 0) continue;
+        n += 1;
+        const id = `S${n}`;
+        const info = fence.info.trimEnd();
+        blocks.set(id, { id, nodeId: slot.nodeId, raw: [`\`\`\`sql${info}`, ...fence.lines, '```'].join('\n') });
+        const infoEnd = fence.start + '```sql'.length + info.length;
+        text += `${section.text.slice(cursor, infoEnd)} ${id}`;
+        cursor = infoEnd;
       }
+      if (cursor === 0) return section;
+      return { ...section, text: text + section.text.slice(cursor) };
+    }),
+  }));
+  return { slots, blocks };
+}
+
+/** Whitespace-insensitive identity of a fence body, so a re-typed copy of a block matches it. */
+function fenceBodyKey(lines: readonly string[]): string {
+  return lines.join('\n').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The span of the whole lines a fence occupies — container prefix and one newline included — when
+ * nothing else shares them; otherwise the fence alone.
+ */
+function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
+  const lineStart = text.lastIndexOf('\n', fence.start - 1) + 1;
+  const lineEnd = text.indexOf('\n', fence.end);
+  const after = text.slice(fence.end, lineEnd === -1 ? text.length : lineEnd);
+  if (text.slice(lineStart, fence.start) !== fence.container || after.trim() !== '') return [fence.start, fence.end];
+  return lineEnd === -1 ? [Math.max(0, lineStart - 1), text.length] : [lineStart, lineEnd + 1];
+}
+
+/**
+ * Expands evidence references in one rendered text field in place: a ```sql fence whose info string
+ * ends in a served id (```` ```sql S7 ```` closed with no body, or the one-line ```` ```sql S7``` ````)
+ * is replaced where it stands by the captured block, indented to its position.
+ *
+ * @remarks
+ * A reference is an optional shorthand for writing the captured SQL out — the model may always
+ * write SQL itself. Fences are located by the rule {@link assignEvidenceIds} numbers them with, so a
+ * fence the model opens mid-line never pairs with a later reference's marker. Two cases are
+ * normalized and reported in `normalized` for the caller's log: a fence that carries an id *and* a
+ * body keeps the body the model wrote and only loses the id, so SQL is never shown twice for one
+ * fence; a reference whose block the section already shows (a fence with the same body, or an
+ * earlier reference to it) renders nothing. An id that names no captured block is returned in
+ * `unknownIds` and the fence is left as written; the caller rejects it.
+ *
+ * The caller runs this over every field {@link orderAndAssemble} renders verbatim — `title`,
+ * `intro`, `closing` and each section's text — so an id cited outside a section expands or rejects
+ * exactly like one inside a section, never a silently unresolved fence. It expands a rendering
+ * copy only: the held repair draft keeps the unexpanded input, so a resent field still carries
+ * short references.
+ *
+ * @param text - One authored text field (a section body, or `title` / `intro` / `closing`).
+ * @param blocks - The id → block lookup from {@link assignEvidenceIds}.
+ */
+export function expandEvidenceRefs(
+  text: string,
+  blocks: ReadonlyMap<string, EvidenceBlock>,
+): { text: string; unknownIds: string[]; normalized: string[] } {
+  const fences = [...locateSqlFences(text)];
+  const shown = new Set(fences.filter(fence => fence.lines.length > 0).map(fence => fenceBodyKey(fence.lines)));
+  const unknownIds: string[] = [];
+  const normalized: string[] = [];
+  let out = '';
+  let cursor = 0;
+  for (const fence of fences) {
+    const id = EVIDENCE_ID_INFO.exec(fence.info)?.[1];
+    if (!id) continue;
+    const block = blocks.get(id);
+    if (fence.lines.length > 0) {
+      const infoStart = fence.start + '```sql'.length;
+      out += text.slice(cursor, infoStart) + fence.info.slice(0, fence.info.lastIndexOf(id)).trimEnd();
+      cursor = infoStart + fence.info.length;
+      normalized.push(`${id} dropped from a fence that carries its own SQL`);
+    } else if (!block) {
+      unknownIds.push(id);
+    } else {
+      const blockLines = block.raw.split('\n');
+      const key = fenceBodyKey(blockLines.slice(1, -1));
+      if (shown.has(key)) {
+        const [from, to] = fenceLineSpan(text, fence);
+        out += text.slice(cursor, Math.max(cursor, from));
+        cursor = to;
+        normalized.push(`${id} not rendered — the section already shows that SQL`);
+        continue;
+      }
+      shown.add(key);
+      const indent = fence.container.replace(/[^\s>]/g, ' ');
+      out += text.slice(cursor, fence.start) + blockLines.map((line, k) => (k > 0 && line ? indent + line : line)).join('\n');
+      cursor = fence.end;
     }
   }
-  return missing;
+  return { text: out + text.slice(cursor), unknownIds, normalized };
 }
 
 /**
@@ -748,8 +719,7 @@ function findMissingDetailItems(
  *
  * Numbered badges are emitted only for AI-provided `sections[].node_ids[]`, in
  * narrative order, so chips on the graph align with `## N` headings in the
- * description. Nodes not linked by the AI get no badge. Leading numbers in
- * AI-supplied labels are stripped to keep numbering deterministic.
+ * description. Nodes not linked by the AI get no badge.
  *
  * A node the AI links from more than one section is normalized here, not rejected: the first
  * section wins the badge and the object link, the later links are returned in
@@ -760,18 +730,14 @@ function findMissingDetailItems(
  * transport line into a small muted paragraph, so the link list reads as a
  * side note at body-small size instead of competing with the section heading.
  *
- * Captured detail-slot callouts and formulas (`opts.detailSlots`) are delivered here for the same
- * reason badges and numbering are engine-owned: the node-level link check accepts a section that
- * names the node while omitting individual captured findings, so the assembler restores every
- * absent ⚠️ callout and `$$ … $$` formula (with its SQL fence) verbatim into its node's section.
- * The rendered preview then drops no captured information regardless of how the model phrased
- * the section.
+ * `title`, `intro`, `closing` and every section's text arrive with evidence references already
+ * expanded ({@link expandEvidenceRefs}) — every field this function renders verbatim shares that
+ * one expansion, so none reaches the assembled document as an unresolved reference fence.
  *
- * @param sections - AI-authored sections containing labels, node associations, and text.
+ * @param sections - AI-authored sections containing labels, node associations, and text; labels are unique.
  * @param opts - Optional wrapper blocks for the final document.
- * @returns The numbered badges for the graph, the fully assembled markdown description, any
- *   duplicate section links first-wins dropped while assembling them, and every captured callout
- *   or formula restored into a section.
+ * @returns The numbered badges for the graph, the fully assembled markdown description, and any
+ *   duplicate section links first-wins dropped while assembling them.
  */
 export function orderAndAssemble(
   sections: Array<{ label: string; node_ids?: string[]; text?: string }>,
@@ -783,43 +749,22 @@ export function orderAndAssemble(
     closing?: string;
     /** Optional node lookup for injecting clickable object-link footnotes per section. */
     nodeMap?: Map<string, { id: string; name: string }>;
-    /**
-     * Captured detail slots for the rendered nodes. Every ⚠️ callout and `$$ … $$` formula a
-     * section-linked slot carries is guaranteed a place in the assembled description: items
-     * already present are left alone, the rest are appended verbatim to the owning section under
-     * a `Captured callouts` / `Captured formulas` marker. Slots with no linked section are
-     * ignored here — the caller's unlinked-slot rejection owns that case.
-     */
-    detailSlots?: readonly DetailSlot[];
   },
 ): {
   badges: Array<{ node_id: string; text: string }>;
   description: string;
   droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }>;
-  restoredDetailItems: RestoredDetailItem[];
 } {
-  const stripLeadingNumber = (s: string) => (typeof s === 'string' ? s : '').replace(/^\d+[\.]?\s+/, '').trim();
-
-  const labelToAiIndex = new Map<string, number>();
-  sections.forEach((sec, i) => {
-    const norm = stripLeadingNumber(sec.label);
-    if (!labelToAiIndex.has(norm)) labelToAiIndex.set(norm, i);
-  });
-
-  const uniqueLabels = [...new Set(sections.map(s => stripLeadingNumber(s.label)))];
-  uniqueLabels.sort((a, b) => (labelToAiIndex.get(a) ?? 0) - (labelToAiIndex.get(b) ?? 0));
-
-  const labelToNumber = new Map<string, number>();
-  uniqueLabels.forEach((label, i) => labelToNumber.set(label, i + 1));
+  const uniqueLabels = [...new Set(sections.map(sec => sec.label))];
+  const labelToNumber = new Map(uniqueLabels.map((label, i) => [label, i + 1]));
 
   const nodeToLabel = new Map<string, string>();
   const labelToNodeIds = new Map<string, string[]>();
   const droppedSectionLinks: Array<{ node_id: string; dropped_from: string; kept_in: string }> = [];
-  for (const sec of sections) {
-    const label = stripLeadingNumber(sec.label);
+  for (const { label, node_ids } of sections) {
     let kept = labelToNodeIds.get(label);
     if (!kept) { kept = []; labelToNodeIds.set(label, kept); }
-    for (const id of sec.node_ids ?? []) {
+    for (const id of node_ids ?? []) {
       const owner = nodeToLabel.get(id);
       if (owner !== undefined) {
         if (owner !== label) droppedSectionLinks.push({ node_id: id, dropped_from: label, kept_in: owner });
@@ -830,38 +775,13 @@ export function orderAndAssemble(
     }
   }
 
-  const numberedBadges = [...nodeToLabel.entries()]
-    .map(([node_id, label]) => {
-      const n = labelToNumber.get(label);
-      return n !== undefined ? { node_id, text: `${n} ${label}`, _n: n } : null;
-    })
-    .filter((b): b is { node_id: string; text: string; _n: number } => b !== null)
-    .sort((a, b) => a._n - b._n)
-    .map(({ node_id, text }) => ({ node_id, text }));
-
-  const sectionMap = new Map(sections.map(s => [stripLeadingNumber(s.label), s.text]));
-
-  const detailHaystack = normalizeCalloutFingerprint(
-    [opts?.title, opts?.intro, opts?.preface, ...sectionMap.values(), opts?.closing]
-      .filter((part): part is string => typeof part === 'string')
-      .join('\n'),
-  );
-  const restoredDetailItems = findMissingDetailItems(labelToNodeIds, detailHaystack, opts?.detailSlots);
-  for (const label of new Set(restoredDetailItems.map(item => item.label))) {
-    const ofLabel = (kind: CapturedDetailKind) =>
-      restoredDetailItems.filter(item => item.label === label && item.kind === kind).map(item => item.text);
-    const callouts = ofLabel('callout');
-    const formulas = ofLabel('formula');
-    let body = sectionMap.get(label) ?? '';
-    if (callouts.length > 0) body += `\n\n**Captured callouts:**\n${callouts.map(block => `- ${block.replace(/\n/g, '\n  ')}`).join('\n')}`;
-    if (formulas.length > 0) body += `\n\n**Captured formulas:**\n${formulas.join('\n')}`;
-    sectionMap.set(label, body);
-  }
+  const badges = [...nodeToLabel].map(([node_id, label]) => ({ node_id, text: `${labelToNumber.get(label)} ${label}` }));
 
   const parts: string[] = [];
   if (opts?.title)        parts.push(`# ${opts.title}`);
   if (opts?.intro)        parts.push(opts.intro);
   if (opts?.preface)      parts.push(opts.preface);
+  const sectionMap = new Map(sections.map(sec => [sec.label, sec.text]));
   for (const label of uniqueLabels) {
     const n = labelToNumber.get(label)!;
     const text = sectionMap.get(label) ?? '';
@@ -881,7 +801,7 @@ export function orderAndAssemble(
   }
   if (opts?.closing) parts.push(`---\n\n${opts.closing}`);
 
-  return { badges: numberedBadges, description: parts.join('\n\n'), droppedSectionLinks, restoredDetailItems };
+  return { badges, description: parts.join('\n\n'), droppedSectionLinks };
 }
 
 /**
@@ -974,6 +894,21 @@ export function findBareNonPrunedNodes(
 }
 
 /**
+ * The detail-slot node ids a present call must link from `sections[].node_ids[]`: the slots whose
+ * node is in the rendered set. The synthesis envelope lists this set and
+ * {@link findUnrenderedDetailSlotIds} enforces it, so the served list and the check share one source.
+ *
+ * @param slotNodeIds - Node ids of every stored detail slot.
+ * @param renderedNodeIds - Node ids the render keeps.
+ */
+export function requiredDetailSlotIds(
+  slotNodeIds: readonly string[],
+  renderedNodeIds: ReadonlySet<string>,
+): string[] {
+  return slotNodeIds.filter(id => renderedNodeIds.has(id));
+}
+
+/**
  * Reports which delivered `detail_slots[]` reached no rendered section.
  *
  * @remarks
@@ -1010,17 +945,17 @@ export function findUnrenderedDetailSlotIds(
 }
 
 /**
- * Validates the full `present_result` input against mechanical contracts only.
+ * Validates the full `present_result` input against the contracts a schema cannot express.
  *
  * @remarks
- * Enforces naming length, summary length, sections[] presence, node-id resolution,
- * and final section label/text cardinality. Markdown/KaTeX formatting is deliberately
+ * `input` has already passed the Zod boundary (`presentResultBoundarySchemaForPhase`), which owns
+ * shape, required and blank fields, length caps and unique section labels. This function enforces
+ * node-id resolution against the result graph, the highlight-group requirement (waived for an
+ * amendment) and highlight/section/note coverage. Markdown/KaTeX formatting is deliberately
  * not validated: formatting can never reject a call (the renderer degrades gracefully).
  *
- * Content quality remains prompt-owned, but structural invariants are enforced
- * here: each final section label is non-empty, short, unique, and has exactly
- * one text body; `node_ids[]` is optional, but a node may not be linked to
- * multiple final sections.
+ * A node linked from more than one section keeps only its first link
+ * ({@link orderAndAssemble} drops and logs the rest).
  *
  * The `description` returned in {@link PresentResultRequest} is the engine-assembled
  * markdown blob built by {@link orderAndAssemble} — passed in as `assembledDescription`,
@@ -1063,7 +998,6 @@ export function validatePresentResult(
   const issuePaths = new Set<string>();
   const pathUnlinkableIds = new Map<string, readonly string[]>();
   const pathEntryIds = new Map<string, readonly string[]>();
-  const pathLengthOverruns = new Map<string, { readonly length: number; readonly limit: number }>();
   const addError = (
     field: PresentResultFailedField,
     message: string,
@@ -1092,43 +1026,10 @@ export function validatePresentResult(
   }
   const externalErrorCount = errors.length;
 
-  /**
-   * Reports one GUI label over its hard cap.
-   *
-   * @remarks
-   * The caps are validator-owned rather than Zod-owned at the boundary (see
-   * `PresentResultBoundarySchema`): a Zod reject fails the whole call with a field path and no held
-   * draft, so an overrun costs a full resend of an answer that was otherwise correct. Reported here
-   * the overrun is repairable, authorizes only its own field, and names the exact entry. The
-   * measured length is stated because a model cannot count characters — the same fact
-   * `describeSizeIssue` (`toolErrorEnvelope.ts`) states for a Zod size issue, in the same wording.
-   * `summary`, `intro` and `closing` are prose, never a rejection axis, and have no cap to check.
-   */
-  const addLengthError = (
-    field: PresentResultFailedField & PresentResultRepairField,
-    path: string,
-    value: string,
-    limit: number,
-  ): void => {
-    if (value.length <= limit) return;
-    addError(field, `${path} is over its length limit: ${value.length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`, [field], [path]);
-    pathLengthOverruns.set(path, { length: value.length, limit });
-  };
-
-  if (!input.name || input.name.trim().length === 0) addError('name', 'name is required');
-  else addLengthError('name', 'name', input.name, PRESENT_RESULT_NAME_MAX);
-  if (typeof input.title === 'string') addLengthError('title', 'title', input.title, PRESENT_RESULT_TITLE_MAX);
-
   if (resolvedNodeIds.length === 0) {
     addError('nodes', 'No nodes in view — the result graph is empty or all nodes were pruned');
   }
 
-  if (!input.summary || input.summary.trim().length === 0) {
-    addError('summary', 'summary is required — one-line graph purpose (~120 chars)');
-  }
-
-  const hasSections = !!(input.sections && input.sections.length > 0);
-  const hasAssembled = !!(assembledDescription && assembledDescription.trim().length > 0);
   const sectionLinkedNodeIds = new Set<string>();
 
   const resolvedSet = new Set(resolvedNodeIds);
@@ -1151,54 +1052,29 @@ export function validatePresentResult(
     ? 'contains unknown IDs'
     : 'names IDs the result graph cannot link';
   const renderNodeIdStates = (ids: readonly string[]): string =>
-    ids.slice(0, NODE_ID_OFFENDERS_SHOWN)
+    ids
       .map(id => `\`${id}\` — ${PRESENT_NODE_ID_STATE_TEXT[stateOf(id)]}`)
-      .join('; ')
-    + (ids.length > NODE_ID_OFFENDERS_SHOWN ? ' ...' : '');
+      .join('; ');
   /**
    * Offenders elsewhere in the call, the accepted set, and the route back — appended to each site,
-   * in that order: the rejection replay hard-slices this string, so the least recoverable fact (which
-   * id failed and why) is stated before the ones the completion envelope also carries.
+   * in that order: the least recoverable fact (which id failed and why) is stated first.
    */
+  let nodeIdHintNeeded = false;
   const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
+    nodeIdHintNeeded = true;
     const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
     return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
-      + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds, NODE_ID_ACCEPTED_SHOWN)}.`
-      + (allHallucinated ? '' : ` ${PRESENT_REAL_ID_ROUTE[stage]}`)
-      + ` ${presentNodeIdHint(stage)}`;
+      + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds)}.`
+      + (allHallucinated ? '' : ` ${PRESENT_REAL_ID_ROUTE[stage]}`);
   };
 
-  if (!hasSections && !hasAssembled) {
-    addError('sections', 'sections[] is required — provide at least one section with label and text; node_ids[] is optional.');
-  }
-
-
-  if (hasSections) {
-    const labels = new Set<string>();
-    for (const [sectionIndex, sec] of input.sections.entries()) {
-      const label = (sec.label ?? '').replace(/^\d+[\.]?\s+/, '').replace(/\s+/g, ' ').trim();
-      const normalizedLabel = normalizePresentSectionLabel(sec.label);
-      if (!label) {
-        addError('sections', 'Section label is required — provide a short final label for this detail section');
-      } else {
-        addLengthError('sections', `sections.${sectionIndex}.label`, sec.label, PRESENT_RESULT_SECTION_LABEL_MAX);
-        if (labels.has(normalizedLabel)) {
-          addError('sections', `Duplicate section label "${label}" — each final label must map to exactly one section text`);
-        }
-        labels.add(normalizedLabel);
-      }
-      if (sec.node_ids?.length) {
-        const unknownIds = sec.node_ids.filter(id => !resolvedSet.has(id));
-        if (unknownIds.length > 0) {
-          addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
-        }
-        for (const nodeId of sec.node_ids.filter(id => resolvedSet.has(id))) {
-          sectionLinkedNodeIds.add(nodeId);
-        }
-      }
-      if (typeof sec.text !== 'string' || sec.text.trim().length === 0) {
-        addError('sections', `Section "${sec.label}" is missing text — every final section label requires one detail body`);
-      }
+  for (const [sectionIndex, sec] of (input.sections ?? []).entries()) {
+    const unknownIds = (sec.node_ids ?? []).filter(id => !resolvedSet.has(id));
+    if (unknownIds.length > 0) {
+      addError('sections', `Section "${sec.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['sections'], [`sections.${sectionIndex}`], unknownIds);
+    }
+    for (const nodeId of sec.node_ids ?? []) {
+      if (resolvedSet.has(nodeId)) sectionLinkedNodeIds.add(nodeId);
     }
   }
 
@@ -1208,10 +1084,7 @@ export function validatePresentResult(
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
-        addError('notes', `notes[].node_id ${nodeIdNoun}: ${renderNodeIdStates([note.node_id])}.${nodeIdRejectionTail([note.node_id])}`, ['notes'], [`notes.${noteIndex}`], [note.node_id]);
-      }
-      if (typeof note.text !== 'string' || note.text.trim().length === 0) {
-        addError('notes', `Note for "${note.node_id}" is missing text`);
+        addError('notes', `notes[].node_id ${nodeIdNoun}: ${renderNodeIdStates([note.node_id])}.${nodeIdRejectionTail([note.node_id])}`, ['notes'], [`notes.${noteIndex}.node_id`], [note.node_id]);
       }
     }
   }
@@ -1222,13 +1095,7 @@ export function validatePresentResult(
       addError('highlight_groups', 'highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)');
     }
   } else {
-    if (input.highlight_groups.length > PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX) {
-      addError('highlight_groups', `highlight_groups exceeds maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`, ['highlight_groups']);
-    }
     for (const [groupIndex, g] of input.highlight_groups.entries()) {
-      if (!g.label) addError('highlight_groups', 'Group label is required');
-      else addLengthError('highlight_groups', `highlight_groups.${groupIndex}.label`, g.label, PRESENT_RESULT_HIGHLIGHT_LABEL_MAX);
-      if (!AI_HIGHLIGHT_ROLES.has(g.color)) addError('highlight_groups', `Group "${g.label}" has invalid role "${g.color}" — use one of: ${[...AI_HIGHLIGHT_ROLES].join(', ')}`);
       const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
       if (unknownIds.length > 0) {
         addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
@@ -1244,7 +1111,7 @@ export function validatePresentResult(
     hasUnexplainedHighlightGap = true;
     addError(
       'highlight_groups',
-      `highlight_groups node_ids must be explained by sections[].node_ids or notes[]: ${unexplainedHighlightNodeIds.slice(0, 5).join(', ')}${unexplainedHighlightNodeIds.length > 5 ? ' ...' : ''}. For each listed node, add it to a section's node_ids[] or add a note naming it — or drop it from highlight_groups[] if it is uncolored plumbing.`,
+      `highlight_groups node_ids must be explained by sections[].node_ids or a notes caption: ${unexplainedHighlightNodeIds.join(', ')}. For each listed node, add it to a section's node_ids[] or add a notes entry for it — or drop it from highlight_groups[] if it is uncolored plumbing.`,
       ['sections', 'notes', 'highlight_groups'],
     );
   }
@@ -1254,14 +1121,12 @@ export function validatePresentResult(
     return [...issuePaths].map(path => {
       const ids = pathUnlinkableIds.get(path);
       const entryIds = pathEntryIds.get(path);
-      const overrun = pathLengthOverruns.get(path);
-      if (!ids && !entryIds && !overrun) return { path };
+      if (!ids && !entryIds) return { path };
       const entry = {
         path,
         ...(ids ? { unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })) } : {}),
         ...(ids && !acceptedStated ? { accepted_node_ids: [...resolvedNodeIds] } : {}),
         ...(entryIds ? { entry_ids: entryIds } : {}),
-        ...(overrun ?? {}),
       };
       if (ids) acceptedStated = true;
       return entry;
@@ -1271,31 +1136,38 @@ export function validatePresentResult(
   if (errors.length > 0) {
     const fieldList = [...failedFields];
     const resendList = [...repairFields];
-    let hint = fieldList.length === 1
-      ? `Fix ${fieldList[0]} only.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`
-      : `Fix these fields: ${fieldList.join(', ')}.${resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : ''}`;
-    if (failedFields.has('sections')) {
+    const sectionsMerge = presentResultSectionsMergeFor(stage, issuePaths);
+    const soleFailureHint = hasUnexplainedHighlightGap && errors.length === 1
+      ? "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a notes entry for it, or drop it from highlight_groups[] if it is uncolored plumbing."
+      : soleHints.length > 0 && errors.length === externalErrorCount && externalViolations.every(violation => violation.soleHint !== undefined)
+        ? [...new Set(soleHints)].join(' ')
+        : undefined;
+    const repairInstructed = allRepairable && resendList.length > 0;
+    const resendSentence = !repairInstructed && resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : '';
+    let hint = soleFailureHint ?? (fieldList.length === 1
+      ? `Fix ${fieldList[0]} only.${resendSentence}`
+      : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`);
+    if (repairInstructed) {
+      hint = `${hint} ${presentResultRepairInstruction(resendList)}`;
+      if (repairFields.has('sections')) hint = `${hint} ${presentResultSectionsResendRule(sectionsMerge)}`;
+    }
+    if (soleFailureHint === undefined && nodeIdHintNeeded) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
-    }
-    if (hasUnexplainedHighlightGap && errors.length === 1) {
-      hint = "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a note naming it, or drop it from highlight_groups[] if it is uncolored plumbing.";
-    }
-    if (soleHints.length === 1 && errors.length === externalErrorCount) {
-      hint = soleHints[0];
     }
     return {
       success: false,
       errors,
       hint,
       repairable: allRepairable,
-      repairFields: [...repairFields],
+      repairFields: resendList,
+      sectionsMerge,
       ...(issuePaths.size > 0 ? { detail: buildRejectionDetail() } : {}),
     };
   }
 
   return {
     success: true,
-    name: input.name.trim(),
+    name: input.name,
     node_ids: resolvedNodeIds,
     summary: input.summary,
     description: assembledDescription!,
@@ -1323,24 +1195,11 @@ export function findDisconnectedViewNodes(
   originNodeId: string,
 ): string[] {
   if (!originNodeId || !nodeIds.includes(originNodeId)) return [];
-  const nodeSet = new Set(nodeIds);
-  const adj = new Map<string, Set<string>>();
-  for (const id of nodeIds) adj.set(id, new Set<string>());
-  for (const [src, tgt] of edges) {
-    if (!nodeSet.has(src) || !nodeSet.has(tgt)) continue;
-    adj.get(src)!.add(tgt);
-    adj.get(tgt)!.add(src);
+  const graph = new Graph({ type: 'undirected' });
+  for (const id of nodeIds) graph.mergeNode(id);
+  for (const [source, target] of edges) {
+    if (graph.hasNode(source) && graph.hasNode(target)) graph.mergeEdge(source, target);
   }
-  const seen = new Set<string>([originNodeId]);
-  const queue: string[] = [originNodeId];
-  let idx = 0;
-  while (idx < queue.length) {
-    const id = queue[idx++];
-    for (const nid of adj.get(id) ?? []) {
-      if (seen.has(nid)) continue;
-      seen.add(nid);
-      queue.push(nid);
-    }
-  }
-  return nodeIds.filter(id => !seen.has(id)).sort();
+  const reachable = new Set(connectedComponents(graph).find(component => component.includes(originNodeId)));
+  return nodeIds.filter(id => !reachable.has(id)).sort();
 }

@@ -1,6 +1,8 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useState } from 'react';
+import { FloatingFocusManager, useFloating } from '@floating-ui/react';
 import { useVsCode } from '../contexts/VsCodeContext';
-import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, type AppShortcutId } from '../ui/keyboardShortcuts';
+import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, ESC_PRIORITY, type AppShortcutId } from '../ui/keyboardShortcuts';
+import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
@@ -87,7 +89,7 @@ const KEY_CAPTIONS: Partial<Record<AppShortcutId, string>> = { exitMode: 'Esc' }
  */
 const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   ...(Object.keys(SHORTCUT_DESCRIPTIONS) as AppShortcutId[]).map(id => ({
-    keys: [KEY_CAPTIONS[id] ?? SHORTCUT_KEYS[id]],
+    keys: [KEY_CAPTIONS[id] ?? [SHORTCUT_KEYS[id]].flat().join(' / ')],
     label: SHORTCUT_DESCRIPTIONS[id],
   })),
   { keys: ['Enter'], label: 'Select a suggestion or apply the focused action' },
@@ -382,16 +384,9 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      onClose();
-    };
-    document.addEventListener('keydown', handler, true);
-    return () => document.removeEventListener('keydown', handler, true);
-  }, [isOpen, onClose]);
+  const { refs, context } = useFloating({ open: isOpen, onOpenChange: (open) => { if (!open) onClose(); } });
+
+  useKeyboardShortcut(SHORTCUT_KEYS.exitMode, onClose, false, { priority: ESC_PRIORITY.help, active: isOpen });
 
   if (!isOpen) return null;
 
@@ -399,19 +394,23 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay" onClick={onClose}>
+      <FloatingFocusManager context={context} initialFocus={refs.floating}>
       <div
+        ref={refs.setFloating}
         role="dialog"
+        aria-modal="true"
         aria-label="Data Lineage help"
-        className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh]"
+        tabIndex={-1}
+        className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh] outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 shrink-0 ln-help-sep-bottom">
           <div className="flex items-center gap-2">
             <img src={window.LOGO_URI} alt="" className="h-8 w-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-            <span className="text-xs ln-text-muted opacity-60">v{__APP_VERSION__}</span>
+            <span className="text-xs ln-text-muted">v{__APP_VERSION__}</span>
           </div>
           <Tooltip content="Close">
-            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text">
+            <button onClick={onClose} aria-label="Close help" className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text">
             <CloseIcon className="w-4 h-4" />
           </button>
           </Tooltip>
@@ -422,6 +421,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
             <button
               key={id}
               onClick={() => setTab(id)}
+              aria-pressed={tab === id}
               className={`px-3 py-1.5 text-xs rounded-sm transition-colors ${tab === id ? 'ln-btn-primary font-medium' : 'ln-text-muted hover:ln-list-item'}`}
             >
               {label}
@@ -451,6 +451,7 @@ export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalP
           </div>
         </div>
       </div>
+      </FloatingFocusManager>
     </div>
   );
 });

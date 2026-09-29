@@ -231,7 +231,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
             <>
               <div className="px-3 pb-1">
                 {visible.length > 0 && (clustered.length > 0 || outOfScope.length > 0) && (
-                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim">
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-muted">
                     Visible
                   </div>
                 )}
@@ -252,7 +252,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                 {clustered.length > 0 && (
                   <>
                     <div
-                      className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-dim ln-border"
+                      className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-muted ln-border"
                       style={{ marginTop: groupedVisible.size > 0 ? '4px' : undefined }}
                     >
                       In Schema Cluster {'⊞'}
@@ -276,7 +276,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                 {outOfScope.length > 0 && (
                   <>
                     <div
-                      className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-dim ln-border"
+                      className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-muted ln-border"
                       style={{ marginTop: (groupedVisible.size > 0 || groupedClustered.size > 0) ? '4px' : undefined }}
                     >
                       Not in Current Filter {'⊘'}

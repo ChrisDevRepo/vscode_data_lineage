@@ -34,7 +34,6 @@ import { trunc } from '../utils/log';
 
 interface DacpacExtractionOptions {
   externalRefsEnabled?: boolean;
-  maxNodes?: number;
 }
 
 /** Counts extracted objects by canonical type for summary logging. */
@@ -86,7 +85,6 @@ export async function extractDacpac(
     allObjects,
     undefined,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
-    options.maxNodes ?? DEFAULT_CONFIG.maxNodes,
     onDebugLog,
   );
 
@@ -170,7 +168,6 @@ export function extractDacpacFiltered(
     allObjects,
     undefined,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
-    options.maxNodes ?? DEFAULT_CONFIG.maxNodes,
     onDebugLog,
   );
   const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
@@ -235,13 +232,17 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
 /**
  * Filters an existing DatabaseModel in memory to include only objects from specific schemas.
  *
+ * @remarks
+ * Retains every matching object and every external reference it touches — this never truncates.
+ * Callers that must honor `dataLineageViz.maxNodes` check the result with
+ * {@link checkObjectLimit} before loading or rendering it.
+ *
  * @param selectedSchemas - Set of schema names to retain.
  * @returns A new DatabaseModel instance containing the filtered subset.
  */
 export function filterBySchemas(
   model: DatabaseModel,
   selectedSchemas: Set<string>,
-  maxNodes = DEFAULT_CONFIG.maxNodes
 ): DatabaseModel {
   const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
   const schemaNodes = model.nodes.filter((n) => lowerSelected.has(n.schema.toLowerCase()));
@@ -256,15 +257,14 @@ export function filterBySchemas(
     n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
   );
   const filtered = [...schemaNodes, ...virtualNodes];
-  const limited = filtered.slice(0, maxNodes);
-  const nodeIds = new Set(limited.map((n) => n.id));
+  const nodeIds = new Set(filtered.map((n) => n.id));
 
   const edges = model.edges.filter(
     (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
   );
 
   return {
-    nodes: limited,
+    nodes: filtered,
     edges,
     schemas: model.schemas.filter((s) => lowerSelected.has(s.name.toLowerCase())),
     catalog: model.catalog,
