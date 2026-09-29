@@ -213,7 +213,7 @@ describe('5,000-object model: loaded and searchable, drawn only up to the render
     const refused = checkObjectLimit(model, MAX_NODES - 1);
     expect(refused).toEqual({ ok: false, count: MAX_NODES, limit: MAX_NODES - 1 });
     expect(formatObjectLimitMessage(MAX_NODES, MAX_NODES - 1)).toBe(
-      '5,000 objects selected (limit 4,999, set by dataLineageViz.maxNodes). Select fewer schemas.',
+      '5,000 objects selected (limit 4,999, set by dataLineageViz.maxNodes). Select fewer schemas or raise the setting.',
     );
 
     const over = buildLargeModel(MAX_NODES + 1);
