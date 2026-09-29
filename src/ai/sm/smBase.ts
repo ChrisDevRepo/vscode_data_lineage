@@ -88,6 +88,12 @@ interface NavigationWorkingMemory extends WorkingMemory {
   column_aspect?: ColumnAspect;
 }
 
+/** Optional kept-verdict fields a held draft restores when a retry omits them. */
+const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions', 'column_flow'] as const;
+
+/** Fields a route rejection is about; a held draft never restores them on a retry that omits them. */
+const ROUTED_FIELDS: readonly string[] = ['prune_neighbors', 'questions', 'column_flow'];
+
 /**
  * Defines the core interface for the state machine handling exploration modes.
  */
@@ -402,7 +408,7 @@ export class NavigationEngine implements IHopStateMachine {
    * sections can reuse already-valid authored prose. Other validation failures never establish held
    * state.
    */
-  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept>();
+  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, { readonly failed: readonly string[] }>();
 
   /** Exploration direction set by `init`; consulted by `enqueueHop` when contracting reference nodes. */
   protected _direction: 'upstream' | 'downstream' | 'bidirectional' = 'bidirectional';
@@ -556,6 +562,10 @@ export class NavigationEngine implements IHopStateMachine {
    * ({@link RepairDraftStore.mergeByKey}), so an angle the retry omits keeps its held body, and an
    * empty summary keeps the held one.
    *
+   * Every other held field the retry omits (`badge_label`, `prune_neighbors`, `questions`,
+   * `column_flow`) is restored unless the rejection that held it named that field as failed; a field
+   * the retry sends replaces the held one.
+   *
    * @param summaryOmitted - The wire summary was `null`: only a held draft of this focus can supply it.
    * @returns The submission to apply, or a `missing_field` rejection when a kept verdict carries no
    *   sections and no summary and no held draft of this focus supplies them, or when the summary was
@@ -585,8 +595,16 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
     this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
+    const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
+    const carried: Partial<HopFindingKept> = {};
+    for (const field of HELD_CARRIED_FIELDS) {
+      if (incoming[field] === undefined && heldForFocus[field] !== undefined && !failed.includes(field)) {
+        Object.assign(carried, { [field]: heldForFocus[field] });
+      }
+    }
     return {
       ...incoming,
+      ...carried,
       sections: RepairDraftStore.mergeByKey(heldForFocus.sections, incoming.sections, section => section.angle ?? ''),
       summary: incoming.summary.trim() ? incoming.summary : heldForFocus.summary,
     };
@@ -598,12 +616,12 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param input - The rejected payload as the model sent it.
    * @param failedPaths - Dotted Zod issue paths of the rejection.
-   * @returns The held parts (`sections` angles, whether `summary`), or `null` when nothing was
-   *   held: not a kept verdict, not the current focus, or no sections or summary free of failures.
+   * @returns The held parts (`sections` angles, whether `summary`, the other field names), or `null`
+   *   when nothing was held: not a kept verdict, not the current focus, or every field failed.
    */
-  public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): { sections: string[]; summary: boolean } | null {
+  public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): { sections: string[]; summary: boolean; fields: string[] } | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
-    const raw = input as { focus_node_id?: unknown; verdict?: unknown; sections?: unknown; summary?: unknown };
+    const raw = input as Record<string, unknown> & { focus_node_id?: unknown; verdict?: unknown };
     if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return null;
     const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap) ?? raw.focus_node_id.toLowerCase();
     if (focus !== this.currentFocusNodeId) return null;
@@ -612,16 +630,25 @@ export class NavigationEngine implements IHopStateMachine {
       ? []
       : extractRawSectionAngles(raw.sections).filter(section => section.text.trim().length > 0);
     const summary = !failed.has('summary') && typeof raw.summary === 'string' ? raw.summary.trim() : '';
-    if (sections.length === 0 && !summary) return null;
+    const fields: Partial<HopFindingKept> = {};
+    for (const field of HELD_CARRIED_FIELDS) {
+      const value = raw[field];
+      if (failed.has(field) || value === undefined || value === null) continue;
+      Object.assign(fields, { [field]: structuredClone(value) });
+    }
+    const carriedNames = Object.keys(fields);
+    if (sections.length === 0 && !summary && carriedNames.length === 0) return null;
     const held = this.heldFindingDraft.get();
     const sameFocus = held !== null && (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) === focus;
     this.heldFindingDraft.hold({
+      ...(sameFocus ? held : {}),
+      ...fields,
       focus_node_id: raw.focus_node_id,
       verdict: raw.verdict,
       sections: sameFocus ? RepairDraftStore.mergeByKey(held.sections, sections, section => section.angle ?? '') : sections,
       summary: summary || (sameFocus ? held.summary : ''),
-    });
-    return { sections: sections.map(section => section.angle ?? ''), summary: summary.length > 0 };
+    }, { failed: [...failed] });
+    return { sections: sections.map(section => section.angle ?? ''), summary: summary.length > 0, fields: carriedNames };
   }
 
   /** Compatibility projection of unresolved scope-boundary leads for synthesis. */
@@ -2268,7 +2295,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (lengthViolations.length > 0) {
       const measured = lengthViolations.map(v => `${v.path}: ${v.chars} chars, limit ${v.limit}`).join('; ');
       this.memory.recordRejection(focusId, `${REJECTION_CODES.fieldLengthExceeded}: ${measured}`, this.hopCount);
-      this.heldFindingDraft.hold(structuredClone(finding));
+      this.heldFindingDraft.hold(structuredClone(finding), { failed: lengthViolations.map(v => v.path.split('.')[0]) });
       return makeRejection({
         code: REJECTION_CODES.fieldLengthExceeded,
         hint: `${measured}. Nothing was committed. Your analysis is held: resubmit submit_findings for ${focusId} with the listed field(s) shortened. ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`,
@@ -2536,7 +2563,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (reported) {
       if (fatalRoutes.length > 0) this.lastRoutedRejected = fatalRoutes.length;
       for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-      if (reported.hold) this.heldFindingDraft.hold(structuredClone(finding));
+      if (reported.hold) this.heldFindingDraft.hold(structuredClone(finding), { failed: ROUTED_FIELDS });
       return reported.rejection;
     }
 

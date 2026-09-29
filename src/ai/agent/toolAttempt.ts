@@ -266,6 +266,8 @@ export interface ToolAttemptResult {
 export interface HeldSubmissionParts {
   readonly sections: readonly string[];
   readonly summary: boolean;
+  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
+  readonly fields: readonly string[];
 }
 
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` when nothing was held. */
@@ -279,7 +281,11 @@ const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
  */
 function withHeldSubmissionHint(data: ToolOutcomeData, held: HeldSubmissionParts): ToolOutcomeData {
   if (data.status !== 'rejected') return data;
-  const labels = [...held.sections.map(angle => `sections "${angle}"`), ...(held.summary ? ['summary'] : [])].join(', ');
+  const labels = [
+    ...(held.sections.length > 0 ? [`sections (${held.sections.join(', ')})`] : []),
+    ...(held.summary ? ['summary'] : []),
+    ...held.fields,
+  ].join(', ');
   const heldHint = `Held from this call: ${labels}. Resend lineage_submit_findings with only the failed field(s) corrected`
     + (held.sections.length > 0 ? `; send sections: {} to keep every held angle. ${keyedResendRule('sections', 'angle')}` : '.');
   const hint = data.correction?.hint;
