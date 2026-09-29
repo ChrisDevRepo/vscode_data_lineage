@@ -24,8 +24,7 @@ function expectedEdgeCount(gt: SyntheticDacpacResult): number {
 describe('formatObjectLimitMessage', () => {
   it('renders the refusal text naming the setting', () => {
     expect(formatObjectLimitMessage(2001, 2000)).toBe(
-      '2,001 objects selected (limit 2,000). '
-      + 'Select fewer schemas, or raise the limit in Settings: dataLineageViz.maxNodes.',
+      '2,001 objects selected (limit 2,000, set by dataLineageViz.maxNodes). Select fewer schemas.',
     );
   });
 
@@ -35,8 +34,7 @@ describe('formatObjectLimitMessage', () => {
 
   it('formats the count with toLocaleString at larger scale', () => {
     expect(formatObjectLimitMessage(12345, 2000)).toBe(
-      '12,345 objects selected (limit 2,000). '
-      + 'Select fewer schemas, or raise the limit in Settings: dataLineageViz.maxNodes.',
+      '12,345 objects selected (limit 2,000, set by dataLineageViz.maxNodes). Select fewer schemas.',
     );
   });
 });
@@ -80,8 +78,7 @@ describe('DACPAC extraction at the object-count boundary', () => {
     const check = checkObjectLimit(model, MAX_NODES);
     expect(check).toEqual({ ok: false, count: 2001, limit: MAX_NODES });
     expect(formatObjectLimitMessage(2001, MAX_NODES)).toBe(
-      '2,001 objects selected (limit 2,000). '
-      + 'Select fewer schemas, or raise the limit in Settings: dataLineageViz.maxNodes.',
+      '2,001 objects selected (limit 2,000, set by dataLineageViz.maxNodes). Select fewer schemas.',
     );
   });
 

@@ -621,7 +621,7 @@ const SUMMARY_DESCRIPTION =
  *
  * @remarks
  * Flat by design: a top-level `anyOf` defeats constrained decoding, so the verdict-dependent shape
- * (a kept verdict carries sections and summary, `end_branch` carries only `reason`) is stated in
+ * (a kept verdict carries sections and summary, `end_branch` requires `reason` and ignores summary and sections) is stated in
  * the describes and enforced by {@link refineSubmitFindingsShape} at parse.
  */
 const HopFindingBaseSchema = z.object({
@@ -823,14 +823,14 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  * ({@link CLASSIFICATION_KEPT_ANGLES}).
  *
  * @remarks
- * One kept angle drops the other key. Sending it fails Zod's strict unrecognized-key check
- * (surfaced through the shared `unrecognized_keys` repair envelope). The fold guidance lives
- * on the kept key's description, where the model reads it before authoring.
+ * One kept angle drops the other key. Sending it raises a custom issue whose hint says to fold
+ * that key's content into the kept angle. The fold guidance also lives on the kept key's
+ * description, where the model reads it before authoring.
  * `both` keeps both angles; both keys are required when `freshSubmission` is set (no held draft and
  * no archived angle), and optional otherwise so the held-draft sentinel `sections: {}` parses.
  * {@link validateSectionsAgainstClassification} still requires both angles at the handler. The parent
  * field is served required and nullable: {@link refineSubmitFindingsShape} accepts an `end_branch`
- * whose `sections` is null and rejects one that includes it.
+ * whether `sections` is null or present; {@link toHopFinding} drops it.
  *
  * @param classification - The locked classification this dispatch's schema narrows to.
  * @param freshSubmission - Serve the `both` keys as required.

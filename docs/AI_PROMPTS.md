@@ -324,9 +324,9 @@ per-hop verdict: `analyze` (transforms data on the answer path), `passthrough`
 (on the path, handing values on unchanged), or `end_branch` (removes this node,
 and every open node reachable only through it, from the result for the rest of
 the run). A kept verdict (`analyze` or `passthrough`) requires `sections` and
-`summary`, and may add `badge_label`; `end_branch` carries only a required
-`reason` and excludes every findings field — the two shapes never mix on one
-submit.
+`summary`, and may add `badge_label`; `end_branch` requires `reason`, refuses `badge_label`,
+`prune_neighbors` and `questions`, and ignores any `summary` or `sections` sent
+with it.
 `end_branch` is refused on the start object (`prune_origin_forbidden`) and on a
 node a committed `column_flow` has already named for a tracked column
 (`prune_carries_tracked_column`).

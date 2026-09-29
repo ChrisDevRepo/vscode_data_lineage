@@ -90,7 +90,14 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         }), normalizedInput);
       }
 
-      const finding = engine.applyHeldContent(toHopFinding(parsed.data));
+      if (parsed.data.verdict === 'end_branch' && (parsed.data.summary != null || parsed.data.sections != null)) {
+        s.logger.debug(
+          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[parsed.data.summary != null ? 'summary' : '', parsed.data.sections != null ? 'sections' : ''].filter(Boolean).join(',')}`,
+        );
+      }
+      const held = engine.applyHeldContent(toHopFinding(parsed.data));
+      if ('code' in held) return s.logAndReturn('lineage_submit_findings', held, normalizedInput);
+      const finding = held;
 
       const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
       const violation = validateSectionsAgainstClassification(finding.verdict === 'end_branch' ? [] : finding.sections, sess.classification, finding.verdict, archivedAngles);

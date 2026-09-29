@@ -43,8 +43,7 @@ export function checkObjectLimit(model: DatabaseModel, limit: number): ObjectLim
  * @param limit - The configured `dataLineageViz.maxNodes` value.
  */
 export function formatObjectLimitMessage(count: number, limit: number): string {
-  return `${count.toLocaleString()} objects selected (limit ${limit.toLocaleString()}). `
-    + `Select fewer schemas, or raise the limit in Settings: dataLineageViz.maxNodes.`;
+  return `${count.toLocaleString()} objects selected (limit ${limit.toLocaleString()}, set by dataLineageViz.maxNodes). Select fewer schemas.`;
 }
 
 /**
