@@ -7,6 +7,7 @@ import { StrictMode, act, useState, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useKeyboardShortcut } from '../../../src/hooks/useKeyboardShortcut';
+import { SHORTCUT_KEYS } from '../../../src/ui/keyboardShortcuts';
 import { SearchWithAutocomplete } from '../../../src/components/SearchWithAutocomplete';
 import { ModeBanner } from '../../../src/components/ModeBanner';
 import { SavedViewsDropdown } from '../../../src/components/SavedViewsDropdown';
@@ -258,5 +259,24 @@ describe('a route checkbox is not a text field', () => {
     });
     expect(exited).toBe(1);
     expect(trimmed).toBe(1);
+  });
+});
+
+describe('the exclude shortcut is Delete alone', () => {
+  it('Delete excludes the selected node and Backspace does nothing', () => {
+    let excluded = 0;
+    function Scene() {
+      useKeyboardShortcut(SHORTCUT_KEYS.excludeHighlightedNode, () => { excluded++; });
+      return <div />;
+    }
+    mount(<Scene />);
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+    });
+    expect(excluded).toBe(0);
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    });
+    expect(excluded).toBe(1);
   });
 });

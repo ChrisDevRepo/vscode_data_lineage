@@ -8,7 +8,7 @@
 ### Changed
 - A deep analysis whose scope is over a limit is now refused to you up front, naming the limit and its setting, with no approval card. Each object the analysis reads takes one round (every procedure, view or function, and a table only where it is read itself) against `dataLineageViz.ai.maxRounds`, which applies without a reload; a column trace may start with at most `dataLineageViz.ai.maxTraceColumns` columns (default 10). The `dataLineageViz.ai.explorationTokenBudget` and `dataLineageViz.ai.explorationNodeCap` settings are removed.
 - The AI deep-analysis approval card is now a compact summary, with a **Show full plan** follow-up for the complete detail.
-- Improved the graph on large models: faster rendering, more stable layout and view handling, correct spacing around AI preview badges and footnotes, and `dataLineageViz.maxNodes` up to 5000 (an over-limit selection is refused with the count, external-reference nodes included, instead of being trimmed).
+- Improved the graph on large models: faster rendering, more stable layout and view handling, correct spacing around AI preview badges and footnotes; a selection over `dataLineageViz.maxNodes` is refused with the count, external-reference nodes included, instead of being silently trimmed.
 - Optimized the `@lineage` assistant's backend and request handling.
 - After an analysis, `@lineage` answers follow-up questions by walking the loaded graph, and a quick overview question can be answered without a tool call.
 - A typed reply while the approval card waits is read as approve, change or cancel.

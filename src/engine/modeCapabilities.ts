@@ -25,6 +25,8 @@ export interface ModeCapabilities {
   isModeLocked: boolean;
   /** Whether the interactive-trace hook's traced subset (not the raw base graph) should render. */
   isTraceActive: boolean;
+  /** Whether the Delete key adds the highlighted node to the exclusion filters (plain graph only). */
+  canExcludeHighlightedNode: boolean;
   /** Whether a node can be removed from the current allowlist-backed view. */
   canRemoveNodeFromScopedView: boolean;
   /** Whether direct-neighbor add/prune controls are enabled for the trace. */
@@ -58,6 +60,7 @@ export function deriveModeCapabilities(input: ModeCapabilityInput): ModeCapabili
   return {
     isModeLocked: hasScopedView,
     isTraceActive,
+    canExcludeHighlightedNode: !hasScopedView && !input.hasAiPreview,
     canRemoveNodeFromScopedView: isCuratedView && !input.hasAnalysisMode && !hasTraceMode,
     canEditTraceScope: isTraceView,
     canStartNewScopedMode: !hasScopedView && !input.hasAiPreview,

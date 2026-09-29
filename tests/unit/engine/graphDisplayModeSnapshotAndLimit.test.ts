@@ -131,24 +131,27 @@ describe('deriveViewSnapshotTransition', () => {
 });
 
 describe('deriveRenderLimitFallback', () => {
-  it('a scoped (trace/path/analysis/AI) overflow has no coarser fallback — chrome stays, actions shrink the scope', () => {
-    const result = deriveRenderLimitFallback({ isScoped: true, renderedCount: 3000, renderLimit: 2000, hasSchemaOverview: true });
-    expect(result.fallbackMode).toBeNull();
+  it('a scoped (trace/path/analysis/AI) overflow offers no view switch — actions shrink the scope', () => {
+    const result = deriveRenderLimitFallback({ isScoped: true, renderedCount: 3000, renderLimit: 2000, canOpenSchemaView: true });
+    expect(result.offerSchemaView).toBe(false);
     expect(result.message).toContain('3,000');
     expect(result.message).toContain('2,000');
     expect(result.message.toLowerCase()).toContain('reduce');
   });
 
-  it('an unscoped overflow falls back to Schema View when clusters exist', () => {
-    const result = deriveRenderLimitFallback({ isScoped: false, renderedCount: 3000, renderLimit: 2000, hasSchemaOverview: true });
-    expect(result.fallbackMode).toBe('schemaOverview');
+  it('an unscoped overflow stays in the current view and offers Schema View as the user\'s choice', () => {
+    const result = deriveRenderLimitFallback({ isScoped: false, renderedCount: 3000, renderLimit: 2000, canOpenSchemaView: true });
+    expect(result).not.toHaveProperty('fallbackMode');
+    expect(result.offerSchemaView).toBe(true);
+    expect(result.message).not.toContain('instead');
     expect(result.message).toContain('Schema View');
   });
 
-  it('an unscoped overflow with nothing to fall back to still returns a message and no surface', () => {
-    const result = deriveRenderLimitFallback({ isScoped: false, renderedCount: 3000, renderLimit: 2000, hasSchemaOverview: false });
-    expect(result.fallbackMode).toBeNull();
+  it('an unscoped overflow without Schema View to open returns a message and no switch', () => {
+    const result = deriveRenderLimitFallback({ isScoped: false, renderedCount: 3000, renderLimit: 2000, canOpenSchemaView: false });
+    expect(result.offerSchemaView).toBe(false);
     expect(result.message).toContain('3,000');
+    expect(result.message).not.toContain('Schema View');
   });
 });
 

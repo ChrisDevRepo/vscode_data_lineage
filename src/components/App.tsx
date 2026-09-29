@@ -1083,23 +1083,8 @@ export function App() {
   }, [graph, config.analysis, config.maxNodes]);
 
   useKeyboardShortcut(SHORTCUT_KEYS.excludeHighlightedNode, () => {
+    if (!modeCapabilities.canExcludeHighlightedNode) return;
     if (!highlightedNodeId) return;
-    const action = resolveRemoveAction(modeCapabilities, {
-      hasAnalysisMode: !!analysisMode,
-      isTraceOrigin: highlightedNodeId === trace.selectedNodeId,
-    });
-    if (action.kind === 'refuse') {
-      notifyUser(action.reason);
-      return;
-    }
-    if (action.kind === 'trace-prune') {
-      pruneTraceNode(highlightedNodeId);
-      return;
-    }
-    if (action.kind === 'curated-remove') {
-      handleRemoveFromView(highlightedNodeId);
-      return;
-    }
     const node = effectiveNodes.find((n) => n.id === highlightedNodeId);
     if (!node) return;
     const pattern = `^${escapeRegexLiteral(String(node.data.schema))}\\.${escapeRegexLiteral(String(node.data.label))}$`;
@@ -1603,10 +1588,10 @@ export function App() {
         isScoped: isTraceActive || !!aiPreview,
         renderedCount,
         renderLimit: config.renderLimit,
-        hasSchemaOverview: config.overview.enabled && schemaNodes.length > 0,
+        canOpenSchemaView: config.overview.enabled && !schemaViewSoftDisabled && graphMode === 'full' && schemaNodes.length > 0,
       })
     : null;
-  const showRenderLimitNotice = !!renderLimitFallback && renderLimitFallback.fallbackMode === null;
+  const showRenderLimitNotice = !!renderLimitFallback;
   const traceReduceSelectedNodeId = showRenderLimitNotice && isTraceActive ? trace.selectedNodeId : null;
   const traceReduceCandidate = useMemo(
     () => traceReduceSelectedNodeId
@@ -1670,29 +1655,18 @@ export function App() {
     );
   }
 
-  const effectiveDisplayMode = renderLimitFallback?.fallbackMode === 'schemaOverview' ? 'schemaOverview' : displayMode;
-
   const renderSurface = showRenderLimitNotice
     ? { nodes: [], edges: [] }
-    : effectiveDisplayMode === 'scoped'
+    : displayMode === 'scoped'
       ? { nodes: tracedNodes, edges: tracedEdges }
-      : (effectiveDisplayMode === 'schemaExpanded' && expandedSchemaViewGraph)
+      : (displayMode === 'schemaExpanded' && expandedSchemaViewGraph)
         ? { nodes: expandedSchemaViewGraph.flowNodes, edges: expandedSchemaViewGraph.flowEdges }
-        : effectiveDisplayMode === 'schemaOverview'
+        : displayMode === 'schemaOverview'
           ? { nodes: schemaNodes, edges: schemaEdges }
           : { nodes: flowNodes, edges: flowEdges };
   const renderNodes = renderSurface.nodes;
   const renderEdges = renderSurface.edges;
 
-  const inSchemaFallback = renderLimitFallback?.fallbackMode === 'schemaOverview';
-  const inSchemaView = <A extends unknown[]>(handler: (...args: A) => void) => (inSchemaFallback
-    ? (...args: A) => { setGraphMode('overview'); handler(...args); }
-    : handler);
-  const canvasGraphModeChange = inSchemaFallback
-    ? (mode: GraphMode) => {
-        if (mode === 'full') vscodeApi.postMessage({ type: 'show-warning', text: renderLimitFallback.message });
-      }
-    : handleGraphModeChange;
   const graphErrorResetKey = JSON.stringify({
     project: activeProjectId,
     source: sourceName,
@@ -1734,12 +1708,22 @@ export function App() {
               Reduce depth to {traceReduceCandidate.upstream + traceReduceCandidate.downstream}
             </button>
           )}
-          <button
-            onClick={() => (isTraceActive ? endTrace() : handleDiscardAiPreview())}
-            className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-secondary"
-          >
-            {isTraceActive ? 'Exit trace' : 'Discard preview'}
-          </button>
+          {renderLimitFallback.offerSchemaView && (
+            <button
+              onClick={() => handleGraphModeChange('overview')}
+              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-primary"
+            >
+              Open Schema View
+            </button>
+          )}
+          {(isTraceActive || aiPreview) && (
+            <button
+              onClick={() => (isTraceActive ? endTrace() : handleDiscardAiPreview())}
+              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-secondary"
+            >
+              {isTraceActive ? 'Exit trace' : 'Discard preview'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1751,20 +1735,20 @@ export function App() {
         renderLimitNotice={renderLimitNotice}
         flowNodes={renderNodes}
         flowEdges={renderEdges}
-        graphMode={effectiveDisplayMode === 'schemaOverview' ? 'overview' : graphMode}
-        onGraphModeChange={config.overview.enabled ? canvasGraphModeChange : undefined}
+        graphMode={graphMode}
+        onGraphModeChange={config.overview.enabled ? handleGraphModeChange : undefined}
         schemaViewSoftDisabled={schemaViewSoftDisabled}
         filteredObjectIds={filteredObjectIds}
-        onOpenExpandedSchemaViewForNode={inSchemaView(handleOpenExpandedSchemaViewForNode)}
-        onExpandExpandedSchemaViewSchema={inSchemaView(handleExpandExpandedSchemaViewSchema)}
-        onCenterExpandedSchemaViewSchema={inSchemaView(handleCenterExpandedSchemaViewSchema)}
+        onOpenExpandedSchemaViewForNode={handleOpenExpandedSchemaViewForNode}
+        onExpandExpandedSchemaViewSchema={handleExpandExpandedSchemaViewSchema}
+        onCenterExpandedSchemaViewSchema={handleCenterExpandedSchemaViewSchema}
         isExpandedSchemaViewActive={displayMode === 'schemaExpanded' && !!expandedSchemaViewGraph}
         expandedSchemas={expandedSchemaView?.expandedSchemas}
         onResetExpandedSchemaView={clearExpandedSchemaView}
         showExpandedSchemaClusters={showExpandedSchemaClusters}
         onToggleExpandedSchemaClusters={handleToggleExpandedSchemaClusters}
         expandedSchemaCount={expandedSchemaCount}
-        onExpandAllSchemas={inSchemaView(handleExpandAllSchemas)}
+        onExpandAllSchemas={handleExpandAllSchemas}
         collapsedSchemaNodeIds={collapsedSchemaNodeIds}
         trace={trace}
         filter={filter}
@@ -1868,15 +1852,6 @@ export function App() {
         }}
       />
 
-      {renderLimitFallback?.fallbackMode === 'schemaOverview' && (
-        <div
-          className="fixed top-2 left-1/2 -translate-x-1/2 z-40 px-3 py-1.5 rounded-sm text-xs text-center max-w-lg"
-          style={{ ...RENDER_LIMIT_SURFACE_STYLE, color: 'var(--ln-fg-muted)' }}
-        >
-          {renderLimitFallback.message}
-        </div>
-      )}
-
       {contextMenu?.kind === 'object' && (
         <NodeContextMenu
           x={contextMenu.x}
@@ -1917,7 +1892,7 @@ export function App() {
           isExpanded={contextMenu.isExpanded}
           disabledReason={isModeLocked ? 'Exit the active mode to change schema expansion' : undefined}
           onClose={() => setContextMenu(null)}
-          onExpand={inSchemaView(handleExpandExpandedSchemaViewSchema)}
+          onExpand={handleExpandExpandedSchemaViewSchema}
           onCollapse={handleCollapseExpandedSchemaViewSchema}
         />
       )}

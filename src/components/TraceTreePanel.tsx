@@ -43,7 +43,7 @@ export interface TraceTreePanelProps {
   selectedNodeId: string | null;
   /** Row activation; the canvas owns selection and route lighting. */
   onSelectNode: (id: string) => void;
-  /** Keyboard focus of a leaf. Selects it for trim; does not run the click's route camera. */
+  /** Keyboard focus of a leaf. Selects it; does not run the click's route camera. */
   onFocusNode: (id: string) => void;
   /** Starting-point activation: clears the selection and frames every node on stage. */
   onShowWhole: () => void;
@@ -500,7 +500,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
         title={(
           <Tooltip
             multiline
-            content={`Starting point (L0) · click to show the whole trace\nRow click: route · ⌘/Ctrl+click or ☐: add route · Del: trim`}
+            content={`Starting point (L0) · click to show the whole trace\nRow click: route · ⌘/Ctrl+click or ☐: add route · right-click: remove from trace`}
             asChild
           >
             <button

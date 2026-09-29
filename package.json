@@ -163,7 +163,7 @@
             "type": "integer",
             "default": 2000,
             "minimum": 10,
-            "maximum": 5000,
+            "maximum": 2000,
             "markdownDescription": "Maximum number of database objects admitted to the webview working graph, including virtual external-reference nodes. A selection over this limit is refused with an error instead of being loaded — select fewer schemas or raise this setting. A refused selection is not loaded for `@lineage` either. React Flow rendering is separately capped by `renderLimit`.",
             "scope": "resource"
           },

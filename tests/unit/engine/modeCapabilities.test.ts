@@ -91,3 +91,22 @@ describe('deriveModeCapabilities — a shown AI preview leaves only the filter u
     expect(result.isModeLocked).toBe(true);
   });
 });
+
+describe('deriveModeCapabilities — the Delete key excludes only in the plain graph', () => {
+  it('the plain graph lets Delete add an exclusion', () => {
+    expect(capabilities({}).canExcludeHighlightedNode).toBe(true);
+  });
+
+  it.each<Partial<ModeCapabilityInput>>([
+    { traceMode: 'applied' },
+    { traceMode: 'filtered' },
+    { traceMode: 'configuring' },
+    { traceMode: 'pathfinding' },
+    { traceMode: 'path-applied' },
+    { hasAnalysisMode: true },
+    { hasAiPreview: true },
+    { hasAdvancedView: true },
+  ])('Delete does nothing in a scoped mode (%o)', (overrides) => {
+    expect(capabilities(overrides).canExcludeHighlightedNode).toBe(false);
+  });
+});

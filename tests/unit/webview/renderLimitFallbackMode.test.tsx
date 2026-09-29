@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 /**
- * Pins that when the render limit falls back to Schema View, the canvas is told it shows Schema
- * View, so the Schema View toggle, schema-node clicks, search and legend match what is drawn; a
- * schema expand then acts on that Schema View and asking for Object View states the limit; with
- * Schema View disabled in settings, the limit notice replaces the graph instead.
+ * Pins that an Object View over the render limit stays in Object View: nothing is drawn, the
+ * render-limit notice offers "Open Schema View" as the user's choice, and choosing it shows Schema
+ * View; with Schema View disabled in settings the notice offers no switch.
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -18,13 +17,14 @@ interface CanvasProps {
   flowNodes: Array<{ type?: string; data?: { schemaName?: string } }>;
   onGraphModeChange?: (mode: 'full' | 'overview') => void;
   onExpandExpandedSchemaViewSchema?: (schema: string) => void;
+  renderLimitNotice?: unknown;
 }
 let canvasProps: CanvasProps | null = null;
 
 vi.mock('../../../src/components/GraphCanvas', () => ({
   GraphCanvas: (props: CanvasProps) => {
     canvasProps = props;
-    return null;
+    return (props.renderLimitNotice ?? null) as never;
   },
 }));
 
@@ -58,8 +58,24 @@ function post(data: object): void {
 
 const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(1300); });
 
-describe('render-limit fallback to Schema View', () => {
-  it('passes Schema View to the canvas while it draws the schema fallback', async () => {
+/** A 60-object graph over a 50-object Schema View threshold, so Schema View is available. */
+const aboveThreshold = { ...DEFAULT_CONFIG, overview: { ...DEFAULT_CONFIG.overview, threshold: 50 } };
+
+async function openInObjectView(model: unknown): Promise<void> {
+  post({ type: 'dacpac-model', model, config: aboveThreshold, sourceName: 'm.dacpac', autoVisualize: true });
+  await settle();
+  expect(canvasProps?.graphMode).toBe('overview');
+  act(() => canvasProps!.onGraphModeChange!('full'));
+  await settle();
+  expect(canvasProps?.graphMode).toBe('full');
+  expect(canvasProps?.flowNodes.length).toBeGreaterThan(0);
+}
+
+const openSchemaViewButton = () =>
+  Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Open Schema View');
+
+describe('render limit in Object View', () => {
+  it('stays in Object View with nothing drawn and offers Schema View in the notice', async () => {
     const { App } = await import('../../../src/components/App');
     act(() => {
       root.render(
@@ -69,44 +85,37 @@ describe('render-limit fallback to Schema View', () => {
       );
     });
     const { model } = generateDwhModel({ objectCount: 60, seed: 1, profile: { externalRefCount: 0 } });
-    post({ type: 'dacpac-model', model, config: { ...DEFAULT_CONFIG }, sourceName: 'm.dacpac', autoVisualize: true });
+    await openInObjectView(model);
+
+    post({ type: 'rebuild-config', config: { ...aboveThreshold, renderLimit: 10 } });
     await settle();
+
+    expect(canvasProps?.flowNodes).toEqual([]);
     expect(canvasProps?.graphMode).toBe('full');
-
-    post({ type: 'rebuild-config', config: { ...DEFAULT_CONFIG, renderLimit: 10 } });
-    await settle();
-
-    expect(canvasProps?.flowNodes.every((n) => n.type === 'schemaNode')).toBe(true);
-    expect(canvasProps?.graphMode).toBe('overview');
+    expect(host.textContent).toContain('Render limit reached');
+    expect(openSchemaViewButton()).toBeDefined();
   }, 15000);
 
-  it('expands a schema from the fallback and explains a refused switch to Object View', async () => {
+  it('shows Schema View only when the user chooses it from the notice', async () => {
     const { App } = await import('../../../src/components/App');
-    const postMessage = vi.fn();
     act(() => {
       root.render(
-        <VsCodeProvider api={{ postMessage } as never}>
+        <VsCodeProvider api={{ postMessage: () => {} } as never}>
           <App />
         </VsCodeProvider>
       );
     });
     const { model } = generateDwhModel({ objectCount: 60, seed: 1, profile: { externalRefCount: 0 } });
-    post({ type: 'dacpac-model', model, config: { ...DEFAULT_CONFIG }, sourceName: 'm.dacpac', autoVisualize: true });
+    await openInObjectView(model);
+    post({ type: 'rebuild-config', config: { ...aboveThreshold, renderLimit: 35 } });
     await settle();
-    post({ type: 'rebuild-config', config: { ...DEFAULT_CONFIG, renderLimit: 35 } });
-    await settle();
-    const schemaCount = canvasProps!.flowNodes.length;
 
-    act(() => canvasProps!.onGraphModeChange!('full'));
-    await settle();
-    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'show-warning', text: expect.stringContaining('limit 35') }));
-    expect(canvasProps!.flowNodes).toHaveLength(schemaCount);
-
-    const schema = canvasProps!.flowNodes[0].data!.schemaName!;
-    act(() => canvasProps!.onExpandExpandedSchemaViewSchema!(schema));
+    act(() => openSchemaViewButton()!.click());
     await settle();
     expect(canvasProps!.graphMode).toBe('overview');
-    expect(canvasProps!.flowNodes.length).toBeGreaterThan(schemaCount);
+    expect(canvasProps!.flowNodes.length).toBeGreaterThan(0);
+    expect(canvasProps!.flowNodes.every((n) => n.type === 'schemaNode')).toBe(true);
+    expect(openSchemaViewButton()).toBeUndefined();
   }, 30000);
 
   it('shows the render-limit notice, not Schema View, when Schema View is disabled in settings', async () => {
@@ -129,5 +138,6 @@ describe('render-limit fallback to Schema View', () => {
 
     expect(canvasProps?.flowNodes).toEqual([]);
     expect(canvasProps?.graphMode).toBe('full');
+    expect(openSchemaViewButton()).toBeUndefined();
   }, 15000);
 });

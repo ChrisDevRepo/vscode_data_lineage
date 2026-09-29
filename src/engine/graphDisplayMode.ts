@@ -253,11 +253,11 @@ export function serializeExpandedSchemas(expandedSchemas: ReadonlySet<string> | 
   return expandedSchemas ? Array.from(expandedSchemas).sort() : [];
 }
 
-/** Where a render-limited surface falls back to so the screen never goes chrome-free and blank. */
+/** What a render-limited screen tells the user and which next step it offers. */
 export interface RenderLimitFallback {
-  /** The surface to render instead of a blank screen; `null` when no fallback fits either. */
-  fallbackMode: 'schemaOverview' | null;
-  /** One-line explanation for the notice shown over or beside the fallback surface. */
+  /** Whether the notice offers switching to Schema View; the view never switches on its own. */
+  offerSchemaView: boolean;
+  /** One-line explanation shown in the render-limit notice. */
   message: string;
 }
 
@@ -268,33 +268,31 @@ interface RenderLimitFallbackInput {
   renderedCount: number;
   /** The configured render ceiling. */
   renderLimit: number;
-  /** Whether Schema View has something to fall back to (schema clusters exist for this model). */
-  hasSchemaOverview: boolean;
+  /** Whether the user can switch to Schema View from the current surface. */
+  canOpenSchemaView: boolean;
 }
 
 /**
- * Derives what a render-limited screen falls back to, so the toolbar, banners, and the rest of
- * the chrome stay mounted instead of the whole screen being replaced by a bare message.
+ * Derives the render-limit notice: the current view stays selected, nothing is drawn, and the notice
+ * names the next steps the user can take.
  *
  * @remarks
- * A scope (trace/path/analysis/AI) has no coarser surface to fall back to — the scope itself is
- * over budget, so the caller keeps chrome mounted and shows actions to shrink it (reduce depth,
- * exit) rather than switching views. The base graph falls back to Schema View, which renders
- * one node per schema and is far cheaper than the object graph it replaces.
+ * A scope (trace/path/analysis/AI) is shrunk by its own actions (reduce depth, exit). The base graph
+ * offers Schema View as a choice when it is available; the switch is never made for the user.
  */
 export function deriveRenderLimitFallback(input: RenderLimitFallbackInput): RenderLimitFallback {
   const count = input.renderedCount.toLocaleString();
   const limit = input.renderLimit.toLocaleString();
   if (input.isScoped) {
     return {
-      fallbackMode: null,
+      offerSchemaView: false,
       message: `This view selects ${count} nodes (limit ${limit}). Reduce the trace depth, narrow the path, or adjust the render limit in settings.`,
     };
   }
   return {
-    fallbackMode: input.hasSchemaOverview ? 'schemaOverview' : null,
-    message: input.hasSchemaOverview
-      ? `The current filter selects ${count} nodes (limit ${limit}) — showing Schema View instead. Narrow schema or type filters to see individual objects.`
+    offerSchemaView: input.canOpenSchemaView,
+    message: input.canOpenSchemaView
+      ? `The current filter selects ${count} nodes (limit ${limit}). Open Schema View, select schema or type filters to reduce scope, or adjust the render limit in settings.`
       : `The current filter selects ${count} nodes (limit ${limit}). Select schema or type filters to reduce scope, or adjust the render limit in settings.`,
   };
 }
