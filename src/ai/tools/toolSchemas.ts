@@ -494,14 +494,9 @@ const END_BRANCH_ROW_DECISION_CONDITION =
   'no tracked column and no row decision reaches the start object through this node; '
   + 'a statement that filters, inserts, updates or deletes rows of a table on the path is a row decision.';
 
-/** Single source for the `reason` describe text of an `end_branch` submit in BB, which has no `column_flow` field. */
+/** Single source for the `reason` describe text of an `end_branch` submit, in BB and CT. */
 const END_BRANCH_REASON_DESCRIPTION =
-  'Required with end_branch, and then the only field besides focus_node_id and verdict; null with a kept verdict. Why '
-  + END_BRANCH_ROW_DECISION_CONDITION;
-
-/** CT form of the same field: `column_flow` is served-required in CT, so end_branch also carries it, as `[]`. */
-const END_BRANCH_REASON_DESCRIPTION_CT =
-  'Required with end_branch, and then the only field besides focus_node_id, verdict and an empty column_flow; null with a kept verdict. Why '
+  'Required with end_branch; null with a kept verdict. Why '
   + END_BRANCH_ROW_DECISION_CONDITION;
 
 /**
@@ -649,7 +644,7 @@ const HopFindingBaseSchema = z.object({
   sections: CapturedSectionsSchema.nullable().describe(SECTIONS_DESCRIPTION),
 }).strict();
 
-const { sections, summary, badge_label, prune_neighbors, questions } = HopFindingBaseSchema.shape;
+const { sections, summary, badge_label, prune_neighbors, questions, reason } = HopFindingBaseSchema.shape;
 
 /**
  * CT form: the BB form plus `column_flow` (served-required — always in the served `required` list,
@@ -657,8 +652,6 @@ const { sections, summary, badge_label, prune_neighbors, questions } = HopFindin
  * `sections`/`summary`, so the short required structured field is emitted before the long capture
  * prose: a model emits arguments in schema order, and a required field placed after several
  * thousand characters of section text tends to drop on the longest `analyze` generations.
- * `reason` is re-described rather than reused from {@link HopFindingBaseSchema}: CT's end_branch
- * also carries a required, empty `column_flow`, which the BB text must not claim.
  */
 const HopFindingCtBaseSchema = HopFindingBaseSchema
   .omit({ sections: true, summary: true, badge_label: true, prune_neighbors: true, questions: true, reason: true })
@@ -668,7 +661,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
     badge_label,
     prune_neighbors,
     questions,
-    reason: z.string().nullable().describe(END_BRANCH_REASON_DESCRIPTION_CT),
+    reason,
     sections,
   })
   .strict();
