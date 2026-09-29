@@ -204,7 +204,7 @@ export function discoveryEvidenceItemBytes(budget: TurnTokenBudget): number {
 }
 
 
-/** Fraction of the selected model's input window the discovery budget may claim — the setting is a ceiling, the window share the floor for small BYOK models. */
+/** Fraction of the selected model's input window the discovery budget may claim — the effective budget is the smaller of the setting and this share of the window. */
 export const DISCOVERY_WINDOW_SHARE = 0.125;
 
 /** What the admission check measures of one proposed scope. */

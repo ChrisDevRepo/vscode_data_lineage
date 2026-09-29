@@ -460,7 +460,7 @@
             "default": 10000,
             "minimum": 1000,
             "maximum": 32000,
-            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request. Exceeding either this or the node cap escalates to a deep analysis that needs your approval."
+            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request, further capped at one eighth of the selected model's input window. Exceeding either this or the node cap escalates to a deep analysis that needs your approval."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
