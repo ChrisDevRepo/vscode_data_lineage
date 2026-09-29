@@ -768,7 +768,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       if (providerCalls < 1) {
         throw new Error('Structured-generation model-port contract violated: rejected output recorded no provider call.');
       }
-      const entryDetectionHint = 'Return exactly one object matching the entry-detection schema.';
+      const entryDetectionHint = error.hint ?? 'Return exactly one object matching the entry-detection schema.';
       const nextAttempt = recordToolAttempt(priorAttempt, {
         stop: 'continue',
         providerCalls,

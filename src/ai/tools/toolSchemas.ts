@@ -841,7 +841,20 @@ function capturedSectionSchemaForClassification(
   const body = z.string().min(1).optional().describe(
     `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
   );
-  return onlyAngle === 'business' ? z.strictObject({ business: body }) : z.strictObject({ technical: body });
+  return z.looseObject({ [onlyAngle]: body })
+    .superRefine((value, ctx) => {
+      const surplus = Object.keys(value).filter((key) => key !== onlyAngle);
+      if (surplus.includes(offAngle)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `"${offAngle}" is not kept under classification=${classification}`,
+          params: { hint: `Fold the ${offAngle} content into "${onlyAngle}" and resend without a "${offAngle}" key; keep every other field unchanged.` },
+        });
+      }
+      const unknown = surplus.filter((key) => key !== offAngle);
+      if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', keys: unknown, message: 'Unrecognized keys' });
+    })
+    .meta({ additionalProperties: false }) as unknown as z.ZodType<CapturedSectionsWire>;
 }
 
 /**

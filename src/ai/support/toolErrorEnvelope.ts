@@ -472,17 +472,60 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown): string | und
  * General field-repair hint chain, shared by every Zod-validation reject regardless of `code`.
  *
  * @remarks
- * An unrecognized key first (removal is unambiguous), then a field absent outright (addition).
+ * An unrecognized key first (removal is unambiguous), then a field absent outright (addition), a
+ * present value of the wrong JSON type, and an array outside its size bound.
  * Both sub-hints are schema-derived, so any caller composing its own reject envelope gets the same
  * repair intelligence {@link rejectionFromZodError} already gives.
  *
  * @param error - The Zod validation failure.
  * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
  * see {@link missingFieldRepairHint}.
- * @returns The first applicable repair hint, or `undefined` when neither chain link applies.
+ * @returns The first applicable repair hint, or `undefined` when no chain link applies.
  */
 export function zodFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
-  return issueOwnedRepairHint(error) ?? unrecognizedKeyRepairHint(error) ?? missingFieldRepairHint(error, input);
+  return issueOwnedRepairHint(error)
+    ?? unrecognizedKeyRepairHint(error)
+    ?? missingFieldRepairHint(error, input)
+    ?? typeMismatchRepairHint(error, input)
+    ?? sizeBoundRepairHint(error, input);
+}
+
+/**
+ * Repair hint for a present value of the wrong JSON type (an array sent as its stringified form).
+ *
+ * @returns The type-directed hint naming the first such path, expected and received types;
+ * `undefined` when no `invalid_type` issue has a present value.
+ */
+function typeMismatchRepairHint(error: z.ZodError, input: unknown): string | undefined {
+  if (input === undefined) return undefined;
+  for (const issue of error.issues) {
+    if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
+    const value = resolveAtPath(input, issue.path);
+    if (value === undefined) continue;
+    const received = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    return `"${issue.path.join('.')}" must be a JSON ${issue.expected}, not a ${received}; send the ${issue.expected} directly.`;
+  }
+  return undefined;
+}
+
+/**
+ * Repair hint for an array or string outside its served size bound.
+ *
+ * @returns The bound-directed hint from the first `too_big` / `too_small` issue; `undefined`
+ * when none is present.
+ */
+function sizeBoundRepairHint(error: z.ZodError, input: unknown): string | undefined {
+  for (const issue of error.issues) {
+    if (issue.code !== 'too_big' && issue.code !== 'too_small') continue;
+    if (issue.origin !== 'array' && issue.origin !== 'set') continue;
+    const path = issue.path.join('.');
+    const value = input === undefined ? undefined : resolveAtPath(input, issue.path);
+    const held = Array.isArray(value) ? `holds ${value.length} items` : 'is outside its item bound';
+    return issue.code === 'too_big'
+      ? `"${path}" ${held}, limit ${String(issue.maximum)}; send at most ${String(issue.maximum)} — merge or drop the surplus.`
+      : `"${path}" ${held}, minimum ${String(issue.minimum)}; send at least ${String(issue.minimum)}.`;
+  }
+  return undefined;
 }
 
 /**

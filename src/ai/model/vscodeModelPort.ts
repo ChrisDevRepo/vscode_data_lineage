@@ -279,20 +279,24 @@ export class VscodeModelPort implements ModelPort {
       (bridge) => bridge.bindStructuredOutputTool(outputSchema, STRUCTURED_OUTPUT_TOOL),
     );
     const calls = (message.tool_calls ?? []).filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
-    const parsed = calls.length === 1
-      ? input.schema.safeParse(this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema))
+    const decoded = calls.length === 1
+      ? this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema)
       : undefined;
+    const parsed = calls.length === 1 ? input.schema.safeParse(decoded) : undefined;
     if (parsed?.success) return parsed.data;
     const emptyRequiredPayload = calls.length === 1
       && isEmptyRecord(calls[0].args);
-    throw new StructuredOutputError(
-      emptyRequiredPayload
-        ? `${STRUCTURED_OUTPUT_TOOL} arguments were empty`
-        : calls.length > 1
-        ? `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`
-        : structuredRejectReason(calls.length === 1, parsed?.error),
-      emptyRequiredPayload ? REJECTION_CODES.emptyStructuredOutput : REJECTION_CODES.invalidStructuredOutput,
-    );
+    if (emptyRequiredPayload) {
+      throw new StructuredOutputError(
+        `${STRUCTURED_OUTPUT_TOOL} arguments were empty`,
+        REJECTION_CODES.emptyStructuredOutput,
+      );
+    }
+    if (calls.length > 1) {
+      throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`);
+    }
+    const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, decoded);
+    throw new StructuredOutputError(reason, REJECTION_CODES.invalidStructuredOutput, hint);
   }
 
   /** Decodes JSON-string array/object arguments against the tool's schema and logs each decode. */
