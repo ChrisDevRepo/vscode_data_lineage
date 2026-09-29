@@ -17,7 +17,7 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   findTextlessNewSectionLabels,
-  findBlockPartitionIssues,
+  findStartOrderIssues,
   presentResultRepairInstruction,
   assemblePreviewSections,
   findDiscoveryPreviewNoteViolations,
@@ -214,14 +214,14 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
 
       if (previewNarrative) {
-        const partition = findBlockPartitionIssues(presentInput.sections ?? [], previewNarrative.blocks.length);
+        const partition = findStartOrderIssues(presentInput.sections ?? []);
         if (partition.length > 0) {
           sess.presentResultRepairDraft.hold(presentInput, { fields: ['sections'] });
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: partition.map(issue => issue.message).join('\n'),
             hint: presentResultRepairInstruction(['sections']),
-            issuePaths: partition.map(issue => `sections.${issue.index}.blocks`),
+            issuePaths: partition.map(issue => `sections.${issue.index}.start`),
           }));
         }
       }

@@ -46,7 +46,7 @@ template content). The **hard cap** is a named constant in
 [`toolSchemas.ts`](../src/ai/tools/toolSchemas.ts), stated to the model as a
 typed JSON-Schema constraint (`maxLength` / `maxItems`) and nowhere else in
 prose. Its **enforcement** is the same Zod declaration for a `present_result`
-field — a real `.max()` the model port and the handler boundary both parse — and
+field — a real `.max()` the tool-attempt boundary parses once — and
 `NavigationEngine` for the `submit_findings` fields (`advertisedMax`), whose
 overrun is a repairable single-field rejection against a held draft. The same
 split covers a count cap (`highlight_groups`), while structural constraints — a
@@ -415,7 +415,8 @@ prompt reasons from.
 Validation is field-scoped and runs before commit, and it is structural only.
 Markdown and math formatting never reject a call: an expression the renderer
 cannot parse degrades to its original source text on screen. A held-draft retry
-may repair only the rejected fields; graph membership, node associations,
+may repair only the rejected fields, each list merged by key (`sections` by label,
+`submit_findings` sections by angle) with a held entry left unnamed kept as authored; graph membership, node associations,
 and highlights remain unchanged.
 
 One submission produces one complete rejection. Checks that need context the
@@ -437,15 +438,17 @@ rendered document from title and numbered section bodies. For preview, the host
 supplies the cached discovery answer and retained bounded scope directly; no
 lookup tool is exposed. The answer is split into top-level markdown blocks
 (`marked.lexer`) and served as `answer_blocks`, numbered B1..Bn. A preview
-section carries `label`, `node_ids` and `blocks: {from, to}` and no text: the
-engine assembles each section's body from the referenced blocks, so the model
-never retypes the answer. One Zod `superRefine` checks that the section ranges
-cover B1..Bn exactly once and in order; a gap, an overlap or an unknown block id
-is reported at `sections.N.blocks` and names the offending blocks. `notes` are
+section carries `label`, `node_ids` and `start`, the served block id it begins
+at (a `z.enum` of B1..Bn built per request), and no text: the engine ends each
+section before the next section's start (the first begins at B1, the last runs to
+the end) and assembles its body from those blocks, so the model never retypes the
+answer. A start that does not follow the one before it is reported at
+`sections.N.start`. A thematic break or blank run in the answer gets no block id
+and folds into its neighbouring block. `notes` are
 checked as one contiguous span of the answer, compared on markdown-stripped
-plain text. A rejected block range is repaired by label: the retry resends only the
-named section, and every held section not resent is kept; a failure inside one held
-section (an unlinkable node id) resends the whole list. The repair hint does
+plain text. A rejected preview is repaired by label: the retry resends only the
+named section, and every held section not resent is kept; `{label, remove: true}`
+drops one. The repair hint does
 not ask for `is_update`. Synthesis continues to author its report from the
 completed exploration archive.
 

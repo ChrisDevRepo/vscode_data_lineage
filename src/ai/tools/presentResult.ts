@@ -146,10 +146,9 @@ export interface PresentResultRepairAuthorization {
   readonly fields: readonly PresentResultRepairField[];
 }
 
-/** Inclusive range of served answer blocks a preview section presents. */
-type PresentSectionBlocks = { from: string; to: string };
-type PresentSection = NonNullable<PresentResultInput['sections']>[number] & { blocks?: PresentSectionBlocks };
-type PresentSectionPatch = NonNullable<PresentResultRepairPatch['sections']>[number] & { blocks?: PresentSectionBlocks };
+/** A preview section carries the served block id it starts at instead of a body. */
+type PresentSection = NonNullable<PresentResultInput['sections']>[number] & { start?: string };
+type PresentSectionPatch = NonNullable<PresentResultRepairPatch['sections']>[number] & { start?: string };
 
 /**
  * The validated, engine-assembled result ready for the UI.
@@ -218,64 +217,59 @@ export function discoveryPreviewNarrative(answer: string): {
   const heading = lead?.type === 'heading' && lead.depth === 1 ? lead : undefined;
   const title = heading?.text.trim();
   const body = heading ? normalized.slice(heading.raw.length).trim() : normalized;
-  const tokens = marked.lexer(body).filter(token => token.type !== 'space');
-  const first = tokens.find(token => token.type !== 'code');
+  const tokens = marked.lexer(body);
+  const first = tokens.find(token => token.type !== 'code' && token.type !== 'hr' && token.type !== 'space');
   const text: string | undefined = first?.type === 'list' ? first.items[0]?.text : first && 'text' in first ? first.text : first?.raw;
   const summary = text?.split('\n').find(line => line.trim())?.trim() || title;
-  const blocks = tokens.map((token, index) => ({ id: `B${index + 1}`, text: token.raw.trim() }));
+  const texts: string[] = [];
+  let leading = '';
+  for (const token of tokens) {
+    const raw = token.raw.trim();
+    if (token.type === 'space') continue;
+    if (token.type !== 'hr') texts.push(leading ? `${leading}\n\n${raw}` : raw);
+    else if (texts.length > 0) texts[texts.length - 1] += `\n\n${raw}`;
+    else leading = raw;
+    if (token.type !== 'hr') leading = '';
+  }
+  const blocks = texts.map((blockText, index) => ({ id: `B${index + 1}`, text: blockText }));
   return { ...(title ? { title } : {}), blocks, summary };
 }
 
 /**
- * Where preview `sections` depart from block ranges that partition `B1..B<blockCount>` in order. The
- * ids themselves are constrained by the served schema; order and coverage depend on the whole
- * (merged) list, so they are checked here.
+ * Where preview `sections` do not start strictly after the section before them. The first section
+ * always begins at B1; the served schema constrains the ids, and order depends on the whole
+ * (merged) list, so it is checked here.
  *
- * @returns One entry per departure — the section it concerns and a message naming that section and
- *   the blocks — empty when the ranges partition the answer.
+ * @returns One entry per departure — the section it concerns and a message naming both sections.
  */
-export function findBlockPartitionIssues(
-  sections: ReadonlyArray<{ label: string; blocks?: PresentSectionBlocks }>,
-  blockCount: number,
+export function findStartOrderIssues(
+  sections: ReadonlyArray<{ label: string; start?: string }>,
 ): Array<{ index: number; message: string }> {
   const issues: Array<{ index: number; message: string }> = [];
-  let next = 1;
-  let previous: string | undefined;
-  for (const [index, { label, blocks }] of sections.entries()) {
-    if (!blocks) continue;
-    const from = Number(blocks.from.slice(1));
-    const to = Number(blocks.to.slice(1));
-    if (to < from) {
-      issues.push({ index, message: `Section "${label}" runs backwards: ${blocks.from} to ${blocks.to}.` });
-      continue;
+  for (const [index, { label, start }] of sections.entries()) {
+    const before = sections[index - 1];
+    if (index === 0 || !start || !before) continue;
+    if (Number(start.slice(1)) <= (index === 1 ? 1 : Number((before.start ?? 'B1').slice(1)))) {
+      issues.push({ index, message: `Section "${label}" starts at ${start}, not after "${before.label}"${index === 1 ? ' (which starts at B1)' : ` at ${before.start}`}; starts ascend strictly.` });
     }
-    if (from > next) {
-      issues.push({ index, message: `B${next}..B${from - 1} belong to no section; "${label}" starts at ${blocks.from}${previous ? ` after "${previous}"` : ''}.` });
-    } else if (from < next) {
-      issues.push({ index, message: `"${label}" starts at ${blocks.from}, but B${from}..B${Math.min(to, next - 1)} already belong to "${previous}".` });
-    }
-    next = Math.max(next, to + 1);
-    previous = label;
-  }
-  if (next <= blockCount && sections.length > 0) {
-    issues.push({ index: sections.length - 1, message: `B${next}..B${blockCount} belong to no section; extend "${sections[sections.length - 1].label}" or add a section for them.` });
   }
   return issues;
 }
 
 /**
- * Builds each preview section's `text` from its block range; the ranges partition the blocks
- * ({@link findBlockPartitionIssues}), so the joined text is the cached answer in its own words.
+ * Builds each preview section's `text` from the blocks between its start and the next section's
+ * start (the first from B1, the last to the end), so the joined text is the cached answer in its
+ * own words.
  */
 export function assemblePreviewSections(
   blocks: readonly AnswerBlock[],
   sections: readonly PresentSection[],
 ): PresentSection[] {
-  const indexOf = (id: string): number => Number(id.slice(1));
-  return sections.map(({ blocks: range, ...section }) => ({
+  const startOf = (index: number): number => (index === 0 ? 1 : Number((sections[index].start ?? 'B1').slice(1)));
+  return sections.map(({ start, ...section }, index) => ({
     ...section,
-    text: range
-      ? blocks.slice(indexOf(range.from) - 1, indexOf(range.to)).map(block => block.text).join('\n\n')
+    text: start
+      ? blocks.slice(startOf(index) - 1, index + 1 < sections.length ? startOf(index + 1) - 1 : blocks.length).map(block => block.text).join('\n\n')
       : section.text,
   }));
 }
@@ -381,23 +375,23 @@ export function findTextlessNewSectionLabels(
 ): string[] {
   const heldKeys = new Set((held ?? []).map(sectionKey));
   return resent
-    .filter(section => !section.remove && !heldKeys.has(sectionKey(section)) && !section.blocks && !(section.text?.trim()))
+    .filter(section => !section.remove && !heldKeys.has(sectionKey(section)) && !section.start && !(section.text?.trim()))
     .map(section => section.label);
 }
 
 /**
  * The held sections a repair may key on, as the model-facing view: label and, for a preview
- * section, the first block of its range. The model's own rejected call already carries every body.
+ * section, the block it starts at. The model's own rejected call already carries every body.
  */
 export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string; start?: string }> {
-  return ((sections ?? []) as PresentSection[]).map(({ label, blocks }) => ({ label, ...(blocks ? { start: blocks.from } : {}) }));
+  return ((sections ?? []) as PresentSection[]).map(({ label, start }) => ({ label, ...(start ? { start } : {}) }));
 }
 
 /**
  * The one sentence every surface (rejection hint, held-draft view) states for how a resent
  * `sections` list merges — so the model never reads two contracts for the same call.
  */
-export const PRESENT_RESULT_SECTIONS_RESEND_RULE = `${keyedResendRule('sections', 'label')} Omit a resent section's text, blocks or node_ids to keep the held value; a label not on file appends a new section and needs its text or blocks; {label, remove: true} drops a held section.`;
+export const PRESENT_RESULT_SECTIONS_RESEND_RULE = `${keyedResendRule('sections', 'label')} Omit a resent section's text, start or node_ids to keep the held value; a label not on file appends a new section and needs its text or start; {label, remove: true} drops a held section.`;
 
 /**
  * The repair-call sentence a repairable rejection carries, stated once here for every failure: the

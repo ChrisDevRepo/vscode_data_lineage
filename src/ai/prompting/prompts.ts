@@ -265,8 +265,8 @@ export function buildPresentationDetailContract(
  * authors no new prose and reads no new evidence. Everything about *how* nodes are linked,
  * captioned, and coloured is therefore identical to synthesis and comes from
  * {@link buildPresentationDetailContract}. What is unique here is the reference contract: the
- * answer is served as numbered blocks, each section names the block range it presents and the
- * engine assembles its text; a note caption is checked as one contiguous span of the answer, so a
+ * answer is served as numbered blocks, each section names the block it starts at and the
+ * engine assembles its text up to the next section; a note caption is checked as one contiguous span of the answer, so a
  * caption stitched together from separated fragments is rejected even when every word of it appears
  * somewhere in the answer.
  *
@@ -276,11 +276,11 @@ function buildVisualPreviewPrompt(): string {
   return [
     '## Structure the cached discovery answer',
     'Call `lineage_present_result` once. Do not call discovery or scope tools; the supplied answer and scope are authoritative.',
-    'Divide `answer_blocks` into consecutive sections: each `sections[]` entry gives a label, its canonical `node_ids`, and the `blocks` range it presents; together the ranges cover B1 to the last block once, in order.',
+    'Divide `answer_blocks` into consecutive sections: each `sections[]` entry gives a label, its canonical `node_ids`, and the `start` block it begins at; a section runs to the block before the next start, the last to the end, and starts ascend from B1.',
     'Choose cut points so each section answers one part of the user\'s question.',
     'Every `notes[].caption` must be one unbroken span copied from the supplied answer — quote a single continuous passage; never stitch separated phrases together, and never invent caption text.',
     '',
-    buildPresentationDetailContract('The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section ranges.', 'preview'),
+    buildPresentationDetailContract('The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section starts.', 'preview'),
   ].join('\n');
 }
 

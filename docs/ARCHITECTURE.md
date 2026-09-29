@@ -101,8 +101,12 @@ Model input crosses three layers, in this order:
   coerce a tool argument into its declared shape and resolve a model-written
   object reference against the loaded snapshot. Every rewrite is logged as
   `[Normalize] tool=… field=… from=… to=…`.
-- **Schema parse** — the tool's Zod schema is the structural contract; a payload
-  that does not parse never reaches a handler. Structural only: a content cap
+- **Schema parse** — the tool's Zod schema, as served to the model for the hop, is
+  the structural contract. The tool-attempt boundary parses each call once against
+  it and answers a failure with `makeRejection` built from `z.prettifyError` (every
+  issue in one parse, a repeated issue collapsed, the expected shape shown once,
+  nothing echoed); a payload that does not parse never reaches a handler, and a
+  handler never parses again. Structural only: a content cap
   (a label length, a legend-group count) is stated in the JSON schema the model
   reads but never parsed, because a parse rejection carries no measured size, no
   held draft, and no repairable classification.
@@ -209,7 +213,7 @@ enters this same discovery loop. The bounded transient preview is a later,
 host-owned action (`preview_button`); it does not grant SM authority. The
 preview reuses the preceding discovery answer and retained bounded scope: only
 `present_result` is exposed, and the model groups the served answer blocks
-into sections by block range, labels and links nodes, and chooses semantic
+into sections by start block, labels and links nodes, and chooses semantic
 colors; the engine assembles the section text. The existing presentation validator, held-draft repair store,
 description assembler, and webview commit remain the shared path.
 
@@ -747,22 +751,21 @@ express: node-id resolution against the result graph and highlight, section and
 note coverage. `submit_findings` advertises its caps without parsing them:
 `badge_label` and `column_flow[].upstream_columns[].note` are checked in
 `NavigationEngine` ahead of every mutation as a repairable single-field
-rejection against a held finding draft, and the retry may omit `sections` to keep
-the prose already authored. Nothing is silently truncated on either path;
+rejection against a held finding draft, and the retry names only the section
+angle it changes: `RepairDraftStore.mergeByKey` keeps every other held angle and
+an empty summary keeps the held one. Nothing is silently truncated on either path;
 engine-authored prose is fitted to the cap where it is written, never submitted
 over it.
 
-A held `present_result` repair merges `sections` under a policy the validator
-records with the draft, so the merge, the held-draft view shown to the model
-and the rejection hint all read one stored fact instead of re-deriving it. By
-label (the default), a resent section replaces the held section with that
-label, a new label appends, and every unnamed held section is kept; a resent section may
-omit `text` or `node_ids` to keep the held values, so the view shows labels
-and node ids only. Whole-list applies only
-where the fix cannot be addressed by label: a failure inside one held section
-(an unlinkable node id), where the omission must be able to drop it. The
-discovery preview follows the same rule, with `blocks` in place of `text`. `notes`
-and `highlight_groups` always resend as a whole list.
+A held `present_result` repair merges `sections` by label through
+`RepairDraftStore.mergeByKey`: a resent section replaces the held section with
+that label, a new label appends, `{label, remove: true}` drops one, and every
+unnamed held section is kept as authored. A resent section may omit `text`,
+`start` or `node_ids` to keep the held values. The rejection shows the model the
+held section labels (with the start block of a preview section) and nothing the
+rejected call already carries. `notes` and `highlight_groups` resend as a whole
+list. A held draft is cleared only on success or turn reset, never by a failed
+retry.
 
 Every captured SQL fence served to synthesis carries an evidence id in its
 info string (```` ```sql S7 ````). Section text may reuse a block by writing

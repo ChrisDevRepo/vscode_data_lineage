@@ -1183,22 +1183,20 @@ const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas
 
 /**
  * The preview stage schemas for an answer of `blockCount` served blocks. A section is the
- * {@link PresentResultSectionSchema} keys with the body given as an inclusive `blocks` range whose
- * ends are the served ids `B1`..`B<blockCount>`, so an id outside the answer cannot be sent. The
- * patch form lets `node_ids` and `blocks` be omitted to keep the held value under the label.
- * Preview reuses the discovery prose for `summary`/`title`; the model authors `name` itself.
+ * {@link PresentResultSectionSchema} keys with the body given as the served id `B1`..`B<blockCount>`
+ * it starts at, so an id outside the answer cannot be sent; the engine ends each section before the
+ * next one's start. The patch form lets `node_ids` and `start` be omitted to keep the held value
+ * under the label. Preview reuses the discovery prose for `summary`/`title`; the model authors
+ * `name` itself.
  */
 function buildPreviewSchemas(blockCount: number) {
   const [first, ...rest] = Array.from({ length: Math.max(blockCount, 1) }, (_, index) => `B${index + 1}`);
-  const range = z.object({
-    from: z.enum([first, ...rest]).describe('First block of the section, e.g. "B1".'),
-    to: z.enum([first, ...rest]).describe('Last block of the section (inclusive), e.g. "B3".'),
-  }).strict().describe('Blocks of `answer_blocks` this section presents. Section ranges follow each other in order and together cover every block exactly once.');
-  const section = PresentResultSectionSchema.omit({ text: true }).extend({ blocks: range });
+  const start = z.enum([first, ...rest]).describe('First block of `answer_blocks` this section presents, e.g. "B3"; it runs to the block before the next section\'s start, the last section to the end. The first section starts at B1; starts ascend strictly.');
+  const section = PresentResultSectionSchema.omit({ text: true }).extend({ start });
   const patch = section.extend({
     node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
-    blocks: range.optional().describe('New block range for this section. Omit to keep the held range under this label.'),
-  remove: z.literal(true).optional().describe('true drops the held section under this label; send only the label with it.'),
+    start: start.optional(),
+    remove: z.literal(true).optional().describe('true drops the held section under this label; send only the label with it.'),
   });
   const model = PresentResultModelSchema.omit({
     summary: true,
@@ -1210,7 +1208,7 @@ function buildPreviewSchemas(blockCount: number) {
     is_update: true,
   }).extend({
     sections: z.array(section).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).describe(
-      'Required report sections, at least one. Each presents a range of the served `answer_blocks`; every node analysed and captured is linked into a section\'s node_ids.',
+      'Required report sections, at least one. Each names the block of the served `answer_blocks` it starts at; every node analysed and captured is linked into a section\'s node_ids.',
     ),
   }).strict();
   const patchSections = z.array(patch).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
