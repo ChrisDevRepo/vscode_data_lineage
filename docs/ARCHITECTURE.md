@@ -106,10 +106,10 @@ Model input crosses three layers, in this order:
   it and answers a failure with `makeRejection` built from `z.prettifyError` (every
   issue in one parse, a repeated issue collapsed, the expected shape shown once,
   nothing echoed); a payload that does not parse never reaches a handler, and a
-  handler never parses again. Structural only: a content cap
-  (a label length, a legend-group count) is stated in the JSON schema the model
-  reads but never parsed, because a parse rejection carries no measured size, no
-  held draft, and no repairable classification.
+  handler never parses again. The `submit_findings` content caps are advertised
+  in the JSON schema but enforced in `NavigationEngine` (§Result and
+  presentation ownership), because a parse rejection carries no held draft and
+  no repairable classification.
 - **Policy rejection** — phase- and state-dependent checks a schema cannot
   express ([`src/ai/interaction/`](../src/ai/interaction/)), returned through
   one shared error envelope. A code belongs in
@@ -322,8 +322,7 @@ both sides `0` is rejected at the schema (`asymmetric_depth_both_zero`). An
 `'exact'` side is enforced as a border per direction: a node inside either
 side's own ceiling is admitted. An `'approximate'` side is shown on the plan
 but does not bound the scope. A missing
-`depth` is rejected at the tool boundary (`startExploration.ts`,
-`missingField`). Once approved, the border a rule carries
+`depth` is rejected at the tool boundary (`missingField`, [`handlers/startExploration.ts`](../src/ai/tools/handlers/startExploration.ts)). Once approved, the border a rule carries
 holds for the whole hop-by-hop run; the model may extend a hard value only
 after synthesis, as a deferred lead or `supplement` follow-up, or through a
 fresh refine at this same gate carrying the user's own correction — never by
@@ -559,7 +558,7 @@ compiles against a fresh in-memory saver so the consent gate can pause and
 resume through `Command({ resume })` inside a single turn. Cross-turn state
 is `AiSession`; `thread_id` is a fresh value per request.
 
-The Detail Archive is the durable semantic store for an exploration.
+The findings archive is the durable semantic store for an exploration.
 `NavigationEngine` separately owns agenda and node lifecycle. Each active hop
 sends one stable system prefix plus one bounded hop message carrying the
 current task, the focus context, a fixed-size window of recent hop summaries
@@ -744,8 +743,8 @@ graph.
 A `present_result` bound — an authored label's length, the legend-group count,
 a blank required field, a repeated section label — is one Zod declaration on the
 model schema. The JSON schema the model reads states it as a typed constraint
-(`maxLength`, `maxItems`, `minLength`), the model port rejects a violation with
-the measured size against the limit, and the handler's boundary parse enforces
+(`maxLength`, `maxItems`, `minLength`), the tool-attempt boundary rejects a violation
+with the measured size against the limit, and the handler's boundary parse enforces
 the same schema. `validatePresentResult` keeps only what a schema cannot
 express: node-id resolution against the result graph and highlight, section and
 note coverage. `submit_findings` advertises its caps without parsing them:

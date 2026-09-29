@@ -262,8 +262,9 @@ warning; an absent buffer omits its section rather than failing the call.
 
 ### Recalling the run behind an applied AI bookmark
 
-`lineage_get_screen_state` takes two optional, mutually exclusive fields. Called
-with neither, it returns the screen card described above. Called with either, it
+`lineage_get_screen_state` takes two optional, mutually exclusive fields, plus a
+`cursor` that pages a long screen card. Called
+with neither field, it returns the screen card described above. Called with either, it
 answers from the run record persisted with the applied bookmark:
 
 | Field | Value | Answers |

@@ -48,7 +48,7 @@ Steps live in [`tests/tools/gate.mjs`](../tests/tools/gate.mjs): production and
 test type-checking, tool-manifest drift check, output-template schema-version
 check, prompt-golden-sync check, honest-test-label check, core-case-completeness check, unit-project
 coverage check, layer-direction guard (`src/engine/**` must not import
-`src/components/**`), core unit project under v8 coverage floors, agent-runtime
+`src/components/**`), output-truncation baseline check, core unit project under v8 coverage floors, agent-runtime
 unit project, both bundles plus the integration-test compile, package-content
 safety, and the no-LangSmith boundary. The gate reports every configured step
 instead of stopping after the first failure. It does not launch VS Code

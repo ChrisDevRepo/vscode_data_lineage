@@ -25,14 +25,11 @@ local stub via npm `overrides`. Some npm 10.x releases leave
 copies the stub into place. Run it by hand if `node_modules` was copied
 instead of installed, or if the bundle fails with `Could not resolve "langsmith"`.
 
-`@langchain/core` is pinned to an exact version and stays pinned. From 1.2.5 the
-package vendors `src/utils/gateway.ts`, which supplies a model call's `baseURL`
-from a LangSmith gateway when the call sets none and `LANGSMITH_GATEWAY` is set.
-The npm override cannot reach that code, because it lives inside
-`@langchain/core`, and the runtime tracing guard in
-`src/ai/host/agentRuntime.ts` watches the `LANGSMITH_TRACING*` and
-`LANGCHAIN_TRACING*` flags instead. The bundle gate `assert-no-langsmith`
-(forbidden `smith.langchain.com` signature) is the check that catches it, so an
+`@langchain/core` is pinned to an exact version and stays pinned. The npm
+override cannot reach code vendored inside `@langchain/core`, so the runtime
+tracing guard in `src/ai/host/agentRuntime.ts` refuses to run when the
+`LANGSMITH_TRACING*` or `LANGCHAIN_TRACING*` flags are set, and the bundle gate
+`assert-no-langsmith` fails on any LangSmith client signature. An
 outdated-dependency report is not a reason to unpin.
 
 ## Repository layout
@@ -133,7 +130,7 @@ live import derives one from the server.
 - **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).
   On read, unrecognized fields are dropped; a project is discarded only when a
   required field is missing or of the wrong type. On write,
-  `StoredConnectionInfoSchema` stays `.strict()` so undeclared connection
+  `StoredConnectionInfoSchema` ([`bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)) stays `.strict()` so undeclared connection
   fields (including credentials) never enter the store. Any change to
   `Project` or `FilterProfile` needs a migration in `migrateProjectStore()`.
 - **AI run records** — [`src/ai/session/runStore.ts`](../src/ai/session/runStore.ts).
@@ -241,7 +238,7 @@ shrink. GitHub does not run this test framework.
 
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, output-template schema version, prompt golden sync, honest test labels, core case completeness, unit-project coverage, layer-direction, core coverage floors, unit tests, builds, and package checks. Run before push. |
+| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, output-template schema version, prompt golden sync, honest test labels, core case completeness, unit-project coverage, layer-direction, output-truncation baseline, core coverage floors, agent-runtime tests, builds, and package checks. Run before push. |
 | **Unit suite** | `npm test` | Every maintained unit test. |
 | **Protected core** | `npm run test:core` | Parser, engine, and webview unit projects. |
 | **Core coverage floors** | `npm run coverage:core` | Per-file thresholds on `sqlBodyParser.ts`, `graphAnalysis.ts`, `graphBuilder.ts`, `shared/sqlRegex.ts`, `shared/nodeIdResolution.ts`. |
