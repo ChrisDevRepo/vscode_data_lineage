@@ -43,7 +43,7 @@ import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolPro
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
-import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair } from '../tools/presentResult';
+import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
 import { escapeDelimitedJson, escapePromptText, formatProviderErrorDiagnostic, isTransportProviderError, truncAtWordBoundary, type ProviderErrorDiagnostic } from '../support/text';
 import {
@@ -523,6 +523,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     presentResultRepairDraftContext: () => {
       const held = deps.getSession().presentResultRepairDraft.get();
       return held ? { sections: heldSectionsForRepair(held.sections) } : null;
+    },
+    holdRejectedPresentResult: (input, issuePaths) => {
+      const sess = deps.getSession();
+      if (sess.activeLmStage?.kind === 'visual_preview') return null;
+      return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis');
     },
     holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
   });

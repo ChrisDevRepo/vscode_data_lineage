@@ -6,6 +6,7 @@ import {
   PresentResultModelSchema,
   PresentResultRepairPatchSchema,
   normalizePresentSectionLabel,
+  PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
@@ -359,6 +360,34 @@ export function heldSectionsForRepair(sections: PresentResultInput['sections']):
 export function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[], stage: PresentResultStage): string {
   const instruction = `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`;
   return resendList.includes('sections') ? `${instruction} ${keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids'])}` : instruction;
+}
+
+/**
+ * Holds the valid fields of a `lineage_present_result` call rejected at the tool-attempt boundary,
+ * so the retry resends only the failed field(s) and {@link mergePresentResultRepairPatch} restores the rest.
+ *
+ * @param store - The session's held `present_result` draft.
+ * @param input - The rejected payload as the model sent it.
+ * @param failedPaths - Dotted Zod issue paths of the rejection.
+ * @param stage - The stage the call was made in.
+ * @returns The repair sentence naming the failed fields to resend; `null` when nothing was held: a draft is
+ *   already held, the payload is not an object, or a failed path names no repairable field.
+ */
+export function holdRejectedPresentResult(
+  store: RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>,
+  input: unknown,
+  failedPaths: readonly string[],
+  stage: PresentResultStage,
+): string | null {
+  if (store.get() || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
+  const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
+  const failed = [...new Set(failedPaths.map(path => path.split('.')[0]))];
+  if (!failed.every(field => repairable.has(field))) return null;
+  const kept = Object.fromEntries(Object.entries(input).filter(([key]) => !failed.includes(key)));
+  if (Object.keys(kept).length === 0) return null;
+  const fields = failed as PresentResultRepairField[];
+  store.hold(kept as PresentResultInput, { fields });
+  return `Held from this call: every field except ${fields.join(', ')}. ${presentResultRepairInstruction(fields, stage)}`;
 }
 
 /**

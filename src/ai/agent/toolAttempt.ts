@@ -273,6 +273,9 @@ export interface HeldSubmissionParts {
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` when nothing was held. */
 export type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
 
+/** Holds the valid fields of a rejected `lineage_present_result` payload; returns the repair sentence, or `null` when nothing was held. */
+export type HoldRejectedPresentResult = (input: unknown, issuePaths: readonly string[]) => string | null;
+
 const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
 
 /**
@@ -341,6 +344,8 @@ interface ToolGenerationAttemptInput {
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedSubmission}. */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /** See {@link ToolAttemptExecutionOptions.holdRejectedPresentResult}. */
+  readonly holdRejectedPresentResult?: HoldRejectedPresentResult;
 }
 
 /**
@@ -383,6 +388,11 @@ interface ToolAttemptExecutionOptions {
    * when nothing was held.
    */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /**
+   * Holds the valid fields of a schema-rejected `lineage_present_result` call in the session's held
+   * draft and returns the repair sentence for the rejection hint, or `null` when nothing was held.
+   */
+  readonly holdRejectedPresentResult?: HoldRejectedPresentResult;
 }
 
 /** Serializable cumulative attempt state for one graph-owned logical phase or active hop. */
@@ -599,6 +609,13 @@ function withHeldDraftDetail(
     ? data.detail as Record<string, unknown>
     : {};
   return { ...data, detail: { ...baseDetail, held_draft: held } };
+}
+
+/** Appends a repair sentence to a rejection's hint. */
+function withRepairHint(data: ToolOutcomeData, sentence: string): ToolOutcomeData {
+  if (data.status !== 'rejected') return data;
+  const hint = data.correction?.hint;
+  return { ...data, correction: { ...data.correction, hint: hint ? `${hint} ${sentence}` : sentence } };
 }
 
 function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinition[] {
@@ -825,6 +842,7 @@ export async function executeToolAttempt(
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
     holdRejectedSubmission: options.holdRejectedSubmission,
+    holdRejectedPresentResult: options.holdRejectedPresentResult,
     priorObservations: priorState?.observations,
   });
 }
@@ -992,9 +1010,12 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const heldSubmission = call.code === REJECTION_CODES.invalidToolInput && call.toolName === SUBMIT_FINDINGS_TOOL
         ? input.holdRejectedSubmission?.(call.input, call.issuePaths ?? [])
         : null;
+      const presentRepair = call.code === REJECTION_CODES.invalidToolInput && call.toolName === PRESENT_RESULT_TOOL
+        ? input.holdRejectedPresentResult?.(call.input, call.issuePaths ?? [])
+        : null;
       const data = heldSubmission
         ? withHeldSubmissionHint(rejected, heldSubmission)
-        : withHeldDraftDetail(rejected, call.toolName, input.presentResultRepairDraftContext);
+        : withHeldDraftDetail(presentRepair ? withRepairHint(rejected, presentRepair) : rejected, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection);
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
