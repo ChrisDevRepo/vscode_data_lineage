@@ -69,9 +69,8 @@ export function validateSectionsAgainstClassification(
  * Converts a `sections` object keyed by angle into angle-bearing entries.
  *
  * @remarks
- * The one converter for both a validated payload (`toHopFinding` in `toolSchemas.ts`) and a raw
- * one on the handler's Zod-failure branch, where a schema failure and a missing locked angle then
- * produce one combined hint. Tolerant on purpose: only the `business`/`technical` keys are read,
+ * The converter for a validated payload (`toHopFinding` in `toolSchemas.ts`). Tolerant on purpose:
+ * only the `business`/`technical` keys are read,
  * so a non-string value under one still counts toward coverage — the strict shape check is Zod's.
  *
  * @param rawSections - The unparsed `sections` value from the raw or normalized tool input.

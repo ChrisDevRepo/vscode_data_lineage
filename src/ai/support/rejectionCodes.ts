@@ -25,8 +25,6 @@ export const REJECTION_CODES = {
   staleTurn: 'stale_turn',
   /** Tool input failed its schema or the engine's argument contract; the hint names the offending field. */
   invalidInput: 'invalid_input',
-  /** CT `submit_findings` failed its schema; the hint names the offending field. Same family as `invalidInput`. */
-  ctFieldRequired: 'ct_field_required',
   /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
   notFound: 'not_found',
   /** `supplement` was requested without a prior exploration in `complete` status to extend. */
@@ -89,7 +87,7 @@ export const REJECTION_CODES = {
   classificationLockViolation: 'classification_lock_violation',
   /** A registered tool handler threw; the generic fallback envelope both LM lanes feed back to the model (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
   toolExecutionError: 'tool_execution_error',
-  /** Code `readToolError` gives the `lineage_present_result` validator's `{ success: false, errors: […] }` failure, the one shape besides `makeRejection`'s (`toolErrorEnvelope.ts`). */
+  /** A `lineage_present_result` call failed an engine-state or content rule its served schema cannot express (`presentResult.ts`, `handlers/presentResult.ts`). */
   validation: 'validation',
   /** `submit_findings` reached an engine in a status other than `awaiting_findings` and not `complete` (`smBase.ts`). */
   invalidStatus: 'invalid_status',

@@ -10,6 +10,8 @@ import {
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
 import { quoteIds } from '../support/text';
+import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
@@ -189,42 +191,23 @@ type PresentResultRequest = {
 };
 
 /**
- * Error shape returned when presenting the result fails.
+ * A failed validation: the one rejection the model receives plus what the handler needs to hold the
+ * draft.
  *
  * @remarks
- * `repairable` is set structurally where each error is added inside
- * {@link validatePresentResult}; downstream code never infers it from message text.
+ * `repairable` is set structurally where each error is added inside {@link validatePresentResult};
+ * downstream code never infers it from message text. The rejection's `reason` is one line per error;
+ * `issuePaths` and `entryIds` name every offender, and `detail.paths` carries per-path offending
+ * node ids with their recorded state plus the uncapped accepted set — the message states both,
+ * capped, so they survive the rejection replay.
  */
-export type PresentResultError = {
+export type PresentResultFailure = {
   success: false;
-  errors: string[];
-  hint: string;
+  rejection: ToolRejection;
   repairable: boolean;
   repairFields: PresentResultRepairField[];
   /** Merge policy a held repair of this failure uses for `sections` — see {@link PresentResultSectionsMerge}. */
   sectionsMerge: PresentResultSectionsMerge;
-  /**
-   * Offending field paths, as `{ path }` entries the shared correction reader understands.
-   *
-   * @remarks
-   * A rejection that names a rule but not the offender costs a whole repair round to locate — the
-   * model has to guess which of N captions or sections failed. The rejection reader mines
-   * this exact shape out of `detail` into the typed `issuePaths`, so emitting it here reaches both
-   * the model's tool result and the diagnostic trace without a second channel.
-   *
-   * A node-id entry additionally carries every offending id at that path with its recorded state,
-   * and the first such entry carries the uncapped accepted set — the message states both, capped, so
-   * they survive the rejection replay; `detail` is where the full lists live.
-   */
-  detail?: ReadonlyArray<{
-    readonly path: string;
-    /** Offending ids at this path, each with its {@link PRESENT_NODE_ID_STATE_TEXT} wording. */
-    readonly unlinkable_node_ids?: ReadonlyArray<{ readonly node_id: string; readonly state: string }>;
-    /** The complete current result-graph id set, stated once per rejection. */
-    readonly accepted_node_ids?: readonly string[];
-    /** See {@link PresentResultViolation.entryIds} — carried through verbatim, id offenders only. */
-    readonly entry_ids?: readonly string[];
-  }>;
 };
 
 /** One numbered top-level block of the cached discovery answer, served to the preview stage as `answer_blocks`. */
@@ -263,8 +246,45 @@ export function discoveryPreviewNarrative(answer: string): {
 }
 
 /**
- * Builds each preview section's `text` from its block range; the ranges already partition the
- * blocks (the boundary schema's rule), so the joined text is the cached answer in its own words.
+ * Where preview `sections` depart from block ranges that partition `B1..B<blockCount>` in order. The
+ * ids themselves are constrained by the served schema; order and coverage depend on the whole
+ * (merged) list, so they are checked here.
+ *
+ * @returns One entry per departure — the section it concerns and a message naming that section and
+ *   the blocks — empty when the ranges partition the answer.
+ */
+export function findBlockPartitionIssues(
+  sections: ReadonlyArray<{ label: string; blocks?: PresentSectionBlocks }>,
+  blockCount: number,
+): Array<{ index: number; message: string }> {
+  const issues: Array<{ index: number; message: string }> = [];
+  let next = 1;
+  let previous: string | undefined;
+  for (const [index, { label, blocks }] of sections.entries()) {
+    if (!blocks) continue;
+    const from = Number(blocks.from.slice(1));
+    const to = Number(blocks.to.slice(1));
+    if (to < from) {
+      issues.push({ index, message: `Section "${label}" runs backwards: ${blocks.from} to ${blocks.to}.` });
+      continue;
+    }
+    if (from > next) {
+      issues.push({ index, message: `B${next}..B${from - 1} belong to no section; "${label}" starts at ${blocks.from}${previous ? ` after "${previous}"` : ''}.` });
+    } else if (from < next) {
+      issues.push({ index, message: `"${label}" starts at ${blocks.from}, but B${from}..B${Math.min(to, next - 1)} already belong to "${previous}".` });
+    }
+    next = Math.max(next, to + 1);
+    previous = label;
+  }
+  if (next <= blockCount && sections.length > 0) {
+    issues.push({ index: sections.length - 1, message: `B${next}..B${blockCount} belong to no section; extend "${sections[sections.length - 1].label}" or add a section for them.` });
+  }
+  return issues;
+}
+
+/**
+ * Builds each preview section's `text` from its block range; the ranges partition the blocks
+ * ({@link findBlockPartitionIssues}), so the joined text is the cached answer in its own words.
  */
 export function assemblePreviewSections(
   blocks: readonly AnswerBlock[],
@@ -991,7 +1011,7 @@ export function findUnrenderedDetailSlotIds(
  * Validates the full `present_result` input against the contracts a schema cannot express.
  *
  * @remarks
- * `input` has already passed the Zod boundary (`presentResultBoundarySchemaForPhase`), which owns
+ * `input` has already passed the served schema at the tool-attempt boundary, which owns
  * shape, required and blank fields, length caps and unique section labels. This function enforces
  * node-id resolution against the result graph, the highlight-group requirement (waived for an
  * amendment) and highlight/section/note coverage. Markdown/KaTeX formatting is deliberately
@@ -1033,7 +1053,7 @@ export function validatePresentResult(
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
   nodeIdState?: PresentNodeIdStateLookup,
-): PresentResultRequest | PresentResultError {
+): PresentResultRequest | PresentResultFailure {
   const errors: string[] = [];
   let allRepairable = true;
   const repairFields = new Set<PresentResultRepairField>();
@@ -1159,23 +1179,6 @@ export function validatePresentResult(
     );
   }
 
-  const buildRejectionDetail = (): PresentResultError['detail'] => {
-    let acceptedStated = false;
-    return [...issuePaths].map(path => {
-      const ids = pathUnlinkableIds.get(path);
-      const entryIds = pathEntryIds.get(path);
-      if (!ids && !entryIds) return { path };
-      const entry = {
-        path,
-        ...(ids ? { unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })) } : {}),
-        ...(ids && !acceptedStated ? { accepted_node_ids: [...resolvedNodeIds] } : {}),
-        ...(entryIds ? { entry_ids: entryIds } : {}),
-      };
-      if (ids) acceptedStated = true;
-      return entry;
-    });
-  };
-
   if (errors.length > 0) {
     const fieldList = [...failedFields];
     const resendList = [...repairFields];
@@ -1194,14 +1197,24 @@ export function validatePresentResult(
     if (soleFailureHint === undefined && nodeIdHintNeeded) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }
+    const unlinkable = [...pathUnlinkableIds].map(([path, ids], index) => ({
+      path,
+      unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })),
+      ...(index === 0 ? { accepted_node_ids: [...resolvedNodeIds] } : {}),
+    }));
     return {
       success: false,
-      errors,
-      hint,
+      rejection: makeRejection({
+        code: REJECTION_CODES.validation,
+        reason: errors.join('\n'),
+        hint,
+        issuePaths: [...issuePaths],
+        entryIds: [...new Set([...pathEntryIds.values()].flat())],
+        ...(unlinkable.length > 0 ? { detail: { paths: unlinkable } } : {}),
+      }),
       repairable: allRepairable,
       repairFields: resendList,
       sectionsMerge,
-      ...(issuePaths.size > 0 ? { detail: buildRejectionDetail() } : {}),
     };
   }
 

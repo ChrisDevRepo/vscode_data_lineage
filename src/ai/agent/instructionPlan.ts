@@ -145,6 +145,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
   /** Whether a committed report from this run exists for `present_result` to amend; read live. */
   readonly presentResultRetainableSections?: () => boolean;
+  /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
+  readonly presentResultPreviewBlockCount?: number;
   /** Whether the active hop's next `submit_findings` is fresh, with no held draft or archived angle; read live, `true` when absent. */
   readonly freshSubmission?: () => boolean;
   /** The active CT hop's tracked-column facts that narrow the served `column_flow`; read live, absent serves the general schema. */
@@ -325,6 +327,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     freshSubmission,
     hopColumns,
     presentResultRetainableSections,
+    presentResultPreviewBlockCount,
     ...input
   } = draft;
   const phase = phaseOf(stage);
@@ -352,7 +355,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
   if (stageSupportsPresentResultRepair(stage) && !liveRepairResolver) {
-    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false));
+    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false, presentResultPreviewBlockCount));
   }
   let registry = schemaOverrides.size
     ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
@@ -360,7 +363,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (liveRepairResolver) {
     liveResolvers.set(
       'lineage_present_result',
-      () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields(), presentResultRetainableSections?.() ?? false),
+      () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields(), presentResultRetainableSections?.() ?? false, presentResultPreviewBlockCount),
     );
   }
   if (liveResolvers.size) registry = resolveRegistrySchemas(registry, liveResolvers);

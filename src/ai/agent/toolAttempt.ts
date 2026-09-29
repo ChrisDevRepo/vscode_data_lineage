@@ -651,18 +651,8 @@ interface RecordedToolOutcome {
   readonly artifact?: ToolRejection;
 }
 
-/** The lines of a validation envelope's `errors[]` list, present only when it carried more than one. */
-function validationErrorLines(rejection: ToolRejection): readonly string[] | undefined {
-  if (rejection.code !== REJECTION_CODES.validation) return undefined;
-  if (!rejection.detail || typeof rejection.detail !== 'object' || Array.isArray(rejection.detail)) return undefined;
-  const errors = (rejection.detail as Record<string, unknown>).errors;
-  return Array.isArray(errors) && errors.every((line) => typeof line === 'string')
-    ? errors as readonly string[]
-    : undefined;
-}
-
 /**
- * The model-facing content of one rejection as plain text: its reason (every error line of a
+ * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when one is held, the `present_result` repair draft. The
  * reason states the facts the model repairs from, so nothing the model needs rides only on
  * `detail`. The code, issue paths and detail stay on the paired `ToolMessage.artifact`.
@@ -672,7 +662,7 @@ function rejectionText(rejection: ToolRejection): string {
     ? (rejection.detail as Record<string, unknown>).held_draft
     : undefined;
   return [
-    ...(validationErrorLines(rejection) ?? [rejection.reason]),
+    rejection.reason,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldDraft !== undefined ? [`Held draft:\n${JSON.stringify(heldDraft)}`] : []),
   ].join('\n');

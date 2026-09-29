@@ -14,7 +14,6 @@ import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorE
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import type { HopFinding, HopFindingKept } from '../sm/smTypes';
-import type { PresentResultStage } from './presentResult';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -1165,70 +1164,51 @@ const PresentResultSectionPatchSchema = PresentResultSectionSchema.extend({
   text: z.string().trim().min(1, 'Section is missing text — every final section label requires one detail body').optional().describe('Detail body. Omit to keep the held text under this label; supply it to rewrite that section, and always for a label not on file.'),
 });
 
-/**
- * Inclusive range of served answer blocks (`B1`, `B2`, …) a preview section presents; the engine
- * assembles the section text from the cached discovery answer.
- */
-const AnswerBlockRangeSchema = z.object({
-  from: z.string().regex(/^B[1-9]\d*$/, 'from must be a block id such as "B1".').describe('First block of the section, e.g. "B1".'),
-  to: z.string().regex(/^B[1-9]\d*$/, 'to must be a block id such as "B3".').describe('Last block of the section (inclusive), e.g. "B3".'),
-}).strict();
+/** Memoized per block count: a fresh schema per request is a new identity, which defeats `toModelJsonSchema`'s cache. */
+const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas>>();
 
 /**
- * One preview section: the {@link PresentResultSectionSchema} keys with the body given as a block
- * range instead of `text`.
+ * The preview stage schemas for an answer of `blockCount` served blocks. A section is the
+ * {@link PresentResultSectionSchema} keys with the body given as an inclusive `blocks` range whose
+ * ends are the served ids `B1`..`B<blockCount>`, so an id outside the answer cannot be sent. The
+ * patch form lets `node_ids` and `blocks` be omitted to keep the held value under the label.
+ * Preview reuses the discovery prose for `summary`/`title`; the model authors `name` itself.
  */
-const PresentResultPreviewSectionSchema = z.object({
-  label: PresentResultSectionSchema.shape.label,
-  node_ids: PresentResultSectionSchema.shape.node_ids,
-  blocks: AnswerBlockRangeSchema.describe('Blocks of `answer_blocks` this section presents. Section ranges follow each other in order and together cover every block exactly once.'),
-}, {
-  error: (issue) => issue.code === 'unrecognized_keys'
-    ? 'A section holds only label, node_ids and blocks. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
-    : undefined,
-}).strict();
+function buildPreviewSchemas(blockCount: number) {
+  const [first, ...rest] = Array.from({ length: Math.max(blockCount, 1) }, (_, index) => `B${index + 1}`);
+  const range = z.object({
+    from: z.enum([first, ...rest]).describe('First block of the section, e.g. "B1".'),
+    to: z.enum([first, ...rest]).describe('Last block of the section (inclusive), e.g. "B3".'),
+  }).strict().describe('Blocks of `answer_blocks` this section presents. Section ranges follow each other in order and together cover every block exactly once.');
+  const section = PresentResultSectionSchema.omit({ text: true }).extend({ blocks: range });
+  const patch = section.extend({
+    node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
+    blocks: range.optional().describe('New block range for this section. Omit to keep the held range under this label.'),
+  });
+  const model = PresentResultModelSchema.omit({
+    summary: true,
+    title: true,
+    intro: true,
+    closing: true,
+    prune_node_ids: true,
+    add_node_ids: true,
+    is_update: true,
+  }).extend({
+    sections: z.array(section).min(1).superRefine(rejectDuplicateSectionLabels).describe(
+      'Required report sections, at least one. Each presents a range of the served `answer_blocks`; every node analysed and captured is linked into a section\'s node_ids.',
+    ),
+  }).strict();
+  const patchSections = z.array(patch).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
+  return { model, patchSections };
+}
 
-/** Preview patch section: `node_ids` and `blocks` may each be omitted to keep the held value under the label. */
-const PresentResultPreviewSectionPatchSchema = PresentResultPreviewSectionSchema.extend({
-  node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
-  blocks: AnswerBlockRangeSchema.optional().describe('New block range for this section. Omit to keep the held range under this label.'),
-});
-
-/**
- * Refinement for preview `sections`: the block ranges partition `B1..B<blockCount>` in order. Each
- * issue is attributed to the section whose range it concerns, so the rejection names that section.
- */
-function rejectBlockPartition(blockCount: number) {
-  const indexOf = (id: string): number => Number(id.slice(1));
-  return (sections: ReadonlyArray<{ label: string; blocks: { from: string; to: string } }>, ctx: z.core.$RefinementCtx): void => {
-    let next = 1;
-    let previous: string | undefined;
-    const issueAt = (index: number, message: string): void => ctx.addIssue({ code: 'custom', path: [index, 'blocks'], message });
-    for (const [index, { label, blocks }] of sections.entries()) {
-      const issue = (message: string): void => issueAt(index, message);
-      const from = indexOf(blocks.from);
-      const to = indexOf(blocks.to);
-      const unknown = [blocks.from, blocks.to].filter(id => indexOf(id) > blockCount);
-      if (unknown.length > 0) {
-        issue(`Section "${label}" names ${unknown.join(', ')}; the answer has blocks B1..B${blockCount}.`);
-        continue;
-      }
-      if (to < from) {
-        issue(`Section "${label}" runs backwards: ${blocks.from} to ${blocks.to}.`);
-        continue;
-      }
-      if (from > next) {
-        issue(`B${next}..B${from - 1} belong to no section; "${label}" starts at ${blocks.from}${previous ? ` after "${previous}"` : ''}.`);
-      } else if (from < next) {
-        issue(`"${label}" starts at ${blocks.from}, but B${from}..B${Math.min(to, next - 1)} already belong to "${previous}".`);
-      }
-      next = Math.max(next, to + 1);
-      previous = label;
-    }
-    if (next <= blockCount && sections.length > 0) {
-      issueAt(sections.length - 1, `B${next}..B${blockCount} belong to no section; extend "${sections[sections.length - 1].label}" or add a section for them.`);
-    }
-  };
+function previewSchemas(blockCount: number) {
+  let schemas = previewSchemaCache.get(blockCount);
+  if (!schemas) {
+    schemas = buildPreviewSchemas(blockCount);
+    previewSchemaCache.set(blockCount, schemas);
+  }
+  return schemas;
 }
 
 /**
@@ -1285,24 +1265,6 @@ function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T)
 }
 
 /**
- * Preview reuses discovery prose for `summary`/`title`; the model authors `name` itself, with the
- * same validation every other stage applies, and supplies structure and graph decoration.
- */
-const PresentResultVisualPreviewModelSchema = PresentResultModelSchema.omit({
-  summary: true,
-  title: true,
-  intro: true,
-  closing: true,
-  prune_node_ids: true,
-  add_node_ids: true,
-  is_update: true,
-}).extend({
-  sections: z.array(PresentResultPreviewSectionSchema).min(1).superRefine(rejectDuplicateSectionLabels).describe(
-    'Required report sections, at least one. Each presents a range of the served `answer_blocks`; every node analysed and captured is linked into a section\'s node_ids.',
-  ),
-}).strict();
-
-/**
  * Selects the model-facing `present_result` schema from the phase and held-draft authorization.
  * Preview omits AI-authored wrapper prose; synthesis uses the full new-render contract; either
  * phase projects the existing strict patch schema while a repairable draft is held.
@@ -1317,15 +1279,18 @@ const PresentResultVisualPreviewModelSchema = PresentResultModelSchema.omit({
  * @param phase - Stage the call will be dispatched in.
  * @param repairFields - Fields a held draft authorizes for repair, when one is held.
  * @param retainable - Whether a committed report from this run exists to amend.
+ * @param previewBlockCount - Served `answer_blocks` count; the preview stage's block ids are
+ *   exactly `B1`..`B<count>`.
  * @returns The schema this stage offers the model.
  */
 export function presentResultSchemaForPhase(
   phase?: string,
   repairFields: readonly PresentResultRepairField[] | null = null,
   retainable = false,
+  previewBlockCount = 0,
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase);
-  if (phase === 'visual_preview') return PresentResultVisualPreviewModelSchema;
+  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount);
+  if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
   const synthesis = phase === 'synthesis';
   const schema = retainable
     ? (synthesis ? PresentResultRetainingSynthesisModelSchema : PresentResultRetainingModelSchema)
@@ -1333,78 +1298,8 @@ export function presentResultSchemaForPhase(
   return schema;
 }
 
-/**
- * Runtime boundary schema for `presentResult` — structural shape only.
- *
- * @remarks
- * Identical to {@link PresentResultModelSchema} but for one requirement: `highlight_groups` drops
- * `min(1)`, which is conditional (exempt when the render amends an existing one) and therefore not
- * expressible on a schema. `validatePresentResult` owns that condition.
- *
- * Every bound the model schema declares — length caps, the highlight group count, blank fields,
- * duplicate section labels — is enforced here by the same Zod declaration the model was offered.
- */
-export const PresentResultBoundarySchema = PresentResultModelSchema.extend({
-  highlight_groups: z.array(HighlightGroupSchema).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX, HIGHLIGHT_GROUPS_OVER_MAX).optional(),
-});
-
-/**
- * Boundary projection for the stages whose offered schema carries no graph-edit controls.
- *
- * @remarks
- * DERIVED from {@link PresentResultBoundarySchema} via the same `.omit()` list
- * {@link PresentResultSynthesisModelSchema} applies to the model-facing schema, so the offered
- * contract and the validated contract cannot drift.
- *
- * `is_update` stays accepted here while the model-facing projection omits it: a session-authorized
- * held draft is merged back into the payload with the held draft's own `is_update` before this
- * parse runs, so omitting the key would reject the repair path. Its stage rules are owned by the
- * dispatcher's held-draft branch and by `isAmendment`.
- */
-const PresentResultLockedGraphBoundarySchema = PresentResultBoundarySchema.omit({
-  prune_node_ids: true,
-  add_node_ids: true,
-});
-
-/**
- * Selects the runtime boundary schema matching the contract the model was offered at this stage.
- *
- * @remarks
- * The mirror of {@link presentResultSchemaForPhase} on the dispatch side: a field the offered
- * schema omits is rejected by the schema, not by a hand-written check after a permissive parse.
- * Preview shares the locked-graph projection with `sections` given as block ranges — the prose
- * fields the preview model schema omits are filled by the dispatcher from the cached discovery
- * answer before the parse, and the ranges must partition the served blocks.
- *
- * The graph-edit controls are opt-in: `completed` is the only stage whose consumers read
- * `add_node_ids`/`prune_node_ids`, so it alone selects the full schema and every other stage —
- * including one added to {@link PresentResultStage} and not wired here — gets the locked
- * projection.
- *
- * @param phase - Stage the call was dispatched in.
- * @param retainable - Whether a committed report from this run exists to amend; mirrors the same
- * argument to {@link presentResultSchemaForPhase} so the offered and validated contracts match.
- * @param previewBlockCount - Number of served answer blocks; the preview stage's section ranges
- * must partition exactly that many.
- * @returns The full boundary schema on the completed stage, else the locked-graph projection.
- */
-export function presentResultBoundarySchemaForPhase(
-  phase?: PresentResultStage,
-  retainable = false,
-  previewBlockCount = 0,
-): z.ZodType {
-  if (phase === 'visual_preview') {
-    return PresentResultLockedGraphBoundarySchema.extend({
-      sections: z.array(PresentResultPreviewSectionSchema).min(1)
-        .superRefine(rejectDuplicateSectionLabels)
-        .superRefine(rejectBlockPartition(previewBlockCount)),
-    });
-  }
-  if (phase === 'completed') {
-    return retainable ? PresentResultRetainingBoundarySchema : PresentResultBoundarySchema;
-  }
-  return retainable ? PresentResultRetainingLockedGraphBoundarySchema : PresentResultLockedGraphBoundarySchema;
-}
+/** The one statement of how a resent `sections` list merges into the held draft. */
+const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, each under its held label; a held section this list does not name is kept as authored.';
 
 /**
  * Strict patch schema for repairing a held `present_result` draft.
@@ -1435,9 +1330,7 @@ export const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
   sections: true,
   notes: true,
 }).partial().extend({
-  sections: z.array(PresentResultSectionPatchSchema).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(
-    'Sections to add or change, each under its label; a held section this list does not name is kept or dropped as the rejection\'s resend rule states.',
-  ),
+  sections: z.array(PresentResultSectionPatchSchema).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(REPAIR_SECTIONS_DESCRIPTION),
   is_update: z.boolean().optional().describe('Optional — a repair keeps the held draft\'s own value; the value sent here is not applied.'),
 }).strict();
 
@@ -1485,10 +1378,11 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
   phase?: string,
+  previewBlockCount = 0,
 ): z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>> {
   const keys = [...new Set<PresentResultRepairField>(fields)].sort();
   const preview = phase === 'visual_preview';
-  const cacheKey = `${preview ? 'preview:' : ''}${keys.join(',')}`;
+  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${keys.join(',')}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
@@ -1496,11 +1390,7 @@ export function presentResultRepairPatchSchemaForFields(
     mask as Partial<Record<keyof typeof PresentResultRepairPatchSchema.shape, true>>,
   );
   const staged = preview && keys.includes('sections')
-    ? picked.extend({
-      sections: z.array(PresentResultPreviewSectionPatchSchema).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(
-        'Sections to add or change, each under its label; a held section this list does not name is kept or dropped as the rejection\'s resend rule states.',
-      ),
-    })
+    ? picked.extend({ sections: previewSchemas(previewBlockCount).patchSections })
     : picked;
   const strict = staged.strict().superRefine((data, ctx) => {
     if (keys.length === 0) return;
@@ -1539,18 +1429,16 @@ export const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({
 }).strict();
 
 /**
- * The four stage projections a render that amends a committed report is offered and parsed against.
+ * The stage projections a render that amends a committed report is offered and parsed against.
  *
  * @remarks
  * Declared here rather than beside each source because {@link PresentResultSynthesisModelSchema} is
- * the last source to exist; the two selectors read them, so each is built once per process.
+ * the last source to exist; the selector reads them, so each is built once per process.
  * A supplement round exits through synthesis, not the completed stage, so both stages have a
  * retaining projection.
  */
 const PresentResultRetainingModelSchema = withRetainableSections(PresentResultModelSchema);
 const PresentResultRetainingSynthesisModelSchema = withRetainableSections(PresentResultSynthesisModelSchema);
-const PresentResultRetainingBoundarySchema = withRetainableSections(PresentResultBoundarySchema);
-const PresentResultRetainingLockedGraphBoundarySchema = withRetainableSections(PresentResultLockedGraphBoundarySchema);
 
 /**
  * Model-facing `lineage_submit_findings` input schema (the permissive BB∪CT superset).

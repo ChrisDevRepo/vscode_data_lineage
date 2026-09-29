@@ -4,9 +4,7 @@
  * @remarks
  * Every tool, guard and engine refusal is emitted by {@link makeRejection} in one shape —
  * `{ code, reason, hint?, detail?, issuePaths?, entryIds? }` — and serialized as the
- * tool result. {@link readToolError} reads that shape back. The one other shape it recognizes is the
- * `lineage_present_result` validator's `{ success: false, errors: […] }`, which that tool still emits
- * itself. Provider-pure.
+ * tool result. {@link readToolError} reads that shape back. Provider-pure.
  */
 import { z } from 'zod';
 import { REJECTION_CODES } from './rejectionCodes';
@@ -63,14 +61,6 @@ const RejectionShape = z.object({
   entryIds: z.array(z.string()).optional(),
 }).strict();
 
-/** Zod view of the `lineage_present_result` validator's `{ success: false, errors: […] }` failure. */
-const PresentResultFailureShape = z.object({
-  success: z.literal(false),
-  errors: z.array(z.unknown()).optional(),
-  hint: z.string().optional(),
-  detail: z.unknown().optional(),
-}).passthrough();
-
 /**
  * Write-side builder for the one tool-execution failure envelope both LM lanes feed back to the
  * model when a handler throws. Owning it here keeps the graph-owned dispatch result provider-neutral.
@@ -113,61 +103,17 @@ export function buildNoProjectLoadedError(): string {
 }
 
 /**
- * Reads the `lineage_present_result` validator failure into a {@link ToolRejection}.
- *
- * @remarks
- * `detail` folds in every offender the validator attached: its per-path records, the full `errors[]`
- * array when it has more than one entry, and every sibling key (`repairFields`, `repairable`, …).
- * The typed `issuePaths` and `entryIds` are read from the flat per-path record
- * list the validator emits in `detail`.
- */
-function readPresentResultFailure(data: unknown): ToolRejection | null {
-  const parsed = PresentResultFailureShape.safeParse(data);
-  if (!parsed.success) return null;
-  const { success: _success, errors, hint, detail, ...siblings } = parsed.data;
-  const reason = String(errors?.[0] ?? '').trim() || 'tool returned failure envelope';
-  const extraFacts: Record<string, unknown> = {};
-  if (errors && errors.length > 1) extraFacts.errors = errors;
-  Object.assign(extraFacts, siblings);
-  const hasExtraFacts = Object.keys(extraFacts).length > 0;
-  const mergedDetail = !hasExtraFacts
-    ? detail
-    : detail === undefined
-      ? extraFacts
-      : typeof detail === 'object' && detail !== null && !Array.isArray(detail)
-        ? { ...detail, ...extraFacts }
-        : { detail, ...extraFacts };
-
-  const records = (Array.isArray(detail) ? detail : []).filter(
-    (record): record is Record<string, unknown> => typeof record === 'object' && record !== null,
-  );
-  const entryIds = [...new Set(records.flatMap((record) => (Array.isArray(record.entry_ids) ? record.entry_ids : [])))]
-    .filter((id): id is string => typeof id === 'string');
-  return makeRejection({
-    code: REJECTION_CODES.validation,
-    reason,
-    hint,
-    detail: mergedDetail,
-    issuePaths: records.flatMap((record) => (typeof record.path === 'string' ? [record.path] : [])),
-    entryIds,
-  });
-}
-
-/**
  * Reader: the typed {@link ToolRejection} a tool result carries, or `null` when the payload is not
- * a refusal. Recognizes exactly two shapes — the {@link makeRejection} shape every emit site uses,
- * and the `lineage_present_result` validator's own `{ success: false, errors: […] }` failure.
+ * a refusal. Recognizes exactly one shape — the {@link makeRejection} shape every emit site uses.
  *
  * @param data - Parsed untrusted tool result.
  * @returns The rejection, or `null` for a successful/non-rejection result.
  */
 export function readToolError(data: unknown): ToolRejection | null {
   const parsed = RejectionShape.safeParse(data);
-  if (parsed.success) {
-    const { detail, ...rest } = parsed.data;
-    return { ...rest, ...(detail !== undefined ? { detail } : {}) };
-  }
-  return readPresentResultFailure(data);
+  if (!parsed.success) return null;
+  const { detail, ...rest } = parsed.data;
+  return { ...rest, ...(detail !== undefined ? { detail } : {}) };
 }
 
 /** Longest one dotted-path segment: an identifier, or an index. */
@@ -215,18 +161,15 @@ export function makeRejection(input: {
 type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 
 /**
- * Enriches one Zod issue's message with the received value: measured size against the bound for
- * `too_big`/`too_small` (models cannot count characters), and a bounded verbatim echo for scalar
- * leaves (the rejected call is replayed without arguments). All derived mechanically from the
- * issue's own metadata — the single enrichment used by every reject prose this module composes.
+ * Enriches one Zod issue's message with the measured size against the bound for
+ * `too_big`/`too_small` (models cannot count characters). The received value is never echoed: the
+ * rejected call stays in the transcript with its arguments.
  */
 function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): string {
   if (issue.code === 'too_big' || issue.code === 'too_small') {
     return describeSizeIssue(issue, received) ?? issue.message;
   }
-  const echo = scalarEcho(received);
-  const message = baseIssueMessage(issue);
-  return echo !== undefined ? `${message}; sent: ${echo}` : message;
+  return baseIssueMessage(issue);
 }
 
 /**
@@ -234,8 +177,8 @@ function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): strin
  * union issue's own path so a nested union still reads as a full path from the payload root) and one
  * model-facing descriptor line per sub-issue — the bare dotted field path when it was absent from
  * `input` (the missing name *is* the defect), or `"<path>: <enriched message>"` when a value was
- * present but matched no branch (e.g. `depth: Invalid input: expected number, received string;
- * sent: "1"`). Both are derived from the same per-sub-issue full path in one pass. Without the
+ * present but matched no branch (e.g. `depth: Invalid input: expected number, received string`).
+ * Both are derived from the same per-sub-issue full path in one pass. Without the
  * defect message a scalar union — every variant naming the same single field — collapses to
  * `variant 1: depth; variant 2: depth`, which names the field but not the defect, so the model
  * regenerates the identical call blind.
@@ -338,9 +281,8 @@ function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line
     if (!branchTexts.includes(text)) branchTexts.push(text);
   }
   const branches = branchTexts.map((text, i) => `variant ${i + 1}: ${text}`);
-  const prefix = issue.path.length ? `${issue.path.join('.')}: ` : '';
   return {
-    line: `${prefix}input matched no variant; supply all required fields of one variant — ${branches.join('; ')}`,
+    line: `input matched no variant; supply all required fields of one variant — ${branches.join('; ')}`,
     paths: allPaths,
   };
 }
@@ -380,6 +322,13 @@ interface JsonSchemaShape {
   oneOf?: JsonSchemaShape[];
   items?: JsonSchemaShape;
   properties?: Record<string, JsonSchemaShape>;
+  required?: string[];
+  enum?: unknown[];
+}
+
+/** A Zod issue path as the model reads it: `sections[2].blocks`. */
+function dottedPath(path: readonly PropertyKey[]): string {
+  return path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[${key}]` : acc ? `${acc}.${String(key)}` : String(key)), '');
 }
 
 /** The JSON Schema node `path` addresses inside `schema`; `undefined` when the path leaves the schema. */
@@ -403,6 +352,22 @@ function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
   if (!branches) return node;
   const nonNull = branches.filter((branch) => branch.type !== 'null');
   return nonNull.length === 1 && nonNull.length < branches.length ? nonNull[0]! : node;
+}
+
+/**
+ * A literal value the node accepts, built from the schema alone: an enum's first member, a
+ * placeholder for a scalar type, and the required members of an object.
+ */
+function exampleOf(node: JsonSchemaShape): unknown {
+  const target = unwrapNullable(node);
+  if (target.enum?.length) return target.enum[0];
+  if (target.properties) {
+    const keys = target.required ?? Object.keys(target.properties);
+    return Object.fromEntries(keys.map(key => [key, exampleOf(target.properties![key] ?? {})]));
+  }
+  const type = Array.isArray(target.type) ? target.type[0] : target.type;
+  if (type === 'array') return [];
+  return type === 'number' || type === 'integer' ? 0 : type === 'boolean' ? false : '...';
 }
 
 /** Whether the schema accepts `null` at `path`. */
@@ -560,7 +525,9 @@ function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
     if (value === undefined) continue;
     const received = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
     const nullNote = acceptsNullAt(schema, issue.path) ? ', or null when it does not apply' : '';
-    return `"${issue.path.join('.')}" must be a JSON ${issue.expected}, not a ${received}; send the ${issue.expected} directly${nullNote}.`;
+    const node = jsonSchemaNodeAt(schema, issue.path);
+    const example = issue.expected === 'object' && node ? JSON.stringify(exampleOf(node)) : undefined;
+    return `"${issue.path.join('.')}" must be a JSON ${issue.expected}, not a ${received}; send the ${issue.expected} directly${example ? `, shaped like ${example}` : ''}${nullNote}.`;
   }
   return undefined;
 }
@@ -615,19 +582,12 @@ export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered i
  */
 export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
 
-/**
- * Longest scalar echoed verbatim. A longer string is reported by path and length only — never a
- * prefix — and objects and arrays are never echoed, so the full-payload re-echo the minimal-delta
- * repair contract forbids stays closed.
- */
-const SCALAR_ECHO_MAX_CHARS = 120;
+/** Longest object key quoted whole; a longer key is reported by length alone, never as a prefix. */
+const KEY_ECHO_MAX_CHARS = 120;
 
-/**
- * Quoted echo of one offending object key; a key longer than {@link SCALAR_ECHO_MAX_CHARS} is
- * reported by length alone, never as a prefix.
- */
+/** Quoted echo of one offending object key. */
 function quoteKey(key: string): string {
-  return key.length > SCALAR_ECHO_MAX_CHARS ? `a ${key.length}-character key` : `"${key}"`;
+  return key.length > KEY_ECHO_MAX_CHARS ? `a ${key.length}-character key` : `"${key}"`;
 }
 
 /** Walks `input` down one Zod issue path; `undefined` when the path leaves the object graph. */
@@ -648,20 +608,10 @@ function measuredSize(value: unknown): string | undefined {
   return undefined;
 }
 
-/** JSON-quoted echo of a short scalar leaf; long strings and non-scalars return `undefined`. */
-function scalarEcho(value: unknown): string | undefined {
-  if (typeof value === 'string') {
-    return value.length > SCALAR_ECHO_MAX_CHARS ? undefined : JSON.stringify(value);
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return undefined;
-}
-
 /**
  * Composes one reason line for a size violation from the issue's own metadata plus the received
- * value: measured size, the bound, and — for scalar leaves only — the verbatim text the model
- * cannot otherwise see (its rejected call is never replayed with arguments). Falls back to the
- * stock Zod message when the received value is unmeasurable.
+ * value: measured size and the bound. Falls back to the stock Zod message when the received value
+ * is unmeasurable.
  */
 function describeSizeIssue(
   issue: Extract<z.core.$ZodIssue, { code: 'too_big' | 'too_small' }>,
@@ -670,8 +620,7 @@ function describeSizeIssue(
   const size = measuredSize(received);
   if (size === undefined) return undefined;
   const bound = issue.code === 'too_big' ? `limit ${issue.maximum}` : `minimum ${issue.minimum}`;
-  const echo = scalarEcho(received);
-  return `${size}, ${bound}${echo !== undefined ? `; sent: ${echo}` : ''}`;
+  return `${size}, ${bound}`;
 }
 
 /**
@@ -683,7 +632,7 @@ export function zodIssuePaths(error: z.ZodError): string[] {
   return error.issues.flatMap((issue) => {
     if (issue.code !== 'unrecognized_keys') return [issue.path.join('.')];
     const base = issue.path.join('.');
-    return issue.keys.map((key) => (key.length > SCALAR_ECHO_MAX_CHARS ? base : base ? `${base}.${key}` : key));
+    return issue.keys.map((key) => (key.length > KEY_ECHO_MAX_CHARS ? base : base ? `${base}.${key}` : key));
   });
 }
 
@@ -691,10 +640,12 @@ export function zodIssuePaths(error: z.ZodError): string[] {
  * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error.
  *
  * @remarks
- * Maps each issue to `"<dottedPath>: <message>"`, except `invalid_union` which expands via
- * {@link describeInvalidUnion} into a per-branch required-field breakdown. When `input` is
- * supplied, each line is enriched with the measured size (`too_big`/`too_small`) or a bounded
- * scalar echo — Zod v4 issues carry no input, so the enrichment happens here. Only STRUCTURAL
+ * The reason is `z.prettifyError` over the issues, each carrying its enriched message: an
+ * `invalid_union` expands via {@link describeInvalidUnion} into a per-branch required-field
+ * breakdown, and when `input` is supplied a size issue names the measured size and a scalar leaf
+ * the value sent — Zod v4 issues carry no input, so the enrichment happens here. Issues identical
+ * apart from their array index (same code, message and path shape) collapse into the first, which
+ * names the other indices, so one defect repeated across N entries is one line. Only STRUCTURAL
  * bounds reach this function; a content cap is enforced and reported separately by the validator
  * or engine.
  * @param error - The Zod validation failure.
@@ -709,22 +660,32 @@ export function rejectionFromZodError(
   opts: { code: string; hint?: string; input?: unknown; schema?: z.ZodType },
 ): ToolRejection {
   const issuePaths: string[] = [];
-  const lines = error.issues.map(issue => {
+  const shown = new Map<string, { issue: z.core.$ZodIssue; message: string; others: string[] }>();
+  for (const issue of error.issues) {
+    let message: string;
     if (issue.code === 'invalid_union') {
       const { line, paths } = describeInvalidUnion(issue, opts.input);
       issuePaths.push(...paths);
-      return line;
+      message = line;
+    } else {
+      const path = issue.path.join('.');
+      if (issue.code === 'unrecognized_keys') issuePaths.push(...issue.keys.map(key => (path ? `${path}.${key}` : key)));
+      else if (path) issuePaths.push(path);
+      message = opts.input !== undefined
+        ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
+        : baseIssueMessage(issue);
     }
-    const path = issue.path.join('.');
-    if (path) issuePaths.push(path);
-    const message = opts.input !== undefined
-      ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
-      : baseIssueMessage(issue);
-    return path ? `${path}: ${message}` : message;
-  });
+    const shape = `${issue.code}|${message}|${issue.path.map(key => (typeof key === 'number' ? '*' : String(key))).join('.')}`;
+    const first = shown.get(shape);
+    if (first) first.others.push(dottedPath(issue.path));
+    else shown.set(shape, { issue, message, others: [] });
+  }
+  const collapsed = [...shown.values()].map(({ issue, message, others }) => (
+    { ...issue, message: others.length > 0 ? `${message} (same at ${others.join(', ')})` : message }
+  ));
   return makeRejection({
     code: opts.code,
-    reason: lines.join('; '),
+    reason: z.prettifyError(new z.ZodError(collapsed)),
     hint: opts.hint ?? zodFieldRepairHint(error, opts.input, opts.schema) ?? INVALID_TOOL_INPUT_REPAIR_HINT,
     issuePaths,
   });

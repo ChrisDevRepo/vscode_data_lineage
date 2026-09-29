@@ -899,6 +899,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'visual_preview', {
       stage: { kind: 'visual_preview' },
       presentResultRepairFields: () => sess.presentResultRepairFields,
+      presentResultPreviewBlockCount: narrative.blocks.length,
       facts: { memorySections: ['discovery_answer', 'discovery_scope'] },
       messages,
       system: buildVisualPreviewSystemPrompt(getCtx(state)),

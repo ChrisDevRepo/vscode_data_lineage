@@ -4,7 +4,9 @@
  * @remarks
  * Provider-neutral validation and assembly helpers remain in the sibling
  * `presentResult.ts`; this handler owns session persistence and the validated
- * webview effect. Turn-lease validation and effect serialization remain in the
+ * webview effect. The input arrives already parsed against the schema the stage served
+ * (the tool-attempt boundary owns that parse), so only engine-state rules are checked here, each
+ * refused as one rejection envelope. Turn-lease validation and effect serialization remain in the
  * registry wrapper.
  */
 import { type AiSession } from '../../session/session';
@@ -15,6 +17,7 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   findTextlessNewSectionLabels,
+  findBlockPartitionIssues,
   presentResultRepairInstruction,
   assemblePreviewSections,
   findDiscoveryPreviewNoteViolations,
@@ -22,29 +25,22 @@ import {
   expandEvidenceRefs,
   type PresentResultViolation,
   type PresentResultInput,
+  type PresentResultRepairPatch,
   type PresentResultStage,
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import {
-  presentResultBoundarySchemaForPhase,
-  normalizePresentSectionLabel,
-  presentResultRepairPatchSchemaForFields,
-  type PresentResultRepairField,
-} from '../../tools/toolSchemas';
+import { normalizePresentSectionLabel } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
-import { makeRejection, readToolError } from '../../support/toolErrorEnvelope';
+import { makeRejection, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-
-/** Zod issue path of a preview section's block range — a failure the range's own resend clears. */
-const PREVIEW_BLOCK_RANGE_PATH = /^sections\.\d+\.blocks$/;
 
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
@@ -130,15 +126,6 @@ function mergeAmendedNotes(
   return [...byNode].map(([nodeId, text]) => ({ nodeId, text }));
 }
 
-function notePresentResultFailure(sess: AiSession, token: number, data: object): void {
-  const rejection = readToolError(data);
-  if (!rejection) return;
-  const reason = rejection.hint
-    ? `${rejection.reason} (${rejection.hint})`
-    : rejection.reason;
-  sess.recordPresentResultFailure(token, sanitizeForLog(reason));
-}
-
 function buildColumnAspectNodeVerdicts(
   nodeIds: readonly string[],
   columnAspect: NonNullable<ResultGraph['columnAspect']>,
@@ -161,67 +148,6 @@ function captureCheckpoint(sess: AiSession, logger: ToolServices['logger']): Pre
   }
 }
 
-/**
- * Resolution of {@link resolvePresentResultRepairDraft}: the (possibly merged) input to keep
- * validating, or a terminal tool response the caller must return immediately.
- */
-type PresentResultRepairResolution =
-  | { readonly kind: 'input'; readonly input: unknown }
-  | { readonly kind: 'reject'; readonly response: string };
-
-/**
- * Resolves `executePresentResult`'s repair-draft branch: merges an authorized patch into a held
- * repairable draft, or passes the input through when no draft is held.
- *
- * @remarks
- * Every reject path returns through the caller's `reject` funnel; otherwise the caller
- * continues validating the resolved `input`.
- *
- * @param sess - Active AI session, source of the held draft and its authorization.
- * @param input - The current tool input.
- * @param stage - Stage the call was dispatched in; selects the patch shape a held draft accepts.
- * @param reject - The caller's reject funnel, invoked here so every failure logs identically.
- * @returns The resolved input to continue validating, or the terminal response to return.
- */
-function resolvePresentResultRepairDraft(
-  sess: AiSession,
-  input: unknown,
-  stage: PresentResultStage,
-  reject: (failure: object, opts?: { clearDraft?: boolean }) => string,
-): PresentResultRepairResolution {
-  const held = sess.presentResultRepairDraft.get();
-  const authorization = sess.presentResultRepairDraft.getAuthorization();
-  if (!held || !authorization) return { kind: 'input', input };
-  const patch = presentResultRepairPatchSchemaForFields(authorization.fields, stage).safeParse(input);
-  if (!patch.success) {
-    const fieldErrors = patch.error.issues
-      .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
-    return {
-      kind: 'reject',
-      response: reject({
-        success: false,
-        errors: fieldErrors,
-        hint: `Invalid present_result repair patch. Send only these authorized fields: ${authorization.fields.join(', ')}.`,
-      }),
-    };
-  }
-  const textlessNewLabels = patch.data.sections
-    ? findTextlessNewSectionLabels(held.sections, patch.data.sections)
-    : [];
-  if (textlessNewLabels.length > 0) {
-    return {
-      kind: 'reject',
-      response: reject({
-        success: false,
-        errors: [`sections[] names label(s) not on file with no text: ${quoteIds(textlessNewLabels)}.`],
-        hint: 'A label already on file may omit text to keep it; a new label needs its text. Use the exact held label to change an existing section. To fix: add text: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.',
-        detail: [{ path: 'sections' }],
-      }),
-    };
-  }
-  return { kind: 'input', input: mergePresentResultRepairPatch(held, patch.data, authorization) };
-}
-
 /** Builds and persists the final lineage presentation for the active turn. */
 export async function executePresentResult(input: unknown, s: ToolServices): Promise<string> {
     try {
@@ -241,38 +167,42 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? discoveryPreviewNarrative(sess.lastDiscoveryAnswer)
         : null;
 
-      const reject = (failure: object, opts: { clearDraft?: boolean } = {}): string => {
-        if (opts.clearDraft) sess.presentResultRepairDraft.clear();
-        notePresentResultFailure(sess, turnEpoch, failure);
-        return s.logAndReturn('lineage_present_result', failure, rawInput);
+      const reject = (rejection: ToolRejection): string => {
+        sess.recordPresentResultFailure(
+          turnEpoch,
+          sanitizeForLog(rejection.hint ? `${rejection.reason} (${rejection.hint})` : rejection.reason),
+        );
+        return s.logAndReturn('lineage_present_result', rejection, rawInput);
       };
 
-      if (isVisualPreview && !sess.presentResultRepairDraft.hasRepairableDraft()) {
+      const held = sess.presentResultRepairDraft.get();
+      const authorization = sess.presentResultRepairDraft.getAuthorization();
+      let presentInput: PresentResultInput;
+      if (held && authorization) {
+        const patch = input as PresentResultRepairPatch;
+        const textlessNewLabels = findTextlessNewSectionLabels(held.sections, patch.sections ?? []);
+        if (textlessNewLabels.length > 0) {
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `sections[] names label(s) not on file with no text: ${quoteIds(textlessNewLabels)}.`,
+            hint: 'A label already on file may omit text to keep it; a new label needs its text. Use the exact held label to change an existing section. To fix: add text: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.',
+            issuePaths: ['sections'],
+          }));
+        }
+        presentInput = mergePresentResultRepairPatch(held, patch, authorization);
+      } else if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
           ? sess.discoveryScopeArtifact
           : null;
-        if (!previewNarrative || !scope) {
+        if (!previewNarrative?.summary || !scope) {
           return reject(makeRejection({
             code: 'preview_source_unavailable',
             hint: 'Run the discovery question again, then request its graph preview.',
-          }), { clearDraft: true });
+          }));
         }
-        const supplied = input && typeof input === 'object' && !Array.isArray(input)
-          ? input as Record<string, unknown>
-          : {};
-        const previewProse: Record<string, string | undefined> = {
-          summary: previewNarrative.summary,
-          title: previewNarrative.title,
-        };
-        for (const [field, value] of Object.entries(previewProse)) {
-          const prior = supplied[field];
-          if (typeof prior === 'string' && prior !== value) {
-            s.logger.debug(
-              `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(prior)} to=${value === undefined ? '(absent)' : sanitizeForLog(value)}`,
-            );
-          }
-        }
-        input = { ...supplied, ...previewProse };
+        presentInput = { ...(input as PresentResultInput), summary: previewNarrative.summary, title: previewNarrative.title };
+      } else {
+        presentInput = input as PresentResultInput;
       }
 
       const presentResultStage: PresentResultStage = isVisualPreview
@@ -281,45 +211,20 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? 'completed'
         : 'synthesis';
 
-      const repairResolution = resolvePresentResultRepairDraft(sess, input, presentResultStage, reject);
-      if (repairResolution.kind === 'reject') return repairResolution.response;
-      input = repairResolution.input;
-
       const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
 
-      const boundary = presentResultBoundarySchemaForPhase(
-        presentResultStage,
-        retainableSections !== null,
-        previewNarrative?.blocks.length,
-      ).safeParse(input);
-      if (!boundary.success) {
-        const fieldErrors = boundary.error.issues
-          .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
-        const issuePaths = [...new Set(boundary.error.issues.flatMap(issue =>
-          issue.code === 'unrecognized_keys'
-            ? [...issue.keys]
-            : issue.path.length > 0 ? [issue.path.join('.')] : []))];
-        const detail = issuePaths.length > 0 ? { detail: issuePaths.map(path => ({ path })) } : {};
-        if (isVisualPreview && issuePaths.length > 0 && issuePaths.every(path => PREVIEW_BLOCK_RANGE_PATH.test(path))) {
-          const repairFields: readonly PresentResultRepairField[] = ['sections'];
-          sess.presentResultRepairDraft.hold(input as PresentResultInput, { fields: repairFields, sectionsMerge: 'by_label' });
-          return reject({
-            success: false,
-            errors: fieldErrors,
-            hint: presentResultRepairInstruction(repairFields, 'by_label', presentResultStage),
-            repairable: true,
-            repairFields,
-            ...detail,
-          });
+      if (previewNarrative) {
+        const partition = findBlockPartitionIssues(presentInput.sections ?? [], previewNarrative.blocks.length);
+        if (partition.length > 0) {
+          sess.presentResultRepairDraft.hold(presentInput, { fields: ['sections'], sectionsMerge: 'by_label' });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: partition.map(issue => issue.message).join('\n'),
+            hint: presentResultRepairInstruction(['sections'], 'by_label'),
+            issuePaths: partition.map(issue => `sections.${issue.index}.blocks`),
+          }));
         }
-        return reject({
-          success: false,
-          errors: fieldErrors,
-          hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
-          ...detail,
-        }, { clearDraft: true });
       }
-      const presentInput = boundary.data as PresentResultInput;
 
       const isAmendment = !isVisualPreview && sess.phase.kind === 'completed' && presentInput.is_update === true;
 
@@ -334,7 +239,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
       if (!resultGraph) {
-        return reject(evaluatePresentResultPreconditionsRule(false)!, { clearDraft: true });
+        return reject(evaluatePresentResultPreconditionsRule(false)!);
       }
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
@@ -377,13 +282,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const currentSet = new Set(resolvedNodeIds);
         const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap);
         if (addResolution.unresolved.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
-              'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
-            ],
-          }, { clearDraft: true });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
+            hint: 'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
+            issuePaths: ['add_node_ids'],
+          }));
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
         const scopeSnapshot = sess.stateMachine?.toJSON() ?? null;
@@ -391,13 +295,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
           : [];
         if (outOfScope.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
-              'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
-            ],
-          }, { clearDraft: true });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
+            hint: 'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
+            issuePaths: ['add_node_ids'],
+          }));
         }
         resolvedNodeIds.push(...toAdd);
         const newSet = new Set(resolvedNodeIds);
@@ -409,13 +312,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
         const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap);
         if (pruneResolution.unresolved.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
-              'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
-            ],
-          }, { clearDraft: true });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
+            hint: 'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
+            issuePaths: ['prune_node_ids'],
+          }));
         }
         const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
@@ -425,27 +327,23 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (resultGraph.originNodeId) {
         const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
         if (disconnected.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `Closed-graph invariant failed: ${quoteIds(disconnected)} ${disconnected.length === 1 ? 'is' : 'are'} disconnected from origin \`${resultGraph.originNodeId}\`.`,
-              'Adjust add_node_ids / prune_node_ids so the view remains connected from the starting node.',
-            ],
-          }, { clearDraft: true });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `Closed-graph invariant failed: ${quoteIds(disconnected)} ${disconnected.length === 1 ? 'is' : 'are'} disconnected from origin \`${resultGraph.originNodeId}\`.`,
+            hint: 'Adjust add_node_ids / prune_node_ids so the view remains connected from the starting node.',
+          }));
         }
       }
 
       if (retainableSections) {
         const retained = resolveRetainedSections(presentInput.sections, retainableSections, new Set(resolvedNodeIds));
         if (retained.unknownLabels.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `sections[] asks to keep text for ${quoteIds(retained.unknownLabels)}, which the committed report has no body for.`,
-              'Send that section with its own text, or use a label from the committed report to keep its text.',
-            ],
-            hint: 'Fix the listed section labels and call lineage_present_result again.',
-          }, { clearDraft: true });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `sections[] asks to keep text for ${quoteIds(retained.unknownLabels)}, which the committed report has no body for.`,
+            hint: 'Send that section with its own text, or use a label from the committed report to keep its text.',
+            issuePaths: ['sections'],
+          }));
         }
         const keptCount = retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string' && sec.text.trim().length > 0).length;
         if (keptCount > 0) {
@@ -586,12 +484,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (!validation.success) {
         if (validation.repairable) {
           sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields, sectionsMerge: validation.sectionsMerge });
-        } else {
-          sess.presentResultRepairDraft.clear();
         }
-        const { sectionsMerge: _heldOnly, ...rejection } = validation;
-        notePresentResultFailure(sess, turnEpoch, rejection);
-        return s.logAndReturn('lineage_present_result', rejection, rawInput);
+        return reject(validation.rejection);
       }
 
       const runId = sess.explorationRunId ?? sess.id;

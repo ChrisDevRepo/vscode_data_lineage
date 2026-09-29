@@ -2,29 +2,23 @@
  * Executes active-hop submissions for the `lineage_submit_findings` tool.
  *
  * @remarks
- * Mode-specific boundary validation and state-machine submission stay local to
- * this handler. Turn-lease validation and effect serialization remain in the
- * registry wrapper.
+ * The input arrives already parsed against the mode-and-classification schema the hop served (the
+ * tool-attempt boundary owns that parse); engine-state rules and state-machine submission stay
+ * local to this handler. Turn-lease validation and effect serialization remain in the registry
+ * wrapper.
  */
 import { NavigationEngine } from '../../sm/smBase';
-import type { Verdict } from '../../sm/smTypes';
 import { sanitizeForLog } from '../../../utils/log';
-import {
-  submitFindingsSchemaForMode,
-  toHopFinding,
-} from '../../tools/toolSchemas';
+import { toHopFinding, type FlatSubmitFindings } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import { assignEvidenceIds } from '../../tools/presentResult';
-import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
+import { makeRejection } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-import {
-  extractRawSectionAngles,
-  validateSectionsAgainstClassification,
-} from '../../interaction/rules/submitFindingsRules';
+import { validateSectionsAgainstClassification } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
 /**
@@ -64,38 +58,14 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           `[Normalize] tool=submit_findings field=${event.field} from=${sanitizeForLog(event.from)} to=${sanitizeForLog(event.to)}`,
         );
       }
+      const flat = normalizedInput as FlatSubmitFindings;
 
-      const hopMode = engine.currentHopAnalysisMode;
-      const findingsSchema = submitFindingsSchemaForMode(hopMode, sess.classification);
-      const parsed = findingsSchema.safeParse(normalizedInput);
-      if (!parsed.success) {
-        const isCtMode = hopMode === 'ct';
-        const { reason: fieldErrors } = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: normalizedInput, schema: findingsSchema });
-        const modeLabel = isCtMode ? 'CT' : 'BB';
-        const summary = `Invalid ${modeLabel} submit_findings input — ${fieldErrors}.`;
-        const repairHint = zodFieldRepairHint(parsed.error, normalizedInput, findingsSchema);
-        const rawAngles = extractRawSectionAngles((normalizedInput as { sections?: unknown }).sections);
-        const rawVerdict = (normalizedInput as { verdict?: unknown }).verdict;
-        const rawFocus = (normalizedInput as { focus_node_id?: unknown }).focus_node_id;
-        const angleHint = validateSectionsAgainstClassification(
-          rawAngles,
-          sess.classification,
-          typeof rawVerdict === 'string' ? rawVerdict as Verdict : undefined,
-          typeof rawFocus === 'string' ? sess.memory.getArchivedAngles(rawFocus) : undefined,
-        );
-        const hint = [summary, repairHint, angleHint].filter(Boolean).join(' ');
-        return s.logAndReturn('lineage_submit_findings', makeRejection({
-          code: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
-          hint,
-        }), normalizedInput);
-      }
-
-      if (parsed.data.verdict === 'end_branch' && (parsed.data.summary != null || parsed.data.sections != null)) {
+      if (flat.verdict === 'end_branch' && (flat.summary != null || flat.sections != null)) {
         s.logger.debug(
-          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[parsed.data.summary != null ? 'summary' : '', parsed.data.sections != null ? 'sections' : ''].filter(Boolean).join(',')}`,
+          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[flat.summary != null ? 'summary' : '', flat.sections != null ? 'sections' : ''].filter(Boolean).join(',')}`,
         );
       }
-      const held = engine.applyHeldContent(toHopFinding(parsed.data));
+      const held = engine.applyHeldContent(toHopFinding(flat));
       if ('code' in held) return s.logAndReturn('lineage_submit_findings', held, normalizedInput);
       const finding = held;
 
