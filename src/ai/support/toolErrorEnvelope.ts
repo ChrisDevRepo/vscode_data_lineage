@@ -630,11 +630,13 @@ function describeSizeIssue(
  * keeps `path.join('.')`.
  */
 export function zodIssuePaths(error: z.ZodError): string[] {
-  return error.issues.flatMap((issue) => {
-    if (issue.code !== 'unrecognized_keys') return [issue.path.join('.')];
-    const base = issue.path.join('.');
-    return issue.keys.map((key) => (key.length > KEY_ECHO_MAX_CHARS ? base : base ? `${base}.${key}` : key));
-  });
+  return error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? unrecognizedKeyPaths(issue) : [issue.path.join('.')]));
+}
+
+/** One dotted path per offending key; a key over {@link KEY_ECHO_MAX_CHARS} yields its container's path, never the key. */
+function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecognized_keys' }>): string[] {
+  const base = issue.path.join('.');
+  return issue.keys.map((key) => (key.length > KEY_ECHO_MAX_CHARS ? base : base ? `${base}.${key}` : key));
 }
 
 /**
@@ -670,7 +672,7 @@ export function rejectionFromZodError(
       message = line;
     } else {
       const path = issue.path.join('.');
-      if (issue.code === 'unrecognized_keys') issuePaths.push(...issue.keys.map(key => (path ? `${path}.${key}` : key)));
+      if (issue.code === 'unrecognized_keys') issuePaths.push(...unrecognizedKeyPaths(issue));
       else if (path) issuePaths.push(path);
       message = opts.input !== undefined
         ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
