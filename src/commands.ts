@@ -105,11 +105,6 @@ export function registerCommands(
      *
      * @returns The SM state, also when no workspace folder is open to write it to;
      *   `undefined` only when there is no state machine or the write failed.
-     *
-     * @remarks
-     * Shares the `tmp` root with AI trace logging rather than creating a `test-results`
-     * directory in the user's project — that name is this repository's test-output
-     * convention, not something a user's workspace should grow.
      */
     vscode.commands.registerCommand('dataLineageViz.dumpSmState', async () => {
       const sess = getSession();

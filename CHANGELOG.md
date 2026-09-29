@@ -6,28 +6,17 @@
 - **Trace navigator** in the trace view: browse a trace by level, highlight routes and find objects.
 
 ### Changed
-- A deep analysis whose scope is over a limit is now refused to you up front, naming the limit and its setting, with no approval card. Each object the analysis reads takes one round (every procedure, view or function, and a table only where it is read itself) against `dataLineageViz.ai.maxRounds`, which applies without a reload; a column trace may start with at most `dataLineageViz.ai.maxTraceColumns` columns (default 10). The `dataLineageViz.ai.explorationTokenBudget` and `dataLineageViz.ai.explorationNodeCap` settings are removed.
-- The AI deep-analysis approval card is now a compact summary, with a **Show full plan** follow-up for the complete detail.
-- Improved the graph on large models: faster rendering, more stable layout and view handling, correct spacing around AI preview badges and footnotes; a selection over `dataLineageViz.maxNodes` is refused with the count, external-reference nodes included, instead of being silently trimmed.
-- `dataLineageViz.maxNodes` now accepts up to 5,000 objects (default 2,000).
-- Optimized the `@lineage` assistant's backend and request handling.
-- After an analysis, `@lineage` answers follow-up questions by walking the loaded graph, and a quick overview question can be answered without a tool call.
-- A typed reply while the approval card waits is read as approve, change or cancel.
-- Accessibility: keyboard focus, accessible names and roles for popups, menus and dialogs, and AA contrast in the toolbar and detail views.
-- Edges fade and thin as the graph gets denser.
-- Dependencies updated: React 19.3.0, `@xyflow/react` 12.11.6, DOMPurify 3.4.16, fast-xml-parser 5.11.1, js-yaml 5.4.2, JSZip 3.10.2, marked 18.0.14, Zod 4.6.5. New: `comlink` (layout worker) and `react-arborist` (trace navigator).
+- `@lineage` backend reworked on LangChain/LangGraph standards: optimized messaging, fewer and clearer rejections.
+- Clearer AI limits: an analysis over a limit is refused up front with the setting to change.
+- Compact approval card and better follow-up handling in chat.
+- Graph performance and stability improved on large models; higher object limit.
+- Accessibility improvements across the graph and detail views.
+- Dependencies updated.
 
 ### Fixed
-- The AI approval card and its **Approve & Proceed** / **Change scope** / **Cancel** buttons stay visible in VS Code releases that collapse a completed chat response: the card's closing line now comes before the buttons instead of after them. While the card waits, **Show full plan** is the only follow-up offered.
-- The AI's "stopped early" and "Discovery budget reached" notices stay visible in VS Code releases that collapse a completed chat response: they now close the answer instead of preceding it.
-- `@lineage` message handling migrated to LangChain/LangGraph standards (tool-calling transcript, `trimMessages`, history reset and cancellation).
-- Numeric settings are read inside their declared range everywhere; a rejected AI report is repaired by resending only the changed sections.
-- Schema View threshold: the toggle and its tooltip use the same `renderLimit`-capped threshold as the initial view.
-- **Search Objects** focuses the picked object in the graph.
-- An unreadable `.dacpac`, or a load that ends without a model, reports an error instead of failing silently.
-- **Reload** on a settings notice reloads the open source, including the demo.
-- The assistant's view of the visible graph respects **Hide Isolated Nodes**.
-- With `dataLineageViz.ai.enabled` off, the `@lineage` participant and its tools are hidden from the chat and tool pickers instead of appearing inert.
+- AI approval card and notices stay visible in current VS Code releases.
+- Settings, search, reload and error-reporting fixes.
+- Graph and assistant views stay in sync with the active filters and AI setting.
 
 ## [1.2.0] - 2026-09-21
 
