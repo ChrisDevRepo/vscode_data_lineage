@@ -206,7 +206,7 @@ function resolvePresentResultRepairDraft(
       response: reject({
         success: false,
         errors: [`sections[] names label(s) not on file with no text: ${quoteIds(textlessNewLabels)}.`],
-        hint: 'A label already on file may omit text to keep it; a new label needs its text. Use the exact held label to change an existing section. To fix: add text: under the offending label, or move its node_ids into an exact held label.',
+        hint: 'A label already on file may omit text to keep it; a new label needs its text. Use the exact held label to change an existing section. To fix: add text: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.',
         detail: [{ path: 'sections' }],
       }),
     };
