@@ -555,20 +555,23 @@ export class NavigationEngine implements IHopStateMachine {
    * A retry with authored sections is a deliberate replacement and remains unchanged.
    *
    * @returns The submission to apply, or a `missing_field` rejection when a kept verdict arrives
-   *   with empty sections and no held draft supplied any.
+   *   with empty sections and an empty summary and no held draft supplied them. Empty sections
+   *   with an authored summary pass on: a revisit credits the angles already archived.
    */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
     if (incoming.verdict === 'end_branch') return incoming;
     const held = this.heldFindingDraft.get();
     if (incoming.sections.length > 0) return incoming;
-    const missing = (): ToolRejection => makeRejection({
-      code: REJECTION_CODES.missingField,
-      hint: 'sections is empty and no draft is held for this node; send authored sections and a non-empty summary.',
-    });
-    if (!held) return missing();
+    const unrestored = (): HopSubmission | ToolRejection => incoming.summary.trim()
+      ? incoming
+      : makeRejection({
+        code: REJECTION_CODES.missingField,
+        hint: 'sections is empty and no draft is held for this node; send authored sections and a non-empty summary.',
+      });
+    if (!held) return unrestored();
     const heldFocus = resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
     const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap) ?? incoming.focus_node_id.toLowerCase();
-    if (heldFocus !== inFocus || inFocus !== this.currentFocusNodeId) return missing();
+    if (heldFocus !== inFocus || inFocus !== this.currentFocusNodeId) return unrestored();
     const restored = this.heldFindingDraft.merge(incoming, (draft, patch) => {
       return {
         ...patch,
@@ -576,7 +579,7 @@ export class NavigationEngine implements IHopStateMachine {
         summary: draft.summary,
       };
     });
-    if (!restored) return missing();
+    if (!restored) return unrestored();
     this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
     return restored;
   }
