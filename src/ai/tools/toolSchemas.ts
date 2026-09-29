@@ -613,7 +613,7 @@ const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + ', null with end_branch. Pr
 
 /** Single source for the `summary` describe text, shared by the per-mode schemas and the registered union. */
 const SUMMARY_DESCRIPTION =
-  KEPT_VERDICT_REQUIRED + ', null with end_branch. One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
+  'One sentence, readable without this hop: what this node does to the data and what it hands to which node. Empty string with end_branch.';
 
 /**
  * Shared `submit_findings` fields across BB and CT modes, one flat object.
@@ -626,7 +626,7 @@ const SUMMARY_DESCRIPTION =
 const HopFindingBaseSchema = z.object({
   focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
   verdict: HopVerdictSchema,
-  summary: z.string().nullable().describe(SUMMARY_DESCRIPTION),
+  summary: z.string().describe(SUMMARY_DESCRIPTION),
   badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
@@ -682,7 +682,7 @@ const END_BRANCH_EXCLUDED_FIELDS = ['badge_label', 'prune_neighbors', 'questions
  * @remarks
  * `end_branch` requires `reason` and refuses the fields that act on a kept verdict; `summary` and
  * `sections` are accepted and dropped by {@link toHopFinding}. A kept verdict carries `sections`
- * and `summary` (and, in CT, `column_flow`) and never `reason`; `summary` may be null only when a held draft
+ * and `summary` (and, in CT, `column_flow`) and never `reason`; `summary` may be empty only when a held draft
  * exists (`fresh` unset), and the engine keeps the held summary. Each fault is one
  * issue on its own path, so the rejection names the exact field to drop or add. `column_flow` is
  * served-required in CT (always in the served `required` list, never omissible at the schema level)
@@ -736,11 +736,11 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       params: { hint: 'Send sections: the section body keyed by angle.' },
     });
   }
-  if (value.summary === null && fresh) {
+  if (typeof value.summary === 'string' && value.summary.trim() === '' && fresh) {
     ctx.addIssue({
       code: 'custom',
       path: ['summary'],
-      message: `required with verdict ${value.verdict}; null only with end_branch.`,
+      message: `required with verdict ${value.verdict}; empty only with end_branch.`,
       params: { hint: 'Send summary: one sentence on what this node does to the data and hands on.' },
     });
   }
@@ -767,7 +767,7 @@ export function toHopFinding(value: FlatSubmitFindings): HopFinding {
     focus_node_id: value.focus_node_id,
     verdict: value.verdict,
     sections: extractRawSectionAngles(value.sections),
-    summary: value.summary ?? '',
+    summary: value.summary,
   };
   if (value.badge_label !== undefined) kept.badge_label = value.badge_label;
   if (value.prune_neighbors !== undefined) kept.prune_neighbors = value.prune_neighbors;
@@ -921,7 +921,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  *
  * @param mode - Locked active analysis mode used for provider projection.
  * @param classification - Locked output classification; omitted callers get the mode-only schema.
- * @param freshSubmission - Serve the `both` angle keys as required and refuse a null `summary` on a kept verdict (the served schema stays nullable for `end_branch`); unset
+ * @param freshSubmission - Serve the `both` angle keys as required and refuse an empty `summary` on a kept verdict; unset
  * so a held draft or an archived angle still validates.
  * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col` and offers
  * `writes_to` for a procedure focus alone.
@@ -1482,7 +1482,7 @@ const PresentResultRetainingSynthesisModelSchema = withRetainableSections(Presen
 export const SubmitFindingsModelSchema = z.object({
   focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
   verdict: HopVerdictSchema,
-  summary: z.string().nullable().describe(SUMMARY_DESCRIPTION),
+  summary: z.string().describe(SUMMARY_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),

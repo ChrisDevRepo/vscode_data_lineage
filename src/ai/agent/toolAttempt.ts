@@ -291,7 +291,7 @@ function heldSubmissionRule(held: HeldSubmissionParts): string {
     ...(held.summary ? ['summary'] : []),
     ...held.fields,
   ].join(', ');
-  const keepValues = [...(held.sections.length > 0 ? ['sections: {}'] : []), ...(held.summary ? ['summary: null'] : [])];
+  const keepValues = [...(held.sections.length > 0 ? ['sections: {}'] : []), ...(held.summary ? ['summary: ""'] : [])];
   return `Held: ${labels}. Resend the full call with the failed field(s) corrected`
     + (keepValues.length > 0 ? `; send ${keepValues.join(' and ')} to keep the held ${keepValues.length > 1 ? 'values' : 'value'}` : '')
     + (held.fields.length > 0 ? `; omit ${held.fields.join(', ')} to keep ${held.fields.length > 1 ? 'them' : 'it'}` : '')

@@ -566,13 +566,11 @@ export class NavigationEngine implements IHopStateMachine {
    * restored unless the rejection that held it named that field as failed; a field
    * the retry sends replaces the held one.
    *
-   * @param summaryOmitted - The wire summary was `null`: only a held draft of this focus can supply it.
    * @returns The submission to apply, or a `missing_field` rejection when a kept verdict carries no
-   *   sections and no summary and no held draft of this focus supplies them, or when the summary was
-   *   omitted with no held draft. Empty sections with an authored summary pass on: a revisit
+   *   sections and no summary and no held draft of this focus supplies them. Empty sections with an authored summary pass on: a revisit
    *   credits the angles already archived.
    */
-  public applyHeldContent(incoming: HopSubmission, summaryOmitted = false): HopSubmission | ToolRejection {
+  public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
     if (incoming.verdict === 'end_branch') return incoming;
     const held = this.heldFindingDraft.get();
     const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap) ?? incoming.focus_node_id.toLowerCase();
@@ -582,13 +580,6 @@ export class NavigationEngine implements IHopStateMachine {
       ? held
       : null;
     if (!heldForFocus) {
-      if (summaryOmitted) {
-        return makeRejection({
-          code: REJECTION_CODES.missingField,
-          hint: 'summary is null and no draft is held for this node; resend the full call with summary: one sentence on what this node does to the data and hands on.',
-          issuePaths: ['summary'],
-        });
-      }
       return incoming.sections.length > 0 || incoming.summary.trim() ? incoming : makeRejection({
         code: REJECTION_CODES.missingField,
         hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',

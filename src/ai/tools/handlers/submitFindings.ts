@@ -60,12 +60,12 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       }
       const flat = normalizedInput as FlatSubmitFindings;
 
-      if (flat.verdict === 'end_branch' && (flat.summary != null || flat.sections != null)) {
+      if (flat.verdict === 'end_branch' && (flat.summary !== '' || flat.sections != null)) {
         s.logger.debug(
-          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[flat.summary != null ? 'summary' : '', flat.sections != null ? 'sections' : ''].filter(Boolean).join(',')}`,
+          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[flat.summary !== '' ? 'summary' : '', flat.sections != null ? 'sections' : ''].filter(Boolean).join(',')}`,
         );
       }
-      const finding = engine.applyHeldContent(toHopFinding(flat), flat.summary == null);
+      const finding = engine.applyHeldContent(toHopFinding(flat));
       if ('code' in finding) return s.logAndReturn('lineage_submit_findings', finding, normalizedInput);
 
       const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
