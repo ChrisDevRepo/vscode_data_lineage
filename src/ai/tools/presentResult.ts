@@ -405,7 +405,9 @@ export function presentResultRepairInstruction(resendList: readonly PresentResul
  * Merges a strict repair patch into a held full `present_result` draft.
  *
  * @remarks
- * `sections` merge by label ({@link RepairDraftStore.mergeByKey}). Every other collection (`notes`, `highlight_groups`) replaces whole by
+ * `sections` merge by label ({@link RepairDraftStore.mergeByKey}); a preview list, whose sections
+ * each carry a `start`, is then ordered by that start, so a new mid-answer section never trips the
+ * ascending-starts check (two sections sharing a start still do). Every other collection (`notes`, `highlight_groups`) replaces whole by
  * design: the model does not send partial array operations for those, it sends the corrected
  * collection, and the normal validation/assembly path checks the merged full draft.
  *
@@ -426,8 +428,11 @@ export function mergePresentResultRepairPatch(
     if (key === 'is_update') continue;
     if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
     if (key === 'sections' && Array.isArray(value)) {
-      updates.sections = RepairDraftStore.mergeByKey<PresentSection>(draft.sections ?? [], value as PresentSectionPatch[], sectionKey)
+      const merged = RepairDraftStore.mergeByKey<PresentSection>(draft.sections ?? [], value as PresentSectionPatch[], sectionKey)
         .map(section => ({ ...section, node_ids: section.node_ids ?? [] }));
+      updates.sections = merged.every(section => section.start)
+        ? merged.sort((a, b) => Number(a.start!.slice(1)) - Number(b.start!.slice(1)))
+        : merged;
       continue;
     }
     Object.assign(updates, { [key]: value });
