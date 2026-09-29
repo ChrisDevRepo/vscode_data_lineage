@@ -443,8 +443,9 @@ never retypes the answer. One Zod `superRefine` checks that the section ranges
 cover B1..Bn exactly once and in order; a gap, an overlap or an unknown block id
 is reported at `sections.N.blocks` and names the offending blocks. `notes` are
 checked as one contiguous span of the answer, compared on markdown-stripped
-plain text. A rejected preview is repaired by label: the retry resends only the
-named section, and every held section not resent is kept. The repair hint does
+plain text. A rejected block range is repaired by label: the retry resends only the
+named section, and every held section not resent is kept; a failure inside one held
+section (an unlinkable node id) resends the whole list. The repair hint does
 not ask for `is_update`. Synthesis continues to author its report from the
 completed exploration archive.
 

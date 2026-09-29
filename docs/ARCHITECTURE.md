@@ -761,7 +761,7 @@ omit `text` or `node_ids` to keep the held values, so the view shows labels
 and node ids only. Whole-list applies only
 where the fix cannot be addressed by label: a failure inside one held section
 (an unlinkable node id), where the omission must be able to drop it. The
-discovery preview always repairs by label. `notes`
+discovery preview follows the same rule, with `blocks` in place of `text`. `notes`
 and `highlight_groups` always resend as a whole list.
 
 Every captured SQL fence served to synthesis carries an evidence id in its
