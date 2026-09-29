@@ -255,7 +255,7 @@ export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic
   }
   const plain = codes.map(code => LANGUAGE_MODEL_ERROR_TEXT[code]).find((text): text is string => text !== undefined);
   if (plain !== undefined) return plain;
-  const detail = trunc(`${diagnostic.name}${codes.length ? ` [${codes.join(' → ')}]` : ''}: ${diagnostic.message}`, 200);
+  const detail = `${diagnostic.name}${codes.length ? ` [${codes.join(' → ')}]` : ''}: ${diagnostic.message}`;
   return `The AI provider reported an error (${detail}).`;
 }
 

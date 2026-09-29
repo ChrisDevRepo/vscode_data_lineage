@@ -11,13 +11,6 @@ type NotifyContext = Record<string, unknown>;
 
 const MAX_NOTIFICATION_CONTEXT = LOG_TRUNC_JSON * 4;
 
-/**
- * Ceiling for the toast text itself. Comfortably above every message this extension composes,
- * so only runaway interpolation — a raw provider error, webview-supplied text — is cut. The
- * untruncated message always reaches the log line above the toast.
- */
-const MAX_NOTIFICATION_MESSAGE = 400;
-
 function renderContextValue(value: unknown): string {
   try {
     if (Array.isArray(value)) {
@@ -60,7 +53,7 @@ export function notifyError(
 ): void {
   const detail = `notification="${userMessage}"${formatContext(context)}`;
   logger.error(`${operation} — ${detail}`, error ?? new Error(userMessage));
-  showErrorMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
+  showErrorMessage(userMessage);
 }
 
 /** Logs detailed information diagnostics before showing a concise VS Code info toast. */
@@ -72,7 +65,7 @@ export function notifyInfo(
   showInformationMessage: (message: string) => unknown = vscode.window.showInformationMessage,
 ): void {
   logger.info(`${operation} — notification="${userMessage}"${formatContext(context)}`);
-  showInformationMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
+  showInformationMessage(userMessage);
 }
 
 /** Logs detailed warning diagnostics before showing a concise VS Code warning toast. */
@@ -84,5 +77,5 @@ export function notifyWarning(
   showWarningMessage: (message: string) => unknown = vscode.window.showWarningMessage,
 ): void {
   logger.warn(`${operation} — notification="${userMessage}"${formatContext(context)}`);
-  showWarningMessage(trunc(userMessage, MAX_NOTIFICATION_MESSAGE));
+  showWarningMessage(userMessage);
 }
