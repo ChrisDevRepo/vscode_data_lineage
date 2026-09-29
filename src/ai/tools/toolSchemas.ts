@@ -681,15 +681,16 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
  */
 export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema> };
 
-/** Fields a kept verdict may carry and an `end_branch` must not — `column_flow` has its own check, since CT serves it always-present. */
-const END_BRANCH_EXCLUDED_FIELDS = ['sections', 'summary', 'badge_label', 'prune_neighbors', 'questions'] as const;
+/** Fields that act on a kept verdict and are therefore refused with `end_branch` — `column_flow` has its own check, since CT serves it always-present. */
+const END_BRANCH_EXCLUDED_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
 
 /**
  * Enforces the verdict-dependent shape of one flat `submit_findings` payload.
  *
  * @remarks
- * `end_branch` carries only `focus_node_id`, `verdict` and a required `reason`; a kept verdict
- * carries `sections` and `summary` (and, in CT, `column_flow`) and never `reason`. Each fault is one
+ * `end_branch` requires `reason` and refuses the fields that act on a kept verdict; `summary` and
+ * `sections` are accepted and dropped by {@link toHopFinding}. A kept verdict carries `sections`
+ * and `summary` (and, in CT, `column_flow`) and never `reason`. Each fault is one
  * issue on its own path, so the rejection names the exact field to drop or add. `column_flow` is
  * served-required in CT (always in the served `required` list, never omissible at the schema level)
  * so its own content check runs for every verdict rather than joining
@@ -699,12 +700,11 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
   if (value.verdict === 'end_branch') {
     for (const field of END_BRANCH_EXCLUDED_FIELDS) {
       if (value[field] == null) continue;
-      const nullable = field === 'sections' || field === 'summary';
       ctx.addIssue({
         code: 'custom',
         path: [field],
         message: 'not accepted with verdict end_branch; verdict analyze or passthrough keeps the node.',
-        params: { hint: nullable ? `Send ${field}: null.` : `Omit ${field}.` },
+        params: { hint: `Omit ${field}.` },
       });
     }
     if (mode === 'ct' && (value.column_flow?.length ?? 0) > 0) {
