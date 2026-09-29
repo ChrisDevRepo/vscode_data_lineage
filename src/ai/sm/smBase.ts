@@ -641,8 +641,10 @@ export class NavigationEngine implements IHopStateMachine {
     const held = prior !== null && (resolveModelNodeId(prior.focus_node_id, this.nodeMap) ?? prior.focus_node_id.toLowerCase()) === focus
       ? prior
       : null;
+    const priorFailed = held ? this.heldFindingDraft.getAuthorization()?.failed ?? [] : [];
     const draft: HopFindingKept = {
       ...(held ?? {}),
+      ...Object.fromEntries(priorFailed.filter(field => (HELD_CARRIED_FIELDS as readonly string[]).includes(field)).map(field => [field, undefined])),
       ...fields,
       focus_node_id: raw.focus_node_id,
       verdict: raw.verdict,
