@@ -191,7 +191,7 @@ export const StartExplorationInputSchema = z.object({
       params: { startIssue: 'classification_required' },
     });
   }
-  if (data.origin && data.analysisMode === 'ct' && (!data.targetColumns || data.targetColumns.length === 0)) {
+  if (data.analysisMode === 'ct' && (data.origin || data.targetColumns !== undefined) && (!data.targetColumns || data.targetColumns.length === 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['targetColumns'],
