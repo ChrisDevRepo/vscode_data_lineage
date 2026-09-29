@@ -15,7 +15,9 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   findTextlessNewSectionLabels,
-  findDiscoveryPreviewReuseViolations,
+  presentResultRepairInstruction,
+  assemblePreviewSections,
+  findDiscoveryPreviewNoteViolations,
   assignEvidenceIds,
   expandEvidenceRefs,
   type PresentResultViolation,
@@ -28,6 +30,7 @@ import {
   presentResultBoundarySchemaForPhase,
   normalizePresentSectionLabel,
   presentResultRepairPatchSchemaForFields,
+  type PresentResultRepairField,
 } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
@@ -39,6 +42,9 @@ import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+
+/** Zod issue path of a preview section's block range — a failure the range's own resend clears. */
+const PREVIEW_BLOCK_RANGE_PATH = /^sections\.\d+\.blocks$/;
 
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
@@ -173,18 +179,20 @@ type PresentResultRepairResolution =
  *
  * @param sess - Active AI session, source of the held draft and its authorization.
  * @param input - The current tool input.
+ * @param stage - Stage the call was dispatched in; selects the patch shape a held draft accepts.
  * @param reject - The caller's reject funnel, invoked here so every failure logs identically.
  * @returns The resolved input to continue validating, or the terminal response to return.
  */
 function resolvePresentResultRepairDraft(
   sess: AiSession,
   input: unknown,
+  stage: PresentResultStage,
   reject: (failure: object, opts?: { clearDraft?: boolean }) => string,
 ): PresentResultRepairResolution {
   const held = sess.presentResultRepairDraft.get();
   const authorization = sess.presentResultRepairDraft.getAuthorization();
   if (!held || !authorization) return { kind: 'input', input };
-  const patch = presentResultRepairPatchSchemaForFields(authorization.fields).safeParse(input);
+  const patch = presentResultRepairPatchSchemaForFields(authorization.fields, stage).safeParse(input);
   if (!patch.success) {
     const fieldErrors = patch.error.issues
       .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
@@ -193,7 +201,7 @@ function resolvePresentResultRepairDraft(
       response: reject({
         success: false,
         errors: fieldErrors,
-        hint: `Invalid present_result repair patch. Send only is_update:true plus these authorized fields: ${authorization.fields.join(', ')}.`,
+        hint: `Invalid present_result repair patch. Send only these authorized fields: ${authorization.fields.join(', ')}.`,
       }),
     };
   }
@@ -267,19 +275,23 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         input = { ...supplied, ...previewProse };
       }
 
-      const repairResolution = resolvePresentResultRepairDraft(sess, input, reject);
-      if (repairResolution.kind === 'reject') return repairResolution.response;
-      input = repairResolution.input;
-
       const presentResultStage: PresentResultStage = isVisualPreview
         ? 'visual_preview'
         : sess.phase.kind === 'completed'
         ? 'completed'
         : 'synthesis';
 
+      const repairResolution = resolvePresentResultRepairDraft(sess, input, presentResultStage, reject);
+      if (repairResolution.kind === 'reject') return repairResolution.response;
+      input = repairResolution.input;
+
       const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
 
-      const boundary = presentResultBoundarySchemaForPhase(presentResultStage, retainableSections !== null).safeParse(input);
+      const boundary = presentResultBoundarySchemaForPhase(
+        presentResultStage,
+        retainableSections !== null,
+        previewNarrative?.blocks.length,
+      ).safeParse(input);
       if (!boundary.success) {
         const fieldErrors = boundary.error.issues
           .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
@@ -287,11 +299,24 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           issue.code === 'unrecognized_keys'
             ? [...issue.keys]
             : issue.path.length > 0 ? [issue.path.join('.')] : []))];
+        const detail = issuePaths.length > 0 ? { detail: issuePaths.map(path => ({ path })) } : {};
+        if (isVisualPreview && issuePaths.length > 0 && issuePaths.every(path => PREVIEW_BLOCK_RANGE_PATH.test(path))) {
+          const repairFields: readonly PresentResultRepairField[] = ['sections'];
+          sess.presentResultRepairDraft.hold(input as PresentResultInput, { fields: repairFields, sectionsMerge: 'by_label' });
+          return reject({
+            success: false,
+            errors: fieldErrors,
+            hint: presentResultRepairInstruction(repairFields, 'by_label'),
+            repairable: true,
+            repairFields,
+            ...detail,
+          });
+        }
         return reject({
           success: false,
           errors: fieldErrors,
           hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
-          ...(issuePaths.length > 0 ? { detail: issuePaths.map(path => ({ path })) } : {}),
+          ...detail,
         }, { clearDraft: true });
       }
       const presentInput = boundary.data as PresentResultInput;
@@ -430,7 +455,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       const unknownEvidenceIds: string[] = [];
-      let renderInput: PresentResultInput = presentInput;
+      let renderInput: PresentResultInput = isVisualPreview && presentInput.sections
+        ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
+        : presentInput;
       if (!isVisualPreview && presentInput.sections?.length) {
         const { blocks: evidenceBlocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
         const expand = (text: string, fieldLabel: string): string => {
@@ -501,7 +528,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       const externalViolations: PresentResultViolation[] = [];
       if (isVisualPreview && previewNarrative) {
-        externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, renderInput));
+        externalViolations.push(...findDiscoveryPreviewNoteViolations(previewNarrative.blocks, renderInput.notes));
       }
       const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds);
       if (uncoveredCtNodes.length > 0) {

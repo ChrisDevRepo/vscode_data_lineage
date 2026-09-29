@@ -13,7 +13,7 @@ import { quoteIds } from '../support/text';
 import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
-import { marked } from 'marked';
+import { marked, type Token } from 'marked';
 import Graph from 'graphology';
 import { connectedComponents } from 'graphology-components';
 
@@ -86,7 +86,7 @@ export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
 const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
   completed: 'A real id outside the result graph can be brought into the view with add_node_ids; otherwise state it in sections[].text.',
   synthesis: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
-  visual_preview: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
+  visual_preview: 'The result graph is locked this stage — remove a real id it does not carry from node_ids; the answer text is served as blocks.',
 };
 
 /**
@@ -106,7 +106,9 @@ function presentNodeIdHint(stage: PresentResultStage): string {
   const hasSearchObjects = getAllowedLmToolNames({ kind: stage }).has('lineage_search_objects');
   return hasSearchObjects
     ? 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically; if still unresolved, resolve canonical IDs with lineage_search_objects. If no loaded node matches the fact, state it in sections[].text rather than a node_ids field. Remove only the named ids from node_ids; keep every other id, section, note and group unchanged.'
-    : 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically. If a fact has no matching loaded node, state it in sections[].text instead of a node_ids field — no other tool is available this stage.';
+    : stage === 'visual_preview'
+      ? 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically. Remove an id no loaded node matches from node_ids — the answer text is already served as blocks.'
+      : 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically. If a fact has no matching loaded node, state it in sections[].text instead of a node_ids field — no other tool is available this stage.';
 }
 
 /**
@@ -143,12 +145,13 @@ export type PresentResultRepairPatch = z.infer<typeof PresentResultRepairPatchSc
  * hint wording), so no caller re-derives it.
  *
  * - `by_label`: a resent label replaces the held section with that label in place, a new label
- *   appends, every held section the patch does not name is kept as authored.
+ *   appends, every held section the patch does not name is kept as authored. The discovery preview
+ *   repairs this way: a section is its label, links and block range, so resending the one section
+ *   whose range failed keeps every other.
  * - `whole_list`: the resent list is the complete new list; a held section it omits is dropped.
- *   Used when the fix cannot be addressed by label — the discovery-preview partition, whose section
- *   texts must jointly reproduce one cached answer, and a failure inside one held section (a
- *   `sections.N` path — an unlinkable node_id, a label over its cap): a section the resend leaves
- *   out is the repair, so the omission must be able to drop it.
+ *   Used when a failure sits inside one held section (a `sections.N` path — an unlinkable node_id,
+ *   a label over its cap): a section the resend leaves out is the repair, so the omission must be
+ *   able to drop it.
  */
 export type PresentResultSectionsMerge = 'by_label' | 'whole_list';
 
@@ -158,8 +161,10 @@ export interface PresentResultRepairAuthorization {
   readonly sectionsMerge: PresentResultSectionsMerge;
 }
 
-type PresentSection = NonNullable<PresentResultInput['sections']>[number];
-type PresentSectionPatch = NonNullable<PresentResultRepairPatch['sections']>[number];
+/** Inclusive range of served answer blocks a preview section presents. */
+type PresentSectionBlocks = { from: string; to: string };
+type PresentSection = NonNullable<PresentResultInput['sections']>[number] & { blocks?: PresentSectionBlocks };
+type PresentSectionPatch = NonNullable<PresentResultRepairPatch['sections']>[number] & { blocks?: PresentSectionBlocks };
 
 /**
  * The validated, engine-assembled result ready for the UI.
@@ -222,19 +227,26 @@ export type PresentResultError = {
   }>;
 };
 
+/** One numbered top-level block of the cached discovery answer, served to the preview stage as `answer_blocks`. */
+export interface AnswerBlock {
+  readonly id: string;
+  readonly text: string;
+}
+
 /**
- * Splits the cached discovery answer into engine-owned title/summary and verbatim section source.
+ * Splits the cached discovery answer into engine-owned title/summary and numbered source blocks.
  *
  * @param answer - The cached discovery chat answer (Markdown), title already inline if present.
  * @returns The split-off `title` (absent when the answer has no leading level-1 heading, ATX or
- *   Setext, closing `#`s stripped), the remaining `body`, and a one-line `summary`: the first line
- *   of the first non-code block's text (a list item, blockquote or task item without its `[ ]`
- *   marker), else the title. A fenced code block is never the summary; absent when neither exists
- *   — the caller degrades to a rejection, never invented prose.
+ *   Setext, closing `#`s stripped), the remaining body as `blocks` — one per top-level Markdown
+ *   token (heading, paragraph, table, list, code), ids `B1`..`Bn` — and a one-line `summary`: the
+ *   first line of the first non-code block's text (a list item, blockquote or task item without its
+ *   `[ ]` marker), else the title. A fenced code block is never the summary; absent when neither
+ *   exists — the caller degrades to a rejection, never invented prose.
  */
 export function discoveryPreviewNarrative(answer: string): {
   title?: string;
-  body: string;
+  blocks: AnswerBlock[];
   summary?: string;
 } {
   const normalized = answer.replace(/\r\n?/g, '\n').trim();
@@ -242,10 +254,29 @@ export function discoveryPreviewNarrative(answer: string): {
   const heading = lead?.type === 'heading' && lead.depth === 1 ? lead : undefined;
   const title = heading?.text.trim();
   const body = heading ? normalized.slice(heading.raw.length).trim() : normalized;
-  const first = marked.lexer(body).find(token => token.type !== 'space' && token.type !== 'code');
+  const tokens = marked.lexer(body).filter(token => token.type !== 'space');
+  const first = tokens.find(token => token.type !== 'code');
   const text: string | undefined = first?.type === 'list' ? first.items[0]?.text : first && 'text' in first ? first.text : first?.raw;
   const summary = text?.split('\n').find(line => line.trim())?.trim() || title;
-  return { ...(title ? { title } : {}), body, summary };
+  const blocks = tokens.map((token, index) => ({ id: `B${index + 1}`, text: token.raw.trim() }));
+  return { ...(title ? { title } : {}), blocks, summary };
+}
+
+/**
+ * Builds each preview section's `text` from its block range; the ranges already partition the
+ * blocks (the boundary schema's rule), so the joined text is the cached answer in its own words.
+ */
+export function assemblePreviewSections(
+  blocks: readonly AnswerBlock[],
+  sections: readonly PresentSection[],
+): PresentSection[] {
+  const indexOf = (id: string): number => Number(id.slice(1));
+  return sections.map(({ blocks: range, ...section }) => ({
+    ...section,
+    text: range
+      ? blocks.slice(indexOf(range.from) - 1, indexOf(range.to)).map(block => block.text).join('\n\n')
+      : section.text,
+  }));
 }
 
 /**
@@ -288,49 +319,48 @@ export interface PresentResultViolation {
 }
 
 /**
- * Finds every way preview prose departs from the cached discovery answer.
+ * Plain text of Markdown, so a caption that drops emphasis or link markup still matches the answer
+ * it was copied from.
+ */
+function markdownPlainText(markdown: string): string {
+  const plain = (token: Token): string => {
+    if (token.type === 'list') return token.items.map(plain).join(' ');
+    if (token.type === 'table') return [...token.header, ...token.rows.flat()].map(cell => cell.tokens.map(plain).join('')).join(' ');
+    if ('tokens' in token && token.tokens) return token.tokens.map(plain).join('');
+    return 'text' in token ? token.text : token.raw;
+  };
+  return marked.lexer(markdown).map(plain).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Finds every note caption that is not one unbroken span of the cached discovery answer.
  *
  * @remarks
  * Returns findings rather than a finished rejection so {@link validatePresentResult} can report
- * them through the same accumulator as every structural rule.
+ * them through the same accumulator as every structural rule. A caption stitched from separated
+ * fragments is a new claim about adjacency, which is exactly what verbatim reuse exists to prevent;
+ * both sides compare as plain text, so Markdown markup never separates a caption from its source.
+ * Each failing caption is reported by index so the repair does not have to re-derive which one.
  *
- * Notes are matched as a **contiguous** span of the whitespace-compacted answer: a caption stitched
- * from separated fragments is a new claim about adjacency, which is exactly what verbatim reuse
- * exists to prevent. Each failing caption is reported by index so the repair does not have to
- * re-derive which one it was.
- *
- * @param sourceBody - The cached discovery answer body, title already split off.
- * @param input - The sections and notes as submitted.
- * @returns One violation per departing field; empty when the payload is a faithful regrouping.
+ * @param blocks - The cached discovery answer's numbered blocks.
+ * @param notes - The notes as submitted.
+ * @returns One violation when any caption departs; empty when every caption is a faithful span.
  */
-export function findDiscoveryPreviewReuseViolations(
-  sourceBody: string,
-  input: Pick<PresentResultInput, 'sections' | 'notes'>,
+export function findDiscoveryPreviewNoteViolations(
+  blocks: readonly AnswerBlock[],
+  notes: PresentResultInput['notes'],
 ): PresentResultViolation[] {
-  const compact = (value: string): string => value.replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
-  const source = compact(sourceBody);
-  const sectionText = compact((input.sections ?? []).map(section => section.text).join('\n\n'));
-  const badNoteIndexes = (input.notes ?? []).flatMap(
-    (note, index) => (source.includes(compact(note.caption)) ? [] : [index]),
+  const source = markdownPlainText(blocks.map(block => block.text).join('\n\n'));
+  const badNoteIndexes = (notes ?? []).flatMap(
+    (note, index) => (source.includes(markdownPlainText(note.caption)) ? [] : [index]),
   );
-  const violations: PresentResultViolation[] = [];
-  if (!source || sectionText !== source) {
-    violations.push({
-      field: 'sections',
-      messages: ['sections[].text must partition the complete cached discovery answer verbatim, in order.'],
-      repairFields: ['sections'],
-      paths: [],
-    });
-  }
-  if (badNoteIndexes.length > 0) {
-    violations.push({
-      field: 'notes',
-      messages: [`notes[].caption must each be one unbroken span copied verbatim from the cached discovery answer. Offending entries: ${badNoteIndexes.map(index => `notes[${index}]`).join(', ')}. For each listed note, replace its caption with one continuous verbatim passage from the answer, or remove the note.`],
-      repairFields: ['notes'],
-      paths: badNoteIndexes.map(index => `notes.${index}.caption`),
-    });
-  }
-  return violations;
+  if (badNoteIndexes.length === 0) return [];
+  return [{
+    field: 'notes',
+    messages: [`notes[].caption must each be one unbroken span copied verbatim from the cached discovery answer. Offending entries: ${badNoteIndexes.map(index => `notes[${index}]`).join(', ')}. For each listed note, replace its caption with one continuous verbatim passage from the answer, or remove the note.`],
+    repairFields: ['notes'],
+    paths: badNoteIndexes.map(index => `notes.${index}.caption`),
+  }];
 }
 
 /**
@@ -340,11 +370,12 @@ export function findDiscoveryPreviewReuseViolations(
  * text-less new label before this runs, so the empty-text fallback is a type fact, not a path.
  */
 function fillSectionPatch(resent: PresentSectionPatch, held: PresentSection | undefined): PresentSection {
+  const blocks = resent.blocks ?? held?.blocks;
   return {
     label: resent.label,
     node_ids: resent.node_ids ?? held?.node_ids ?? [],
-    text: resent.text ?? held?.text ?? '',
-  };
+    ...(blocks ? { blocks } : { text: resent.text ?? held?.text ?? '' }),
+  } as PresentSection;
 }
 
 /** Held sections indexed by their {@link normalizePresentSectionLabel} key. */
@@ -395,7 +426,7 @@ export function findTextlessNewSectionLabels(
 ): string[] {
   const heldIndex = indexSectionsByLabel(held ?? []);
   return resent
-    .filter(section => !heldIndex.has(normalizePresentSectionLabel(section.label)) && !(section.text?.trim()))
+    .filter(section => !heldIndex.has(normalizePresentSectionLabel(section.label)) && !section.blocks && !(section.text?.trim()))
     .map(section => section.label);
 }
 
@@ -404,16 +435,17 @@ export function findTextlessNewSectionLabels(
  *
  * @remarks
  * Under `by_label` a section the model does not resend keeps its text, so the view carries only what
- * the model needs to target a section and judge coverage — `label` and `node_ids`. Under
- * `whole_list` the model must resend every section, so it sees each one in full. Lives beside
- * {@link mergeSections}, the module that owns the label key, so the view and the merge cannot drift.
+ * the model needs to target a section and judge coverage — `label`, `node_ids` and, for a preview
+ * section, its `blocks` range. Under `whole_list` the model must resend every section, so it sees
+ * each one in full. Lives beside {@link mergeSections}, the module that owns the label key, so the
+ * view and the merge cannot drift.
  */
 export function projectHeldSectionsForRepair(
   sections: PresentResultInput['sections'],
   sectionsMerge: PresentResultSectionsMerge,
-): PresentResultInput['sections'] | Array<{ label: string; node_ids: string[] }> {
+): PresentResultInput['sections'] | Array<{ label: string; node_ids: string[]; blocks?: PresentSectionBlocks }> {
   if (sectionsMerge === 'whole_list' || !sections) return sections;
-  return sections.map(section => ({ label: section.label, node_ids: section.node_ids }));
+  return (sections as PresentSection[]).map(({ label, node_ids, blocks }) => ({ label, node_ids, ...(blocks ? { blocks } : {}) }));
 }
 
 /**
@@ -422,28 +454,34 @@ export function projectHeldSectionsForRepair(
  */
 export function presentResultSectionsResendRule(sectionsMerge: PresentResultSectionsMerge): string {
   return sectionsMerge === 'by_label'
-    ? 'sections: resend only the section(s) you add or change, each under its held label; omit a resent section\'s text or node_ids to keep the held value; a label not on file appends a new section and needs text; every held section you do not name is kept as authored.'
-    : 'sections: resend the complete list — a held section you leave out is dropped; a resent section may omit text or node_ids to keep the held values under that label; a label not on file needs text.';
+    ? 'sections: resend only the section(s) you add or change, each under its held label; omit a resent section\'s text, blocks or node_ids to keep the held value; a label not on file appends a new section and needs its text or blocks; every held section you do not name is kept as authored.'
+    : 'sections: resend the complete list — a held section you leave out is dropped; a resent section may omit text, blocks or node_ids to keep the held values under that label; a label not on file needs its text or blocks.';
 }
 
 /** Issue path inside one held section (`sections.N`, `sections.N.label`) — a failure only that section's resend or omission can clear. */
 const HELD_SECTION_ISSUE_PATH = /^sections\.\d+(\.|$)/;
 
 /**
- * Decides the {@link PresentResultSectionsMerge} for a failure, from the stage and the structural
+ * Decides the {@link PresentResultSectionsMerge} for a failure, from the structural
  * issue paths the validator recorded — never from message text.
  */
-function presentResultSectionsMergeFor(stage: PresentResultStage, issuePaths: ReadonlySet<string>): PresentResultSectionsMerge {
-  if (stage === 'visual_preview') return 'whole_list';
+function presentResultSectionsMergeFor(issuePaths: ReadonlySet<string>): PresentResultSectionsMerge {
   for (const path of issuePaths) {
     if (HELD_SECTION_ISSUE_PATH.test(path)) return 'whole_list';
   }
   return 'by_label';
 }
 
-/** The repair-call sentence a repairable rejection carries, stated once here for every failure. */
-function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[]): string {
-  return `You may repair the held draft by calling lineage_present_result with is_update:true and only these corrected fields: ${resendList.join(', ')}.`;
+/**
+ * The repair-call sentence a repairable rejection carries, stated once here for every failure: the
+ * fields to resend and, when `sections` is among them, how the resend merges.
+ */
+export function presentResultRepairInstruction(
+  resendList: readonly PresentResultRepairField[],
+  sectionsMerge: PresentResultSectionsMerge,
+): string {
+  const instruction = `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`;
+  return resendList.includes('sections') ? `${instruction} ${presentResultSectionsResendRule(sectionsMerge)}` : instruction;
 }
 
 /**
@@ -1136,7 +1174,7 @@ export function validatePresentResult(
   if (errors.length > 0) {
     const fieldList = [...failedFields];
     const resendList = [...repairFields];
-    const sectionsMerge = presentResultSectionsMergeFor(stage, issuePaths);
+    const sectionsMerge = presentResultSectionsMergeFor(issuePaths);
     const soleFailureHint = hasUnexplainedHighlightGap && errors.length === 1
       ? "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a notes entry for it, or drop it from highlight_groups[] if it is uncolored plumbing."
       : soleHints.length > 0 && errors.length === externalErrorCount && externalViolations.every(violation => violation.soleHint !== undefined)
@@ -1147,10 +1185,7 @@ export function validatePresentResult(
     let hint = soleFailureHint ?? (fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendSentence}`
       : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`);
-    if (repairInstructed) {
-      hint = `${hint} ${presentResultRepairInstruction(resendList)}`;
-      if (repairFields.has('sections')) hint = `${hint} ${presentResultSectionsResendRule(sectionsMerge)}`;
-    }
+    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList, sectionsMerge)}`;
     if (soleFailureHint === undefined && nodeIdHintNeeded) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }

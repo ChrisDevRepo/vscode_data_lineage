@@ -887,7 +887,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const source = escapeDelimitedJson({
       question: sess.lastDiscoveryQuestion,
       answer_title: narrative.title ?? null,
-      answer_body: narrative.body,
+      answer_blocks: narrative.blocks,
       scope: { origin: scope.origin, direction: scope.direction, node_ids: scope.nodeIds, edges: scope.edges },
     });
     const messages = [modelUserMessage([

@@ -221,10 +221,9 @@ function buildActivePhasePrompt(): string {
  *
  * The depth line is the one stage-dependent part. Synthesis chooses how much captured evidence
  * survives; follow-up authors text without the archive in the window, so re-deriving via
- * `lineage_get_object_detail` is the owner; preview authors none — it partitions a fixed answer that
- * `findDiscoveryPreviewReuseViolations` re-compares character for character, so a compress-or-drop
- * rule there would instruct a guaranteed rejection. The heading rule ships to the two stages that
- * author section text.
+ * `lineage_get_object_detail` is the owner; preview authors none — its section text is assembled
+ * from the served answer blocks, so a compress-or-drop rule there would contradict the stage. The
+ * heading rule ships to the two stages that author section text.
  *
  * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`; omitted by
  *   stages whose own block names it. First parameter because existing callers pass it positionally.
@@ -239,7 +238,7 @@ export function buildPresentationDetailContract(
     '- Inside a section body use bold labels, never `#` headings; the engine owns the title, the section headings and the object headers.';
   const depthRules = mode === 'preview'
     ? [
-      '- Depth is already fixed by the supplied answer: copy each span whole and choose only where to cut, because the engine compares your joined sections against that answer character for character.',
+      '- Depth is fixed by the supplied answer; you choose only where its blocks are cut into sections.',
     ]
     : mode === 'completed'
       ? [
@@ -265,10 +264,11 @@ export function buildPresentationDetailContract(
  * The stage restructures an already-written discovery answer into the graph presentation; it
  * authors no new prose and reads no new evidence. Everything about *how* nodes are linked,
  * captioned, and coloured is therefore identical to synthesis and comes from
- * {@link buildPresentationDetailContract}. What is unique here is the reuse constraint: the
- * supplied answer is the only permitted source of text, and `findDiscoveryPreviewReuseViolations` checks
- * it as a contiguous span, so a caption stitched together from separated fragments is rejected even
- * when every word of it appears somewhere in the answer.
+ * {@link buildPresentationDetailContract}. What is unique here is the reference contract: the
+ * answer is served as numbered blocks, each section names the block range it presents and the
+ * engine assembles its text; a note caption is checked as one contiguous span of the answer, so a
+ * caption stitched together from separated fragments is rejected even when every word of it appears
+ * somewhere in the answer.
  *
  * @returns The visual-preview protocol block.
  */
@@ -276,11 +276,11 @@ function buildVisualPreviewPrompt(): string {
   return [
     '## Structure the cached discovery answer',
     'Call `lineage_present_result` once. Do not call discovery or scope tools; the supplied answer and scope are authoritative.',
-    'Partition the complete `answer_body` across `sections[].text` in its original order. Copy it verbatim: no rewriting, summarizing, new claims, or omissions.',
-    'Choose cut points so each section answers one part of the user\'s question. Add only section labels and canonical node links.',
+    'Divide `answer_blocks` into consecutive sections: each `sections[]` entry gives a label, its canonical `node_ids`, and the `blocks` range it presents; together the ranges cover B1 to the last block once, in order.',
+    'Choose cut points so each section answers one part of the user\'s question.',
     'Every `notes[].caption` must be one unbroken span copied from the supplied answer — quote a single continuous passage; never stitch separated phrases together, and never invent caption text.',
     '',
-    buildPresentationDetailContract('The detailed walkthrough belongs in `sections[].text`, taken from the supplied `answer_body` — the preview is a regrouping of that answer, never a lighter retelling of it.', 'preview'),
+    buildPresentationDetailContract('The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section ranges.', 'preview'),
   ].join('\n');
 }
 

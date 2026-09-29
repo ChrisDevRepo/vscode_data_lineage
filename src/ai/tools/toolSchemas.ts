@@ -1166,6 +1166,66 @@ const PresentResultSectionPatchSchema = PresentResultSectionSchema.extend({
 });
 
 /**
+ * Inclusive range of served answer blocks (`B1`, `B2`, …) a preview section presents; the engine
+ * assembles the section text from the cached discovery answer.
+ */
+const AnswerBlockRangeSchema = z.object({
+  from: z.string().regex(/^B[1-9]\d*$/, 'from must be a block id such as "B1".').describe('First block of the section, e.g. "B1".'),
+  to: z.string().regex(/^B[1-9]\d*$/, 'to must be a block id such as "B3".').describe('Last block of the section (inclusive), e.g. "B3".'),
+}).strict();
+
+/**
+ * One preview section: the {@link PresentResultSectionSchema} keys with the body given as a block
+ * range instead of `text`.
+ */
+const PresentResultPreviewSectionSchema = PresentResultSectionSchema.omit({ text: true }).extend({
+  blocks: AnswerBlockRangeSchema.describe('Blocks of `answer_blocks` this section presents. Section ranges follow each other in order and together cover every block exactly once.'),
+});
+
+/** Preview patch section: `node_ids` and `blocks` may each be omitted to keep the held value under the label. */
+const PresentResultPreviewSectionPatchSchema = PresentResultPreviewSectionSchema.extend({
+  node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
+  blocks: AnswerBlockRangeSchema.optional().describe('New block range for this section. Omit to keep the held range under this label.'),
+});
+
+/**
+ * Refinement for preview `sections`: the block ranges partition `B1..B<blockCount>` in order. Each
+ * issue is attributed to the section whose range it concerns, so the rejection names that section.
+ */
+function rejectBlockPartition(blockCount: number) {
+  const indexOf = (id: string): number => Number(id.slice(1));
+  return (sections: ReadonlyArray<{ label: string; blocks: { from: string; to: string } }>, ctx: z.core.$RefinementCtx): void => {
+    let next = 1;
+    let previous: string | undefined;
+    const issueAt = (index: number, message: string): void => ctx.addIssue({ code: 'custom', path: [index, 'blocks'], message });
+    for (const [index, { label, blocks }] of sections.entries()) {
+      const issue = (message: string): void => issueAt(index, message);
+      const from = indexOf(blocks.from);
+      const to = indexOf(blocks.to);
+      const unknown = [blocks.from, blocks.to].filter(id => indexOf(id) > blockCount);
+      if (unknown.length > 0) {
+        issue(`Section "${label}" names ${unknown.join(', ')}; the answer has blocks B1..B${blockCount}.`);
+        continue;
+      }
+      if (to < from) {
+        issue(`Section "${label}" runs backwards: ${blocks.from} to ${blocks.to}.`);
+        continue;
+      }
+      if (from > next) {
+        issue(`B${next}..B${from - 1} belong to no section; "${label}" starts at ${blocks.from}${previous ? ` after "${previous}"` : ''}.`);
+      } else if (from < next) {
+        issue(`"${label}" starts at ${blocks.from}, but B${from}..B${Math.min(to, next - 1)} already belong to "${previous}".`);
+      }
+      next = Math.max(next, to + 1);
+      previous = label;
+    }
+    if (next <= blockCount && sections.length > 0) {
+      issueAt(sections.length - 1, `B${next}..B${blockCount} belong to no section; extend "${sections[sections.length - 1].label}" or add a section for them.`);
+    }
+  };
+}
+
+/**
  * Schema defining the shape of the final generated presentation result.
  */
 export const PresentResultModelSchema = z.object({
@@ -1230,6 +1290,10 @@ const PresentResultVisualPreviewModelSchema = PresentResultModelSchema.omit({
   prune_node_ids: true,
   add_node_ids: true,
   is_update: true,
+}).extend({
+  sections: z.array(PresentResultPreviewSectionSchema).min(1).superRefine(rejectDuplicateSectionLabels).describe(
+    'Required report sections, at least one. Each presents a range of the served `answer_blocks`; every node analysed and captured is linked into a section\'s node_ids.',
+  ),
 }).strict();
 
 /**
@@ -1254,7 +1318,7 @@ export function presentResultSchemaForPhase(
   repairFields: readonly PresentResultRepairField[] | null = null,
   retainable = false,
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields);
+  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase);
   if (phase === 'visual_preview') return PresentResultVisualPreviewModelSchema;
   const synthesis = phase === 'synthesis';
   const schema = retainable
@@ -1302,9 +1366,9 @@ const PresentResultLockedGraphBoundarySchema = PresentResultBoundarySchema.omit(
  * @remarks
  * The mirror of {@link presentResultSchemaForPhase} on the dispatch side: a field the offered
  * schema omits is rejected by the schema, not by a hand-written check after a permissive parse.
- * Preview shares the synthesis projection — the prose fields the preview model schema omits are
- * filled by the dispatcher from the cached discovery answer before the parse, so only the
- * graph-edit controls are out of contract there.
+ * Preview shares the locked-graph projection with `sections` given as block ranges — the prose
+ * fields the preview model schema omits are filled by the dispatcher from the cached discovery
+ * answer before the parse, and the ranges must partition the served blocks.
  *
  * The graph-edit controls are opt-in: `completed` is the only stage whose consumers read
  * `add_node_ids`/`prune_node_ids`, so it alone selects the full schema and every other stage —
@@ -1314,9 +1378,22 @@ const PresentResultLockedGraphBoundarySchema = PresentResultBoundarySchema.omit(
  * @param phase - Stage the call was dispatched in.
  * @param retainable - Whether a committed report from this run exists to amend; mirrors the same
  * argument to {@link presentResultSchemaForPhase} so the offered and validated contracts match.
+ * @param previewBlockCount - Number of served answer blocks; the preview stage's section ranges
+ * must partition exactly that many.
  * @returns The full boundary schema on the completed stage, else the locked-graph projection.
  */
-export function presentResultBoundarySchemaForPhase(phase?: PresentResultStage, retainable = false): z.ZodType {
+export function presentResultBoundarySchemaForPhase(
+  phase?: PresentResultStage,
+  retainable = false,
+  previewBlockCount = 0,
+): z.ZodType {
+  if (phase === 'visual_preview') {
+    return PresentResultLockedGraphBoundarySchema.extend({
+      sections: z.array(PresentResultPreviewSectionSchema).min(1)
+        .superRefine(rejectDuplicateSectionLabels)
+        .superRefine(rejectBlockPartition(previewBlockCount)),
+    });
+  }
   if (phase === 'completed') {
     return retainable ? PresentResultRetainingBoundarySchema : PresentResultBoundarySchema;
   }
@@ -1401,26 +1478,36 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
+  phase?: string,
 ): z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>> {
   const keys = [...new Set<PresentResultRepairField>(fields)].sort();
-  const cacheKey = keys.join(',');
+  const preview = phase === 'visual_preview';
+  const cacheKey = `${preview ? 'preview:' : ''}${keys.join(',')}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
   const picked = PresentResultRepairPatchSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultRepairPatchSchema.shape, true>>,
-  ).strict().superRefine((data, ctx) => {
+  );
+  const staged = preview && keys.includes('sections')
+    ? picked.extend({
+      sections: z.array(PresentResultPreviewSectionPatchSchema).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(
+        'Sections to add or change, each under its label; a held section this list does not name is kept or dropped as the rejection\'s resend rule states.',
+      ),
+    })
+    : picked;
+  const strict = staged.strict().superRefine((data, ctx) => {
     if (keys.length === 0) return;
     const touchesAuthorizedField = keys.some(
       key => (data as Record<string, unknown>)[key] !== undefined,
     );
     if (touchesAuthorizedField) return;
-    const message = `Repair patch named no authorized field; send is_update:true plus at least one of: ${keys.join(', ')}.`;
+    const message = `Repair patch named no authorized field; send at least one of: ${keys.join(', ')}.`;
     for (const key of keys) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
     }
   });
-  const schema = picked as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
+  const schema = strict as z.ZodType<z.infer<typeof PresentResultRepairPatchSchema>>;
   repairPatchSchemaCache.set(cacheKey, schema);
   return schema;
 }
