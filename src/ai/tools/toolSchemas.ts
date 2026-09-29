@@ -1360,7 +1360,7 @@ export const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
   sections: z.array(PresentResultSectionPatchSchema).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(
     'Sections to add or change, each under its label; a held section this list does not name is kept or dropped as the rejection\'s resend rule states.',
   ),
-  is_update: z.boolean().optional().describe('Optional — while a held draft is being repaired the engine authorizes the repair from the held-draft context and defaults this to true; you need not set it.'),
+  is_update: z.boolean().optional().describe('Optional — a repair keeps the held draft\'s own value; the value sent here is not applied.'),
 }).strict();
 
 /** Presentation fields that a held-draft rejection may explicitly authorize for repair. */
