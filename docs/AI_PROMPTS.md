@@ -444,9 +444,9 @@ section before the next section's start (the first begins at B1, the last runs t
 the end) and assembles its body from those blocks, so the model never retypes the
 answer. A start that does not follow the one before it is reported at
 `sections.N.start`. A thematic break or blank run in the answer gets no block id
-and folds into its neighbouring block. `notes` are
-checked as one contiguous span of the answer, compared on markdown-stripped
-plain text. A rejected preview is repaired by label: the retry resends only the
+and folds into its neighbouring block. `notes` take the same
+`{node_id, caption}` shape as synthesis; a caption is the model's own one-line
+label, never compared with the answer text. A rejected preview is repaired by label: the retry resends only the
 named section, and every held section not resent is kept; `{label, remove: true}`
 drops one. The repair hint does
 not ask for `is_update`. Synthesis continues to author its report from the

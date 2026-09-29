@@ -20,7 +20,6 @@ import {
   findStartOrderIssues,
   presentResultRepairInstruction,
   assemblePreviewSections,
-  findDiscoveryPreviewNoteViolations,
   assignEvidenceIds,
   expandEvidenceRefs,
   type PresentResultViolation,
@@ -433,9 +432,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       );
 
       const externalViolations: PresentResultViolation[] = [];
-      if (isVisualPreview && previewNarrative) {
-        externalViolations.push(...findDiscoveryPreviewNoteViolations(previewNarrative.blocks, renderInput.notes));
-      }
       const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds);
       if (uncoveredCtNodes.length > 0) {
         externalViolations.push({

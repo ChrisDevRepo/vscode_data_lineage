@@ -16,7 +16,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
-import { marked, type Token } from 'marked';
+import { marked } from 'marked';
 import Graph from 'graphology';
 import { connectedComponents } from 'graphology-components';
 
@@ -317,51 +317,6 @@ export interface PresentResultViolation {
   readonly soleHint?: string;
 }
 
-/**
- * Plain text of Markdown, so a caption that drops emphasis or link markup still matches the answer
- * it was copied from.
- */
-function markdownPlainText(markdown: string): string {
-  const plain = (token: Token): string => {
-    if (token.type === 'list') return token.items.map(plain).join(' ');
-    if (token.type === 'table') return [...token.header, ...token.rows.flat()].map(cell => cell.tokens.map(plain).join('')).join(' ');
-    if ('tokens' in token && token.tokens) return token.tokens.map(plain).join('');
-    return 'text' in token ? token.text : token.raw;
-  };
-  return marked.lexer(markdown).map(plain).join(' ').replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Finds every note caption that is not one unbroken span of the cached discovery answer.
- *
- * @remarks
- * Returns findings rather than a finished rejection so {@link validatePresentResult} can report
- * them through the same accumulator as every structural rule. A caption stitched from separated
- * fragments is a new claim about adjacency, which is exactly what verbatim reuse exists to prevent;
- * both sides compare as plain text, so Markdown markup never separates a caption from its source.
- * Each failing caption is reported by index so the repair does not have to re-derive which one.
- *
- * @param blocks - The cached discovery answer's numbered blocks.
- * @param notes - The notes as submitted.
- * @returns One violation when any caption departs; empty when every caption is a faithful span.
- */
-export function findDiscoveryPreviewNoteViolations(
-  blocks: readonly AnswerBlock[],
-  notes: PresentResultInput['notes'],
-): PresentResultViolation[] {
-  const source = markdownPlainText(blocks.map(block => block.text).join('\n\n'));
-  const badNoteIndexes = (notes ?? []).flatMap(
-    (note, index) => (source.includes(markdownPlainText(note.caption)) ? [] : [index]),
-  );
-  if (badNoteIndexes.length === 0) return [];
-  return [{
-    field: 'notes',
-    messages: [`notes[].caption must each be one unbroken span copied verbatim from the cached discovery answer. Offending entries: ${badNoteIndexes.map(index => `notes[${index}]`).join(', ')}. For each listed note, replace its caption with one continuous verbatim passage from the answer, or remove the note.`],
-    repairFields: ['notes'],
-    paths: badNoteIndexes.map(index => `notes.${index}.caption`),
-  }];
-}
-
 /** Identity of a held section: its normalized label. */
 const sectionKey = (section: { label?: string }): string => normalizePresentSectionLabel(section.label ?? '');
 
@@ -385,10 +340,11 @@ export function findTextlessNewSectionLabels(
 
 /**
  * The held sections a repair may key on, as the model-facing view: label and, for a preview
- * section, the block it starts at. The model's own rejected call already carries every body.
+ * section, the block it effectively starts at (the first always B1). The model's own rejected call already carries every body.
  */
 export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string; start?: string }> {
-  return ((sections ?? []) as PresentSection[]).map(({ label, start }) => ({ label, ...(start ? { start } : {}) }));
+  const held = (sections ?? []) as PresentSection[];
+  return held.map(({ label, start }, index) => ({ label, ...(start ? { start: `B${startBlock(held, index)}` } : {}) }));
 }
 
 /**
