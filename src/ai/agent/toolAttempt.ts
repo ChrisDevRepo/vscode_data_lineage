@@ -51,6 +51,7 @@ import {
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { keyedResendRule } from '../support/repairDraftStore';
 import {
   contextBlockBytes,
   estimateTokens,
@@ -261,6 +262,30 @@ export interface ToolAttemptResult {
   readonly providerError?: ProviderErrorDiagnostic;
 }
 
+/** Parts of a rejected `lineage_submit_findings` call the session now holds: section angles, and whether the summary. */
+export interface HeldSubmissionParts {
+  readonly sections: readonly string[];
+  readonly summary: boolean;
+}
+
+/** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` when nothing was held. */
+export type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
+
+const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
+
+/**
+ * Appends the held-parts instruction to a schema rejection of `lineage_submit_findings`: the labels
+ * of what is held (never its content) and the resend rule, so the retry names only the failed field(s).
+ */
+function withHeldSubmissionHint(data: ToolOutcomeData, held: HeldSubmissionParts): ToolOutcomeData {
+  if (data.status !== 'rejected') return data;
+  const labels = [...held.sections.map(angle => `sections "${angle}"`), ...(held.summary ? ['summary'] : [])].join(', ');
+  const heldHint = `Held from this call: ${labels}. Resend lineage_submit_findings with only the failed field(s) corrected`
+    + (held.sections.length > 0 ? `; send sections: {} to keep every held angle. ${keyedResendRule('sections', 'angle')}` : '.');
+  const hint = data.correction?.hint;
+  return { ...data, correction: { ...data.correction, hint: hint ? `${hint} ${heldHint}` : heldHint } };
+}
+
 /**
  * The held `lineage_present_result` repair draft as the model sees it on a present_result
  * rejection: the labels a resend keys on, each with its first block for a preview section.
@@ -308,6 +333,8 @@ interface ToolGenerationAttemptInput {
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
   /** See {@link ToolAttemptExecutionOptions.presentResultRepairDraftContext}. */
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
+  /** See {@link ToolAttemptExecutionOptions.holdRejectedSubmission}. */
+  readonly holdRejectedSubmission?: HoldRejectedSubmission;
 }
 
 /**
@@ -344,6 +371,12 @@ interface ToolAttemptExecutionOptions {
    * draft is held, in which case a present_result rejection carries no `held_draft` detail.
    */
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
+  /**
+   * Holds the valid parts of a schema-rejected `lineage_submit_findings` call in the session's held
+   * finding draft and names them, so the retry resends only the failed field(s). Returns `null`
+   * when nothing was held.
+   */
+  readonly holdRejectedSubmission?: HoldRejectedSubmission;
 }
 
 /** Serializable cumulative attempt state for one graph-owned logical phase or active hop. */
@@ -785,6 +818,7 @@ export async function executeToolAttempt(
     debugLog: options.debugLog,
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
+    holdRejectedSubmission: options.holdRejectedSubmission,
     priorObservations: priorState?.observations,
   });
 }
@@ -948,7 +982,13 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       continue;
     }
     if (!call.valid) {
-      const data = withHeldDraftDetail(rejectionFromInvalid(call, input.registry), call.toolName, input.presentResultRepairDraftContext);
+      const rejected = rejectionFromInvalid(call, input.registry);
+      const heldSubmission = call.code === REJECTION_CODES.invalidToolInput && call.toolName === SUBMIT_FINDINGS_TOOL
+        ? input.holdRejectedSubmission?.(call.input, call.issuePaths ?? [])
+        : null;
+      const data = heldSubmission
+        ? withHeldSubmissionHint(rejected, heldSubmission)
+        : withHeldDraftDetail(rejected, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection);
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));

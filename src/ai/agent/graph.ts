@@ -524,6 +524,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       const held = deps.getSession().presentResultRepairDraft.get();
       return held ? { sections: heldSectionsForRepair(held.sections) } : null;
     },
+    holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
   });
 
   /** Returns the cumulative attempt state for one phase, or a fresh state when the phase changed. */

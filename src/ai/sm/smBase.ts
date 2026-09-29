@@ -1,5 +1,6 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent } from './smTypes';
 import { buildSubmissionRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, type SubmissionFaults } from './smRouteValidation';
+import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
@@ -589,6 +590,38 @@ export class NavigationEngine implements IHopStateMachine {
       sections: RepairDraftStore.mergeByKey(heldForFocus.sections, incoming.sections, section => section.angle ?? ''),
       summary: incoming.summary.trim() ? incoming.summary : heldForFocus.summary,
     };
+  }
+
+  /**
+   * Holds the valid parts of a `submit_findings` call the tool-attempt boundary rejected, so the
+   * retry resends only the failed field(s) and {@link applyHeldContent} restores the rest.
+   *
+   * @param input - The rejected payload as the model sent it.
+   * @param failedPaths - Dotted Zod issue paths of the rejection.
+   * @returns The held parts (`sections` angles, whether `summary`), or `null` when nothing was
+   *   held: not a kept verdict, not the current focus, or no sections or summary free of failures.
+   */
+  public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): { sections: string[]; summary: boolean } | null {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
+    const raw = input as { focus_node_id?: unknown; verdict?: unknown; sections?: unknown; summary?: unknown };
+    if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return null;
+    const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap) ?? raw.focus_node_id.toLowerCase();
+    if (focus !== this.currentFocusNodeId) return null;
+    const failed = new Set(failedPaths.map(path => path.split('.')[0]));
+    const sections = failed.has('sections')
+      ? []
+      : extractRawSectionAngles(raw.sections).filter(section => section.text.trim().length > 0);
+    const summary = !failed.has('summary') && typeof raw.summary === 'string' ? raw.summary.trim() : '';
+    if (sections.length === 0 && !summary) return null;
+    const held = this.heldFindingDraft.get();
+    const sameFocus = held !== null && (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) === focus;
+    this.heldFindingDraft.hold({
+      focus_node_id: raw.focus_node_id,
+      verdict: raw.verdict,
+      sections: sameFocus ? RepairDraftStore.mergeByKey(held.sections, sections, section => section.angle ?? '') : sections,
+      summary: summary || (sameFocus ? held.summary : ''),
+    });
+    return { sections: sections.map(section => section.angle ?? ''), summary: summary.length > 0 };
   }
 
   /** Compatibility projection of unresolved scope-boundary leads for synthesis. */
