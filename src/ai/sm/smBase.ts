@@ -88,11 +88,11 @@ interface NavigationWorkingMemory extends WorkingMemory {
   column_aspect?: ColumnAspect;
 }
 
-/** Optional kept-verdict fields a held draft restores when a retry omits them. */
-const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions', 'column_flow'] as const;
+/** Optional kept-verdict fields a held draft restores when a retry omits them; CT `column_flow` is served-required, so a retry always resends it. */
+const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
 
 /** Fields a route rejection is about; a held draft never restores them on a retry that omits them. */
-const ROUTED_FIELDS: readonly string[] = ['prune_neighbors', 'questions', 'column_flow'];
+const ROUTED_FIELDS: readonly string[] = ['prune_neighbors', 'questions'];
 
 /**
  * Defines the core interface for the state machine handling exploration modes.
@@ -562,8 +562,8 @@ export class NavigationEngine implements IHopStateMachine {
    * ({@link RepairDraftStore.mergeByKey}), so an angle the retry omits keeps its held body, and an
    * empty summary keeps the held one.
    *
-   * Every other held field the retry omits (`badge_label`, `prune_neighbors`, `questions`,
-   * `column_flow`) is restored unless the rejection that held it named that field as failed; a field
+   * Every other held field the retry omits (`badge_label`, `prune_neighbors`, `questions`) is
+   * restored unless the rejection that held it named that field as failed; a field
    * the retry sends replaces the held one.
    *
    * @param summaryOmitted - The wire summary was `null`: only a held draft of this focus can supply it.
@@ -585,13 +585,13 @@ export class NavigationEngine implements IHopStateMachine {
       if (summaryOmitted) {
         return makeRejection({
           code: REJECTION_CODES.missingField,
-          hint: 'summary is null and no draft is held for this node; send summary: one sentence on what this node does to the data and hands on.',
+          hint: 'summary is null and no draft is held for this node; resend the full call with summary: one sentence on what this node does to the data and hands on.',
           issuePaths: ['summary'],
         });
       }
       return incoming.sections.length > 0 || incoming.summary.trim() ? incoming : makeRejection({
         code: REJECTION_CODES.missingField,
-        hint: 'sections is empty and no draft is held for this node; send authored sections and a non-empty summary.',
+        hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
       });
     }
     this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
@@ -611,13 +611,14 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Holds the valid parts of a `submit_findings` call the tool-attempt boundary rejected, so the
-   * retry resends only the failed field(s) and {@link applyHeldContent} restores the rest.
+   * Holds the valid parts of a `submit_findings` call the tool-attempt boundary rejected, merged
+   * over a held draft of the same focus, so {@link applyHeldContent} restores them on the retry.
    *
    * @param input - The rejected payload as the model sent it.
    * @param failedPaths - Dotted Zod issue paths of the rejection.
-   * @returns The held parts (`sections` angles, whether `summary`, the other field names), or `null`
-   *   when nothing was held: not a kept verdict, not the current focus, or every field failed.
+   * @returns What the retry gets restored — held `sections` angles, whether a held `summary`, the
+   *   other held field names (a field this call failed excluded) — or `null` when nothing is held
+   *   for it: not a kept verdict, not the current focus, or no valid part and no held draft.
    */
   public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): { sections: string[]; summary: boolean; fields: string[] } | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
@@ -636,19 +637,22 @@ export class NavigationEngine implements IHopStateMachine {
       if (failed.has(field) || value === undefined || value === null) continue;
       Object.assign(fields, { [field]: structuredClone(value) });
     }
-    const carriedNames = Object.keys(fields);
-    if (sections.length === 0 && !summary && carriedNames.length === 0) return null;
-    const held = this.heldFindingDraft.get();
-    const sameFocus = held !== null && (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) === focus;
-    this.heldFindingDraft.hold({
-      ...(sameFocus ? held : {}),
+    const prior = this.heldFindingDraft.get();
+    const held = prior !== null && (resolveModelNodeId(prior.focus_node_id, this.nodeMap) ?? prior.focus_node_id.toLowerCase()) === focus
+      ? prior
+      : null;
+    const draft: HopFindingKept = {
+      ...(held ?? {}),
       ...fields,
       focus_node_id: raw.focus_node_id,
       verdict: raw.verdict,
-      sections: sameFocus ? RepairDraftStore.mergeByKey(held.sections, sections, section => section.angle ?? '') : sections,
-      summary: summary || (sameFocus ? held.summary : ''),
-    }, { failed: [...failed] });
-    return { sections: sections.map(section => section.angle ?? ''), summary: summary.length > 0, fields: carriedNames };
+      sections: held ? RepairDraftStore.mergeByKey(held.sections, sections, section => section.angle ?? '') : sections,
+      summary: summary || (held?.summary ?? ''),
+    };
+    const restored = HELD_CARRIED_FIELDS.filter(field => draft[field] !== undefined && !failed.has(field));
+    if (draft.sections.length === 0 && !draft.summary.trim() && restored.length === 0) return null;
+    this.heldFindingDraft.hold(draft, { failed: [...failed] });
+    return { sections: draft.sections.map(section => section.angle ?? ''), summary: draft.summary.trim().length > 0, fields: restored };
   }
 
   /** Compatibility projection of unresolved scope-boundary leads for synthesis. */
