@@ -209,7 +209,7 @@ export class VscodeModelPort implements ModelPort {
           } else {
             const rejection = rejectionFromZodError(
               parsed.error,
-              { code: REJECTION_CODES.invalidToolInput, input: decodedArgs },
+              { code: REJECTION_CODES.invalidToolInput, input: decodedArgs, schema: definition.inputSchema },
             );
             const unrecognizedKeys = zodUnrecognizedKeys(parsed.error);
             call = {
@@ -295,7 +295,7 @@ export class VscodeModelPort implements ModelPort {
     if (calls.length > 1) {
       throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`);
     }
-    const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, decoded);
+    const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, decoded, input.schema);
     throw new StructuredOutputError(reason, REJECTION_CODES.invalidStructuredOutput, hint);
   }
 

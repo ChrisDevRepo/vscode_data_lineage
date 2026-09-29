@@ -66,14 +66,14 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       }
 
       const hopMode = engine.currentHopAnalysisMode;
-      const parsed = submitFindingsSchemaForMode(hopMode, sess.classification)
-        .safeParse(normalizedInput);
+      const findingsSchema = submitFindingsSchemaForMode(hopMode, sess.classification);
+      const parsed = findingsSchema.safeParse(normalizedInput);
       if (!parsed.success) {
         const isCtMode = hopMode === 'ct';
-        const { reason: fieldErrors } = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: normalizedInput });
+        const { reason: fieldErrors } = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: normalizedInput, schema: findingsSchema });
         const modeLabel = isCtMode ? 'CT' : 'BB';
         const summary = `Invalid ${modeLabel} submit_findings input — ${fieldErrors}.`;
-        const repairHint = zodFieldRepairHint(parsed.error, normalizedInput);
+        const repairHint = zodFieldRepairHint(parsed.error, normalizedInput, findingsSchema);
         const rawAngles = extractRawSectionAngles((normalizedInput as { sections?: unknown }).sections);
         const rawVerdict = (normalizedInput as { verdict?: unknown }).verdict;
         const rawFocus = (normalizedInput as { focus_node_id?: unknown }).focus_node_id;

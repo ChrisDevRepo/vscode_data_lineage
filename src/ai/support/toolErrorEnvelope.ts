@@ -393,6 +393,62 @@ function baseIssueMessage(issue: z.core.$ZodIssue): string {
     : issue.message;
 }
 
+/** The slice of a JSON Schema node the repair hints read. */
+interface JsonSchemaShape {
+  type?: string | string[];
+  anyOf?: JsonSchemaShape[];
+  oneOf?: JsonSchemaShape[];
+  items?: JsonSchemaShape;
+  properties?: Record<string, JsonSchemaShape>;
+}
+
+/** The JSON Schema node `path` addresses inside `schema`; `undefined` when the path leaves the schema. */
+function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): JsonSchemaShape | undefined {
+  if (!schema) return undefined;
+  const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
+  let node = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }) as JsonSchemaShape;
+  for (const key of path) {
+    const next: JsonSchemaShape | undefined = variantsOf(node)
+      .map((variant) => (typeof key === 'number' ? variant.items : variant.properties?.[String(key)]))
+      .find((candidate) => candidate !== undefined);
+    if (!next) return undefined;
+    node = next;
+  }
+  return node;
+}
+
+/** Whether the schema accepts `null` at `path`. */
+function acceptsNullAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): boolean {
+  const node = jsonSchemaNodeAt(schema, path);
+  if (!node) return false;
+  return [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])]
+    .some((variant) => variant.type === 'null' || (Array.isArray(variant.type) && variant.type.includes('null')));
+}
+
+/**
+ * Removal hint for `unrecognized_keys` issues that all sit inside an object or array element, naming
+ * the keys that element accepts.
+ *
+ * @returns The element-directed hint; `undefined` when an issue is at the root, or the schema is
+ * absent or does not resolve the element, so the caller keeps the key-only wording.
+ */
+function nestedKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined): string | undefined {
+  const issues = error.issues.filter((issue) => issue.code === 'unrecognized_keys');
+  if (issues.length === 0 || issues.some((issue) => issue.path.length === 0)) return undefined;
+  const clauses = new Map<string, { keys: Set<string>; allowed: string[] }>();
+  for (const issue of issues) {
+    const allowed = Object.keys(jsonSchemaNodeAt(schema, issue.path)?.properties ?? {});
+    if (allowed.length === 0) return undefined;
+    const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '');
+    const clause = clauses.get(where) ?? { keys: new Set<string>(), allowed };
+    for (const key of issue.keys) clause.keys.add(key);
+    clauses.set(where, clause);
+  }
+  const parts = [...clauses].map(([where, { keys, allowed }]) =>
+    `remove ${[...keys].map(quoteKey).join(', ')} from ${where} (it accepts only ${allowed.join(', ')})`);
+  return `Resend the tool call: ${parts.join('; ')}. Keep every other field unchanged.`;
+}
+
 /**
  * Repair hint for an `invalid_tool_input` rejection carrying at least one `unrecognized_keys` issue.
  *
@@ -402,12 +458,16 @@ function baseIssueMessage(issue: z.core.$ZodIssue): string {
  * This names the offending key(s) and directs removal, stated alongside any other flagged field's
  *
  * @param error - The Zod validation failure under {@link rejectionFromZodError}.
+ * @param schema - The schema the payload failed; when given, a key nested in an object or array element
+ * is answered with the keys that element accepts.
  * @returns The removal-directed hint when any issue is `unrecognized_keys`; `undefined` otherwise,
  * so the caller falls back to {@link INVALID_TOOL_INPUT_REPAIR_HINT} unchanged.
  */
-function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
+function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): string | undefined {
   const offendingKeys = zodUnrecognizedKeys(error);
   if (offendingKeys.length === 0) return undefined;
+  const elementRemoval = nestedKeyRemovalHint(error, schema);
+  if (elementRemoval) return elementRemoval;
 
   const plural = offendingKeys.length > 1;
   const keyList = offendingKeys.map(quoteKey).join(', ');
@@ -440,11 +500,12 @@ function unrecognizedKeyRepairHint(error: z.ZodError): string | undefined {
  * @param error - The Zod validation failure under {@link rejectionFromZodError}.
  * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
  * an `invalid_type` issue alone does not distinguish the two.
+ * @param schema - The schema the payload failed; names `null` as the value of a missing field that accepts it.
  * @returns The addition-directed hint when any issue names a field absent from `input`;
  * `undefined` otherwise, so the caller falls back to {@link INVALID_TOOL_INPUT_REPAIR_HINT}
  * unchanged.
  */
-function missingFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
+function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   if (input === undefined) return undefined;
   const isMissingFieldIssue = (issue: z.core.$ZodIssue): boolean =>
     (issue.code === 'invalid_type' || issue.code === 'invalid_value')
@@ -457,9 +518,13 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown): string | und
 
   const plural = missingFields.length > 1;
   const fieldList = missingFields.map((field) => `"${field}"`).join(', ');
+  const nullable = missingFields.filter((field) => acceptsNullAt(schema, field.split('.').map((key) => (/^\d+$/.test(key) ? Number(key) : key))));
+  const nullNote = nullable.length === 0
+    ? ''
+    : ` ${nullable.map((field) => `"${field}"`).join(', ')} must be present; send null when ${nullable.length > 1 ? 'they do' : 'it does'} not apply.`;
   const addition = `Field${plural ? 's' : ''} ${fieldList} ${plural ? 'are' : 'is'} ${MISSING_FIELD_FRAGMENT}, `
     + `not present with the wrong type — resend the full tool call with ${plural ? 'them' : 'it'} added at the `
-    + 'required type; keep every other field unchanged.';
+    + `required type; keep every other field unchanged.${nullNote}`;
 
   const hasOtherIssues = error.issues.some((issue) => !isMissingFieldIssue(issue));
   return hasOtherIssues
@@ -480,13 +545,15 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown): string | und
  * @param error - The Zod validation failure.
  * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
  * see {@link missingFieldRepairHint}.
+ * @param schema - The schema the payload failed; lets a hint name what the schema accepts (an element's
+ * keys, `null` for a nullable field). Absent, every link keeps its schema-free wording.
  * @returns The first applicable repair hint, or `undefined` when no chain link applies.
  */
-export function zodFieldRepairHint(error: z.ZodError, input: unknown): string | undefined {
+export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   return issueOwnedRepairHint(error)
-    ?? unrecognizedKeyRepairHint(error)
-    ?? missingFieldRepairHint(error, input)
-    ?? typeMismatchRepairHint(error, input)
+    ?? unrecognizedKeyRepairHint(error, schema)
+    ?? missingFieldRepairHint(error, input, schema)
+    ?? typeMismatchRepairHint(error, input, schema)
     ?? sizeBoundRepairHint(error, input);
 }
 
@@ -496,14 +563,15 @@ export function zodFieldRepairHint(error: z.ZodError, input: unknown): string | 
  * @returns The type-directed hint naming the first such path, expected and received types;
  * `undefined` when no `invalid_type` issue has a present value.
  */
-function typeMismatchRepairHint(error: z.ZodError, input: unknown): string | undefined {
+function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   if (input === undefined) return undefined;
   for (const issue of error.issues) {
     if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
     const value = resolveAtPath(input, issue.path);
     if (value === undefined) continue;
     const received = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
-    return `"${issue.path.join('.')}" must be a JSON ${issue.expected}, not a ${received}; send the ${issue.expected} directly.`;
+    const nullNote = acceptsNullAt(schema, issue.path) ? ', or null when it does not apply' : '';
+    return `"${issue.path.join('.')}" must be a JSON ${issue.expected}, not a ${received}; send the ${issue.expected} directly${nullNote}.`;
   }
   return undefined;
 }
@@ -531,16 +599,18 @@ function sizeBoundRepairHint(error: z.ZodError, input: unknown): string | undefi
 /**
  * The repair instruction a schema refinement states itself, on `params.hint` of its custom issue.
  *
- * @returns The first such hint, so a refinement that names its own concrete repair is never
- * followed by the generic instruction it would contradict; `undefined` when no issue carries one.
+ * @returns Every distinct such hint, so a refinement that names its own concrete repair is never
+ * followed by the generic instruction it would contradict, and each flagged field gets its own; `undefined`
+ * when no issue carries one.
  */
 function issueOwnedRepairHint(error: z.ZodError): string | undefined {
+  const hints: string[] = [];
   for (const issue of error.issues) {
     if (issue.code !== 'custom') continue;
     const hint = (issue.params as { hint?: unknown } | undefined)?.hint;
-    if (typeof hint === 'string') return hint;
+    if (typeof hint === 'string' && !hints.includes(hint)) hints.push(hint);
   }
-  return undefined;
+  return hints.length > 0 ? hints.join(' ') : undefined;
 }
 
 /**
@@ -641,12 +711,13 @@ export function zodIssuePaths(error: z.ZodError): string[] {
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
  * {@link zodFieldRepairHint}, then {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input`
- * (the value that failed parsing) enabling measured-size and scalar-echo enrichment.
+ * (the value that failed parsing) enabling measured-size and scalar-echo enrichment; optional `schema`
+ * (the schema it failed) enabling the hints that name what the schema accepts.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
  */
 export function rejectionFromZodError(
   error: z.ZodError,
-  opts: { code: string; hint?: string; input?: unknown },
+  opts: { code: string; hint?: string; input?: unknown; schema?: z.ZodType },
 ): ToolRejection {
   const issuePaths: string[] = [];
   const lines = error.issues.map(issue => {
@@ -665,7 +736,7 @@ export function rejectionFromZodError(
   return makeRejection({
     code: opts.code,
     reason: lines.join('; '),
-    hint: opts.hint ?? zodFieldRepairHint(error, opts.input) ?? INVALID_TOOL_INPUT_REPAIR_HINT,
+    hint: opts.hint ?? zodFieldRepairHint(error, opts.input, opts.schema) ?? INVALID_TOOL_INPUT_REPAIR_HINT,
     issuePaths,
   });
 }

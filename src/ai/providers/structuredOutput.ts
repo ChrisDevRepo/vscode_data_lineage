@@ -39,15 +39,17 @@ export class StructuredOutputError extends Error {
  * @param callPresent - Whether the provider emitted the synthetic tool call.
  * @param error - The Zod validation failure when the emitted input failed schema validation.
  * @param input - The parsed payload that failed validation; enables measured-size and type-mismatch text.
+ * @param schema - The schema the payload failed; enables the hints that name what it accepts.
  * @returns Bounded reason for graph retry state; `hint` only for a schema-invalid payload.
  */
 export function structuredRejectReason(
   callPresent: boolean,
   error: z.ZodError | undefined,
   input?: unknown,
+  schema?: z.ZodType,
 ): { reason: string; hint?: string } {
   if (!callPresent) return { reason: `missing ${STRUCTURED_OUTPUT_TOOL} tool call` };
   if (!error) return { reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: schema mismatch` };
-  const { reason, hint } = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput, input });
+  const { reason, hint } = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput, input, schema });
   return { reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${reason}`, hint };
 }

@@ -699,35 +699,55 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
   if (value.verdict === 'end_branch') {
     for (const field of END_BRANCH_EXCLUDED_FIELDS) {
       if (value[field] == null) continue;
+      const nullable = field === 'sections' || field === 'summary';
       ctx.addIssue({
         code: 'custom',
         path: [field],
-        message: `not accepted with verdict end_branch — an end_branch submit carries only focus_node_id, verdict${mode === 'ct' ? ', reason and an empty column_flow' : ' and reason'}; remove ${field}, or submit analyze or passthrough to keep the node.`,
+        message: 'not accepted with verdict end_branch; verdict analyze or passthrough keeps the node.',
+        params: { hint: nullable ? `Send ${field}: null.` : `Omit ${field}.` },
       });
     }
     if (mode === 'ct' && (value.column_flow?.length ?? 0) > 0) {
       ctx.addIssue({
         code: 'custom',
         path: ['column_flow'],
-        message: 'not accepted with verdict end_branch — an end_branch submit carries only focus_node_id, verdict, reason and an empty column_flow; submit column_flow: [], or submit analyze or passthrough to keep the node.',
+        message: 'not accepted with verdict end_branch; verdict analyze or passthrough keeps the node.',
+        params: { hint: 'Send column_flow: [].' },
       });
     }
-    const reasonMessage = 'required with verdict end_branch: why nothing on the answer path runs through this node.';
-    if (value.reason == null) {
-      ctx.addIssue({ code: 'invalid_type', expected: 'string', input: undefined, path: ['reason'], message: reasonMessage });
-    } else if (!value.reason.trim()) {
-      ctx.addIssue({ code: 'custom', path: ['reason'], message: reasonMessage });
+    if (!value.reason?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reason'],
+        message: 'required with verdict end_branch.',
+        params: { hint: 'Send reason: one sentence on why nothing on the answer path runs through this node.' },
+      });
     }
     return;
   }
   if (value.reason?.trim()) {
-    ctx.addIssue({ code: 'custom', path: ['reason'], message: `accepted only with verdict end_branch; with ${value.verdict}, state the findings in sections and summary and remove reason.` });
+    ctx.addIssue({
+      code: 'custom',
+      path: ['reason'],
+      message: `accepted only with verdict end_branch, not ${value.verdict}.`,
+      params: { hint: 'Send reason: null; the findings belong in sections and summary.' },
+    });
   }
   if (value.sections == null) {
-    ctx.addIssue({ code: 'invalid_type', expected: 'object', input: undefined, path: ['sections'], message: `required with verdict ${value.verdict}.` });
+    ctx.addIssue({
+      code: 'custom',
+      path: ['sections'],
+      message: `required with verdict ${value.verdict}; null only with end_branch.`,
+      params: { hint: 'Send sections: the section body keyed by angle.' },
+    });
   }
   if (value.summary == null) {
-    ctx.addIssue({ code: 'invalid_type', expected: 'string', input: undefined, path: ['summary'], message: `required with verdict ${value.verdict}.` });
+    ctx.addIssue({
+      code: 'custom',
+      path: ['summary'],
+      message: `required with verdict ${value.verdict}; null only with end_branch.`,
+      params: { hint: 'Send summary: one sentence on what this node does to the data and hands on.' },
+    });
   }
 }
 
@@ -1490,5 +1510,5 @@ export function parseToolInput<T extends z.ZodType>(
   | { readonly ok: false; readonly error: ToolRejection } {
   const parsed = schema.safeParse(input);
   if (parsed.success) return { ok: true, data: parsed.data };
-  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input }) };
+  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
 }
