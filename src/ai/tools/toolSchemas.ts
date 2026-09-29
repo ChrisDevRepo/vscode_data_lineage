@@ -1192,7 +1192,15 @@ const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas
 function buildPreviewSchemas(blockCount: number) {
   const [first, ...rest] = Array.from({ length: Math.max(blockCount, 1) }, (_, index) => `B${index + 1}`);
   const start = z.enum([first, ...rest]).describe('First block of `answer_blocks` this section presents, e.g. "B3"; it runs to the block before the next section\'s start, the last section to the end. The first section starts at B1; starts ascend strictly.');
-  const section = PresentResultSectionSchema.omit({ text: true }).extend({ start });
+  const section = z.object({
+    label: PresentResultSectionSchema.shape.label,
+    node_ids: PresentResultSectionSchema.shape.node_ids,
+    start,
+  }, {
+    error: (issue) => issue.code === 'unrecognized_keys'
+      ? 'A section holds only label, node_ids and start. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
+      : undefined,
+  }).strict();
   const patch = section.extend({
     node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
     start: start.optional(),

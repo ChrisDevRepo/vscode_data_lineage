@@ -65,9 +65,8 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           `[Normalize] tool=submit_findings verdict=end_branch dropped=${[flat.summary != null ? 'summary' : '', flat.sections != null ? 'sections' : ''].filter(Boolean).join(',')}`,
         );
       }
-      const held = engine.applyHeldContent(toHopFinding(flat));
-      if ('code' in held) return s.logAndReturn('lineage_submit_findings', held, normalizedInput);
-      const finding = held;
+      const finding = engine.applyHeldContent(toHopFinding(flat));
+      if ('code' in finding) return s.logAndReturn('lineage_submit_findings', finding, normalizedInput);
 
       const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
       const violation = validateSectionsAgainstClassification(finding.verdict === 'end_branch' ? [] : finding.sections, sess.classification, finding.verdict, archivedAngles);

@@ -182,10 +182,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const patch = input as PresentResultRepairPatch;
         const textlessNewLabels = findTextlessNewSectionLabels(held.sections, patch.sections ?? []);
         if (textlessNewLabels.length > 0) {
+          const body = isVisualPreview ? 'start' : 'text';
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `sections[] names label(s) not on file with no text: ${quoteIds(textlessNewLabels)}.`,
-            hint: 'A label already on file may omit text to keep it; a new label needs its text. Use the exact held label to change an existing section. To fix: add text: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.',
+            reason: `sections[] names label(s) not on file with no ${body}: ${quoteIds(textlessNewLabels)}.`,
+            hint: `A label already on file may omit ${body} to keep it; a new label needs its ${body}. Use the exact held label to change an existing section. To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.`,
             issuePaths: ['sections'],
           }));
         }
@@ -220,7 +221,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: partition.map(issue => issue.message).join('\n'),
-            hint: presentResultRepairInstruction(['sections']),
+            hint: presentResultRepairInstruction(['sections'], 'visual_preview'),
             issuePaths: partition.map(issue => `sections.${issue.index}.start`),
           }));
         }

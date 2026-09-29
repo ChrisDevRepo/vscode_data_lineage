@@ -760,8 +760,9 @@ over it.
 A held `present_result` repair merges `sections` by label through
 `RepairDraftStore.mergeByKey`: a resent section replaces the held section with
 that label, a new label appends, `{label, remove: true}` drops one, and every
-unnamed held section is kept as authored. A resent section may omit `text`,
-`start` or `node_ids` to keep the held values. The rejection shows the model the
+unnamed held section is kept as authored. A resent section may omit its
+stage's body field (`text`; `start` in the preview) or `node_ids` to keep the held
+values, and the hint names only the field the stage's schema accepts. The rejection shows the model the
 held section labels (with the start block of a preview section) and nothing the
 rejected call already carries. `notes` and `highlight_groups` resend as a whole
 list. A held draft is cleared only on success or turn reset, never by a failed

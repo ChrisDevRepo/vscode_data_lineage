@@ -247,13 +247,18 @@ export function findStartOrderIssues(
 ): Array<{ index: number; message: string }> {
   const issues: Array<{ index: number; message: string }> = [];
   for (const [index, { label, start }] of sections.entries()) {
-    const before = sections[index - 1];
-    if (index === 0 || !start || !before) continue;
-    if (Number(start.slice(1)) <= (index === 1 ? 1 : Number((before.start ?? 'B1').slice(1)))) {
-      issues.push({ index, message: `Section "${label}" starts at ${start}, not after "${before.label}"${index === 1 ? ' (which starts at B1)' : ` at ${before.start}`}; starts ascend strictly.` });
+    if (index === 0 || !start) continue;
+    const before = startBlock(sections, index - 1);
+    if (startBlock(sections, index) <= before) {
+      issues.push({ index, message: `Section "${label}" starts at ${start}, not after "${sections[index - 1].label}" at B${before}; starts ascend strictly.` });
     }
   }
   return issues;
+}
+
+/** The 1-based block a preview section starts at; the first section always begins at B1. */
+function startBlock(sections: ReadonlyArray<{ start?: string }>, index: number): number {
+  return index === 0 ? 1 : Number((sections[index].start ?? 'B1').slice(1));
 }
 
 /**
@@ -265,11 +270,10 @@ export function assemblePreviewSections(
   blocks: readonly AnswerBlock[],
   sections: readonly PresentSection[],
 ): PresentSection[] {
-  const startOf = (index: number): number => (index === 0 ? 1 : Number((sections[index].start ?? 'B1').slice(1)));
   return sections.map(({ start, ...section }, index) => ({
     ...section,
     text: start
-      ? blocks.slice(startOf(index) - 1, index + 1 < sections.length ? startOf(index + 1) - 1 : blocks.length).map(block => block.text).join('\n\n')
+      ? blocks.slice(startBlock(sections, index) - 1, index + 1 < sections.length ? startBlock(sections, index + 1) - 1 : blocks.length).map(block => block.text).join('\n\n')
       : section.text,
   }));
 }
@@ -388,18 +392,13 @@ export function heldSectionsForRepair(sections: PresentResultInput['sections']):
 }
 
 /**
- * The one sentence every surface (rejection hint, held-draft view) states for how a resent
- * `sections` list merges — so the model never reads two contracts for the same call.
- */
-export const PRESENT_RESULT_SECTIONS_RESEND_RULE = `${keyedResendRule('sections', 'label')} Omit a resent section's text, start or node_ids to keep the held value; a label not on file appends a new section and needs its text or start; {label, remove: true} drops a held section.`;
-
-/**
  * The repair-call sentence a repairable rejection carries, stated once here for every failure: the
- * fields to resend and, when `sections` is among them, how the resend merges.
+ * fields to resend and, when `sections` is among them, how the resend merges under the stage's own
+ * section body field.
  */
-export function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[]): string {
+export function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[], stage: PresentResultStage): string {
   const instruction = `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`;
-  return resendList.includes('sections') ? `${instruction} ${PRESENT_RESULT_SECTIONS_RESEND_RULE}` : instruction;
+  return resendList.includes('sections') ? `${instruction} ${keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids'])}` : instruction;
 }
 
 /**
@@ -1086,7 +1085,7 @@ export function validatePresentResult(
     let hint = soleFailureHint ?? (fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendSentence}`
       : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`);
-    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList)}`;
+    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList, stage)}`;
     if (soleFailureHint === undefined && nodeIdHintNeeded) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }

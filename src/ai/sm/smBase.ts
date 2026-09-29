@@ -556,7 +556,8 @@ export class NavigationEngine implements IHopStateMachine {
    * empty summary keeps the held one.
    *
    * @returns The submission to apply, or a `missing_field` rejection when a kept verdict carries no
-   *   sections and no held draft of this focus supplies any.
+   *   sections and no summary and no held draft of this focus supplies them. Empty sections with an
+   *   authored summary pass on: a revisit credits the angles already archived.
    */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
     if (incoming.verdict === 'end_branch') return incoming;
@@ -568,7 +569,7 @@ export class NavigationEngine implements IHopStateMachine {
       ? held
       : null;
     if (!heldForFocus) {
-      return incoming.sections.length > 0 ? incoming : makeRejection({
+      return incoming.sections.length > 0 || incoming.summary.trim() ? incoming : makeRejection({
         code: REJECTION_CODES.missingField,
         hint: 'sections is empty and no draft is held for this node; send authored sections and a non-empty summary.',
       });

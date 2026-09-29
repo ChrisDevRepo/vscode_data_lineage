@@ -65,7 +65,12 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
  *
  * @param field - The list field a resend carries, e.g. `sections`.
  * @param key - What identifies an entry in that list, e.g. `label` or `angle`.
+ * @param partialFields - The entry fields the stage accepts and a resent entry may omit to keep the
+ * held value, the first being the body a new key needs. Absent for a list whose entries are only
+ * replaced by key.
  */
-export function keyedResendRule(field: string, key: string): string {
-  return `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;
+export function keyedResendRule(field: string, key: string, partialFields: readonly string[] = []): string {
+  const rule = `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;
+  if (partialFields.length === 0) return rule;
+  return `${rule} Omit a resent entry's ${partialFields.join(' or ')} to keep the held value; a ${key} not on file appends a new entry and needs its ${partialFields[0]}; {${key}: …, remove: true} drops a held entry.`;
 }

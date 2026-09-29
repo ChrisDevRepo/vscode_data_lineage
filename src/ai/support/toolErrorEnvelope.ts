@@ -290,7 +290,8 @@ function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line
 /**
  * Standing repair instruction for a schema-invalid tool call. Truthful for the port-level reject:
  * nothing is held at that layer, so the model must resend the complete call — the instruction
- * directs a minimal edit, it does not promise server-side reuse.
+ * directs a minimal edit, it does not promise server-side reuse. A keyed resend is stated only by the
+ * held-draft hints, where a draft is held; before the first parse nothing is, so a full resend is correct.
  */
 export const INVALID_TOOL_INPUT_REPAIR_HINT
   = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
