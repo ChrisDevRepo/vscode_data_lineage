@@ -62,7 +62,10 @@ export function isConsentGateRejection(code: string): boolean {
   return code === CONSENT_GATE_CODE;
 }
 
-/** Zod view of the {@link makeRejection} shape, parsed once at the read boundary. */
+/**
+ * Zod view of the {@link makeRejection} shape, parsed once at the read boundary. Strict: the emitter
+ * writes exactly these keys, so a success payload carrying any other key is never read as a rejection.
+ */
 const RejectionShape = z.object({
   code: z.string(),
   reason: z.string().trim().min(1),
@@ -71,7 +74,7 @@ const RejectionShape = z.object({
   issuePaths: z.array(z.string()).optional(),
   entryIds: z.array(z.string()).optional(),
   lengthOverruns: z.array(z.object({ path: z.string(), length: z.number(), limit: z.number() })).optional(),
-});
+}).strict();
 
 /** Zod view of the `lineage_present_result` validator's `{ success: false, errors: […] }` failure. */
 const PresentResultFailureShape = z.object({
