@@ -683,7 +683,8 @@ const END_BRANCH_EXCLUDED_FIELDS = ['badge_label', 'prune_neighbors', 'questions
  * @remarks
  * `end_branch` requires `reason` and refuses the fields that act on a kept verdict; `summary` and
  * `sections` are accepted and dropped by {@link toHopFinding}. A kept verdict carries `sections`
- * and `summary` (and, in CT, `column_flow`) and never `reason`. Each fault is one
+ * and `summary` (and, in CT, `column_flow`) and never `reason`; `summary` may be null exactly when
+ * `sections` is the held-draft sentinel `{}`, which the engine restores with the held summary. Each fault is one
  * issue on its own path, so the rejection names the exact field to drop or add. `column_flow` is
  * served-required in CT (always in the served `required` list, never omissible at the schema level)
  * so its own content check runs for every verdict rather than joining
@@ -734,7 +735,8 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       params: { hint: 'Send sections: the section body keyed by angle.' },
     });
   }
-  if (value.summary == null) {
+  const heldSentinel = value.sections != null && Object.keys(value.sections).length === 0;
+  if (value.summary == null && !heldSentinel) {
     ctx.addIssue({
       code: 'custom',
       path: ['summary'],
