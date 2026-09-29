@@ -181,8 +181,9 @@ function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>)
  * factor. Importing {@link MAX_TOOL_PROVIDER_CALLS} keeps the two constants in lockstep — raising the
  * per-phase call cap automatically widens this budget. The bound is the sum of three terms:
  * the {@link SELF_LOOPING_ONE_TIME_PHASES} one-time phases (each up to `MAX_TOOL_PROVIDER_CALLS`
- * steps), the active coordinator/worker loop (`maxRounds` rounds, each one coordinator step plus up to
- * `MAX_TOOL_PROVIDER_CALLS` no-progress worker self-loops plus one step per accepted read), and {@link FIXED_TRANSITION_OVERHEAD} for the
+ * steps), the active coordinator/worker loop (`maxRounds` rounds, each one coordinator step plus, per
+ * accepted read and once more at the end, up to `MAX_TOOL_PROVIDER_CALLS` worker self-loops — the
+ * read itself and the no-progress replies in a row before it), and {@link FIXED_TRANSITION_OVERHEAD} for the
  * non-looping gate/plumbing nodes. Floored at {@link RECURSION_LIMIT_FLOOR}. A limit below the implied
  * transition count aborts a legitimate turn mid-analysis with an opaque LangGraph recursion error.
  *
@@ -195,7 +196,7 @@ function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>)
  */
 export function turnRecursionLimit(maxRounds: number, scopeSize: number): number {
   const oneTimePhaseSteps = SELF_LOOPING_ONE_TIME_PHASES * MAX_TOOL_PROVIDER_CALLS;
-  const activeLoopSteps = maxRounds * (1 + MAX_TOOL_PROVIDER_CALLS + scopeSize);
+  const activeLoopSteps = maxRounds * (1 + MAX_TOOL_PROVIDER_CALLS * (1 + scopeSize));
   return Math.max(
     RECURSION_LIMIT_FLOOR,
     oneTimePhaseSteps + activeLoopSteps + FIXED_TRANSITION_OVERHEAD,
