@@ -61,7 +61,6 @@ const RejectionShape = z.object({
   detail: z.unknown().optional(),
   issuePaths: z.array(z.string()).optional(),
   entryIds: z.array(z.string()).optional(),
-  lengthOverruns: z.array(z.object({ path: z.string(), length: z.number(), limit: z.number() })).optional(),
 }).strict();
 
 /** Zod view of the `lineage_present_result` validator's `{ success: false, errors: […] }` failure. */
