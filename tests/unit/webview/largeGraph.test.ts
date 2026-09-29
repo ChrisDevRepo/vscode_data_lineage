@@ -18,11 +18,12 @@ import {
   buildGraphologyGraph,
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
-import { deriveGraphDisplayMode, deriveInitialGraphMode } from '../../../src/engine/graphDisplayMode';
+import { deriveGraphDisplayMode, deriveInitialGraphMode, traceSizeByDepth } from '../../../src/engine/graphDisplayMode';
 import { filterBySchemas } from '../../../src/engine/dacpacExtractor';
-import { checkObjectLimit } from '../../../src/engine/modelFilters';
+import { checkObjectLimit, formatObjectLimitMessage } from '../../../src/engine/modelFilters';
 import { DEFAULT_CONFIG, type DatabaseModel, type ExtensionConfig } from '../../../src/engine/types';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
+import { filterSuggestions } from '../../../src/utils/autocomplete';
 import { buildLargeModel } from './largeGraphFixture';
 
 /**
@@ -196,5 +197,80 @@ describe('scoped surface ceiling', () => {
 
     expect(state.mode).toBe('scoped');
     expect(state.renderedCount).toBe(40);
+  });
+});
+
+describe('5,000-object model: loaded and searchable, drawn only up to the render limit', () => {
+  const MAX_NODES = 5000;
+  const RENDER_LIMIT_MAX = 1500;
+  const model = buildLargeModel(MAX_NODES);
+  const config = configWith({ renderLimit: RENDER_LIMIT_MAX });
+
+  it('admits the model at maxNodes 5000 and refuses it at 4999 with the shared message', () => {
+    expect(model.nodes).toHaveLength(MAX_NODES);
+    expect(checkObjectLimit(model, MAX_NODES).ok).toBe(true);
+
+    const refused = checkObjectLimit(model, MAX_NODES - 1);
+    expect(refused).toEqual({ ok: false, count: MAX_NODES, limit: MAX_NODES - 1 });
+    expect(formatObjectLimitMessage(MAX_NODES, MAX_NODES - 1)).toBe(
+      '5,000 objects selected (limit 4,999, set by dataLineageViz.maxNodes). Select fewer schemas.',
+    );
+
+    const over = buildLargeModel(MAX_NODES + 1);
+    const overCheck = checkObjectLimit(over, MAX_NODES);
+    expect(overCheck).toEqual({ ok: false, count: MAX_NODES + 1, limit: MAX_NODES });
+    expect(formatObjectLimitMessage(MAX_NODES + 1, MAX_NODES)).toContain('5,001 objects selected (limit 5,000');
+  });
+
+  it('blocks the object surface above the render limit and starts in Schema View', () => {
+    expect(deriveInitialGraphMode({ filteredCount: MAX_NODES, config })).toBe('overview');
+    const state = deriveGraphDisplayMode({
+      graphMode: 'full', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
+    });
+    expect(state).toEqual({ mode: 'renderLimit', renderedCount: MAX_NODES });
+  });
+
+  it('keeps Schema View available at 5,000 objects', () => {
+    const state = deriveGraphDisplayMode({
+      graphMode: 'overview', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0, schemaOverviewRenderedCount: model.schemas.length,
+    });
+    expect(state.mode).toBe('schemaOverview');
+    expect(state.renderedCount).toBe(model.schemas.length);
+  });
+
+  it('finds an object the canvas does not draw', () => {
+    const target = model.nodes[MAX_NODES - 1];
+    const hits = filterSuggestions(model.nodes, target.name, 50);
+    expect(hits.map(n => n.id)).toContain(target.id);
+    expect(model.nodes.indexOf(target)).toBeGreaterThanOrEqual(RENDER_LIMIT_MAX);
+  });
+
+  it('bounds a scoped trace by the render limit', () => {
+    const graph = buildGraphologyGraph(model);
+    const origin = model.nodes[MAX_NODES / 2].id;
+    const reach = traceSizeByDepth(graph, origin, TRACE_ALL_LEVELS, TRACE_ALL_LEVELS);
+    expect(reach).toBe(directedReach(model, origin));
+
+    const state = deriveGraphDisplayMode({
+      graphMode: 'full', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
+      scopedModeActive: true, scopedRenderedCount: reach,
+    });
+    expect(reach).toBeLessThanOrEqual(RENDER_LIMIT_MAX);
+    expect(state.mode).toBe('scoped');
+    expect(state.renderedCount).toBe(reach);
+
+    const tooLarge = deriveGraphDisplayMode({
+      graphMode: 'full', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
+      scopedModeActive: true, scopedRenderedCount: RENDER_LIMIT_MAX + 1,
+    });
+    expect(tooLarge.mode).toBe('renderLimit');
+
+    const shallow = traceSizeByDepth(graph, origin, 1, 1);
+    expect(shallow).toBeLessThanOrEqual(reach);
+    expect(shallow).toBeLessThanOrEqual(RENDER_LIMIT_MAX);
   });
 });
