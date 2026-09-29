@@ -921,7 +921,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  *
  * @param mode - Locked active analysis mode used for provider projection.
  * @param classification - Locked output classification; omitted callers get the mode-only schema.
- * @param freshSubmission - Serve the `both` angle keys as required and `summary` as non-null; unset
+ * @param freshSubmission - Serve the `both` angle keys as required and refuse a null `summary` on a kept verdict (the served schema stays nullable for `end_branch`); unset
  * so a held draft or an archived angle still validates.
  * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col` and offers
  * `writes_to` for a procedure focus alone.
