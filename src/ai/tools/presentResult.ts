@@ -222,15 +222,15 @@ export function discoveryPreviewNarrative(answer: string): {
   const text: string | undefined = first?.type === 'list' ? first.items[0]?.text : first && 'text' in first ? first.text : first?.raw;
   const summary = text?.split('\n').find(line => line.trim())?.trim() || title;
   const texts: string[] = [];
-  let leading = '';
+  const leading: string[] = [];
   for (const token of tokens) {
     const raw = token.raw.trim();
     if (token.type === 'space') continue;
-    if (token.type !== 'hr') texts.push(leading ? `${leading}\n\n${raw}` : raw);
+    if (token.type !== 'hr') texts.push([...leading.splice(0), raw].join('\n\n'));
     else if (texts.length > 0) texts[texts.length - 1] += `\n\n${raw}`;
-    else leading = raw;
-    if (token.type !== 'hr') leading = '';
+    else leading.push(raw);
   }
+  if (leading.length > 0) texts.push(leading.join('\n\n'));
   const blocks = texts.map((blockText, index) => ({ id: `B${index + 1}`, text: blockText }));
   return { ...(title ? { title } : {}), blocks, summary };
 }
