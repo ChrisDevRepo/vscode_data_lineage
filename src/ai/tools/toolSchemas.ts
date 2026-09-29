@@ -751,11 +751,10 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
  * consumes.
  *
  * @remarks
- * Called exactly once, by `executeSubmitFindings`, right after its own
- * {@link submitFindingsSchemaForMode} parse — never inside the schema itself, so the schema's output
- * type stays equal to its input type and is safe to validate more than once. Both the model port
- * (deciding `valid`/`invalid`) and the handler (its own boundary) parse with the same schema; only
- * the handler converts.
+ * Called exactly once, by `executeSubmitFindings`, on the payload the tool-attempt boundary already
+ * parsed against the served {@link submitFindingsSchemaForMode} schema — never inside the schema
+ * itself, so the schema's output type stays equal to its input type. The boundary decides
+ * `valid`/`invalid`; only the handler converts.
  *
  * @param value - A payload {@link refineSubmitFindingsShape} accepted.
  * @returns The `end_branch` or kept variant, carrying exactly that variant's fields.
@@ -922,7 +921,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  *
  * @param mode - Locked active analysis mode used for provider projection.
  * @param classification - Locked output classification; omitted callers get the mode-only schema.
- * @param freshSubmission - Serve the `both` angle keys as required; the handler's parse leaves it unset
+ * @param freshSubmission - Serve the `both` angle keys as required and `summary` as non-null; unset
  * so a held draft or an archived angle still validates.
  * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col` and offers
  * `writes_to` for a procedure focus alone.

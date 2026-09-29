@@ -26,12 +26,7 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
     return this.authorization;
   }
 
-  /** `true` when a retry can be interpreted as a patch for the currently held draft. */
-  public hasRepairableDraft(): boolean {
-    return this.draft !== null;
-  }
-
-  /** Clears the held draft after commit or after any non-repairable failure. */
+  /** Clears the held draft on success or turn reset. */
   public clear(): void {
     this.draft = null;
     this.authorization = null;

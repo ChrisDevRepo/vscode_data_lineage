@@ -643,8 +643,8 @@ export function zodIssuePaths(error: z.ZodError): string[] {
  * @remarks
  * The reason is `z.prettifyError` over the issues, each carrying its enriched message: an
  * `invalid_union` expands via {@link describeInvalidUnion} into a per-branch required-field
- * breakdown, and when `input` is supplied a size issue names the measured size and a scalar leaf
- * the value sent — Zod v4 issues carry no input, so the enrichment happens here. Issues identical
+ * breakdown, and when `input` is supplied a size issue names the measured size — Zod v4 issues
+ * carry no input, so the enrichment happens here; a sent value is never echoed. Issues identical
  * apart from their array index (same code, message and path shape) collapse into the first, which
  * names the other indices, so one defect repeated across N entries is one line. Only STRUCTURAL
  * bounds reach this function; a content cap is enforced and reported separately by the validator
