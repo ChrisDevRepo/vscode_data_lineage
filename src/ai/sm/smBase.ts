@@ -567,8 +567,9 @@ export class NavigationEngine implements IHopStateMachine {
    * the retry sends replaces the held one.
    *
    * @returns The submission to apply, or a `missing_field` rejection when a kept verdict carries no
-   *   sections and no summary and no held draft of this focus supplies them. Empty sections with an authored summary pass on: a revisit
-   *   credits the angles already archived.
+   *   sections and no summary and no held draft of this focus supplies them, or when neither the
+   *   retry nor a held draft supplies a non-empty summary. Empty sections with an authored summary
+   *   pass on: a revisit credits the angles already archived.
    */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
     if (incoming.verdict === 'end_branch') return incoming;
@@ -580,10 +581,13 @@ export class NavigationEngine implements IHopStateMachine {
       ? held
       : null;
     if (!heldForFocus) {
-      return incoming.sections.length > 0 || incoming.summary.trim() ? incoming : makeRejection({
-        code: REJECTION_CODES.missingField,
-        hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
-      });
+      if (incoming.sections.length === 0 && !incoming.summary.trim()) {
+        return makeRejection({
+          code: REJECTION_CODES.missingField,
+          hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
+        });
+      }
+      return incoming.summary.trim() ? incoming : this.emptySummaryRejection();
     }
     this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
     const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
@@ -593,12 +597,23 @@ export class NavigationEngine implements IHopStateMachine {
         Object.assign(carried, { [field]: heldForFocus[field] });
       }
     }
+    const summary = incoming.summary.trim() ? incoming.summary : heldForFocus.summary;
+    if (!summary.trim()) return this.emptySummaryRejection();
     return {
       ...incoming,
       ...carried,
       sections: RepairDraftStore.mergeByKey(heldForFocus.sections, incoming.sections, section => section.angle ?? ''),
-      summary: incoming.summary.trim() ? incoming.summary : heldForFocus.summary,
+      summary,
     };
+  }
+
+  /** A kept verdict whose summary is empty with no held summary to restore. */
+  private emptySummaryRejection(): ToolRejection {
+    return makeRejection({
+      code: REJECTION_CODES.missingField,
+      hint: 'summary is empty and no summary is held for this node; resend the full call with summary: one sentence on what this node does to the data and hands on.',
+      issuePaths: ['summary'],
+    });
   }
 
   /**
