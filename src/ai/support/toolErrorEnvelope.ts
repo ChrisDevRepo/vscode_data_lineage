@@ -397,6 +397,14 @@ function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly Property
   return node;
 }
 
+/** The non-null branch of a nullable node (`anyOf: [X, {type: 'null'}]`); any other node unchanged. */
+function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
+  const branches = node.anyOf;
+  if (!branches) return node;
+  const nonNull = branches.filter((branch) => branch.type !== 'null');
+  return nonNull.length === 1 && nonNull.length < branches.length ? nonNull[0]! : node;
+}
+
 /** Whether the schema accepts `null` at `path`. */
 function acceptsNullAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): boolean {
   const node = jsonSchemaNodeAt(schema, path);
@@ -417,7 +425,8 @@ function nestedKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
   if (issues.length === 0 || issues.some((issue) => issue.path.length === 0)) return undefined;
   const clauses = new Map<string, { keys: Set<string>; allowed: string[] }>();
   for (const issue of issues) {
-    const allowed = Object.keys(jsonSchemaNodeAt(schema, issue.path)?.properties ?? {});
+    const node = jsonSchemaNodeAt(schema, issue.path);
+    const allowed = Object.keys((node ? unwrapNullable(node) : undefined)?.properties ?? {});
     if (allowed.length === 0) return undefined;
     const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '');
     const clause = clauses.get(where) ?? { keys: new Set<string>(), allowed };
