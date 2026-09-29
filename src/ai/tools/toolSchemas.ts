@@ -1178,9 +1178,15 @@ const AnswerBlockRangeSchema = z.object({
  * One preview section: the {@link PresentResultSectionSchema} keys with the body given as a block
  * range instead of `text`.
  */
-const PresentResultPreviewSectionSchema = PresentResultSectionSchema.omit({ text: true }).extend({
+const PresentResultPreviewSectionSchema = z.object({
+  label: PresentResultSectionSchema.shape.label,
+  node_ids: PresentResultSectionSchema.shape.node_ids,
   blocks: AnswerBlockRangeSchema.describe('Blocks of `answer_blocks` this section presents. Section ranges follow each other in order and together cover every block exactly once.'),
-});
+}, {
+  error: (issue) => issue.code === 'unrecognized_keys'
+    ? 'A section holds only label, node_ids and blocks. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
+    : undefined,
+}).strict();
 
 /** Preview patch section: `node_ids` and `blocks` may each be omitted to keep the held value under the label. */
 const PresentResultPreviewSectionPatchSchema = PresentResultPreviewSectionSchema.extend({
