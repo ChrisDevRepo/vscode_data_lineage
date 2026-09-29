@@ -392,15 +392,15 @@ object.
 
 `lineage_present_result` receives structured presentation fields for both bounded
 one-pass previews and completed hop-by-hop explorations. Synthesis authors text;
-preview only regroups the cached discovery answer and adds labels, node links,
-verbatim captions, and highlight groups. The engine owns validation, section
+preview only groups the cached discovery answer into sections by block reference
+and adds labels, node links, captions, and highlight groups. The engine owns validation, section
 numbering, badge derivation, object links, markdown assembly, and graph closure.
 
 Both stages are validated by the same rules, so both receive the same
 presentation contract. The linking, captioning, and highlight-selection rules are
 authored once and composed into every stage that calls the tool through the
 shared phase dispatcher; only genuinely stage-specific material — the archive
-evidence surfaces for synthesis, the verbatim-reuse constraint for preview, the
+evidence surfaces for synthesis, the answer-block reference contract for preview, the
 depth and heading rules that license only the text-authoring stages — lives with
 its stage. A stage that reaches the tool without that contract is a stage judged
 by rules it was never given. The contract also states the enforced mechanical
@@ -415,7 +415,7 @@ prompt reasons from.
 Validation is field-scoped and runs before commit, and it is structural only.
 Markdown and math formatting never reject a call: an expression the renderer
 cannot parse degrades to its original source text on screen. A held-draft retry
-may repair only the rejected text fields; graph membership, node associations,
+may repair only the rejected fields; graph membership, node associations,
 and highlights remain unchanged.
 
 One submission produces one complete rejection. Checks that need context the
@@ -435,11 +435,18 @@ final source presentation surface.
 There is no AI-writeable assembled `description` field. The engine builds the
 rendered document from title and numbered section bodies. For preview, the host
 supplies the cached discovery answer and retained bounded scope directly; no
-lookup tool is exposed. The submitted section bodies must partition that answer
-verbatim and in order, and node captions must be exact excerpts. Any rewrite,
-omission, or invented caption is rejected through the existing held-draft repair
-flow, which exposes only the invalid fields on the retry. Synthesis continues to
-author its report from the completed exploration archive.
+lookup tool is exposed. The answer is split into top-level markdown blocks
+(`marked.lexer`) and served as `answer_blocks`, numbered B1..Bn. A preview
+section carries `label`, `node_ids` and `blocks: {from, to}` and no text: the
+engine assembles each section's body from the referenced blocks, so the model
+never retypes the answer. One Zod `superRefine` checks that the section ranges
+cover B1..Bn exactly once and in order; a gap, an overlap or an unknown block id
+is reported at `sections.N.blocks` and names the offending blocks. `notes` are
+checked as one contiguous span of the answer, compared on markdown-stripped
+plain text. A rejected preview is repaired by label: the retry resends only the
+named section, and every held section not resent is kept. The repair hint does
+not ask for `is_update`. Synthesis continues to author its report from the
+completed exploration archive.
 
 ## Phase policy and completed follow-ups
 
@@ -500,7 +507,7 @@ directly according to the phase policy.
   not emit `#`, `##`, or `###` headings; use bold labels inside a body. The
   shared presentation contract states this rule to the text-authoring stages
   (synthesis and completed follow-ups); preview is exempt because its bodies
-  are verbatim spans of the cached answer.
+  are blocks of the cached answer.
 
 ## SQL witness contract
 

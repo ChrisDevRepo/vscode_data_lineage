@@ -208,9 +208,9 @@ rule — only ids, columns and relationships tools returned — not a forced cal
 enters this same discovery loop. The bounded transient preview is a later,
 host-owned action (`preview_button`); it does not grant SM authority. The
 preview reuses the preceding discovery answer and retained bounded scope: only
-`present_result` is exposed, and the model may regroup verbatim section
-bodies, label/link nodes, choose semantic colors, and select verbatim
-captions. The existing presentation validator, held-draft repair store,
+`present_result` is exposed, and the model groups the served answer blocks
+into sections by block range, labels and links nodes, and chooses semantic
+colors; the engine assembles the section text. The existing presentation validator, held-draft repair store,
 description assembler, and webview commit remain the shared path.
 
 A completed discovery answer can also offer to continue as an exploration.
@@ -759,10 +759,9 @@ label (the default), a resent section replaces the held section with that
 label, a new label appends, and every unnamed held section is kept; a resent section may
 omit `text` or `node_ids` to keep the held values, so the view shows labels
 and node ids only. Whole-list applies only
-where the fix cannot be addressed by label: the discovery preview, whose
-section texts must jointly reproduce one cached answer, and a failure inside one
-held section (an unlinkable node id), where the omission must be able to drop
-it. `notes`
+where the fix cannot be addressed by label: a failure inside one held section
+(an unlinkable node id), where the omission must be able to drop it. The
+discovery preview always repairs by label. `notes`
 and `highlight_groups` always resend as a whole list.
 
 Every captured SQL fence served to synthesis carries an evidence id in its
@@ -773,6 +772,12 @@ so committed text never depends on ids. A fence that carries an id and a body
 keeps the model's body; a reference to SQL the section already shows renders
 once; an unknown id is a repairable `sections` rejection. References are
 optional — SQL written out is never rejected.
+
+Large model messages follow one pattern: content the engine already holds is
+referenced by id and assembled by the engine, never retyped by the model —
+answer blocks (`B<n>`) for the preview, SQL snippets (`S<n>`) for synthesis. A
+rejected large message is repaired by resending only the named part; every held
+part not resent is kept.
 
 In CT, the synthesis prompt requires validated terminal source nodes to remain
 visible in the final source presentation surface so the rendered answer cannot
