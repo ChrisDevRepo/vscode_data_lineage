@@ -306,7 +306,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return reject({
             success: false,
             errors: fieldErrors,
-            hint: presentResultRepairInstruction(repairFields, 'by_label'),
+            hint: presentResultRepairInstruction(repairFields, 'by_label', presentResultStage),
             repairable: true,
             repairFields,
             ...detail,

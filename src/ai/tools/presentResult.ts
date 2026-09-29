@@ -452,10 +452,14 @@ export function projectHeldSectionsForRepair(
  * The one sentence every surface (rejection hint, held-draft view) states for how a resent
  * `sections` list merges — so the model never reads two contracts for the same call.
  */
-export function presentResultSectionsResendRule(sectionsMerge: PresentResultSectionsMerge): string {
+export function presentResultSectionsResendRule(
+  sectionsMerge: PresentResultSectionsMerge,
+  stage: PresentResultStage,
+): string {
+  const body = stage === 'visual_preview' ? 'blocks' : 'text';
   return sectionsMerge === 'by_label'
-    ? 'sections: resend only the section(s) you add or change, each under its held label; omit a resent section\'s text, blocks or node_ids to keep the held value; a label not on file appends a new section and needs its text or blocks; every held section you do not name is kept as authored.'
-    : 'sections: resend the complete list — a held section you leave out is dropped; a resent section may omit text, blocks or node_ids to keep the held values under that label; a label not on file needs its text or blocks.';
+    ? `sections: resend only the section(s) you add or change, each under its held label; omit a resent section's ${body} or node_ids to keep the held value; a label not on file appends a new section and needs its ${body}; every held section you do not name is kept as authored.`
+    : `sections: resend the complete list — a held section you leave out is dropped; a resent section may omit ${body} or node_ids to keep the held values under that label; a label not on file needs its ${body}.`;
 }
 
 /** Issue path inside one held section (`sections.N`, `sections.N.label`) — a failure only that section's resend or omission can clear. */
@@ -479,9 +483,10 @@ function presentResultSectionsMergeFor(issuePaths: ReadonlySet<string>): Present
 export function presentResultRepairInstruction(
   resendList: readonly PresentResultRepairField[],
   sectionsMerge: PresentResultSectionsMerge,
+  stage: PresentResultStage,
 ): string {
   const instruction = `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`;
-  return resendList.includes('sections') ? `${instruction} ${presentResultSectionsResendRule(sectionsMerge)}` : instruction;
+  return resendList.includes('sections') ? `${instruction} ${presentResultSectionsResendRule(sectionsMerge, stage)}` : instruction;
 }
 
 /**
@@ -1185,7 +1190,7 @@ export function validatePresentResult(
     let hint = soleFailureHint ?? (fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendSentence}`
       : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`);
-    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList, sectionsMerge)}`;
+    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList, sectionsMerge, stage)}`;
     if (soleFailureHint === undefined && nodeIdHintNeeded) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }
