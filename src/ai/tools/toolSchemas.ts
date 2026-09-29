@@ -682,14 +682,16 @@ const END_BRANCH_EXCLUDED_FIELDS = ['badge_label', 'prune_neighbors', 'questions
  * @remarks
  * `end_branch` requires `reason` and refuses the fields that act on a kept verdict; `summary` and
  * `sections` are accepted and dropped by {@link toHopFinding}. A kept verdict carries `sections`
- * and `summary` (and, in CT, `column_flow`) and never `reason`; `summary` may be null exactly when
- * `sections` is the held-draft sentinel `{}`, which the engine restores with the held summary. Each fault is one
+ * and `summary` (and, in CT, `column_flow`) and never `reason`; `summary` may be null only when a held draft
+ * exists (`fresh` unset), and the engine keeps the held summary. Each fault is one
  * issue on its own path, so the rejection names the exact field to drop or add. `column_flow` is
  * served-required in CT (always in the served `required` list, never omissible at the schema level)
  * so its own content check runs for every verdict rather than joining
  * {@link END_BRANCH_EXCLUDED_FIELDS}'s omission-only check.
  */
-function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, mode: 'bb' | 'ct'): void {
+function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, mode: 'bb' | 'ct', fresh: boolean): void {
+  if (typeof value !== 'object' || value === null) return;
+  const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
   if (value.verdict === 'end_branch') {
     for (const field of END_BRANCH_EXCLUDED_FIELDS) {
       if (value[field] == null) continue;
@@ -700,7 +702,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
         params: { hint: `Omit ${field}.` },
       });
     }
-    if (mode === 'ct' && (value.column_flow?.length ?? 0) > 0) {
+    if (mode === 'ct' && (Array.isArray(value.column_flow) ? value.column_flow.length : 0) > 0) {
       ctx.addIssue({
         code: 'custom',
         path: ['column_flow'],
@@ -708,7 +710,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
         params: { hint: 'Send column_flow: [].' },
       });
     }
-    if (!value.reason?.trim()) {
+    if (!reason) {
       ctx.addIssue({
         code: 'custom',
         path: ['reason'],
@@ -718,7 +720,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     }
     return;
   }
-  if (value.reason?.trim()) {
+  if (reason) {
     ctx.addIssue({
       code: 'custom',
       path: ['reason'],
@@ -726,7 +728,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       params: { hint: 'Send reason: null; the findings belong in sections and summary.' },
     });
   }
-  if (value.sections == null) {
+  if (value.sections === null) {
     ctx.addIssue({
       code: 'custom',
       path: ['sections'],
@@ -734,8 +736,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       params: { hint: 'Send sections: the section body keyed by angle.' },
     });
   }
-  const heldSentinel = value.sections != null && Object.keys(value.sections).length === 0;
-  if (value.summary == null && !heldSentinel) {
+  if (value.summary === null && fresh) {
     ctx.addIssue({
       code: 'custom',
       path: ['summary'],
@@ -788,9 +789,10 @@ export function toHopFinding(value: FlatSubmitFindings): HopFinding {
 function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
   mode: 'bb' | 'ct',
+  fresh: boolean,
 ): z.ZodType<FlatSubmitFindings> {
   return schema
-    .superRefine((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode)) as z.ZodType<FlatSubmitFindings>;
+    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode, fresh))) as z.ZodType<FlatSubmitFindings>;
 }
 
 /**
@@ -802,7 +804,7 @@ function finalizeSubmitFindingsSchema(
  * A kept verdict enqueues every open neighbour not named in `prune_neighbors`; `questions` attach a
  * check to one of them. BB does not carry CT-only `column_flow`.
  */
-export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindingBaseSchema, 'bb');
+export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindingBaseSchema, 'bb', true);
 
 /**
  * CT-mode submit_findings input.
@@ -812,7 +814,7 @@ export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindi
  * contract is documented on {@link ColumnFlowSchema}, and its `upstream_columns` are the carry each
  * enqueued neighbour receives.
  */
-export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindingCtBaseSchema, 'ct');
+export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindingCtBaseSchema, 'ct', true);
 
 /** Memoized per (mode, classification) narrowed `submit_findings` schemas built by {@link submitFindingsSchemaForMode}. */
 const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>();
@@ -826,7 +828,7 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  * that key's content into the kept angle. The fold guidance also lives on the kept key's
  * description, where the model reads it before authoring.
  * `both` keeps both angles; both keys are required when `freshSubmission` is set (no held draft and
- * no archived angle), and optional otherwise so the held-draft sentinel `sections: {}` parses.
+ * no archived angle), and optional otherwise so a retry names only the angle it changes.
  * {@link validateSectionsAgainstClassification} still requires both angles at the handler. The parent
  * field is served required and nullable: {@link refineSubmitFindingsShape} accepts an `end_branch`
  * whether `sections` is null or present; {@link toHopFinding} drops it.
@@ -846,7 +848,7 @@ function capturedSectionSchemaForClassification(
       return z.strictObject({ business: z.string().min(1), technical: z.string().min(1) });
     }
     const bothBody = z.string().min(1).optional().describe(
-      'Send sections: {} to reuse the held draft.',
+      'Send only an angle you change; an angle left out keeps its held body.',
     );
     return z.strictObject({ business: bothBody, technical: bothBody });
   }
@@ -910,8 +912,8 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  * classification keeps ({@link capturedSectionSchemaForClassification}). A `business` or
  * `technical` lock structurally cannot author the other angle's key, so a surplus angle fails
  * Zod at this boundary instead of being silently dropped at commit. A `both` lock advertises both
- * keys and the classification validator requires both on a fresh submission, while `sections: {}`
- * still parses to reuse a held draft; `sections: null` is the `end_branch`
+ * keys and the classification validator requires both on a fresh submission, while a retry
+ * with a held draft names only the angle it changes; `sections: null` is the `end_branch`
  * shape {@link refineSubmitFindingsShape} exempts. The host path uses this at the last seam
  * before the model sees the tool set so the model cannot fill a field or angle invalid for the
  * locked mode/classification — the contract is the form's shape, not prompt prose. The static
@@ -953,7 +955,7 @@ export function submitFindingsSchemaForMode(
       .describe(sectionsDescribe);
     narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
   }
-  const schema = finalizeSubmitFindingsSchema(narrowed, mode);
+  const schema = finalizeSubmitFindingsSchema(narrowed, mode, freshSubmission);
   submitFindingsSchemaCache.set(cacheKey, schema);
   return schema;
 }
@@ -1062,10 +1064,21 @@ function overLength(limit: number) {
   };
 }
 
+/**
+ * A refinement that also runs when the value already carries shape issues, so one parse reports
+ * every defect of a call instead of hiding the cross-field ones behind the first shape failure.
+ * Its `fn` reads the raw value and must tolerate a wrong type.
+ */
+function superRefineAll<T>(fn: (value: T, ctx: z.core.$RefinementCtx<T>) => void) {
+  return z.superRefine<T>(fn, { when: () => true });
+}
+
 /** Refinement for a `sections` list: each final label maps to exactly one section text. */
 function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>, ctx: z.core.$RefinementCtx): void {
+  if (!Array.isArray(sections)) return;
   const seen = new Set<string>();
   for (const [index, { label }] of sections.entries()) {
+    if (typeof label !== 'string') continue;
     const key = normalizePresentSectionLabel(label);
     if (seen.has(key)) {
       ctx.addIssue({
@@ -1162,6 +1175,7 @@ const PresentResultSectionSchema = z.object({
 const PresentResultSectionPatchSchema = PresentResultSectionSchema.extend({
   node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
   text: z.string().trim().min(1, 'Section is missing text — every final section label requires one detail body').optional().describe('Detail body. Omit to keep the held text under this label; supply it to rewrite that section, and always for a label not on file.'),
+  remove: z.literal(true).optional().describe('true drops the held section under this label; send only the label with it.'),
 });
 
 /** Memoized per block count: a fresh schema per request is a new identity, which defeats `toModelJsonSchema`'s cache. */
@@ -1184,6 +1198,7 @@ function buildPreviewSchemas(blockCount: number) {
   const patch = section.extend({
     node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
     blocks: range.optional().describe('New block range for this section. Omit to keep the held range under this label.'),
+  remove: z.literal(true).optional().describe('true drops the held section under this label; send only the label with it.'),
   });
   const model = PresentResultModelSchema.omit({
     summary: true,
@@ -1194,11 +1209,11 @@ function buildPreviewSchemas(blockCount: number) {
     add_node_ids: true,
     is_update: true,
   }).extend({
-    sections: z.array(section).min(1).superRefine(rejectDuplicateSectionLabels).describe(
+    sections: z.array(section).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).describe(
       'Required report sections, at least one. Each presents a range of the served `answer_blocks`; every node analysed and captured is linked into a section\'s node_ids.',
     ),
   }).strict();
-  const patchSections = z.array(patch).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
+  const patchSections = z.array(patch).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
   return { model, patchSections };
 }
 
@@ -1226,7 +1241,7 @@ export const PresentResultModelSchema = z.object({
   highlight_groups: z.array(HighlightGroupSchema).min(1).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX, HIGHLIGHT_GROUPS_OVER_MAX).describe(
     'REQUIRED for new renders, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
-  sections: z.array(PresentResultSectionSchema).min(1).superRefine(rejectDuplicateSectionLabels).describe(
+  sections: z.array(PresentResultSectionSchema).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).describe(
     'Required final report sections, at least one. Every node analysed and captured this turn '
     + '(anything with a detail slot) is linked into a section\'s node_ids, as that field describes — '
     + 'an analysed node absent from every section fails validation.',
@@ -1259,7 +1274,7 @@ const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
  */
 function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T) {
   return schema.extend({
-    sections: z.array(PresentResultRetainedSectionSchema).min(1).superRefine(rejectDuplicateSectionLabels).optional()
+    sections: z.array(PresentResultRetainedSectionSchema).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).optional()
       .describe('Final report sections. Omit entirely to keep the committed report; list a label with no text to keep that section unchanged.'),
   });
 }
@@ -1299,7 +1314,7 @@ export function presentResultSchemaForPhase(
 }
 
 /** The one statement of how a resent `sections` list merges into the held draft. */
-const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, each under its held label; a held section this list does not name is kept as authored.';
+const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, each under its held label; a held section this list does not name is kept as authored; {label, remove: true} drops one.';
 
 /**
  * Strict patch schema for repairing a held `present_result` draft.
@@ -1330,7 +1345,7 @@ export const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
   sections: true,
   notes: true,
 }).partial().extend({
-  sections: z.array(PresentResultSectionPatchSchema).min(1).superRefine(rejectDuplicateSectionLabels).optional().describe(REPAIR_SECTIONS_DESCRIPTION),
+  sections: z.array(PresentResultSectionPatchSchema).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).optional().describe(REPAIR_SECTIONS_DESCRIPTION),
   is_update: z.boolean().optional().describe('Optional — a repair keeps the held draft\'s own value; the value sent here is not applied.'),
 }).strict();
 

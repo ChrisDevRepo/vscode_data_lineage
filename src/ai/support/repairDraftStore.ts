@@ -2,12 +2,11 @@
  * Tiny lifecycle holder for "hold-and-amend" AI repair drafts.
  *
  * @remarks
- * The store is deliberately domain-neutral: it does not know which fields are safe to preserve,
- * which failures are repairable, or how patches should merge. Tool/domain dispatchers own those
- * policies and inject the merge function. This keeps retry state DRY without turning repair into a
- * monolithic engine.
+ * The store is deliberately domain-neutral: it does not know which fields are safe to preserve or
+ * which failures are repairable; tool/domain dispatchers own those policies. A held draft is cleared
+ * only on success or turn reset, never by a failed retry.
  */
-export class RepairDraftStore<TFull, TPatch, TAuthorization = undefined> {
+export class RepairDraftStore<TFull, TAuthorization = undefined> {
   private draft: TFull | null = null;
   private authorization: TAuthorization | null = null;
 
@@ -39,14 +38,34 @@ export class RepairDraftStore<TFull, TPatch, TAuthorization = undefined> {
   }
 
   /**
-   * Merges a patch into the held draft using the caller's domain-specific merge policy.
+   * Merges keyed patch entries into held entries: a patch entry overlays the held entry with the
+   * same key in place, a new key appends, and `{ remove: true }` drops the held entry (a key not
+   * held is a no-op). Every held entry the patch does not name is kept as authored.
    *
-   * @param patch - Strictly validated patch payload.
-   * @param merge - Pure merge function supplied by the domain adapter.
-   * @returns The merged full draft, or `null` when no draft is held.
+   * @param keyOf - Identity of an entry; the caller owns any key normalization.
    */
-  public merge(patch: TPatch, merge: (draft: TFull, patch: TPatch) => TFull): TFull | null {
-    if (!this.draft) return null;
-    return merge(this.draft, patch);
+  public static mergeByKey<T extends object>(
+    held: readonly T[],
+    patch: ReadonlyArray<Partial<T> & { remove?: boolean }>,
+    keyOf: (entry: Partial<T>) => string,
+  ): T[] {
+    const byKey = new Map(held.map(entry => [keyOf(entry), entry]));
+    for (const { remove, ...entry } of patch) {
+      const key = keyOf(entry as Partial<T>);
+      if (remove) byKey.delete(key);
+      else byKey.set(key, { ...byKey.get(key), ...entry } as T);
+    }
+    return [...byKey.values()];
   }
+}
+
+/**
+ * The one resend rule every held-draft hint states for a keyed list, so no tool teaches a second
+ * contract for the same merge ({@link RepairDraftStore.mergeByKey}).
+ *
+ * @param field - The list field a resend carries, e.g. `sections`.
+ * @param key - What identifies an entry in that list, e.g. `label` or `angle`.
+ */
+export function keyedResendRule(field: string, key: string): string {
+  return `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;
 }

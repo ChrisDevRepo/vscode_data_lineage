@@ -216,11 +216,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (previewNarrative) {
         const partition = findBlockPartitionIssues(presentInput.sections ?? [], previewNarrative.blocks.length);
         if (partition.length > 0) {
-          sess.presentResultRepairDraft.hold(presentInput, { fields: ['sections'], sectionsMerge: 'by_label' });
+          sess.presentResultRepairDraft.hold(presentInput, { fields: ['sections'] });
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: partition.map(issue => issue.message).join('\n'),
-            hint: presentResultRepairInstruction(['sections'], 'by_label'),
+            hint: presentResultRepairInstruction(['sections']),
             issuePaths: partition.map(issue => `sections.${issue.index}.blocks`),
           }));
         }
@@ -483,7 +483,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields, sectionsMerge: validation.sectionsMerge });
+          sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
         }
         return reject(validation.rejection);
       }

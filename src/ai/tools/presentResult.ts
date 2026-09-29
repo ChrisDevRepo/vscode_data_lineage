@@ -10,6 +10,7 @@ import {
 } from './toolSchemas';
 import { getAllowedLmToolNames } from './toolPolicy';
 import { quoteIds } from '../support/text';
+import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
@@ -140,27 +141,9 @@ export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
  */
 export type PresentResultRepairPatch = z.infer<typeof PresentResultRepairPatchSchema>;
 
-/**
- * How a resent `sections` list merges into the held draft — decided once by
- * {@link validatePresentResult} when the draft is held, and read from the stored
- * {@link PresentResultRepairAuthorization} by every surface after that (merge, held-draft view,
- * hint wording), so no caller re-derives it.
- *
- * - `by_label`: a resent label replaces the held section with that label in place, a new label
- *   appends, every held section the patch does not name is kept as authored. The discovery preview
- *   repairs this way: a section is its label, links and block range, so resending the one section
- *   whose range failed keeps every other.
- * - `whole_list`: the resent list is the complete new list; a held section it omits is dropped.
- *   Used when a failure sits inside one held section (a `sections.N` path — an unlinkable node_id,
- *   a label over its cap): a section the resend leaves out is the repair, so the omission must be
- *   able to drop it.
- */
-export type PresentResultSectionsMerge = 'by_label' | 'whole_list';
-
-/** What a held-draft rejection authorized: the repairable fields and the sections merge policy. */
+/** What a held-draft rejection authorized: the presentation fields a resend may patch. */
 export interface PresentResultRepairAuthorization {
   readonly fields: readonly PresentResultRepairField[];
-  readonly sectionsMerge: PresentResultSectionsMerge;
 }
 
 /** Inclusive range of served answer blocks a preview section presents. */
@@ -206,8 +189,6 @@ export type PresentResultFailure = {
   rejection: ToolRejection;
   repairable: boolean;
   repairFields: PresentResultRepairField[];
-  /** Merge policy a held repair of this failure uses for `sections` — see {@link PresentResultSectionsMerge}. */
-  sectionsMerge: PresentResultSectionsMerge;
 };
 
 /** One numbered top-level block of the cached discovery answer, served to the preview stage as `answer_blocks`. */
@@ -383,54 +364,8 @@ export function findDiscoveryPreviewNoteViolations(
   }];
 }
 
-/**
- * Completes one resent section from the held section under the same label: an omitted `node_ids`
- * or `text` keeps the held value, so a repair that adds one node id never retypes a body the
- * held-draft view does not show. A label not on file has nothing to inherit — the handler rejects a
- * text-less new label before this runs, so the empty-text fallback is a type fact, not a path.
- */
-function fillSectionPatch(resent: PresentSectionPatch, held: PresentSection | undefined): PresentSection {
-  const blocks = resent.blocks ?? held?.blocks;
-  return {
-    label: resent.label,
-    node_ids: resent.node_ids ?? held?.node_ids ?? [],
-    ...(blocks ? { blocks } : { text: resent.text ?? held?.text ?? '' }),
-  } as PresentSection;
-}
-
-/** Held sections indexed by their {@link normalizePresentSectionLabel} key. */
-function indexSectionsByLabel(sections: readonly PresentSection[]): Map<string, number> {
-  return new Map(sections.map((section, index) => [normalizePresentSectionLabel(section.label), index]));
-}
-
-/**
- * Merges a resent `sections` list into the held one under the recorded {@link PresentResultSectionsMerge}.
- *
- * @remarks
- * Both modes fill each resent section from its held namesake ({@link fillSectionPatch}); they differ
- * only in what happens to a held section the patch does not name — kept in place (`by_label`) or
- * dropped (`whole_list`). The patch schema rejects a label repeated inside one patch, so no label
- * resolves last-wins.
- */
-function mergeSections(
-  held: readonly PresentSection[],
-  resent: readonly PresentSectionPatch[],
-  mode: PresentResultSectionsMerge,
-): PresentSection[] {
-  const heldIndex = indexSectionsByLabel(held);
-  const heldFor = (section: PresentSectionPatch): PresentSection | undefined => {
-    const index = heldIndex.get(normalizePresentSectionLabel(section.label));
-    return index === undefined ? undefined : held[index];
-  };
-  if (mode === 'whole_list') return resent.map(section => fillSectionPatch(section, heldFor(section)));
-  const merged = [...held];
-  for (const section of resent) {
-    const index = heldIndex.get(normalizePresentSectionLabel(section.label));
-    if (index === undefined) merged.push(fillSectionPatch(section, undefined));
-    else merged[index] = fillSectionPatch(section, merged[index]);
-  }
-  return merged;
-}
+/** Identity of a held section: its normalized label. */
+const sectionKey = (section: { label?: string }): string => normalizePresentSectionLabel(section.label ?? '');
 
 /**
  * Labels in a resent `sections` patch that match no held section and carry no text.
@@ -444,77 +379,40 @@ export function findTextlessNewSectionLabels(
   held: readonly PresentSection[] | undefined,
   resent: readonly PresentSectionPatch[],
 ): string[] {
-  const heldIndex = indexSectionsByLabel(held ?? []);
+  const heldKeys = new Set((held ?? []).map(sectionKey));
   return resent
-    .filter(section => !heldIndex.has(normalizePresentSectionLabel(section.label)) && !section.blocks && !(section.text?.trim()))
+    .filter(section => !section.remove && !heldKeys.has(sectionKey(section)) && !section.blocks && !(section.text?.trim()))
     .map(section => section.label);
 }
 
 /**
- * Projects held `sections` to the shape the held-draft repair view shows the model.
- *
- * @remarks
- * Under `by_label` a section the model does not resend keeps its text, so the view carries only what
- * the model needs to target a section and judge coverage — `label`, `node_ids` and, for a preview
- * section, its `blocks` range. Under `whole_list` the model must resend every section, so it sees
- * each one in full. Lives beside {@link mergeSections}, the module that owns the label key, so the
- * view and the merge cannot drift.
+ * The held sections a repair may key on, as the model-facing view: label and, for a preview
+ * section, the first block of its range. The model's own rejected call already carries every body.
  */
-export function projectHeldSectionsForRepair(
-  sections: PresentResultInput['sections'],
-  sectionsMerge: PresentResultSectionsMerge,
-): PresentResultInput['sections'] | Array<{ label: string; node_ids: string[]; blocks?: PresentSectionBlocks }> {
-  if (sectionsMerge === 'whole_list' || !sections) return sections;
-  return (sections as PresentSection[]).map(({ label, node_ids, blocks }) => ({ label, node_ids, ...(blocks ? { blocks } : {}) }));
+export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string; start?: string }> {
+  return ((sections ?? []) as PresentSection[]).map(({ label, blocks }) => ({ label, ...(blocks ? { start: blocks.from } : {}) }));
 }
 
 /**
  * The one sentence every surface (rejection hint, held-draft view) states for how a resent
  * `sections` list merges — so the model never reads two contracts for the same call.
  */
-export function presentResultSectionsResendRule(
-  sectionsMerge: PresentResultSectionsMerge,
-  stage: PresentResultStage,
-): string {
-  const body = stage === 'visual_preview' ? 'blocks' : 'text';
-  return sectionsMerge === 'by_label'
-    ? `sections: resend only the section(s) you add or change, each under its held label; omit a resent section's ${body} or node_ids to keep the held value; a label not on file appends a new section and needs its ${body}; every held section you do not name is kept as authored.`
-    : `sections: resend the complete list — a held section you leave out is dropped; a resent section may omit ${body} or node_ids to keep the held values under that label; a label not on file needs its ${body}.`;
-}
-
-/** Issue path inside one held section (`sections.N`, `sections.N.label`) — a failure only that section's resend or omission can clear. */
-const HELD_SECTION_ISSUE_PATH = /^sections\.\d+(\.|$)/;
-
-/**
- * Decides the {@link PresentResultSectionsMerge} for a failure, from the structural
- * issue paths the validator recorded — never from message text.
- */
-function presentResultSectionsMergeFor(issuePaths: ReadonlySet<string>): PresentResultSectionsMerge {
-  for (const path of issuePaths) {
-    if (HELD_SECTION_ISSUE_PATH.test(path)) return 'whole_list';
-  }
-  return 'by_label';
-}
+export const PRESENT_RESULT_SECTIONS_RESEND_RULE = `${keyedResendRule('sections', 'label')} Omit a resent section's text, blocks or node_ids to keep the held value; a label not on file appends a new section and needs its text or blocks; {label, remove: true} drops a held section.`;
 
 /**
  * The repair-call sentence a repairable rejection carries, stated once here for every failure: the
  * fields to resend and, when `sections` is among them, how the resend merges.
  */
-export function presentResultRepairInstruction(
-  resendList: readonly PresentResultRepairField[],
-  sectionsMerge: PresentResultSectionsMerge,
-  stage: PresentResultStage,
-): string {
+export function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[]): string {
   const instruction = `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`;
-  return resendList.includes('sections') ? `${instruction} ${presentResultSectionsResendRule(sectionsMerge, stage)}` : instruction;
+  return resendList.includes('sections') ? `${instruction} ${PRESENT_RESULT_SECTIONS_RESEND_RULE}` : instruction;
 }
 
 /**
  * Merges a strict repair patch into a held full `present_result` draft.
  *
  * @remarks
- * `sections` merges under the authorization's recorded {@link PresentResultSectionsMerge}
- * ({@link mergeSections}). Every other collection (`notes`, `highlight_groups`) replaces whole by
+ * `sections` merge by label ({@link RepairDraftStore.mergeByKey}). Every other collection (`notes`, `highlight_groups`) replaces whole by
  * design: the model does not send partial array operations for those, it sends the corrected
  * collection, and the normal validation/assembly path checks the merged full draft.
  *
@@ -535,7 +433,8 @@ export function mergePresentResultRepairPatch(
     if (key === 'is_update') continue;
     if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
     if (key === 'sections' && Array.isArray(value)) {
-      updates.sections = mergeSections(draft.sections ?? [], value as PresentSectionPatch[], authorization.sectionsMerge);
+      updates.sections = RepairDraftStore.mergeByKey<PresentSection>(draft.sections ?? [], value as PresentSectionPatch[], sectionKey)
+        .map(section => ({ ...section, node_ids: section.node_ids ?? [] }));
       continue;
     }
     Object.assign(updates, { [key]: value });
@@ -1114,10 +1013,11 @@ export function validatePresentResult(
   const nodeIdNoun = allHallucinated
     ? 'contains unknown IDs'
     : 'names IDs the result graph cannot link';
-  const renderNodeIdStates = (ids: readonly string[]): string =>
-    ids
-      .map(id => `\`${id}\` — ${PRESENT_NODE_ID_STATE_TEXT[stateOf(id)]}`)
-      .join('; ');
+  const renderNodeIdStates = (ids: readonly string[]): string => {
+    const byState = new Map<PresentNodeIdState, string[]>();
+    for (const id of ids) byState.set(stateOf(id), [...(byState.get(stateOf(id)) ?? []), id]);
+    return [...byState].map(([state, group]) => `${quoteIds(group)} — ${PRESENT_NODE_ID_STATE_TEXT[state]}`).join('; ');
+  };
   /**
    * Offenders elsewhere in the call, the accepted set, and the route back — appended to each site,
    * in that order: the least recoverable fact (which id failed and why) is stated first.
@@ -1182,7 +1082,6 @@ export function validatePresentResult(
   if (errors.length > 0) {
     const fieldList = [...failedFields];
     const resendList = [...repairFields];
-    const sectionsMerge = presentResultSectionsMergeFor(issuePaths);
     const soleFailureHint = hasUnexplainedHighlightGap && errors.length === 1
       ? "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a notes entry for it, or drop it from highlight_groups[] if it is uncolored plumbing."
       : soleHints.length > 0 && errors.length === externalErrorCount && externalViolations.every(violation => violation.soleHint !== undefined)
@@ -1193,7 +1092,7 @@ export function validatePresentResult(
     let hint = soleFailureHint ?? (fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendSentence}`
       : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`);
-    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList, sectionsMerge, stage)}`;
+    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList)}`;
     if (soleFailureHint === undefined && nodeIdHintNeeded) {
       hint = `${hint} ${presentNodeIdHint(stage)}`;
     }
@@ -1214,7 +1113,6 @@ export function validatePresentResult(
       }),
       repairable: allRepairable,
       repairFields: resendList,
-      sectionsMerge,
     };
   }
 

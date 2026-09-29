@@ -43,7 +43,7 @@ import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolPro
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
-import { discoveryPreviewNarrative, orderAndAssemble, projectHeldSectionsForRepair } from '../tools/presentResult';
+import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
 import { escapeDelimitedJson, escapePromptText, formatProviderErrorDiagnostic, isTransportProviderError, truncAtWordBoundary, type ProviderErrorDiagnostic } from '../support/text';
 import {
@@ -510,9 +510,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * {@link isTransportProviderError}).
    *
    * @remarks
-   * `presentResultRepairDraftContext` shows held `sections` through {@link projectHeldSectionsForRepair}
-   * under the merge policy the rejection recorded when it held the draft, so the view, the merge and
-   * the hint all read one stored fact. `notes` and `highlight_groups` merge whole and stay in full.
+   * `presentResultRepairDraftContext` shows the held section labels through {@link heldSectionsForRepair};
+   * the rejected call the model sent already carries every body.
    */
   const runToolAttempt = (
     plan: ConverseInstructionPlan,
@@ -522,16 +521,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     debugLog: message => deps.logger?.debug(message),
     traceSyntheticRejection: deps.traceSyntheticRejection,
     presentResultRepairDraftContext: () => {
-      const store = deps.getSession().presentResultRepairDraft;
-      const held = store.get();
-      const authorization = store.getAuthorization();
-      if (!held || !authorization) return null;
-      return {
-        sections: projectHeldSectionsForRepair(held.sections, authorization.sectionsMerge),
-        notes: held.notes,
-        highlight_groups: held.highlight_groups,
-        sectionsMerge: authorization.sectionsMerge,
-      };
+      const held = deps.getSession().presentResultRepairDraft.get();
+      return held ? { sections: heldSectionsForRepair(held.sections) } : null;
     },
   });
 

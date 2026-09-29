@@ -11,6 +11,7 @@
 
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { keyedResendRule } from '../support/repairDraftStore';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
@@ -70,7 +71,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
  * authored survives the correction instead of being re-authored from scratch.
  */
 const HELD_CORRECTION_ORDER =
-  'Your analysis is held: resend submit_findings with `sections: {}` and the fields named above corrected to reuse your original sections and summary verbatim.';
+  `Your analysis is held: resend submit_findings with only the fields named above corrected. ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
 
 /**
  * True for a correctable field-scoped content error. The engine holds the finding draft for a

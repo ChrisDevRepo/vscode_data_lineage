@@ -19,7 +19,7 @@ import { contextBlockBytes, discoveryEvidenceItemBytes, type TurnTokenBudget } f
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
-import type { PresentResultInput, PresentResultRepairAuthorization, PresentResultRepairPatch } from '../tools/presentResult';
+import type { PresentResultInput, PresentResultRepairAuthorization } from '../tools/presentResult';
 import type { LmStage } from '../tools/toolPolicy';
 
 /** Reviewable exploration proposal. It has no active engine authority until approval. */
@@ -252,7 +252,6 @@ export class AiSession {
   /** Held full `present_result` draft for narrow patch-only synthesis repair. */
   public readonly presentResultRepairDraft = new RepairDraftStore<
     PresentResultInput,
-    PresentResultRepairPatch,
     PresentResultRepairAuthorization
   >();
 

@@ -51,12 +51,10 @@ import {
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import type { PresentResultSectionsMerge } from '../tools/presentResult';
 import {
   contextBlockBytes,
   estimateTokens,
   storedEvidenceKindBytes,
-  type TurnTokenBudget,
 } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { IToolRegistry } from '../tools/registry';
@@ -264,15 +262,11 @@ export interface ToolAttemptResult {
 }
 
 /**
- * Structural shape of the session's held `lineage_present_result` repair draft, embedded into a
- * present_result rejection's own tool result when one is held — never rendered as a separate
- * message. `sectionsMerge` is the policy the validator recorded when it held the draft.
+ * The held `lineage_present_result` repair draft as the model sees it on a present_result
+ * rejection: the labels a resend keys on, each with its first block for a preview section.
  */
 export interface HeldDraftRepairContent {
-  readonly sections?: unknown;
-  readonly notes?: unknown;
-  readonly highlight_groups?: unknown;
-  readonly sectionsMerge: PresentResultSectionsMerge;
+  readonly sections: ReadonlyArray<{ readonly label: string; readonly start?: string }>;
 }
 
 /** Provider-neutral ingredients for one graph- or smoke-owned generation and dispatch batch. */
@@ -550,37 +544,22 @@ export async function renderToolAttemptContext(
 const PRESENT_RESULT_TOOL = 'lineage_present_result';
 
 /**
- * Embeds the session's currently held `lineage_present_result` repair draft into a present_result
- * rejection's own `detail`, when one is held — the one place a repair draft reaches the model,
- * attached to the exact rejected call it answers rather than replayed as a separate message on
- * every later retry. Bound-or-stub, the convention every other structured `detail` in this module
- * follows: whole when it fits the retry-context share, a size-only stub otherwise, never shrunk.
- *
- * @param data - The outcome about to be recorded; embedding is a no-op for any status but
- *   `'rejected'` or any tool but {@link PRESENT_RESULT_TOOL}.
- * @param toolName - The rejected call's own tool name.
- * @param draftContext - Live resolver for the held draft; `undefined`/returns nothing when none is held.
- * @param budget - The attempt's token budget, which sizes the embedded block.
+ * Embeds the labels of the session's held `lineage_present_result` draft into a present_result
+ * rejection's own `detail`, so a resend can key on them. A no-op for any status but `'rejected'` or
+ * any tool but {@link PRESENT_RESULT_TOOL}.
  */
 function withHeldDraftDetail(
   data: ToolOutcomeData,
   toolName: string,
   draftContext: (() => HeldDraftRepairContent | null | undefined) | undefined,
-  budget: TurnTokenBudget,
 ): ToolOutcomeData {
   if (data.status !== 'rejected' || toolName !== PRESENT_RESULT_TOOL) return data;
   const held = draftContext?.();
   if (!held) return data;
-  const heldDraft = boundStructuredValue({
-    sections: held.sections,
-    notes: held.notes,
-    highlight_groups: held.highlight_groups,
-    sections_merge: held.sectionsMerge,
-  }, contextBlockBytes(budget));
   const baseDetail = data.detail && typeof data.detail === 'object' && !Array.isArray(data.detail)
     ? data.detail as Record<string, unknown>
     : {};
-  return { ...data, detail: { ...baseDetail, held_draft: heldDraft } };
+  return { ...data, detail: { ...baseDetail, held_draft: held } };
 }
 
 function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinition[] {
@@ -653,18 +632,19 @@ interface RecordedToolOutcome {
 
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
- * multi-error validation), its hint and, when one is held, the `present_result` repair draft. The
+ * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
  * reason states the facts the model repairs from, so nothing the model needs rides only on
  * `detail`. The code, issue paths and detail stay on the paired `ToolMessage.artifact`.
  */
 function rejectionText(rejection: ToolRejection): string {
-  const heldDraft = rejection.detail && typeof rejection.detail === 'object'
-    ? (rejection.detail as Record<string, unknown>).held_draft
+  const held = rejection.detail && typeof rejection.detail === 'object'
+    ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
+  const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
-    ...(heldDraft !== undefined ? [`Held draft:\n${JSON.stringify(heldDraft)}`] : []),
+    ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
   ].join('\n');
 }
 
@@ -840,7 +820,8 @@ type SynthesizedRejectionMessages = readonly ModelMessage[];
  * @remarks
  * Every synthesized rejection follows the same 3-step contract as a dispatched-call reject —
  * build, debug-log, trace — and, like every reply without progress, counts toward
- * {@link MAX_TOOL_PROVIDER_CALLS}.
+ * {@link MAX_TOOL_PROVIDER_CALLS}. The correction travels as a user message because no tool call
+ * was received, so there is no call id for a tool result to answer.
  */
 function emitSynthesizedRejection(
   input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase' | 'traceSyntheticRejection'>,
@@ -967,7 +948,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       continue;
     }
     if (!call.valid) {
-      const data = withHeldDraftDetail(rejectionFromInvalid(call, input.registry), call.toolName, input.presentResultRepairDraftContext, model.budget);
+      const data = withHeldDraftDetail(rejectionFromInvalid(call, input.registry), call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection);
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
@@ -1034,7 +1015,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     );
 
     if (resultRejection) {
-      const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext, model.budget);
+      const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
     } else {

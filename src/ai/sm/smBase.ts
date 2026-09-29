@@ -18,7 +18,7 @@ import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, appendUniqueSectionText, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
-import { RepairDraftStore } from '../support/repairDraftStore';
+import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, ColumnCarry, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
@@ -401,7 +401,7 @@ export class NavigationEngine implements IHopStateMachine {
    * sections can reuse already-valid authored prose. Other validation failures never establish held
    * state.
    */
-  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, HopFindingKept>();
+  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept>();
 
   /** Exploration direction set by `init`; consulted by `enqueueHop` when contracting reference nodes. */
   protected _direction: 'upstream' | 'downstream' | 'bidirectional' = 'bidirectional';
@@ -551,37 +551,34 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Restores held prose only when a correction retry keeps the focus and sends no sections.
-   * A retry with authored sections is a deliberate replacement and remains unchanged.
+   * Overlays a correction retry on the held draft of the same focus: sections merge by angle
+   * ({@link RepairDraftStore.mergeByKey}), so an angle the retry omits keeps its held body, and an
+   * empty summary keeps the held one.
    *
-   * @returns The submission to apply, or a `missing_field` rejection when a kept verdict arrives
-   *   with empty sections and an empty summary and no held draft supplied them. Empty sections
-   *   with an authored summary pass on: a revisit credits the angles already archived.
+   * @returns The submission to apply, or a `missing_field` rejection when a kept verdict carries no
+   *   sections and no held draft of this focus supplies any.
    */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
     if (incoming.verdict === 'end_branch') return incoming;
     const held = this.heldFindingDraft.get();
-    if (incoming.sections.length > 0) return incoming;
-    const unrestored = (): HopSubmission | ToolRejection => incoming.summary.trim()
-      ? incoming
-      : makeRejection({
+    const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap) ?? incoming.focus_node_id.toLowerCase();
+    const heldForFocus = held
+      && (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) === inFocus
+      && inFocus === this.currentFocusNodeId
+      ? held
+      : null;
+    if (!heldForFocus) {
+      return incoming.sections.length > 0 ? incoming : makeRejection({
         code: REJECTION_CODES.missingField,
         hint: 'sections is empty and no draft is held for this node; send authored sections and a non-empty summary.',
       });
-    if (!held) return unrestored();
-    const heldFocus = resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
-    const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap) ?? incoming.focus_node_id.toLowerCase();
-    if (heldFocus !== inFocus || inFocus !== this.currentFocusNodeId) return unrestored();
-    const restored = this.heldFindingDraft.merge(incoming, (draft, patch) => {
-      return {
-        ...patch,
-        sections: draft.sections,
-        summary: draft.summary,
-      };
-    });
-    if (!restored) return unrestored();
+    }
     this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
-    return restored;
+    return {
+      ...incoming,
+      sections: RepairDraftStore.mergeByKey(heldForFocus.sections, incoming.sections, section => section.angle ?? ''),
+      summary: incoming.summary.trim() ? incoming.summary : heldForFocus.summary,
+    };
   }
 
   /** Compatibility projection of unresolved scope-boundary leads for synthesis. */
@@ -2231,7 +2228,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.heldFindingDraft.hold(structuredClone(finding));
       return makeRejection({
         code: REJECTION_CODES.fieldLengthExceeded,
-        hint: `${measured}. Nothing was committed. Your analysis is held: resubmit submit_findings for ${focusId} with the listed field(s) shortened — send sections: {} to keep the prose you already authored, or new sections to replace it.`,
+        hint: `${measured}. Nothing was committed. Your analysis is held: resubmit submit_findings for ${focusId} with the listed field(s) shortened. ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`,
         detail: lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit })),
         issuePaths: lengthViolations.map(v => v.path),
       });
