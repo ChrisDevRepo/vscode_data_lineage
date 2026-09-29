@@ -338,13 +338,17 @@ export function findTextlessNewSectionLabels(
     .map(section => section.label);
 }
 
+/** Held preview sections with each `start` replaced by the block it effectively starts at (the first always B1). */
+function withEffectiveStarts(sections: readonly PresentSection[]): PresentSection[] {
+  return sections.map((section, index) => (section.start ? { ...section, start: `B${startBlock(sections, index)}` } : section));
+}
+
 /**
  * The held sections a repair may key on, as the model-facing view: label and, for a preview
  * section, the block it effectively starts at (the first always B1). The model's own rejected call already carries every body.
  */
 export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string; start?: string }> {
-  const held = (sections ?? []) as PresentSection[];
-  return held.map(({ label, start }, index) => ({ label, ...(start ? { start: `B${startBlock(held, index)}` } : {}) }));
+  return withEffectiveStarts((sections ?? []) as PresentSection[]).map(({ label, start }) => ({ label, ...(start ? { start } : {}) }));
 }
 
 /**
@@ -362,7 +366,7 @@ export function presentResultRepairInstruction(resendList: readonly PresentResul
  *
  * @remarks
  * `sections` merge by label ({@link RepairDraftStore.mergeByKey}); a preview list, whose sections
- * each carry a `start`, is then ordered by that start, so a new mid-answer section never trips the
+ * each carry a `start`, is then ordered by its effective start (the held first section at B1), so a new mid-answer section never trips the
  * ascending-starts check (two sections sharing a start still do). Every other collection (`notes`, `highlight_groups`) replaces whole by
  * design: the model does not send partial array operations for those, it sends the corrected
  * collection, and the normal validation/assembly path checks the merged full draft.
@@ -384,7 +388,7 @@ export function mergePresentResultRepairPatch(
     if (key === 'is_update') continue;
     if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
     if (key === 'sections' && Array.isArray(value)) {
-      const merged = RepairDraftStore.mergeByKey<PresentSection>(draft.sections ?? [], value as PresentSectionPatch[], sectionKey)
+      const merged = RepairDraftStore.mergeByKey<PresentSection>(withEffectiveStarts(draft.sections ?? []), value as PresentSectionPatch[], sectionKey)
         .map(section => ({ ...section, node_ids: section.node_ids ?? [] }));
       updates.sections = merged.every(section => section.start)
         ? merged.sort((a, b) => Number(a.start!.slice(1)) - Number(b.start!.slice(1)))
