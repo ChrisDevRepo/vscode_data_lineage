@@ -60,9 +60,9 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       }
       const flat = normalizedInput as FlatSubmitFindings;
 
-      if (flat.verdict === 'end_branch' && (flat.summary !== '' || flat.sections != null)) {
+      if (flat.verdict === 'end_branch' && (flat.summary !== '' || Object.keys(flat.sections).length > 0)) {
         s.logger.debug(
-          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[flat.summary !== '' ? 'summary' : '', flat.sections != null ? 'sections' : ''].filter(Boolean).join(',')}`,
+          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[flat.summary !== '' ? 'summary' : '', Object.keys(flat.sections).length > 0 ? 'sections' : ''].filter(Boolean).join(',')}`,
         );
       }
       const finding = engine.applyHeldContent(toHopFinding(flat));

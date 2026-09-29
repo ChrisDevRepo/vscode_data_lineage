@@ -495,7 +495,7 @@ const END_BRANCH_ROW_DECISION_CONDITION =
 
 /** Single source for the `reason` describe text of an `end_branch` submit, in BB and CT. */
 const END_BRANCH_REASON_DESCRIPTION =
-  'Required with end_branch; null with a kept verdict. Why '
+  'Required with end_branch; empty string with a kept verdict. Why '
   + END_BRANCH_ROW_DECISION_CONDITION;
 
 /**
@@ -609,7 +609,7 @@ const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries;
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
 /** Single source for the `sections` describe text, shared by the per-mode schemas and the registered union. */
-const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + ', null with end_branch. Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
+const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + ', {} with end_branch. Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
 
 /** Single source for the `summary` describe text, shared by the per-mode schemas and the registered union. */
 const SUMMARY_DESCRIPTION =
@@ -633,14 +633,14 @@ const HopFindingBaseSchema = z.object({
     .describe(BADGE_LABEL_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
-  reason: z.string().nullable().describe(END_BRANCH_REASON_DESCRIPTION),
+  reason: z.string().describe(END_BRANCH_REASON_DESCRIPTION),
   /**
    * One string per fired `*_capture` template, keyed by angle. One key (`business` /
    * `technical` classification) or two (`both`) — required with a kept verdict. Declared last:
    * a model emits arguments in schema order, so the long prose closes the object after every
    * short field.
    */
-  sections: CapturedSectionsSchema.nullable().describe(SECTIONS_DESCRIPTION),
+  sections: CapturedSectionsSchema.describe(SECTIONS_DESCRIPTION),
 }).strict();
 
 const { sections, summary, badge_label, prune_neighbors, questions, reason } = HopFindingBaseSchema.shape;
@@ -725,14 +725,14 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       code: 'custom',
       path: ['reason'],
       message: `accepted only with verdict end_branch, not ${value.verdict}.`,
-      params: { hint: 'Send reason: null; the findings belong in sections and summary.' },
+      params: { hint: 'Send reason: ""; the findings belong in sections and summary.' },
     });
   }
-  if (value.sections === null) {
+  if (fresh && typeof value.sections === 'object' && value.sections !== null && Object.keys(value.sections).length === 0) {
     ctx.addIssue({
       code: 'custom',
       path: ['sections'],
-      message: `required with verdict ${value.verdict}; null only with end_branch.`,
+      message: `required with verdict ${value.verdict}; empty only with end_branch.`,
       params: { hint: 'Send sections: the section body keyed by angle.' },
     });
   }
@@ -761,7 +761,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
  */
 export function toHopFinding(value: FlatSubmitFindings): HopFinding {
   if (value.verdict === 'end_branch') {
-    return { focus_node_id: value.focus_node_id, verdict: 'end_branch', reason: value.reason ?? '' };
+    return { focus_node_id: value.focus_node_id, verdict: 'end_branch', reason: value.reason };
   }
   const kept: HopFindingKept = {
     focus_node_id: value.focus_node_id,
@@ -826,16 +826,17 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  * One kept angle drops the other key. Sending it raises a custom issue whose hint says to fold
  * that key's content into the kept angle. The fold guidance also lives on the kept key's
  * description, where the model reads it before authoring.
- * `both` keeps both angles; both keys are required when `freshSubmission` is set (no held draft and
- * no archived angle), and optional otherwise so a retry names only the angle it changes.
- * {@link validateSectionsAgainstClassification} still requires both angles at the handler. The parent
- * field is served required and nullable: {@link refineSubmitFindingsShape} accepts an `end_branch`
- * whether `sections` is null or present; {@link toHopFinding} drops it.
+ * `both` keeps both angles, each key optional so `{}` stays valid with `end_branch`; a retry with
+ * a held draft names only the angle it changes. {@link refineSubmitFindingsShape} refuses `{}` on a
+ * kept verdict of a fresh submission, and {@link validateSectionsAgainstClassification} requires
+ * both angles at the handler. The parent
+ * field is served required and non-nullable: {@link refineSubmitFindingsShape} accepts an `end_branch`
+ * whether `sections` is `{}` or present; {@link toHopFinding} drops it.
  *
  * @param classification - The locked classification this dispatch's schema narrows to.
- * @param freshSubmission - Serve the `both` keys as required.
+ * @param freshSubmission - No held draft and no archived angle: the `both` keys carry no held-body wording.
  * @returns The sections object for that classification. A one-angle lock carries only that key;
- * `both` carries both keys, required when `freshSubmission`.
+ * `both` carries both keys, optional.
  */
 function capturedSectionSchemaForClassification(
   classification: ClassificationValue,
@@ -844,11 +845,17 @@ function capturedSectionSchemaForClassification(
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
   if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
     if (freshSubmission) {
-      return z.strictObject({ business: z.string().min(1), technical: z.string().min(1) });
+      const body = z.string().min(1).optional();
+      return z.strictObject({ business: body, technical: body }).superRefine((value, ctx) => {
+        if (Object.keys(value).length === 0) return;
+        for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
+          if (value[angle] === undefined) {
+            ctx.addIssue({ code: 'custom', path: [angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send sections.${angle}.` } });
+          }
+        }
+      });
     }
-    const bothBody = z.string().min(1).optional().describe(
-      'Send only an angle you change; an angle left out keeps its held body.',
-    );
+    const bothBody = z.string().min(1).optional().describe('Send only an angle you change; an angle left out keeps its held body.');
     return z.strictObject({ business: bothBody, technical: bothBody });
   }
   const [onlyAngle] = kept;
@@ -912,7 +919,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  * `technical` lock structurally cannot author the other angle's key, so a surplus angle fails
  * Zod at this boundary instead of being silently dropped at commit. A `both` lock advertises both
  * keys and the classification validator requires both on a fresh submission, while a retry
- * with a held draft names only the angle it changes; `sections: null` is the `end_branch`
+ * with a held draft names only the angle it changes; `sections: {}` is the `end_branch`
  * shape {@link refineSubmitFindingsShape} exempts. The host path uses this at the last seam
  * before the model sees the tool set so the model cannot fill a field or angle invalid for the
  * locked mode/classification — the contract is the form's shape, not prompt prose. The static
@@ -947,10 +954,9 @@ export function submitFindingsSchemaForMode(
   if (classification) {
     const kept = CLASSIFICATION_KEPT_ANGLES[classification];
     const sectionsDescribe = kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
-      ? KEPT_VERDICT_REQUIRED + ', null with end_branch. Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
-      : `${KEPT_VERDICT_REQUIRED}, null with end_branch. Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`;
+      ? KEPT_VERDICT_REQUIRED + ', {} with end_branch. Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
+      : `${KEPT_VERDICT_REQUIRED}, {} with end_branch. Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`;
     const narrowedSections = capturedSectionSchemaForClassification(classification, freshSubmission)
-      .nullable()
       .describe(sectionsDescribe);
     narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
   }
@@ -1490,8 +1496,8 @@ export const SubmitFindingsModelSchema = z.object({
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
-  reason: z.string().nullable().describe(END_BRANCH_REASON_DESCRIPTION),
-  sections: CapturedSectionsSchema.nullable().describe(SECTIONS_DESCRIPTION),
+  reason: z.string().describe(END_BRANCH_REASON_DESCRIPTION),
+  sections: CapturedSectionsSchema.describe(SECTIONS_DESCRIPTION),
 }).strict();
 
 /**
