@@ -623,15 +623,16 @@ export class NavigationEngine implements IHopStateMachine {
    * @param input - The rejected payload as the model sent it.
    * @param failedPaths - Dotted Zod issue paths of the rejection.
    * @returns What the retry gets restored — held `sections` angles, whether a held `summary`, the
-   *   other held field names (a field this call failed excluded) — or `null` when nothing is held
-   *   for it: not a kept verdict, not the current focus, or no valid part and no held draft.
+   *   other held field names (a field this call failed excluded). A call that is not a kept verdict
+   *   of the current focus holds nothing new and reports the draft already held for the current
+   *   focus; `null` when nothing is held.
    */
   public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): { sections: string[]; summary: boolean; fields: string[] } | null {
-    if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
     const raw = input as Record<string, unknown> & { focus_node_id?: unknown; verdict?: unknown };
-    if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return null;
+    if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap) ?? raw.focus_node_id.toLowerCase();
-    if (focus !== this.currentFocusNodeId) return null;
+    if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
     const failed = new Set(failedPaths.map(path => path.split('.')[0]));
     const sections = failed.has('sections')
       ? []
@@ -661,6 +662,18 @@ export class NavigationEngine implements IHopStateMachine {
     if (draft.sections.length === 0 && !draft.summary.trim() && restored.length === 0) return null;
     this.heldFindingDraft.hold(draft, { failed: [...failed] });
     return { sections: draft.sections.map(section => section.angle ?? ''), summary: draft.summary.trim().length > 0, fields: restored };
+  }
+
+  /** The parts a draft already held for the current focus still restores, unchanged; `null` when none is held. */
+  private heldPartsOfCurrentFocus(): { sections: string[]; summary: boolean; fields: string[] } | null {
+    const held = this.heldFindingDraft.get();
+    if (held === null || (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) !== this.currentFocusNodeId) return null;
+    const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
+    return {
+      sections: held.sections.map(section => section.angle ?? ''),
+      summary: held.summary.trim().length > 0,
+      fields: HELD_CARRIED_FIELDS.filter(field => held[field] !== undefined && !failed.includes(field)),
+    };
   }
 
   /** Compatibility projection of unresolved scope-boundary leads for synthesis. */
