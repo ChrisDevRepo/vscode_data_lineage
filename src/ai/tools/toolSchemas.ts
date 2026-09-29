@@ -21,7 +21,7 @@ import type { PresentResultStage } from './presentResult';
  * wildcard target column locks an unwinnable CT session because no real column can match it.
  */
 export const ColumnIdentifierSchema = z.string().trim().min(1).regex(/^[^*%?]+$/, 'wildcards are not column identifiers').describe(
-  'A column the user named verbatim. When the user named no specific column, omit targetColumns; wildcards are rejected at the boundary.',
+  'A column (a field of a table or view) the user named verbatim — never a table, view or procedure name. When the user named no specific column, omit targetColumns; wildcards are rejected at the boundary.',
 );
 
 const MissionBriefValueSchema = z.string()
