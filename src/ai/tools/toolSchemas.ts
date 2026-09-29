@@ -1090,6 +1090,14 @@ function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>
     }
   }
 }
+/** A non-empty `sections` list with unique labels: the one bound every stage's section array shares. */
+function sectionList<T extends z.ZodType<{ label: string }>>(item: T) {
+  return z.array(item).min(1).check(superRefineAll(rejectDuplicateSectionLabels));
+}
+
+/** The merged held-draft `sections` field, held to the same bound as the served section arrays. */
+export const MergedSectionsSchema = z.object({ sections: sectionList(z.looseObject({ label: z.string() })) });
+
 /**
  * The Lineage color-scheme enum shared by every colored surface. Declared once so
  * render paths cannot drift: flow-role schemes (`source` / `transform` / `target`) plus status
@@ -1214,11 +1222,11 @@ function buildPreviewSchemas(blockCount: number) {
     add_node_ids: true,
     is_update: true,
   }).extend({
-    sections: z.array(section).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).describe(
+    sections: sectionList(section).describe(
       'Required report sections, at least one. Each names the block of the served `answer_blocks` it starts at; every node analysed and captured is linked into a section\'s node_ids.',
     ),
   }).strict();
-  const patchSections = z.array(patch).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
+  const patchSections = sectionList(patch).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
   return { model, patchSections };
 }
 
@@ -1246,7 +1254,7 @@ export const PresentResultModelSchema = z.object({
   highlight_groups: z.array(HighlightGroupSchema).min(1).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX, HIGHLIGHT_GROUPS_OVER_MAX).describe(
     'REQUIRED for new renders, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
-  sections: z.array(PresentResultSectionSchema).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).describe(
+  sections: sectionList(PresentResultSectionSchema).describe(
     'Required final report sections, at least one. Every node analysed and captured this turn '
     + '(anything with a detail slot) is linked into a section\'s node_ids, as that field describes — '
     + 'an analysed node absent from every section fails validation.',
@@ -1279,7 +1287,7 @@ const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
  */
 function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T) {
   return schema.extend({
-    sections: z.array(PresentResultRetainedSectionSchema).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).optional()
+    sections: sectionList(PresentResultRetainedSectionSchema).optional()
       .describe('Final report sections. Omit entirely to keep the committed report; list a label with no text to keep that section unchanged.'),
   });
 }
@@ -1350,7 +1358,7 @@ export const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
   sections: true,
   notes: true,
 }).partial().extend({
-  sections: z.array(PresentResultSectionPatchSchema).min(1).check(superRefineAll(rejectDuplicateSectionLabels)).optional().describe(REPAIR_SECTIONS_DESCRIPTION),
+  sections: sectionList(PresentResultSectionPatchSchema).optional().describe(REPAIR_SECTIONS_DESCRIPTION),
   is_update: z.boolean().optional().describe('Optional — a repair keeps the held draft\'s own value; the value sent here is not applied.'),
 }).strict();
 

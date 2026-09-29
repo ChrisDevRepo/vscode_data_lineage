@@ -30,11 +30,11 @@ import {
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import { normalizePresentSectionLabel } from '../../tools/toolSchemas';
+import { MergedSectionsSchema, normalizePresentSectionLabel } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
-import { makeRejection, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
@@ -191,6 +191,13 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           }));
         }
         presentInput = mergePresentResultRepairPatch(held, patch, authorization);
+        const merged = MergedSectionsSchema.safeParse({ sections: presentInput.sections });
+        if (!merged.success) {
+          return reject(rejectionFromZodError(merged.error, {
+            code: REJECTION_CODES.validation,
+            hint: `${presentResultRepairInstruction(['sections'], isVisualPreview ? 'visual_preview' : 'synthesis')} The merge left the report with no section to keep; a section stays unless it is dropped.`,
+          }));
+        }
       } else if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
           ? sess.discoveryScopeArtifact
