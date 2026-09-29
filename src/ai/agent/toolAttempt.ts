@@ -116,8 +116,8 @@ function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number,
 }
 
 /**
- * Model replies without progress allowed in one logical phase/hop — the one stuck-step stop. A
- * reply makes progress when it adds an accepted observation or ends the phase; empty, text-only,
+ * Model replies in a row without progress allowed in one logical phase/hop — the one stuck-step
+ * stop; an attempt that adds an accepted observation restarts the count. A reply makes progress when it adds an accepted observation or ends the phase; empty, text-only,
  * duplicate and rejected replies do not.
  */
 export const MAX_TOOL_PROVIDER_CALLS = 3;
@@ -358,7 +358,7 @@ export interface ToolPhaseAttemptState {
   readonly phase: InstructionPhase;
   /** Monotonic physical-call count for the logical phase or hop. */
   readonly providerCalls: number;
-  /** Model replies that added no accepted observation — the count {@link MAX_TOOL_PROVIDER_CALLS} bounds. */
+  /** Model replies in a row that added no accepted observation — the count {@link MAX_TOOL_PROVIDER_CALLS} bounds. */
   readonly noProgressCalls: number;
   /** Accepted non-terminal facts retained for recovery attempts. */
   readonly observations: readonly ToolAttemptObservation[];
@@ -417,7 +417,7 @@ export function recordToolAttempt(
   attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'observations' | 'rejections' | 'messages'>,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
-  const noProgressCalls = state.noProgressCalls + (attempt.observations.length === 0 ? attempt.providerCalls : 0);
+  const noProgressCalls = attempt.observations.length === 0 ? state.noProgressCalls + attempt.providerCalls : 0;
   const observations = [...state.observations, ...attempt.observations];
   const rejections = [...state.rejections, ...attempt.rejections];
   const messages = [...state.messages, ...attempt.messages];

@@ -579,7 +579,7 @@ ahead of its text and calls, so a provider that validates signatures on the
 current turn accepts the history. A read that an earlier generation already had
 accepted and the model asks for again is answered with a `duplicate_read`
 rejection naming the accepted call ID; a duplicate inside the same batch is
-reused silently. A phase stops after `MAX_TOOL_PROVIDER_CALLS` model replies
+reused silently. A phase stops after `MAX_TOOL_PROVIDER_CALLS` model replies in a row
 that add no accepted observation — rejected, duplicate, empty or text-only.
 
 ## BB and column-trace modes
