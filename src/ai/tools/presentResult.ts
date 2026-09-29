@@ -355,11 +355,14 @@ export function heldSectionsForRepair(sections: PresentResultInput['sections']):
 /**
  * The repair-call sentence a repairable rejection carries, stated once here for every failure: the
  * fields to resend and, when `sections` is among them, how the resend merges under the stage's own
- * section body field.
+ * section body field — or, when the held draft has no section, that every section is resent.
  */
-export function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[], stage: PresentResultStage): string {
+export function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[], stage: PresentResultStage, sectionsHeld = true): string {
   const instruction = `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`;
-  return resendList.includes('sections') ? `${instruction} ${keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids'])}` : instruction;
+  if (!resendList.includes('sections')) return instruction;
+  return sectionsHeld
+    ? `${instruction} ${keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids'])}`
+    : `${instruction} No section is held: resend every section.`;
 }
 
 /**
@@ -387,7 +390,7 @@ export function holdRejectedPresentResult(
   if (Object.keys(kept).length === 0) return null;
   const fields = failed as PresentResultRepairField[];
   store.hold(kept as PresentResultInput, { fields });
-  return `Held from this call: every field except ${fields.join(', ')}. ${presentResultRepairInstruction(fields, stage)}`;
+  return `Held from this call: every field except ${fields.join(', ')}. ${presentResultRepairInstruction(fields, stage, false)}`;
 }
 
 /**
