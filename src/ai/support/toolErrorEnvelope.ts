@@ -3,23 +3,13 @@
  *
  * @remarks
  * Every tool, guard and engine refusal is emitted by {@link makeRejection} in one shape —
- * `{ code, reason, hint?, detail?, issuePaths?, entryIds?, lengthOverruns? }` — and serialized as the
+ * `{ code, reason, hint?, detail?, issuePaths?, entryIds? }` — and serialized as the
  * tool result. {@link readToolError} reads that shape back. The one other shape it recognizes is the
  * `lineage_present_result` validator's `{ success: false, errors: […] }`, which that tool still emits
  * itself. Provider-pure.
  */
 import { z } from 'zod';
 import { REJECTION_CODES } from './rejectionCodes';
-
-/** One length offender a rejection names: the field path, its measured length, and its cap. */
-export interface RejectionLengthOverrun {
-  /** Dotted field path of the over-long value. */
-  readonly path: string;
-  /** Measured character length of the rejected value. */
-  readonly length: number;
-  /** The hard cap `length` exceeds. */
-  readonly limit: number;
-}
 
 /** The one rejection shape: what was wrong (`reason`), how to repair it (`hint`), and typed machine facts. */
 export interface ToolRejection {
@@ -35,8 +25,6 @@ export interface ToolRejection {
   issuePaths?: string[];
   /** Exact offending entry ids, for a violation whose offender is an id rather than a field path. */
   entryIds?: readonly string[];
-  /** Length offenders with their measured size and cap. */
-  lengthOverruns?: RejectionLengthOverrun[];
 }
 
 /**
@@ -131,7 +119,7 @@ export function buildNoProjectLoadedError(): string {
  * @remarks
  * `detail` folds in every offender the validator attached: its per-path records, the full `errors[]`
  * array when it has more than one entry, and every sibling key (`repairFields`, `repairable`, …).
- * The typed `issuePaths`, `entryIds` and `lengthOverruns` are read from the flat per-path record
+ * The typed `issuePaths` and `entryIds` are read from the flat per-path record
  * list the validator emits in `detail`.
  */
 function readPresentResultFailure(data: unknown): ToolRejection | null {
@@ -156,13 +144,6 @@ function readPresentResultFailure(data: unknown): ToolRejection | null {
   );
   const entryIds = [...new Set(records.flatMap((record) => (Array.isArray(record.entry_ids) ? record.entry_ids : [])))]
     .filter((id): id is string => typeof id === 'string');
-  const overrunByPath = new Map<string, RejectionLengthOverrun>();
-  for (const { path, length, limit } of records) {
-    if (typeof path === 'string' && Number.isInteger(length) && Number.isInteger(limit) && (length as number) > (limit as number) && !overrunByPath.has(path)) {
-      overrunByPath.set(path, { path, length: length as number, limit: limit as number });
-    }
-  }
-  const lengthOverruns = [...overrunByPath.values()];
   return makeRejection({
     code: REJECTION_CODES.validation,
     reason,
@@ -170,7 +151,6 @@ function readPresentResultFailure(data: unknown): ToolRejection | null {
     detail: mergedDetail,
     issuePaths: records.flatMap((record) => (typeof record.path === 'string' ? [record.path] : [])),
     entryIds,
-    lengthOverruns,
   });
 }
 
@@ -214,7 +194,6 @@ export function makeRejection(input: {
   detail?: unknown;
   issuePaths?: readonly string[];
   entryIds?: readonly string[];
-  lengthOverruns?: readonly RejectionLengthOverrun[];
 }): ToolRejection {
   const reason = (input.reason ?? input.code).trim();
   if (!reason) throw new Error('makeRejection: reason must not be empty');
@@ -226,7 +205,6 @@ export function makeRejection(input: {
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     ...(issuePaths.length > 0 ? { issuePaths } : {}),
     ...(input.entryIds?.length ? { entryIds: [...input.entryIds] } : {}),
-    ...(input.lengthOverruns?.length ? { lengthOverruns: [...input.lengthOverruns] } : {}),
   };
 }
 
