@@ -32,14 +32,14 @@ export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 
 export const EntryDetectionSchema = z.object({
   entry: z.enum(['column_trace', 'visual_render', 'discovery'])
     .describe('Discrete entry route selected from the user request.'),
-  targetColumns: z.array(ColumnIdentifierSchema).nullish()
+  targetColumns: z.array(ColumnIdentifierSchema).nullable()
     .describe('Explicit user-named columns for column_trace; null for discovery or visual_render.'),
 }).strict().superRefine((value, ctx) => {
   if (value.entry === 'column_trace' && (!value.targetColumns || value.targetColumns.length === 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'column_trace requires at least one explicitly named column.' });
   }
   if (value.entry !== 'column_trace' && value.targetColumns != null) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry === 'discovery' ? 'Discovery' : 'Visual render'} does not take \`targetColumns\`. Call detect_entry again with \`targetColumns\` omitted.` });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry === 'discovery' ? 'Discovery' : 'Visual render'} does not take \`targetColumns\`. Call detect_entry again with \`targetColumns\` null.` });
   }
 });
 /**

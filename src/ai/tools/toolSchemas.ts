@@ -21,7 +21,7 @@ import type { PresentResultStage } from './presentResult';
  * wildcard target column locks an unwinnable CT session because no real column can match it.
  */
 export const ColumnIdentifierSchema = z.string().trim().min(1).regex(/^[^*%?]+$/, 'wildcards are not column identifiers').describe(
-  'A field of a table or view that the user named verbatim; a column trace starts only when at least one such column is named. When the user named no specific column, omit targetColumns; wildcards are rejected at the boundary.',
+  'A field of a table or view that the user named verbatim; a column trace starts only when at least one such column is named. When the user named no specific column, supply none; wildcards are rejected at the boundary.',
 );
 
 const MissionBriefValueSchema = z.string()
@@ -496,12 +496,12 @@ const END_BRANCH_ROW_DECISION_CONDITION =
 
 /** Single source for the `reason` describe text of an `end_branch` submit in BB, which has no `column_flow` field. */
 const END_BRANCH_REASON_DESCRIPTION =
-  'Required with end_branch, and then the only field besides focus_node_id and verdict: why '
+  'Required with end_branch, and then the only field besides focus_node_id and verdict; null with a kept verdict. Why '
   + END_BRANCH_ROW_DECISION_CONDITION;
 
 /** CT form of the same field: `column_flow` is served-required in CT, so end_branch also carries it, as `[]`. */
 const END_BRANCH_REASON_DESCRIPTION_CT =
-  'Required with end_branch, and then the only field besides focus_node_id, verdict and an empty column_flow: why '
+  'Required with end_branch, and then the only field besides focus_node_id, verdict and an empty column_flow; null with a kept verdict. Why '
   + END_BRANCH_ROW_DECISION_CONDITION;
 
 /**
@@ -639,7 +639,7 @@ const HopFindingBaseSchema = z.object({
     .describe(BADGE_LABEL_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
-  reason: z.string().nullish().describe(END_BRANCH_REASON_DESCRIPTION),
+  reason: z.string().nullable().describe(END_BRANCH_REASON_DESCRIPTION),
   /**
    * One string per fired `*_capture` template, keyed by angle. One key (`business` /
    * `technical` classification) or two (`both`) — required with a kept verdict. Declared last:
@@ -668,7 +668,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
     badge_label,
     prune_neighbors,
     questions,
-    reason: z.string().nullish().describe(END_BRANCH_REASON_DESCRIPTION_CT),
+    reason: z.string().nullable().describe(END_BRANCH_REASON_DESCRIPTION_CT),
     sections,
   })
   .strict();
@@ -1466,7 +1466,7 @@ export const SubmitFindingsModelSchema = z.object({
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
-  reason: z.string().nullish().describe(END_BRANCH_REASON_DESCRIPTION),
+  reason: z.string().nullable().describe(END_BRANCH_REASON_DESCRIPTION),
   sections: CapturedSectionsSchema.nullable().describe(SECTIONS_DESCRIPTION),
 }).strict();
 
