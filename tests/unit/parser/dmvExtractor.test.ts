@@ -583,13 +583,13 @@ function testExpandSchemaPlaceholder() {
 
   const sql = `SELECT * FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nWHERE s.name IN ({{SCHEMAS}})`;
   const expanded = expandSchemaPlaceholder(sql, ['dbo', 'Sales']);
-  expect(expanded.includes("s.name IN ('dbo', 'Sales')"), 'Basic: schema list expanded').toBe(true);
+  expect(expanded.includes("s.name IN (N'dbo', N'Sales')"), 'Basic: schema list expanded as Unicode literals').toBe(true);
   expect(!expanded.includes('{{SCHEMAS}}'), 'Basic: no placeholder remnants').toBe(true);
 
   const depsSql = `SELECT * FROM sys.sql_expression_dependencies d\nWHERE (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))`;
   const expandedDeps = expandSchemaPlaceholder(depsSql, ['dbo']);
-  expect(expandedDeps.includes("s1.name IN ('dbo')"), 'Multi: first placeholder expanded').toBe(true);
-  expect(expandedDeps.includes("d.referenced_schema_name IN ('dbo')"), 'Multi: second placeholder expanded').toBe(true);
+  expect(expandedDeps.includes("s1.name IN (N'dbo')"), 'Multi: first placeholder expanded').toBe(true);
+  expect(expandedDeps.includes("d.referenced_schema_name IN (N'dbo')"), 'Multi: second placeholder expanded').toBe(true);
   expect(!expandedDeps.includes('{{SCHEMAS}}'), 'Multi: no placeholder remnants').toBe(true);
 
   const noPlaceholder = `SELECT * FROM sys.objects`;
@@ -597,7 +597,10 @@ function testExpandSchemaPlaceholder() {
   expect(unchanged === noPlaceholder, 'No placeholder: SQL unchanged').toBe(true);
 
   const injected = expandSchemaPlaceholder(sql, ["O'Brien"]);
-  expect(injected.includes("'O''Brien'"), 'SQL injection: single quote escaped').toBe(true);
+  expect(injected.includes("N'O''Brien'"), 'SQL injection: single quote escaped').toBe(true);
+
+  const unicode = expandSchemaPlaceholder(sql, ['Ärger日本']);
+  expect(unicode.includes("N'Ärger日本'"), 'Unicode: a non-ASCII schema name keeps its characters (N literal)').toBe(true);
 
   const empty = expandSchemaPlaceholder(sql, []);
   expect(empty.includes('s.name IN ()'), 'Empty: produces IN ()').toBe(true);

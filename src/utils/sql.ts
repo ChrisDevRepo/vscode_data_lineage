@@ -108,10 +108,10 @@ const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
 
 /**
  * Expands a `{{SCHEMAS}}` placeholder within a SQL template with a comma-separated list
- * of single-quoted schema names.
+ * of Unicode (`N'…'`) schema-name literals, so a name outside the server code page keeps its characters.
  *
  * Example: `SELECT * FROM sys.tables WHERE schema_name IN ({{SCHEMAS}})`
- * becomes `SELECT * FROM sys.tables WHERE schema_name IN ('dbo', 'Sales')`.
+ * becomes `SELECT * FROM sys.tables WHERE schema_name IN (N'dbo', N'Sales')`.
  *
  * @remarks
  * Safe for string-literal (`IN (…)`, `= '…'`) contexts only. Embedded `'` characters are
@@ -122,7 +122,7 @@ const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
  */
 export function expandSchemaPlaceholder(sql: string, schemas: string[]): string {
   if (!sql.includes(SCHEMA_PLACEHOLDER)) return sql;
-  const list = schemas.map(s => `'${s.replace(/'/g, "''")}'`).join(', ');
+  const list = schemas.map(s => `N'${s.replace(/'/g, "''")}'`).join(', ');
   return sql.replace(/\{\{SCHEMAS\}\}/g, list);
 }
 
