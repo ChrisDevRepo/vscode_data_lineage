@@ -39,7 +39,7 @@ const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
     'Answer angle the user asked for: "business" only when the user asks for the business view (meaning, '
     + 'impact, business rules); "technical" only when the user asks for a technical lens (performance, indexes, '
-    + 'execution plan, query shape, load pattern); otherwise "both" — a question in neither terms, or in both.',
+    + 'execution plan, query shape, load pattern); otherwise "both" — a question in neither terms, or in both. Required for a fresh proposal.',
   );
 
 const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(MAX_ID_LIST_LENGTH).describe(
