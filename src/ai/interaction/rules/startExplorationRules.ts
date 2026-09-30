@@ -2,13 +2,16 @@ import type { InteractionRuleResult } from '../types';
 import type { ZodError, ZodIssue } from 'zod';
 import { DEFAULT_EXPLORATION_QUESTION } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-import { makeRejection } from '../../support/toolErrorEnvelope';
+import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection } from '../../support/toolErrorEnvelope';
 import {
   ASYMMETRIC_DEPTH_BOTH_ZERO,
 } from '../../../engine/shared/explorationDepthContract';
 import { CT_TARGET_COLUMNS_RECOVERY } from '../../tools/toolSchemas';
 
 type StartRejectIssue = { code: string; path: string; message: string; action: string };
+
+/** The repair of an issue whose message already states the fact: the one generic resend rule. */
+const RESEND = INVALID_TOOL_INPUT_REPAIR_HINT;
 
 /**
  * Resolves the canonical user question for an exploration.
@@ -51,18 +54,12 @@ function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartR
   if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message: issue.message, action: CT_TARGET_COLUMNS_RECOVERY };
   if (tag === ASYMMETRIC_DEPTH_BOTH_ZERO) return { code: ASYMMETRIC_DEPTH_BOTH_ZERO, path, message: issue.message, action: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' };
   if (issue.code === 'unrecognized_keys') return { code: 'unknown_field', path: issue.keys.join(',') || path, message: issue.message, action: 'Remove the unknown field and resubmit.' };
-  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message: issue.message, action: `Correct ${path} and resubmit.` };
+  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message: issue.message, action: RESEND };
   if (issue.code === 'invalid_value' && ['analysisMode', 'classification'].includes(path)) {
-    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message: issue.message, action: `Provide ${path} and resubmit.` };
-    return { code: 'invalid_enum', path, message: issue.message, action: `Use an allowed ${path} value and resubmit.` };
+    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message: issue.message, action: RESEND };
+    return { code: 'invalid_enum', path, message: issue.message, action: RESEND };
   }
-  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' || tag === 'depth_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message: issue.message, action: `Correct ${path} and resubmit.` };
-}
-
-/** One reason line: the issue's path with its message and own action, minus text the hint already serves. */
-function startIssueLine(issue: StartRejectIssue, hint: string): string {
-  const parts = [...new Set([issue.message, issue.action])].filter(part => part !== hint);
-  return parts.length > 0 ? `${issue.path}: ${parts.join(' ')}` : issue.path;
+  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' || tag === 'depth_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message: issue.message, action: RESEND };
 }
 
 /**
@@ -71,8 +68,9 @@ function startIssueLine(issue: StartRejectIssue, hint: string): string {
  * @param error - Strict schema failure whose issue meaning must be preserved.
  * @param input - Raw payload used to distinguish absent enum fields from invalid values.
  * @returns A compatible rejection envelope containing at most three unique field issues; the
- * `reason` states every issue (with its own action when it differs from the top one) and the top
- * issue's action is served once, as `hint`.
+ * `reason` states every issue as `path: message` (the path alone when the message is itself a
+ * repair the `hint` serves) and the `hint` serves the distinct repairs of
+ * every issue once, the generic resend rule last.
  */
 export function buildStartExplorationReject(error: ZodError, input?: Record<string, unknown>): NonNullable<InteractionRuleResult> {
   const unique = new Map<string, StartRejectIssue>();
@@ -82,12 +80,12 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
     if (unique.size === 3) break;
   }
   const issues = [...unique.values()];
-  const top = issues[0] ?? { code: 'invalid_value', path: '(root)', message: 'Invalid input.', action: 'Correct the input and resubmit.' };
+  const actions = [...new Set(issues.map(issue => issue.action))].sort((a, b) => Number(a === RESEND) - Number(b === RESEND));
   return makeRejection({
-    code: top.code,
-    reason: issues.length > 0 ? issues.map(issue => startIssueLine(issue, top.action)).join('\n') : top.message,
-    hint: top.action,
-    detail: { issues: issues.map(({ action, ...issue }) => (action === top.action ? issue : { ...issue, action })) },
+    code: issues[0]?.code ?? 'invalid_value',
+    reason: issues.map(issue => (actions.includes(issue.message) ? issue.path : `${issue.path}: ${issue.message}`)).join('\n'),
+    hint: actions.join(' ') || RESEND,
+    detail: { issues: issues.map(({ action: _action, ...issue }) => issue) },
     issuePaths: issues.map(issue => issue.path),
   });
 }
