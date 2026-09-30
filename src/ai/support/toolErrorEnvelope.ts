@@ -379,21 +379,21 @@ function acceptsNullAt(schema: z.ZodType | undefined, path: readonly PropertyKey
 }
 
 /**
- * Removal hint for `unrecognized_keys` issues that all sit inside an object or array element, naming
- * the keys that element accepts.
+ * Removal hint for `unrecognized_keys` issues, naming the keys the object they sit in accepts; the
+ * call itself is the object for an issue at the root.
  *
- * @returns The element-directed hint; `undefined` when an issue is at the root, or the schema is
- * absent or does not resolve the element, so the caller keeps the key-only wording.
+ * @returns The object-directed hint; `undefined` when the schema is absent or does not resolve the
+ * object, so the caller keeps the key-only wording.
  */
-function nestedKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined): string | undefined {
+function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined): string | undefined {
   const issues = error.issues.filter((issue) => issue.code === 'unrecognized_keys');
-  if (issues.length === 0 || issues.some((issue) => issue.path.length === 0)) return undefined;
+  if (issues.length === 0) return undefined;
   const clauses = new Map<string, { keys: Set<string>; allowed: string[] }>();
   for (const issue of issues) {
     const node = jsonSchemaNodeAt(schema, issue.path);
     const allowed = Object.keys((node ? unwrapNullable(node) : undefined)?.properties ?? {});
     if (allowed.length === 0) return undefined;
-    const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '');
+    const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '') || 'the call';
     const clause = clauses.get(where) ?? { keys: new Set<string>(), allowed };
     for (const key of issue.keys) clause.keys.add(key);
     clauses.set(where, clause);
@@ -419,7 +419,7 @@ function nestedKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
 function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): string | undefined {
   const offendingKeys = zodUnrecognizedKeys(error);
   if (offendingKeys.length === 0) return undefined;
-  const elementRemoval = nestedKeyRemovalHint(error, schema);
+  const elementRemoval = objectKeyRemovalHint(error, schema);
   if (elementRemoval) return elementRemoval;
 
   const plural = offendingKeys.length > 1;
