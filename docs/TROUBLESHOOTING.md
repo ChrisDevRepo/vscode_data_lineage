@@ -6,7 +6,25 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **`.dacpac` won't load.** Close SSDT / Visual Studio / Azure Data Studio (file lock). Only SSDT- and SDK-style archives are supported.
 
-**Database connection fails.** Install or update the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql) and configure a connection profile. Data Lineage Viz needs an MSSQL release that exposes the connection-sharing API (v1.34 or later). Database import uses that profile; `@lineage` reads only the already-loaded model and never opens a database connection. Imports need metadata visibility such as `VIEW DEFINITION` plus permission to run the configured catalog queries. Profiling also needs `SELECT` on profiled tables and catalog visibility for `sys.partitions` row counts.
+**Database connection fails.** The error shows as `<connection name>: <original driver message>` — the text is the driver's, unchanged — and the full error is written to **Output → Data Lineage Viz**. Which fix applies depends on `dataLineageViz.database.connectionProvider`:
+
+- `mssqlExtension` (default): install or update the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql) and save a connection profile there. Microsoft is retiring its connection-sharing API, so MSSQL shows a retirement notice on every connect; the wizard offers **Use Built-in Connection** to switch.
+- `builtIn`: add a connection with **Data Lineage: Add Database Connection**; no other extension is needed. The notification buttons fit the error:
+
+| Error | Typical cause | Buttons |
+|---|---|---|
+| 18456 `Login failed for user` | Wrong password or user; Entra account without access | Update Password · Edit Connection (Entra: Sign in with another account) |
+| 4060 / 916 `Cannot open database` | Database missing or the login has no user in it | Choose Database · Edit Connection |
+| 40613 / 40197 / 40501 / 40532 | Azure database unavailable, busy or resuming | Retry |
+| `ETIMEOUT`, `ESOCKET`, `ENOTFOUND`, `ECONNREFUSED` | Wrong server or port, server stopped, network blocked | Edit Connection · Retry |
+| Certificate not trusted (self-signed) | Local or test server without a trusted certificate | Trust Server Certificate (asks first — only for a server you control) · Edit Connection |
+| Sign-in cancelled | Microsoft sign-in window closed | Sign In |
+| 229 / 297 / 300 | Login cannot read metadata | Copy GRANT Statement |
+| anything else | — | Show Log · Edit Connection |
+
+Firewall and IP-allow-list errors are shown as the server reports them; Data Lineage does not change firewall rules. A password is stored only in VS Code secret storage — **Data Lineage: Update Database Password** replaces it, **Remove Database Connection** deletes it with the connection.
+
+Database import needs metadata visibility such as `VIEW DEFINITION` plus permission to run the configured catalog queries; the built-in connection sends only the queries in [`DMV_QUERIES.md`](DMV_QUERIES.md). Profiling also needs `SELECT` on profiled tables and catalog visibility for `sys.partitions` row counts. `@lineage` reads only the already-loaded model and never opens a database connection.
 
 **Cross-database refs missing.** Fully qualified three- or four-part names can surface as virtual external nodes, but remote database internals are not imported. Unqualified names are ambiguous and may not resolve.
 

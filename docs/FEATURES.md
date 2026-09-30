@@ -14,6 +14,17 @@ loading and settings actions.
 
 ---
 
+## Database connections
+
+A live database is read through the provider set in `dataLineageViz.database.connectionProvider`:
+
+- **`mssqlExtension`** (default) — a connection profile saved in the MSSQL extension. Microsoft is retiring that connection API; the wizard shows a notice with **Use Built-in Connection**.
+- **`builtIn`** — a connection saved by Data Lineage (**Add / Edit / Remove Database Connection**, **Update Database Password**), SQL login or Microsoft Entra ID, opened with a bundled driver. Passwords stay in VS Code secret storage; Entra sign-in uses the Microsoft account in VS Code.
+
+Both providers run only the queries in [`DMV_QUERIES.md`](DMV_QUERIES.md) and table profiling. Errors show the driver message unchanged, with actions that fit it — see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
+
+---
+
 ## Keyboard shortcuts
 
 All shortcuts are local to the graph webview — the extension registers no VS Code
