@@ -217,7 +217,7 @@ export class VscodeModelPort implements ModelPort {
               valid: false,
               callId,
               toolName,
-              input: args,
+              input: decodedArgs,
               code: REJECTION_CODES.invalidToolInput,
               reason: rejection.reason,
               ...(fieldHint !== undefined ? { hint: fieldHint } : {}),

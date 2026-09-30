@@ -400,10 +400,10 @@ export class NavigationEngine implements IHopStateMachine {
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
   /**
-   * Submission held only after a field-scoped failure a retry can correct without re-authoring the
-   * analysis — route/column incompleteness, or a field over its length cap — so a retry with empty
-   * sections can reuse already-valid authored prose. Other validation failures never establish held
-   * state.
+   * Submission held after a rejection a retry can correct without re-authoring the analysis — a
+   * schema rejection at the tool-attempt boundary ({@link holdRejectedSubmission}), a route/column
+   * fault, or a field over its length cap — so {@link applyHeldContent} restores what the retry
+   * omits. Other rejections never establish held state.
    */
   private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, { readonly failed: readonly string[] }>();
 
@@ -544,14 +544,12 @@ export class NavigationEngine implements IHopStateMachine {
    * Canonical focus id of a currently-held finding, or `null` when none is held.
    *
    * @remarks
-   * Non-null means the prior `submit_findings` failed only on a field-scoped, correctable defect.
+   * Non-null means a rejected submit_findings of this focus left correctable parts held.
    */
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();
     if (!held) return null;
-    return resolveModelNodeId(held.focus_node_id, this.nodeMap)
-      ?? held.focus_node_id.toLowerCase()
-      ?? null;
+    return resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
   }
 
   /**
@@ -2279,7 +2277,6 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     try {
-      this.heldFindingDraft.clear();
     const invalidRoutes: InvalidRoute[] = [];
     const routeOutcomes: RouteOutcome[] = [];
     const rawFocusId = params.focus_node_id;
