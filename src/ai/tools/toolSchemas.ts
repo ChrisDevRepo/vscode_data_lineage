@@ -1197,9 +1197,9 @@ const PresentResultSectionSchema = z.object({
  * see (the held-draft view shows labels and node ids only).
  */
 const PresentResultSectionPatchSchema = PresentResultSectionSchema.extend({
-  node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
-  text: z.string().trim().min(1, 'Section is missing text — every final section label requires one detail body').optional().describe('Detail body. Omit to keep the held text under this label; supply it to rewrite that section, and always for a label not on file.'),
-  remove: z.literal(true).optional().describe('true drops the held section under this label; send only the label with it.'),
+  node_ids: PresentResultSectionSchema.shape.node_ids.optional(),
+  text: PresentResultSectionSchema.shape.text.optional().describe('Detail body for this section label.'),
+  remove: z.literal(true).optional().describe('true drops the held section under this label.'),
 });
 
 /** Memoized per block count: a fresh schema per request is a new identity, which defeats `toModelJsonSchema`'s cache. */
@@ -1226,9 +1226,9 @@ function buildPreviewSchemas(blockCount: number) {
       : undefined,
   }).strict();
   const patch = section.extend({
-    node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the held links under this label; an empty array unlinks them.'),
+    node_ids: PresentResultSectionSchema.shape.node_ids.optional(),
     start: start.optional(),
-    remove: z.literal(true).optional().describe('true drops the held section under this label; send only the label with it.'),
+    remove: z.literal(true).optional().describe('true drops the held section under this label.'),
   });
   const model = PresentResultModelSchema.omit({
     summary: true,
@@ -1269,7 +1269,7 @@ export const PresentResultModelSchema = z.object({
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
   highlight_groups: z.array(HighlightGroupSchema).min(1).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX, HIGHLIGHT_GROUPS_OVER_MAX).describe(
-    'REQUIRED for new renders, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
+    'REQUIRED, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
   sections: sectionList(PresentResultSectionSchema).describe(
     'Required final report sections, at least one. Every node analysed and captured this turn '
@@ -1343,8 +1343,8 @@ export function presentResultSchemaForPhase(
   return schema;
 }
 
-/** The one statement of how a resent `sections` list merges into the held draft. */
-const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, each under its held label; a held section this list does not name is kept as authored; {label, remove: true} drops one.';
+/** How a resent `sections` list merges into the held draft is stated once, by the rejection (`keyedResendRule`). */
+const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, keyed by label.';
 
 /**
  * Strict patch schema for repairing a held `present_result` draft.
