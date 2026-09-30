@@ -500,7 +500,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
         title={(
           <Tooltip
             multiline
-            content={`Starting point (L0) · click to show the whole trace\nRow click: route · ⌘/Ctrl+click or ☐: add route · right-click: remove from trace`}
+            content={`Starting point (L0) · click to show the whole trace\nRow click: route · ⌘/Ctrl+click or ☐: add route · right-click the node on the graph: remove from trace`}
             asChild
           >
             <button

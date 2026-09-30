@@ -18,6 +18,7 @@ import {
   bfsDepthMap,
   bfsReachable,
   findShortestPathOrdered,
+  nodesCutByRemoval,
 } from '../../../src/engine/graphGuards';
 import { makeGraph } from '../helpers/testUtils';
 
@@ -219,5 +220,15 @@ describe('bfsDepthMap', () => {
 
   it('returns the origin alone for an empty edge list', () => {
     expect([...bfsDepthMap([], 'A')]).toEqual([['A', 0]]);
+  });
+});
+
+describe('nodesCutByRemoval — cycles', () => {
+  it('cuts nothing when the removed node sits on a cycle that still reaches the origin', () => {
+    expect(nodesCutByRemoval(threeCycle(), 'A', NONE, new Set(['B']))).toEqual([]);
+  });
+
+  it('terminates on a two-node cycle and cuts nothing beyond the removed node', () => {
+    expect(nodesCutByRemoval(twoCycle(), 'A', NONE, new Set(['B']))).toEqual([]);
   });
 });
