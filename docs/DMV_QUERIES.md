@@ -182,7 +182,7 @@ Used for the table design preview in the SQL viewer.
 | `table_name` | string | Table name |
 | `ordinal` | int | Column position (1-based) |
 | `column_name` | string | Column name |
-| `type_name` | string | Data type (`int`, `nvarchar`, etc.) |
+| `type_name` | string | Data type (`int`, `nvarchar`, etc.); a CLR type such as `hierarchyid`, `geography` or `geometry` has no system type id and is named by its user type |
 | `max_length` | int | Max length in bytes (-1 = `max`) |
 | `precision` | int | Numeric precision |
 | `scale` | int | Numeric scale |

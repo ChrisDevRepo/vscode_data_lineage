@@ -106,7 +106,7 @@ queries:
         o.name AS table_name,
         c.column_id AS ordinal,
         c.name AS column_name,
-        TYPE_NAME(c.system_type_id) AS type_name,
+        COALESCE(TYPE_NAME(c.system_type_id), TYPE_NAME(c.user_type_id)) AS type_name,
         c.max_length,
         c.precision,
         c.scale,
@@ -129,7 +129,7 @@ queries:
           WHERE ep.major_id = o.object_id AND ep.class = 1
             AND ep.name = 'microsoft_database_tools_support'
         )
-      GROUP BY s.name, o.name, c.column_id, c.name, TYPE_NAME(c.system_type_id),
+      GROUP BY s.name, o.name, c.column_id, c.name, COALESCE(TYPE_NAME(c.system_type_id), TYPE_NAME(c.user_type_id)),
                c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed
       ORDER BY s.name, o.name, c.column_id
 

@@ -855,6 +855,36 @@ function testPkOrdinalFromDmv() {
   expect(legacyId!.pkOrdinal === undefined, 'Legacy (no pk_ordinal col): pkOrdinal absent — no crash').toBe(true);
 }
 
+  it('keeps "]" in object, schema, column and dependency names', () => {
+    const results: DmvResults = {
+      nodes: makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), [
+        [cell('we]ird'), cell('t]x'), cell('U '), nullCell()],
+        [cell('dbo'), cell('vSrc'), cell('V '), cell('SELECT 1')],
+      ]),
+      columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), [
+        [cell('we]ird'), cell('t]x'), cell('1'), cell('c]1'), cell('int'), cell('4'), cell('10'), cell('0'), cell('1'), cell('0'), cell('0')],
+      ]),
+      dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), [
+        [cell('dbo'), cell('vSrc'), cell('we]ird'), cell('t]x')],
+      ]),
+    };
+    const model = buildModelFromDmv(results);
+    const table = model.nodes.find(n => n.type === 'table');
+    expect(table?.schema).toBe('we]ird');
+    expect(table?.name).toBe('t]x');
+    expect(table?.id).toBe('[we]ird].[t]x]');
+    expect(table?.columns?.map(c => c.name)).toEqual(['c]1']);
+    expect(model.schemas.map(s => s.name)).toContain('we]ird');
+    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]ird].[t]x] -> [dbo].[vsrc]');
+  });
+
+  it('the columns query names a CLR type through its user type', () => {
+    const config = yaml.load(readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8')) as { queries: Array<{ name: string; sql: string }> };
+    const sql = config.queries.find(q => q.name === 'columns')!.sql;
+    expect(sql).toContain('COALESCE(TYPE_NAME(c.system_type_id), TYPE_NAME(c.user_type_id)) AS type_name');
+    expect(sql).toMatch(/GROUP BY[^]*COALESCE\(TYPE_NAME\(c\.system_type_id\), TYPE_NAME\(c\.user_type_id\)\)/);
+  });
+
   it('expands schema placeholders', testExpandSchemaPlaceholder);
   it('keeps placeholders in configured queries', testYamlQueriesHavePlaceholder);
   it('classifies phase-two queries', testPhase2QueryPredicate);

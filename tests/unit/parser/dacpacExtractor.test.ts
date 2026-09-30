@@ -436,6 +436,43 @@ async function testPhase1Phase2Bridge() {
 }
 
 
+/** Builds an in-memory dacpac whose single table exercises entity-encoded names, `IsMax` types and a `sys`-qualified CLR type. */
+async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  const column = (name: string, type: string, props = '') => `
+        <Entry><Element Type="SqlSimpleColumn" Name="[my schema].[r&amp;d &lt;t&gt;].[${name}]">
+          <Relationship Name="TypeSpecifier"><Entry><Element Type="SqlTypeSpecifier">${props}
+            <Relationship Name="Type"><Entry><References ExternalSource="BuiltIns" Name="${type}" /></Entry></Relationship>
+          </Element></Entry></Relationship>
+        </Element></Entry>`;
+  zip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
+      <Model>
+        <Element Type="SqlTable" Name="[my schema].[r&amp;d &lt;t&gt;]">
+          <Relationship Name="Columns">${column('say &quot;hi&quot;', '[int]')}${column('vc', '[varchar]', '<Property Name="IsMax" Value="True" />')}${column('nv', '[nvarchar]', '<Property Name="IsMax" Value="True" />')}${column('vb', '[varbinary]', '<Property Name="IsMax" Value="True" />')}${column('n50', '[nvarchar]', '<Property Name="Length" Value="50" />')}${column('g', '[sys].[geography]')}
+          </Relationship>
+        </Element>
+      </Model>
+    </DataSchemaModel>`);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+async function testNamesAndTypesRoundTrip() {
+  const model = await extractDacpac(await makeNameAndTypeDacpac());
+  const table = model.nodes.find(n => n.type === 'table');
+  expect(table?.name, 'XML entities in an object name are decoded').toBe('r&d <t>');
+  expect(table?.schema).toBe('my schema');
+  const byName = new Map((table?.columns ?? []).map(c => [c.name, c.type]));
+  expect([...byName.keys()], 'XML entities in a column name are decoded').toContain('say "hi"');
+  expect(byName.get('vc'), 'IsMax keeps (max) on varchar').toBe('varchar(max)');
+  expect(byName.get('nv'), 'IsMax keeps (max) on nvarchar').toBe('nvarchar(max)');
+  expect(byName.get('vb'), 'IsMax keeps (max) on varbinary').toBe('varbinary(max)');
+  expect(byName.get('n50'), 'a declared length is untouched').toBe('nvarchar(50)');
+  expect(byName.get('g'), 'a sys-qualified CLR type reads as its bare name').toBe('geography');
+}
+
+
 async function testDacpacExtractionOptions() {
   const buffer = await makeExternalRefDacpac();
 
@@ -641,6 +678,7 @@ async function testComputedColumnTypeBorrowing() {
   it('bridges phase-one and phase-two extraction', testPhase1Phase2Bridge);
   it('retains the cross-schema catalog under filtering', testCrossSchemaCatalogUnderFilter);
   it('honors DACPAC extraction options', testDacpacExtractionOptions);
+  it('decodes entity-encoded names and keeps (max) and CLR type names', testNamesAndTypesRoundTrip);
 
   it('extracts from a byte view at a nonzero offset', async () => {
     const file = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));

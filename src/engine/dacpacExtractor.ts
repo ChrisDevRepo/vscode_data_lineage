@@ -321,6 +321,11 @@ async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string
 /**
  * Parses the raw XML string into a structured object using `fast-xml-parser`.
  *
+ * @remarks
+ * Entity processing stays off so a hostile DOCTYPE cannot expand entities. The five predefined entities
+ * and character references in `Name` attributes are decoded afterwards by {@link decodeXmlText}, so an
+ * object or column named `a&b` is read as `a&b`; `Value` attributes and text are decoded where they are read.
+ *
  * @param xml - The XML string to parse.
  * @returns An object containing the elements array and the DSP name.
  */
@@ -332,6 +337,7 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string }
     parseTagValue: true,
     trimValues: true,
     processEntities: false,
+    attributeValueProcessor: (attrName, value) => (attrName === 'Name' ? decodeXmlText(value) : value),
     cdataPropName: CDATA_PROP,
   });
 
@@ -567,14 +573,15 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
             for (const tsEntry of asArray(colRel.Entry)) {
               for (const tsEl of asArray(tsEntry.Element)) {
                 const tsProps = asArray(tsEl.Property);
-                length = tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
+                const isMax = tsProps.find(p => p['@_Name'] === 'IsMax')?.['@_Value'] === 'True';
+                length = isMax ? '-1' : tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
                 precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
                 scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
                 for (const typeRel of asArray(tsEl.Relationship)) {
                   if (typeRel['@_Name'] !== 'Type') continue;
                   for (const typeEntry of asArray(typeRel.Entry)) {
                     for (const ref of asArray(typeEntry.References)) {
-                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']) : '?';
+                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']).replace(/^sys\./i, '') : '?';
                     }
                   }
                 }

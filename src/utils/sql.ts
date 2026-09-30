@@ -44,6 +44,16 @@ export function stripBrackets(name: string): string {
 }
 
 /**
+ * Bracket-quotes one identifier part for T-SQL, doubling every `]` so the name round-trips through
+ * {@link stripBrackets}. The inverse of the unescaping done there.
+ *
+ * Example: `a]b` becomes `[a]]b]`.
+ */
+export function quoteIdentifier(name: string): string {
+  return `[${name.replace(/\]/g, ']]')}]`;
+}
+
+/**
  * Canonical comparison form for a SQL **column** name: strip delimiters (reusing {@link stripBrackets})
  * then case-fold, so a model-emitted `[ListPrice]` / `ListPrice` matches a DDL `ListPrice`. The single
  * normalizer for column-name equality across the column-trace path.

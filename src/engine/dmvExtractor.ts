@@ -26,7 +26,7 @@ import {
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue, IServerInfo } from '../types/mssql';
-import { schemaKey } from '../utils/sql';
+import { quoteIdentifier, schemaKey } from '../utils/sql';
 
 /**
  * Aggregates raw query results from various system catalog views.
@@ -338,7 +338,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     const objType = DMV_TYPE_MAP[typeCode];
     if (!objType) continue;
 
-    const fullName = `[${schemaName}].[${objectName}]`;
+    const fullName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(objectName)}`;
     const id = normalizeName(fullName);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -385,11 +385,11 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
     if (!depSchema) continue;
 
     const targetName = depDatabase
-      ? `[${depDatabase}].[${depSchema}].[${depName}]`
-      : `[${depSchema}].[${depName}]`;
+      ? `${quoteIdentifier(depDatabase)}.${quoteIdentifier(depSchema)}.${quoteIdentifier(depName)}`
+      : `${quoteIdentifier(depSchema)}.${quoteIdentifier(depName)}`;
 
     deps.push({
-      sourceName: `[${refSchema}].[${refName}]`,
+      sourceName: `${quoteIdentifier(refSchema)}.${quoteIdentifier(refName)}`,
       targetName,
     });
   }
@@ -412,7 +412,7 @@ function extractAllObjects(result: SimpleExecuteResult): ExtractedObject[] {
     const objType = DMV_TYPE_MAP[typeCode];
     if (!objType) continue;
 
-    const fullName = `[${schemaName}].[${objectName}]`;
+    const fullName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(objectName)}`;
     const id = normalizeName(fullName);
     if (seen.has(id)) continue;
     seen.add(id);
