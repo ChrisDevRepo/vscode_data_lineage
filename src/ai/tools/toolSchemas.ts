@@ -878,8 +878,7 @@ function capturedSectionSchemaForClassification(
     if (freshSubmission) {
       return z.strictObject({ business: plainBody, technical: plainBody }).meta({ required: [...CLASSIFICATION_KEPT_ANGLES.both] });
     }
-    const heldBody = plainBody.describe('Send only an angle you change; an angle left out keeps its held body.');
-    return z.strictObject({ business: heldBody, technical: heldBody });
+    return z.strictObject({ business: plainBody, technical: plainBody });
   }
   const [onlyAngle] = kept;
   const offAngle = onlyAngle === 'business' ? 'technical' : 'business';

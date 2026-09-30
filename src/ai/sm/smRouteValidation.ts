@@ -56,7 +56,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_queued:
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_noop_out_of_scope:
-    'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors; ask a question about it instead, recorded as a deferred follow-up.',
+    'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors.',
   prune_origin_forbidden:
     'Remove it from prune_neighbors.',
   prune_carries_tracked_column: 'Remove it from prune_neighbors.',
@@ -72,7 +72,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
  * authored survives the correction instead of being re-authored from scratch.
  */
 export const HELD_CORRECTION_ORDER =
-  `Your analysis is held: ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
+  `Your analysis is held: ${keyedResendRule('sections', 'angle')} Omit summary to keep the held summary.`;
 
 /**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the

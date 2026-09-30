@@ -282,10 +282,9 @@ function heldSubmissionRule(held: HeldSubmissionParts): string {
     ...(held.summary ? ['summary'] : []),
     ...held.fields,
   ].join(', ');
-  const keepValues = [...(held.sections.length > 0 ? ['sections: {}'] : []), ...(held.summary ? ['summary: ""'] : [])];
+  const omittable = [...(held.summary ? ['summary'] : []), ...held.fields];
   return `Held: ${labels}. Resend the full call: always focus_node_id, verdict and every other required field; the failed field(s) corrected`
-    + (keepValues.length > 0 ? `; ${keepValues.join(' and ')} keep the held ${keepValues.length > 1 ? 'values' : 'value'}` : '')
-    + (held.fields.length > 0 ? `; omit ${held.fields.join(', ')} to keep ${held.fields.length > 1 ? 'them' : 'it'}` : '')
+    + (omittable.length > 0 ? `; omit ${omittable.join(', ')} to keep the held ${omittable.length > 1 ? 'values' : 'value'}` : '')
     + '.'
     + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '');
 }
