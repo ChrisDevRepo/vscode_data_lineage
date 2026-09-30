@@ -474,25 +474,28 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
  * General field-repair hint chain, shared by every Zod-validation reject regardless of `code`.
  *
  * @remarks
- * An unrecognized key first (removal is unambiguous), then a field absent outright (addition), a
- * present value of the wrong JSON type, and an array outside its size bound.
- * Both sub-hints are schema-derived, so any caller composing its own reject envelope gets the same
- * repair intelligence {@link rejectionFromZodError} already gives. A hint states the fault and the
- * field repair only; the resend rule is appended once by the caller.
+ * Every applicable link, in this order: a refinement's own hint, an unrecognized key (removal is
+ * unambiguous), a field absent outright (addition), a present value of the wrong JSON type, and an
+ * array outside its size bound. The links are schema-derived, so any caller composing its own reject
+ * envelope gets the same repair intelligence {@link rejectionFromZodError} already gives. A hint
+ * states the fault and the field repair only; the resend rule is appended once, last, by the caller.
  *
  * @param error - The Zod validation failure.
  * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
  * see {@link missingFieldRepairHint}.
  * @param schema - The schema the payload failed; lets a hint name what the schema accepts (an element's
  * keys, `null` for a nullable field). Absent, every link keeps its schema-free wording.
- * @returns The first applicable repair hint, or `undefined` when no chain link applies.
+ * @returns The distinct applicable repair hints joined, or `undefined` when no chain link applies.
  */
 export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
-  return issueOwnedRepairHint(error)
-    ?? unrecognizedKeyRepairHint(error, schema)
-    ?? missingFieldRepairHint(error, input, schema)
-    ?? typeMismatchRepairHint(error, input, schema)
-    ?? sizeBoundRepairHint(error);
+  const hints = [
+    issueOwnedRepairHint(error),
+    unrecognizedKeyRepairHint(error, schema),
+    missingFieldRepairHint(error, input, schema),
+    typeMismatchRepairHint(error, input, schema),
+    sizeBoundRepairHint(error),
+  ].filter((hint): hint is string => hint !== undefined);
+  return hints.length > 0 ? [...new Set(hints)].join(' ') : undefined;
 }
 
 /**
