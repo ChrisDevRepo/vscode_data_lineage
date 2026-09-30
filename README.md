@@ -41,7 +41,7 @@ Built-in connections live in the application-scoped setting `dataLineageViz.data
 
 The connection picker the wizard shows lists the same Edit, Update Password and Remove actions below the saved connections. Removing always asks first; saved projects that used the connection stay and ask for a connection on their next open.
 
-Data Lineage only reads. Every statement it sends is a read-only query from [`assets/dmvQueries.yaml`](assets/dmvQueries.yaml) (or your `dataLineageViz.dmvQueriesFile`) or a table-statistics query, and built-in connections declare read-only intent (`ApplicationIntent=ReadOnly`). SQL Server has no read-only connection mode; the guarantee against writes is a login with read permissions only — `db_datareader`, `VIEW DEFINITION` and `VIEW DATABASE STATE`.
+Data Lineage only reads. Every statement it sends is a read-only query from [`assets/dmvQueries.yaml`](assets/dmvQueries.yaml) (or your `dataLineageViz.dmvQueriesFile`) or a table-statistics query, and built-in connections declare read-only intent (`ApplicationIntent=ReadOnly`). SQL Server has no read-only connection mode; the guarantee against writes is a login with read permissions only. Required permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables to profile for table statistics.
 
 Switching the provider keeps saved projects and their schema selection. On its next open a project reconnects through the selected provider: a saved built-in connection with the same server and user is used directly, otherwise the connection picker opens and **Add Connection…** starts from the project's server, user and database. The project then remembers the new connection.
 

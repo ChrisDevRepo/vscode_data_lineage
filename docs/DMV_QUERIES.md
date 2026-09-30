@@ -11,8 +11,8 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 
 ## Prerequisites
 
-- **MSSQL extension** (`ms-mssql.mssql`) installed and a connection profile configured.
-- **`VIEW DEFINITION`** permission on the target database.
+- A connection: the built-in connection, or a profile in the MSSQL extension (`ms-mssql.mssql`) — see `dataLineageViz.database.connectionProvider`.
+- Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables to profile for table statistics. Nothing else is needed.
 - Supported platforms: SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool.
 
 ## What gets executed and when — read the SQL yourself

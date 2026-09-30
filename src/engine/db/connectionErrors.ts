@@ -125,7 +125,7 @@ const bracket = (identifier: string): string => `[${identifier.replace(/\]/g, ']
 
 function grantStatement(user: string | undefined): string {
   const principal = user ? bracket(user) : '[user_or_group]';
-  return `GRANT VIEW DEFINITION TO ${principal};\nGRANT VIEW DATABASE STATE TO ${principal};`;
+  return `GRANT VIEW DEFINITION TO ${principal};`;
 }
 
 function entraScopes(target: ConnectionErrorTarget): string[] {

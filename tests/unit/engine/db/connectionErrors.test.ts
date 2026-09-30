@@ -220,9 +220,9 @@ describe('action handlers', () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it('Copy GRANT Statement copies VIEW DEFINITION and VIEW DATABASE STATE for the login, bracket-quoted', async () => {
+  it('Copy GRANT Statement copies only VIEW DEFINITION for the login, bracket-quoted', async () => {
     await run(driver('x', { number: 229 }), { ...builtIn, user: 'we]ird' }, 'copyGrantStatement');
-    expect(host.writeText).toHaveBeenCalledWith('GRANT VIEW DEFINITION TO [we]]ird];\nGRANT VIEW DATABASE STATE TO [we]]ird];');
+    expect(host.writeText).toHaveBeenCalledWith('GRANT VIEW DEFINITION TO [we]]ird];');
   });
 
   it('Copy GRANT Statement uses a placeholder principal for an Entra connection', async () => {
