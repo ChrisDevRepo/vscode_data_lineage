@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.2] - 2026-09-30
+
+### Security
+- Dependency updates for security advisories: undici 7.30.0, markdown-it 14.3.2, brace-expansion 2.1.7 / 5.0.12, fast-uri 3.1.8.
+
 ## [1.2.1] - 2026-09-30
 
 ### Added
