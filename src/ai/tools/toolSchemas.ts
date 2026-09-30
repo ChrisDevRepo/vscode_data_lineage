@@ -1427,7 +1427,9 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * Builds the strict provider/runtime patch schema for exactly the authorized held-draft fields.
  *
  * @remarks
- * `superRefine`s in one required-shape rule: a patch naming none of the authorized fields (only
+ * A sole authorized field is `required` in the served schema, so a patch without it fails as a
+ * missing property and the provider sees the contract before it drafts. `superRefine`s in one
+ * required-shape rule for several fields: a patch naming none of the authorized fields (only
  * `is_update`, or nothing at all) rejects here, at the same Zod boundary as every other structural
  * violation, with one issue per authorized field so `issuePaths` names the whole authorized set.
  * Without this, an empty patch parsed successfully, merged nothing into the held draft, and
@@ -1453,7 +1455,10 @@ export function presentResultRepairPatchSchemaForFields(
   const staged = preview && keys.includes('sections')
     ? picked.extend({ sections: previewSchemas(previewBlockCount).patchSections })
     : picked;
-  const strict = staged.strict().superRefine((data, ctx) => {
+  const declared = keys.length === 1
+    ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
+    : staged;
+  const strict = declared.strict().superRefine((data, ctx) => {
     if (keys.length === 0) return;
     const touchesAuthorizedField = keys.some(
       key => (data as Record<string, unknown>)[key] !== undefined,
