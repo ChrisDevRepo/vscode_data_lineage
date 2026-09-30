@@ -455,14 +455,14 @@ type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 const KEPT_VERDICT_ONLY = 'Only with analyze or passthrough: ';
 
 /** Requirement prefix for `summary` and `sections`, which a kept verdict must carry. */
-const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough';
+const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough; omit with end_branch. ';
 
 /**
  * Single source for the `prune_neighbors` field describe text, shared by the strict per-mode
  * schemas and the permissive registered union so the two cannot drift.
  */
 export const PRUNE_NEIGHBORS_DESCRIPTION =
-  KEPT_VERDICT_ONLY + 'removes a neighbor you have not visited, and whatever only it leads to, based on this node\'s SQL alone; '
+  KEPT_VERDICT_ONLY + 'removes a neighbor that is neither visited nor queued, and whatever only it leads to, based on this node\'s SQL alone; '
   + 'use it for writes this node makes that nothing reads.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
@@ -476,7 +476,7 @@ const PruneNeighborSchema = z.object({
  * the permissive registered union.
  */
 const QUESTIONS_DESCRIPTION =
-  'Optional: a specific check for one neighbor (a rule, filter or calculation to establish there). '
+  KEPT_VERDICT_ONLY + 'a specific check for one neighbor (a rule, filter or calculation to establish there). '
   + 'Every open neighbor you do not prune is visited next. '
   + 'A question on a neighbor you prune is not checked in this run; it is offered to the user as a follow-up.';
 
@@ -497,7 +497,7 @@ const END_BRANCH_ROW_DECISION_CONDITION =
 
 /** Single source for the `reason` describe text of an `end_branch` submit, in BB and CT. */
 const END_BRANCH_REASON_DESCRIPTION =
-  'Required with end_branch; empty string with a kept verdict. Why '
+  'Required with end_branch; omit with a kept verdict. Why '
   + END_BRANCH_ROW_DECISION_CONDITION;
 
 /**
@@ -611,11 +611,11 @@ const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries;
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
 /** Single source for the `sections` describe text, shared by the per-mode schemas and the registered union. */
-const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + ', {} with end_branch. Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
+const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + 'Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
 
 /** Single source for the `summary` describe text, shared by the per-mode schemas and the registered union. */
 const SUMMARY_DESCRIPTION =
-  KEPT_VERDICT_REQUIRED + ', empty string with end_branch. One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
+  KEPT_VERDICT_REQUIRED + 'One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
 
 /**
  * Shared `submit_findings` fields across BB and CT modes, one flat object.
@@ -749,7 +749,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     ctx.addIssue({
       code: 'custom',
       path: ['sections'],
-      message: `required with verdict ${value.verdict}; empty only with end_branch.`,
+      message: `required with verdict ${value.verdict}.`,
       params: { hint: 'Send sections: the section body keyed by angle.' },
     });
   }
@@ -763,7 +763,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     ctx.addIssue({
       code: 'custom',
       path: ['summary'],
-      message: `required with verdict ${value.verdict}; empty only with end_branch.`,
+      message: `required with verdict ${value.verdict}.`,
       params: { hint: 'Send summary: one sentence on what this node does to the data and hands on.' },
     });
   }
@@ -965,8 +965,8 @@ export function submitFindingsSchemaForMode(
   if (classification) {
     const kept = CLASSIFICATION_KEPT_ANGLES[classification];
     const sectionsDescribe = kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
-      ? KEPT_VERDICT_REQUIRED + (freshSubmission ? ', omitted with end_branch' : ', {} with end_branch') + '. Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
-      : `${KEPT_VERDICT_REQUIRED}, {} with end_branch. Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`;
+      ? KEPT_VERDICT_REQUIRED + 'Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
+      : `${KEPT_VERDICT_REQUIRED}Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`;
     const narrowedSections = capturedSectionSchemaForClassification(classification, freshSubmission)
       .optional()
       .describe(sectionsDescribe);
