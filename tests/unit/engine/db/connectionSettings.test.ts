@@ -190,6 +190,44 @@ describe('connection commands', () => {
     expect(id).toBe(valid.id);
   });
 
+  it('addDatabaseConnection keeps hand-edited entries it cannot read, unchanged', async () => {
+    const handEdited = { id: 'typo-id', name: 'Typo', server: 'db2', authenticationType: 'sqllogin', user: 'u' };
+    host.stored = [valid, handEdited];
+    const { context } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await host.handlers.get('dataLineageViz.addDatabaseConnection')!({ connection: { ...valid, id: 'new-id', name: 'New' } });
+
+    const saved = host.updates[0].value as Array<Record<string, unknown>>;
+    expect(saved).toEqual([valid, handEdited, expect.objectContaining({ id: 'new-id' })]);
+  });
+
+  it('removeDatabaseConnection keeps hand-edited entries it cannot read, unchanged', async () => {
+    const handEdited = { id: 'typo-id', name: 'Typo', server: 'db2', port: 0, authenticationType: 'sqlLogin' };
+    host.stored = [valid, handEdited];
+    host.showWarningMessage.mockResolvedValueOnce('Remove');
+    const { context } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(valid.id);
+
+    expect(host.updates[0].value).toEqual([handEdited]);
+  });
+
+  it('addDatabaseConnection rejects an oversized field or password and writes nothing', async () => {
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+    const huge = 'x'.repeat(1024 * 1024);
+    const add = host.handlers.get('dataLineageViz.addDatabaseConnection')!;
+
+    for (const field of ['id', 'name', 'server', 'user', 'database', 'tenantId']) {
+      await expect(add({ connection: { ...valid, [field]: huge } })).rejects.toThrow(/connection/i);
+    }
+    await expect(add({ connection: valid, password: huge })).rejects.toThrow(/connection/i);
+    expect(host.updates).toHaveLength(0);
+    expect(secrets.store).not.toHaveBeenCalled();
+  });
+
   it('removeDatabaseConnection deletes the entry and its secret', async () => {
     host.stored = [valid, { ...valid, id: 'keep-me', name: 'Keep' }];
     host.showWarningMessage.mockResolvedValueOnce('Remove');

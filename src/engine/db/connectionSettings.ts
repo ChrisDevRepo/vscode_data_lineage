@@ -26,6 +26,20 @@ export function passwordSecretKey(id: string): string {
 
 const MAX_TCP_PORT = 65535;
 
+/** SQL Server `sysname` length: bounds names, logins and database names. */
+const MAX_SYSNAME_LENGTH = 128;
+/** SQL Server maximum password length. */
+export const MAX_PASSWORD_LENGTH = 128;
+/** Input-box validation message for a password SQL Server cannot accept, or `undefined`. */
+export function passwordTooLong(value: string): string | undefined {
+  return value.length > MAX_PASSWORD_LENGTH ? `A password has at most ${MAX_PASSWORD_LENGTH} characters.` : undefined;
+}
+
+/** A DNS name (253) plus a `tcp:` prefix, a `\\instance` name and a `,port` suffix. */
+const MAX_SERVER_LENGTH = 512;
+/** A tenant is a GUID or a verified domain name. */
+const MAX_TENANT_LENGTH = 253;
+
 const TCP_PREFIX = /^tcp:/i;
 const INSTANCE_SEPARATOR = '\\';
 
@@ -52,13 +66,13 @@ export function resolveServerAddress(server: string): { host: string; instanceNa
 }
 
 const connectionFields = {
-  name: z.string().min(1),
-  server: z.string().min(1),
+  name: z.string().min(1).max(MAX_SYSNAME_LENGTH),
+  server: z.string().min(1).max(MAX_SERVER_LENGTH),
   port: z.number().int().min(1).max(MAX_TCP_PORT).optional(),
-  database: z.string().min(1).optional(),
+  database: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
   authenticationType: z.enum(['sqlLogin', 'entraId']),
-  user: z.string().min(1).optional(),
-  tenantId: z.string().min(1).optional(),
+  user: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
+  tenantId: z.string().min(1).max(MAX_TENANT_LENGTH).optional(),
   encrypt: z.boolean().optional(),
   trustServerCertificate: z.boolean().optional(),
 };
@@ -70,10 +84,10 @@ const connectionFields = {
  * Not `.strict()`: an unrecognized property, `password` above all, is dropped on parse rather than
  * kept, so a hand-edited entry can never route a credential from settings into a connection.
  */
-export const BuiltInConnectionSchema = z.object({ id: z.string().min(1), ...connectionFields });
+export const BuiltInConnectionSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH), ...connectionFields });
 
 /** {@link BuiltInConnectionSchema} with the id optional, for callers that let the extension assign one. */
-export const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).optional(), ...connectionFields });
+export const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
 
 /** A validated built-in connection. */
 export type BuiltInConnection = z.infer<typeof BuiltInConnectionSchema>;
@@ -81,7 +95,7 @@ export type BuiltInConnection = z.infer<typeof BuiltInConnectionSchema>;
 /** Argument of `dataLineageViz.addDatabaseConnection` that skips every prompt. */
 export const AddConnectionArgsSchema = z.object({
   connection: BuiltInConnectionInputSchema,
-  password: z.string().optional(),
+  password: z.string().max(MAX_PASSWORD_LENGTH).optional(),
 });
 
 /** Validated argument of `dataLineageViz.addDatabaseConnection`. */
@@ -116,29 +130,44 @@ export function readBuiltInConnections(logger?: Pick<Logger, 'debug'>): BuiltInC
   return connections;
 }
 
+/** The raw setting value, as the user's settings.json holds it. */
+function readRawConnections(): unknown[] {
+  const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
+  return Array.isArray(raw) ? raw : [];
+}
+
+function rawId(entry: unknown): unknown {
+  return entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
+}
+
 /**
  * Writes the connection list to the user (global) settings.
  *
  * @remarks
  * The setting is application-scoped, so a workspace can neither hold nor override it.
  */
-async function writeBuiltInConnections(connections: BuiltInConnection[]): Promise<void> {
+async function writeRawConnections(entries: unknown[]): Promise<void> {
   await vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION)
-    .update(CONNECTIONS_SETTING, connections, vscode.ConfigurationTarget.Global);
+    .update(CONNECTIONS_SETTING, entries, vscode.ConfigurationTarget.Global);
 }
 
-/** Adds a connection, or replaces the saved one with the same id. */
-export async function upsertBuiltInConnection(connection: BuiltInConnection, logger?: Pick<Logger, 'debug'>): Promise<void> {
-  const saved = readBuiltInConnections(logger);
-  const at = saved.findIndex((c) => c.id === connection.id);
-  if (at >= 0) saved[at] = connection;
-  else saved.push(connection);
-  await writeBuiltInConnections(saved);
+/**
+ * Adds a connection, or replaces the saved one with the same id.
+ *
+ * @remarks
+ * Every other entry is written back as stored, including a hand-edited one that fails validation.
+ */
+export async function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
+  const entries = readRawConnections();
+  const at = entries.findIndex((entry) => rawId(entry) === connection.id);
+  if (at >= 0) entries[at] = connection;
+  else entries.push(connection);
+  await writeRawConnections(entries);
 }
 
-/** Removes the saved connection with the given id. */
-export async function deleteBuiltInConnection(id: string, logger?: Pick<Logger, 'debug'>): Promise<void> {
-  await writeBuiltInConnections(readBuiltInConnections(logger).filter((c) => c.id !== id));
+/** Removes the saved connection with the given id; every other entry is written back as stored. */
+export async function deleteBuiltInConnection(id: string): Promise<void> {
+  await writeRawConnections(readRawConnections().filter((entry) => rawId(entry) !== id));
 }
 
 /** Human-readable `server / database` label. */

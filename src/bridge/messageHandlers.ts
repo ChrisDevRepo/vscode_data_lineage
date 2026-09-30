@@ -582,7 +582,7 @@ export function createMessageHandlers(
         }
       } else if (project.connection.type === 'database') {
         const dbConn = project.connection;
-        await withDbProgressHost(host, dbEnv, 'Loading project', (patch) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }), async (session) => {
+        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, token) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, token), async (session) => {
           lastConnectionInfo = session.connectionInfo;
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
@@ -661,13 +661,13 @@ export function createMessageHandlers(
     },
     'db-visualize': async (msg) => {
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch) => {
+      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, token) => {
         if (!lastConnectionInfo) {
           host.log('error', 'Bridge', 'Database visualize', new Error('No stored connection info'));
           host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
           return undefined;
         }
-        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch });
+        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, token);
       }, async (conn, _progress, token) => {
         const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
         let pendingProject: ReturnType<typeof createProject> | null = null;
@@ -731,7 +731,7 @@ export function createMessageHandlers(
     },
     'db-connect': () => {
       host.log('debug', 'Bridge', 'Database connect requested');
-      return withDbProgressHost(host, dbEnv, 'Connecting', () => connectDatabase(dbEnv), (conn) => {
+      return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn) => {
         lastConnectionInfo = conn.connectionInfo;
         return runDbPhase1Host(host, conn, outputChannel);
       });
@@ -1158,13 +1158,13 @@ async function withDbProgressHost(
   host: BridgeHost,
   env: DbConnectEnv,
   title: string,
-  connectFn: (patch?: Partial<StoredConnectionInfo>) => Promise<DbSession | undefined>,
+  connectFn: (patch: Partial<StoredConnectionInfo> | undefined, token: vscode.CancellationToken) => Promise<DbSession | undefined>,
   phaseFn: (session: DbSession, progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Promise<void>,
 ) {
   await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
     let session: DbSession | undefined;
     try {
-      session = await connectFn();
+      session = await connectFn(undefined, token);
       if (session && !token.isCancellationRequested) {
         await phaseFn(session, progress, token);
       } else {
@@ -1174,7 +1174,7 @@ async function withDbProgressHost(
     } catch (err) {
       const target = isDbConnectionError(err) ? err.target : session && isDriverError(err) ? targetFromSession(session) : undefined;
       if (target) {
-        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, () => connectFn(patch), phaseFn);
+        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn(patch, token), phaseFn);
         const reported = reportConnectionError(
           isDbConnectionError(err) ? err.original : err,
           target,

@@ -12,7 +12,7 @@ import { openBuiltInSession, listAccessibleDatabases, type BuiltInEnv } from './
 import { describeConnectionError } from './connectionErrors';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
-  passwordSecretKey, readBuiltInConnections, upsertBuiltInConnection, type BuiltInConnection,
+  passwordSecretKey, passwordTooLong, readBuiltInConnections, upsertBuiltInConnection, type BuiltInConnection,
 } from './connectionSettings';
 
 const WIZARD_TITLE = 'Add Database Connection';
@@ -265,7 +265,7 @@ export async function runAddConnectionFlow(
         const answer = await askInput({
           step: n, canGoBack: true, password: true,
           prompt: keepSaved ? 'Password — leave empty to keep the saved password' : 'Password — stored in the VS Code secret store',
-          validate: (v) => (v || keepSaved ? undefined : 'A password is required.'),
+          validate: (v) => passwordTooLong(v) ?? (v || keepSaved ? undefined : 'A password is required.'),
         });
         if (typeof answer === 'string') state.password = answer === '' ? undefined : answer;
         return outcome(answer);
@@ -346,7 +346,7 @@ export async function runAddConnectionFlow(
         direction = 1;
         continue;
       }
-      await upsertBuiltInConnection(connection, logger);
+      await upsertBuiltInConnection(connection);
       await reconcilePassword(env.secrets, existing, connection, state.password);
       notifyInfo(logger, 'Save database connection', `Saved connection "${connection.name}".`, { connectionId: id });
       return connection;
@@ -414,7 +414,7 @@ export function registerConnectionCommands(
       }
       const connection = BuiltInConnectionSchema.parse({ ...parsed.data.connection, id: parsed.data.connection.id ?? randomUUID() });
       const previous = readBuiltInConnections(logger).find((c) => c.id === connection.id);
-      await upsertBuiltInConnection(connection, logger);
+      await upsertBuiltInConnection(connection);
       await reconcilePassword(context.secrets, previous, connection, parsed.data.password);
       logger.info(`Saved database connection ${connection.id} (${describeConnection(connection)})`);
       return connection.id;
@@ -433,7 +433,7 @@ export function registerConnectionCommands(
         `Remove "${target.name}"? Its saved password is deleted too.`, { modal: true }, 'Remove',
       );
       if (choice !== 'Remove') return;
-      await deleteBuiltInConnection(target.id, logger);
+      await deleteBuiltInConnection(target.id);
       await context.secrets.delete(passwordSecretKey(target.id));
       logger.info(`Removed database connection ${target.id}`);
     }),
@@ -446,6 +446,7 @@ export function registerConnectionCommands(
         prompt: 'Stored in the VS Code secret store, never in settings.',
         password: true,
         ignoreFocusOut: true,
+        validateInput: passwordTooLong,
       });
       if (password === undefined) return false;
       await context.secrets.store(passwordSecretKey(target.id), password);

@@ -10,7 +10,7 @@ import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '.
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
-import { passwordSecretKey, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
+import { passwordSecretKey, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
 import { MicrosoftSignInError, type DbQueryOptions, type DbSession } from './dbSession';
 import type { DmvQuery } from '../connectionManager';
 
@@ -30,6 +30,8 @@ export interface BuiltInOpenOptions {
   password?: string;
   /** Database to open instead of the saved one. */
   database?: string;
+  /** Cancels a connect in progress; the socket is closed and the open resolves `undefined`. */
+  token?: vscode.CancellationToken;
 }
 
 /** Scope that yields an access token for Azure SQL, Fabric and Synapse. */
@@ -269,6 +271,7 @@ async function promptForPassword(connection: BuiltInConnection): Promise<{ passw
     prompt: `No saved password for "${connection.name}".`,
     password: true,
     ignoreFocusOut: true,
+    validateInput: passwordTooLong,
   });
   if (password === undefined) return undefined;
   const choice = await vscode.window.showQuickPick(
@@ -326,7 +329,7 @@ async function resolveAuthentication(
  * @param connection - The saved connection.
  * @param env - Host services.
  * @param options - Per-open overrides.
- * @returns The open session, or `undefined` when the user cancelled a prompt.
+ * @returns The open session, or `undefined` when the user cancelled a prompt or the connect.
  * @throws The driver's own error, unchanged, when login or the network fails; a
  *   `MicrosoftSignInError` when Entra sign-in does not complete.
  */
@@ -344,6 +347,7 @@ export async function openBuiltInSession(
     logger.info(`Password prompt cancelled for ${label}`);
     return undefined;
   }
+  if (options.token?.isCancellationRequested) return undefined;
 
   const lib = await import('tedious');
   const encrypt = connection.encrypt ?? true;
@@ -383,13 +387,24 @@ export async function openBuiltInSession(
 
   logger.info(`Connecting to ${label}${database ? ` / ${database}` : ''} (${connection.authenticationType})`);
   const started = Date.now();
+  let cancelled: boolean;
   try {
-    await new Promise<void>((resolve, reject) => {
-      raw.connect((err?: Error) => (err ? reject(err) : resolve()));
+    cancelled = await new Promise<boolean>((resolve, reject) => {
+      const subscription = options.token?.onCancellationRequested(() => resolve(true));
+      raw.connect((err?: Error) => {
+        subscription?.dispose();
+        if (err) reject(err);
+        else resolve(false);
+      });
     });
   } catch (err) {
     await session.dispose();
     throw err;
+  }
+  if (cancelled) {
+    await session.dispose();
+    logger.info(`Connect to ${label} cancelled`);
+    return undefined;
   }
   logger.info(`Connected (${Date.now() - started}ms)`);
   return session;

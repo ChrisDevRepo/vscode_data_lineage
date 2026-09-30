@@ -390,7 +390,7 @@ async function pickDatabase(env: DbConnectEnv, connection: BuiltInConnection): P
   return vscode.window.showInputBox({ prompt: `Database on ${connection.server}`, placeHolder: 'Database name', ignoreFocusOut: true });
 }
 
-async function connectBuiltIn(env: DbConnectEnv, stored: StoredConnectionInfo | undefined): Promise<DbSession | undefined> {
+async function connectBuiltIn(env: DbConnectEnv, stored: StoredConnectionInfo | undefined, token: vscode.CancellationToken | undefined): Promise<DbSession | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
   const connections = readBuiltInConnections(logger);
   let connection: BuiltInConnection | undefined;
@@ -409,7 +409,7 @@ async function connectBuiltIn(env: DbConnectEnv, stored: StoredConnectionInfo | 
     return undefined;
   }
   try {
-    return await openBuiltInSession(connection, env, { database });
+    return await openBuiltInSession(connection, env, { database, token });
   } catch (err) {
     throw new DbConnectionError(builtInTarget(connection, database), err);
   }
@@ -482,10 +482,11 @@ export function connectionErrorHooks(
  *
  * @param env - Host services.
  * @param stored - Connection saved with a project, when reconnecting.
+ * @param token - Cancels a built-in connect in progress; the mssql extension's connect cannot be cancelled.
  * @returns The open session, or `undefined` when the user cancelled.
  * @throws When the provider cannot connect, with a message that names the server or the missing extension.
  */
-export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo): Promise<DbSession | undefined> {
+export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
   const provider = getConnectionProvider();
   const storedProvider: ConnectionProviderId = stored?.provider ?? 'mssqlExtension';
   if (stored && storedProvider !== provider) {
@@ -494,7 +495,7 @@ export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnecti
       : `This project was saved with a built-in connection. ${SETTING_NAME} selects the SQL Server (mssql) extension, so it connects through that extension.`;
     notifyInfo(Logger.create(env.outputChannel, 'DB'), 'Select connection provider', message, { stored: storedProvider, setting: provider });
   }
-  return provider === 'builtIn' ? connectBuiltIn(env, stored) : connectMssqlExtension(env, stored);
+  return provider === 'builtIn' ? connectBuiltIn(env, stored, token) : connectMssqlExtension(env, stored);
 }
 
 /**

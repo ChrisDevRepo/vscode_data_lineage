@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const fake = vi.hoisted(() => ({
   connections: [] as Array<Record<string, any>>,
   connectError: undefined as Error | undefined,
+  connectHangs: false,
   executed: [] as string[],
   active: 0,
   maxActive: 0,
@@ -29,7 +30,7 @@ vi.mock('tedious', async () => {
     closed = false;
     pending: Request | undefined;
     constructor(public config: Record<string, any>) { super(); fake.connections.push(this); }
-    connect(cb: (err?: Error) => void) { queueMicrotask(() => cb(fake.connectError)); }
+    connect(cb: (err?: Error) => void) { if (!fake.connectHangs) queueMicrotask(() => cb(fake.connectError)); }
     execSql(request: Request) {
       fake.executed.push(request.sql);
       fake.active++;
@@ -77,6 +78,7 @@ const { openBuiltInSession, mapCell, listAccessibleDatabases } = await import('.
 const yamlQueries = (yaml.load(readFileSync(rootPath('assets', 'dmvQueries.yaml'), 'utf8')) as { queries: DmvQuery[] }).queries;
 const yamlSql = (name: string): string => yamlQueries.find((q) => q.name === name)!.sql;
 const { MicrosoftSignInError } = await import('../../../../src/engine/db/dbSession');
+const { CancellationTokenSource } = await import('vscode');
 
 const outputChannel = { debug() {}, info() {}, warn() {}, error() {}, trace() {} } as never;
 
@@ -113,6 +115,7 @@ function script(columns: ReturnType<typeof col>[], rows: unknown[][]) {
 beforeEach(() => {
   fake.connections.length = 0;
   fake.connectError = undefined;
+  fake.connectHangs = false;
   fake.executed.length = 0;
   fake.active = 0; fake.maxActive = 0; fake.cancelled = 0;
   fake.respond = undefined;
@@ -357,6 +360,27 @@ describe('openBuiltInSession — failures', () => {
 
     await expect(openBuiltInSession(sqlLogin, env)).rejects.toBe(fake.connectError);
     expect(fake.connections[0].closed).toBe(true);
+  });
+
+  it('cancelling a connect in progress closes the socket and resolves undefined without waiting for connectTimeout', async () => {
+    fake.connectHangs = true;
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    const source = new CancellationTokenSource();
+    const opening = openBuiltInSession(sqlLogin, env, { token: source.token });
+    await vi.waitFor(() => expect(fake.connections).toHaveLength(1));
+    source.cancel();
+
+    await expect(opening).resolves.toBeUndefined();
+    expect(fake.connections[0].closed).toBe(true);
+  });
+
+  it('a token cancelled before the connect opens no socket', async () => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    const source = new CancellationTokenSource();
+    source.cancel();
+
+    await expect(openBuiltInSession(sqlLogin, env, { token: source.token })).resolves.toBeUndefined();
+    expect(fake.connections).toHaveLength(0);
   });
 
   it('a Microsoft sign-in that does not complete raises a MicrosoftSignInError carrying the reason', async () => {
