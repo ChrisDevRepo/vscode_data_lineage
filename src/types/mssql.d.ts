@@ -5,8 +5,9 @@
  * Only the subset used by Data Lineage Viz is declared here.
  *
  * Two API surfaces:
- *  - IExtension (main export): promptForConnection(), connect()
- *  - IConnectionSharingService (v1.34+): executeSimpleQuery()
+ *  - IExtension (main export): promptForConnection(), connect() — exported up to v1.45.1 only;
+ *    v1.46+ connects through IConnectionSharingService.connect() with a saved profile id
+ *  - IConnectionSharingService (v1.34+): connect(), executeSimpleQuery()
  */
 
 export interface DbCellValue {

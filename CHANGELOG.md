@@ -4,7 +4,6 @@
 
 ### Added
 - **Trace navigator** in the trace view: browse a trace by level, highlight routes and find objects.
-- **Remove from trace** in the node context menu; the render-limit notice on a trace offers **Reduce depth to ↑n ↓n**.
 - Setting `dataLineageViz.ai.maxTraceColumns` caps the starting columns of one column trace.
 
 ### Changed
@@ -19,9 +18,11 @@
 - AI approval card and notices stay visible in current VS Code releases.
 - Settings, search, reload and error-reporting fixes.
 - Graph and assistant views stay in sync with the active filters and AI setting.
+- Database projects connect again with SQL Server (mssql) extension v1.46, which removed the connection API Data Lineage used. Connections now come from the connections saved in the SQL Server extension.
+- Open Wizard asks to close the open view instead of doing nothing.
 
-### Removed
-- Settings `dataLineageViz.ai.explorationNodeCap` and `dataLineageViz.ai.explorationTokenBudget`; a deep analysis is admitted against `dataLineageViz.ai.maxRounds` before the approval card.
+### Known issues
+- Microsoft is retiring the mssql connection-sharing API, so the SQL Server extension shows a retirement notice when Data Lineage connects. A built-in SQL driver will replace it in a coming release.
 
 ## [1.2.0] - 2026-09-21
 
