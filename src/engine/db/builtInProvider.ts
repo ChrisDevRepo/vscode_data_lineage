@@ -311,7 +311,8 @@ async function resolveAuthentication(
  * @remarks
  * SQL login reads the password from the secret store and prompts once when none is saved; Entra ID
  * requests a Microsoft account token from VS Code. Neither credential is logged or persisted in a
- * settings file.
+ * settings file. The connection declares read-only application intent (`ApplicationIntent=ReadOnly`),
+ * so availability-group and read scale-out routing may serve it from a readable secondary.
  *
  * @param connection - The saved connection.
  * @param env - Host services.
@@ -348,6 +349,7 @@ export async function openBuiltInSession(
       trustServerCertificate,
       useColumnNames: false,
       requestTimeout: 0,
+      readOnlyIntent: true,
       appName: APP_NAME,
     },
   });

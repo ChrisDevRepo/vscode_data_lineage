@@ -250,7 +250,7 @@ describe('openBuiltInSession — credentials', () => {
     expect(config.server).toBe('sql.example.com');
     expect(config.authentication).toEqual({ type: 'default', options: { userName: 'sa', password: 'from-secret' } });
     expect(config.options).toMatchObject({
-      port: 1444, database: 'AdventureWorks', encrypt: true, trustServerCertificate: false, useColumnNames: false, requestTimeout: 0,
+      port: 1444, database: 'AdventureWorks', encrypt: true, trustServerCertificate: false, useColumnNames: false, requestTimeout: 0, readOnlyIntent: true,
     });
     expect(ui.showInputBox).not.toHaveBeenCalled();
   });
