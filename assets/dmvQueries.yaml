@@ -276,3 +276,15 @@ queries:
         CAST(SERVERPROPERTY('EngineEdition')      AS INT)           AS engine_edition,
         CAST(SERVERPROPERTY('ProductMajorVersion') AS INT)          AS major_version,
         CAST(SERVERPROPERTY('Edition')             AS NVARCHAR(50)) AS edition
+
+  # ── Database list (optional, built-in connection only) ──────────────────────
+  - name: database-list
+    phase: 1
+    description: >
+      Databases the login can open, offered as a pick list when a built-in connection
+      has no database. Without this query the user types the database name.
+    sql: |
+      SELECT name AS database_name
+      FROM sys.databases
+      WHERE HAS_DBACCESS(name) = 1
+      ORDER BY name

@@ -4,8 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
 
-const connectDirect = vi.fn();
-const promptForConnection = vi.fn();
+const connectDatabase = vi.fn();
 let detailPanelListener: ((message: unknown) => Promise<void>) | undefined;
 const detailPanelPosts: unknown[] = [];
 
@@ -37,8 +36,7 @@ vi.mock('vscode', async (importOriginal) => {
 
 vi.mock('../../../src/engine/connectionManager', async (importOriginal) => ({
   ...await importOriginal<Record<string, unknown>>(),
-  connectDirect: (...args: unknown[]) => connectDirect(...args),
-  promptForConnection: (...args: unknown[]) => promptForConnection(...args),
+  connectDatabase: (...args: unknown[]) => connectDatabase(...args),
 }));
 
 const { createMessageHandlers } = await import('../../../src/bridge/messageHandlers');
@@ -47,7 +45,7 @@ const aiRoot = fileURLToPath(new URL('../../../src/ai', import.meta.url));
 
 /** Every database-execution identifier that must never appear in the production AI tree. */
 const DATABASE_EXECUTION_PATTERN =
-  /connectionManager|dmvExtractor|profilingEngine|executeSimpleQuery|executeDmvQueries|promptForConnection|table-stats-request/;
+  /connectionManager|db\/dbSession|builtInProvider|mssqlExtensionProvider|connectDatabase|dmvExtractor|profilingEngine|executeSimpleQuery|executeDmvQueries|promptForConnection|table-stats-request/;
 
 /**
  * A token that provably exists in `src/ai/**`. The negative match below is vacuously true when the
@@ -107,8 +105,7 @@ describe('AI/database capability boundary', () => {
     expect(detailPanelListener).toBeDefined();
     await detailPanelListener!({ type: 'table-stats-request', schema: 'dbo', objectName: 'Orders', mode: 'quick', columns: [] });
 
-    expect(connectDirect).not.toHaveBeenCalled();
-    expect(promptForConnection).not.toHaveBeenCalled();
+    expect(connectDatabase).not.toHaveBeenCalled();
     expect(detailPanelPosts).toContainEqual(expect.objectContaining({ type: 'table-stats-error' }));
   });
 });

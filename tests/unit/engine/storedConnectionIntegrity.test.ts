@@ -3,9 +3,9 @@
  * what may reach the mssql extension, and what may reach the `projects-list` frame.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { connectDirect, stripSensitiveFields } from '../../../src/engine/connectionManager';
+import { connectDatabase, stripSensitiveFields } from '../../../src/engine/connectionManager';
 import { partitionSendableProjects } from '../../../src/bridge/messageHandlers';
 import { migrateProjectStore } from '../../../src/engine/projectStore';
 import { ExtensionToWebviewMsgSchema, type Project } from '../../../src/engine/shared/bridgeContract';
@@ -13,9 +13,15 @@ import type { IConnectionInfo } from '../../../src/types/mssql';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
+vi.mock('vscode', async (importOriginal) => ({
+  ...await importOriginal<Record<string, unknown>>(),
+  workspace: { getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined }) },
+}));
+
 const outputChannel = {
   debug() {}, info() {}, warn() {}, error() {}, trace() {}, append() {}, appendLine() {},
 } as unknown as vscode.LogOutputChannel;
+const env = { secrets: {} as vscode.SecretStorage, outputChannel, loadQueries: async () => [] };
 
 function dbProject(connectionInfo: Record<string, unknown>): Project {
   return {
@@ -45,8 +51,8 @@ describe('stored connection integrity', () => {
     (vscode as unknown as { extensions: { reset(): void } }).extensions.reset();
   });
 
-  it('connectDirect hands the mssql extension a clone, so a mutated profile cannot reach the saved record', async () => {
-    const stored = { ...cleanConnectionInfo } as unknown as IConnectionInfo;
+  it('reconnecting hands the mssql extension a clone, so a mutated profile cannot reach the saved record', async () => {
+    const stored = { ...cleanConnectionInfo };
     let received: Record<string, unknown> | undefined;
     (vscode as unknown as { extensions: { registry: Map<string, unknown> } }).extensions.registry.set(MSSQL_EXTENSION_ID, {
       isActive: true,
@@ -60,10 +66,11 @@ describe('stored connection integrity', () => {
       },
     });
 
-    const result = await connectDirect(stored, outputChannel);
+    const session = await connectDatabase(env, stored);
 
-    expect(result?.connectionUri).toBe('uri://connection');
+    expect(session?.provider).toBe('mssqlExtension');
     expect(received).not.toBe(stored);
+    expect(session?.connectionInfo).not.toHaveProperty('azureAccountToken');
     expect(stored).not.toHaveProperty('azureAccountToken');
     expect(Object.keys(stored).sort()).toEqual(Object.keys(cleanConnectionInfo).sort());
   });

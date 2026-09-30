@@ -21,10 +21,12 @@ import {
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
 import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import {
-  promptForConnection, connectDirect, stripSensitiveFields,
-  loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered, disconnectDatabase,
-  executeSimpleQuery, getServerInfo, withQueryTimeout, isPhase2Query, MSSQL_EXTENSION_ID, type DmvQuery,
+  connectDatabase, connectionErrorHooks, releaseSession, getConnectionAvailability, stripSensitiveFields,
+  loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered,
+  executeSimpleQuery, withQueryTimeout, isPhase2Query, type DmvQuery, type DbConnectEnv,
 } from '../engine/connectionManager';
+import { DATABASE_CONFIG_SECTION, type DbSession } from '../engine/db/dbSession';
+import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
 import { type IConnectionInfo, type SimpleExecuteResult } from '../types/mssql';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent } from '../engine/profilingEngine';
 import { type StatsMode } from '../engine/profilingEngine';
@@ -48,6 +50,7 @@ import {
   type MainPanelToExtensionMsg,
   type Project,
   type RenderStateSnapshot,
+  type StoredConnectionInfo,
   type ScreenStateExtras,
   stripFocusNodeLinks,
 } from '../engine/shared/bridgeContract';
@@ -71,15 +74,15 @@ export type WebviewMessageHandlers = {
  * `pending` holds the connection negotiation currently in flight, so concurrent stats requests
  * join it rather than each opening their own connection.
  */
-export type StatsConnState = {
-  /** Negotiated connection uri, or `undefined` before the first successful negotiation. */
-  uri: string | undefined;
+export type StatsConnState<T = DbSession> = {
+  /** Negotiated connection, or `undefined` before the first successful negotiation. */
+  session: T | undefined;
   /** The in-flight negotiation, joined by concurrent requests instead of starting a second one. */
-  pending: Promise<string | undefined> | null;
+  pending: Promise<T | undefined> | null;
 };
 
 /**
- * Resolves the connection uri table profiling runs against, negotiating at most one connection.
+ * Resolves the connection table profiling runs against, negotiating at most one connection.
  *
  * @remarks
  * A request arriving while a negotiation is in flight joins it, instead of opening a second
@@ -87,25 +90,25 @@ export type StatsConnState = {
  * cleared however it settles, so a cancelled or failed negotiation leaves the state ready again.
  *
  * @param state - Panel-lived connection state, mutated in place.
- * @param negotiate - Opens or prompts for a connection and yields its uri, or `undefined` when the
+ * @param negotiate - Opens or prompts for a connection and yields it, or `undefined` when the
  *   user cancelled.
- * @returns The connection uri, or `undefined` when the negotiation yielded none.
+ * @returns The connection, or `undefined` when the negotiation yielded none.
  */
-export async function resolveStatsConnectionUri(
-  state: StatsConnState,
-  negotiate: () => Promise<string | undefined>,
-): Promise<string | undefined> {
-  if (state.uri) return state.uri;
+export async function resolveStatsConnection<T>(
+  state: StatsConnState<T>,
+  negotiate: () => Promise<T | undefined>,
+): Promise<T | undefined> {
+  if (state.session) return state.session;
   state.pending ??= negotiate();
-  let negotiated: string | undefined;
+  let negotiated: T | undefined;
   try {
     negotiated = await state.pending;
   } finally {
     state.pending = null;
   }
   if (!negotiated) return undefined;
-  state.uri ??= negotiated;
-  return state.uri;
+  state.session ??= negotiated;
+  return state.session;
 }
 
 declare const __BUILD_TIMESTAMP__: string;
@@ -213,19 +216,6 @@ function recordWebviewError(sess: AiSession, entry: WebviewErrorEntry): void {
 export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
 
 /**
- * Reports whether the SQL Server (mssql) extension is reachable from this host.
- *
- * @remarks
- * `getExtension` returns `undefined` for a disabled extension exactly as for a missing one, so this
- * single answer covers both states and the webview needs no third value.
- *
- * @returns True when the extension is installed and enabled.
- */
-export function isMssqlAvailable(): boolean {
-  return vscode.extensions.getExtension(MSSQL_EXTENSION_ID) !== undefined;
-}
-
-/**
  * Represents a bundle of message handlers and their associated cleanup logic.
  */
 export interface MessageHandlerBundle {
@@ -319,17 +309,18 @@ export function createMessageHandlers(
 
   let cachedElements: XmlElement[] | null = null;
   let cachedDspName = '';
-  let lastConnectionInfo: IConnectionInfo | undefined;
+  let lastConnectionInfo: StoredConnectionInfo | undefined;
+  const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: () => loadDmvQueries(outputChannel, context.extensionUri) };
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
-  const statsConnState: StatsConnState = { uri: undefined, pending: null };
+  const statsConnState: StatsConnState = { session: undefined, pending: null };
   async function cleanupStatsConnection(): Promise<void> {
-    if (statsConnState.uri) {
-      await disconnectDatabase(statsConnState.uri, outputChannel).catch(err =>
+    if (statsConnState.session) {
+      await statsConnState.session.dispose().catch((err: unknown) =>
         host.log('warn', 'DB', `Stats disconnect failed: ${err instanceof Error ? err.message : String(err)}`)
       );
-      statsConnState.uri = undefined;
+      statsConnState.session = undefined;
     }
   }
 
@@ -446,7 +437,7 @@ export function createMessageHandlers(
               }
             } else if (m.type === 'table-stats-request') {
               if (detailPanel) {
-                await handleTableStatsRequestHost(host, lastConnectionInfo, statsConnState, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
+                await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, statsConnState, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
               }
             } else if (m.type === 'close-detail') {
               detailPanel?.dispose();
@@ -590,21 +581,18 @@ export function createMessageHandlers(
         }
       } else if (project.connection.type === 'database') {
         const dbConn = project.connection;
-        await withDbProgressHost(host, 'Loading project', async () => {
-          const result = await connectDirect(dbConn.connectionInfo as IConnectionInfo, outputChannel);
-          return result ?? await promptForConnection(outputChannel);
-        }, async (dbResult) => {
-          lastConnectionInfo = dbResult.connectionInfo;
+        await withDbProgressHost(host, dbEnv, 'Loading project', (patch) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }), async (session) => {
+          lastConnectionInfo = session.connectionInfo;
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
-            await runDbPhase1Host(host, dbResult.connectionUri, dbResult.connectionInfo, outputChannel);
+            await runDbPhase1Host(host, session, outputChannel);
           } else {
-            await runDbPhase2Host(host, dbResult.connectionUri, schemas, outputChannel, getSession, dbResult.connectionInfo.database, dbConn.sourceName, (m) => {
+            await runDbPhase2Host(host, session, schemas, outputChannel, getSession, session.connectionInfo.database, dbConn.sourceName, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
             });
             const refreshed = {
               ...project,
-              connection: { ...dbConn, connectionInfo: stripSensitiveFields(dbConn.connectionInfo as IConnectionInfo) },
+              connection: { ...dbConn, connectionInfo: refreshedConnectionInfo(session, dbConn.connectionInfo) },
               updatedAt: new Date().toISOString(),
             };
             const updatedStore = updateProject(store, refreshed);
@@ -672,13 +660,13 @@ export function createMessageHandlers(
     },
     'db-visualize': async (msg) => {
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      return withDbProgressHost(host, 'Loading selected schemas', async () => {
+      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch) => {
         if (!lastConnectionInfo) {
           host.log('error', 'Bridge', 'Database visualize', new Error('No stored connection info'));
           host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
           return undefined;
         }
-        return (await connectDirect(lastConnectionInfo, outputChannel)) ?? await promptForConnection(outputChannel);
+        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch });
       }, async (conn, _progress, token) => {
         const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
         let pendingProject: ReturnType<typeof createProject> | null = null;
@@ -686,7 +674,7 @@ export function createMessageHandlers(
           try {
             pendingProject = createProject(msg.projectName, {
               type: 'database',
-              connectionInfo: stripSensitiveFields(conn.connectionInfo),
+              connectionInfo: conn.connectionInfo,
               sourceName,
               schemas: msg.schemas,
             });
@@ -700,7 +688,7 @@ export function createMessageHandlers(
           }
         }
 
-        await runDbPhase2Host(host, conn.connectionUri, msg.schemas, outputChannel, getSession, conn.connectionInfo.database, sourceName, (m) => {
+        await runDbPhase2Host(host, conn, msg.schemas, outputChannel, getSession, conn.connectionInfo.database, sourceName, (m) => {
           if (pendingProject) {
             setCurrentModel(m, true, { id: pendingProject.id, name: pendingProject.name });
           } else {
@@ -742,13 +730,19 @@ export function createMessageHandlers(
     },
     'db-connect': () => {
       host.log('debug', 'Bridge', 'Database connect requested');
-      return withDbProgressHost(host, 'Connecting', () => promptForConnection(outputChannel), (conn) => {
+      return withDbProgressHost(host, dbEnv, 'Connecting', () => connectDatabase(dbEnv), (conn) => {
         lastConnectionInfo = conn.connectionInfo;
-        return runDbPhase1Host(host, conn.connectionUri, conn.connectionInfo, outputChannel);
+        return runDbPhase1Host(host, conn, outputChannel);
       });
     },
     'check-mssql': () => {
-      host.postMessage({ type: 'mssql-status', available: isMssqlAvailable() });
+      host.postMessage({ type: 'mssql-status', ...getConnectionAvailability() });
+    },
+    'use-builtin-connection': async () => {
+      const cfg = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION);
+      await cfg.update('connectionProvider', 'builtIn', vscode.ConfigurationTarget.Global);
+      host.log('info', 'Bridge', 'Connection provider switched to builtIn from the wizard');
+      host.postMessage({ type: 'mssql-status', ...getConnectionAvailability() });
     },
     'save-view': async (msg) => {
       const logger = Logger.create(outputChannel, 'Bridge');
@@ -1006,22 +1000,22 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
   }
 }
 
-async function runDbPhase1Host(host: BridgeHost, connectionUri: string, connectionInfo: IConnectionInfo, outputChannel: vscode.LogOutputChannel) {
+async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChannel: vscode.LogOutputChannel) {
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   const previewQuery = queries.find(q => q.name === 'schema-preview');
   if (!previewQuery) throw new Error('Missing schema-preview query');
   host.log('info', 'DB', 'Running schema preview query');
   const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
-  const resultMap = await executeDmvQueries(connectionUri, [previewQuery], outputChannel, undefined, timeoutMs);
+  const resultMap = await executeDmvQueries(session, [previewQuery], outputChannel, undefined, timeoutMs);
   const result = resultMap.get('schema-preview');
   if (!result) throw new Error('No schema preview result');
   const preview = buildSchemaPreview(result);
   const config = await readExtensionConfig(host);
-  host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${connectionInfo.server} / ${connectionInfo.database}` });
+  host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${session.connectionInfo.server} / ${session.connectionInfo.database}` });
   host.log('info', 'DB', `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
 }
 
-async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas: string[], outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
+async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
   const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
@@ -1029,18 +1023,18 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
   const leadSteps = allObjectsQuery ? 2 : 1;
   const totalSteps = queries.filter(isPhase2Query).length + leadSteps;
   host.postMessage({ type: 'db-progress', step: 1, total: totalSteps, label: 'Detecting database platform' });
-  const platformMetadata = await loadDatabasePlatform(connectionUri, queries, outputChannel, timeoutMs);
+  const platformMetadata = await loadDatabasePlatform(session, queries, outputChannel, timeoutMs);
   let allObjectsResult: SimpleExecuteResult | undefined;
   if (allObjectsQuery) {
     host.postMessage({ type: 'db-progress', step: 2, total: totalSteps, label: 'Loading object catalog' });
     try {
-      const catalogMap = await executeDmvQueries(connectionUri, [allObjectsQuery], outputChannel, undefined, timeoutMs);
+      const catalogMap = await executeDmvQueries(session, [allObjectsQuery], outputChannel, undefined, timeoutMs);
       allObjectsResult = catalogMap.get('all-objects');
     } catch (err) {
       host.log('warn', 'DB', `Object catalog unavailable — cross-schema references stay unresolved: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  const resultMap = await executeDmvQueriesFiltered(connectionUri, queries, schemas, outputChannel, (step, total, label) => {
+  const resultMap = await executeDmvQueriesFiltered(session, queries, schemas, outputChannel, (step, total, label) => {
     host.postMessage({ type: 'db-progress', step: step + leadSteps, total: total + leadSteps, label });
   }, timeoutMs);
   const requireResult = (name: 'nodes' | 'columns' | 'dependencies'): SimpleExecuteResult => {
@@ -1082,7 +1076,7 @@ async function runDbPhase2Host(host: BridgeHost, connectionUri: string, schemas:
 const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
 
 /**
- * Shape accepted from the MSSQL extension's `getServerInfo`.
+ * Shape accepted from a session's `getServerInfo`.
  *
  * @remarks
  * `IServerInfo` types these as required, but the value crosses an extension boundary this code
@@ -1105,7 +1099,7 @@ const ServerInfoSchema = z.object({
  * needs the result at model construction.
  */
 async function loadDatabasePlatform(
-  connectionUri: string,
+  session: DbSession,
   queries: DmvQuery[],
   outputChannel: vscode.LogOutputChannel,
   timeoutMs: number,
@@ -1116,7 +1110,7 @@ async function loadDatabasePlatform(
 
   if (platformQuery) {
     try {
-      const resultMap = await executeDmvQueries(connectionUri, [platformQuery], outputChannel, undefined, probeTimeoutMs);
+      const resultMap = await executeDmvQueries(session, [platformQuery], outputChannel, undefined, probeTimeoutMs);
       const platformInfo = resultMap.get('platform-info');
       const missingColumns = platformInfo ? validateQueryResult('platform-info', platformInfo) : [];
       if (platformInfo?.rows.length && missingColumns.length === 0) return { platformInfo };
@@ -1133,7 +1127,7 @@ async function loadDatabasePlatform(
 
   try {
     const serverInfo = ServerInfoSchema.parse(await withQueryTimeout(
-      getServerInfo(connectionUri),
+      session.getServerInfo(),
       probeTimeoutMs,
       `MSSQL getServerInfo timed out after ${probeTimeoutMs / 1000}s`,
     ));
@@ -1144,26 +1138,66 @@ async function loadDatabasePlatform(
   }
 }
 
-async function withDbProgressHost(host: BridgeHost, title: string, connectFn: () => Promise<any>, phaseFn: (res: any, progress: any, token: any) => Promise<void>) {
+/**
+ * Connection info to persist for a project after a successful reconnect.
+ *
+ * @remarks
+ * An mssql-extension record that reconnected through the same provider keeps its stored fields; any
+ * other case persists the session's own info, so a provider switch chosen by the setting is stored
+ * once and does not announce itself again.
+ */
+function refreshedConnectionInfo(session: DbSession, stored: StoredConnectionInfo): StoredConnectionInfo {
+  const storedForMssql = (stored.provider ?? 'mssqlExtension') === 'mssqlExtension';
+  return session.provider === 'mssqlExtension' && storedForMssql
+    ? stripSensitiveFields(stored as unknown as IConnectionInfo)
+    : session.connectionInfo;
+}
+
+async function withDbProgressHost(
+  host: BridgeHost,
+  env: DbConnectEnv,
+  title: string,
+  connectFn: (patch?: Partial<StoredConnectionInfo>) => Promise<DbSession | undefined>,
+  phaseFn: (session: DbSession, progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Promise<void>,
+) {
   await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
+    let session: DbSession | undefined;
     try {
-      const res = await connectFn();
-      if (res && !token.isCancellationRequested) {
-        await phaseFn(res, progress, token);
+      session = await connectFn();
+      if (session && !token.isCancellationRequested) {
+        await phaseFn(session, progress, token);
       } else {
         host.log('info', 'DB', `${title} cancelled or failed to connect`);
         host.postMessage({ type: 'db-cancelled' });
       }
     } catch (err) {
-      host.log('error', 'DB', title, err);
-      host.postMessage({ type: 'db-error', message: err instanceof Error ? err.message : String(err), phase: 'connect' });
+      const target = isDbConnectionError(err) ? err.target : session && isDriverError(err) ? targetFromSession(session) : undefined;
+      if (target) {
+        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, () => connectFn(patch), phaseFn);
+        const reported = reportConnectionError(
+          isDbConnectionError(err) ? err.original : err,
+          target,
+          Logger.create(env.outputChannel, 'DB'),
+          connectionErrorHooks(env, target.connectionId, retry),
+        );
+        host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
+      } else {
+        host.log('error', 'DB', title, err);
+        host.postMessage({ type: 'db-error', message: err instanceof Error ? err.message : String(err), phase: 'connect' });
+      }
+    } finally {
+      if (session) {
+        await releaseSession(session).catch((err: unknown) =>
+          host.log('warn', 'DB', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`));
+      }
     }
   });
 }
 
 async function handleTableStatsRequestHost(
   host: BridgeHost,
-  storedConnectionInfo: IConnectionInfo | undefined,
+  dbEnv: DbConnectEnv,
+  storedConnectionInfo: StoredConnectionInfo | undefined,
   statsConnState: StatsConnState,
   panel: vscode.WebviewPanel,
   schema: string,
@@ -1192,20 +1226,18 @@ async function handleTableStatsRequestHost(
 
   logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
   try {
-    const connectionUri = await resolveStatsConnectionUri(statsConnState, async () => {
-      const result = storedConnectionInfo ? (await connectDirect(storedConnectionInfo, outputChannel) ?? await promptForConnection(outputChannel)) : await promptForConnection(outputChannel);
-      return result?.connectionUri;
-    });
-    if (!connectionUri) {
+    const session = await resolveStatsConnection(statsConnState, () => connectDatabase(dbEnv, storedConnectionInfo));
+    if (!session) {
       void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
       return;
     }
-    const serverInfo = await getServerInfo(connectionUri);
+    const serverInfo = await session.getServerInfo();
     const engineEdition = serverInfo.engineEditionId;
 
     const rowCountSql = buildRowCountQuery(schema, objectName);
-    const rowCountPromise = executeSimpleQuery(connectionUri, rowCountSql, outputChannel);
-    const rowCountResult = await withQueryTimeout(rowCountPromise, timeoutMs, `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
+    const rowCountResult = await executeSimpleQuery(session, rowCountSql, outputChannel, {
+      ms: timeoutMs, message: `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
+    });
     const rowCount = rowCountResult.rowCount > 0 ? parseInt(rowCountResult.rows[0][0].displayValue, 10) || 0 : 0;
 
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
@@ -1221,15 +1253,17 @@ async function handleTableStatsRequestHost(
 
     let profilingResult;
     try {
-      const profilingPromise = executeSimpleQuery(connectionUri, profilingSql, outputChannel);
-      profilingResult = await withQueryTimeout(profilingPromise, timeoutMs, `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
+      profilingResult = await executeSimpleQuery(session, profilingSql, outputChannel, {
+        ms: timeoutMs, message: `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
+      });
     } catch (sampleErr) {
       const needsSampling0 = rowCount > sampleThreshold && sampleThreshold >= 0;
       if (needsSampling0 && /TABLESAMPLE/i.test(sampleErr instanceof Error ? sampleErr.message : String(sampleErr))) {
         const retrySql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, -1, sampleSize);
         if (!retrySql) throw sampleErr;
-        const retryPromise = executeSimpleQuery(connectionUri, retrySql, outputChannel);
-        profilingResult = await withQueryTimeout(retryPromise, timeoutMs, `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`);
+        profilingResult = await executeSimpleQuery(session, retrySql, outputChannel, {
+          ms: timeoutMs, message: `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
+        });
       } else {
         throw sampleErr;
       }
@@ -1248,6 +1282,11 @@ async function handleTableStatsRequestHost(
     logger.info(`Table statistics ready — ${schema}.${objectName} rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
     void postToDetail(panel, { type: 'table-stats-result', stats, mode }, logger);
   } catch (err) {
+    if (isDbConnectionError(err)) {
+      const reported = reportConnectionError(err.original, err.target, logger, connectionErrorHooks(dbEnv, err.target.connectionId, undefined));
+      void postToDetail(panel, { type: 'table-stats-error', message: reported.message }, logger);
+      return;
+    }
     host.log('error', 'Stats', 'Profiling', err);
     void postToDetail(panel, { type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) }, logger);
   }

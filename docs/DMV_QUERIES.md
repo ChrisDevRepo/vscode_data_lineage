@@ -34,6 +34,7 @@ Nothing runs automatically in the background. The standard import path uses:
 |-------|---------|------|
 | Phase 1 | `schema-preview` | Runs first to populate the schema-selection wizard. |
 | Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the extension uses authoritative MSSQL server metadata; if neither source is available, the model records `Unknown database platform` without failing the import. |
+| Built-in connection | `database-list` | Runs only when a built-in connection (`dataLineageViz.database.connectionProvider` = `builtIn`) has no database: its rows fill the database pick list. If it is missing, the user types the database name. The built-in connection also reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. |
 | Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
 | Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
 
@@ -64,6 +65,11 @@ queries:
     sql: |
       SELECT ...
   - name: platform-info    # Platform detection before model construction
+    phase: 1
+    description: "..."
+    sql: |
+      SELECT ...
+  - name: database-list    # Built-in connection database pick list, optional
     phase: 1
     description: "..."
     sql: |
@@ -132,6 +138,12 @@ Runs before the Phase 2 sweep. Returns all objects across **all schemas** (no DD
 | `IF` | Inline Table-Valued Function |
 | `TF` | Multi-Statement Table-Valued Function |
 | `ET` | External Table (PolyBase, Synapse, Fabric) |
+
+### `database-list` — databases for the built-in connection
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `database_name` | string | A database the login can open (first column is read) |
 
 ### `platform-info` — platform detection
 

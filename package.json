@@ -143,6 +143,26 @@
         "command": "dataLineageViz.searchObjects",
         "title": "Data Lineage: Search Objects",
         "icon": "$(search)"
+      },
+      {
+        "command": "dataLineageViz.addDatabaseConnection",
+        "title": "Add Database Connection",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.editDatabaseConnection",
+        "title": "Edit Database Connection",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.removeDatabaseConnection",
+        "title": "Remove Database Connection",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.updateDatabasePassword",
+        "title": "Update Database Password",
+        "category": "Data Lineage"
       }
     ],
     "keybindings": [],
@@ -242,6 +262,92 @@
             "default": "",
             "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
             "scope": "resource"
+          },
+          "dataLineageViz.database.connectionProvider": {
+            "type": "string",
+            "enum": [
+              "mssqlExtension",
+              "builtIn"
+            ],
+            "default": "mssqlExtension",
+            "enumDescriptions": [
+              "Use connections saved in the SQL Server (mssql) extension. Microsoft is retiring this API; the SQL Server extension shows a notice.",
+              "Connect directly with Data Lineage's own connections (SQL login or Microsoft Entra ID). Passwords stay in the VS Code secret store."
+            ],
+            "markdownDescription": "Where database connections come from. With `builtIn`, add connections with **Data Lineage: Add Database Connection**.",
+            "scope": "application"
+          },
+          "dataLineageViz.database.connections": {
+            "type": "array",
+            "default": [],
+            "scope": "application",
+            "markdownDescription": "Built-in database connections, used when `#dataLineageViz.database.connectionProvider#` is `builtIn`. Passwords are never stored here: SQL login passwords live in the VS Code secret store. Manage entries with **Data Lineage: Add Database Connection**.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "name",
+                "server",
+                "authenticationType"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "markdownDescription": "Stable identifier; also names the secret-store entry of the password."
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Display name."
+                },
+                "server": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Server host name or address."
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "description": "TCP port. Defaults to 1433."
+                },
+                "database": {
+                  "type": "string",
+                  "description": "Database to open. Leave empty to choose at connect time."
+                },
+                "authenticationType": {
+                  "type": "string",
+                  "enum": [
+                    "sqlLogin",
+                    "entraId"
+                  ],
+                  "enumDescriptions": [
+                    "SQL Server login with user name and password.",
+                    "Microsoft Entra ID sign-in through VS Code."
+                  ]
+                },
+                "user": {
+                  "type": "string",
+                  "description": "SQL login user name."
+                },
+                "tenantId": {
+                  "type": "string",
+                  "description": "Microsoft Entra tenant id to sign in to."
+                },
+                "encrypt": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Encrypt the connection."
+                },
+                "trustServerCertificate": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Trust the server certificate without validation. Use only for servers you control."
+                }
+              }
+            }
           }
         }
       },
@@ -823,6 +929,7 @@
     "react": "19.3.0",
     "react-arborist": "3.16.0",
     "react-dom": "19.3.0",
+    "tedious": "^20.0.0",
     "zod": "4.6.5"
   },
   "devDependencies": {

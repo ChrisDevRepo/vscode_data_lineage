@@ -53,6 +53,8 @@ function makeLoader(schemas: SchemaInfo[]): DacpacLoaderState {
     filePath: '/tmp/synthetic.dacpac',
     status: null,
     mssqlAvailable: null,
+    connectionProvider: null,
+    switchToBuiltInConnection: () => {},
     pendingAutoVisualize: false,
     pendingVisualize: false,
     isDemo: false,

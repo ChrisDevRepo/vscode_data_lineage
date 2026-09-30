@@ -1506,6 +1506,14 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   background: transparent;
   border: 1px solid var(--ln-border);
 }
+.ln-provider-notice {
+  background: var(--ln-validation-warning-bg);
+  border: 1px solid var(--ln-validation-warning-border);
+  color: var(--ln-wizard-fg);
+}
+.ln-btn-compact {
+  padding: 0.25rem 0.75rem;
+}
 .ln-status-body {
   color: var(--ln-fg-muted);
   opacity: 0.9;

@@ -9,6 +9,8 @@ import { searchCatalog } from './utils/modelSearch';
 import { markGitIgnored } from './utils/gitIgnoredDir';
 import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './bridge/messageHandlers';
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
+import { registerConnectionCommands } from './engine/db/connectionCommands';
+import { loadDmvQueries } from './engine/connectionManager';
 
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
@@ -27,6 +29,7 @@ export function registerCommands(
   const aiLogger = Logger.create(outputChannel, 'AI');
 
   return [
+    ...registerConnectionCommands(context, outputChannel, () => loadDmvQueries(outputChannel, context.extensionUri)),
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 

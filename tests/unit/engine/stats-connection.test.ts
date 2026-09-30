@@ -1,20 +1,20 @@
 /**
- * Pins the stats-connection negotiation contracts: uri reuse, one shared in-flight
+ * Pins the stats-connection negotiation contracts: connection reuse, one shared in-flight
  * negotiation for concurrent requests, and in-flight cleanup on cancel or error.
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { resolveStatsConnectionUri, type StatsConnState } from '../../../src/bridge/messageHandlers';
+import { resolveStatsConnection, type StatsConnState } from '../../../src/bridge/messageHandlers';
 
-function freshState(uri: string | undefined = undefined): StatsConnState {
-  return { uri, pending: null };
+function freshState(session: string | undefined = undefined): StatsConnState<string> {
+  return { session, pending: null };
 }
 
-describe('resolveStatsConnectionUri', () => {
-  it('reuses the negotiated uri without renegotiating', async () => {
+describe('resolveStatsConnection', () => {
+  it('reuses the negotiated connection without renegotiating', async () => {
     const state = freshState('mssql://localhost/AdventureWorks');
     const negotiate = vi.fn(async (): Promise<string | undefined> => 'mssql://other/db');
-    await expect(resolveStatsConnectionUri(state, negotiate)).resolves.toBe(
+    await expect(resolveStatsConnection(state, negotiate)).resolves.toBe(
       'mssql://localhost/AdventureWorks',
     );
     expect(negotiate).not.toHaveBeenCalled();
@@ -27,26 +27,26 @@ describe('resolveStatsConnectionUri', () => {
       release = resolve;
     });
     const negotiate = vi.fn(() => gate);
-    const first = resolveStatsConnectionUri(state, negotiate);
-    const second = resolveStatsConnectionUri(state, negotiate);
+    const first = resolveStatsConnection(state, negotiate);
+    const second = resolveStatsConnection(state, negotiate);
     release('mssql://localhost/AdventureWorks');
     await expect(first).resolves.toBe('mssql://localhost/AdventureWorks');
     await expect(second).resolves.toBe('mssql://localhost/AdventureWorks');
     expect(negotiate).toHaveBeenCalledTimes(1);
-    expect(state.uri).toBe('mssql://localhost/AdventureWorks');
+    expect(state.session).toBe('mssql://localhost/AdventureWorks');
     expect(state.pending).toBeNull();
   });
 
   it('clears the in-flight negotiation on cancel', async () => {
     const state = freshState();
     const negotiate = vi.fn(async (): Promise<string | undefined> => undefined);
-    await expect(resolveStatsConnectionUri(state, negotiate)).resolves.toBeUndefined();
+    await expect(resolveStatsConnection(state, negotiate)).resolves.toBeUndefined();
     expect(state.pending).toBeNull();
-    expect(state.uri).toBeUndefined();
+    expect(state.session).toBeUndefined();
     const retry = vi.fn(
       async (): Promise<string | undefined> => 'mssql://localhost/AdventureWorks',
     );
-    await expect(resolveStatsConnectionUri(state, retry)).resolves.toBe(
+    await expect(resolveStatsConnection(state, retry)).resolves.toBe(
       'mssql://localhost/AdventureWorks',
     );
     expect(retry).toHaveBeenCalledTimes(1);
@@ -60,18 +60,18 @@ describe('resolveStatsConnectionUri', () => {
       release = reject;
     });
     const negotiate = vi.fn(() => gate);
-    const first = expect(resolveStatsConnectionUri(state, negotiate)).rejects.toBe(failure);
-    const second = expect(resolveStatsConnectionUri(state, negotiate)).rejects.toBe(failure);
+    const first = expect(resolveStatsConnection(state, negotiate)).rejects.toBe(failure);
+    const second = expect(resolveStatsConnection(state, negotiate)).rejects.toBe(failure);
     release(failure);
     await first;
     await second;
     expect(negotiate).toHaveBeenCalledTimes(1);
     expect(state.pending).toBeNull();
-    expect(state.uri).toBeUndefined();
+    expect(state.session).toBeUndefined();
     const retry = vi.fn(
       async (): Promise<string | undefined> => 'mssql://localhost/AdventureWorks',
     );
-    await expect(resolveStatsConnectionUri(state, retry)).resolves.toBe(
+    await expect(resolveStatsConnection(state, retry)).resolves.toBe(
       'mssql://localhost/AdventureWorks',
     );
   });

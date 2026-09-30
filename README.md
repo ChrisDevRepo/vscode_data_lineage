@@ -18,10 +18,28 @@ Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric
 ## Get started
 
 1. Run **Data Lineage: Open Wizard** (`Ctrl+Shift+P`).
-2. Pick a `.dacpac` file — or **Connect to Database** via the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql).
+2. Pick a `.dacpac` file — or **Connect to Database** (see [Database projects](#database-projects)).
 3. Select schemas and click **Visualize**.
 
 No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to explore the AdventureWorks sample.
+
+## Database projects
+
+A live database is read through one of two connection providers, chosen with the setting `dataLineageViz.database.connectionProvider`:
+
+- `mssqlExtension` (default) — connections come from the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql), which Microsoft is retiring the connection API of.
+- `builtIn` — connections are stored by this extension and opened with a bundled SQL Server driver; no other extension is needed. The wizard offers **Use Built-in Connection** while the default is active.
+
+Built-in connections live in the application-scoped setting `dataLineageViz.database.connections` (server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption). Passwords are never written to settings: they go to VS Code's secret storage under `dataLineageViz.database.password.<id>`, and a missing password is asked for once with the option to save it. `entraId` connections sign in with a Microsoft account through VS Code.
+
+| Command | Purpose |
+|---|---|
+| Data Lineage: Add Database Connection | Six-step wizard (server, authentication, user, password or sign-in, database, display name) that tests the connection before saving |
+| Data Lineage: Edit Database Connection | Change a saved connection |
+| Data Lineage: Remove Database Connection | Delete a connection and its stored password |
+| Data Lineage: Update Database Password | Replace the stored password |
+
+A failed connection shows `<connection name>: <original driver message>` with the actions that fit the error, for example Update Password, Edit Connection, Choose Database, Trust Server Certificate, Retry or Show Log. The raw error is written to the Data Lineage output channel.
 
 ## Explore your lineage
 
