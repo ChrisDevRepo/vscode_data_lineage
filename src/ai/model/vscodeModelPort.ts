@@ -28,7 +28,7 @@ import {
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
-import { rejectionFromZodError, zodFieldRepairHint, zodIssuePaths, zodUnrecognizedKeys } from '../support/toolErrorEnvelope';
+import { rejectionFromZodError, zodFieldRepairHint, zodUnrecognizedKeys } from '../support/toolErrorEnvelope';
 import { coerceStringifiedArguments, droppedKeyPaths } from '../support/inputNormalization';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
@@ -221,7 +221,7 @@ export class VscodeModelPort implements ModelPort {
               code: REJECTION_CODES.invalidToolInput,
               reason: rejection.reason,
               ...(fieldHint !== undefined ? { hint: fieldHint } : {}),
-              issuePaths: zodIssuePaths(parsed.error),
+              ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
               ...(unrecognizedKeys.length > 0 ? { unrecognizedKeys } : {}),
             };
           }

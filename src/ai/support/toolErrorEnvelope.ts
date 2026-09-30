@@ -613,15 +613,6 @@ function describeSizeIssue(
   return `${size}, ${bound}`;
 }
 
-/**
- * Dotted issue paths for a raw `ZodError`. An `unrecognized_keys` issue yields one path per
- * offending key, since Zod's own `issue.path` stops at the containing object; every other issue
- * keeps `path.join('.')`.
- */
-export function zodIssuePaths(error: z.ZodError): string[] {
-  return error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? unrecognizedKeyPaths(issue) : [issue.path.join('.')]));
-}
-
 /** One dotted path per offending key; a key over {@link KEY_ECHO_MAX_CHARS} yields its container's path, never the key. */
 function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecognized_keys' }>): string[] {
   const base = issue.path.join('.');
