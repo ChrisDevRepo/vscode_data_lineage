@@ -561,7 +561,6 @@ function buildRunTraceTriggerPrompt(
     '',
     '## Inputs to lineage_start_exploration',
     '',
-    '- **excludeNodeIds**: scan the discovery turn below for any user instruction to ignore, exclude, skip, or drop a named object. If none, pass `[]`.',
     '- Every field, including **origin** and **mission_brief**: derive from <original_question> and the discovery answer below, as each field\'s description says.',
     '',
     '## Discovery context',
