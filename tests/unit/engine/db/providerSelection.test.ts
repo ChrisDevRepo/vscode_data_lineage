@@ -14,6 +14,7 @@ const host = vi.hoisted(() => ({
   getExtension: vi.fn(),
   openBuiltInSession: vi.fn(),
   runAddConnectionFlow: vi.fn(),
+  executeCommand: vi.fn(),
 }));
 
 vi.mock('vscode', async (importOriginal) => {
@@ -28,7 +29,8 @@ vi.mock('vscode', async (importOriginal) => {
       showErrorMessage: vi.fn(),
       showInputBox: vi.fn(),
     },
-    commands: { executeCommand: vi.fn() },
+    QuickPickItemKind: { Separator: -1, Default: 0 },
+    commands: { executeCommand: (...a: unknown[]) => host.executeCommand(...a) },
     workspace: {
       getConfiguration: (section: string) => ({
         get: (key: string, d: unknown) => host.settings[`${section}.${key}`] ?? d,
@@ -87,7 +89,7 @@ function installMssql() {
 
 beforeEach(() => {
   host.settings = {};
-  for (const fn of [host.showQuickPick, host.showInformationMessage, host.showWarningMessage, host.getExtension, host.openBuiltInSession, host.runAddConnectionFlow, activate, mssqlConnect, mssqlExecute, mssqlDisconnect]) fn.mockClear();
+  for (const fn of [host.showQuickPick, host.showInformationMessage, host.showWarningMessage, host.getExtension, host.openBuiltInSession, host.runAddConnectionFlow, host.executeCommand, activate, mssqlConnect, mssqlExecute, mssqlDisconnect]) fn.mockClear();
   host.getExtension.mockReset();
   host.openBuiltInSession.mockImplementation(async (conn: Record<string, any>) => fakeBuiltInSession(conn));
 });
@@ -132,7 +134,7 @@ describe('connectDatabase — builtIn', () => {
     const session = await connectDatabase(env);
 
     const items = host.showQuickPick.mock.calls[0][0] as Array<{ label: string }>;
-    expect(items.map((i) => i.label)).toEqual(['Local', 'Cloud', '$(add) Add Connection…']);
+    expect(items.map((i) => i.label)).toEqual(['Local', 'Cloud', '$(add) Add Connection…', 'Manage', '$(edit) Edit Connection…', '$(key) Update Password…', '$(trash) Remove Connection…']);
     expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-cloud' }), env, expect.anything());
     expect(session?.provider).toBe('builtIn');
   });
@@ -145,6 +147,19 @@ describe('connectDatabase — builtIn', () => {
 
     expect(host.runAddConnectionFlow).toHaveBeenCalledTimes(1);
     expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-new' }), env, expect.anything());
+    expect(session?.provider).toBe('builtIn');
+  });
+
+  it('a manage item runs its command, then shows the picker again', async () => {
+    host.showQuickPick
+      .mockImplementationOnce(async (items: Array<{ label: string }>) => items.find((i) => i.label.includes('Update Password')))
+      .mockImplementationOnce(async (items: Array<{ label: string }>) => items.find((i) => i.label === 'Local'));
+
+    const session = await connectDatabase(env);
+
+    expect(host.executeCommand).toHaveBeenCalledWith('dataLineageViz.updateDatabasePassword');
+    expect(host.showQuickPick).toHaveBeenCalledTimes(2);
+    expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-local' }), env, expect.anything());
     expect(session?.provider).toBe('builtIn');
   });
 

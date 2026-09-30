@@ -22,6 +22,8 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 | 229 / 297 / 300 | Login cannot read metadata | Copy GRANT Statement |
 | anything else | — | Show Log · Edit Connection |
 
+The built-in connection retries a connect by itself on the transient errors 4060, 10928, 10929, 40197, 40501 and 40613 — three times, five seconds apart, as Microsoft recommends — before the error is shown. A mistyped database name (4060) therefore takes about 15 seconds to report.
+
 Firewall and IP-allow-list errors are shown as the server reports them; Data Lineage does not change firewall rules. A password is stored only in VS Code secret storage — **Data Lineage: Update Database Password** replaces it, **Remove Database Connection** deletes it with the connection.
 
 Switching the provider keeps saved projects and their schema selection. On its next open a project reconnects through the selected provider: a saved built-in connection with the same server and user is used directly, otherwise the connection picker opens and **Add Connection…** starts from the project's server, user and database. The project then remembers the new connection.

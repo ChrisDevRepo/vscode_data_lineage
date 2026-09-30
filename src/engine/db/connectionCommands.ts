@@ -386,8 +386,7 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: (c: Built
  * `dataLineageViz.addDatabaseConnection` accepts `{ connection, password? }`; with an argument it
  * validates, saves to user settings and the secret store without prompting, and returns the id;
  * replacing an existing id that changes server, port, user or authentication type drops its saved
- * password unless a new one is supplied. `removeDatabaseConnection` with an argument removes the
- * connection without the confirmation modal, so other extensions can call it.
+ * password unless a new one is supplied. `removeDatabaseConnection` always asks for confirmation.
  * The other commands take an optional connection id and otherwise show a picker; edit returns the
  * saved id and update-password returns whether a password was stored.
  */
@@ -424,12 +423,10 @@ export function registerConnectionCommands(
     vscode.commands.registerCommand('dataLineageViz.removeDatabaseConnection', async (arg?: unknown): Promise<void> => {
       const target = await connectionFromArg(arg, 'Select a connection to remove');
       if (!target) return;
-      if (arg === undefined) {
-        const choice = await vscode.window.showWarningMessage(
-          `Remove "${target.name}"? Its saved password is deleted too.`, { modal: true }, 'Remove',
-        );
-        if (choice !== 'Remove') return;
-      }
+      const choice = await vscode.window.showWarningMessage(
+        `Remove "${target.name}"? Its saved password is deleted too.`, { modal: true }, 'Remove',
+      );
+      if (choice !== 'Remove') return;
       await deleteBuiltInConnection(target.id, logger);
       await context.secrets.delete(passwordSecretKey(target.id));
       logger.info(`Removed database connection ${target.id}`);

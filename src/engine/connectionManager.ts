@@ -297,29 +297,46 @@ function authDetail(connection: BuiltInConnection): string {
   return connection.authenticationType === 'entraId' ? 'Microsoft Entra ID' : `SQL Login (${connection.user ?? 'no user'})`;
 }
 
+const MANAGE_ITEMS = [
+  { label: '$(edit) Edit Connection…', command: 'dataLineageViz.editDatabaseConnection' },
+  { label: '$(key) Update Password…', command: 'dataLineageViz.updateDatabasePassword' },
+  { label: '$(trash) Remove Connection…', command: 'dataLineageViz.removeDatabaseConnection' },
+] as const;
+
 /**
- * Shows the saved built-in connections plus an add item; returns the chosen or newly added one. The
- * add flow starts from the server, port, user and database of `stored` when there is one.
+ * Shows the saved built-in connections, an add item and the manage commands; returns the chosen or
+ * newly added connection. A manage item runs its command and shows the list again. The add flow
+ * starts from the server, port, user and database of `stored` when there is one.
  */
 async function pickBuiltInConnection(
   env: DbConnectEnv,
   connections: BuiltInConnection[],
   stored?: StoredConnectionInfo,
 ): Promise<BuiltInConnection | undefined> {
-  const picked = await vscode.window.showQuickPick(
-    [
-      ...connections.map((connection) => ({
-        label: connection.name, description: describeConnection(connection), detail: authDetail(connection), connection,
-      })),
-      { label: '$(add) Add Connection…', description: 'Save a new SQL login or Microsoft Entra ID connection', connection: undefined },
-    ],
-    { placeHolder: 'Select a database connection', ignoreFocusOut: true, matchOnDescription: true },
-  );
-  if (!picked) return undefined;
-  if (picked.connection) return picked.connection;
-  return runAddConnectionFlow(env, undefined, stored
-    ? { server: stored.server, port: stored.port, user: stored.user, database: stored.database }
-    : undefined);
+  let current = connections;
+  for (;;) {
+    const picked = await vscode.window.showQuickPick<vscode.QuickPickItem & { connection?: BuiltInConnection; command?: string }>(
+      [
+        ...current.map((connection) => ({
+          label: connection.name, description: describeConnection(connection), detail: authDetail(connection), connection,
+        })),
+        { label: '$(add) Add Connection…', description: 'Save a new SQL login or Microsoft Entra ID connection' },
+        ...(current.length > 0
+          ? [{ label: 'Manage', kind: vscode.QuickPickItemKind.Separator }, ...MANAGE_ITEMS.map((item) => ({ ...item }))]
+          : []),
+      ],
+      { placeHolder: 'Select a database connection', ignoreFocusOut: true, matchOnDescription: true },
+    );
+    if (!picked) return undefined;
+    if (picked.connection) return picked.connection;
+    if (!picked.command) {
+      return runAddConnectionFlow(env, undefined, stored
+        ? { server: stored.server, port: stored.port, user: stored.user, database: stored.database }
+        : undefined);
+    }
+    await vscode.commands.executeCommand(picked.command);
+    current = readBuiltInConnections();
+  }
 }
 
 /** Opens the connection without a database, lists what the login can open and asks which one. */

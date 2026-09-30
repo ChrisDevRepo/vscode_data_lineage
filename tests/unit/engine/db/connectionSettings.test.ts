@@ -192,6 +192,7 @@ describe('connection commands', () => {
 
   it('removeDatabaseConnection deletes the entry and its secret', async () => {
     host.stored = [valid, { ...valid, id: 'keep-me', name: 'Keep' }];
+    host.showWarningMessage.mockResolvedValueOnce('Remove');
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
@@ -266,14 +267,17 @@ describe('saved password follows the server it was entered for', () => {
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
-  it('removeDatabaseConnection with an argument removes without a confirmation modal', async () => {
+  it('removeDatabaseConnection always asks first, also when called with an id', async () => {
     host.stored = [valid];
-    const { context } = makeContext();
+    host.showWarningMessage.mockResolvedValueOnce(undefined);
+    const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
     await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(valid.id);
 
-    expect(host.showWarningMessage).not.toHaveBeenCalled();
+    expect(host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining(valid.name), { modal: true }, 'Remove');
+    expect(host.updates).toHaveLength(0);
+    expect(secrets.delete).not.toHaveBeenCalled();
   });
 
   interface Step { values?: string[]; pick?: string }

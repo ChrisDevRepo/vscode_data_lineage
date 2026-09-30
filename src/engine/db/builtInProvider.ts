@@ -39,6 +39,12 @@ const ENTRA_SQL_SCOPE = 'https://database.windows.net//.default';
 const APP_NAME = 'Data Lineage Viz';
 
 const MS_PER_SECOND = 1000;
+/**
+ * Connect retries on the transient errors the driver recognises (the SqlClient list: 4060, 10928,
+ * 10929, 40197, 40501, 40613). Microsoft recommends waiting at least five seconds before a retry.
+ */
+const CONNECT_RETRY_INTERVAL_MS = 5 * MS_PER_SECOND;
+const CONNECT_MAX_RETRIES = 3;
 
 /** Engine editions that run in a Microsoft cloud service. */
 const CLOUD_ENGINE_EDITIONS: ReadonlySet<number> = new Set([5, 6, 8, 11, 12]);
@@ -350,6 +356,8 @@ export async function openBuiltInSession(
       useColumnNames: false,
       requestTimeout: 0,
       readOnlyIntent: true,
+      connectionRetryInterval: CONNECT_RETRY_INTERVAL_MS,
+      maxRetriesOnTransientErrors: CONNECT_MAX_RETRIES,
       appName: APP_NAME,
     },
   });
