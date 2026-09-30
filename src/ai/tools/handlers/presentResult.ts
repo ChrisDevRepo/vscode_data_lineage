@@ -4,35 +4,36 @@
  * @remarks
  * Provider-neutral validation and assembly helpers remain in the sibling
  * `presentResult.ts`; this handler owns session persistence and the validated
- * webview effect. Turn-lease validation and effect serialization remain in the
+ * webview effect. The input arrives already parsed against the schema the stage served
+ * (the tool-attempt boundary owns that parse), so only engine-state rules are checked here, each
+ * refused as one rejection envelope. Turn-lease validation and effect serialization remain in the
  * registry wrapper.
  */
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
 import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
-  findBareNonPrunedNodes, findUnrenderedDetailSlotIds, buildColumnChainPreface,
-  isRepairablePresentResultFailure,
+  findBareNonPrunedNodes, findUnrenderedDetailSlotIds, requiredDetailSlotIds, buildColumnChainPreface,
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
-  stripUnchangedRepairEnvelopeKeys,
-  findDiscoveryPreviewReuseViolations,
+  findTextlessNewSectionLabels,
+  findStartOrderIssues,
+  presentResultRepairInstruction,
+  assemblePreviewSections,
+  assignEvidenceIds,
+  expandEvidenceRefs,
   type PresentResultViolation,
   type PresentResultInput,
+  type PresentResultRepairPatch,
   type PresentResultStage,
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import {
-  presentResultBoundarySchemaForPhase,
-  PRESENT_RESULT_NAME_MAX,
-  PRESENT_RESULT_TITLE_MAX,
-  presentResultRepairPatchSchemaForFields,
-} from '../../tools/toolSchemas';
+import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
-import { coercedBoolean, resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
-import { readToolError } from '../../support/toolErrorEnvelope';
+import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
+import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
@@ -59,16 +60,8 @@ function findUncoveredCtChainNodes(
   for (const sec of input.sections ?? []) {
     for (const id of sec.node_ids ?? []) linked.add(lc(id));
   }
-  for (const group of input.highlight_groups ?? []) {
-    for (const id of group.node_ids ?? []) linked.add(lc(id));
-  }
   for (const note of input.notes ?? []) linked.add(lc(note.node_id));
   return required.filter(id => !linked.has(lc(id)));
-}
-
-/** Section labels match on their rendered form: leading AI numbering and case never distinguish two. */
-function sectionLabelKey(label: string): string {
-  return label.replace(/^\d+\.?\s+/, '').trim().toLowerCase();
 }
 
 /**
@@ -76,8 +69,10 @@ function sectionLabelKey(label: string): string {
  *
  * @remarks
  * An omitted `sections` array or empty section text asks to retain the committed body under that
- * label; inherited `node_ids` are narrowed to nodes this render still shows so a retained section
- * cannot re-link a node the same call pruned. Supplied node ids are left alone.
+ * label, and omitted section `node_ids` ask to retain its committed links; inherited `node_ids` are
+ * narrowed to nodes this render still shows so a retained section cannot re-link a node the same
+ * call pruned. Supplied node ids are left alone. Committed text is stored with its evidence
+ * references already expanded, so a retained body keeps its SQL verbatim.
  *
  * @param committed - Sections of the report this run already rendered.
  * @returns The complete sections, or the labels that asked to retain a body that does not exist.
@@ -86,40 +81,45 @@ function resolveRetainedSections(
   supplied: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> | undefined,
   committed: NonNullable<ResultGraph['sections']>,
   renderedNodeIds: ReadonlySet<string>,
-): { sections: Array<{ label: string; node_ids?: string[]; text: string }>; unknownLabels: string[] } {
-  const byLabel = new Map(committed.map(sec => [sectionLabelKey(sec.label), sec]));
+): { sections: Array<{ label: string; node_ids: string[]; text: string }>; unknownLabels: string[] } {
+  const byLabel = new Map(committed.map(sec => [normalizePresentSectionLabel(sec.label), sec]));
   const source: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> = supplied?.length
     ? supplied
     : committed.map(sec => ({ label: sec.label }));
-  const sections: Array<{ label: string; node_ids?: string[]; text: string }> = [];
+  const sections: Array<{ label: string; node_ids: string[]; text: string }> = [];
   const unknownLabels: string[] = [];
   for (const sec of source) {
+    const kept = byLabel.get(normalizePresentSectionLabel(sec.label));
+    const nodeIds = sec.node_ids ?? kept?.node_ids?.filter(id => renderedNodeIds.has(id)) ?? [];
     if (typeof sec.text === 'string' && sec.text.trim().length > 0) {
-      sections.push({ ...sec, text: sec.text });
+      sections.push({ label: sec.label, node_ids: nodeIds, text: sec.text });
       continue;
     }
-    const kept = byLabel.get(sectionLabelKey(sec.label));
     if (!kept?.text) {
       unknownLabels.push(sec.label);
       continue;
     }
-    const nodeIds = sec.node_ids ?? kept.node_ids?.filter(id => renderedNodeIds.has(id));
-    sections.push({
-      label: sec.label,
-      ...(nodeIds && nodeIds.length > 0 ? { node_ids: nodeIds } : {}),
-      text: kept.text,
-    });
+    sections.push({ label: sec.label, node_ids: nodeIds, text: kept.text });
   }
   return { sections, unknownLabels };
 }
 
-function notePresentResultFailure(sess: AiSession, token: number, data: object): void {
-  const rejection = readToolError(data);
-  if (!rejection) return;
-  const reason = rejection.hint
-    ? `${rejection.reason} (${rejection.hint})`
-    : rejection.reason;
-  sess.recordPresentResultFailure(token, trunc(sanitizeForLog(reason), 240));
+/**
+ * The notes an amendment renders: the committed captions for nodes still shown, overlaid by this
+ * call's notes by node id — the one merge both the rendered view and the committed
+ * `resultGraph.notes` take, so a follow-up that edits one caption does not blank every other
+ * caption on the graph.
+ */
+function mergeAmendedNotes(
+  committed: ReadonlyArray<{ nodeId: string; summary: string }> | undefined,
+  supplied: ReadonlyArray<{ node_id: string; caption: string }>,
+  renderedNodeIds: readonly string[],
+): Array<{ nodeId: string; text: string }> {
+  const rendered = new Set(renderedNodeIds);
+  const byNode = new Map<string, string>();
+  for (const note of committed ?? []) if (rendered.has(note.nodeId) && note.summary) byNode.set(note.nodeId, note.summary);
+  for (const note of supplied) byNode.set(note.node_id, note.caption);
+  return [...byNode].map(([nodeId, text]) => ({ nodeId, text }));
 }
 
 function buildColumnAspectNodeVerdicts(
@@ -144,117 +144,7 @@ function captureCheckpoint(sess: AiSession, logger: ToolServices['logger']): Pre
   }
 }
 
-/**
- * Resolution of {@link resolvePresentResultRepairDraft}: the (possibly merged) input to keep
- * validating, or a terminal tool response the caller must return immediately.
- */
-type PresentResultRepairResolution =
-  | { readonly kind: 'input'; readonly input: unknown }
-  | { readonly kind: 'reject'; readonly response: string };
-
-/**
- * Resolves `executePresentResult`'s repair-draft branch: merges an authorized patch into a held
- * repairable draft, or rejects an `is_update:true` sent with no held draft during synthesis.
- *
- * @remarks
- * Pure move of the branch guarding `sess.presentResultRepairDraft`: every reject path inside it
- * already returns through the caller's `reject` funnel, so this helper hands back either that
- * terminal response or the resolved `input` to keep validating — the caller returns or continues
- * with it unchanged, exactly as the inline branch did.
- *
- * @param sess - Active AI session, source of the held draft and its authorization.
- * @param logger - Host logger for the same debug lines the inline branch emitted.
- * @param input - The current tool input, already `is_update`-normalized by the caller.
- * @param coercedIsUpdateData - The caller's already-coerced `is_update` value (`undefined` on a
- *   failed coercion).
- * @param requestedRepair - Whether the coerced `is_update` asked for a repair this turn.
- * @param reject - The caller's reject funnel, invoked here so every failure logs identically.
- * @returns The resolved input to continue validating, or the terminal response to return.
- */
-function resolvePresentResultRepairDraft(
-  sess: AiSession,
-  logger: ToolServices['logger'],
-  input: unknown,
-  coercedIsUpdateData: boolean | undefined,
-  requestedRepair: boolean | undefined,
-  reject: (failure: object, opts?: { clearDraft?: boolean }) => string,
-): PresentResultRepairResolution {
-  if (sess.presentResultRepairDraft.hasRepairableDraft()) {
-    if (coercedIsUpdateData !== true) {
-      input = { ...(input as Record<string, unknown>), is_update: true };
-      logger.debug('presentResult normalization: repairable draft held — is_update defaulted to true (declared authorization backfill)');
-    }
-    const allowedFields = sess.presentResultRepairDraft.getAuthorization();
-    if (!allowedFields?.length) {
-      return {
-        kind: 'reject',
-        response: reject({
-          success: false,
-          errors: ['Held present_result repair authorization is missing.'],
-          hint: 'Call lineage_present_result again with the full required payload.',
-        }, { clearDraft: true }),
-      };
-    }
-    const heldDraftForStrip = sess.presentResultRepairDraft.get();
-    if (heldDraftForStrip && input && typeof input === 'object' && !Array.isArray(input)) {
-      const { input: strippedInput, stripped } = stripUnchangedRepairEnvelopeKeys(
-        input as Record<string, unknown>, heldDraftForStrip, allowedFields,
-      );
-      if (stripped.length) {
-        input = strippedInput;
-        for (const key of stripped) {
-          logger.debug(`[AI] repair patch: stripped unchanged envelope key ${key}`);
-        }
-      }
-    }
-    const patch = presentResultRepairPatchSchemaForFields(allowedFields).safeParse(input);
-    if (!patch.success) {
-      const fieldErrors = patch.error.issues.slice(0, 3)
-        .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
-      return {
-        kind: 'reject',
-        response: reject({
-          success: false,
-          errors: fieldErrors,
-          hint: `Invalid present_result repair patch. Send only is_update:true plus these authorized fields: ${allowedFields.join(', ')}.`,
-        }),
-      };
-    }
-    const merged = sess.presentResultRepairDraft.merge(
-      patch.data,
-      (draft, repairPatch) => mergePresentResultRepairPatch(draft, repairPatch, allowedFields),
-    );
-    if (!merged) {
-      return {
-        kind: 'reject',
-        response: reject({
-          success: false,
-          errors: ['No held present_result draft is available for repair.'],
-          hint: 'Call lineage_present_result with the full required payload.',
-        }),
-      };
-    }
-    return { kind: 'input', input: merged };
-  }
-  if (sess.phase.kind === 'exploring' && requestedRepair) {
-    return {
-      kind: 'reject',
-      response: reject({
-        error: REJECTION_CODES.invalidInput,
-        hint: 'is_update:true is accepted during synthesis only for a session-authorized held repair draft. Send the full new-render payload without is_update.',
-      }, { clearDraft: true }),
-    };
-  }
-  return { kind: 'input', input };
-}
-
-/**
- * Builds and persists the final lineage presentation for the active turn.
- *
- * @param input - Raw model-supplied tool input.
- * @param s - Host capabilities for the active tool session.
- * @returns The successful view summary or a structured validation rejection.
- */
+/** Builds and persists the final lineage presentation for the active turn. */
 export async function executePresentResult(input: unknown, s: ToolServices): Promise<string> {
     try {
       const sess = s.getSession();
@@ -262,10 +152,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const turnEpoch = s.turnEpoch(sess);
       const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
       if (attemptWrite.kind !== 'accepted') {
-        return s.logAndReturn('lineage_present_result', {
-          error: REJECTION_CODES.staleTurn,
+        return s.logAndReturn('lineage_present_result', makeRejection({
+          code: REJECTION_CODES.staleTurn,
           hint: 'The turn no longer owns this session. Do not render this result.',
-        }, rawInput);
+        }), rawInput);
       }
       const model = s.requireModel();
       const isVisualPreview = sess.activeLmStage?.kind === 'visual_preview';
@@ -273,61 +163,58 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? discoveryPreviewNarrative(sess.lastDiscoveryAnswer)
         : null;
 
-      const reject = (failure: object, opts: { clearDraft?: boolean } = {}): string => {
-        if (opts.clearDraft) sess.presentResultRepairDraft.clear();
-        notePresentResultFailure(sess, turnEpoch, failure);
-        return s.logAndReturn('lineage_present_result', failure, rawInput);
+      const reject = (rejection: ToolRejection): string => {
+        sess.recordPresentResultFailure(
+          turnEpoch,
+          sanitizeForLog(rejection.hint ? `${rejection.reason} (${rejection.hint})` : rejection.reason),
+        );
+        return s.logAndReturn('lineage_present_result', rejection, rawInput);
       };
 
-      const rawIsUpdate = typeof input === 'object' && input !== null
-        ? (input as { is_update?: unknown }).is_update
-        : undefined;
-      const coercedIsUpdate = coercedBoolean().safeParse(rawIsUpdate);
-      if (coercedIsUpdate.success && typeof rawIsUpdate === 'string') {
-        input = { ...(input as Record<string, unknown>), is_update: coercedIsUpdate.data };
-        s.logger.debug(`presentResult normalization: is_update "${rawIsUpdate}" → ${coercedIsUpdate.data} (string-encoded boolean unwrapped)`);
-      }
-      const requestedRepair = coercedIsUpdate.success && coercedIsUpdate.data;
-
-      if (isVisualPreview && !sess.presentResultRepairDraft.hasRepairableDraft()) {
+      const held = sess.presentResultRepairDraft.get();
+      const authorization = sess.presentResultRepairDraft.getAuthorization();
+      let presentInput: PresentResultInput;
+      if (held && authorization) {
+        const patch = input as PresentResultRepairPatch;
+        const textlessNewLabels = findTextlessNewSectionLabels(held.sections, patch.sections ?? []);
+        if (textlessNewLabels.length > 0) {
+          const body = isVisualPreview ? 'start' : 'text';
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `sections[] names label(s) not on file with no ${body}: ${quoteIds(textlessNewLabels)}.`,
+            hint: `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.`,
+            issuePaths: ['sections'],
+          }));
+        }
+        presentInput = mergePresentResultRepairPatch(held, patch, authorization);
+        const merged = MergedSectionsSchema.safeParse({ sections: presentInput.sections });
+        if (!merged.success) {
+          const owed = new Set<string>(['sections', ...authorization.fields.filter(field => presentInput[field] === undefined)]);
+          const fields = PRESENT_RESULT_REPAIR_FIELDS.filter(field => owed.has(field));
+          sess.presentResultRepairDraft.hold(presentInput, { fields });
+          const sectionsHeld = (held.sections?.length ?? 0) > 0;
+          const instruction = presentResultRepairInstruction(fields, isVisualPreview ? 'visual_preview' : 'synthesis', sectionsHeld);
+          return reject(rejectionFromZodError(merged.error, {
+            code: REJECTION_CODES.validation,
+            hint: sectionsHeld
+              ? `${instruction} The merge left the report with no section to keep; a section stays unless it is dropped.`
+              : instruction,
+          }));
+        }
+      } else if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
           ? sess.discoveryScopeArtifact
           : null;
-        if (!previewNarrative || !scope) {
-          return reject({
-            error: 'preview_source_unavailable',
+        if (!previewNarrative?.summary || !scope) {
+          return reject(makeRejection({
+            code: 'preview_source_unavailable',
             hint: 'Run the discovery question again, then request its graph preview.',
-          }, { clearDraft: true });
+          }));
         }
-        const supplied = input && typeof input === 'object' && !Array.isArray(input)
-          ? input as Record<string, unknown>
-          : {};
-        const capPreviewProse = (field: string, text: string | undefined, max: number): string | undefined => {
-          if (text === undefined || text.length <= max) return text;
-          s.logger.debug(
-            `[Normalize] tool=present_result field=${field} from=${text.length} chars to=${max} chars (cut to cap)`,
-          );
-          return text.slice(0, max);
-        };
-        const previewProse: Record<string, string | undefined> = {
-          name: capPreviewProse('name', `${scope.origin} graph preview`, PRESENT_RESULT_NAME_MAX),
-          summary: previewNarrative.summary,
-          title: capPreviewProse('title', previewNarrative.title, PRESENT_RESULT_TITLE_MAX),
-        };
-        for (const [field, value] of Object.entries(previewProse)) {
-          const prior = supplied[field];
-          if (typeof prior === 'string' && prior !== value) {
-            s.logger.debug(
-              `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(prior)} to=${value === undefined ? '(absent)' : sanitizeForLog(value)}`,
-            );
-          }
-        }
-        input = { ...supplied, ...previewProse };
+        presentInput = { ...(input as PresentResultInput), summary: previewNarrative.summary, title: previewNarrative.title };
+      } else {
+        presentInput = input as PresentResultInput;
       }
-
-      const repairResolution = resolvePresentResultRepairDraft(sess, s.logger, input, coercedIsUpdate.data, requestedRepair, reject);
-      if (repairResolution.kind === 'reject') return repairResolution.response;
-      input = repairResolution.input;
 
       const presentResultStage: PresentResultStage = isVisualPreview
         ? 'visual_preview'
@@ -337,22 +224,24 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
 
-      const boundary = presentResultBoundarySchemaForPhase(presentResultStage, retainableSections !== null).safeParse(input);
-      if (!boundary.success) {
-        const fieldErrors = boundary.error.issues.slice(0, 3)
-          .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`);
-        const issuePaths = [...new Set(boundary.error.issues.flatMap(issue =>
-          issue.code === 'unrecognized_keys'
-            ? [...issue.keys]
-            : issue.path.length > 0 ? [issue.path.join('.')] : []))];
-        return reject({
-          success: false,
-          errors: fieldErrors,
-          hint: 'Fix the listed fields and call lineage_present_result again with the corrected content.',
-          ...(issuePaths.length > 0 ? { detail: issuePaths.map(path => ({ path })) } : {}),
-        }, { clearDraft: true });
+      const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
+        if (!held) return reject(rejection);
+        sess.presentResultRepairDraft.hold(presentInput, { fields: [field] });
+        return reject({ ...rejection, hint: `${rejection.hint} ${presentResultRepairInstruction([field], presentResultStage)}` });
+      };
+
+      if (previewNarrative) {
+        const partition = findStartOrderIssues(presentInput.sections ?? []);
+        if (partition.length > 0) {
+          sess.presentResultRepairDraft.hold(presentInput, { fields: ['sections'] });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: partition.map(issue => issue.message).join('\n'),
+            hint: presentResultRepairInstruction(['sections'], 'visual_preview'),
+            issuePaths: partition.map(issue => `sections.${issue.index}.start`),
+          }));
+        }
       }
-      const presentInput = boundary.data as PresentResultInput;
 
       const isAmendment = !isVisualPreview && sess.phase.kind === 'completed' && presentInput.is_update === true;
 
@@ -367,7 +256,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
       if (!resultGraph) {
-        return reject(evaluatePresentResultPreconditionsRule(false)!, { clearDraft: true });
+        return reject(evaluatePresentResultPreconditionsRule(false)!);
       }
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
@@ -410,13 +299,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const currentSet = new Set(resolvedNodeIds);
         const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap);
         if (addResolution.unresolved.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
-              'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
-            ],
-          }, { clearDraft: true });
+          return rejectGraphEdit('add_node_ids', makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
+            hint: 'Use lineage_search_objects to resolve canonical IDs.',
+            issuePaths: ['add_node_ids'],
+          }));
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
         const scopeSnapshot = sess.stateMachine?.toJSON() ?? null;
@@ -424,13 +312,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
           : [];
         if (outOfScope.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope, 5)}.`,
-              'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
-            ],
-          }, { clearDraft: true });
+          return rejectGraphEdit('add_node_ids', makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
+            hint: 'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
+            issuePaths: ['add_node_ids'],
+          }));
         }
         resolvedNodeIds.push(...toAdd);
         const newSet = new Set(resolvedNodeIds);
@@ -442,13 +329,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
         const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap);
         if (pruneResolution.unresolved.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
-              'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
-            ],
-          }, { clearDraft: true });
+          return rejectGraphEdit('prune_node_ids', makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
+            hint: 'Use lineage_search_objects to resolve canonical IDs.',
+            issuePaths: ['prune_node_ids'],
+          }));
         }
         const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
@@ -458,27 +344,23 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (resultGraph.originNodeId) {
         const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
         if (disconnected.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `Closed-graph invariant failed: ${quoteIds(disconnected, 5)} ${disconnected.length === 1 ? 'is' : 'are'} disconnected from origin \`${resultGraph.originNodeId}\`.`,
-              'Adjust add_node_ids / prune_node_ids so the view remains connected from the starting node.',
-            ],
-          }, { clearDraft: true });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `Closed-graph invariant failed: ${quoteIds(disconnected)} ${disconnected.length === 1 ? 'is' : 'are'} disconnected from origin \`${resultGraph.originNodeId}\`.`,
+            hint: 'Adjust add_node_ids / prune_node_ids so the view remains connected from the starting node.',
+          }));
         }
       }
 
       if (retainableSections) {
         const retained = resolveRetainedSections(presentInput.sections, retainableSections, new Set(resolvedNodeIds));
         if (retained.unknownLabels.length > 0) {
-          return reject({
-            success: false,
-            errors: [
-              `sections[] asks to keep text for ${quoteIds(retained.unknownLabels, 5)}, which the committed report has no body for.`,
-              'Send that section with its own text, or use a label from the committed report to keep its text.',
-            ],
-            hint: 'Fix the listed section labels and call lineage_present_result again.',
-          }, { clearDraft: true });
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `sections[] asks to keep text for ${quoteIds(retained.unknownLabels)}, which the committed report has no body for.`,
+            hint: 'Send that section with its own text, or use a label from the committed report to keep its text.',
+            issuePaths: ['sections'],
+          }));
         }
         const keptCount = retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string' && sec.text.trim().length > 0).length;
         if (keptCount > 0) {
@@ -487,17 +369,45 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         presentInput.sections = retained.sections;
       }
 
-      s.logger.debug(`presentResult section[0] preview: ${trunc(presentInput.sections?.[0]?.text ?? '(empty)', 200)}`);
+      const unknownEvidenceIds: string[] = [];
+      let renderInput: PresentResultInput = isVisualPreview && presentInput.sections
+        ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
+        : presentInput;
+      if (!isVisualPreview && presentInput.sections?.length) {
+        const { blocks: evidenceBlocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
+        const expand = (text: string, fieldLabel: string): string => {
+          const expanded = expandEvidenceRefs(text, evidenceBlocks);
+          unknownEvidenceIds.push(...expanded.unknownIds);
+          for (const entry of expanded.normalized) {
+            s.logger.debug(`presentResult normalization: evidence reference ${entry} — ${fieldLabel}`);
+          }
+          return expanded.text;
+        };
+        const expandOptional = (text: string | undefined, fieldLabel: string): string | undefined =>
+          text === undefined ? text : expand(text, fieldLabel);
+        renderInput = {
+          ...presentInput,
+          title: expandOptional(presentInput.title, 'title'),
+          intro: expandOptional(presentInput.intro, 'intro'),
+          closing: expandOptional(presentInput.closing, 'closing'),
+          sections: presentInput.sections.map(sec => {
+            const expanded = expand(sec.text, `section "${trunc(sec.label, 60)}"`);
+            return expanded === sec.text ? sec : { ...sec, text: expanded };
+          }),
+        };
+      }
 
-      const bareNodeIds = findBareNonPrunedNodes(resultGraph, presentInput, resolvedNodeIds);
+      s.logger.debug(`presentResult section[0] preview: ${trunc(renderInput.sections?.[0]?.text ?? '(empty)', 200)}`);
+
+      const bareNodeIds = findBareNonPrunedNodes(resultGraph, renderInput, resolvedNodeIds);
       if (bareNodeIds.length > 0) {
         s.logger.debug(`[Presentation] ${bareNodeIds.length} non-pruned node(s) left bare by the AI (rendered unlabeled/uncolored) — ${trunc(bareNodeIds.join(', '), 200)}`);
       }
 
       const renderedNodeIds = new Set(resolvedNodeIds);
       const unrenderedSlotIds = findUnrenderedDetailSlotIds(
-        sess.memory.notedNodeIds.filter(id => renderedNodeIds.has(id)),
-        presentInput,
+        requiredDetailSlotIds(sess.memory.notedNodeIds, renderedNodeIds),
+        renderInput,
       );
       if (unrenderedSlotIds.length > 0) {
         s.logger.debug(`[Presentation] ${unrenderedSlotIds.length} of ${sess.memory.slotCount} detail slot(s) reached no section — ${trunc(unrenderedSlotIds.join(', '), 200)}`);
@@ -505,33 +415,25 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       let assembledDescription: string | undefined = undefined;
-      if (presentInput.sections?.length) {
+      if (renderInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
         const columnChainPreface = resultGraph.columnAspect
           ? buildColumnChainPreface(resultGraph.columnAspect.edges)
           : undefined;
-        // Slots of rendered nodes ride into assembly so the engine restores any captured ⚠️
-        // callout or $$ formula the authored section text omits; unlinked slots stay on the
-        // rejection path below.
-        const renderedDetailSlots = sess.memory.getResult().detail_slots.filter(slot => renderedNodeIds.has(slot.nodeId));
         const assembled = orderAndAssemble(
-          presentInput.sections,
+          renderInput.sections,
           {
-            title: presentInput.title,
-            intro: presentInput.intro,
-            closing: presentInput.closing,
+            title: renderInput.title,
+            intro: renderInput.intro,
+            closing: renderInput.closing,
             nodeMap,
             ...(columnChainPreface ? { preface: columnChainPreface } : {}),
-            ...(renderedDetailSlots.length > 0 ? { detailSlots: renderedDetailSlots } : {}),
           },
         );
         assembledBadges = assembled.badges;
         assembledDescription = assembled.description;
         if (assembled.droppedSectionLinks.length > 0) {
           s.logger.debug(`[Presentation] ${assembled.droppedSectionLinks.length} duplicate section link(s) dropped (first section keeps the badge) — ${trunc(assembled.droppedSectionLinks.map(d => `${d.node_id}: "${d.dropped_from}" → kept in "${d.kept_in}"`).join(', '), 300)}`);
-        }
-        for (const item of assembled.restoredDetailItems) {
-          s.logger.debug(`[Presentation] captured ${item.kind} restored to section "${item.label}" — ${trunc(item.text.replace(/\s+/g, ' '), 200)}`);
         }
       }
 
@@ -540,34 +442,41 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       );
 
       const externalViolations: PresentResultViolation[] = [];
-      if (isVisualPreview && previewNarrative) {
-        externalViolations.push(...findDiscoveryPreviewReuseViolations(previewNarrative.body, presentInput));
-      }
-      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, presentInput, resolvedNodeIds, sess.memory.notedNodeIds);
+      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds);
       if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
           field: 'sections',
           messages: [
-            `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes, 5)}.`,
-            'For each one: add its id to a sections[].node_ids, or to any highlight_groups[].node_ids, or give it one grounded notes[].node_id caption. Tables carry the traced column even when they have no detail slot.',
+            `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes)}.`,
+            'For each one: add its id to a sections[].node_ids, or give it one grounded notes[] entry. Tables carry the traced column even when they have no detail slot.',
           ],
           repairFields: ['sections', 'highlight_groups', 'notes'],
           paths: ['sections', 'highlight_groups', 'notes'],
           entryIds: uncoveredCtNodes,
-          soleHint: 'Fix CT node coverage only. Keep existing section text where possible; add each named node to a section, a highlight group, or notes[].',
         });
       }
       if (unrenderedSlotIds.length > 0) {
         externalViolations.push({
           field: 'sections',
           messages: [
-            `Detail slot(s) reached no section: ${quoteIds(unrenderedSlotIds, 5)}.`,
-            'For each one, add its id to a sections[].node_ids so the captured findings render in that section\'s text — a notes[] caption or a highlight color does not carry a detail slot\'s prose.',
+            `Detail slot(s) reached no section: ${quoteIds(unrenderedSlotIds)}.`,
+            'Add each id to a section\'s node_ids and write that object\'s captured findings into the same section\'s text; a notes caption or a highlight color does not carry them.',
           ],
           repairFields: ['sections'],
           paths: ['sections'],
           entryIds: unrenderedSlotIds,
-          soleHint: 'Fix detail-slot coverage only. Keep existing section text where possible; add each named node to a sections[].node_ids.',
+        });
+      }
+      if (unknownEvidenceIds.length > 0) {
+        externalViolations.push({
+          field: 'sections',
+          messages: [
+            `Evidence id(s) ${quoteIds([...new Set(unknownEvidenceIds)])} name no captured SQL block. `
+            + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.',
+          ],
+          repairFields: ['sections'],
+          paths: ['sections'],
+          entryIds: [...new Set(unknownEvidenceIds)],
         });
       }
 
@@ -581,20 +490,19 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
         return 'out_of_scope';
       };
-      const validation = validatePresentResult(presentInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage, nodeIdState);
+      const validation = validatePresentResult(renderInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage, nodeIdState);
 
       if (!validation.success) {
-        if (isRepairablePresentResultFailure(validation)) {
-          sess.presentResultRepairDraft.hold(presentInput, validation.repairFields);
-          validation.hint = `${validation.hint} You may repair the held draft by calling lineage_present_result with is_update:true and only these corrected fields: ${validation.repairFields.join(', ')}.`;
-        } else {
-          sess.presentResultRepairDraft.clear();
+        if (validation.repairable) {
+          sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
         }
-        notePresentResultFailure(sess, turnEpoch, validation);
-        return s.logAndReturn('lineage_present_result', validation, rawInput);
+        return reject(validation.rejection);
       }
 
       const runId = sess.explorationRunId ?? sess.id;
+      const renderedNotes = isAmendment
+        ? mergeAmendedNotes(resultGraph.notes, validation.notes, validation.node_ids)
+        : validation.notes.map(n => ({ nodeId: n.node_id, text: n.caption }));
       const aiMetadata: PresentationArtifact['aiMetadata'] = {
         summary: validation.summary,
         description: validation.description,
@@ -603,7 +511,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         runId,
         highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
         badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
-        notes: validation.notes.map(n => ({ nodeId: n.node_id, text: n.text })),
+        notes: renderedNotes,
         layoutDirection: validation.layout_direction,
         ...(resultGraph.columnAspect ? {
           columnAspect: {
@@ -635,37 +543,30 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         );
       } catch (error) {
         s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
+        sess.markSynthesisRenderDegraded('preview_dispatch');
       }
 
       const repeatedSuccess = sess.presentResultCalledThisTurn;
       const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
       if (successWrite.kind !== 'accepted') {
-        return s.logAndReturn('lineage_present_result', {
-          error: REJECTION_CODES.staleTurn,
+        return s.logAndReturn('lineage_present_result', makeRejection({
+          code: REJECTION_CODES.staleTurn,
           hint: 'The result was not committed because the turn no longer owns this session.',
-        }, rawInput);
+        }), rawInput);
       }
       if (isAmendment) {
         resultGraph.nodeIds = resolvedNodeIds;
         resultGraph.edges = resolvedEdges;
-        const existingNotes = new Map((resultGraph.notes ?? []).map(n => [n.nodeId, n]));
-        for (const n of validation.notes) existingNotes.set(n.node_id, { nodeId: n.node_id, summary: n.text });
-        resultGraph.notes = Array.from(existingNotes.values());
-      } else {
-        resultGraph.notes = validation.notes.map(n => ({ nodeId: n.node_id, summary: n.text }));
       }
+      resultGraph.notes = renderedNotes.map(n => ({ nodeId: n.nodeId, summary: n.text }));
       {
         resultGraph.description = validation.description ?? undefined;
         resultGraph.summary = validation.summary ?? undefined;
-        resultGraph.title = presentInput.title ?? undefined;
-        resultGraph.intro = presentInput.intro ?? undefined;
-        resultGraph.closing = presentInput.closing ?? undefined;
-        if (Array.isArray(presentInput.sections)) {
-          resultGraph.sections = presentInput.sections.map(sec => ({
-            label: sec.label,
-            node_ids: sec.node_ids,
-            text: sec.text,
-          }));
+        resultGraph.title = renderInput.title ?? undefined;
+        resultGraph.intro = renderInput.intro ?? undefined;
+        resultGraph.closing = renderInput.closing ?? undefined;
+        if (Array.isArray(renderInput.sections)) {
+          resultGraph.sections = renderInput.sections.map(sec => ({ label: sec.label, node_ids: sec.node_ids, text: sec.text }));
           resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
         }
       }

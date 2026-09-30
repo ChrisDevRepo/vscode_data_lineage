@@ -8,14 +8,29 @@ export type KeyboardShortcutId =
   | 'excludeHighlightedNode'
   | 'exitMode'
   | 'toggleSchemaView'
-  | 'hideExpandedSchemaClusters';
+  | 'hideExpandedSchemaClusters'
+  | 'aiSectionPrevious'
+  | 'aiSectionNext';
 
 /**
- * Subset of {@link KeyboardShortcutId} for app-level (always-active) shortcuts —
- * the ids that carry a concrete key binding in {@link SHORTCUT_KEYS}.
+ * The Esc step-back order: one `useKeyboardShortcut` priority per overlay level, highest first.
+ * A registration at a lower level never fires while a higher one is active and unblocked —
+ * closing Help always outranks unpinning a column or closing a local picker, which always
+ * outranks exiting the mode itself. The mode-exit registration uses the hook's default priority.
+ */
+export const ESC_PRIORITY = {
+  help: 20,
+  overlay: 10,
+} as const;
+
+/**
+ * Subset of {@link KeyboardShortcutId} documented in the Help panel and carrying a concrete key
+ * binding in {@link SHORTCUT_KEYS} — every one of them reaches the document, either as an
+ * always-active app-level shortcut or, for `aiSectionPrevious` / `aiSectionNext`, as the AI
+ * report pane's own local handler while it has focus.
  *
  * @remarks
- * Binding {@link SHORTCUT_KEYS} to `Record<AppShortcutId, string>` turns any drift
+ * Binding {@link SHORTCUT_KEYS} to `Record<AppShortcutId, string | string[]>` turns any drift
  * between the runtime key map and the documented ids into a compile error.
  */
 export type AppShortcutId = Extract<
@@ -27,6 +42,8 @@ export type AppShortcutId = Extract<
   | 'exitMode'
   | 'toggleSchemaView'
   | 'hideExpandedSchemaClusters'
+  | 'aiSectionPrevious'
+  | 'aiSectionNext'
 >;
 
 /**
@@ -36,7 +53,7 @@ export type AppShortcutId = Extract<
  * `useKeyboardShortcut` matches case-insensitively — list each letter key once;
  * never add upper/lowercase duplicates.
  */
-export const SHORTCUT_KEYS: Record<AppShortcutId, string> = {
+export const SHORTCUT_KEYS: Record<AppShortcutId, string | string[]> = {
   quickJump: '/',
   fitView: 'f',
   openHelp: '?',
@@ -44,6 +61,8 @@ export const SHORTCUT_KEYS: Record<AppShortcutId, string> = {
   exitMode: 'Escape',
   toggleSchemaView: 's',
   hideExpandedSchemaClusters: 'h',
+  aiSectionPrevious: '[',
+  aiSectionNext: ']',
 };
 
 /**
@@ -63,7 +82,14 @@ export const SHORTCUT_DESCRIPTIONS: Record<AppShortcutId, string> = {
   hideExpandedSchemaClusters: 'Hide schema clusters in Expanded Schema View',
   excludeHighlightedNode: 'Exclude the selected node from the view',
   exitMode: 'Close active input, then exit the current mode',
+  aiSectionPrevious: 'Previous AI report section (report pane focused)',
+  aiSectionNext: 'Next AI report section (report pane focused)',
 };
+
+/** A checkbox or radio is a choice, not a place the user is typing. */
+function isChoiceInput(target: EventTarget): boolean {
+  return target instanceof HTMLInputElement && (target.type === 'checkbox' || target.type === 'radio');
+}
 
 /**
  * Reports whether an event target is a text-entry surface (`input`, `textarea`,
@@ -71,17 +97,32 @@ export const SHORTCUT_DESCRIPTIONS: Record<AppShortcutId, string> = {
  *
  * @remarks
  * Shared by {@link useKeyboardShortcut} and the app-level shortcut handlers so
- * bare-key shortcuts never fire while the user is typing. Single source of truth
- * for the guard — keep both consumers on this function rather than re-checking
- * element types inline.
+ * bare-key shortcuts never fire while the user is typing. A checkbox or radio is
+ * not typing. Single source of truth for the guard — keep both consumers on this
+ * function rather than re-checking element types inline.
  *
  * @param target - The `KeyboardEvent.target` to classify.
  * @returns `true` when the target accepts text input and shortcuts must be suppressed.
  */
 export function isTextEntryTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (
-    target.isContentEditable ||
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement
-  );
+  if (!(target instanceof HTMLElement) || isChoiceInput(target)) return false;
+  return target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+}
+
+/**
+ * Reports whether an event target is a text-entry surface that currently holds content.
+ *
+ * @remarks
+ * A step-back shortcut (Esc) that owns emptying-then-exiting behavior passes this guard instead
+ * of {@link isTextEntryTarget}: the first press clears the local field (handled by the field's own
+ * key handler), and only once it is empty does the shortcut reach the mode it steps back out of.
+ * A focused-but-empty field is not "the user is typing" for that purpose.
+ *
+ * @param target - The `KeyboardEvent.target` to classify.
+ * @returns `true` when the target is a text-entry surface and currently non-empty.
+ */
+export function isTextEntryTargetWithContent(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement) || isChoiceInput(target)) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return target.value.length > 0;
+  return target.isContentEditable && (target.textContent?.length ?? 0) > 0;
 }

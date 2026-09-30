@@ -55,3 +55,11 @@ export function reconcileAiView(nodeIds: string[], metadata: AIViewMetadata, mod
 
   return { nodeIds: resolved, unresolved, metadata: reconciled };
 }
+
+/** Ids carrying an AI badge or footnote in `metadata`, for the layout's annotation band. */
+export function annotatedNodeIdsFromAiMetadata(metadata: AIViewMetadata): string[] {
+  const ids = new Set<string>();
+  for (const badge of metadata.badges) ids.add(badge.nodeId);
+  for (const note of metadata.notes ?? []) ids.add(note.nodeId);
+  return [...ids];
+}

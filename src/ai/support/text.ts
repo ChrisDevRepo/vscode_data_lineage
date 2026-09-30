@@ -60,6 +60,30 @@ export function trunc(text: string, max = 60): string {
 }
 
 /**
+ * Truncate `text` to at most `max` characters, folding at the nearest earlier whitespace boundary
+ * instead of {@link trunc}'s mid-word hard cut, with a trailing ellipsis.
+ *
+ * @remarks
+ * `trunc` is correct for a single-line log preview, where a mid-word cut is unobjectionable. A
+ * multi-line surface (a chat status label) reads as broken prose when the cut lands inside a word,
+ * so this folds back to the last space before the budget. Falls back to `trunc`'s hard cut when no
+ * whitespace exists before `max` (one long unbroken token), so the result is never empty and never
+ * exceeds `max`.
+ *
+ * @param text - The string to shorten.
+ * @param max - Inclusive character budget, the trailing `…` included.
+ * @returns `text` unchanged when within budget, else the text folded at the nearest earlier word
+ * boundary plus `…`.
+ */
+export function truncAtWordBoundary(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  const boundary = cut.lastIndexOf(' ');
+  const folded = boundary > 0 ? cut.slice(0, boundary).trimEnd() : cut.trimEnd();
+  return `${folded}…`;
+}
+
+/**
  * Serialize `value` to JSON with every angle bracket replaced by its unicode escape.
  *
  * @remarks
@@ -201,12 +225,23 @@ function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): strin
 }
 
 /**
+ * Plain-words explanation for each `vscode.LanguageModelError` code, keyed by the error's `code`.
+ * The provider's own text for these carries no remedy the user can act on.
+ */
+const LANGUAGE_MODEL_ERROR_TEXT: Readonly<Record<string, string>> = {
+  NoPermissions: 'The extension is not allowed to use the selected language model. Grant it access in the model picker or the chat provider settings, then try again.',
+  Blocked: 'The AI provider blocked the request. Try again later or choose another model.',
+  NotFound: 'The selected language model is no longer available. Choose another model and try again.',
+};
+
+/**
  * Renders a sanitized provider diagnostic as the single user-facing chat error line.
  *
  * @remarks
  * Classification is code-based only (never message-prose matching), via
  * {@link isTransportProviderError}: a known connection-level code names the failure a temporary
- * network/service interruption; anything else stays a plain provider error. The transport branch
+ * network/service interruption; a `vscode.LanguageModelError` code is named in plain words;
+ * anything else stays a plain provider error. The transport branch
  * reports the code chain, not the provider's own message — that prose is boilerplate shared across
  * every network-class failure and can offer a contradictory remedy. The full message stays in the
  * debug log and trace diagnostic. A provider *verdict* keeps its message, since there the prose is
@@ -218,7 +253,9 @@ export function describeProviderErrorForUser(diagnostic: ProviderErrorDiagnostic
     return `The AI provider connection was interrupted (${codes.join(' → ') || diagnostic.name}).`
       + ' This is usually a temporary network or service issue — please try again.';
   }
-  const detail = trunc(`${diagnostic.name}${codes.length ? ` [${codes.join(' → ')}]` : ''}: ${diagnostic.message}`, 200);
+  const plain = codes.map(code => LANGUAGE_MODEL_ERROR_TEXT[code]).find((text): text is string => text !== undefined);
+  if (plain !== undefined) return plain;
+  const detail = `${diagnostic.name}${codes.length ? ` [${codes.join(' → ')}]` : ''}: ${diagnostic.message}`;
   return `The AI provider reported an error (${detail}).`;
 }
 
@@ -249,14 +286,33 @@ export function sanitizeDescriptionForChat(description: string): string {
  * the offender-list quoting rule.
  *
  * @param ids - Offending ids to display.
- * @param cap - Maximum entries shown; a truncated list ends with ` ...`. Defaults to all entries.
  * @returns The backtick-quoted list. Quoting keeps an invisible defect (zero-width or padding
  *   characters) from rendering an offending id identical to a valid one, which would make the
  *   model re-send the same value and spend a repair round learning nothing.
  */
-export function quoteIds(ids: readonly string[], cap = ids.length): string {
-  const shown = ids.slice(0, cap).map(id => `\`${id}\``).join(', ');
-  return ids.length > cap ? `${shown} ...` : shown;
+export function quoteIds(ids: readonly string[]): string {
+  return ids.map(id => `\`${id}\``).join(', ');
+}
+
+/**
+ * Reads a `cursor` input as the zero-based offset of the next page.
+ *
+ * @param cursor - The `next_cursor` value a previous result carried; absent for the first page.
+ * @returns The offset, `0` when no cursor was sent.
+ */
+export function cursorOffset(cursor: string | undefined): number {
+  return cursor === undefined ? 0 : Number.parseInt(cursor, 10);
+}
+
+/**
+ * Builds the `next_cursor` value for a list that continues at `offset`.
+ *
+ * @param offset - Zero-based index of the first item the next page serves.
+ * @param total - Length of the full list; no cursor is returned once `offset` reaches it.
+ * @returns The opaque cursor string, or `undefined` when the list is exhausted.
+ */
+export function nextCursor(offset: number, total: number): string | undefined {
+  return offset < total ? String(offset) : undefined;
 }
 
 /**

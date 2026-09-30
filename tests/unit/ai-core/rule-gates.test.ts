@@ -8,7 +8,7 @@ import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
  * Executable form of three written architecture rules.
  *
  * @remarks
- * Each rule below is stated in prose (`docs/ARCHITECTURE.md`, `.github/copilot-instructions.md`).
+ * Each rule below is stated in prose (`docs/ARCHITECTURE.md`, `docs/DEVELOPER_GUIDE.md`).
  * The scans run inside the normal unit suite — and therefore inside `npm run gate` — so a
  * violation fails the build.
  *
@@ -301,7 +301,7 @@ describe('rejection codes — one home per multi-site code', () => {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, index) => {
         for (const code of MULTI_SITE_REJECTION_CODES) {
-          if (line.includes(`error: '${code}'`) || line.includes(`error: "${code}"`)) {
+          if (line.includes(`code: '${code}'`) || line.includes(`code: "${code}"`)) {
             offenders.push(`${posixRelative(aiRoot, file)}:${index + 1} ${code}`);
           }
         }

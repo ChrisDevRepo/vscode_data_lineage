@@ -4,11 +4,10 @@
  * Enforces the invariant the Legend depends on: every schema in the legend LIST
  * (`deriveLegendSchemas`) must have a color in the legend MAP (`deriveLegendColorMap`).
  *
- * Regression context: in overview mode an expanded external-only schema (e.g. `ext`,
- * one external object) used to enter the list while the map skipped external object
- * nodes, so the Legend threw `No legend color assigned for "ext"` and crashed the
- * whole webview. Externals are not palette schemas — they must never appear in the
- * colorful legend, in lockstep across both derivations.
+ * In overview mode, an expanded external-only schema (e.g. `ext`, one external object) must never
+ * enter the list while the map skips external object nodes — a mismatch throws
+ * `No legend color assigned for "ext"` and crashes the whole webview. Externals are not palette
+ * schemas — they must never appear in the colorful legend, in lockstep across both derivations.
  */
 
 import { describe, it, expect } from 'vitest';

@@ -204,7 +204,8 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
  *
  * @remarks
  * Blinkered-worker scope: what to analyse, the node + its neighbours, and continuity/self-correction
- * memory (short-term summaries + `recent_rejections`). No progress chrome, no user-interaction framing.
+ * memory (short-term summaries + `recent_rejections`, earlier hops only — the current hop's rejection
+ * is already the tool result of the call it refused). No progress chrome, no user-interaction framing.
  */
 interface ActiveHopInstruction {
   /** Per-focus user message shipped to the active worker. */
@@ -236,7 +237,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     focusKind: focusIsNonBodied(sess, engine) ? 'non_bodied' : 'bodied',
   });
   const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
-  const recentRejections = sess.memory.getRecentRejections();
+  const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);
   const memory = buildMemoryBlock(sess.memory.getShortTermMemory(), recentRejections);
   const memorySections: string[] = [];
   if (currentTask) memorySections.push('current_task');

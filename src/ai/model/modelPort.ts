@@ -1,9 +1,9 @@
 import {
   AIMessage,
   HumanMessage,
-  SystemMessage,
   ToolMessage,
   type BaseMessage,
+  type MessageContent,
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -16,11 +16,6 @@ import type { TurnTokenBudget } from '../support/tokenBudget';
 /** LangChain's provider-neutral message hierarchy is the graph's sole history type. */
 export type ModelMessage = BaseMessage;
 
-/** Creates a system instruction in the graph's provider-neutral message format. */
-export function modelSystemMessage(text: string): SystemMessage {
-  return new SystemMessage(text);
-}
-
 /** Creates a user message in the graph's provider-neutral message format. */
 export function modelUserMessage(text: string): HumanMessage {
   return new HumanMessage(text);
@@ -32,8 +27,30 @@ export function modelAssistantMessage(text: string): AIMessage {
 }
 
 /**
+ * `AIMessage.additional_kwargs` key carrying a generation's provider stream parts: every part the
+ * bridge does not interpret as text or a tool call (reasoning, thought signatures, provider data),
+ * held as the original objects in stream order.
+ *
+ * @remarks
+ * The array rides exactly one stream chunk: `AIMessageChunk.concat` keeps that array's objects and
+ * order untouched, whereas two chunks each carrying the key would have their items merged by `id`
+ * into plain objects.
+ */
+export const PROVIDER_PARTS_KEY = 'providerParts';
+
+/**
+ * Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty when it carries none.
+ */
+export function messageProviderParts(message: BaseMessage): readonly unknown[] {
+  const parts = message.additional_kwargs?.[PROVIDER_PARTS_KEY];
+  return Array.isArray(parts) ? parts : [];
+}
+
+/**
  * Creates an assistant message containing validated JSON-object tool calls.
  *
+ * @param providerParts - The provider stream parts of the generation that emitted these calls,
+ * replayed verbatim before them so a provider that signs its own turn receives it unchanged.
  * @throws {@link ModelPortError} when a call input is not a JSON object.
  */
 export function modelToolCallMessage(
@@ -43,6 +60,7 @@ export function modelToolCallMessage(
     readonly input: unknown;
   }[],
   text = '',
+  providerParts: readonly unknown[] = [],
 ): AIMessage {
   return new AIMessage({
     content: text,
@@ -52,6 +70,7 @@ export function modelToolCallMessage(
       args: modelToolArgs(call.input),
       type: 'tool_call' as const,
     })),
+    ...(providerParts.length > 0 ? { additional_kwargs: { [PROVIDER_PARTS_KEY]: [...providerParts] } } : {}),
   });
 }
 
@@ -65,16 +84,27 @@ function modelToolArgs(input: unknown): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
-/** Creates the tool-result message paired with a preceding tool call. */
+/**
+ * Creates the tool-result message paired with a preceding tool call.
+ * @param status - Standard tool-result outcome: `'success'` for an executed call, `'error'`
+ * otherwise. Omitted only by a caller with no outcome to report (e.g. replayed chat history).
+ * @param artifact - Machine-only facts riding `@langchain/core`'s documented `ToolMessage.artifact`
+ * side channel — kept on the message for a reader that needs the full structured record, never sent
+ * to the provider. Omitted when the caller has none.
+ */
 export function modelToolResultMessage(
   callId: string,
   toolName: string,
   text: string,
+  status?: 'success' | 'error',
+  artifact?: unknown,
 ): ToolMessage {
   return new ToolMessage({
     tool_call_id: callId,
     name: toolName,
     content: text,
+    ...(status !== undefined ? { status } : {}),
+    ...(artifact !== undefined ? { artifact } : {}),
   });
 }
 
@@ -179,7 +209,7 @@ export interface ModelToolDefinition {
   readonly name: string;
   /** Natural-language description of what the tool does. */
   readonly description: string;
-  /** Zod schema validating the call input; also the acceptance test in {@link matchProseToolCall}. */
+  /** Zod schema validating the call input. */
   readonly inputSchema: ZodType;
 }
 
@@ -200,13 +230,6 @@ export interface ToolGenerationInput {
   readonly tools: readonly ModelToolDefinition[];
   /** Optional policy narrowing which tools the model may call. */
   readonly toolChoice?: ModelToolChoice;
-  /**
-   * `true` when this generation must end in a tool call, so its streamed text is never the
-   * deliverable; only then may the port cut the stream on degenerate repetition
-   * ({@link createStreamRepetitionObserver}). Absent or `false`, text may be the answer and is
-   * bounded by the size ceiling alone.
-   */
-  readonly requiresToolCall?: boolean;
   /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
   /** Graph phase label carried into diagnostics and trace records. */
@@ -225,7 +248,7 @@ export interface ValidGeneratedToolCall {
   readonly callId: string;
   /** Registry tool name to dispatch. */
   readonly toolName: string;
-  /** Call input as the provider sent it, already accepted by the tool's input schema. */
+  /** Zod's accepted, parsed and transformed value — dispatch uses this, never the raw wire shape. */
   readonly input: unknown;
 }
 
@@ -260,6 +283,8 @@ export interface InvalidGeneratedToolCall {
   readonly hint?: string;
   /** Paths of the schema issues that rejected the input, when known. */
   readonly issuePaths?: readonly string[];
+  /** Offending key(s) when the rejection carries a Zod `unrecognized_keys` issue. */
+  readonly unrecognizedKeys?: readonly string[];
 }
 
 /** Validation result for a provider-emitted tool call. */
@@ -290,6 +315,13 @@ export interface ModelIdentity {
 export type ToolGenerationResult =
   | {
       readonly status: 'completed';
+      /**
+       * The model's own turn exactly as the provider returned it — text, every tool call with its
+       * own arguments, and the provider stream parts ({@link PROVIDER_PARTS_KEY}) — appended to the
+       * transcript unchanged. {@link text} and {@link toolCalls} are views of it (`toolCalls` adds
+       * each call's validation outcome).
+       */
+      readonly message: AIMessage;
       readonly content: readonly ToolGenerationContent[];
       readonly text: string;
       readonly toolCalls: readonly GeneratedToolCall[];
@@ -359,6 +391,17 @@ export interface SingleGenerationModelPort {
   readonly budget: TurnTokenBudget;
   /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
   generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult>;
+  /**
+   * Counts tokens for one message's content on the exact model this port wraps — the same
+   * provider-reported count `trimMessages` uses to bound the retry transcript.
+   */
+  getNumTokens(content: MessageContent): Promise<number>;
+}
+
+/** Flattens LangChain `MessageContent` (a string or a list of content blocks) into plain text for a provider token counter. */
+export function messageContentToText(content: MessageContent): string {
+  if (typeof content === 'string') return content;
+  return content.map((block) => (typeof block === 'string' ? block : 'text' in block && typeof block.text === 'string' ? block.text : '')).join('');
 }
 
 /** Full provider-neutral model boundary used by the lineage runtime. */
@@ -396,162 +439,5 @@ export function errorToolTurnResult(
     toolCalls: [],
     error: userMessage ?? describeProviderErrorForUser(diagnostic),
     providerError: diagnostic,
-  };
-}
-
-/** A fenced ```json (or bare ```) code block wrapping exactly one JSON value. */
-const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
-
-/**
- * One `<parameter=name>` pair of the Hermes/XML tool-call envelope — the second recorded spelling
- * of the same miss. Global: a call carries one pair per field, and the closing tag is the bare
- * `</parameter>`, never a named or balanced `</tool_call>` form.
- */
-const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
-
-/** Synthetic call identifier every promoted prose tool call carries, on every lane. */
-export const PROSE_PROMOTED_CALL_ID = 'text-promoted-0';
-
-/** Outcome of reading a text-only generation as a tool call. */
-export type ProseToolCallMatch =
-  | { readonly kind: 'promoted'; readonly toolName: string; readonly input: Record<string, unknown> }
-  | { readonly kind: 'ambiguous'; readonly tools: readonly string[] }
-  | { readonly kind: 'none' };
-
-/**
- * Reads a text-only generation as the record a tool call would carry, without judging it.
- *
- * @remarks
- * Three recorded spellings of one miss: a fenced JSON block, the payload as the entire message body
- * with no fence at all, and the Hermes/XML `<parameter=…>` envelope. The per-value parse of the
- * envelope is best-effort so a bare id like `[ai].[x]` stays the string it is. Zero
- * `<parameter=…>` pairs is not this envelope — matching none must not manufacture an empty `{}` a
- * permissive schema could accept. Reading is not acceptance: what a tool accepts is decided by its
- * own schema in {@link matchProseToolCall}.
- *
- * @param text - The generation's concatenated text.
- * @returns The record read from `text`, or `null` when `text` carries none of the three shapes.
- */
-export function readProseToolCandidate(text: string): Record<string, unknown> | null {
-  const match = FENCED_JSON_BLOCK.exec(text);
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(match ? match[1] : text.trim());
-  } catch {
-    const xmlParameters = [...text.matchAll(XML_TOOL_PARAMETER)];
-    if (xmlParameters.length === 0) return null;
-    candidate = Object.fromEntries(
-      xmlParameters.map(([, name, raw]): [string, unknown] => {
-        const value = raw.trim();
-        try {
-          return [name, JSON.parse(value) as unknown];
-        } catch {
-          return [name, value];
-        }
-      }),
-    );
-  }
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
-  return candidate as Record<string, unknown>;
-}
-
-/**
- * Recovers a tool call a provider described in prose instead of emitting through the native
- * tool-call channel.
- *
- * @remarks
- * The single recognizer both ports call, so the harness measures what production would have done.
- * Callers apply it only to a generation that carries no native tool-call part — a real call is
- * never second-guessed. Acceptance is the tool's own {@link ModelToolDefinition.inputSchema}, the
- * same schema the native path validates against, so nothing here relaxes what a tool accepts. A
- * prose payload names no tool, so its identity is the one schema that accepts it; two accepting
- * schemas leave the tool undetermined and the generation stays a text finish, which the attempt
- * policy then charges as it would any other text-only answer.
- *
- * @param text - The generation's concatenated text.
- * @param definitions - Tool definitions offered for this generation, already narrowed to the active
- * tool choice.
- * @returns The promoted call, the ambiguous tool names, or `none`.
- */
-export function matchProseToolCall(
-  text: string,
-  definitions: readonly ModelToolDefinition[],
-): ProseToolCallMatch {
-  if (definitions.length === 0) return { kind: 'none' };
-  const candidate = readProseToolCandidate(text);
-  if (!candidate) return { kind: 'none' };
-  const accepting = definitions.filter((entry) => entry.inputSchema.safeParse(candidate).success);
-  if (accepting.length === 0) return { kind: 'none' };
-  if (accepting.length > 1) {
-    return { kind: 'ambiguous', tools: accepting.map((entry) => entry.name) };
-  }
-  return { kind: 'promoted', toolName: accepting[0].name, input: candidate as Record<string, unknown> };
-}
-
-/** One degenerate-cycle finding: the repeated normalized line and its occurrence count. */
-export interface RepetitionStrike {
-  /** How many times the normalized line has repeated. */
-  readonly repeats: number;
-  /** The repeated normalized line. */
-  readonly line: string;
-}
-
-const REPETITION_STRIKE = 3;
-const REPETITION_MIN_LINE_CHARS = 32;
-const REPETITION_MAX_TRACKED_LINES = 2048;
-const REPETITION_MAX_BUFFERED_LINE_CHARS = 8192;
-
-/**
- * Counts repeated substantial text lines across ONE streamed generation — the degenerate-repeat
- * sibling of the stream text ceilings.
- *
- * @remarks
- * The ceilings in the ports bound a drain by SIZE; a model oscillating over one undecidable hop
- * choice emits a small cycle tens to hundreds of times (146k-150k chars observed against
- * 4-18k chars of unique content), so the size brake pays nearly the whole bill before reacting.
- * This counter fires when one substantial line reaches its 3rd identical occurrence, which on
- * every recorded loop body lands at 3-17% of the wasted characters. It observes text deltas as
- * they stream, normalizes whitespace (chunk boundaries never split a comparison), and returns the
- * strike exactly once; the caller applies it only to a generation that must end in a tool call
- * ({@link ToolGenerationInput.requiresToolCall}), never after a tool-call delta, with
- * per-generation state, and never where text is the deliverable. Exported
- * beside {@link matchProseToolCall} so any port, production or harness, stops on the same bytes.
- *
- * @returns An observer whose `observe` returns the first {@link RepetitionStrike}, or `null`.
- */
-export function createStreamRepetitionObserver(): {
-  readonly observe: (textDelta: string) => RepetitionStrike | null;
-} {
-  const counts = new Map<string, number>();
-  let partial = '';
-  const count = (raw: string): RepetitionStrike | null => {
-    const line = raw.replace(/\s+/g, ' ').trim();
-    if (
-      line.length < REPETITION_MIN_LINE_CHARS
-      || (counts.size >= REPETITION_MAX_TRACKED_LINES && !counts.has(line))
-    ) {
-      return null;
-    }
-    const repeats = (counts.get(line) ?? 0) + 1;
-    counts.set(line, repeats);
-    return repeats === REPETITION_STRIKE ? { repeats, line } : null;
-  };
-  return {
-    observe(textDelta: string): RepetitionStrike | null {
-      partial += textDelta;
-      let end = partial.indexOf('\n');
-      while (end !== -1) {
-        const strike = count(partial.slice(0, end));
-        partial = partial.slice(end + 1);
-        if (strike) return strike;
-        end = partial.indexOf('\n');
-      }
-      if (partial.length > REPETITION_MAX_BUFFERED_LINE_CHARS) {
-        const strike = count(partial);
-        partial = '';
-        if (strike) return strike;
-      }
-      return null;
-    },
   };
 }

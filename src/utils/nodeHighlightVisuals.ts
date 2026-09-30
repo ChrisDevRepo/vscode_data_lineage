@@ -20,12 +20,13 @@ interface NodeHighlightStyle {
  *
  * @param highlighted - Click-selection state; `'yellow'` is the plain click highlight.
  * @param aiHighlight - AI-authored highlight color/glow, when the model marked this node.
- * @param dimmed - Whether a different node is selected and this one is out of scope.
+ * @param dimmed - Whether a different node is selected and this one is out of scope. Omitted by a
+ * caller whose dim is expressed as CSS instead — see `LIT_CLASS_NAME` in `src/engine/nodeDecoration.ts`.
  */
 export function resolveNodeHighlightStyle(
   highlighted: boolean | 'yellow' | undefined,
   aiHighlight: { color: string; glow: string; shadow: string } | undefined,
-  dimmed: boolean | undefined,
+  dimmed?: boolean,
 ): NodeHighlightStyle {
   const isHighlighted = highlighted === true || highlighted === 'yellow';
   const isYellow = highlighted === 'yellow';

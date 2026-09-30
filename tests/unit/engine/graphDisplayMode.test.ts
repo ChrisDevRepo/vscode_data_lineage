@@ -48,6 +48,19 @@ describe('deriveInitialGraphMode', () => {
   it('defaults schema double-click to Expand Only', () => {
     expect(DEFAULT_CONFIG.overview.schemaDoubleClickBehavior).toBe('expandOnly');
   });
+
+  it('seeds Object View at the default threshold (150)', () => {
+    expect(deriveInitialGraphMode({ filteredCount: 150, config: DEFAULT_CONFIG })).toBe('full');
+  });
+
+  it('seeds Schema View just above the default threshold (151)', () => {
+    expect(deriveInitialGraphMode({ filteredCount: 151, config: DEFAULT_CONFIG })).toBe('overview');
+  });
+
+  it('seeds Schema View when the threshold exceeds the render limit and the count is between them', () => {
+    const wideThreshold = { ...config, overview: { ...config.overview, threshold: 1000 }, renderLimit: 750 };
+    expect(deriveInitialGraphMode({ filteredCount: 800, config: wideThreshold })).toBe('overview');
+  });
 });
 
 describe('deriveGraphDisplayMode', () => {

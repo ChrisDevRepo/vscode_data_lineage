@@ -5,7 +5,7 @@ import { Tooltip } from './ui/Tooltip';
  * Supported visual variants for the {@link ModeBanner}.
  * Each variant applies specific styling and icon colors.
  */
-export type BannerVariant = 'trace' | 'analysis' | 'ai';
+export type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
 
 interface ModeBannerProps {
   /** The visual style of the banner. */
@@ -31,6 +31,7 @@ const VARIANT_CLASS: Record<BannerVariant, string> = {
   trace: 'ln-mode-banner--trace',
   analysis: 'ln-mode-banner--analysis',
   ai: 'ln-mode-banner--ai',
+  bookmark: 'ln-mode-banner--bookmark',
 };
 
 /**
@@ -109,7 +110,14 @@ export const ModeBanner = memo(function ModeBanner({
               type="text"
               value={saveName}
               onChange={e => setSaveName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleConfirmSave(); if (e.key === 'Escape') { setSaving(false); setSaveName(''); } }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleConfirmSave();
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  setSaving(false);
+                  setSaveName('');
+                }
+              }}
               placeholder="Bookmark name..."
               className="h-7 px-2 text-xs rounded-sm ln-input w-[140px]"
             />
@@ -138,7 +146,7 @@ export const ModeBanner = memo(function ModeBanner({
           </div>
         )}
         <Tooltip content="Close">
-          <button onClick={onClose} className="ln-mode-banner__close">
+          <button onClick={() => onClose()} className="ln-mode-banner__close" aria-label="Close">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>

@@ -15,13 +15,11 @@ import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult, SmState } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
-import { discoveryBlockBytes, discoveryEvidenceItemBytes, type TurnTokenBudget } from '../support/tokenBudget';
+import { contextBlockBytes, discoveryEvidenceItemBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { RepairDraftStore } from '../support/repairDraftStore';
-import { readToolError } from '../support/toolErrorEnvelope';
-import { longestPrefixFitting } from '../support/textTruncation';
+import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
-import type { PresentResultInput, PresentResultRepairPatch } from '../tools/presentResult';
-import type { PresentResultRepairField } from '../tools/toolSchemas';
+import type { PresentResultInput, PresentResultRepairAuthorization } from '../tools/presentResult';
 import type { LmStage } from '../tools/toolPolicy';
 
 /** Reviewable exploration proposal. It has no active engine authority until approval. */
@@ -96,7 +94,7 @@ export type ExplorationActivationOutcome =
 export const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
 /*
  * Byte bounds for the discovery-evidence message, one evidence item, and the replayed transcript
- * live in `support/tokenBudget.ts` (`discoveryBlockBytes()`, `discoveryEvidenceItemBytes()`).
+ * live in `support/tokenBudget.ts` (`contextBlockBytes()`, `discoveryEvidenceItemBytes()`).
  */
 /**
  * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn history
@@ -126,33 +124,8 @@ type DiscoveryTranscriptTurn = readonly [
   { readonly role: 'assistant'; readonly content: string },
 ];
 
-const DISCOVERY_TRUNCATION_MARKER = '…[truncated to discovery memory bound]';
-
 function renderDiscoveryTranscript(turns: readonly DiscoveryTranscriptTurn[]): string {
   return JSON.stringify(turns.flat());
-}
-
-function truncateDiscoveryText(text: string, fits: (candidate: string) => boolean): string {
-  if (!fits(DISCOVERY_TRUNCATION_MARKER)) return DISCOVERY_TRUNCATION_MARKER;
-  const prefix = longestPrefixFitting(text, candidate => fits(`${candidate}${DISCOVERY_TRUNCATION_MARKER}`));
-  return `${prefix}${DISCOVERY_TRUNCATION_MARKER}`;
-}
-
-function boundDiscoveryTurn(turn: DiscoveryTranscriptTurn, budget: TurnTokenBudget): DiscoveryTranscriptTurn {
-  const build = (user: string, assistant: string): DiscoveryTranscriptTurn => [
-    { role: 'user', content: user },
-    { role: 'assistant', content: assistant },
-  ];
-  const fits = (user: string, assistant: string): boolean =>
-    Buffer.byteLength(renderDiscoveryTranscript([build(user, assistant)]), 'utf8') <= discoveryBlockBytes(budget);
-  const user = turn[0].content;
-  const assistant = turn[1].content;
-  if (fits(user, assistant)) return turn;
-
-  const boundedAssistant = truncateDiscoveryText(assistant, candidate => fits(user, candidate));
-  if (fits(user, boundedAssistant)) return build(user, boundedAssistant);
-  const boundedUser = truncateDiscoveryText(user, candidate => fits(candidate, boundedAssistant));
-  return build(boundedUser, boundedAssistant);
 }
 
 /**
@@ -230,7 +203,7 @@ export class AiSession {
   public pendingExploration: PendingExplorationProposal | null = null;
   /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
-  /** Latest bounded discovery scope captured in the current turn. */
+  /** Latest bounded discovery scope walked with `lineage_get_scope_bundle`; backs the preview offer ({@link settleDiscoveryTurn}). */
   public discoveryScopeArtifact: DiscoveryScopeArtifact | null = null;
   /** Latest validated presentation, retained for graph replay without another model call. */
   public presentationArtifact: PresentationArtifact | null = null;
@@ -246,15 +219,6 @@ export class AiSession {
    * sees an answer to their original question without opening the description overlay.
    */
   public get lastPresentResultSummary(): string | null { return this.presentationArtifact?.aiMetadata.summary ?? null; }
-  /**
-   * Last `present_result` highlight groups (the Lineage `source`/`transform`/`target` colour
-   * scheme). Persisted from the transient webview `aiMetadata` so post-session diagnostics
-   * can see the rendered colour grouping, which otherwise
-   * lives only in the webview message and never reaches `resultGraph`.
-   */
-  public get lastPresentResultHighlightGroups(): Array<{ label: string; color: string; nodeIds: string[] }> | null {
-    return this.presentationArtifact?.aiMetadata.highlightGroups ?? null;
-  }
   /**
    * `true` when `present_result` was successfully invoked in the current turn.
    *
@@ -288,24 +252,73 @@ export class AiSession {
   /** Held full `present_result` draft for narrow patch-only synthesis repair. */
   public readonly presentResultRepairDraft = new RepairDraftStore<
     PresentResultInput,
-    PresentResultRepairPatch,
-    readonly PresentResultRepairField[]
+    PresentResultRepairAuthorization
   >();
 
+  /** Fields the held `present_result` repair draft authorizes a resend to patch, or `null` when none is held. */
+  public get presentResultRepairFields(): PresentResultRepairAuthorization['fields'] | null {
+    return this.presentResultRepairDraft.getAuthorization()?.fields ?? null;
+  }
+
   /**
-   * Origin node id walked during the most recent discovery turn.
+   * Reason the current turn's synthesis rendered the model's held text without a working
+   * preview/panel step, or `null` when the last render was clean. Set by
+   * {@link markSynthesisRenderDegraded}; read and cleared once by the participant's one-shot
+   * warning toast via {@link consumeSynthesisRenderDegraded}.
+   */
+  private _synthesisRenderDegradedReason: string | null = null;
+
+  /** Records that a synthesis terminal path rendered the model's held text with no working render step. */
+  public markSynthesisRenderDegraded(reason: string): void {
+    this._synthesisRenderDegradedReason = reason;
+  }
+
+  /** Peeks the render-degraded reason without clearing it — read by the synthesis node's own chat line. */
+  public get synthesisRenderDegradedReason(): string | null {
+    return this._synthesisRenderDegradedReason;
+  }
+
+  private readonly _closingNotices = new Map<string, string>();
+
+  /**
+   * Queues a user-visible notice for the turn's closing markdown, once per `key`.
    *
    * @remarks
-   * Captured after a discovery turn makes ≥2 distinct `lineage_get_object_detail` calls; read by the
-   * post-discovery SM-offer pill to seed `lineage_start_exploration` without re-asking the user.
-   * Cleared in {@link resetExploration}.
+   * VS Code folds every response part before a completed response's last markdown into a collapsed
+   * disclosure, so a notice streamed ahead of the answer is never seen. Notices wait here until the
+   * node that writes the answer takes them with {@link takeClosingNotices}.
+   */
+  public queueClosingNotice(key: string, notice: string): void {
+    if (!this._closingNotices.has(key)) this._closingNotices.set(key, notice);
+  }
+
+  /** Returns the queued notices in queue order, joined as markdown paragraphs, and clears the queue. */
+  public takeClosingNotices(): string {
+    const notices = [...this._closingNotices.values()].map(notice => `\n\n${notice}`).join('');
+    this._closingNotices.clear();
+    return notices;
+  }
+
+  /** Returns and clears the render-degraded reason — call exactly once, from the one-shot toast site. */
+  public consumeSynthesisRenderDegraded(): string | null {
+    const reason = this._synthesisRenderDegradedReason;
+    this._synthesisRenderDegradedReason = null;
+    return reason;
+  }
+
+  /**
+   * Origin node id walked during the most recent discovery walk.
+   *
+   * @remarks
+   * Captured by {@link settleDiscoveryTurn} from a walked scope of ≥2 nodes or ≥2 distinct
+   * `lineage_get_object_detail` reads; read by the post-discovery SM-offer pill to seed
+   * `lineage_start_exploration` without re-asking the user. Cleared in {@link resetExploration}.
    */
   public lastDiscoveryOrigin: string | null = null;
 
   /**
-   * Number of distinct nodes inspected via `lineage_get_object_detail`
-   * in the most recent discovery turn. The SM-offer follow-up pill renders
-   * when this count is ≥ 2.
+   * Nodes in the most recent discovery walk: the walked scope's size, or the distinct objects read
+   * with `lineage_get_object_detail`. The SM-offer follow-up pill renders when this count is ≥ 2.
    */
   public lastDiscoveryWalkCount = 0;
 
@@ -469,6 +482,7 @@ export class AiSession {
     this._presentResultFailureCountThisTurn = 0;
     this._presentResultLastFailureReasonThisTurn = null;
     this.presentResultRepairDraft.clear();
+    this._synthesisRenderDegradedReason = null;
   }
 
   private resetMemoryWipeDiagnostics(): void {
@@ -516,6 +530,7 @@ export class AiSession {
     this.resetMemoryWipeDiagnostics();
     this.resetPresentResultTurnState();
     this._bufferedFollowUpProse = null;
+    this._closingNotices.clear();
   }
 
   /**
@@ -555,28 +570,44 @@ export class AiSession {
     return guard;
   }
 
-  /** Clears a stale discovery scope before a new, non-preview discovery turn. */
-  public clearDiscoveryScope(token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'clearDiscoveryScope');
-    if (guard.kind === 'accepted') this.discoveryScopeArtifact = null;
-    return guard;
-  }
-
   /**
-   * Records a multi-object discovery walk so the post-discovery SM-offer pill can fire and seed
-   * `lineage_start_exploration` without re-asking the user. Set by the discovery graph node after a
-   * discovery turn inspects ≥ 2 distinct objects; cleared in {@link resetExploration}.
+   * Settles the post-discovery offers once a discovery turn has its answer.
    *
-   * @param origin - The first inspected node id (the SM-offer origin).
-   * @param walkCount - Distinct objects inspected (≥ 2).
+   * @remarks
+   * A scope of two or more nodes this turn walked, else a detail walk of two or more objects,
+   * becomes the recorded discovery that seeds the "Start deeper hop-by-hop analysis" offer and
+   * `lineage_start_exploration`. A turn that read the catalog without walking a scope answered
+   * about something the stored scope does not show, so that scope — and the "Show graph preview"
+   * offer it backs — is dropped. A turn that read nothing (a direct answer) changes neither, so the
+   * last walk's offers stay on the newest reply. Everything is cleared in {@link resetExploration}.
+   *
+   * @param token - Turn epoch of the discovery turn.
    * @param question - The user's verbatim discovery prompt.
    * @param answer - The AI's final discovery answer (markdown).
+   * @param detailWalk - The turn's multi-object detail walk, or `null`.
+   * @param readCatalog - Whether the turn accepted any tool observation.
    */
-  public recordDiscovery(origin: string, walkCount: number, question: string, answer: string): void {
-    this.lastDiscoveryOrigin = origin;
-    this.lastDiscoveryWalkCount = walkCount;
-    this.lastDiscoveryQuestion = question;
-    this.lastDiscoveryAnswer = answer;
+  public settleDiscoveryTurn(
+    token: number,
+    question: string,
+    answer: string,
+    detailWalk: { readonly origin: string; readonly walkCount: number } | null,
+    readCatalog: boolean,
+  ): SessionWriteOutcome {
+    const guard = this.guardTurnWrite(token, 'settleDiscoveryTurn');
+    if (guard.kind !== 'accepted') return guard;
+    const scope = this.discoveryScopeArtifact?.turnEpoch === token ? this.discoveryScopeArtifact : null;
+    const walk = scope && scope.nodeIds.length >= 2
+      ? { origin: scope.origin, walkCount: scope.nodeIds.length }
+      : detailWalk;
+    if (walk) {
+      this.lastDiscoveryOrigin = walk.origin;
+      this.lastDiscoveryWalkCount = walk.walkCount;
+      this.lastDiscoveryQuestion = question;
+      this.lastDiscoveryAnswer = answer;
+    }
+    if (readCatalog && !(scope && scope.nodeIds.length >= 2)) this.discoveryScopeArtifact = null;
+    return guard;
   }
 
   /**
@@ -637,12 +668,12 @@ export class AiSession {
       ) assistant = message.content;
     }
     if (user !== null && assistant !== null) {
-      this.discoveryTranscript.push(boundDiscoveryTurn([
+      this.discoveryTranscript.push([
         { role: 'user', content: user },
         { role: 'assistant', content: assistant },
-      ], budget));
+      ]);
       while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
-        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > discoveryBlockBytes(budget)) {
+        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > contextBlockBytes(budget)) {
         this.discoveryTranscript.shift();
         debugLog?.(`[AI] [Discovery] oldest transcript turn evicted — turnsRemaining=${this.discoveryTranscript.length} cap=${MAX_DISCOVERY_TRANSCRIPT_TURNS}`);
       }
@@ -675,7 +706,7 @@ export class AiSession {
       }
       this.discoveryEvidence.push({ toolName: observation.toolName, result });
       while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
-        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > discoveryBlockBytes(budget)) {
+        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > contextBlockBytes(budget)) {
         const evicted = this.discoveryEvidence.shift();
         debugLog?.(`[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`);
       }
@@ -809,7 +840,7 @@ export class AiSession {
   public activatePendingExploration(
     expectedRevision: number,
     token: number,
-    factory: (proposal: PendingExplorationProposal) => IHopStateMachine | { error: string },
+    factory: (proposal: PendingExplorationProposal) => IHopStateMachine | ToolRejection,
   ): ExplorationActivationOutcome {
     const guard = this.guardTurnWrite(token, 'activatePendingExploration');
     if (guard.kind !== 'accepted') return guard;
@@ -819,7 +850,7 @@ export class AiSession {
       return { kind: 'rejected', reason: `stale_proposal_revision:${expectedRevision}->${proposal.revision}` };
     }
     const built = factory(proposal);
-    if ('error' in built) return { kind: 'rejected', reason: built.error };
+    if ('code' in built) return { kind: 'rejected', reason: built.code };
     const priorMemory = this.memory.toJSON();
     try {
       const classification = ClassificationSchema.parse(proposal.classification);
@@ -850,6 +881,7 @@ export class AiSession {
     this.phase = { kind: 'exploring' };
     this._presentResultCalledThisTurn = false;
     this._presentResultAutoDispatched = false;
+    this.presentResultRepairDraft.clear();
     return guard;
   }
 

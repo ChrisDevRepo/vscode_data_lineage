@@ -167,9 +167,11 @@ export interface MemoryStateSnapshot {
  * `submit_findings` may put a grounded clause on `column_flow[].upstream_columns[].note` while
  * synthesis lifts only `detail_slots[].sections[].text`; the commit site merges those notes into
  * the sections it stores here. Identity is trimmed exact equality — a substring match is new
- * evidence and is kept. A dropped exact duplicate is NORMALIZE-WITH-LOG when `debugLog` is supplied.
+ * evidence and is kept. A dropped exact duplicate, and an accepted merge, are both
+ * NORMALIZE-WITH-LOG when `debugLog` is supplied — a note joining an existing section's text is a
+ * content change of that section, so it is logged the same as the drop it stands next to.
  *
- * @param nodeId - Node id, for the log line when a duplicate is dropped.
+ * @param nodeId - Node id, for the log line when a duplicate is dropped or a note is merged.
  * @param debugLog - Optional debug sink the commit site already holds.
  */
 export function appendUniqueSectionText(
@@ -196,6 +198,7 @@ export function appendUniqueSectionText(
   }
   if (unique.length === 0) return sections;
   const last = sections[sections.length - 1]!;
+  debugLog?.(`[Memory] column_flow note(s) merged — node=${nodeId ?? '(unknown)'} section=${last.angle} count=${unique.length}`);
   return [...sections.slice(0, -1), { ...last, text: `${last.text}\n${unique.join('\n')}` }];
 }
 

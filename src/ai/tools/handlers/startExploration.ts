@@ -7,21 +7,12 @@
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
-import {
-  DEFAULT_EXPLORATION_QUESTION,
-  depthSidesOf,
-  mergeRefineDepthIntent,
-  resolveDepthIntentForBoundary,
-  type DepthIntent,
-} from '../../sm/smTypes';
+import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent } from '../../sm/smTypes';
+import { depthSidesDiffer, directionFromDepth } from '../../../engine/shared/explorationDepthContract';
 import { sanitizeForLog, trunc } from '../../../utils/log';
 import { StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
-import { renderScopeSummaryMd } from '../../prompting/scopeSummaryRenderer';
-import {
-  normalizeStartExplorationInput,
-  type StartExplorationInputObject,
-} from '../../support/inputNormalization';
+import { nodeFiltersRemovedByOrigin, renderScopeSummaryMd, schemaFiltersRemovedByOrigin } from '../../prompting/scopeSummaryRenderer';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
 import { isCancellationOutcome } from '../../support/cancellation';
@@ -30,25 +21,16 @@ import {
   evaluateBbTargetColumnsRule,
   evaluateAlreadyStartedRule,
   evaluateParallelStartRule,
-  evaluateScopeBudgetRule,
   evaluateSupplementPrereqRule,
   resolveCanonicalQuestion,
 } from '../../interaction/rules/startExplorationRules';
 import type { ToolServices } from './toolServices';
-import { AI_MAX_SCOPE_NODE_IDS } from '../../../engine/shared/bridgeContract';
 import { composeDiscoverySummaryText } from '../../support/discoverySummary';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import { checkScopeAdmission } from '../../support/tokenBudget';
+import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/** Reserve 30% of maxRounds as a buffer for retries and synthesis — never start SM on a scope that fills the whole budget. */
-const SAFETY_RATIO = 0.7;
-
-/**
- * Validates an exploration proposal and either opens its approval gate or resumes an approved supplement.
- *
- * @param input - Raw model-supplied tool input.
- * @param s - Host capabilities for the active tool session.
- * @returns The structured proposal, gate, hop context, or rejection envelope.
- */
+/** Validates an exploration proposal and either opens its approval gate or resumes an approved supplement. */
 export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);
@@ -59,8 +41,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const preCheckPrior = sess.stateMachine as NavigationEngine | null;
       const preCheckLive  = !!preCheckPrior && preCheckPrior.status !== 'complete';
       const isRefining = sess.pendingExploration !== null
-        && sess.phase.kind === 'awaiting_gate'
-        && sess.phase.gate.gate === 'confirm_sm_start';
+        && sess.phase.kind === 'awaiting_gate';
       {
         const alreadyStarted = evaluateAlreadyStartedRule(
           preCheckLive,
@@ -72,23 +53,10 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
       }
 
-      const rawObject = input && typeof input === 'object' && !Array.isArray(input)
-        ? input as StartExplorationInputObject
-        : {};
-      const explicitMode = rawObject.analysisMode === 'bb' || rawObject.analysisMode === 'ct'
-        ? rawObject.analysisMode
-        : undefined;
-      const inheritedMode = isRefining ? sess.pendingExploration?.init.analysisMode : undefined;
-      const normalizedStart = normalizeStartExplorationInput(rawObject, explicitMode ?? inheritedMode);
-      for (const event of normalizedStart.normalizations) {
-        s.logger.debug(`[AI] [StartExploration] normalized field=${event.field} reason=${event.reason} origin=${sanitizeForLog(typeof rawObject.origin === 'string' ? rawObject.origin : '')}`);
-      }
-      const parseInput = input && typeof input === 'object' && !Array.isArray(input)
-        ? normalizedStart.input
-        : input;
-      const parsed = StartExplorationInputSchema.safeParse(parseInput);
+      const parsed = StartExplorationInputSchema.safeParse(input);
       if (!parsed.success) {
-        return s.logAndReturn('lineage_start_exploration', buildStartExplorationReject(parsed.error, normalizedStart.input), loggedInput);
+        const rawObject = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+        return s.logAndReturn('lineage_start_exploration', buildStartExplorationReject(parsed.error, rawObject), loggedInput);
       }
       const data = parsed.data;
       if (data.mission_brief !== undefined) {
@@ -104,6 +72,9 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           modelQuestion: data.question,
           pendingInitQuestion: undefined,
         });
+        if (data.question && data.question !== canonicalQuestion) {
+          s.logger.debug('[AI] [StartExploration] model question discarded — a higher-priority question source is in force (supplement)');
+        }
         if (canonicalQuestion) sess.memory.setUserQuestion(canonicalQuestion);
       };
 
@@ -117,42 +88,71 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           throw new Error('[start_exploration] supplement prerequisite passed without a prior engine');
         }
         const supplementIds = data.supplement.nodeIds ?? [];
+        const supplementScope = priorEngine.measureSupplementScope(supplementIds, data.supplement.chain);
+        const supplementRefusal = checkScopeAdmission(s.budget, supplementScope);
+        if (supplementRefusal) {
+          s.logger.debug(`[ScopeBudget] supplement refused limit=${supplementRefusal.limit} nodes=${supplementScope.nodes} rounds=${supplementScope.rounds} columns=${supplementScope.columns}`);
+          return s.logAndReturn('lineage_start_exploration', makeRejection({
+            code: REJECTION_CODES.overActiveScopeBudget,
+            reason: supplementRefusal.supplementText,
+            detail: { limit: supplementRefusal.limit, nodes: supplementScope.nodes, rounds: supplementScope.rounds, columns: supplementScope.columns },
+          }), loggedInput);
+        }
         const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
-        if ('error' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
+        if ('code' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
+        const skippedIdsSuffix = res.skippedDetails.length > 0
+          ? ` skippedIds=[${res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(',')}]`
+          : '';
+        if (res.agendaed === 0 && res.contracted === 0) {
+          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 contracted=0 skipped=${res.skipped}${skippedIdsSuffix}`);
+          const unresolvedIds = res.skippedDetails.filter(skip => skip.reason === 'unresolved').map(skip => skip.nodeId);
+          const borderSkips = res.skippedDetails.filter(skip => skip.reason !== 'unresolved');
+          const hint = [
+            'No id in this supplement was admitted into this trace (each is listed above with its refusal), so there is nothing to explore. Do not resend this supplement.',
+            ...(unresolvedIds.length > 0
+              ? [`${unresolvedIds.join(', ')} ${unresolvedIds.length === 1 ? 'does' : 'do'} not resolve to an object in the loaded graph: call lineage_search_objects with each named identifier to resolve the canonical schema-qualified id before proposing it.`]
+              : []),
+            ...borderSkips.map(skip => skip.hint
+              ?? `${skip.nodeId} is excluded by the approved scope: to analyse it, start a new lineage_start_exploration proposal (origin + scope, no supplement) that names it without that exclusion, for the user to approve at the confirm_sm_start gate.`),
+          ].join(' ');
+          return s.logAndReturn('lineage_start_exploration', makeRejection({
+            code: REJECTION_CODES.supplementAllRefused,
+            reason: `Supplement refused, nothing admitted: ${res.skippedDetails.map(skip => `${skip.nodeId} (${skip.reason})`).join(', ')}`,
+            hint,
+            detail: { skippedDetails: res.skippedDetails },
+          }), loggedInput);
+        }
         const admittedIds = supplementIds.filter(
           id => !res.skippedDetails.some(skip => skip.nodeId.toLowerCase() === id.toLowerCase()),
         );
         applyFollowUpContext();
         sess.enterExploring(s.turnEpoch(sess));
-        const skippedIdsSuffix = res.skippedDetails.length > 0
-          ? ` skippedIds=[${res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(',')}]`
-          : '';
         s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}${skippedIdsSuffix}`);
         const hopCtx = priorEngine.getHopContext();
         return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }
 
       if (!data.origin && data.proposalRevision === undefined) {
-        return s.logAndReturn('lineage_start_exploration', {
-          error: REJECTION_CODES.missingField,
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: REJECTION_CODES.missingField,
           hint: "Field 'origin' is required for a fresh exploration. Supply 'supplement' with nodeIds only when extending a completed prior exploration (follow-up phase).",
-        }, loggedInput);
+        }), loggedInput);
       }
 
       const prior = sess.stateMachine as NavigationEngine | null;
       const priorLive = !!prior && prior.status !== 'complete';
 
       if (data.proposalRevision !== undefined && !isRefining) {
-        return s.logAndReturn('lineage_start_exploration', {
-          error: REJECTION_CODES.staleProposalRevision,
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: REJECTION_CODES.staleProposalRevision,
           hint: 'proposalRevision is valid only while refining the matching pending approval gate.',
-        }, loggedInput);
+        }), loggedInput);
       }
       if (isRefining && data.proposalRevision !== sess.pendingExploration!.revision) {
-        return s.logAndReturn('lineage_start_exploration', {
-          error: REJECTION_CODES.staleProposalRevision,
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: REJECTION_CODES.staleProposalRevision,
           hint: `Refine proposal revision ${sess.pendingExploration!.revision}; do not reuse an older gate revision.`,
-        }, loggedInput);
+        }), loggedInput);
       }
 
       const parallelViolation = evaluateParallelStartRule(sess.startExplorationRoundId, sess.currentRoundId);
@@ -187,26 +187,23 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const stringArray = (v: unknown, fallback: string[] = []): string[] => v === undefined
         ? [...fallback]
         : Array.isArray(v) ? (v as unknown[]).filter((t): t is string => typeof t === 'string') : [];
-      const excludeTypes = stringArray(data.excludeTypes, pendingInit?.excludeTypes);
-      const excludeSchemas = stringArray(data.excludeSchemas, pendingInit?.excludeSchemas);
-      const excludeNodeIds = stringArray(data.excludeNodeIds, pendingInit?.excludeNodeIds);
+      const excludeTypes = stringArray(data.excludeTypes, pendingInit?.excludeTypes ?? engine.getGuiHiddenTypes());
+      const excludeSchemas = stringArray(data.excludeSchemas, pendingInit?.excludeSchemas ?? engine.getGuiHiddenSchemas());
+      const excludeNodeIds = stringArray(data.excludeNodeIds, pendingInit?.excludeNodeIds ?? engine.getGuiExcludedNodeIds());
       const passNodeIds = stringArray(data.passNodeIds, pendingInit?.passNodeIds);
       const scopeNotes = stringArray(data.scopeNotes, pendingInit?.scopeNotes);
       const refineOrigin = isRefining ? (data.origin ?? pendingInit?.origin ?? '') : (data.origin ?? '');
-      const refineDirection = data.direction ?? (isRefining ? pendingInit?.direction : 'bidirectional');
-      const refineQuestion = resolveCanonicalQuestion({
+      const canonicalRefineQuestion = resolveCanonicalQuestion({
         lastDiscoveryQuestion: sess.lastDiscoveryQuestion,
         currentTurnPrompt: sess.currentTurnPrompt,
         modelQuestion: data.question,
         pendingInitQuestion: isRefining ? pendingInit?.question : undefined,
-      }) ?? DEFAULT_EXPLORATION_QUESTION;
-      const refineMissionBrief = data.mission_brief !== undefined
-        ? data.mission_brief
-        : (isRefining ? pendingInit?.mission_brief : undefined);
-      if (data.mission_brief === undefined && refineMissionBrief !== undefined) {
-        s.logger.debug(`[Mission] provenance=pending_proposal len=${refineMissionBrief.length}`);
+      });
+      if (data.question && data.question !== canonicalRefineQuestion) {
+        s.logger.debug('[AI] [StartExploration] model question discarded — a higher-priority question source is in force (refine)');
       }
-      const refineAnalysisMode = data.analysisMode ?? (isRefining ? pendingInit?.analysisMode : 'bb');
+      const refineQuestion = canonicalRefineQuestion ?? DEFAULT_EXPLORATION_QUESTION;
+      const refineAnalysisMode = data.analysisMode ?? pendingInit?.analysisMode;
       const bbTargetConflict = refineAnalysisMode === 'bb'
         ? evaluateBbTargetColumnsRule(data.targetColumns)
         : null;
@@ -217,30 +214,42 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (refineAnalysisMode === 'bb' && isRefining && pendingInit?.targetColumns?.length) {
         s.logger.debug(`[AI] [StartExploration] refine to BB drops proposal targetColumns cols=[${trunc(pendingInit.targetColumns.join(','), 120)}] origin=${sanitizeForLog(refineOrigin)}`);
       }
-      if (isRefining && data.depth === undefined && data.depthStated !== undefined) {
-        s.logger.debug(`[AI] [Proposal] refine depthStated without depth rejected revision=${sess.pendingExploration!.revision}`);
-        return s.logAndReturn('lineage_start_exploration', {
-          error: REJECTION_CODES.missingField,
-          hint: 'depthStated qualifies only a depth sent in the same call: resend `depth` with the level count the user stated and depthStated: true.',
-        }, loggedInput);
+      const sameStringSet = (a?: string[], b?: string[]): boolean => {
+        const norm = (v?: string[]): string => [...(v ?? [])].map(s2 => s2.toLowerCase()).sort().join('\u0000');
+        return norm(a) === norm(b);
+      };
+      const depthIntent = data.depth ?? pendingInit?.depthIntent;
+      if (!depthIntent) {
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: REJECTION_CODES.missingField,
+          hint: 'depth is required for the exploration proposal: send levels and exactness for both upstream and downstream.',
+        }), loggedInput);
       }
-      const depthIntent: DepthIntent = isRefining
-        ? mergeRefineDepthIntent(pendingInit?.depthIntent ?? { kind: 'default_start' }, data.depth, data.depthStated)
-        : resolveDepthIntentForBoundary(data.depth, data.depthStated);
-      const boundSides = depthSidesOf(depthIntent);
-      if (data.depth && typeof data.depth === 'object') {
-        for (const side of ['upstream', 'downstream'] as const) {
-          const raw = data.depth[side];
-          if (typeof raw === 'number' && raw > 0 && boundSides[side] === null) {
-            s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth.${side} from=${sanitizeForLog(String(raw))} to=(unstated)`);
-          }
+      const refineDirection = directionFromDepth(depthIntent);
+      const sameDepthIntent = (a?: DepthIntent, b?: DepthIntent): boolean =>
+        !!a && !!b && !depthSidesDiffer(a.upstream, b.upstream) && !depthSidesDiffer(a.downstream, b.downstream);
+      const refineScopeChanged = isRefining && (
+        refineOrigin.toLowerCase() !== (pendingInit?.origin ?? '').toLowerCase()
+        || refineAnalysisMode !== pendingInit?.analysisMode
+        || !sameStringSet(refineTargetColumns, pendingInit?.targetColumns)
+        || !sameDepthIntent(depthIntent, pendingInit?.depthIntent)
+      );
+      const missionBriefClearedOnScopeChange = isRefining
+        && data.mission_brief === undefined
+        && refineScopeChanged
+        && !!pendingInit?.mission_brief;
+      const refineMissionBrief = data.mission_brief !== undefined
+        ? data.mission_brief
+        : (isRefining && !refineScopeChanged ? pendingInit?.mission_brief : undefined);
+      if (data.mission_brief === undefined && isRefining) {
+        if (missionBriefClearedOnScopeChange) {
+          s.logger.debug('[Mission] provenance=cleared_on_scope_change');
+        } else if (refineMissionBrief !== undefined) {
+          s.logger.debug(`[Mission] provenance=pending_proposal len=${refineMissionBrief.length}`);
         }
-      } else if (typeof data.depth === 'number' && boundSides.upstream === null) {
-        s.logger.debug(`[Normalize] tool=lineage_start_exploration field=depth from=${sanitizeForLog(String(data.depth))} to=(unstated)`);
       }
-
       const proposalInit = {
-        question: refineQuestion || DEFAULT_EXPLORATION_QUESTION,
+        question: refineQuestion,
         origin: refineOrigin,
         analysisMode: refineAnalysisMode,
         targetColumns: refineTargetColumns,
@@ -255,22 +264,25 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       } satisfies import('../../sm/smTypes').NavigationInitParams;
       const initResult = engine.init(proposalInit);
 
-      if ('error' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
-      const maxRounds = s.maxRounds;
-      const safeMax = Math.max(1, Math.floor(maxRounds * SAFETY_RATIO));
-      const scopeViolation = evaluateScopeBudgetRule(initResult.scopeSize, safeMax, maxRounds);
-      if (scopeViolation) {
-        const scopeOrigin = engine.currentOrigin ?? data.origin;
-        s.logger.debug(`[ScopeBudget] origin=${scopeOrigin} scope=${initResult.scopeSize} safe_max=${safeMax}`);
-        return s.logAndReturn('lineage_start_exploration', scopeViolation, loggedInput);
-      }
-
+      if ('code' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
       const classification = data.classification ?? sess.pendingExploration?.classification;
       if (!classification) {
-        return s.logAndReturn('lineage_start_exploration', { error: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }), loggedInput);
       }
       engine.classification = classification;
-      const summary = engine.getScopeSummary(AI_MAX_SCOPE_NODE_IDS);
+      const summary = engine.getScopeSummary();
+
+      const scopeMeasure = engine.measureAdmissionScope();
+      const refusal = checkScopeAdmission(s.budget, scopeMeasure);
+      if (refusal) {
+        s.logger.debug(`[ScopeBudget] refused limit=${refusal.limit} origin=${engine.currentOrigin ?? data.origin} nodes=${scopeMeasure.nodes} rounds=${scopeMeasure.rounds} columns=${scopeMeasure.columns}`);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: REJECTION_CODES.overActiveScopeBudget,
+          reason: isRefining ? refusal.refineText : refusal.text,
+          detail: { limit: refusal.limit, nodes: scopeMeasure.nodes, rounds: scopeMeasure.rounds, columns: scopeMeasure.columns },
+        }), loggedInput);
+      }
+
       const nextProposal = {
         init: proposalInit,
         classification,
@@ -279,14 +291,14 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       };
       if (isRefining && sess.pendingExploration && sameExplorationProposal(nextProposal, sess.pendingExploration)) {
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
-        return s.logAndReturn('lineage_start_exploration', {
-          error: 'no_op_refine',
-          hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change.',
-        }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: 'no_op_refine',
+          hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change; if the request needs no change to the plan, reply to the user in text instead.',
+        }), loggedInput);
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('lineage_start_exploration', { error: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }, loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }), loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
       const proposalRevision = sess.pendingExploration!.revision;
@@ -294,16 +306,11 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed' || isRefining) {
         const classes = ['sliding_memory'];
-        if (initResult.scopeSchemas) {
-          const filterSet = new Set((activeFilter.schemas || []).map(schema => schema.toLowerCase()));
-          for (const schema of initResult.scopeSchemas) {
-            if (filterSet.size > 0 && !filterSet.has(schema.toLowerCase())) {
-              classes.push(`schema:${schema.toLowerCase()}`);
-            }
-          }
-        }
+        const removedSchemaFilters = schemaFiltersRemovedByOrigin(excludeSchemas, summary.activeFilters.schemas);
 
-        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification);
+        const removedNodeFilters = nodeFiltersRemovedByOrigin(excludeNodeIds, summary.origin, summary.activeFilters.nodeIds);
+
+        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification, removedSchemaFilters, removedNodeFilters);
         let discoverySummary: string | undefined;
         if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
           discoverySummary = await composeDiscoverySummaryText(
@@ -335,14 +342,19 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           detail,
           proposalRevision,
         });
-        const hint = isRefining
+        const missionBriefClearedNote = missionBriefClearedOnScopeChange
+          ? ' mission_brief from the previous revision was not kept because the scope changed; send mission_brief to restate it.'
+          : '';
+        const hint = (isRefining
           ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
-          : 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.';
-        return s.logAndReturn('lineage_start_exploration', {
-          error: REJECTION_CODES.actionRequired,
-          ...gate,
+          : 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.')
+          + missionBriefClearedNote;
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: REJECTION_CODES.actionRequired,
+          reason: gate.detail || undefined,
           hint,
-        }, loggedInput);
+          detail: gate,
+        }), loggedInput);
       }
 
       const hopResult = engine.getHopContext();

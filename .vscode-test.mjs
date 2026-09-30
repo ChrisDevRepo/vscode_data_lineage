@@ -10,7 +10,7 @@ const fixtureExtension = fileURLToPath(
 );
 
 const shared = {
-  version: '1.130.0',
+  version: 'stable',
   launchArgs: ['--disable-extensions'],
   mocha: {
     ui: 'tdd',

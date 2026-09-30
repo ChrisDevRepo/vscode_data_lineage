@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
@@ -20,6 +20,10 @@ interface InlineTraceControlsProps {
   }) => void;
   /** Callback fired to cancel the trace configuration. */
   onClose: () => void;
+  /** BFS-only probe for the object count the current upstream/downstream choice would produce — "count before the click". Omitted when the caller cannot resolve a graph yet. */
+  estimateCount?: (upstreamLevels: number, downstreamLevels: number) => number;
+  /** Render limit the count is checked against for the "over limit" hint; the choice stays clickable regardless — the render-limit notice handles it once applied. */
+  renderLimit?: number;
 }
 
 /** Numeric depth input paired with an exhaustive-depth toggle. */
@@ -46,10 +50,13 @@ function DepthInput({
         value={value}
         onChange={(event) => onChange(parseInt(event.target.value) || 0)}
         disabled={isAll}
+        aria-label={`${label} levels`}
         className="w-16 h-9 px-2 text-sm text-center rounded-sm transition-colors focus:outline-hidden disabled:opacity-50 ln-input"
       />
       <button
         onClick={onToggleAll}
+        aria-label={`All ${label.toLowerCase()} levels`}
+        aria-pressed={isAll}
         className={`h-9 px-3 rounded-sm text-sm font-medium transition-colors ${isAll ? 'ln-btn-primary' : 'ln-btn-secondary'}`}
       >
         All
@@ -66,18 +73,24 @@ export const InlineTraceControls = memo(function InlineTraceControls({
   defaultDownstream = 3,
   onApply,
   onClose,
+  estimateCount,
+  renderLimit,
 }: InlineTraceControlsProps) {
   const [upstream, setUpstream] = useState(defaultUpstream);
   const [isUpstreamAll, setIsUpstreamAll] = useState(false);
   const [downstream, setDownstream] = useState(defaultDownstream);
   const [isDownstreamAll, setIsDownstreamAll] = useState(false);
 
+  const effectiveUpstream = isUpstreamAll ? TRACE_ALL_LEVELS : upstream;
+  const effectiveDownstream = isDownstreamAll ? TRACE_ALL_LEVELS : downstream;
+  const previewCount = useMemo(
+    () => estimateCount?.(effectiveUpstream, effectiveDownstream),
+    [estimateCount, effectiveUpstream, effectiveDownstream],
+  );
+  const overLimit = previewCount !== undefined && renderLimit !== undefined && previewCount > renderLimit;
+
   const handleApply = () => {
-    onApply({
-      startNodeId,
-      upstreamLevels: isUpstreamAll ? TRACE_ALL_LEVELS : upstream,
-      downstreamLevels: isDownstreamAll ? TRACE_ALL_LEVELS : downstream,
-    });
+    onApply({ startNodeId, upstreamLevels: effectiveUpstream, downstreamLevels: effectiveDownstream });
   };
 
   return (
@@ -106,6 +119,11 @@ export const InlineTraceControls = memo(function InlineTraceControls({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+        {previewCount !== undefined && (
+          <span className={`text-xs whitespace-nowrap ${overLimit ? 'ln-text-warning' : 'ln-text-muted'}`}>
+            {previewCount.toLocaleString()} objects{overLimit ? ' — over limit' : ''}
+          </span>
+        )}
         <button
           onClick={handleApply}
           className="h-9 px-4 rounded-sm text-sm font-medium transition-colors ln-btn-primary"
@@ -114,7 +132,8 @@ export const InlineTraceControls = memo(function InlineTraceControls({
         </button>
         <Tooltip content="Close Trace Configuration">
           <button
-            onClick={onClose}
+            aria-label="Close Trace Configuration"
+            onClick={() => onClose()}
             className="h-8 w-8 flex items-center justify-center rounded-sm transition-colors ln-btn-secondary"
           >
             <CloseIcon />

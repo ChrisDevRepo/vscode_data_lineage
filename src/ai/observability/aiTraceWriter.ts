@@ -26,8 +26,8 @@ export type RuntimeLifecycleRecord =
       readonly runFingerprint: string;
       readonly status: 'ok' | 'error' | 'cancelled';
       /**
-       * Machine-readable stop reason behind a non-`ok` status (`semantic_failures`,
-       * `provider_calls`, `output_limit`, `engine_error`, …).
+       * Machine-readable stop reason behind a non-`ok` status (`no_progress`,
+       * `engine_error`, …).
        *
        * @remarks
        * A turn that ends on a tool rejection carries that rejection's prose nowhere in the trace:
@@ -90,10 +90,10 @@ export type RuntimeLifecycleRecord =
       readonly requestId: string;
       readonly gateId: string;
       readonly gate: string;
-      readonly action: 'approve' | 'change' | 'cancel';
+      readonly action: 'approve' | 'change' | 'cancel' | 'hold';
       readonly outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed';
       /** Enumerated cause when `outcome` is `refused`; never free text. */
-      readonly refusedBy?: 'gate_id_mismatch' | 'gate_kind_mismatch' | 'no_pending_gate';
+      readonly refusedBy?: 'gate_id_mismatch' | 'no_pending_gate';
       /**
        * When the action was received. The record's own `at` stamps an accepted approval only after
        * the released turn finishes, so the pair separates decision wait from released work.
@@ -131,9 +131,8 @@ export type RuntimeLifecycleRecord =
        * @remarks
        * `rejectionCode` alone cannot distinguish two different rules that share a code — several
        * `validation` rejections in one phase are otherwise indistinguishable in the NDJSON. These
-       * are the same bounded identifier paths the correction envelope already carries
-       * ({@link rejectionIssuePaths}), never prose, so the lifecycle-records-carry-no-prose
-       * contract above still holds.
+       * are the same bounded identifier paths the rejection carries as `issuePaths`, never prose, so the
+       * lifecycle-records-carry-no-prose contract above still holds.
        */
       readonly issuePaths?: readonly string[];
       readonly durationMs: number;

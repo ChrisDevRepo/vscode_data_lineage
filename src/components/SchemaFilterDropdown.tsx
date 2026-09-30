@@ -31,6 +31,10 @@ interface SchemaFilterDropdownProps {
   onToggleFocusSchema: (schema: string) => void;
   /** Whether the current filter state is "narrowed" (affects visual indicators). */
   isNarrowed?: boolean;
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger while {@link disabled}. */
+  disabledReason?: string;
 }
 
 const SCHEMA_ICON = (
@@ -51,6 +55,8 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
   onSelectNone,
   onToggleFocusSchema,
   isNarrowed = false,
+  disabled = false,
+  disabledReason,
 }: SchemaFilterDropdownProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -64,9 +70,10 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
       isNarrowed={isNarrowed}
       icon={SCHEMA_ICON}
       panelWidth="w-96"
-      panelRole="listbox"
       ariaLabel="Filter schemas"
       panelClassName="max-h-96 flex flex-col"
+      disabled={disabled}
+      disabledReason={disabledReason}
     >
       <div className="mb-2 flex items-center gap-2">
         <input
@@ -96,18 +103,21 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
 
       <div className="overflow-y-auto flex-1">
         {filteredSchemas.map((schema) => (
-          <div key={schema} className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item">
+          <label key={schema} className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item cursor-pointer">
             {onToggleSchema && (
               <input
                 type="checkbox"
                 checked={selectedSchemas.has(schema)}
                 onChange={() => onToggleSchema(schema)}
+                aria-label={schema}
                 className="w-4 h-4 rounded-sm border cursor-pointer ln-checkbox"
               />
             )}
             <Tooltip content={focusSchemas.has(schema) ? 'Unfocus schema' : 'Focus schema'}>
               <button
                 onClick={() => onToggleFocusSchema(schema)}
+                aria-label={`Focus schema ${schema}`}
+                aria-pressed={focusSchemas.has(schema)}
                 className="p-1 rounded-sm transition-colors"
                 style={{ color: focusSchemas.has(schema) ? 'var(--vscode-symbolIcon-functionForeground)' : 'var(--ln-fg-muted)' }}
               >
@@ -115,7 +125,7 @@ export const SchemaFilterDropdown = memo(function SchemaFilterDropdown({
               </button>
             </Tooltip>
             <span className="flex-1 text-sm ln-text">{schema}</span>
-          </div>
+          </label>
         ))}
       </div>
     </ToolbarDropdown>

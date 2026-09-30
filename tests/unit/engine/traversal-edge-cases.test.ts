@@ -18,7 +18,7 @@ import {
   bfsDepthMap,
   bfsReachable,
   findShortestPathOrdered,
-  firstDisconnectedRequiredNode,
+  nodesCutByRemoval,
 } from '../../../src/engine/graphGuards';
 import { makeGraph } from '../helpers/testUtils';
 
@@ -163,18 +163,6 @@ describe('bfsReachable — cycles and self-reference', () => {
   });
 });
 
-describe('firstDisconnectedRequiredNode — cyclic topology', () => {
-  it('reports nothing disconnected while the cycle keeps an alternate route', () => {
-    expect(firstDisconnectedRequiredNode(threeCycle(), 'A', new Set(['B']), new Set(['C']))).toBeNull();
-  });
-
-  it('names the node cut off once the only route is broken', () => {
-    const graph = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-    expect(firstDisconnectedRequiredNode(graph, 'A', new Set(['B']), new Set(['C']))).toBe('C');
-  });
-});
-
-
 describe('findShortestPathOrdered — cycles and self-reference', () => {
   it('finds a forward path inside a cycle without looping', () => {
     expect(findShortestPathOrdered(threeCycle(), 'A', 'C')).toEqual({
@@ -232,5 +220,15 @@ describe('bfsDepthMap', () => {
 
   it('returns the origin alone for an empty edge list', () => {
     expect([...bfsDepthMap([], 'A')]).toEqual([['A', 0]]);
+  });
+});
+
+describe('nodesCutByRemoval — cycles', () => {
+  it('cuts nothing when the removed node sits on a cycle that still reaches the origin', () => {
+    expect(nodesCutByRemoval(threeCycle(), 'A', NONE, new Set(['B']))).toEqual([]);
+  });
+
+  it('terminates on a two-node cycle and cuts nothing beyond the removed node', () => {
+    expect(nodesCutByRemoval(twoCycle(), 'A', NONE, new Set(['B']))).toEqual([]);
   });
 });

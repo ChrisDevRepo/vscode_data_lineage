@@ -7,8 +7,6 @@
  * then interpolate this constant, so a rename cannot drift between the guard and the prompt.
  */
 export const REJECTION_CODES = {
-  /** `submit_findings` carries a CT-only field (`column_flow`) in a BB session. */
-  bbFieldUnknown: 'bb_field_unknown',
   /** Tool called outside the current phase's `toolPolicy` allow-list. */
   offPolicy: 'off_policy',
   /** `start_exploration` while the session's exploration is already live (one-shot per turn). */
@@ -25,19 +23,25 @@ export const REJECTION_CODES = {
   staleTurn: 'stale_turn',
   /** Tool input failed its schema or the engine's argument contract; the hint names the offending field. */
   invalidInput: 'invalid_input',
-  /** CT `submit_findings` failed its schema; the hint names the offending field. Same family as `invalidInput`. */
-  ctFieldRequired: 'ct_field_required',
   /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
   notFound: 'not_found',
   /** `supplement` was requested without a prior exploration in `complete` status to extend. */
   supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
   /** `supplement` named no node to extend; the repair is to answer, never to resend an empty list. */
   supplementEmpty: 'supplement_empty',
+  /**
+   * Every id named in a `supplement` request was refused — unresolved (no such object), or stopped by
+   * the border (excluded, out-of-allowlist, or not connected to the trace) — distinct from
+   * {@link supplementEmpty}, whose list of ids was empty to begin with. The repair is a corrective
+   * tool call (a new `lineage_start_exploration` proposal for a border refusal), never a resend of
+   * this supplement.
+   */
+  supplementAllRefused: 'supplement_all_refused',
   /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
   invalidRegex: 'invalid_regex',
   /** A discovery-phase scope-expanding catalog request exceeded the turn's node/token budget. */
   overDiscoveryBudget: 'over_discovery_budget',
-  /** An active-phase scope admission exceeded the exploration node/token budget. */
+  /** A proposal, scope change or supplement exceeded `ai.maxRounds` or `ai.maxTraceColumns` at admission; no approval card is opened. */
   overActiveScopeBudget: 'over_active_scope_budget',
   /** Consent-gate marker sharing the rejection envelope without being a rejection (`isConsentGateRejection`). */
   actionRequired: 'action_required',
@@ -47,9 +51,11 @@ export const REJECTION_CODES = {
   ctFieldForbiddenInBb: 'ct_field_forbidden_in_bb',
   /** A tool requiring a live exploration session (`stateMachine`) was called with none active. */
   noActiveSession: 'no_active_session',
+  /** A tool ran with no model/graph loaded — the panel closed mid-turn, or no project was ever opened. */
+  noProjectLoaded: 'no_project_loaded',
   /** A `prune_neighbors` entry, or an `end_branch` focus, carries a tracked column an accepted `column_flow` already named (`smRouteValidation.ts`, `smBase.ts`). */
   pruneCarriesTrackedColumn: 'prune_carries_tracked_column',
-  /** A `prune_neighbors` entry, or an `end_branch` verdict, names the immutable exploration origin. */
+  /** An `end_branch` verdict names the immutable exploration origin. */
   pruneOriginForbidden: 'prune_origin_forbidden',
   /** `proposalRevision` no longer matches the pending approval gate under refine. */
   staleProposalRevision: 'stale_proposal_revision',
@@ -69,8 +75,6 @@ export const REJECTION_CODES = {
   writesToNamesReader: 'writes_to_names_reader',
   /** An `upstream_columns` entry names a node already pruned earlier this run (`smRouteValidation.ts`, `columnTracer.ts`). */
   prunedContributor: 'pruned_contributor',
-  /** A CT active tracked column is left unaccounted by the submitted `column_flow` (`smCompleteness.ts`, `smBase.ts` log line). */
-  columnChainIncomplete: 'column_chain_incomplete',
   /** A `submit_findings` field (e.g. `badge_label`, a `column_flow` note) exceeds its length bound (`smBase.ts`). */
   fieldLengthExceeded: 'field_length_exceeded',
   /** The provider emitted the synthetic structured-output/terminal tool call with empty required arguments (`structuredOutput.ts`, `vscodeModelPort.ts`, `graph.ts`). */
@@ -81,17 +85,13 @@ export const REJECTION_CODES = {
   classificationLockViolation: 'classification_lock_violation',
   /** A registered tool handler threw; the generic fallback envelope both LM lanes feed back to the model (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
   toolExecutionError: 'tool_execution_error',
-  /** `readToolError`'s synthesized code for the `{success:false,errors:[]}` shape when no `error` field is present (`toolErrorEnvelope.ts`). */
+  /** A `lineage_present_result` call failed an engine-state or content rule its served schema cannot express (`presentResult.ts`, `handlers/presentResult.ts`). */
   validation: 'validation',
-  /** `submit_findings` reached an engine not in `awaiting_findings`; the rule mapper passes it through for every status but `complete` (`smBase.ts`, `submitFindingsRules.ts`). */
+  /** `submit_findings` reached an engine in a status other than `awaiting_findings` and not `complete` (`smBase.ts`). */
   invalidStatus: 'invalid_status',
-  /** `submit_findings` reached an engine whose exploration is already `complete`; the mapped wire form of {@link REJECTION_CODES.invalidStatus} (`submitFindingsRules.ts`). */
+  /** `submit_findings` reached an engine whose exploration is already `complete` (`smBase.ts`). */
   explorationComplete: 'exploration_complete',
-  /** Engine-internal: `submit_findings.focus_node_id` resolves to no loaded node; mapped to {@link REJECTION_CODES.invalidInput} on the wire (`smBase.ts`, `submitFindingsRules.ts`). */
-  invalidFocusNode: 'invalid_focus_node',
-  /** Engine-internal: `submit_findings.focus_node_id` is a real node other than the current focus; mapped to {@link REJECTION_CODES.focusNodeIdMismatch} (`smBase.ts`, `submitFindingsRules.ts`). */
-  focusMismatch: 'focus_mismatch',
-  /** `submit_findings.focus_node_id` is not the current hop focus; the wire form of {@link REJECTION_CODES.focusMismatch} (`submitFindingsRules.ts`). */
+  /** `submit_findings.focus_node_id` is a real node other than the current hop focus (`smBase.ts`). */
   focusNodeIdMismatch: 'focus_node_id_mismatch',
   /** A provider tool call failed its tool's input schema before dispatch (`vscodeModelPort.ts`, `toolAttempt.ts`, `toolErrorEnvelope.ts`). */
   invalidToolInput: 'invalid_tool_input',
@@ -99,4 +99,6 @@ export const REJECTION_CODES = {
   unknownTool: 'unknown_tool',
   /** The synthetic structured-output call was missing, duplicated or schema-invalid (`structuredOutput.ts`, `vscodeModelPort.ts`). */
   invalidStructuredOutput: 'invalid_structured_output',
+  /** A `supplement`/`start_exploration` id resolves to a real node with no dependency path (in either direction) to the traced graph — refused, never silently admitted (`smBase.ts` `admitSupplementTargets`). */
+  notConnectedToTrace: 'not_connected_to_trace',
 } as const;

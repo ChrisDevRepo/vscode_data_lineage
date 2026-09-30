@@ -315,10 +315,8 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
       {picker && (
         <TraceNeighborPickerToolbar picker={picker} onClose={closePicker} onSelect={selectPickerOption} />
       )}
-      {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
-      {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
-    {/* The trace +/- buttons sit outside the card edge, so they live on this unclipped box; the dim
-        sits here too, so an off-thread card's buttons fade with it. */}
+    {/* The trace +/- buttons and the AI badge/footnote sit outside the card edge, so they live on
+        this unclipped box; the dim sits here too, so an off-thread card's overlays fade with it. */}
     <div
       className="transition duration-300 ease-in-out"
       style={{
@@ -329,6 +327,8 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         zIndex,
       }}
     >
+      {data.aiBadge && <AiBadgeToolbar {...data.aiBadge} />}
+      {data.aiNote && <AiNoteToolbar text={data.aiNote.text} />}
       <TraceControlsRail traceControls={data.traceControls} onAction={applyTraceAction} />
     <div
       className={view.isTransformNode ? 'transition-all duration-300 ease-in-out' : 'rounded-lg border ln-node-card transition-all duration-300 ease-in-out'}

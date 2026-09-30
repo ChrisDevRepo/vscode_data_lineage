@@ -7,7 +7,7 @@ import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
 import { searchCatalog } from './utils/modelSearch';
 import { markGitIgnored } from './utils/gitIgnoredDir';
-import { applyModelToSession, buildExtensionConfig } from './bridge/messageHandlers';
+import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './bridge/messageHandlers';
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 
 /**
@@ -105,11 +105,6 @@ export function registerCommands(
      *
      * @returns The SM state, also when no workspace folder is open to write it to;
      *   `undefined` only when there is no state machine or the write failed.
-     *
-     * @remarks
-     * Shares the `tmp` root with AI trace logging rather than creating a `test-results`
-     * directory in the user's project — that name is this repository's test-output
-     * convention, not something a user's workspace should grow.
      */
     vscode.commands.registerCommand('dataLineageViz.dumpSmState', async () => {
       const sess = getSession();
@@ -189,7 +184,7 @@ export function registerCommands(
         return;
       }
       const model = sess.model;
-      const qp = vscode.window.createQuickPick();
+      const qp = vscode.window.createQuickPick<vscode.QuickPickItem & { schema: string }>();
       qp.placeholder = 'Search tables, views, procedures, functions…';
       qp.matchOnDescription = false;
       qp.matchOnDetail = false;
@@ -201,7 +196,21 @@ export function registerCommands(
           label:       n.name,
           description: `[${n.schema}]`,
           detail:      n.type,
+          schema:      n.schema,
         }));
+      });
+
+      qp.onDidAccept(() => {
+        const picked = qp.selectedItems[0];
+        if (!picked) return;
+        qp.hide();
+        const panel = getActivePanel();
+        if (!panel) {
+          notifyWarning(configLogger, 'Search objects', 'Open the Data Lineage view to focus an object.', { command: 'dataLineageViz.searchObjects' });
+          return;
+        }
+        panel.reveal();
+        void postToWebview(panel, { type: 'focus-object', schema: picked.schema, name: picked.label }, configLogger);
       });
 
       qp.onDidHide(() => qp.dispose());
@@ -229,9 +238,9 @@ export function registerCommands(
           undefined,
           {
             externalRefsEnabled: config.externalRefs.enabled,
-            maxNodes: config.maxNodes,
           },
         );
+        if (isModelOverLimit(model, config.maxNodes, configLogger)) return;
         const sess = getSession();
 
         applyModelToSession(sess, model, false, null);

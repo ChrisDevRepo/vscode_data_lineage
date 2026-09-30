@@ -55,14 +55,14 @@ summary:
   instruction: >
     One line for the info card, ~120 chars: the subject of the analysis and
     where its data lands.
-  example: "Loan lineage from raw checkouts through fee calculation to FactCircA."
+  example: ""
 
 title:
   stages: [synthesis]
   instruction: >
     Optional, ≤80 chars: "[Subject] — [key computation, pattern or finding]",
     ending on the final output object where it fits.
-  example: "NetFeeA — DaysA × RateA, 6-hop ETL to FactCircA"
+  example: ""
 
 intro:
   stages: [synthesis]
@@ -70,11 +70,7 @@ intro:
     2–4 sentences before the sections: the direct answer to the question
     first — the origin, the key relationship or the finding asked for — then
     the architectural context.
-  example: >
-    Read as a business-driven view: NetFeeA is the product of DaysA
-    and RateA — both computed independently before joining at
-    spBuildCircA. DaysA originates in raw checkout imports; RateA is
-    derived from branch margins with a markup formula.
+  example: ""
 
 # Section assembly (lift + group + label) is governed by buildSynthesisPrompt()
 # in src/ai/prompting/prompts.ts — kept there to avoid duplication with the synthesis cue.
@@ -86,10 +82,7 @@ closing:
     One paragraph after the sections with the overall answer in the lens the
     user asked for; a business mission states impact and scope and leaves
     the mechanism to the sections.
-  example: |
-    The spBuildCircA pipeline reloads from staging each run, applies a
-    four-stage cascade (loan staging → fee calculation → waiver
-    application → fact write), and lands region-normalized totals in FactCircA.
+  example: ""
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools/presentResult.ts
 # from title + intro + sections[] + closing) — NOT an AI-writeable field.
@@ -115,10 +108,10 @@ notes:
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
-# Each fired *_capture template produces ONE sections[] entry for its angle.
-# Under classification `both` both recipes fire (two entries); a single-angle
-# lock fires one recipe (one body). Shape: { angle, text }. Independent specs —
-# no cross-references between templates. Each section is self-contained;
+# Each fired *_capture template produces ONE `sections` key for its angle.
+# Under classification `both` both recipes fire (two keys); a single-angle
+# lock fires one recipe (one key). Shape: { business?: string, technical?: string }. Independent specs —
+# no cross-references between templates. Each key is self-contained;
 # synthesis groups across nodes at the next phase.
 
 business_capture:
@@ -142,33 +135,7 @@ business_capture:
     sink holding the traced column's own values, before/after or as-of, is
     a business audit trail: a consumer with a one-line caption.
     </scope_relevance>
-  example: |
-    `spCalcFeeA` computes `NetFeeA` at the final INSERT into
-    `FactCircA`, only for rows with `Status = 'CONFIRMED'`.
-
-    $$
-    NetFeeA = DaysA \times RateA
-    $$
-
-    1. `DaysA` is line-item days checked out, renamed from `RawDaysA` in
-       `CTE_Loans`.
-    2. `RateA` is list rate after markup:
-
-       $$
-       RateA = BaseRateA \times (1 + MarkupPctA)
-       $$
-    3. The fact row is INSERTed with `NetFeeA` populated.
-
-    | From | To | Business meaning |
-    |------|----|------------------|
-    | RawDaysA | DaysA | line-item days checked out |
-    | StdRateA | RateA (pre-markup) | published rate |
-    | MarkupPctA | RateA (component) | branch-specific markup |
-
-    ⚠️ Null `MarkupPctA` collapses `RateA` to `BaseRateA` — verify
-    branch coverage before each run. Consumer impact: every fee
-    dashboard reads `NetFeeA` directly; this rule defines the
-    dashboard's accuracy.
+  example: ""
 
 technical_capture:
   stages: [active]
@@ -182,26 +149,7 @@ technical_capture:
     6. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
     7. Error handling: TRY/CATCH, retry, locking.
     8. Antipatterns: a ⚠️ line per non-sargable or converting predicate, per-row UDF or correlated subquery, unguarded UPDATE or DELETE, or read-before-write order.
-  example: >
-    Loading: TRUNCATE + INSERT — full reload, no delta tracking.
-
-    ```sql
-    INSERT INTO dbo.FactCircA (NetFeeA, BranchId, DaysA)
-    SELECT o.RawDaysA * p.RateA, o.BranchId, o.RawDaysA
-    FROM CTE_Loans o
-    INNER HASH JOIN DimBranch p ON o.BranchId = p.BranchId
-    LEFT JOIN vwRateA pl ON o.BranchId = pl.BranchId
-    WHERE o.IsActive = 1
-    ```
-
-    Filters: `WHERE IsActive = 1` — plain equality predicate; index
-    support is unknown from this DDL (schema metadata required).
-    `INNER HASH JOIN` on `BranchId` — explicit hash-join hint in the
-    source; fit for the actual table sizes needs plan evidence.
-    `LEFT JOIN vwRateA` on `BranchId` — ⚠️ unmatched rows produce NULL
-    downstream; no ISNULL guard before the INSERT.
-    Candidate: an index covering `(BranchId, CheckoutDate)` may help the
-    downstream aggregation — validate against existing indexes first.
+  example: ""
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────
 # One contract for the ⚠️ findings every capture angle may raise. Fires once per
@@ -211,7 +159,7 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    In either angle, one ⚠️ line per statement that silently loses, duplicates, overwrites or defaults rows — including a multi-statement write with no wrapping transaction, where a failure between the statements leaves rows lost or doubled: quote it and say its effect on the rows. A hardcoded value is stated as its literal.
+    In either angle, one ⚠️ line per statement that silently loses, duplicates, overwrites or defaults rows — including a multi-statement write with no wrapping transaction, where a failure between the statements leaves rows lost or doubled: quote it and say its effect on the rows.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
@@ -221,13 +169,13 @@ structural_callouts:
 structural_summary:
   stages: [active]
   instruction: >
-    This focus has no SQL body, so each `sections[]` entry follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
+    This focus has no SQL body, so each `sections` value follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
 # Fires additively alongside business_capture / technical_capture when the
 # session has targetColumns set. Instructs the AI to fill out the column_flow
 # JSON per hop. CT-mode-gated in templateRenderer.ts → CT_MODE_GATED.
-# sections[].text (semantic channel) should cover business/technical logic only —
+# sections (semantic channel) should cover business/technical logic only —
 # NOT re-state column flow; that belongs exclusively in column_flow.
 
 column_trace_capture:
@@ -241,7 +189,7 @@ column_trace_capture:
 
     ## Before submitting — verify
     □ A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
-    □ sections[].text — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
+    □ `sections` — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
 
     ## Verdict — the `verdict` field decides it; column_flow follows
     On `analyze`, column_flow carries each active column — upstream_columns: []
@@ -250,7 +198,7 @@ column_trace_capture:
     upstream column; its writer is visited next, where full attribution
     resolves.
     Off-trace (no tracked column here): column_flow: [] — the node stays for what it
-    does to the rows, stated in sections[].text.
+    does to the rows, stated in `sections`.
 
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompting/prompts.ts. No separate per-angle templates
@@ -270,23 +218,9 @@ general:
     - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation.
     - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.
     - **Status lifecycles**: numbered transitions.
-    - **Callouts**: each captured ⚠️ sits once, in its section; impact before mechanism in a business mission.
+    - **Callouts**: each captured ⚠️ sits once, in its section, as its own markdown list item (`- ⚠️ …`), never merged onto the same line as another callout; impact before mechanism in a business mission.
     - **Scope**: a side branch the question did not ask about is one line in the section it hangs off — never a section, a highlight, or a deletion. A column trace follows the traced column's value chain to its terminal sources.
-  example: >
-    $$NetFeeA = DaysA \times RateA \times (1 - WaiverPctA)$$
-
-    | From | To | Business meaning |
-    | --- | --- | --- |
-    | RawDaysA | DaysA | Days counted per loan line |
-    | StdRateA | RateA | Rate after branch markup |
-
-    ```sql
-    WHERE o.IsActive = 1 AND o.CheckoutDate >= DATEADD(YEAR, -2, GETDATE())
-    ```
-
-    Status flow: 1. Checked Out → 2. Renewed → 3. Overdue → 4. Returned → 5. Closed.
-
-    ⚠️ Null `WaiverPctA` collapses NetFeeA to DaysA × RateA — verify input.
+  example: ""
 
 # ── Big-picture ETL closing — TECHNICAL angle only ───────────────────────────
 # Classification-gated to ['technical', 'both'] in templateRenderer.ts.

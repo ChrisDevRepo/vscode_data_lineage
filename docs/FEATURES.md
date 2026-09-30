@@ -26,14 +26,28 @@ global keybindings, so none of these can conflict with your editor bindings.
 | <kbd>?</kbd> | Open Help |
 | <kbd>s</kbd> | Toggle Schema View |
 | <kbd>h</kbd> | Hide schema clusters in Expanded Schema View |
-| <kbd>Delete</kbd> | Exclude the selected node from the view |
+| <kbd>Delete</kbd> | Exclude the selected node from the view (plain graph only) |
 | <kbd>Esc</kbd> | Close active input, then exit the current mode |
+| <kbd>[</kbd> / <kbd>]</kbd> | Previous / next AI report section, while the report pane has focus |
 
 Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text,
 and never fire with a Ctrl, Cmd, or Alt modifier. <kbd>Esc</kbd> cascades: it closes
 the active input, dropdown, or help panel first, then exits one graph mode per press
 (AI preview → bookmark → analysis → trace). Press <kbd>?</kbd> in the webview for the
 same list in the app.
+
+Menus and popups follow the standard keyboard pattern:
+
+- **Right-click menus** on a node or schema cluster, and the **Graph Analysis** menu, take
+  focus when they open. <kbd>↑</kbd>/<kbd>↓</kbd> and <kbd>Home</kbd>/<kbd>End</kbd> move
+  between items, <kbd>Enter</kbd> runs one, <kbd>Esc</kbd> closes.
+- **Toolbar popups** (Schema, Type and External refs filters, Bookmarks, Exclusion rules) move
+  focus into the popup and return it to their button on <kbd>Esc</kbd>. A whole filter row is
+  clickable, not only its checkbox.
+- **Help** is a modal dialog: focus stays inside while it is open and the first <kbd>Esc</kbd>
+  closes it.
+- An inline delete or leave confirmation moves focus to **Cancel**, so <kbd>Enter</kbd> never
+  confirms a destructive action by accident.
 
 ---
 
@@ -54,15 +68,17 @@ When a loaded graph exceeds a configurable node threshold, the extension starts 
 
 ### Rendering limits
 
-The extension separates the **webview working graph** (`maxNodes`) from **React Flow rendering** (`renderLimit`). `@lineage` queries the complete host snapshot while the GUI stays responsive.
+The extension separates the **webview working graph** (`maxNodes`) from **React Flow rendering** (`renderLimit`). `@lineage` queries the complete loaded model even when rendering is capped. A selection over `maxNodes` is refused and not loaded at all — neither the graph nor `@lineage` sees it.
 
 | Setting | Controls |
 |---------|----------|
-| `dataLineageViz.maxNodes` | Objects admitted to the webview working graph and its virtual-node budget |
+| `dataLineageViz.maxNodes` | Objects (including virtual external-reference nodes) admitted to the webview working graph |
 | `dataLineageViz.renderLimit` | React Flow nodes the GUI will lay out and render |
-| `dataLineageViz.overview.threshold` | Whether a new load starts in Schema View or Object View |
+| `dataLineageViz.overview.threshold` | Whether a new load starts in Schema View or Object View; a threshold above `renderLimit` is treated as `renderLimit` |
 
-When the selected surface would render more than `renderLimit` React Flow nodes, the graph shows a "limit reached" message instead of rendering that surface. Schema View and Expanded Schema View count collapsed schemas as one rendered node each, and trace/path/analysis scopes render ahead of the base full-graph limit. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
+A selection whose object count exceeds `maxNodes` is refused outright — nothing is loaded or rendered, the prior view stays, and an error names the count, the limit, and the setting. It is never silently truncated. When a selection within `maxNodes` would still render more than `renderLimit` React Flow nodes, the graph shows a *Render limit reached* notice instead of drawing it. On the base graph the notice offers **Open Schema View** where available. A trace, path, analysis or AI preview is counted by its own size; for a trace the notice offers **Reduce depth to ↑n ↓n** (the deepest depth per side that fits) and **Exit trace**. Schema View and Expanded Schema View count each collapsed schema as one node. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
+
+Lines scale with the graph: up to about 100 rendered edges they keep full color and width; above that they fade and thin gradually, reaching their floor at 2,000 edges, so a dense graph reads as density rather than solid ink. The fade is stronger in dark themes, where the same line color stands out more, and off in high-contrast themes. Highlighted and route lines keep full emphasis.
 
 ---
 
@@ -142,10 +158,22 @@ After running **Trace Levels**, refine the result directly on the graph without 
 
 - **Add a neighbour** — the **+** control on a node pulls in one of its direct upstream/downstream neighbours that the trace did not already include.
 - **Prune a node** — the **−** control drops a node from the current trace scope.
-- **Safety gating** — the trace origin is an anchor and cannot be pruned, and a prune is rejected when it would disconnect any remaining node from the origin, so the trace always stays connected. Only safe actions are offered.
+- **Safety gating** — the trace origin is an anchor and cannot be pruned. A pruned node leaves together with the branch that hangs only on it, so the trace always stays connected.
 - Edits layer on top of the original trace and never change your filters; re-run **Trace Levels** or press <kbd>Esc</kbd> to discard them.
 
 Editing applies to Trace Levels results — a computed shortest path is fixed.
+
+### Trace navigator
+
+A trace opens with the whole graph visible and nothing dimmed; the navigator starts folded to a button at the top left, beside the legend. Opened, it lists the trace as a tree in a compact top-left card that is only as tall as its rows, and the graph is refitted beside it:
+
+- **Starting point** — the panel title (L0); click it to clear the selection and fit the whole trace. Its tooltip lists the row gestures.
+- **Upstream / Downstream** — fixed sections of hop levels (L1, L2, …); each object's type symbol carries its schema color, as on the canvas and in the legend. Deeper levels start collapsed on large traces; **Expand all** / **Collapse all** in the title bar open or close every level. The **+** on a section loads one more level on that side; its tooltip shows how many nodes it adds.
+- **Click a node** — lights only the route between the starting point and that node — every path connecting them, so both branches of a diamond — animates just those edges and fits the view to the route.
+- **Check nodes** — each checkbox, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+click on a row, adds that node's route: the graph shows only the routes to the checked nodes, on any level and either side, with every route edge animated and the view fitted to all of them. Rows hidden from the graph stay listed, dimmed, and can be checked to add their route. **Show all** restores the trace.
+- **Hide** — the panel's close button folds it back to the button beside the legend; click it to reopen. The choice holds for later traces in the session.
+- **Trim** — right-click a node and choose **Remove from trace** to remove it and the branch that hangs only on it. **Reset** beside the edit summary restores the starting scope.
+- **Find** — the magnifier in the title bar, or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd> inside the panel, opens it; it jumps between matches and opens collapsed levels, and <kbd>Esc</kbd> closes it. Objects reached from neither side are listed under **Connected**.
 
 ### Find path
 
@@ -241,8 +269,8 @@ The default state. The AI uses snapshot catalog tools to inspect loaded scope, D
 
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
 - `/search` pins this path deterministically, skipping the entry-detection model call. `/trace` pins the deep-analysis path below.
-- Discovery scope is bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; over-budget requests are redirected to the approval-gated deep-analysis path.
-- During approved deep analysis, total scope growth is bounded by `dataLineageViz.ai.explorationNodeCap` and `dataLineageViz.ai.explorationTokenBudget`; an over-budget hop submission is held and rejected with a hint to prune, defer, or synthesize.
+- Discovery scope is bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` (further capped at one eighth of the selected model's input window); over-budget requests are redirected to the approval-gated deep-analysis path.
+- A deep-analysis proposal is admitted once, before the approval card: each object the analysis reads takes one round — every procedure, view or function in the scope, and a table only where the analysis reads it itself (a starting table or one named in a follow-up) — and the rounds must fit `dataLineageViz.ai.maxRounds`, and a column trace may select at most `dataLineageViz.ai.maxTraceColumns` starting columns (default 10; columns the trace picks up along the way are not counted). Over a limit, no card opens and the chat names the limit and the setting; narrow the scope, trace fewer columns or raise the setting and ask again. The same check runs on a scope change; a follow-up is checked against the rounds only, counting the rounds already taken. The setting is read on every request.
 - An explicit graph/render request is answered by discovery like any other question; the picture itself is the separate bounded preview below, reached by follow-up, not deep analysis.
 
 #### Bounded graph preview
@@ -285,7 +313,8 @@ Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
 analysis** follow-up, or a discovery request that exceeds the configured
 budget. It begins only after the user approves the consent gate.
 
-- The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal.
+- The proposal card is a summarized view, fact lines only: depth per side, estimated hop and node counts, schemas (in the shortest wording that states the full selection), in-scope objects grouped by type (capped at three lines), tracing mode and columns, analysis angle and every exclusion — all rendered in full. The goal, discovery summary and noted constraints show only in the full plan. The **Show full plan** follow-up prints the whole plan, every in-scope object included.
+- The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal. You can also just reply in chat: approve, ask for a change, or cancel in your own words; an unrelated question is answered and the proposal stays pending.
 - The extension walks the approved graph scope one object at a time and validates every requested route against the loaded catalog before visiting it.
 - Recent summaries provide short-term continuity while full hop details are retained for final synthesis.
 - Below the `Hop X/Y` counter, the chat echoes each completed hop's one-line finding as it lands — a
@@ -305,8 +334,9 @@ intent:
 - “all” seeds the full reachable frontier;
 - bidirectional questions can use different upstream and downstream depths,
   including zero to disable one side;
-- omitted depth uses a fixed default of three levels per side, not the
-  `trace.default*Levels` settings, which apply to the GUI trace.
+- the assistant always states a starting depth for both directions — there is
+  no backend-supplied default, and the `trace.default*Levels` settings apply
+  only to the GUI trace, never the assistant's.
 
 **A level count you state is a hard border; a depth the assistant chose is a
 starting point.** When your question names a number of levels, the trace stops
@@ -336,7 +366,7 @@ enforced throughout.
 - **Ask for a graph preview.** Try *"show me the lineage for `dbo.udfLeadingZeros` in the app"*. The preview is transient; save it explicitly if you want a bookmark.
 - **The assistant is context-aware.** It knows what filters are active and which schemas are visible. Ask *"what's filtered out?"*.
 - **It also sees the screen.** With a trace, a graph analysis, or a bookmark applied, ask *"explain this"*, *"what am I looking at?"*, or — for an AI bookmark — *"what did you find about X?"*, *"which objects did you drop and why?"*, *"has anything changed since?"*. Type `#lineageView` in the chat input to attach the screen explicitly; the lineage tools appear in the `#` picker once a model is loaded.
-- **Customise output.** Command Palette → **Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). See [`AI_PROMPTS.md`](AI_PROMPTS.md) for what each key controls.
+- **Customise output.** Command Palette → **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). See [`AI_PROMPTS.md`](AI_PROMPTS.md) for what each key controls.
 
 ### Requirements
 
@@ -348,9 +378,9 @@ enforced throughout.
 ### Disable
 
 Set `dataLineageViz.ai.enabled` to `false` to disable the `@lineage` participant and all AI tools:
-nothing registers and nothing can execute. VS Code may still show the contributed names in its
-chat and tool pickers — they are declared in the extension manifest, which the host reads
-regardless of the setting — but selecting one performs no AI action.
+nothing registers and nothing can execute, and the manifest's `when` clauses hide the participant
+and the tools from the chat and tool pickers. Reload the window after changing the setting so the
+registration follows it.
 
 ---
 

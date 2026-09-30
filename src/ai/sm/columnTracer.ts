@@ -67,7 +67,7 @@ export class ColumnTracer {
     return this.aspect.target_columns;
   }
 
-  /** Columns that the next hop must account for. */
+  /** Tracked columns served to the next hop. */
   get activeColumns(): string[] {
     return this.aspect.active_columns;
   }
@@ -94,7 +94,7 @@ export class ColumnTracer {
    * continued (an entry with upstream real columns) or produced here (`upstream_columns: []`). An
    * UPSTREAM trace accounts via `active_columns − {out_col}`; a DOWNSTREAM trace accounts against
    * `out_col` UNION every `upstream_columns[].col` named, since the active column there lives on
-   * the PREVIOUS node. A non-empty result means the chain was left incomplete and the engine rejects.
+   * the PREVIOUS node. A non-empty result is returned on the hop ack as data. The engine does not reject the hop for it.
    *
    * @param columnFlow - The column flow entries submitted by the AI.
    * @param traceDirection - Trace direction of the owning exploration.
@@ -330,7 +330,7 @@ export class ColumnTracer {
         }
 
         if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
-          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections[].text, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
           continue;
         }
 

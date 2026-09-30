@@ -31,13 +31,13 @@ Each entry in `rules:` carries:
 |-------|----------|---------|
 | `name` | ✓ | Stable identifier for logs and tests. |
 | `enabled` |  | Opt-out switch: only `enabled: false` skips the rule. Omitting it — or giving it any other value — runs the rule, and validation never inspects the field. |
-| `priority` |  ✓ | Lower runs first. Choose custom priorities after the shipped rules listed in the built-in YAML. |
+| `priority` | ✓ | Lower runs first. Choose custom priorities after the shipped rules listed in the built-in YAML. |
 | `category` | ✓ | One of `preprocessing` \| `source` \| `target` \| `exec` \| `external_ref`. Drives edge direction. |
 | `pattern` | ✓ | JavaScript regex. **Capture group 1** must be the object reference (or, for `external_ref`, the URL / path inside quotes). |
 | `flags` | ✓ | Regex flags. **Must include `g`** — a rule whose flags omit it is rejected by name, because a non-global pattern either hangs the scan or silently under-matches. `gi` is the usual choice. |
 | `description` |  | Human-readable hint shown in logs and errors. |
-| `replacement` | preprocessing only | Replacement string when the rule is a custom preprocessing pass. |
-| `kind` | external_ref only | Free-text label (e.g. `openrowset`, `copy_from`, `bulk_from`). |
+| `replacement` | preprocessing only | Replacement string applied by a custom preprocessing pass. The built-in `clean_sql` entry documents the built-in cleansing pipeline; editing it has no effect. |
+| `kind` | ✓ for `external_ref` | Non-empty label (e.g. `openrowset`, `copy_from`, `bulk_from`); a rule without it is skipped. |
 
 Categories drive edge direction:
 

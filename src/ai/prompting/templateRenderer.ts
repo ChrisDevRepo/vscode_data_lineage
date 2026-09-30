@@ -11,7 +11,7 @@ import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
  *
  * @remarks
  * - `discover`  = inline chat first response (no SM engaged).
- * - `active`    = per-hop `sections[]` writing — capture rules (one entry per fired `*_capture`).
+ * - `active`    = per-hop `sections` writing — capture rules (one key per fired `*_capture`).
  * - `synthesis` = present_result assembly — render rules. Slot bodies arrive
  *                 pre-formatted from the active-phase capture and are lifted
  *                 as written; synthesis assembles, groups, frames.
@@ -91,7 +91,7 @@ const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
 ]);
 
 /**
- * The `sections[].angle` each capture key writes. The per-focus recipe labels its bullet with this
+ * The `sections` key each capture key writes. The per-focus recipe labels its bullet with this
  * value, never the YAML key, so the label is the literal the `submit_findings` schema accepts.
  */
 const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business' | 'technical'>>> = {
@@ -101,32 +101,45 @@ const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business'
 
 /**
  * Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the
- * one-`sections[]`-entry-per-schema-angle rule (`classification_lock_violation` — each capture
- * bullet is labelled with its `sections[].angle` value), the exact-substring quoting rule and
- * the `not established` wording, so no capture key restates them.
+ * one-key-per-schema-angle rule (`classification_lock_violation` — each capture bullet is
+ * labelled with the `sections` key it writes), the exact-substring quoting rule and the
+ * `not established` wording, so no capture key restates them.
+ *
+ * @remarks
+ * The `sections` shape is read from the same {@link CLASSIFICATION_KEPT_ANGLES} the dispatched
+ * `submit_findings` schema narrows to, so the prompt line and the schema never name different
+ * angles; a locked mission told both keys would guess the excluded one and be rejected.
  */
-const CAPTURE_RECIPE_HEADER = [
-  '### Capture recipe',
-  'Submit one `sections[]` entry per angle this mission fires, with that angle in `angle`, and put every bullet below — including the ⚠️ callout bullet — inside that entry\'s `text`. Markdown without headings. Back each grain predicate, formula and ⚠️ line with one short ```sql fence of its deciding expression, an exact substring of `bb_ddl`; what the SQL does not establish reads `not established from the available SQL`. Skip an item the SQL lacks.',
-].join('\n\n');
+function captureRecipeHeader(classification: ClassificationValue | undefined): string {
+  const kept = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
+  const shape = !kept
+    ? 'an object keyed by angle (`{business, technical}`), one key per angle this mission fires'
+    : kept.length === 2
+      ? '`{"business": …, "technical": …}` — classification=both keeps both keys, one key per angle'
+      : '`{"' + kept[0] + '": …}` — classification=' + classification + ' keeps only this key';
+  return [
+    '### Capture recipe',
+    `Submit \`sections\` as ${shape}, and put every bullet below — including the ⚠️ callout bullet — inside that key's string value. Markdown without headings. Back each grain predicate, formula and ⚠️ line with one short \`\`\`sql fence of its deciding expression, an exact substring of \`bb_ddl\`; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,
+  ].join('\n\n');
+}
 
 /**
  * Bare-summary angle clause — the one line the non-bodied per-focus render keeps from
- * {@link CAPTURE_RECIPE_HEADER} when it drops the rest of that header (its SQL-evidence rules do
+ * {@link captureRecipeHeader} when it drops the rest of that header (its SQL-evidence rules do
  * not apply to a schema-only node with no body). Without it the model has no cue that
- * `sections[].angle` is a fixed schema literal and free-labels the entry from the summary's own
- * bullet names (`Purpose`, `Upstream sources`, …), which `lineage_submit_findings` rejects.
+ * `sections` is a fixed schema key set and free-labels the entry from the summary's own bullet
+ * names (`Purpose`, `Upstream sources`, …), which `lineage_submit_findings` rejects.
  *
  * @remarks
  * Unlocked (`classification` undefined) states every angle the mode ever accepts. A locked
  * classification with one kept angle ({@link CLASSIFICATION_KEPT_ANGLES}) states only that angle:
  * the per-dispatch `submit_findings` schema (`toolSchemas.ts`
  * `capturedSectionSchemaForClassification`) hard-rejects the excluded one, so naming it here
- * would only buy the model a rejection it cannot act on. `both` keeps every angle, same as
- * unlocked.
+ * would only buy the model a rejection it cannot act on. `both` names both keys, which the
+ * classification validator requires on a fresh submission.
  */
 const BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED =
-  'Submit this as one `sections[]` entry per angle this mission keeps (`business`, `technical`, or both), with that literal — never a descriptive label — in `angle`.';
+  'Submit this under the matching `sections` key (`business`, `technical`, or both) — never a descriptive label.';
 
 /**
  * Resolves {@link BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED} to the angle(s) the locked classification
@@ -136,8 +149,8 @@ const BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED =
 function bareSummaryAngleClause(classification: ClassificationValue | undefined): string {
   if (!classification) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
-  if (kept.length === 2) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
-  return `Submit this as one \`sections[]\` entry with \`angle: "${kept[0]}"\` — never a descriptive label.`;
+  if (kept.length === 2) return 'Submit this under both `sections` keys, `business` and `technical` — never a descriptive label.';
+  return `Submit this under \`sections.${kept[0]}\` — never a descriptive label.`;
 }
 
 /** Render scope for {@link resolveStagePrompt}: hop-invariant system block vs per-focus hop block. */
@@ -160,9 +173,9 @@ export interface StagePromptResult {
  *
  * @remarks
  * Walks `STAGE_BY_KEY` and emits one bullet per active key: `- <key>: <instruction>`, a capture key
- * labelled with its `sections[].angle` instead (`CAPTURE_ANGLE`), and a per-focus recipe key with
+ * labelled with its `sections` key instead (`CAPTURE_ANGLE`), and a per-focus recipe key with
  * no angle of its own (e.g. `structural_callouts`) labelled with neither — it folds into whichever
- * angle fired, per {@link CAPTURE_RECIPE_HEADER}, never its own `- <key>:` line. One heading
+ * angle fired, per {@link captureRecipeHeader}, never its own `- <key>:` line. One heading
  * hierarchy — no per-key `####` wrappers. The AI parses the bullet list directly.
  * The non-bodied per-focus render is the exception: `structural_summary` ships bare, with no
  * `### ` header, keeping only {@link bareSummaryAngleClause} ahead of it.
@@ -263,7 +276,7 @@ export function resolveStagePrompt(
   const headerByPhase: Record<TemplateStage, string> = {
     discover:  '### Output templates (discovery)',
     active:    render.scope === 'per_focus'
-      ? CAPTURE_RECIPE_HEADER
+      ? captureRecipeHeader(classification)
       : '### Active-phase templates (write each key to its target field)',
     synthesis: '### Output templates (synthesis)',
   };

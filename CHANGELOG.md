@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.1] - 2026-09-30
+
+### Added
+- **Trace navigator** in the trace view: browse a trace by level, highlight routes and find objects.
+- **Remove from trace** in the node context menu; the render-limit notice on a trace offers **Reduce depth to ↑n ↓n**.
+- Setting `dataLineageViz.ai.maxTraceColumns` caps the starting columns of one column trace.
+
+### Changed
+- `@lineage` backend reworked on LangChain/LangGraph standards: optimized messaging, fewer and clearer rejections.
+- Clearer AI limits: an analysis over a limit is refused up front with the setting to change.
+- Compact approval card and better follow-up handling in chat.
+- Faster graph rendering on large models: layout runs in a background worker, with more stable layout and view handling and a higher object limit.
+- Accessibility improvements across the graph and detail views.
+- Dependencies updated: React 19.3.0, @xyflow/react 12.11.6, DOMPurify 3.4.16, fast-xml-parser 5.11.1, js-yaml 5.4.2, JSZip 3.10.2, marked 18.0.14, Zod 4.6.5. New: comlink for the layout worker, react-arborist for the trace navigator.
+
+### Fixed
+- AI approval card and notices stay visible in current VS Code releases.
+- Settings, search, reload and error-reporting fixes.
+- Graph and assistant views stay in sync with the active filters and AI setting.
+
+### Removed
+- Settings `dataLineageViz.ai.explorationNodeCap` and `dataLineageViz.ai.explorationTokenBudget`; a deep analysis is admitted against `dataLineageViz.ai.maxRounds` before the approval card.
+
 ## [1.2.0] - 2026-09-21
 
 ### Added

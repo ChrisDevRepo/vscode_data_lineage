@@ -1,16 +1,31 @@
-import { useState, useCallback, useRef, useEffect, useTransition, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect, useTransition, useMemo, type CSSProperties } from 'react';
 import { ReactFlowProvider, type Node as FlowNode } from '@xyflow/react';
 import { StartScreen } from './StartScreen';
 import { CreateFlow } from './CreateFlow';
 import { VisualizingScreen, type LoadingPhase } from './VisualizingScreen';
 import { GraphCanvas } from './GraphCanvas';
-import { NodeContextMenu } from './NodeContextMenu';
+import { NodeContextMenu, SchemaContextMenu } from './NodeContextMenu';
 import { useExpandedSchemaView, type ExpandedSchemaViewState } from '../hooks/useExpandedSchemaView';
 import { useGraphology } from '../hooks/useGraphology';
 import { buildSchemaGraph } from '../engine/graphBuilder';
-import { deriveGraphDisplayMode, deriveInitialGraphMode } from '../engine/graphDisplayMode';
+import {
+  deriveGraphDisplayMode,
+  deriveInitialGraphMode,
+  deriveRenderLimitFallback,
+  deriveViewSnapshotTransition,
+  userFilterForHost,
+  aiPreviewDisplayFilter,
+  filterAfterAiPreviewDiscard,
+  largestFittingTraceDepth,
+  traceReduceDepthLevels,
+  collapseLastExpandedSchema,
+  retainExistingSchemas,
+  serializeExpandedSchemas,
+  type ViewSnapshot,
+  effectiveOverviewThreshold,
+} from '../engine/graphDisplayMode';
 import { summarizeRenderedConnectivity } from '../engine/renderConnectivity';
-import { deriveModeCapabilities } from '../engine/modeCapabilities';
+import { deriveModeCapabilities, resolveRemoveAction } from '../engine/modeCapabilities';
 import { useInteractiveTrace } from '../hooks/useInteractiveTrace';
 import { useDacpacLoader } from '../hooks/useDacpacLoader';
 import { useVsCode } from '../contexts/VsCodeContext';
@@ -18,8 +33,9 @@ import type { ColumnTraceNodeData, DatabaseModel, ObjectType, FilterState, Exten
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
 import { computeSchemas } from '../engine/modelBuilder';
-import { reconcileAiView } from './aiViewReconcile';
+import { reconcileAiView, annotatedNodeIdsFromAiMetadata } from './aiViewReconcile';
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
 import { notifyUser } from '../utils/notify';
@@ -27,6 +43,12 @@ import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIVi
 import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, deserializeFilter } from '../engine/projectStore';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
+
+/** Elevated-surface chrome (background + shadow) shared by the render-limit overlays; each spreads in its own `color`. */
+const RENDER_LIMIT_SURFACE_STYLE: CSSProperties = {
+  background: 'var(--ln-bg-elevated, var(--ln-bg))',
+  boxShadow: 'var(--ln-dropdown-shadow)',
+};
 
 /**
  * Represents a transient AI-curated view before it is saved as a permanent bookmark.
@@ -59,6 +81,8 @@ const MIN_SPINNER_MS = 1200;
  * in a rebuilding state with no way out.
  */
 const REBUILD_TIMEOUT_MS = 15_000;
+/** Deepest symmetric trace depth probed when reducing a trace to fit the render limit. */
+const TRACE_REDUCE_MAX_PROBE_DEPTH = 10;
 
 /**
  * Computes the set of schemas that are immediate neighbors of a target schema.
@@ -111,7 +135,20 @@ interface ObjectContextMenuState {
   objectType: ObjectType;
 }
 
-type ContextMenuState = ObjectContextMenuState;
+/** State representing the position and target of a right-clicked schema cluster (Schema View). */
+interface SchemaContextMenuState {
+  kind: 'schema';
+  /** X-coordinate in pixels. */
+  x: number;
+  /** Y-coordinate in pixels. */
+  y: number;
+  /** Schema name the cluster represents. */
+  schema: string;
+  /** Whether this schema is currently expanded in Expanded Schema View. */
+  isExpanded: boolean;
+}
+
+type ContextMenuState = ObjectContextMenuState | SchemaContextMenuState;
 
 /**
  * Coordinates application navigation, model lifecycle, graph filters, and interaction modes.
@@ -150,16 +187,14 @@ export function App() {
   const [graphMode, setGraphMode] = useState<GraphMode>('full');
   const [schemaViewSoftDisabled, setSchemaViewSoftDisabled] = useState(false);
 
-  const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel } = useGraphology();
+  const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel, refusesBuild } = useGraphology();
   const isBaseRenderLimited = renderLimitHit > 0 || filteredCount > config.renderLimit;
-  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode } =
+  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths, focusTargetIds, navigatorTrace, resetTraceToStart, addTraceNeighbors, traceScopeGraph, fullGraph } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config, model, isBaseRenderLimited);
 
-  /**
-   * Updates the global extension configuration.
-   */
+  /** Updates the global extension configuration, keeping the current object when the host resends identical content. */
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
-    setConfig(cfg);
+    setConfig(prev => (JSON.stringify(prev) === JSON.stringify(cfg) ? prev : cfg));
   }, []);
 
   const dacpacLoader = useDacpacLoader(applyConfig);
@@ -177,19 +212,28 @@ export function App() {
    * @param modeOverride - Graph view mode to build for when the caller flips the mode in the same tick
    *   (state has not committed yet); defaults to the current `graphMode`. Callers switching to a mode
    *   must pass this so the correct layout path (Dagre vs. Schema View) is chosen.
-   * @returns The number of nodes in the resulting graph (0 for deferred/transition builds).
+   * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so Dagre reserves the
+   *   vertical band those overlays need; defaults to the ids annotated by the AI preview or AI
+   *   bookmark currently shown, so every rebuild of that view keeps the band.
+   * @returns The number of nodes in the resulting graph (0 for deferred/transition builds), or -1 when
+   *   the maxNodes admission check refused the build. The refusal is reported synchronously on both
+   *   paths so a caller never arms a one-shot camera restore for a graph change that will not come.
    */
   const rebuild = useCallback(
-    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false, modeOverride?: GraphMode): number => {
+    (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false, modeOverride?: GraphMode, annotatedNodeIds?: readonly string[]): number => {
       const mode = modeOverride ?? graphMode;
       const skipLayout = mode === 'overview';
+      const display = aiPreviewDisplayFilter(f, aiPreviewRef.current !== null, m.schemas.map(s => s.name));
+      const shownAiMetadata = aiPreviewRef.current?.aiMetadata ?? activeAdvancedProfileRef.current?.aiMetadata;
+      const annotated = annotatedNodeIds ?? (shownAiMetadata ? annotatedNodeIdsFromAiMetadata(shownAiMetadata) : undefined);
       if (forceLayout) {
-        return buildFromModel(m, f, cfg || config, skipLayout);
+        return buildFromModel(m, display, cfg || config, skipLayout, annotated);
       }
-      startTransition(() => { buildFromModel(m, f, cfg || config, skipLayout); });
+      if (refusesBuild(m, display, cfg || config)) return -1;
+      startTransition(() => { buildFromModel(m, display, cfg || config, skipLayout, annotated); });
       return 0; // Count unavailable for deferred builds; callers requiring count use forceLayout
     },
-    [buildFromModel, config, graphMode]
+    [buildFromModel, refusesBuild, config, graphMode]
   );
 
   /**
@@ -211,24 +255,32 @@ export function App() {
    */
   const handleVisualize = useCallback(
     (dacpacModel: DatabaseModel, selectedSchemas: Set<string>) => {
-      let trimmed = filterBySchemas(dacpacModel, selectedSchemas, Infinity);
-      trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, (msg) => {
-        vscodeApi.postMessage({ type: 'error', error: msg });
-      });
+      let trimmed = filterBySchemas(dacpacModel, selectedSchemas);
+      trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, notifyUser);
       trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
 
-      setModel(trimmed);
+      const refusal = refuseOverObjectLimit(trimmed, config.maxNodes, 'Visualize');
+      if (refusal !== null) {
+        setLoadingError(refusal);
+        return;
+      }
+
       const f = getResetFilter(trimmed);
-      setFilter(f);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: trimmed.nodes.length, config });
+      modelRef.current = trimmed;
+      filterRef.current = f;
+      graphModeRef.current = initialGraphMode;
+      expandedSchemaViewRef.current = null;
+      setModel(trimmed);
+      setFilter(f);
       setGraphMode(initialGraphMode);
-      setSchemaViewSoftDisabled(trimmed.nodes.length <= config.overview.threshold);
+      setSchemaViewSoftDisabled(trimmed.nodes.length <= effectiveOverviewThreshold(config));
       setExpandedSchemaView(null);
       setActiveViewId(null);
       rebuild(trimmed, f, config, initialGraphMode === 'full', initialGraphMode);
       setLoadingPhase('generate');
     },
-    [rebuild, config, vscodeApi]
+    [rebuild, config]
   );
 
   useEffect(() => {
@@ -303,13 +355,21 @@ export function App() {
     };
   }, [view, loadingPhase, dacpacLoader.status, dacpacLoader.loadingContext, loadingError]);
 
+  /**
+   * Rebuilds the shown graph when the settings change. A load in flight owns its own rebuild with
+   * the new settings, so this effect stands down while one is pending — it would otherwise rebuild
+   * the model that load is replacing. A `rebuild-config` frame rebuilds in its own handler and marks
+   * its config as seen here, so one settings change builds the graph once.
+   */
   const prevConfigRef = useRef(config);
+  const isLoadPending = dacpacLoader.pendingAutoVisualize || dacpacLoader.pendingVisualize;
   useEffect(() => {
-    if (prevConfigRef.current !== config && model && view === 'graph') {
-      prevConfigRef.current = config;
+    const changed = prevConfigRef.current !== config;
+    prevConfigRef.current = config;
+    if (changed && !isLoadPending && model && view === 'graph') {
       rebuild(model, filter, config);
     }
-  }, [config, model, view, filter, rebuild]);
+  }, [config, isLoadPending, model, view, filter, rebuild]);
 
 
   /** Transitions to the creation wizard screen. */
@@ -370,19 +430,21 @@ export function App() {
     setView('visualizing');
   }, [dacpacLoader.loadDemo]);
 
-  /** Returns to the start screen and resets exploration state. */
-  const handleBack = useCallback(() => {
-    dacpacLoader.resetToStart();
-    setView('start');
-    clearTrace();
-    setIsDetailOpen(false);
-    setLoadingProjectId(null);
-    setLoadingError(null);
-    setStartScreenMessage(null);
-    setActiveProjectId(null);
-    setActiveViewId(null);
-    vscodeApi.postMessage({ type: 'request-projects' });
-  }, [dacpacLoader.resetToStart, clearTrace, vscodeApi]);
+  /**
+   * Re-runs the load that produced the current graph so a reload-class setting (max nodes, exclusion
+   * patterns, external references, parse rules) takes effect; a source with no stored path is warned.
+   */
+  const reloadSourceRef = useRef<() => void>(() => {});
+  reloadSourceRef.current = () => {
+    if (view !== 'graph') return;
+    if (!activeProjectId && !dacpacLoader.isDemo) {
+      vscodeApi.postMessage({ type: 'show-warning', text: 'Reopen the .dacpac file to apply the changed setting.' });
+      return;
+    }
+    resetScopedModes();
+    if (activeProjectId) handleOpenProject(activeProjectId);
+    else handleDemoClick();
+  };
 
   /** Aborts an active loading or parsing operation. */
   const handleCancelVisualizing = useCallback(() => {
@@ -433,17 +495,53 @@ export function App() {
   const [infoBarNodeId, setInfoBarNodeId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isDetailSearchOpen, setIsDetailSearchOpen] = useState(false);
+  const [isTraceTreeCollapsed, setIsTraceTreeCollapsed] = useState(true);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode | null>(null);
   const pendingAnalysisRef = useRef<AnalysisType | null>(null);
 
   /** The currently active advanced bookmark profile (allowlist-based view). */
   const [activeAdvancedProfile, setActiveAdvancedProfile] = useState<FilterProfile | null>(null);
+  const activeAdvancedProfileRef = useRef(activeAdvancedProfile);
+  activeAdvancedProfileRef.current = activeAdvancedProfile;
   /** Transient AI preview — shown before user decides to save as bookmark. */
   const [aiPreview, setAiPreview] = useState<AiPreview | null>(null);
-  /** Saved filter state before entering any locked mode (trace/analysis/bookmark) — restored on exit. */
-  const preModFilterRef = useRef<FilterState | null>(null);
+  const aiPreviewRef = useRef(aiPreview);
+  aiPreviewRef.current = aiPreview;
   /** Saved node positions from a bookmark — applied once after rebuild, then cleared. */
   const [pendingPositions, setPendingPositions] = useState<Record<string, { x: number; y: number }> | undefined>(undefined);
+  /** Saved view (filter, graph mode, expanded schemas, viewport) before entering any locked mode — restored exactly on exit. */
+  const viewSnapshotRef = useRef<ViewSnapshot | null>(null);
+  /** Live viewport reported by the canvas, read back when a locked mode is entered. */
+  const currentViewportRef = useRef<{ x: number; y: number; zoom: number } | undefined>(undefined);
+  /** Viewport to apply once after the next rebuild, then cleared. */
+  const [pendingViewport, setPendingViewport] = useState<{ x: number; y: number; zoom: number } | undefined>(undefined);
+
+  /**
+   * Ends every scoped mode (trace, analysis, bookmark view, AI preview) and drops the saved view
+   * snapshot, so a source that is left or reloaded does not carry state built on its old model.
+   */
+  const resetScopedModes = useCallback(() => {
+    viewSnapshotRef.current = null;
+    aiPreviewRef.current = null;
+    setAiPreview(null);
+    setActiveAdvancedProfile(null);
+    setAnalysisMode(null);
+    clearTrace();
+  }, [clearTrace]);
+
+  /** Returns to the start screen and resets exploration state. */
+  const handleBack = useCallback(() => {
+    dacpacLoader.resetToStart();
+    setView('start');
+    resetScopedModes();
+    setIsDetailOpen(false);
+    setLoadingProjectId(null);
+    setLoadingError(null);
+    setStartScreenMessage(null);
+    setActiveProjectId(null);
+    setActiveViewId(null);
+    vscodeApi.postMessage({ type: 'request-projects' });
+  }, [dacpacLoader.resetToStart, resetScopedModes, vscodeApi]);
 
   /** Names of allowlist node IDs no longer present in the model (stale objects). */
   const bookmarkStaleNames = useMemo(() => {
@@ -471,30 +569,89 @@ export function App() {
   configRef.current = config;
   const rebuildRef = useRef(rebuild);
   rebuildRef.current = rebuild;
+  const graphModeRef = useRef(graphMode);
+  graphModeRef.current = graphMode;
+  const expandedSchemaViewRef = useRef(expandedSchemaView);
+  expandedSchemaViewRef.current = expandedSchemaView;
   const pendingRefreshReset = useRef(false);
   const prevIsModeLocked = useRef(false);
+  /**
+   * Tells the canvas to skip its fit on the next graph-data change. Arm it only after the change is
+   * known to be coming: a rebuild that returned -1 (refused) or that never ran leaves the graph data
+   * as it is, so an armed skip would otherwise swallow the fit of an unrelated later change.
+   */
   const preserveViewportOnNextGraphChange = useCallback(() => {
     setViewportPreserveVersion((version) => version + 1);
   }, []);
 
-  useEffect(() => {
-    const entering = isModeLocked && !prevIsModeLocked.current;
-    const leaving = !isModeLocked && prevIsModeLocked.current;
-    prevIsModeLocked.current = isModeLocked;
+  /** Reads the current pre-lock view (filter, graph mode, expanded schemas, focus, viewport) off the live refs. */
+  const captureViewSnapshot = useCallback((): ViewSnapshot => ({
+    filter: filterRef.current,
+    graphMode: graphModeRef.current,
+    expandedSchemas: expandedSchemaViewRef.current ? Array.from(expandedSchemaViewRef.current.expandedSchemas) : [],
+    focusNodeId: expandedSchemaViewRef.current?.focusNodeId ?? null,
+    viewport: currentViewportRef.current,
+  }), []);
 
-    if (entering && !preModFilterRef.current) {
-      preModFilterRef.current = filterRef.current;
-    } else if (leaving) {
-      const saved = preModFilterRef.current;
-      preModFilterRef.current = null;
-      if (saved && modelRef.current) {
-        setFilter(saved);
-        const mode = deriveInitialGraphMode({ filteredCount: modelRef.current.nodes.length, config: configRef.current });
-        setGraphMode(mode);
-        rebuildRef.current(modelRef.current, saved, configRef.current, false, mode);
+  /** Reports the canvas's live viewport so it can be captured into a view snapshot on lock entry. */
+  const handleCameraChange = useCallback((viewport: { x: number; y: number; zoom: number }) => {
+    currentViewportRef.current = viewport;
+  }, []);
+
+  /** Keeps expanded schemas that still exist in the model, instead of collapsing all of them, when settings change or Refresh completes. */
+  const reconcileExpandedSchemaView = useCallback((m: DatabaseModel) => {
+    const current = expandedSchemaViewRef.current;
+    if (!current) return;
+    const kept = retainExistingSchemas(current.expandedSchemas, new Set(m.schemas.map((s) => s.name)));
+    setExpandedSchemaView(kept ? { focusNodeId: current.focusNodeId, expandedSchemas: kept } : null);
+  }, []);
+
+  /**
+   * Restores the view (graph mode, expanded schemas, viewport) saved on entry to a locked mode or
+   * the AI preview, then clears the saved snapshot and any shown AI preview. A no-op when none is
+   * saved.
+   *
+   * @remarks
+   * The saved camera is armed only when the rebuild is admitted: a refused rebuild (maxNodes lowered
+   * while the mode was locked) changes no graph data, so an armed camera and fit-skip would otherwise
+   * stay pending and snap to the stale viewport on the next unrelated graph change.
+   *
+   * @param selection - The filter to apply; defaults to the filter saved in the snapshot.
+   */
+  const restoreViewSnapshot = useCallback((selection?: FilterState) => {
+    const saved = viewSnapshotRef.current;
+    viewSnapshotRef.current = null;
+    aiPreviewRef.current = null;
+    setAiPreview(null);
+    if (saved && modelRef.current) {
+      const restored = selection ?? saved.filter;
+      setFilter(restored);
+      setGraphMode(saved.graphMode);
+      setExpandedSchemaView(saved.expandedSchemas.length > 0
+        ? { focusNodeId: saved.focusNodeId, expandedSchemas: new Set(saved.expandedSchemas) }
+        : null);
+      const outcome = rebuildRef.current(modelRef.current, restored, configRef.current, false, saved.graphMode);
+      if (outcome !== -1) {
+        preserveViewportOnNextGraphChange();
+        if (saved.viewport) setPendingViewport(saved.viewport);
       }
     }
-  }, [isModeLocked]);
+  }, [preserveViewportOnNextGraphChange]);
+
+  useEffect(() => {
+    const { shouldSnapshot, shouldRestore } = deriveViewSnapshotTransition(
+      isModeLocked,
+      prevIsModeLocked.current,
+      !!viewSnapshotRef.current,
+    );
+    prevIsModeLocked.current = isModeLocked;
+
+    if (shouldSnapshot) {
+      viewSnapshotRef.current = captureViewSnapshot();
+    } else if (shouldRestore && !aiPreviewRef.current) {
+      restoreViewSnapshot();
+    }
+  }, [isModeLocked, captureViewSnapshot, restoreViewSnapshot]);
 
   /**
    * Resets filters and pulls fresh extension settings from the host.
@@ -503,10 +660,11 @@ export function App() {
    * Posts `rebuild` and sets {@link pendingRefreshReset} so the arriving `rebuild-config` reply
    * performs a full filter reset and re-derives the graph view mode. Does not exit active trace,
    * analysis, or AI preview modes. Also remounts the canvas ({@link canvasResetKey}), so the button
-   * repairs a stuck rendering state even when the host never replies.
+   * repairs a stuck rendering state even when the host never replies. Expanded schemas are kept
+   * (reconciled once the reply arrives) — a refresh reloads data, it does not collapse the view,
+   * matching the VS Code tree-view convention.
    */
   const handleRefresh = useCallback(() => {
-    setExpandedSchemaView(null);
     pendingRefreshReset.current = true;
     setCanvasResetKey((k) => k + 1);
     vscodeApi.postMessage({ type: 'rebuild' });
@@ -519,7 +677,7 @@ export function App() {
       setFilter(f);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: model.nodes.length, config });
       setGraphMode(initialGraphMode);
-      setSchemaViewSoftDisabled(model.nodes.length <= config.overview.threshold);
+      setSchemaViewSoftDisabled(model.nodes.length <= effectiveOverviewThreshold(config));
       setExpandedSchemaView(null);
       clearTrace(() => {
         rebuild(model, f, config, initialGraphMode === 'full', initialGraphMode);
@@ -563,8 +721,7 @@ export function App() {
     vscodeApi.postMessage({ type: 'rebuild' });
   }, [vscodeApi, model, clearRebuildTimeout]);
 
-  const isTraceActive = trace.mode === 'applied' || trace.mode === 'path-applied'
-    || trace.mode === 'filtered' || trace.mode === 'analysis';
+  const isTraceActive = modeCapabilities.isTraceActive;
 
   const effectiveGraph = useMemo(
     () => (isTraceActive && traceGraph) ? traceGraph : graph,
@@ -616,16 +773,31 @@ export function App() {
     if (isDetailOpen) vscodeApi.postMessage({ type: 'update-detail' });
   }, [isDetailOpen, vscodeApi]);
 
-  /** Applies a lineage trace from a specific node. */
+  /** Applies a lineage trace from a specific node; the trace opens unselected, so no node dims. */
   const handleTraceApply = useCallback((config: { upstreamLevels: number; downstreamLevels: number }) => {
+    handleClearSelection();
     applyTrace(config.upstreamLevels, config.downstreamLevels);
-  }, [applyTrace]);
+  }, [applyTrace, handleClearSelection]);
+
+  /** Starts a trace with the default levels; the trace opens unselected, so no node dims. */
+  const handleStartTraceImmediate = useCallback((nodeId: string) => {
+    handleClearSelection();
+    startTraceImmediate(nodeId);
+  }, [startTraceImmediate, handleClearSelection]);
 
   /** Displays the context menu at the specified coordinates for a node. */
   const handleNodeContextMenu = useCallback(
     (node: FlowNode, x: number, y: number) => {
       if (node.type === 'schemaNode') {
-        setContextMenu(null);
+        const schemaName = String((node.data as { schemaName?: string }).schemaName ?? '');
+        if (!schemaName) { setContextMenu(null); return; }
+        setContextMenu({
+          kind: 'schema',
+          x,
+          y,
+          schema: schemaName,
+          isExpanded: expandedSchemaView?.expandedSchemas.has(schemaName) ?? false,
+        });
         return;
       }
       if (node.type === 'columnTraceNode') {
@@ -659,7 +831,7 @@ export function App() {
         fullName: String(data.fullName),
       });
     },
-    []
+    [expandedSchemaView]
   );
 
   /** Opens the DDL/definition viewer for a specific node. */
@@ -698,11 +870,23 @@ export function App() {
   }, [model, config, rebuild]);
 
   /**
+   * Refuses a candidate schema selection that would exceed `dataLineageViz.maxNodes`, surfacing
+   * the shared refusal message as a warning notification. The single guard every
+   * in-canvas schema-filter handler calls before committing its next filter state.
+   *
+   * @returns `true` when the selection is within the configured limit.
+   */
+  const guardSchemaSelection = useCallback(
+    (m: DatabaseModel, schemas: Set<string>): boolean => refuseOverObjectLimit(filterBySchemas(m, schemas), config.maxNodes, 'Filter') === null,
+    [config],
+  );
+
+  /**
    * Unified star-schema handler for the schema focus control.
    *
    * @param schema - Target schema, or null to unfocus.
    * @param options - Logic flags: toggle, forceLayout, includeNeighbors.
-   * @returns Post-filter node count.
+   * @returns Post-filter node count, or `0` when the selection is refused.
    */
   const applyStarSchema = useCallback((
     schema: string | null,
@@ -713,6 +897,7 @@ export function App() {
 
     if (schema === null || (toggle && filter.focusSchemas.has(schema))) {
       const allSchemas = new Set(model.schemas.map(s => s.name));
+      if (!guardSchemaSelection(model, allSchemas)) return 0;
       const next = { ...filter, focusSchemas: new Set<string>(), schemas: allSchemas };
       const count = rebuild(model, next, config, forceLayout);
       setFilter(next);
@@ -722,12 +907,13 @@ export function App() {
     const schemas = includeNeighbors
       ? computeNeighborSchemas(model, schema)
       : new Set<string>([schema]);
+    if (!guardSchemaSelection(model, schemas)) return 0;
     const next = { ...filter, focusSchemas: includeNeighbors ? new Set([schema]) : new Set<string>(), schemas };
     window.vscode?.postMessage({ type: 'log', text: `[Filter] applyStarSchema: schema="${schema}", schemas=[${[...schemas].join(',')}], forceLayout=${forceLayout}` });
     const count = rebuild(model, next, config, forceLayout);
     setFilter(next);
     return count;
-  }, [model, config, rebuild, filter]);
+  }, [model, config, rebuild, filter, guardSchemaSelection]);
 
   const handleToggleFocusSchema = useCallback(
     (schema: string) => { applyStarSchema(schema, { toggle: true }); },
@@ -809,9 +995,10 @@ export function App() {
     const current = filterRef.current;
     if (current.exclusionPatterns.includes(pattern)) return;
     const next = { ...current, exclusionPatterns: [...current.exclusionPatterns, pattern] };
-    preserveViewportOnNextGraphChange();
     setFilter(next);
-    if (modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
+    if (modelRef.current && rebuildRef.current(modelRef.current, next, configRef.current) !== -1) {
+      preserveViewportOnNextGraphChange();
+    }
   }, [preserveViewportOnNextGraphChange]);
 
   /** Removes a previously added exclusion pattern. */
@@ -824,6 +1011,15 @@ export function App() {
     });
   }, [model, config, rebuild]);
 
+  /** Shared tail for a schema-selection edit: guards against emptying the visible set, rebuilds, and returns the next filter (or `prev` unedited when the guard refuses). */
+  const commitSchemaSelection = useCallback((prev: FilterState, nextSchemas: Set<string>): FilterState => {
+    if (!model) return { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
+    if (!guardSchemaSelection(model, nextSchemas)) return prev;
+    const next = { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
+    rebuild(model, next, config);
+    return next;
+  }, [model, config, rebuild, guardSchemaSelection]);
+
   /** Toggles visibility of a specific schema. */
   const handleToggleSchema = useCallback((schema: string) => {
     setFilter((prev) => {
@@ -833,31 +1029,23 @@ export function App() {
       } else {
         schemas.add(schema);
       }
-      const next = { ...prev, schemas, focusSchemas: new Set<string>() };
-      if (model) rebuild(model, next, config);
-      return next;
+      return commitSchemaSelection(prev, schemas);
     });
-  }, [model, config, rebuild]);
+  }, [commitSchemaSelection]);
 
   /** Selects multiple schemas at once. */
   const handleSelectAllSchemas = useCallback((schemas: string[]) => {
-    setFilter((prev) => {
-      const next = { ...prev, schemas: new Set([...prev.schemas, ...schemas]), focusSchemas: new Set<string>() };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+    setFilter((prev) => commitSchemaSelection(prev, new Set([...prev.schemas, ...schemas])));
+  }, [commitSchemaSelection]);
 
   /** Deselects multiple schemas at once. */
   const handleSelectNoneSchemas = useCallback((schemas: string[]) => {
     setFilter((prev) => {
       const nextSchemas = new Set(prev.schemas);
       for (const s of schemas) nextSchemas.delete(s);
-      const next = { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
-      if (model) rebuild(model, next, config);
-      return next;
+      return commitSchemaSelection(prev, nextSchemas);
     });
-  }, [model, config, rebuild]);
+  }, [commitSchemaSelection]);
 
   /** Initiates a structural analysis mode. */
   const openAnalysis = useCallback((type: AnalysisType) => {
@@ -868,7 +1056,7 @@ export function App() {
 
     const currentFilter = filterRef.current;
     if (type === 'orphans' && currentFilter.hideIsolated) {
-      if (!preModFilterRef.current) preModFilterRef.current = currentFilter;
+      if (!viewSnapshotRef.current) viewSnapshotRef.current = captureViewSnapshot();
       const nextFilter = { ...currentFilter, hideIsolated: false };
       setFilter(nextFilter);
       pendingAnalysisRef.current = 'orphans';
@@ -882,7 +1070,7 @@ export function App() {
       window.vscode?.postMessage({ type: 'log', text: `[Trace] Analysis run: type="${type}" → ${result.groups.length} groups, ${totalNodes} total nodes` });
       setAnalysisMode({ type, result, activeGroupId: null });
     }
-  }, [endTrace, model, graph, graphMode, config, buildFromModel]);
+  }, [endTrace, model, graph, graphMode, config, buildFromModel, captureViewSnapshot]);
 
   useEffect(() => {
     if (pendingAnalysisRef.current && graph) {
@@ -963,6 +1151,10 @@ export function App() {
     setPendingPositions(undefined);
   }, []);
 
+  const handlePendingViewportApplied = useCallback(() => {
+    setPendingViewport(undefined);
+  }, []);
+
   /** Removes a specific node from the current bookmark view. */
   const handleRemoveFromView = useCallback((nodeId: string) => {
     const current = filterRef.current;
@@ -971,15 +1163,34 @@ export function App() {
       ...current,
       allowlistNodeIds: new Set([...current.allowlistNodeIds].filter(id => id !== nodeId)),
     };
-    preserveViewportOnNextGraphChange();
     setFilter(next);
-    if (modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
+    if (modelRef.current && rebuildRef.current(modelRef.current, next, configRef.current) !== -1) {
+      preserveViewportOnNextGraphChange();
+    }
   }, [preserveViewportOnNextGraphChange]);
 
-  /** Discards the transient AI preview view. */
+  /**
+   * Discards the transient AI preview view, keeping the user's current filter selection.
+   *
+   * @remarks
+   * Restores the pre-preview graph mode, expanded schemas and viewport. While a trace or analysis
+   * owns the snapshot, the graph is rebuilt from the selection and the saved selection is replaced,
+   * so that mode's exit restores the rest.
+   */
   const handleDiscardAiPreview = useCallback(() => {
+    const selection = filterAfterAiPreviewDiscard(filterRef.current);
+    if (!isModeLocked) {
+      restoreViewSnapshot(selection);
+      return;
+    }
+    aiPreviewRef.current = null;
     setAiPreview(null);
-  }, []);
+    setFilter(selection);
+    if (modelRef.current && rebuildRef.current(modelRef.current, selection, configRef.current) !== -1) {
+      preserveViewportOnNextGraphChange();
+    }
+    if (viewSnapshotRef.current) viewSnapshotRef.current = { ...viewSnapshotRef.current, filter: selection };
+  }, [isModeLocked, restoreViewSnapshot, preserveViewportOnNextGraphChange]);
 
   /** Exits the active advanced bookmark view and restores previous filters. */
   const handleExitAdvancedBookmark = useCallback(() => {
@@ -996,13 +1207,18 @@ export function App() {
       else closeAnalysis();
     } else if (trace.mode !== 'none') {
       endTrace();
+    } else if (expandedSchemaView) {
+      const remaining = collapseLastExpandedSchema(expandedSchemaView.expandedSchemas);
+      preserveViewportOnNextGraphChange();
+      setExpandedSchemaView(remaining ? { focusNodeId: null, expandedSchemas: remaining } : null);
     }
-  });
+  }, false, { allowEmptyTextEntry: true });
 
   /** Applies a saved view profile (filters and optionally positions). */
   const handleApplyView = useCallback((profile: FilterProfile) => {
     setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
+    if (isAdvanced && !viewSnapshotRef.current) viewSnapshotRef.current = captureViewSnapshot();
     const shapeMode: GraphMode | undefined = isAdvanced
       ? 'full'
       : profile.graphMode
@@ -1025,19 +1241,20 @@ export function App() {
       setPendingPositions(profile.positions);
     }
     if (isAdvanced) {
-      if (!preModFilterRef.current) preModFilterRef.current = filter;
       const restored = deserializeFilter(profile.filter);
       if (model) restored.schemas = new Set(model.schemas.map(s => s.name));
       restored.types = new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']);
       setFilter(restored);
       setActiveAdvancedProfile(profile);
-      if (model) rebuild(model, restored, config, hasPositions, targetMode);
+      const annotatedNodeIds = profile.aiMetadata ? annotatedNodeIdsFromAiMetadata(profile.aiMetadata) : undefined;
+      if (model) rebuild(model, restored, config, hasPositions, targetMode, annotatedNodeIds);
     } else {
       const restored = deserializeFilter(profile.filter);
+      if (model && !guardSchemaSelection(model, restored.schemas)) return;
       setFilter(restored);
       if (model) rebuild(model, restored, config, hasPositions, targetMode);
     }
-  }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled]);
+  }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled, guardSchemaSelection, captureViewSnapshot]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -1077,6 +1294,7 @@ export function App() {
             analysis: { ...DEFAULT_CONFIG.analysis, ...msg.config.analysis },
           };
           setConfig(merged);
+          prevConfigRef.current = merged;
 
           if (pendingRefreshReset.current && modelRef.current) {
             pendingRefreshReset.current = false;
@@ -1085,15 +1303,15 @@ export function App() {
               hideIsolated: filterRef.current.hideIsolated,
               exclusionPatterns: filterRef.current.exclusionPatterns,
             };
-            if (preModFilterRef.current) preModFilterRef.current = { ...f, allowlistNodeIds: undefined };
             setFilter(f);
             const mode = deriveInitialGraphMode({ filteredCount: modelRef.current.nodes.length, config: merged });
             setGraphMode(mode);
-            setSchemaViewSoftDisabled(modelRef.current.nodes.length <= merged.overview.threshold);
+            setSchemaViewSoftDisabled(modelRef.current.nodes.length <= effectiveOverviewThreshold(merged));
+            reconcileExpandedSchemaView(modelRef.current);
             rebuildRef.current(modelRef.current, f, merged, mode === 'full', mode);
           } else if (modelRef.current && rebuildRef.current) {
-            if (graphMode === 'overview') setExpandedSchemaView(null);
-            rebuildRef.current(modelRef.current, filterRef.current, merged);
+            reconcileExpandedSchemaView(modelRef.current);
+            rebuildRef.current(modelRef.current, filterRef.current, merged, false, graphModeRef.current);
           }
 
           const elapsed = Date.now() - rebuildStartRef.current;
@@ -1104,6 +1322,8 @@ export function App() {
             setTimeout(() => setIsRebuilding(false), MIN_REBUILD_SPINNER_MS - elapsed);
           }
         }
+      } else if (msg.type === 'reload-source') {
+        reloadSourceRef.current();
       } else if (msg.type === 'ai-view-preview') {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;
@@ -1121,21 +1341,16 @@ export function App() {
           nodeIds: new Set<string>(resolvedIds),
           aiMetadata: metadata,
         };
-        if (!preModFilterRef.current) preModFilterRef.current = filterRef.current;
+        if (!viewSnapshotRef.current) viewSnapshotRef.current = captureViewSnapshot();
+        const bookmarkExitSelection = activeAdvancedProfileRef.current ? viewSnapshotRef.current.filter : null;
         setActiveAdvancedProfile(null);
         const allowlist = preview.nodeIds;
+        aiPreviewRef.current = preview;
         setFilter(prev => {
-          const next: FilterState = {
-            ...prev,
-            allowlistNodeIds: allowlist,
-            schemas: renderModel ? new Set(renderModel.schemas.map(s => s.name)) : prev.schemas,
-            types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
-            exclusionPatterns: [],
-            hideIsolated: false,
-          };
+          const next: FilterState = { ...(bookmarkExitSelection ?? prev), allowlistNodeIds: allowlist };
           if (renderModel) {
             setGraphMode('full');
-            rebuildRef.current(renderModel, next, configRef.current, false, 'full');
+            rebuildRef.current(renderModel, next, configRef.current, false, 'full', annotatedNodeIdsFromAiMetadata(metadata));
           }
           return next;
         });
@@ -1145,23 +1360,23 @@ export function App() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [view, graphMode, handleApplyView, clearRebuildTimeout]);
+  }, [view, handleApplyView, clearRebuildTimeout, captureViewSnapshot, reconcileExpandedSchemaView]);
 
 
   const activeProject = projects.find(p => p.id === activeProjectId);
   const filterProfiles = activeProject?.filterProfiles ?? [];
 
   const filterKeyForHost = useMemo(() => {
-    const { searchTerm: _, ...rest } = serializeFilter(filter);
+    const { searchTerm: _, ...rest } = serializeFilter(userFilterForHost(filter, !!aiPreview, viewSnapshotRef.current));
     return JSON.stringify(rest);
-  }, [filter]);
+  }, [filter, aiPreview]);
   useEffect(() => {
     if (!model) return;
-    const { searchTerm: _, ...filterForHost } = serializeFilter(filter);
+    const { searchTerm: _, ...filterForHost } = serializeFilter(userFilterForHost(filter, !!aiPreview, viewSnapshotRef.current));
     const uiState = {
       filter: filterForHost,
       expandedSchemaView: expandedSchemaView
-        ? { focusNodeId: expandedSchemaView.focusNodeId, expandedSchemas: Array.from(expandedSchemaView.expandedSchemas).sort() }
+        ? { focusNodeId: expandedSchemaView.focusNodeId, expandedSchemas: serializeExpandedSchemas(expandedSchemaView.expandedSchemas) }
         : null,
       trace: {
         mode: trace.mode,
@@ -1195,7 +1410,7 @@ export function App() {
       },
     };
     vscodeApi.postMessage({ type: 'filter-changed', uiState });
-  }, [filterKeyForHost, filterProfiles, model, vscodeApi, expandedSchemaView, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted, graphMode, filteredCount, renderLimitHit, analysisMode, activeAdvancedProfile, isDetailOpen]);
+  }, [filterKeyForHost, aiPreview, filterProfiles, model, vscodeApi, expandedSchemaView, trace.mode, trace.selectedNodeId, trace.targetNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.analysisType, trace.autoPromoted, graphMode, filteredCount, renderLimitHit, analysisMode, activeAdvancedProfile, isDetailOpen]);
 
   const isViewModified = useMemo(() => {
     if (!activeViewId) return false;
@@ -1228,7 +1443,7 @@ export function App() {
       expandedSchemaView: expandedSchemaView
         ? {
             focusNodeId: expandedSchemaView.focusNodeId,
-            expandedSchemas: Array.from(expandedSchemaView.expandedSchemas).sort(),
+            expandedSchemas: serializeExpandedSchemas(expandedSchemaView.expandedSchemas),
           }
         : undefined,
     };
@@ -1324,21 +1539,23 @@ export function App() {
     withPositions: boolean,
     positions?: Record<string, { x: number; y: number }>,
   ) => {
-    if (!aiPreview) return;
+    if (!aiPreview || !model) return;
+    const display = aiPreviewDisplayFilter(filter, true, model.schemas.map(s => s.name));
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
       createdAt: new Date().toISOString(),
       source: 'ai',
       filter: {
-        ...serializeFilter(filter),
+        ...serializeFilter(display),
         allowlistNodeIds: Array.from(aiPreview.nodeIds),
       },
       aiMetadata: aiPreview.aiMetadata,
       ...(withPositions && positions ? { positions } : {}),
     };
+    setFilter(display);
     persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
-  }, [filter, aiPreview, persistFilterProfile]);
+  }, [filter, aiPreview, model, persistFilterProfile]);
 
   /** Deletes a saved view profile. */
   const handleDeleteView = useCallback((profileId: string) => {
@@ -1353,6 +1570,42 @@ export function App() {
 
   const filteredObjectIds = useMemo(() => new Set(flowNodes.map(n => n.id)), [flowNodes]);
 
+
+
+  const { mode: displayMode, renderedCount } = deriveGraphDisplayMode({
+    graphMode,
+    filteredCount,
+    config,
+    renderLimitHit,
+    expandedSchemaCount,
+    schemaOverviewRenderedCount: schemaNodes.length,
+    expandedSchemaViewRenderedCount,
+    scopedModeActive: isTraceActive || !!aiPreview,
+    scopedRenderedCount: isTraceActive ? trace.tracedNodeIds.size : tracedNodes.length,
+  });
+
+  const renderLimitFallback = displayMode === 'renderLimit'
+    ? deriveRenderLimitFallback({
+        isScoped: isTraceActive || !!aiPreview,
+        renderedCount,
+        renderLimit: config.renderLimit,
+        canOpenSchemaView: config.overview.enabled && !schemaViewSoftDisabled && graphMode === 'full' && schemaNodes.length > 0,
+      })
+    : null;
+  const showRenderLimitNotice = !!renderLimitFallback;
+  const traceReduceSelectedNodeId = showRenderLimitNotice && isTraceActive ? trace.selectedNodeId : null;
+  const traceReduceCandidate = useMemo(
+    () => traceReduceSelectedNodeId
+      ? largestFittingTraceDepth(
+          traceReduceDepthLevels(trace.upstreamLevels, trace.downstreamLevels, TRACE_REDUCE_MAX_PROBE_DEPTH).map(depth => ({
+            ...depth,
+            count: estimateTraceSize(depth.upstream, depth.downstream),
+          })),
+          config.renderLimit,
+        )
+      : null,
+    [traceReduceSelectedNodeId, trace.upstreamLevels, trace.downstreamLevels, config.renderLimit, estimateTraceSize],
+  );
 
   const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
     vscodeApi.postMessage({ type: 'save-wizard-view', view: v });
@@ -1402,48 +1655,18 @@ export function App() {
     );
   }
 
-  const { mode: displayMode, renderedCount } = deriveGraphDisplayMode({
-    graphMode,
-    filteredCount,
-    config,
-    renderLimitHit,
-    expandedSchemaCount,
-    schemaOverviewRenderedCount: schemaNodes.length,
-    expandedSchemaViewRenderedCount,
-    scopedModeActive: isTraceActive || !!aiPreview,
-    scopedRenderedCount: tracedNodes.length,
-  });
+  const renderSurface = showRenderLimitNotice
+    ? { nodes: [], edges: [] }
+    : displayMode === 'scoped'
+      ? { nodes: tracedNodes, edges: tracedEdges }
+      : (displayMode === 'schemaExpanded' && expandedSchemaViewGraph)
+        ? { nodes: expandedSchemaViewGraph.flowNodes, edges: expandedSchemaViewGraph.flowEdges }
+        : displayMode === 'schemaOverview'
+          ? { nodes: schemaNodes, edges: schemaEdges }
+          : { nodes: flowNodes, edges: flowEdges };
+  const renderNodes = renderSurface.nodes;
+  const renderEdges = renderSurface.edges;
 
-  if (displayMode === 'renderLimit') {
-    const countText = `${renderedCount.toLocaleString()} nodes (limit: ${config.renderLimit.toLocaleString()})`;
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center p-8 max-w-md" style={{ color: 'var(--ln-fg)' }}>
-          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
-          <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)' }}>
-            {isTraceActive || aiPreview
-              ? `This view selects ${countText}. Reduce the trace depth, narrow the path, or adjust the render limit in settings.`
-              : `The current filter selects ${countText}. Select schema or type filters to reduce scope, or adjust the render limit in settings.`}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const renderNodes = displayMode === 'scoped'
-    ? tracedNodes
-    : (displayMode === 'schemaExpanded' && expandedSchemaViewGraph)
-      ? expandedSchemaViewGraph.flowNodes
-      : displayMode === 'schemaOverview'
-        ? schemaNodes
-        : flowNodes;
-  const renderEdges = displayMode === 'scoped'
-    ? tracedEdges
-    : (displayMode === 'schemaExpanded' && expandedSchemaViewGraph)
-      ? expandedSchemaViewGraph.flowEdges
-      : displayMode === 'schemaOverview'
-        ? schemaEdges
-        : flowEdges;
   const graphErrorResetKey = JSON.stringify({
     project: activeProjectId,
     source: sourceName,
@@ -1451,7 +1674,7 @@ export function App() {
     graphMode,
     traceMode: trace.mode,
     filter: serializeFilter(filter),
-    expandedSchemas: expandedSchemaView ? Array.from(expandedSchemaView.expandedSchemas).sort() : [],
+    expandedSchemas: serializeExpandedSchemas(expandedSchemaView?.expandedSchemas),
     showExpandedSchemaClusters,
   });
   const graphErrorContext = {
@@ -1460,7 +1683,7 @@ export function App() {
     displayMode,
     graphMode,
     traceMode: trace.mode,
-    expandedSchemas: expandedSchemaView ? Array.from(expandedSchemaView.expandedSchemas).sort() : [],
+    expandedSchemas: serializeExpandedSchemas(expandedSchemaView?.expandedSchemas),
     renderedNodeCount: renderNodes.length,
     renderedEdgeCount: renderEdges.length,
     filteredCount,
@@ -1471,9 +1694,45 @@ export function App() {
     ),
   };
 
+  const renderLimitNotice = (showRenderLimitNotice && renderLimitFallback) ? (
+    <div className="absolute inset-0 z-40 flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--ln-bg) 70%, transparent)' }}>
+      <div className="text-center p-8 max-w-md rounded-lg" style={{ ...RENDER_LIMIT_SURFACE_STYLE, color: 'var(--ln-fg)' }}>
+        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
+        <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)', marginBottom: 16 }}>{renderLimitFallback.message}</div>
+        <div className="flex items-center justify-center gap-2">
+          {traceReduceCandidate && (
+            <button
+              onClick={() => applyTrace(traceReduceCandidate.upstream, traceReduceCandidate.downstream)}
+              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-primary"
+            >
+              Reduce depth to ↑{traceReduceCandidate.upstream} ↓{traceReduceCandidate.downstream}
+            </button>
+          )}
+          {renderLimitFallback.offerSchemaView && (
+            <button
+              onClick={() => handleGraphModeChange('overview')}
+              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-primary"
+            >
+              Open Schema View
+            </button>
+          )}
+          {(isTraceActive || aiPreview) && (
+            <button
+              onClick={() => (isTraceActive ? endTrace() : handleDiscardAiPreview())}
+              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-secondary"
+            >
+              {isTraceActive ? 'Exit trace' : 'Discard preview'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <ReactFlowProvider key={canvasResetKey}>
       <GraphCanvas
+        renderLimitNotice={renderLimitNotice}
         flowNodes={renderNodes}
         flowEdges={renderEdges}
         graphMode={graphMode}
@@ -1502,11 +1761,23 @@ export function App() {
         onCloseInfoBar={() => setInfoBarNodeId(null)}
         isDetailSearchOpen={isDetailSearchOpen}
         onToggleDetailSearch={() => setIsDetailSearchOpen(prev => !prev)}
+        isTraceTreeCollapsed={isTraceTreeCollapsed}
+        onToggleTraceTreeCollapsed={() => setIsTraceTreeCollapsed(prev => !prev)}
+        traceScopeGraph={traceScopeGraph}
+        modelGraph={fullGraph}
+        setFocusTargets={setFocusTargets}
+        exitFocusPaths={exitFocusPaths}
+        isFocusPaths={isFocusPaths}
+        focusTargetIds={focusTargetIds}
+        navigatorTrace={navigatorTrace}
+        onResetTrace={resetTraceToStart}
+        onAddTraceNeighbors={addTraceNeighbors}
         onNodeClick={handleNodeClick}
         onClearSelection={handleClearSelection}
         onSchemaNodeSelect={handleSchemaNodeSelect}
         onNodeContextMenu={handleNodeContextMenu}
-        onStartTraceImmediate={startTraceImmediate}
+        onShowDetails={setInfoBarNodeId}
+        onStartTraceImmediate={handleStartTraceImmediate}
         onTraceApply={handleTraceApply}
         onTraceEnd={endTrace}
         onResetAll={handleResetAll}
@@ -1532,6 +1803,7 @@ export function App() {
         onClearAnalysisGroup={clearAnalysisGroup}
         onApplyPath={applyPath}
         isRebuilding={isRebuilding}
+        estimateTraceSize={estimateTraceSize}
         onRefresh={handleRefresh}
         onRebuild={handleRebuild}
         onBack={handleBack}
@@ -1562,6 +1834,9 @@ export function App() {
         pendingPositions={pendingPositions}
         viewportPreserveVersion={viewportPreserveVersion}
         onPendingPositionsApplied={handlePendingPositionsApplied}
+        onCameraChange={handleCameraChange}
+        pendingViewport={pendingViewport}
+        onPendingViewportApplied={handlePendingViewportApplied}
         useFullModel={useFullModel}
         onToggleFullModel={toggleUseFullModel}
         filteredOutCount={traceFilteredOutCount}
@@ -1590,18 +1865,36 @@ export function App() {
           externalUrl={contextMenu.externalUrl}
           fullName={contextMenu.fullName}
           isTracing={isModeLocked}
-          canExcludeNode={modeCapabilities.canExcludeHighlightedNode}
+          removeAction={resolveRemoveAction(modeCapabilities, {
+            hasAnalysisMode: !!analysisMode,
+            isTraceOrigin: contextMenu.nodeId === trace.selectedNodeId,
+          })}
           onClose={() => setContextMenu(null)}
           onTrace={(nodeId) => startTraceConfig(nodeId)}
           onFindPath={(nodeId) => startPathFinding(nodeId)}
           onViewDdl={handleViewDdl}
           onShowDetails={(nodeId) => setInfoBarNodeId(nodeId)}
           onExcludeNode={handleAddExclusionPattern}
+          onTracePruneNode={pruneTraceNode}
+          onCuratedRemoveNode={handleRemoveFromView}
           onCollapseSchema={
             displayMode === 'schemaExpanded' && expandedSchemaView?.expandedSchemas.has(contextMenu.schema)
               ? handleCollapseExpandedSchemaViewSchema
               : undefined
           }
+        />
+      )}
+
+      {contextMenu?.kind === 'schema' && (
+        <SchemaContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          schema={contextMenu.schema}
+          isExpanded={contextMenu.isExpanded}
+          disabledReason={isModeLocked ? 'Exit the active mode to change schema expansion' : undefined}
+          onClose={() => setContextMenu(null)}
+          onExpand={handleExpandExpandedSchemaViewSchema}
+          onCollapse={handleCollapseExpandedSchemaViewSchema}
         />
       )}
     </ReactFlowProvider>

@@ -70,6 +70,7 @@ export function useDropdown(placement: Placement = 'bottom-start') {
     toggle,
     refs,
     floatingStyles,
+    context,
     getReferenceProps,
     getFloatingProps,
   };

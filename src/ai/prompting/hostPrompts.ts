@@ -36,50 +36,6 @@ import { escapePromptText } from '../support/text';
 export type StagePromptContext = GeneralPromptContext;
 
 /**
- * Answers the small class of questions whose facts are owned completely by the host snapshot.
- *
- * @remarks
- * This is intentionally narrower than lineage intent classification. It handles only aggregate
- * application context already rendered in every prompt (platform, schema count, visible object
- * count). Questions about object types, named objects, dependencies, or lineage stay model/tool
- * routed so this helper cannot invent semantic database facts.
- */
-export function tryBuildDeterministicContextAnswer(
-  prompt: string,
-  ctx: StagePromptContext,
-): string | null {
-  const normalized = prompt
-    .toLocaleLowerCase('en-US')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-  if (!normalized) return null;
-
-  const asksCount = /\b(?:how many|number of|count of|object count|schema count)\b/.test(normalized);
-  const asksLineage = /\b(?:feed|feeds|source|sources|upstream|downstream|depend|dependency|dependencies|lineage|impact|column|columns|read|reads|write|writes|use|uses)\b/.test(normalized);
-  const namesObjectType = /\b(?:table|tables|view|views|procedure|procedures|function|functions)\b/.test(normalized);
-
-  if (asksCount && /\bobjects?\b/.test(normalized) && !asksLineage && !namesObjectType) {
-    if (ctx.filterSchemas.length === 1) {
-      return `The current \`${ctx.filterSchemas[0]}\` schema has **${ctx.visibleNodes} objects**.`;
-    }
-    if (ctx.filterSchemas.length > 1) {
-      return `The active schemas (${ctx.filterSchemas.map(schema => `\`${schema}\``).join(', ')}) contain **${ctx.visibleNodes} objects**.`;
-    }
-    return `The loaded snapshot contains **${ctx.totalNodes} objects** across **${ctx.totalSchemaCount} schemas**.`;
-  }
-
-  if (asksCount && /\bschemas?\b/.test(normalized) && !asksLineage) {
-    return `The loaded snapshot contains **${ctx.totalSchemaCount} schemas**.`;
-  }
-
-  const asksPlatform = /\b(?:what|which)\b/.test(normalized)
-    && /\b(?:database platform|db platform|sql platform|database type|sql dialect)\b/.test(normalized);
-  if (asksPlatform) return `The loaded snapshot platform is **${ctx.dbPlatform}**.`;
-
-  return null;
-}
-
-/**
  * Derives the {@link StagePromptContext} from the loaded model + active filter.
  *
  * @remarks
@@ -177,10 +133,10 @@ export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string 
  * Directive system prompt for the restricted **SM-entry** turn.
  *
  * @remarks
- * Paired with a 3-tool registry (`lineage_get_screen_state` + `lineage_search_objects` + `lineage_start_exploration`) and
- * a graph-enforced required terminal tool, so a weak model can only resolve the origin and open the exploration
- * → the `confirm_sm_start` gate fires deterministically (instead of answering in prose). For a
- * column trace, the detected columns are surfaced so the model passes them as `targetColumns`.
+ * Paired with a 4-tool registry (`lineage_get_screen_state` + `lineage_search_objects` + `lineage_get_object_detail` + `lineage_start_exploration`)
+ * under automatic tool choice: a `lineage_start_exploration` call opens the `confirm_sm_start` gate,
+ * and a text-only reply ends the turn as its answer. For a column trace, the detected columns are
+ * surfaced so the model passes them as `targetColumns`.
  *
  * @param ctx - Grounding context.
  * @param targetColumns - Columns to trace when the entry route is `column_trace`; omitted otherwise.
@@ -193,7 +149,7 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     : '';
   const directive = [
     '## Task: open the exploration',
-    "Resolve the object the user named with `lineage_search_objects`, then call `lineage_start_exploration` once with that exact id as `origin`. Set every other field from the user's own words, as its description says: `direction`, `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
+    "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named. Set every other field from the user's own words, as its description says: `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
     ctLine,
     'The user then reviews your proposal at an approval gate.',
   ].filter(Boolean).join('\n');
@@ -205,11 +161,11 @@ export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
   const base = buildGeneralSystemPrompt(ctx);
   const directive = [
     '## Refine the pending exploration',
-    'Revise the interrupted proposal and call `lineage_start_exploration`. Do not answer in prose.',
+    'Revise the interrupted proposal and call `lineage_start_exploration`.',
     'The current proposal, revision, and requested edit are supplied in the trailing user message.',
     'Reuse canonical IDs already present there. Do not search for or re-resolve the unchanged origin.',
     'Use `lineage_search_objects` only when the requested edit needs resolution, such as a typo, ambiguous name, name pattern, or newly named object.',
-    'Call `lineage_start_exploration` with the current proposalRevision and only fields changed by the edit; omitted fields are inherited mechanically.',
+    'Call `lineage_start_exploration` with the current proposalRevision and only fields changed by the edit; an omitted field keeps the reviewed value, except mission_brief as the trailing message states.',
     'A successful patch re-emits the consent gate. That is expected control flow, not an error to retry around.',
   ].join('\n');
   return [base, directive].join('\n\n');
@@ -221,32 +177,16 @@ export function buildGateRefinePrompt(
   refine: AiGateRefine,
   proposalRevision: number,
 ): string {
-  const fmt = (values?: string[]): string => values?.length ? values.join(', ') : '(none)';
-  const targetLine = refine.analysisMode === 'bb'
-    ? '- targetColumns: omit for BB'
-    : `- targetColumns: ${refine.targetColumns ? fmt(refine.targetColumns) : '(unchanged)'}`;
   return [
-    'The user is refining the pending exploration scope. Do not start a new exploration or answer in prose.',
+    'The user is refining the pending exploration scope. Do not start a new exploration.',
     '',
     'Current candidate scope (post-filter):',
     escapePromptText(scopeSummaryMd),
     '',
-    'Requested scope edits:',
-    `- excludeTypes: ${fmt(refine.excludeTypes)}`,
-    `- excludeSchemas: ${fmt(refine.excludeSchemas)}`,
-    `- excludeNodeIds: ${fmt(refine.excludeNodeIds)}`,
-    `- passNodeIds: ${fmt(refine.passNodeIds)}`,
-    `- analysisMode: ${refine.analysisMode ?? '(unchanged)'}`,
-    targetLine,
-    refine.instruction ? `- instruction: "${escapePromptText(refine.instruction)}"` : '',
+    `Requested change: "${escapePromptText(refine.instruction ?? '')}"`,
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
-    'Omitted proposal fields are preserved mechanically. Preserve unchanged origin, question, mission brief, direction, depth, filters, mode, classification, and columns by omitting them. An analysis constraint in the instruction that no field above expresses goes in `scopeNotes`.',
-    'Use `lineage_search_objects` only when the requested edit needs resolution, such as a typo, ambiguous name, name pattern, or newly named object.',
-    'Reuse canonical IDs already present in the current proposal context. Do not search for or re-resolve the unchanged origin.',
-    'Do not repeat entry detection, discovery, scope-bundle retrieval, or the original origin search.',
-    'The backend merges the patch, recomputes an unpublished preview, and re-emits the gate for review.',
-    'A CT-to-BB patch removes targetColumns. A BB-to-CT patch must include at least one named targetColumns value.',
+    'Preserve unchanged origin, question, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint in the instruction that no field above expresses goes in `scopeNotes`.',
   ].filter(Boolean).join('\n');
 }
 
@@ -255,7 +195,7 @@ export function buildGateRefinePrompt(
  * committed hop.
  *
  * @remarks
- * The graph replaces the thread with `[anchor]` alone (`RESET_HISTORY` + this message); the per-hop
+ * The graph replaces the thread with `[anchor]` alone (`RemoveMessage(REMOVE_ALL_MESSAGES)` + this message); the per-hop
  * task, focus context and `<short_term_memory>` ride the following worker message, while hop
  * protocol and session memo stay in the stable `system`. The anchor keeps the conversation leading
  * with a `user` turn (strict providers reject a leading assistant turn), so it stays a one-line

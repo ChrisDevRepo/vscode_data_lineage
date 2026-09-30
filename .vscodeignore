@@ -61,6 +61,11 @@ debug.log
 # repository, so an unignored one ships the whole source and test tree inside the VSIX.
 .verify*/**
 
+# Local git worktrees (.g<sha>, .gru, …) and log files any run leaves in them or at the root.
+.g*/**
+*.log
+**/*.log
+
 # KaTeX TTF fonts — never loaded by VS Code's webview (Chromium picks
 # woff2 > woff > ttf; TTF only matters for legacy browsers). Keep woff+woff2
 # as the actual delivery formats.

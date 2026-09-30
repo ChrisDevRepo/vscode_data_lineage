@@ -12,25 +12,14 @@ import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
-import { DEFAULT_MAX_ROUNDS } from './ai/core/agentCore';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules } from './engine/sqlBodyParser';
-import { parseAiOutputTemplatesYaml, parseParseRulesYaml, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
+import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import { buildExtensionConfig } from './bridge/messageHandlers';
 
 declare const __BUILD_TIMESTAMP__: string;
-
-/**
- * Fallback for `dataLineageViz.ai.enabled` when the setting is absent.
- *
- * @remarks
- * Mirrors the manifest default (`package.json` → `contributes.configuration` →
- * `dataLineageViz.ai.enabled`). Kept here rather than in `src/ai/**` so reading the
- * kill switch never pulls a module from the AI tree onto the activation path.
- */
-const DEFAULT_AI_ENABLED = true;
 
 let outputChannel: vscode.LogOutputChannel;
 let activeTraceWriter: AiTraceWriter | undefined;
@@ -135,12 +124,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       );
     } else if (aiEnabled) {
     const runStoreLogger = Logger.create(outputChannel, 'AI');
-    const maxRounds = vscode.workspace
-      .getConfiguration('dataLineageViz')
-      .get<number>('ai.maxRounds', DEFAULT_MAX_ROUNDS);
     const aiToolHost = {
       getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
-      maxRounds,
     };
     context.subscriptions.push(
       ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
@@ -151,7 +136,6 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       createRegistry: (lease, model) =>
         buildAiToolRegistry(getSession, outputChannel, getActivePanel, lease, { ...aiToolHost, model, signal: lease.signal, budget: model.budget }),
       logger: Logger.create(outputChannel, 'AI'),
-      maxRounds,
       traceWriter,
     });
 
@@ -239,7 +223,15 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
           const msg = `${label} changed. Reload your data source to apply.`;
           configLogger.info(`Config changed — notification="${msg}"`);
           const pick = await vscode.window.showInformationMessage(msg, 'Reload');
-          if (pick === 'Reload') void vscode.commands.executeCommand('dataLineageViz.open');
+          if (pick === 'Reload') {
+            const panel = getActivePanel();
+            if (panel) {
+              panel.reveal();
+              void postToWebview(panel, { type: 'reload-source' }, configLogger);
+            } else {
+              void vscode.commands.executeCommand('dataLineageViz.open');
+            }
+          }
           break;
         }
       }

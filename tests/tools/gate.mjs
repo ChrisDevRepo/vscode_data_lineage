@@ -46,6 +46,7 @@ const STEPS = [
   { name: 'core case completeness', cmd: nodeBin, args: ['tests/tools/assert-core-cases-complete.mjs'] },
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
   { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },
+  { name: 'no new output truncation', cmd: nodeBin, args: ['tests/tools/assert-no-output-truncation.mjs', '--baseline', 'tests/tools/output-truncation-baseline.json'] },
   npmRun('unit: core (+ core coverage floors)', 'coverage:core'),
   npmRun('unit: agent runtime', 'test:runtime'),
 

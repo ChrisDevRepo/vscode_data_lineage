@@ -150,6 +150,32 @@ export function compileExclusionPattern(pattern: string): RegExp {
   return new RegExp(pattern.replace(/%/g, '.*'), 'i');
 }
 
+/**
+ * Compiles exclusion patterns into one node predicate that matches a node's `schema.name` or its
+ * `fullName` — the single matcher for every exclusion-pattern consumer.
+ *
+ * @param onInvalidPattern - Called for each pattern that does not compile; that pattern is skipped.
+ * @returns The predicate, or `null` when no pattern compiles.
+ */
+export function compileExclusionMatcher(
+  patterns: readonly string[],
+  onInvalidPattern?: (pattern: string, err: unknown) => void,
+): ((node: { schema: string; name: string; fullName: string }) => boolean) | null {
+  const regexes: RegExp[] = [];
+  for (const pattern of patterns) {
+    try {
+      regexes.push(compileExclusionPattern(pattern));
+    } catch (err) {
+      onInvalidPattern?.(pattern, err);
+    }
+  }
+  if (regexes.length === 0) return null;
+  return (node) => {
+    const name = `${node.schema}.${node.name}`;
+    return regexes.some((r) => r.test(name) || r.test(node.fullName));
+  };
+}
+
 /** Escapes a string so it can be safely used as a literal part of a regular expression. */
 export function escapeRegexLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

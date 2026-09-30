@@ -1,4 +1,5 @@
 import type { InteractionRuleResult } from '../types';
+import { makeRejection } from '../../support/toolErrorEnvelope';
 
 /**
  * `present_result` requires either a bounded preview scope or a completed exploration graph.
@@ -8,10 +9,9 @@ import type { InteractionRuleResult } from '../types';
  */
 export function evaluatePresentResultPreconditionsRule(hasPresentationSource: boolean): InteractionRuleResult {
   if (hasPresentationSource) return null;
-  return {
-    success: false,
-    errors: ['No presentation source is available.'],
-    error: 'missing_result_graph',
+  return makeRejection({
+    code: 'missing_result_graph',
+    reason: 'No presentation source is available.',
     hint: 'Load one bounded scope for a visual preview or complete the active exploration first.',
-  };
+  });
 }

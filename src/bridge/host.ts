@@ -151,5 +151,5 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
 /** Transforms a detailed ZodError into a concise, human-readable summary. */
 export function summarizeZodError(err: z.ZodError): string {
   const issues = err.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`);
-  return `${issues.length} validation issues: ${issues.slice(0, 3).join(', ')}${issues.length > 3 ? '...' : ''}`;
+  return `${issues.length} validation issues: ${issues.join(', ')}`;
 }

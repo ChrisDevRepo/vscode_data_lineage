@@ -27,7 +27,7 @@ No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to expl
 
 Once your model loads, the visual graph is ready to use — no Copilot required:
 
-- **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly.
+- **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly and focuses it in the graph.
 - **Trace dependencies** — follow sources upstream or consumers downstream from any node.
 - **See the blast radius** — spot hubs, islands, orphans, and circular dependencies before you change anything.
 - **Read the SQL** — right-click an object to open its DDL or table details; full-text search across procedure and view bodies.
@@ -56,9 +56,9 @@ metadata allows — follow column mappings or explain SQL logic.
 
 `@lineage` has three user-visible paths:
 
-- **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered directly in chat from deterministic tools. `/search` pins this path.
+- **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered directly in chat from deterministic tools. `/search` pins this path. An explicit graph/render request is answered here too; **Show graph preview** draws it.
 - **Graph preview** — the **Show graph preview** follow-up opens a bounded transient preview in the side panel. Save it explicitly if you want a bookmark.
-- **Structured walkthrough** — an explicit graph/render request, `/trace`, a named-column trace, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
+- **Structured walkthrough** — `/trace`, a named-column trace, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
 
 Only the `@lineage` chat experience requires a VS Code Language Model Chat
 provider, such as

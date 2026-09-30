@@ -135,7 +135,7 @@ function buildEntry(contract, existing, toModelJsonSchema) {
       toolReferenceName: contract.name,
       displayName: deriveDisplayName(contract.name),
       canBeReferencedInPrompt: true,
-      when: 'dataLineageViz.modelLoaded',
+      when: 'dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled',
     };
     return Object.fromEntries(
       NEW_ENTRY_KEY_ORDER

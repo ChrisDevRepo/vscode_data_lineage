@@ -12,6 +12,10 @@ interface ExternalRefsDropdownProps {
   onToggleSubType: (subType: 'file' | 'db') => void;
   /** Optional visual flag indicating if the view is already narrowed by other filters. */
   isNarrowed?: boolean;
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger while {@link disabled}. */
+  disabledReason?: string;
 }
 
 const EXTERNAL_REFS_ICON = (
@@ -32,6 +36,8 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   onToggleMaster,
   onToggleSubType,
   isNarrowed = false,
+  disabled = false,
+  disabledReason,
 }: ExternalRefsDropdownProps) {
   return (
     <ToolbarDropdown
@@ -39,11 +45,11 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
       isNarrowed={isNarrowed}
       icon={EXTERNAL_REFS_ICON}
       panelWidth="w-56"
-      panelRole="menu"
       ariaLabel="External reference filters"
-      ariaHaspopup="true"
+      disabled={disabled}
+      disabledReason={disabledReason}
     >
-      <div className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={showExternalRefs}>
+      <label className="flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors ln-list-item cursor-pointer">
         <input
           type="checkbox"
           checked={showExternalRefs}
@@ -52,11 +58,11 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
           aria-label="Toggle all external references"
         />
         <span className="text-sm ln-text">External Refs</span>
-      </div>
+      </label>
 
       {/* Sub-filters (only interactive when master is ON) */}
       <div className={showExternalRefs ? '' : 'opacity-40'}>
-        <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded-sm transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('file')}>
+        <label className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded-sm transition-colors ln-list-item cursor-pointer">
           <input
             type="checkbox"
             checked={externalRefTypes.has('file')}
@@ -66,8 +72,8 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
             aria-label="Toggle file source references"
           />
           <span className="text-sm ln-text">File Sources</span>
-        </div>
-        <div className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded-sm transition-colors ln-list-item" role="menuitemcheckbox" aria-checked={externalRefTypes.has('db')}>
+        </label>
+        <label className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded-sm transition-colors ln-list-item cursor-pointer">
           <input
             type="checkbox"
             checked={externalRefTypes.has('db')}
@@ -77,7 +83,7 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
             aria-label="Toggle cross-database references"
           />
           <span className="text-sm ln-text">Cross-Database</span>
-        </div>
+        </label>
       </div>
     </ToolbarDropdown>
   );

@@ -40,8 +40,8 @@ export interface CurrentHopActionPolicyResult {
  * Classifies current-hop prune actions without mutating engine state.
  *
  * @remarks
- * Unresolved and no-op prunes are notices; pruning the origin is fatal. Queued, visited and
- * removed targets are protected rather than turned into a retry-loop rejection.
+ * Unresolved and no-op prunes are notices. The origin, queued, visited and removed targets are
+ * protected rather than turned into a retry-loop rejection.
  */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
   const fatalErrors: InvalidRoute[] = [];
@@ -55,7 +55,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       continue;
     }
     if (id === input.originId) {
-      fatalErrors.push({ kind: 'prune_origin_forbidden', id, path: target.path, reason: `\`${id}\` is the origin node and anchors the lineage.` });
+      notices.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` is the origin node and anchors the lineage; a prune cannot remove it.` });
       continue;
     }
     if (input.removedIds.has(id)) {

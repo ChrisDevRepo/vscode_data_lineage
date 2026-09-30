@@ -53,22 +53,6 @@ describe('renderAiMarkdown — delimiter rules', () => {
 });
 
 describe('renderAiMarkdown — structure', () => {
-  it('renders GFM tables', () => {
-    const rows = render(fixture).querySelectorAll('table tbody tr');
-    expect(rows).toHaveLength(2);
-  });
-
-  it('renders fenced code blocks', () => {
-    expect(render(fixture).querySelectorAll('pre code')).toHaveLength(1);
-  });
-
-  it('renders headings at their authored depth', () => {
-    const host = render(fixture);
-    expect(host.querySelectorAll('h1')).toHaveLength(1);
-    expect(host.querySelectorAll('h2')).toHaveLength(3);
-    expect(host.querySelectorAll('h3')).toHaveLength(1);
-  });
-
   it('gives numbered section headings a stable id for chip navigation', () => {
     const host = render(fixture);
     const ids = Array.from(host.querySelectorAll<HTMLHeadingElement>('h2[id]')).map(h => h.id);

@@ -1,6 +1,7 @@
 import type { LmStage } from '../../tools/toolPolicy';
 import type { InteractionRuleResult } from '../types';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import { makeRejection } from '../../support/toolErrorEnvelope';
 
 /**
  * Tool-specific routing hint for off-policy responses.
@@ -37,8 +38,8 @@ export function evaluateToolPhaseRule(
 ): InteractionRuleResult {
   if (allowed.has(toolName)) return null;
   const stageLabel = stage.kind === 'active' ? `active(${stage.mode})` : stage.kind;
-  return {
-    error: REJECTION_CODES.offPolicy,
+  return makeRejection({
+    code: REJECTION_CODES.offPolicy,
     hint: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}. Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${offPolicyHint(toolName, stage)}`,
-  };
+  });
 }
