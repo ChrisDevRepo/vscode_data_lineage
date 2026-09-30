@@ -182,7 +182,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: `sections[] names label(s) not on file with no ${body}: ${quoteIds(textlessNewLabels)}.`,
-            hint: `A label already on file may omit ${body} to keep it; a new label needs its ${body}. Use the exact held label to change an existing section. To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.`,
+            hint: `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.`,
             issuePaths: ['sections'],
           }));
         }
@@ -302,7 +302,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
             reason: `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
-            hint: 'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
+            hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['add_node_ids'],
           }));
         }
@@ -332,7 +332,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
             reason: `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
-            hint: 'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
+            hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['prune_node_ids'],
           }));
         }
@@ -453,7 +453,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           repairFields: ['sections', 'highlight_groups', 'notes'],
           paths: ['sections', 'highlight_groups', 'notes'],
           entryIds: uncoveredCtNodes,
-          soleHint: 'Fix CT node coverage only: link each named node in a section or notes.',
         });
       }
       if (unrenderedSlotIds.length > 0) {
@@ -461,12 +460,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           field: 'sections',
           messages: [
             `Detail slot(s) reached no section: ${quoteIds(unrenderedSlotIds)}.`,
-            'For each one, add its id to a sections[].node_ids so the captured findings render in that section\'s text — a notes caption or a highlight color does not carry a detail slot\'s prose.',
+            'Add each id to a section\'s node_ids and write that object\'s captured findings into the same section\'s text; a notes caption or a highlight color does not carry them.',
           ],
           repairFields: ['sections'],
           paths: ['sections'],
           entryIds: unrenderedSlotIds,
-          soleHint: 'Fix detail-slot coverage only: add each named node to a sections[].node_ids.',
         });
       }
       if (unknownEvidenceIds.length > 0) {
@@ -479,7 +477,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           repairFields: ['sections'],
           paths: ['sections'],
           entryIds: [...new Set(unknownEvidenceIds)],
-          soleHint: 'Fix evidence references only: replace each named id with a served one, or write that SQL out in the fence.',
         });
       }
 

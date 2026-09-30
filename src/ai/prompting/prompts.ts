@@ -246,7 +246,7 @@ export function buildPresentationDetailContract(
         headingRule,
       ]
       : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth, with the short SQL that grounds them; every captured callout, formula and predicate appears exactly once — stated in words, or, where its detail_slots fence shows an id, cited by that id (```sql S<n>) and expanded verbatim after the text — never both, and never an id that no served fence shows. Never drop part of a linked node\'s captured detail.',
+        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth, with the short SQL that grounds them; every captured callout, formula and predicate appears exactly once — stated in words or as its SQL fence, never both. Never drop part of a linked node\'s captured detail.',
         headingRule,
       ];
   return [

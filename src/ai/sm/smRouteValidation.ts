@@ -12,7 +12,7 @@
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { keyedResendRule } from '../support/repairDraftStore';
-import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
@@ -40,9 +40,9 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   non_writer_continuation:
     'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours on this focus\'s carrier side — the available routes above list them — carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
   self_loop_column:
-    'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (the offending node.col is named above). Keep the rest of column_flow, sections, and summary as submitted.',
+    'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (the offending node.col is named above).',
   bad_writes_to_target:
-    'Point writes_to at the node and column this hop actually writes — usually the focus itself, so omit writes_to and let it default. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway. Keep the rest of column_flow, sections, and summary as submitted.',
+    'Point writes_to at the node and column this hop actually writes — usually the focus itself, so omit writes_to and let it default. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
   pruned_contributor:
     'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
   prune_absent:
@@ -58,11 +58,10 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors; ask a question about it instead, recorded as a deferred follow-up.',
   prune_origin_forbidden:
-    'The origin node anchors the lineage and cannot be pruned. Remove it from prune_neighbors.',
-  prune_carries_tracked_column:
-    'A column_flow names this node for the tracked columns listed above, and a node a column flows through stays in the result. Remove it from prune_neighbors.',
+    'Remove it from prune_neighbors.',
+  prune_carries_tracked_column: 'Remove it from prune_neighbors.',
   end_branch_carries_tracked_column:
-    'This focus carries the tracked columns listed above and stays in the result: submit analyze or passthrough (upstream_columns: [] where a column ends here) instead of end_branch.',
+    'Submit analyze or passthrough (upstream_columns: [] where a column ends here) instead of end_branch.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
 };
@@ -73,7 +72,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
  * authored survives the correction instead of being re-authored from scratch.
  */
 const HELD_CORRECTION_ORDER =
-  `Your analysis is held: ${INVALID_TOOL_INPUT_REPAIR_HINT} ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
+  `Your analysis is held: ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
 
 /**
  * True for a correctable field-scoped content error. The engine holds the finding draft for a

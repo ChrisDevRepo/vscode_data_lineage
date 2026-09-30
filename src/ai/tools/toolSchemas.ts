@@ -20,7 +20,7 @@ import type { HopFinding, HopFindingKept } from '../sm/smTypes';
  * wildcard target column locks an unwinnable CT session because no real column can match it.
  */
 export const ColumnIdentifierSchema = z.string().trim().min(1).regex(/^[^*%?]+$/, 'wildcards are not column identifiers').describe(
-  'A field of a table or view that the user named verbatim; a column trace starts only when at least one such column is named. When the user named no specific column, supply none; wildcards are rejected at the boundary.',
+  'A field of a table or view that the user named verbatim; a column trace starts only when at least one such column is named. Wildcards are rejected at the boundary.',
 );
 
 const MissionBriefValueSchema = z.string()
@@ -614,7 +614,7 @@ const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + ', {} with end_branch. Pre-
 
 /** Single source for the `summary` describe text, shared by the per-mode schemas and the registered union. */
 const SUMMARY_DESCRIPTION =
-  'One sentence, readable without this hop: what this node does to the data and what it hands to which node. Empty string with end_branch.';
+  KEPT_VERDICT_REQUIRED + ', empty string with end_branch. One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
 
 /**
  * Shared `submit_findings` fields across BB and CT modes, one flat object.

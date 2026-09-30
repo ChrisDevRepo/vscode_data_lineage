@@ -9,7 +9,6 @@ import {
   PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
 } from './toolSchemas';
-import { getAllowedLmToolNames } from './toolPolicy';
 import { quoteIds } from '../support/text';
 import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
@@ -88,31 +87,23 @@ export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
  * other stage is left with prose.
  */
 const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
-  completed: 'A real id outside the result graph can be brought into the view with add_node_ids; otherwise state it in sections[].text.',
-  synthesis: 'The result graph is locked this stage — state a real id it does not carry in sections[].text.',
-  visual_preview: 'The result graph is locked this stage — remove a real id it does not carry from node_ids; the answer text is served as blocks.',
+  completed: 'A real id outside the result graph can be brought into the view with add_node_ids.',
+  synthesis: 'The result graph is locked this stage.',
+  visual_preview: 'The result graph is locked this stage; the answer text is served as blocks.',
 };
 
 /**
- * Builds the unknown-node-id repair hint for the calling stage.
+ * The unknown-node-id repair hint for the calling stage: the one action the stage accepts for an
+ * id the result graph does not carry.
  *
  * @remarks
- * Derived from {@link getAllowedLmToolNames} rather than hardcoded per stage: `completed` is
- * currently the only stage whose tool policy includes `lineage_search_objects` (see
- * `toolPolicy.ts`'s `COMPLETED_TOOLS`), but reading the policy directly means this hint can never
- * drift from it if a stage's tool set changes. `visual_preview` and `synthesis` expose
- * `lineage_present_result` only, so naming `lineage_search_objects` there hands the model a
- * caller-impossible instruction — it retries the off-policy call, burns a turn, and fails again.
- * Stages without the tool fall back to the same instruction: state the unmatched fact in prose
- * instead of linking a node.
+ * The route that only one stage offers (`add_node_ids`, the locked graph) rides on
+ * {@link PRESENT_REAL_ID_ROUTE}; this sentence states the action once.
  */
 function presentNodeIdHint(stage: PresentResultStage): string {
-  const hasSearchObjects = getAllowedLmToolNames({ kind: stage }).has('lineage_search_objects');
-  return hasSearchObjects
-    ? 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically; if still unresolved, resolve canonical IDs with lineage_search_objects. If no loaded node matches the fact, state it in sections[].text rather than a node_ids field. Remove only the named ids from node_ids; keep every other id, section, note and group unchanged.'
-    : stage === 'visual_preview'
-      ? 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically. Remove an id no loaded node matches from node_ids — the answer text is already served as blocks.'
-      : 'Use node IDs from the current result graph. Case and bracket differences are normalized automatically. If a fact has no matching loaded node, state it in sections[].text instead of a node_ids field — no other tool is available this stage.';
+  return stage === 'visual_preview'
+    ? 'Case and bracket differences are normalized automatically. Remove the named ids from node_ids.'
+    : 'Case and bracket differences are normalized automatically. Remove the named ids from node_ids, or state the fact in sections[].text.';
 }
 
 /**
@@ -307,15 +298,6 @@ export interface PresentResultViolation {
    * the model or the repair-patch machinery.
    */
   readonly entryIds?: readonly string[];
-  /**
-   * Replaces the generic field-list hint when this is the only reported failure.
-   *
-   * @remarks
-   * Same precedent as the unexplained-highlight gap below: a class whose repair is not "resend this
-   * field" needs its own wording, but only while nothing else is wrong — a mixed batch keeps the
-   * generic hint so no single class can misdescribe the others.
-   */
-  readonly soleHint?: string;
 }
 
 /** Identity of a held section: its normalized label. */
@@ -968,15 +950,12 @@ export function validatePresentResult(
       if (entryIds.length > 0) pathEntryIds.set(path, entryIds);
     }
   };
-  let hasUnexplainedHighlightGap = false;
 
-  const soleHints = externalViolations.flatMap(violation => violation.soleHint ?? []);
   for (const violation of externalViolations) {
     for (const message of violation.messages) {
       addError(violation.field, message, violation.repairFields, violation.paths, [], violation.entryIds);
     }
   }
-  const externalErrorCount = errors.length;
 
   if (resolvedNodeIds.length === 0) {
     addError('nodes', 'No nodes in view — the result graph is empty or all nodes were pruned');
@@ -1061,7 +1040,6 @@ export function validatePresentResult(
 
   const unexplainedHighlightNodeIds = [...highlightedNodeIds].filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id));
   if (unexplainedHighlightNodeIds.length > 0) {
-    hasUnexplainedHighlightGap = true;
     addError(
       'highlight_groups',
       `highlight_groups node_ids must be explained by sections[].node_ids or a notes caption: ${unexplainedHighlightNodeIds.join(', ')}. For each listed node, add it to a section's node_ids[] or add a notes entry for it — or drop it from highlight_groups[] if it is uncolored plumbing.`,
@@ -1072,20 +1050,16 @@ export function validatePresentResult(
   if (errors.length > 0) {
     const fieldList = [...failedFields];
     const resendList = [...repairFields];
-    const soleFailureHint = hasUnexplainedHighlightGap && errors.length === 1
-      ? "Fix sections, notes, or highlight_groups. For each node named in the error, add it to a section's node_ids[], add a notes entry for it, or drop it from highlight_groups[] if it is uncolored plumbing."
-      : soleHints.length > 0 && errors.length === externalErrorCount && externalViolations.every(violation => violation.soleHint !== undefined)
-        ? [...new Set(soleHints)].join(' ')
-        : undefined;
     const repairInstructed = allRepairable && resendList.length > 0;
     const resendSentence = !repairInstructed && resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : '';
-    let hint = soleFailureHint ?? (fieldList.length === 1
+    const fieldHint = repairInstructed ? undefined : fieldList.length === 1
       ? `Fix ${fieldList[0]} only.${resendSentence}`
-      : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`);
-    if (repairInstructed) hint = `${hint} ${presentResultRepairInstruction(resendList, stage)}`;
-    if (soleFailureHint === undefined && nodeIdHintNeeded) {
-      hint = `${hint} ${presentNodeIdHint(stage)}`;
-    }
+      : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`;
+    const hint = [
+      fieldHint,
+      nodeIdHintNeeded ? presentNodeIdHint(stage) : undefined,
+      repairInstructed ? presentResultRepairInstruction(resendList, stage) : undefined,
+    ].filter(Boolean).join(' ');
     const unlinkable = [...pathUnlinkableIds].map(([path, ids], index) => ({
       path,
       unlinkable_node_ids: ids.map(id => ({ node_id: id, state: PRESENT_NODE_ID_STATE_TEXT[stateOf(id)] })),

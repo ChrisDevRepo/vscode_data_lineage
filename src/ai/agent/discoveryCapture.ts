@@ -4,6 +4,7 @@ import type { ToolAttemptObservation } from './toolAttempt';
 import type { AiSession } from '../session/session';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { readToolError } from '../support/toolErrorEnvelope';
+import { OVER_DISCOVERY_BUDGET_HINT } from '../support/tokenBudget';
 
 /** The captured walk used to seed the SM-offer pill / `lineage_start_exploration`. */
 interface DiscoveryWalk {
@@ -110,8 +111,6 @@ export interface OverBudgetNotice {
   readonly hint: string;
 }
 
-const DEFAULT_OVER_BUDGET_HINT = 'Scope exceeds the discovery budget. A scope this large is analysed hop by hop through an approved exploration.';
-
 /**
  * Reads an `over_discovery_budget` rejection from any tool result.
  *
@@ -133,7 +132,7 @@ export function readOverBudgetNotice(toolName: string, resultText: string): Over
   }
   const view = OverBudgetResultView.safeParse(raw);
   if (!view.success) return null;
-  return { toolName, nodes: (view.data.detail?.counts ?? view.data.counts)?.nodes ?? null, hint: view.data.hint?.trim() || DEFAULT_OVER_BUDGET_HINT };
+  return { toolName, nodes: (view.data.detail?.counts ?? view.data.counts)?.nodes ?? null, hint: view.data.hint?.trim() || OVER_DISCOVERY_BUDGET_HINT };
 }
 
 /**

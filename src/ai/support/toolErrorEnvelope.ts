@@ -497,7 +497,7 @@ export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z
     ?? unrecognizedKeyRepairHint(error, schema)
     ?? missingFieldRepairHint(error, input, schema)
     ?? typeMismatchRepairHint(error, input, schema)
-    ?? sizeBoundRepairHint(error, input);
+    ?? sizeBoundRepairHint(error);
 }
 
 /**
@@ -522,21 +522,18 @@ function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
 }
 
 /**
- * Repair hint for an array or string outside its served size bound.
+ * Repair action for an array outside its served size bound; the count and the bound ride on the
+ * issue line.
  *
- * @returns The bound-directed hint from the first `too_big` / `too_small` issue; `undefined`
- * when none is present.
+ * @returns The action for the first `too_big` / `too_small` array issue; `undefined` when none is
+ * present.
  */
-function sizeBoundRepairHint(error: z.ZodError, input: unknown): string | undefined {
+function sizeBoundRepairHint(error: z.ZodError): string | undefined {
   for (const issue of error.issues) {
     if (issue.code !== 'too_big' && issue.code !== 'too_small') continue;
     if (issue.origin !== 'array' && issue.origin !== 'set') continue;
     const path = issue.path.join('.');
-    const value = input === undefined ? undefined : resolveAtPath(input, issue.path);
-    const held = Array.isArray(value) ? `holds ${value.length} items` : 'is outside its item bound';
-    return issue.code === 'too_big'
-      ? `"${path}" ${held}, limit ${String(issue.maximum)}; send at most ${String(issue.maximum)} — merge or drop the surplus.`
-      : `"${path}" ${held}, minimum ${String(issue.minimum)}; send at least ${String(issue.minimum)}.`;
+    return issue.code === 'too_big' ? `Merge or drop the surplus in "${path}".` : `Add the missing items to "${path}".`;
   }
   return undefined;
 }
