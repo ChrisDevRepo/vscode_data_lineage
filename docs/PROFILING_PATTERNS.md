@@ -51,8 +51,9 @@ Tables above the configured threshold use a platform-specific sampling clause:
   full scan.
 
 The target sample size is converted into the clause required by the detected
-platform. Row-count headers and percentage denominators continue to use catalog
-row counts, including sampled runs.
+platform. Row-count headers show the catalog row count. On a `TABLESAMPLE` run the
+query also returns the number of rows it read, and NULL %, completeness and
+uniqueness are computed against that sample size, so they describe the sample.
 
 Current limitation: Fabric's generated `TOP` aggregate query limits result rows
 rather than the aggregate input. Treat those metrics as full-scan aggregates

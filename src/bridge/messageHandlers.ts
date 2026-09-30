@@ -28,7 +28,7 @@ import {
 import { DATABASE_CONFIG_SECTION, type DbSession } from '../engine/db/dbSession';
 import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
 import { type IConnectionInfo, type SimpleExecuteResult } from '../types/mssql';
-import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent } from '../engine/profilingEngine';
+import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
 import { type StatsMode } from '../engine/profilingEngine';
 import { buildModelFromDmv, buildSchemaPreview, mapServerInfoPlatform, validateQueryResult, type DmvResults } from '../engine/dmvExtractor';
 import {
@@ -1271,10 +1271,7 @@ async function handleTableStatsRequestHost(
     if (!profilingResult.rows.length) {
       throw new Error(`Profiling query returned no rows for ${schema}.${objectName}`);
     }
-    const resultRow: Record<string, string> = {};
-    for (let i = 0; i < profilingResult.columnInfo.length; i++) {
-      resultRow[profilingResult.columnInfo[i].columnName] = profilingResult.rows[0][i].displayValue;
-    }
+    const resultRow = profilingRowFromResult(profilingResult);
 
     const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
     const samplePercent = needsSampling ? computeSamplePercent(sampleSize, rowCount) : undefined;

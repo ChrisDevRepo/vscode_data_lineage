@@ -12,6 +12,7 @@
  */
 
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
+import type { SimpleExecuteResult } from '../types/mssql';
 
 /**
  * Statistical profile for a single column.
@@ -37,7 +38,7 @@ export interface ColumnStats {
   max?: string;
   /** Numeric mean. */
   mean?: number;
-  /** Population standard deviation. */
+  /** Sample standard deviation (`STDEV`). */
   stdDev?: number;
   /** Minimum string length. */
   minLength?: number;
@@ -209,6 +210,9 @@ export function buildColumnAggregations(
   return result;
 }
 
+/** Result column that carries the number of rows a `TABLESAMPLE` query actually read. */
+export const SAMPLE_ROWS_ALIAS = '__rows';
+
 /**
  * Assembles the full profiling SELECT statement with optional sampling.
  *
@@ -248,8 +252,9 @@ export function buildProfilingQuery(
       tablesampleClause = ` TABLESAMPLE(${pct} PERCENT)`;
     }
   }
+  const sampleRowsAgg = tablesampleClause ? `COUNT_BIG(*) AS ${qi(SAMPLE_ROWS_ALIAS)},\n  ` : '';
 
-  return `SELECT ${topClause}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
+  return `SELECT ${topClause}${sampleRowsAgg}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
 }
 
 /**
@@ -370,6 +375,9 @@ export function parseProfilingResult(
     return n;
   }
 
+  const sampleRows = sampled && row[SAMPLE_ROWS_ALIAS] !== undefined ? safeInt(row[SAMPLE_ROWS_ALIAS], 'sample rows') : 0;
+  const denominator = sampleRows > 0 ? sampleRows : rowCount;
+
   for (const col of cols) {
     const cat = classifyColumn(col);
     const isNullable = col.nullable === 'NULL';
@@ -390,9 +398,9 @@ export function parseProfilingResult(
 
     const distinctCount = safeInt(row[`${col.name}__d`], `${col.name} distinct`);
     const nullCount = isNullable ? safeInt(row[`${col.name}__n`], `${col.name} nulls`) : null;
-    const nullPercent = nullCount !== null && rowCount > 0 ? (nullCount / rowCount) * 100 : null;
-    const completeness = nullCount !== null && rowCount > 0 ? 1 - (nullCount / rowCount) : 1;
-    const uniqueness = rowCount > 0 ? Math.min(distinctCount / rowCount, 1) : 0;
+    const nullPercent = nullCount !== null && denominator > 0 ? (nullCount / denominator) * 100 : null;
+    const completeness = nullCount !== null && denominator > 0 ? 1 - (nullCount / denominator) : 1;
+    const uniqueness = denominator > 0 ? Math.min(distinctCount / denominator, 1) : 0;
 
     const entry: ColumnStats = {
       name: col.name,
@@ -430,4 +438,21 @@ export function parseProfilingResult(
   }
 
   return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+/**
+ * Turns the single row of a profiling query into the name → value map {@link parseProfilingResult}
+ * reads. A NULL cell is left out, so an aggregate over no values (MIN of an all-NULL column) is
+ * absent rather than the text `NULL`.
+ *
+ * @param result - The profiling query result; only the first row is read.
+ */
+export function profilingRowFromResult(result: SimpleExecuteResult): Record<string, string> {
+  const row: Record<string, string> = {};
+  const cells = result.rows[0] ?? [];
+  result.columnInfo.forEach((column, i) => {
+    const cell = cells[i];
+    if (cell && !cell.isNull) row[column.columnName] = cell.displayValue;
+  });
+  return row;
 }

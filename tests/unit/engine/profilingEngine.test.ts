@@ -19,6 +19,8 @@ import {
   compactDate,
   typeBadgeLabel,
   parseProfilingResult,
+  profilingRowFromResult,
+  SAMPLE_ROWS_ALIAS,
 } from '../../../src/engine/profilingEngine';
 import type { ColumnDef } from '../../../src/engine/types';
 import { ENGINE_EDITION_FABRIC } from '../../../src/engine/types';
@@ -205,6 +207,46 @@ describe('ProfilingEngine pure functions', () => {
     expect(q.includes('TOP '), 'Fabric large table uses TOP').toBe(true);
     expect(q.includes('TABLESAMPLE'), 'Fabric does not use TABLESAMPLE').toBe(false);
     expect(q.includes('500000'), 'Fabric TOP clause uses sampleSize').toBe(true);
+  });
+
+  it('profilingRowFromResult — a NULL aggregate is absent, so an all-NULL column has no min, max or length', () => {
+    const cols: ColumnDef[] = [col('Note', 'nvarchar(50)', 'NULL'), col('Closed', 'datetime', 'NULL')];
+    const result = {
+      rowCount: 1,
+      columnInfo: ['Note__d', 'Note__n', 'Note__minl', 'Note__maxl', 'Closed__d', 'Closed__n', 'Closed__min', 'Closed__max']
+        .map((columnName) => ({ columnName })),
+      rows: [[
+        { displayValue: '0', isNull: false }, { displayValue: '40', isNull: false },
+        { displayValue: 'NULL', isNull: true }, { displayValue: 'NULL', isNull: true },
+        { displayValue: '0', isNull: false }, { displayValue: '40', isNull: false },
+        { displayValue: 'NULL', isNull: true }, { displayValue: 'NULL', isNull: true },
+      ]],
+    } as never;
+    const stats = parseProfilingResult(profilingRowFromResult(result), cols, 40, false);
+    const [note, closed] = stats.columns;
+    expect(note.minLength).toBeUndefined();
+    expect(note.maxLength).toBeUndefined();
+    expect(closed.min).toBeUndefined();
+    expect(closed.max).toBeUndefined();
+    expect(note.nullPercent).toBe(100);
+    expect(stats.warnings).toBeUndefined();
+  });
+
+  it('buildProfilingQuery — a TABLESAMPLE query also counts the rows it read', () => {
+    const aggs = buildColumnAggregations([col('Code', 'nvarchar(25)', 'NULL')], false, 'quick');
+    expect(buildProfilingQuery('Sales', 'Detail', aggs, 3, 121_317, 100_000, 10_000)).toContain(`COUNT_BIG(*) AS [${SAMPLE_ROWS_ALIAS}]`);
+    expect(buildProfilingQuery('Sales', 'Detail', aggs, 3, 50_000, 100_000, 10_000)).not.toContain('COUNT_BIG(*)');
+  });
+
+  it('parseProfilingResult — sampled percentages use the rows the sample read, not the table row count', () => {
+    const cols: ColumnDef[] = [col('Code', 'nvarchar(25)', 'NULL')];
+    const row = { [SAMPLE_ROWS_ALIAS]: '10132', Code__d: '2000', Code__n: '5044' };
+    const [code] = parseProfilingResult(row, cols, 121_317, true, 9).columns;
+    expect(code.nullPercent).toBeCloseTo(49.78, 1);
+    expect(code.completeness).toBeCloseTo(0.5022, 3);
+    expect(code.uniqueness).toBeCloseTo(2000 / 10132, 5);
+    const full = parseProfilingResult({ Code__d: '2000', Code__n: '5044' }, cols, 121_317, false);
+    expect(full.columns[0].nullPercent).toBeCloseTo((5044 / 121_317) * 100, 5);
   });
 
   it('parseProfilingResult — basic integer column, not nullable', () => {
