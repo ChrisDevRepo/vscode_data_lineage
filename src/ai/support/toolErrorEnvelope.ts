@@ -565,6 +565,13 @@ export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered i
  */
 export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
 
+/**
+ * The fact stated once, ahead of the issue lines, when a call reaches validation as `{}`: every
+ * required field is absent for one cause (typically arguments cut mid-string before they were decoded),
+ * which the per-field "received undefined" lines alone never say.
+ */
+const EMPTY_ARGUMENTS_REASON = 'The call arrived with no arguments.';
+
 /** Longest object key quoted whole; a longer key is reported by length alone, never as a prefix. */
 const KEY_ECHO_MAX_CHARS = 120;
 
@@ -668,9 +675,11 @@ export function rejectionFromZodError(
   const collapsed = [...shown.values()].map(({ issue, message, others }) => (
     { ...issue, message: others.length > 0 ? `${message} (same at ${others.join(', ')})` : message }
   ));
+  const arrivedEmpty = typeof opts.input === 'object' && opts.input !== null && !Array.isArray(opts.input) && Object.keys(opts.input).length === 0;
+  const issueLines = z.prettifyError(new z.ZodError(collapsed));
   return makeRejection({
     code: opts.code,
-    reason: z.prettifyError(new z.ZodError(collapsed)),
+    reason: arrivedEmpty ? `${EMPTY_ARGUMENTS_REASON}\n${issueLines}` : issueLines,
     hint: opts.hint ?? [zodFieldRepairHint(error, opts.input, opts.schema), INVALID_TOOL_INPUT_REPAIR_HINT].filter(Boolean).join(' '),
     issuePaths,
   });
