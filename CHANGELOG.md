@@ -4,6 +4,8 @@
 
 ### Added
 - **Trace navigator** in the trace view: browse a trace by level, highlight routes and find objects.
+- **Remove from trace** in the node context menu; the render-limit notice on a trace offers **Reduce depth to ↑n ↓n**.
+- Setting `dataLineageViz.ai.maxTraceColumns` caps the starting columns of one column trace.
 
 ### Changed
 - `@lineage` backend reworked on LangChain/LangGraph standards: optimized messaging, fewer and clearer rejections.
@@ -17,6 +19,9 @@
 - AI approval card and notices stay visible in current VS Code releases.
 - Settings, search, reload and error-reporting fixes.
 - Graph and assistant views stay in sync with the active filters and AI setting.
+
+### Removed
+- Settings `dataLineageViz.ai.explorationNodeCap` and `dataLineageViz.ai.explorationTokenBudget`; a deep analysis is admitted against `dataLineageViz.ai.maxRounds` before the approval card.
 
 ## [1.2.0] - 2026-09-21
 

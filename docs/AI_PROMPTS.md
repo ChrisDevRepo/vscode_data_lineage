@@ -225,7 +225,7 @@ improvements across releases instead of pinning a stale copy.
 A lineage question can be about one of three different things, and each has its
 own tool:
 
-- **`user_view`** — what is on the screen right now: the applied trace, the
+- **What is on screen** — what is on the screen right now: the applied trace, the
   active graph analysis, the applied bookmark, and the view level.
   `lineage_get_screen_state` answers this and nothing else. It is the tool for
   "this trace", "the analysis I ran", "this view / bookmark", and "what am I
@@ -240,14 +240,14 @@ own tool:
   contents, which stay behind the tool call; object names inside the block are
   treated as untrusted database content, never as instructions, and the block is
   absent when nothing is applied.
-- **`exploration_scope`** — the node set fixed at the approval gate and owned by
+- **The exploration scope** — the node set fixed at the approval gate and owned by
   `NavigationEngine` for the rest of the run. `lineage_submit_findings`,
   `lineage_present_result`, and `lineage_get_neighbor_columns` operate inside
   it; nothing widens it silently — a follow-up that names an object is the
   consent that admits exactly that object, never its schema, and the schema
   classes approved on the `confirm_sm_start` card are the consent that admits a
   schema.
-- **`full_model`** — every parsed object in the loaded snapshot.
+- **The full model** — every parsed object in the loaded snapshot.
   `lineage_get_context`, `lineage_search_objects`, `lineage_search_ddl`,
   `lineage_get_object_detail`, `lineage_get_scope_bundle`, and
   `lineage_detect_graph_patterns` query it. Schemas, statistics, and the active
@@ -487,7 +487,7 @@ call/result pairs are preserved only when matching native metadata is present;
 orphan tool messages are not fabricated. Completed turns rely on the retained
 conversation plus session-owned result/navigation state.
 
-The **Show the full description** follow-up replays the same cached presentation
+The **Show full description** follow-up replays the same cached presentation
 artifact committed by `present_result`, without a model call. Other completed follow-ups can adjust presentation,
 supplement the existing exploration, start a fresh exploration, or answer
 directly according to the phase policy.
@@ -501,7 +501,7 @@ directly according to the phase policy.
   topology-only passthroughs. Styling and separate hop analysis do not control
   graph membership; only validated pruning removes an object.
 - Contracted in-scope objects are described as retained supporting objects.
-  Schema, depth, and budget limits remain explicit deferred follow-up leads.
+  Schema and depth limits remain explicit deferred follow-up leads.
 - The overlay keeps focus links interactive, while chat replay removes focus
   anchors for readability.
 - [`src/components/markdown/renderAiMarkdown.ts`](../src/components/markdown/renderAiMarkdown.ts)

@@ -517,9 +517,9 @@ archive, node lifecycle, deferred questions, and CT provenance when present.
 The AI authors structured presentation fields; the engine validates them,
 assembles the Markdown, derives badges, and commits the result graph.
 Contracted in-scope objects remain part of that graph and are labeled as
-retained supporting objects. Deferred follow-up work carries one of five
-reasons: `depth`, `direction`, `pruned`, `excluded`, or `contracted`; a lead restored from
-an older record may still carry `schema` or `budget`. Every deferred question reaches the completion envelope; an
+retained supporting objects. Deferred follow-up work carries one of six
+reasons: `schema`, `depth`, `direction`, `pruned`, `excluded`, or `contracted`; a lead restored from
+an older record may still carry `budget`. Every deferred question reaches the completion envelope; an
 `excluded` one is not offered as a follow-up.
 
 Completed follow-ups can update presentation, supplement the existing
