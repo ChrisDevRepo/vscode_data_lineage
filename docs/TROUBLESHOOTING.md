@@ -24,6 +24,20 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 The built-in connection retries a connect by itself on the transient errors 4060, 10928, 10929, 40197, 40501 and 40613 — three times, five seconds apart, as Microsoft recommends — before the error is shown. A mistyped database name (4060) therefore takes about 15 seconds to report.
 
+**Built-in connection by platform.**
+
+| Platform | Server name | Sign-in | Note |
+|---|---|---|---|
+| SQL Server (on-premises, Docker) | `host`, `host,port`, `host\instance` | SQL Login | Self-signed certificate: use Trust Server Certificate. A named instance needs the SQL Server Browser service (UDP 1434); with a port it is not used. |
+| Azure SQL Database | `<server>.database.windows.net` | SQL Login or Microsoft Entra ID | A paused serverless database resumes on the first login (about a minute): the first connect can end with 40613 "not currently available" — choose Retry. |
+| Azure SQL Managed Instance | `<name>.<zone>.database.windows.net` (public endpoint: `,3342`) | SQL Login or Microsoft Entra ID | — |
+| Synapse dedicated SQL pool | `<workspace>.sql.azuresynapse.net` | SQL Login or Microsoft Entra ID | A paused pool must be resumed in Synapse first. |
+| Synapse serverless SQL pool | `<workspace>-ondemand.sql.azuresynapse.net` | SQL Login or Microsoft Entra ID | Access is granted through Synapse RBAC roles. |
+| Fabric Data Warehouse, SQL analytics endpoint | `<id>.datawarehouse.fabric.microsoft.com` | Microsoft Entra ID only | SQL Login is not supported by Fabric. Use the warehouse or lakehouse name as the database. |
+| SQL database in Fabric | `<id>.database.fabric.microsoft.com` | Microsoft Entra ID only | — |
+
+A `tcp:` prefix, as the Azure portal connection strings carry it, is accepted and dropped. When the login cannot open `master` (a contained or Microsoft Entra database user, a Fabric workspace), the wizard asks for the database name instead of listing databases.
+
 Firewall and IP-allow-list errors are shown as the server reports them; Data Lineage does not change firewall rules. A password is stored only in VS Code secret storage — **Data Lineage: Update Database Password** replaces it, **Remove Database Connection** deletes it with the connection.
 
 Switching the provider keeps saved projects and their schema selection. On its next open a project reconnects through the selected provider: a saved built-in connection with the same server and user is used directly, otherwise the connection picker opens and **Add Connection…** starts from the project's server, user and database. The project then remembers the new connection.

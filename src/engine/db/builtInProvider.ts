@@ -10,7 +10,7 @@ import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '.
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
-import { passwordSecretKey, describeConnection, type BuiltInConnection } from './connectionSettings';
+import { passwordSecretKey, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
 import { MicrosoftSignInError, type DbQueryOptions, type DbSession } from './dbSession';
 import type { DmvQuery } from '../connectionManager';
 
@@ -45,6 +45,8 @@ const MS_PER_SECOND = 1000;
  */
 const CONNECT_RETRY_INTERVAL_MS = 5 * MS_PER_SECOND;
 const CONNECT_MAX_RETRIES = 3;
+/** Login budget of one connect attempt; Microsoft recommends 30 seconds for Azure SQL and Synapse. */
+const CONNECT_TIMEOUT_MS = 30 * MS_PER_SECOND;
 
 /** Engine editions that run in a Microsoft cloud service. */
 const CLOUD_ENGINE_EDITIONS: ReadonlySet<number> = new Set([5, 6, 8, 11, 12]);
@@ -318,7 +320,8 @@ async function resolveAuthentication(
  * SQL login reads the password from the secret store and prompts once when none is saved; Entra ID
  * requests a Microsoft account token from VS Code. Neither credential is logged or persisted in a
  * settings file. The connection declares read-only application intent (`ApplicationIntent=ReadOnly`),
- * so availability-group and read scale-out routing may serve it from a readable secondary.
+ * so availability-group and read scale-out routing may serve it from a readable secondary. The server
+ * may carry a `tcp:` prefix or a `host\instance` name; an explicit port takes precedence over the instance.
  *
  * @param connection - The saved connection.
  * @param env - Host services.
@@ -345,11 +348,12 @@ export async function openBuiltInSession(
   const lib = await import('tedious');
   const encrypt = connection.encrypt ?? true;
   const trustServerCertificate = connection.trustServerCertificate ?? false;
+  const address = resolveServerAddress(connection.server);
   const raw = new lib.Connection({
-    server: connection.server,
+    server: address.host,
     authentication,
     options: {
-      ...(connection.port ? { port: connection.port } : {}),
+      ...(connection.port ? { port: connection.port } : address.instanceName ? { instanceName: address.instanceName } : {}),
       ...(database ? { database } : {}),
       encrypt,
       trustServerCertificate,
@@ -358,6 +362,7 @@ export async function openBuiltInSession(
       readOnlyIntent: true,
       connectionRetryInterval: CONNECT_RETRY_INTERVAL_MS,
       maxRetriesOnTransientErrors: CONNECT_MAX_RETRIES,
+      connectTimeout: CONNECT_TIMEOUT_MS,
       appName: APP_NAME,
     },
   });

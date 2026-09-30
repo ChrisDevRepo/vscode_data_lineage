@@ -23,7 +23,7 @@ import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { notifyInfo, notifyWarning } from '../utils/notifications';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
-import { DbConnectionError, getConnectionProvider, type ConnectionErrorTarget, type ConnectionProviderId, type DbSession } from './db/dbSession';
+import { DbConnectionError, MicrosoftSignInError, getConnectionProvider, type ConnectionErrorTarget, type ConnectionProviderId, type DbSession } from './db/dbSession';
 import {
   MSSQL_EXTENSION_ID, MssqlApiError, createMssqlSession, isMssqlExtensionAvailable,
   promptForMssqlConnection, reconnectMssqlConnection,
@@ -339,17 +339,28 @@ async function pickBuiltInConnection(
   }
 }
 
-/** Opens the connection without a database, lists what the login can open and asks which one. */
+/**
+ * Opens the connection without a database, lists what the login can open and asks which one.
+ *
+ * @remarks
+ * A login that cannot open the default database (a contained or Microsoft Entra user on Azure SQL,
+ * a Fabric or Synapse workspace) or cannot read the list falls back to typing the name; the
+ * connection made with that name reports any real login problem. A Microsoft sign-in that does not
+ * complete is raised as a {@link DbConnectionError} so the caller can offer Sign In.
+ */
 async function pickDatabase(env: DbConnectEnv, connection: BuiltInConnection): Promise<string | undefined> {
   let names: string[] = [];
-  const probe = await openBuiltInSession(connection, env);
-  if (!probe) return undefined;
   try {
-    names = await listAccessibleDatabases(probe, env);
+    const probe = await openBuiltInSession(connection, env);
+    if (!probe) return undefined;
+    try {
+      names = await listAccessibleDatabases(probe, env);
+    } finally {
+      await probe.dispose();
+    }
   } catch (err) {
+    if (err instanceof MicrosoftSignInError) throw new DbConnectionError(builtInTarget(connection, undefined), err);
     Logger.create(env.outputChannel, 'DB').debug(`Database list unavailable for ${connection.server}: ${err instanceof Error ? err.message : String(err)}`);
-  } finally {
-    await probe.dispose();
   }
   if (names.length > 0) {
     return vscode.window.showQuickPick(names, { placeHolder: `Database on ${connection.server}`, ignoreFocusOut: true });

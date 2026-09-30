@@ -26,6 +26,31 @@ export function passwordSecretKey(id: string): string {
 
 const MAX_TCP_PORT = 65535;
 
+const TCP_PREFIX = /^tcp:/i;
+const INSTANCE_SEPARATOR = '\\';
+
+/** Removes the leading `tcp:` protocol prefix of a server address, as the Azure portal connection strings carry it. */
+export function dropTcpPrefix(server: string): string {
+  return server.trim().replace(TCP_PREFIX, '').trim();
+}
+
+/**
+ * Splits a server address the way SqlClient and the mssql extension read it.
+ *
+ * @remarks
+ * A leading `tcp:` prefix is dropped, and `host\instance` becomes the host and the named instance the
+ * SQL Browser service resolves to a port.
+ *
+ * @param server - The address as typed or stored.
+ */
+export function resolveServerAddress(server: string): { host: string; instanceName?: string } {
+  const address = dropTcpPrefix(server);
+  const at = address.indexOf(INSTANCE_SEPARATOR);
+  if (at < 0) return { host: address };
+  const instanceName = address.slice(at + 1);
+  return instanceName ? { host: address.slice(0, at), instanceName } : { host: address.slice(0, at) };
+}
+
 const connectionFields = {
   name: z.string().min(1),
   server: z.string().min(1),

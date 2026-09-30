@@ -250,9 +250,33 @@ describe('openBuiltInSession — credentials', () => {
     expect(config.server).toBe('sql.example.com');
     expect(config.authentication).toEqual({ type: 'default', options: { userName: 'sa', password: 'from-secret' } });
     expect(config.options).toMatchObject({
-      port: 1444, database: 'AdventureWorks', encrypt: true, trustServerCertificate: false, useColumnNames: false, requestTimeout: 0, readOnlyIntent: true, connectionRetryInterval: 5000, maxRetriesOnTransientErrors: 3,
+      port: 1444, database: 'AdventureWorks', encrypt: true, trustServerCertificate: false, useColumnNames: false, requestTimeout: 0, readOnlyIntent: true, connectionRetryInterval: 5000, maxRetriesOnTransientErrors: 3, connectTimeout: 30000,
     });
     expect(ui.showInputBox).not.toHaveBeenCalled();
+  });
+
+  it('drops a tcp: prefix from the server, as SqlClient and the mssql extension accept it', async () => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    await openBuiltInSession({ ...sqlLogin, server: 'TCP:sql.example.com' }, env);
+    expect(fake.connections[0].config.server).toBe('sql.example.com');
+  });
+
+  it('splits host\\instance into server and instanceName and leaves the port to the SQL Browser lookup', async () => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    await openBuiltInSession({ ...sqlLogin, server: 'dbhost\\SQLEXPRESS', port: undefined }, env);
+    const config = fake.connections[0].config;
+    expect(config.server).toBe('dbhost');
+    expect(config.options.instanceName).toBe('SQLEXPRESS');
+    expect(config.options.port).toBeUndefined();
+  });
+
+  it('an explicit port wins over an instance name, which the driver would otherwise refuse', async () => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    await openBuiltInSession({ ...sqlLogin, server: 'dbhost\\SQLEXPRESS', port: 1444 }, env);
+    const config = fake.connections[0].config;
+    expect(config.server).toBe('dbhost');
+    expect(config.options.port).toBe(1444);
+    expect(config.options.instanceName).toBeUndefined();
   });
 
   it('honours explicit encrypt and trustServerCertificate', async () => {

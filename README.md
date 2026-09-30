@@ -30,7 +30,7 @@ A live database is read through one of two connection providers, chosen with the
 - `mssqlExtension` (default) — connections come from the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql), which Microsoft is retiring the connection API of.
 - `builtIn` — connections are stored by this extension and opened with a bundled SQL Server driver; no other extension is needed. The wizard offers **Use Built-in Connection** while the default is active.
 
-Built-in connections live in the application-scoped setting `dataLineageViz.database.connections` (server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption). Passwords are never written to settings: they go to VS Code's secret storage under `dataLineageViz.database.password.<id>`, and a missing password is asked for once with the option to save it. `entraId` connections sign in with a Microsoft account through VS Code.
+Built-in connections live in the application-scoped setting `dataLineageViz.database.connections` (server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption). Passwords are never written to settings: they go to VS Code's secret storage under `dataLineageViz.database.password.<id>`, and a missing password is asked for once with the option to save it. `entraId` connections sign in with a Microsoft account through VS Code. Microsoft Fabric accepts Microsoft Entra ID only; the server name forms per platform are listed in [Troubleshooting](docs/TROUBLESHOOTING.md#import-and-connection).
 
 | Command | Purpose |
 |---|---|

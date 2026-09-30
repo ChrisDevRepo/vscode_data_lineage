@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const host = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
   showQuickPick: vi.fn(),
+  showInputBox: vi.fn(),
+  listAccessibleDatabases: vi.fn(),
   showInformationMessage: vi.fn(),
   showWarningMessage: vi.fn(),
   getExtension: vi.fn(),
@@ -27,7 +29,7 @@ vi.mock('vscode', async (importOriginal) => {
       showInformationMessage: (...a: unknown[]) => host.showInformationMessage(...a),
       showWarningMessage: (...a: unknown[]) => host.showWarningMessage(...a),
       showErrorMessage: vi.fn(),
-      showInputBox: vi.fn(),
+      showInputBox: (...a: unknown[]) => host.showInputBox(...a),
     },
     QuickPickItemKind: { Separator: -1, Default: 0 },
     commands: { executeCommand: (...a: unknown[]) => host.executeCommand(...a) },
@@ -42,13 +44,14 @@ vi.mock('vscode', async (importOriginal) => {
 
 vi.mock('../../../../src/engine/db/builtInProvider', () => ({
   openBuiltInSession: (...a: unknown[]) => host.openBuiltInSession(...a),
+  listAccessibleDatabases: (...a: unknown[]) => host.listAccessibleDatabases(...a),
 }));
 vi.mock('../../../../src/engine/db/connectionCommands', () => ({
   runAddConnectionFlow: (...a: unknown[]) => host.runAddConnectionFlow(...a),
 }));
 
 const { connectDatabase, getConnectionAvailability } = await import('../../../../src/engine/connectionManager');
-const { getConnectionProvider, DbConnectionError } = await import('../../../../src/engine/db/dbSession');
+const { getConnectionProvider, DbConnectionError, MicrosoftSignInError } = await import('../../../../src/engine/db/dbSession');
 
 const outputChannel = { debug() {}, info() {}, warn() {}, error() {}, trace() {} } as never;
 const env = { secrets: {} as never, outputChannel, loadQueries: async () => [] };
@@ -89,7 +92,7 @@ function installMssql() {
 
 beforeEach(() => {
   host.settings = {};
-  for (const fn of [host.showQuickPick, host.showInformationMessage, host.showWarningMessage, host.getExtension, host.openBuiltInSession, host.runAddConnectionFlow, host.executeCommand, activate, mssqlConnect, mssqlExecute, mssqlDisconnect]) fn.mockClear();
+  for (const fn of [host.showQuickPick, host.showInputBox, host.listAccessibleDatabases, host.showInformationMessage, host.showWarningMessage, host.getExtension, host.openBuiltInSession, host.runAddConnectionFlow, host.executeCommand, activate, mssqlConnect, mssqlExecute, mssqlDisconnect]) fn.mockClear();
   host.getExtension.mockReset();
   host.openBuiltInSession.mockImplementation(async (conn: Record<string, any>) => fakeBuiltInSession(conn));
 });
@@ -240,6 +243,58 @@ describe('connectDatabase — builtIn failures', () => {
     expect((err as Error).message).toBe("Login failed for user 'sa'.");
     expect((err as InstanceType<typeof DbConnectionError>).original).toBe(original);
     expect((err as InstanceType<typeof DbConnectionError>).target).toMatchObject({ name: 'Local', provider: 'builtIn', connectionId: 'id-local' });
+  });
+});
+
+describe('connectDatabase — builtIn database choice', () => {
+  const noDatabase = { id: 'id-nodb', name: 'NoDb', server: 'x.database.windows.net', authenticationType: 'entraId' };
+
+  beforeEach(() => {
+    host.settings['dataLineageViz.database.connectionProvider'] = 'builtIn';
+    host.settings['dataLineageViz.database.connections'] = [noDatabase];
+    host.showQuickPick.mockImplementation(async (items: Array<{ label: string }>) => items[0]);
+  });
+
+  it('a probe login without access to master falls back to typing the database name', async () => {
+    host.openBuiltInSession.mockImplementation(async (conn: Record<string, any>, _env: unknown, options?: { database?: string }) => {
+      if (!options?.database) throw Object.assign(new Error("Login failed for user 'reader'."), { number: 18456 });
+      return fakeBuiltInSession({ ...conn, database: options.database });
+    });
+    host.showInputBox.mockResolvedValue('SalesDb');
+
+    const session = await connectDatabase(env);
+
+    expect(host.showInputBox).toHaveBeenCalledTimes(1);
+    expect(host.openBuiltInSession).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'id-nodb' }), env, { database: 'SalesDb' });
+    expect(session?.provider).toBe('builtIn');
+  });
+
+  it('an unreadable database list falls back to typing and closes the probe', async () => {
+    const probe = fakeBuiltInSession(noDatabase);
+    host.openBuiltInSession.mockResolvedValueOnce(probe);
+    host.listAccessibleDatabases.mockRejectedValue(new Error('Invalid object name'));
+    host.showInputBox.mockResolvedValue('SalesDb');
+
+    await connectDatabase(env);
+
+    expect(probe.dispose).toHaveBeenCalledTimes(1);
+    expect(host.showInputBox).toHaveBeenCalledTimes(1);
+  });
+
+  it('a Microsoft sign-in that does not complete surfaces as DbConnectionError with the sign-in action target', async () => {
+    host.openBuiltInSession.mockRejectedValueOnce(new MicrosoftSignInError('cancelled'));
+
+    const err = await connectDatabase(env).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DbConnectionError);
+    expect((err as InstanceType<typeof DbConnectionError>).target).toMatchObject({ name: 'NoDb', connectionId: 'id-nodb' });
+    expect(host.showInputBox).not.toHaveBeenCalled();
+  });
+
+  it('a cancelled password prompt on the probe cancels the connection', async () => {
+    host.openBuiltInSession.mockResolvedValueOnce(undefined);
+    await expect(connectDatabase(env)).resolves.toBeUndefined();
+    expect(host.showInputBox).not.toHaveBeenCalled();
   });
 });
 

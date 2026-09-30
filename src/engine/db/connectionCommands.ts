@@ -11,7 +11,7 @@ import { notifyInfo } from '../../utils/notifications';
 import { openBuiltInSession, listAccessibleDatabases, type BuiltInEnv } from './builtInProvider';
 import { describeConnectionError } from './connectionErrors';
 import {
-  AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection,
+  AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
   passwordSecretKey, readBuiltInConnections, upsertBuiltInConnection, type BuiltInConnection,
 } from './connectionSettings';
 
@@ -20,12 +20,13 @@ const WIZARD_STEPS = 6;
 const MAX_TCP_PORT = 65535;
 
 /**
- * Parses the wizard's server field: `host` or `host,port`.
+ * Parses the wizard's server field: `host` or `host,port`, with an optional `tcp:` prefix dropped.
  *
  * @returns The host and optional port, or `undefined` when the text is not a valid server.
  */
 export function parseServerInput(text: string): { server: string; port?: number } | undefined {
-  const [host, port, ...rest] = text.split(',').map((part) => part.trim());
+  const [typed, port, ...rest] = text.split(',').map((part) => part.trim());
+  const host = dropTcpPrefix(typed ?? '');
   if (!host || rest.length > 0) return undefined;
   if (port === undefined) return { server: host };
   if (!/^\d+$/.test(port)) return undefined;

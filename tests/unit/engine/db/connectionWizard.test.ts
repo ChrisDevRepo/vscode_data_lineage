@@ -14,6 +14,10 @@ describe('parseServerInput', () => {
     expect(parseServerInput(' sql.example.com,1444 ')).toEqual({ server: 'sql.example.com', port: 1444 });
   });
 
+  it('drops the tcp: prefix the Azure portal connection strings carry', () => {
+    expect(parseServerInput('tcp:x.database.windows.net,1433')).toEqual({ server: 'x.database.windows.net', port: 1433 });
+  });
+
   it('rejects an empty host, a non-numeric port and an out-of-range port', () => {
     expect(parseServerInput('')).toBeUndefined();
     expect(parseServerInput(',1433')).toBeUndefined();
