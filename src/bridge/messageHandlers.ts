@@ -25,7 +25,7 @@ import {
   loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered,
   executeSimpleQuery, withQueryTimeout, isPhase2Query, type DmvQuery, type DbConnectEnv,
 } from '../engine/connectionManager';
-import { DATABASE_CONFIG_SECTION, type DbSession } from '../engine/db/dbSession';
+import { DATABASE_CONFIG_SECTION, getConnectionProvider, type DbSession } from '../engine/db/dbSession';
 import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
 import { type IConnectionInfo, type SimpleExecuteResult } from '../types/mssql';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
@@ -68,10 +68,11 @@ export type WebviewMessageHandlers = {
 };
 
 /**
- * Panel-lived connection state for table profiling.
+ * Panel-lived connection state for table profiling through the mssql extension.
  *
  * @remarks
- * `pending` holds the connection negotiation currently in flight, so concurrent stats requests
+ * Built-in connections do not use it: each profiling request opens its own connection and closes it
+ * when done, so no idle socket outlives the request. `pending` holds the connection negotiation currently in flight, so concurrent stats requests
  * join it rather than each opening their own connection.
  */
 export type StatsConnState<T = DbSession> = {
@@ -1225,8 +1226,12 @@ async function handleTableStatsRequestHost(
   const t0 = Date.now();
 
   logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
+  const perRequest = getConnectionProvider() === 'builtIn';
+  let session: DbSession | undefined;
   try {
-    const session = await resolveStatsConnection(statsConnState, () => connectDatabase(dbEnv, storedConnectionInfo));
+    session = perRequest
+      ? await connectDatabase(dbEnv, storedConnectionInfo)
+      : await resolveStatsConnection(statsConnState, () => connectDatabase(dbEnv, storedConnectionInfo));
     if (!session) {
       void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
       return;
@@ -1286,6 +1291,11 @@ async function handleTableStatsRequestHost(
     }
     host.log('error', 'Stats', 'Profiling', err);
     void postToDetail(panel, { type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) }, logger);
+  } finally {
+    if (perRequest && session) {
+      await releaseSession(session).catch((err: unknown) =>
+        host.log('warn', 'Stats', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`));
+    }
   }
 }
 
