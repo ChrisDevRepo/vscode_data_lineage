@@ -46,7 +46,8 @@ vi.mock('../../../../src/engine/db/builtInProvider', () => ({
   openBuiltInSession: (...a: unknown[]) => host.openBuiltInSession(...a),
   listAccessibleDatabases: (...a: unknown[]) => host.listAccessibleDatabases(...a),
 }));
-vi.mock('../../../../src/engine/db/connectionCommands', () => ({
+vi.mock('../../../../src/engine/db/connectionCommands', async (importOriginal) => ({
+  ...await importOriginal<Record<string, unknown>>(),
   runAddConnectionFlow: (...a: unknown[]) => host.runAddConnectionFlow(...a),
 }));
 
@@ -207,6 +208,45 @@ describe('connectDatabase — builtIn', () => {
     expect(session?.provider).toBe('builtIn');
   });
 
+  it('several saved connections for the same login: the one with the project database wins, like the mssql profile match', async () => {
+    const sales = { ...local, id: 'id-sales', name: 'Sales', database: 'Sales' };
+    host.settings['dataLineageViz.database.connections'] = [local, sales];
+
+    await connectDatabase(env, { server: 'localhost', database: 'Sales', user: 'sa', authenticationType: 'SqlLogin' });
+
+    expect(host.showQuickPick).not.toHaveBeenCalled();
+    expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-sales' }), env, { database: 'Sales' });
+  });
+
+  it('several saved connections for the same login and none with the project database: the first match opens the project database', async () => {
+    const other = { ...local, id: 'id-other', name: 'Other', database: 'Other' };
+    host.settings['dataLineageViz.database.connections'] = [local, other];
+
+    await connectDatabase(env, { server: 'localhost', database: 'Archive', user: 'sa', authenticationType: 'SqlLogin' });
+
+    expect(host.showQuickPick).not.toHaveBeenCalled();
+    expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-local' }), env, { database: 'Archive' });
+  });
+
+  it('an mssql server string with a port matches a saved connection that stores the port separately', async () => {
+    const docker = { ...local, id: 'id-docker', server: 'localhost', port: 14333 };
+    host.settings['dataLineageViz.database.connections'] = [docker];
+
+    await connectDatabase(env, { server: 'localhost,14333', database: 'AdventureWorks', user: 'sa', authenticationType: 'SqlLogin' });
+
+    expect(host.showQuickPick).not.toHaveBeenCalled();
+    expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-docker' }), env, { database: 'AdventureWorks' });
+  });
+
+  it('the sign-in type must match: an mssql Entra record maps to the Entra connection on the same server', async () => {
+    const entraLocal = { id: 'id-entra', name: 'Entra', server: 'localhost', authenticationType: 'entraId' };
+    host.settings['dataLineageViz.database.connections'] = [local, entraLocal];
+
+    await connectDatabase(env, { server: 'localhost', database: 'AdventureWorks', authenticationType: 'AzureMFA', email: 'a@b.c' });
+
+    expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-entra' }), env, { database: 'AdventureWorks' });
+  });
+
   it('falls back to the picker when no saved connection matches the stored record', async () => {
     host.showQuickPick.mockImplementation(async (items: Array<{ label: string }>) => items[0]);
     await connectDatabase(env, { server: 'unknown-host', database: 'db', provider: 'builtIn', connectionId: 'gone' });
@@ -359,5 +399,36 @@ describe('connectDatabase — mssqlExtension', () => {
   it('reports a missing extension with the install instruction', async () => {
     host.getExtension.mockReset();
     await expect(connectDatabase(env)).rejects.toThrow(/not installed or is disabled/);
+  });
+});
+
+describe('migration from the mssql extension to the built-in connection', () => {
+  it('a project saved through mssql reopens once through a pre-filled new connection, then silently', async () => {
+    host.settings['dataLineageViz.database.connectionProvider'] = 'builtIn';
+    host.settings['dataLineageViz.database.connections'] = [];
+    const savedByMssql = { server: 'localhost,14333', database: 'AdventureWorks2022', user: 'dlv_reader', authenticationType: 'SqlLogin' };
+    const added = { id: 'id-added', name: 'Local', server: 'localhost', port: 14333, database: 'AdventureWorks2022', authenticationType: 'sqlLogin', user: 'dlv_reader' };
+    host.showQuickPick.mockImplementationOnce(async (items: Array<{ label: string }>) => items.find((i) => i.label.includes('Add Connection')));
+    host.runAddConnectionFlow.mockImplementationOnce(async () => {
+      host.settings['dataLineageViz.database.connections'] = [added];
+      return added;
+    });
+
+    const first = await connectDatabase(env, savedByMssql);
+
+    expect(host.showInformationMessage).toHaveBeenCalledTimes(1);
+    expect(host.runAddConnectionFlow).toHaveBeenCalledWith(env, undefined, {
+      server: 'localhost,14333', port: undefined, user: 'dlv_reader', database: 'AdventureWorks2022',
+    });
+    expect(first?.connectionInfo).toMatchObject({ provider: 'builtIn', connectionId: 'id-added', database: 'AdventureWorks2022' });
+
+    host.showInformationMessage.mockClear();
+    host.showQuickPick.mockClear();
+    const second = await connectDatabase(env, first!.connectionInfo);
+
+    expect(host.showQuickPick).not.toHaveBeenCalled();
+    expect(host.showInformationMessage).not.toHaveBeenCalled();
+    expect(host.getExtension.mock.calls.filter(([id]) => id === MSSQL_ID)).toHaveLength(0);
+    expect(second?.connectionInfo).toMatchObject({ connectionId: 'id-added' });
   });
 });

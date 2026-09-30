@@ -30,7 +30,7 @@ import {
 } from './db/mssqlExtensionProvider';
 import { listAccessibleDatabases, openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
 import { describeConnection, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
-import { runAddConnectionFlow } from './db/connectionCommands';
+import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
 import { targetFromStored, type ConnectionErrorHooks } from './db/connectionErrors';
 
 export { MSSQL_EXTENSION_ID };
@@ -283,14 +283,36 @@ export function getConnectionAvailability(): { provider: ConnectionProviderId; a
   return { provider, available: provider === 'builtIn' ? true : isMssqlExtensionAvailable() };
 }
 
-/** Whether a stored connection matches a saved built-in connection closely enough to reuse it. */
+/** Built-in sign-in type a stored record's `authenticationType` names; mssql and built-in spellings both read. */
+function storedAuthKind(authenticationType: string | undefined): BuiltInConnection['authenticationType'] | undefined {
+  if (!authenticationType) return undefined;
+  const value = authenticationType.toLowerCase();
+  if (value === 'sqllogin') return 'sqlLogin';
+  if (value === 'entraid' || value.startsWith('azure') || value.startsWith('activedirectory')) return 'entraId';
+  return undefined;
+}
+
+/**
+ * Finds the saved built-in connection that reopens a stored project.
+ *
+ * @remarks
+ * A saved `connectionId` wins. Otherwise the match follows the mssql extension's profile match:
+ * same server and port (a `host,port` server string is split first), and the same sign-in type and user where both sides name one. Among several
+ * matches the one saved for the project's database is preferred, then the first; the project's own
+ * database is opened either way.
+ */
 function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnectionInfo): BuiltInConnection | undefined {
   const byId = stored.connectionId ? connections.find((c) => c.id === stored.connectionId) : undefined;
   if (byId) return byId;
-  const sameHost = connections.filter((c) => c.server.toLowerCase() === stored.server.toLowerCase()
-    && (!c.port || !stored.port || c.port === stored.port));
-  const sameLogin = sameHost.filter((c) => !c.user || !stored.user || c.user.toLowerCase() === stored.user.toLowerCase());
-  return sameLogin.length === 1 ? sameLogin[0] : undefined;
+  const same = (a?: string, b?: string) => !a || !b || a.toLowerCase() === b.toLowerCase();
+  const kind = storedAuthKind(stored.authenticationType);
+  const host = parseServerInput(stored.server) ?? { server: stored.server };
+  const port = stored.port ?? host.port;
+  const matches = connections.filter((c) => c.server.toLowerCase() === host.server.toLowerCase()
+    && (!c.port || !port || c.port === port)
+    && (!kind || c.authenticationType === kind)
+    && same(c.user, stored.user));
+  return matches.find((c) => same(c.database, stored.database) && !!c.database) ?? matches[0];
 }
 
 function authDetail(connection: BuiltInConnection): string {
