@@ -71,7 +71,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
  * reference the reason names). The engine holds the draft for that set, so the prose the model
  * authored survives the correction instead of being re-authored from scratch.
  */
-const HELD_CORRECTION_ORDER =
+export const HELD_CORRECTION_ORDER =
   `Your analysis is held: ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
 
 /**

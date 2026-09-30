@@ -1,5 +1,5 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
-import { buildSubmissionRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, type SubmissionFaults } from './smRouteValidation';
+import { buildSubmissionRejection, HELD_CORRECTION_ORDER, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, type SubmissionFaults } from './smRouteValidation';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
@@ -19,7 +19,7 @@ import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, appendUniqueSectionText, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
-import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
+import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, ColumnCarry, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
@@ -90,9 +90,6 @@ interface NavigationWorkingMemory extends WorkingMemory {
 
 /** Optional kept-verdict fields a held draft restores when a retry omits them; CT `column_flow` is served-required, so a retry always resends it. */
 const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
-
-/** Fields a route rejection is about; a held draft never restores them on a retry that omits them. */
-const ROUTED_FIELDS: readonly string[] = ['prune_neighbors', 'questions'];
 
 /**
  * Defines the core interface for the state machine handling exploration modes.
@@ -2325,7 +2322,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.heldFindingDraft.hold(structuredClone(finding), { failed: lengthViolations.map(v => v.path.split('.')[0]) });
       return makeRejection({
         code: REJECTION_CODES.fieldLengthExceeded,
-        hint: `${measured}. Nothing was committed. Your analysis is held: resubmit submit_findings for ${focusId} with the listed field(s) shortened. ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`,
+        hint: `${measured}. Nothing was committed. Shorten the listed field(s) for ${focusId}. ${HELD_CORRECTION_ORDER}`,
         detail: lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit })),
         issuePaths: lengthViolations.map(v => v.path),
       });
@@ -2590,7 +2587,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (reported) {
       if (fatalRoutes.length > 0) this.lastRoutedRejected = fatalRoutes.length;
       for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-      if (reported.hold) this.heldFindingDraft.hold(structuredClone(finding), { failed: ROUTED_FIELDS });
+      if (reported.hold) this.heldFindingDraft.hold(structuredClone(finding), { failed: fatalRoutes.flatMap(r => r.path?.split('.')[0] ?? []) });
       return reported.rejection;
     }
 
