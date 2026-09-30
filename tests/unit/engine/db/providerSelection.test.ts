@@ -195,6 +195,19 @@ describe('connectDatabase — builtIn', () => {
     expect(host.showQuickPick).toHaveBeenCalledTimes(1);
     expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-local' }), env, expect.anything());
   });
+
+  it('pre-fills the add flow from a stored project that matches no saved connection', async () => {
+    host.showQuickPick.mockImplementation(async (items: Array<{ label: string }>) => items.find((i) => i.label.includes('Add Connection')));
+    host.runAddConnectionFlow.mockResolvedValue({ ...local, id: 'id-new', name: 'New' });
+
+    await connectDatabase(env, {
+      server: 'sql.example.com', port: 14333, database: 'Sales', user: 'reader', authenticationType: 'SqlLogin', email: 'x@example.com',
+    });
+
+    expect(host.runAddConnectionFlow).toHaveBeenCalledWith(env, undefined, {
+      server: 'sql.example.com', port: 14333, database: 'Sales', user: 'reader',
+    });
+  });
 });
 
 describe('connectDatabase — builtIn failures', () => {

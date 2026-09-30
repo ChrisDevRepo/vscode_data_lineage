@@ -297,8 +297,15 @@ function authDetail(connection: BuiltInConnection): string {
   return connection.authenticationType === 'entraId' ? 'Microsoft Entra ID' : `SQL Login (${connection.user ?? 'no user'})`;
 }
 
-/** Shows the saved built-in connections plus an add item; returns the chosen or newly added one. */
-async function pickBuiltInConnection(env: DbConnectEnv, connections: BuiltInConnection[]): Promise<BuiltInConnection | undefined> {
+/**
+ * Shows the saved built-in connections plus an add item; returns the chosen or newly added one. The
+ * add flow starts from the server, port, user and database of `stored` when there is one.
+ */
+async function pickBuiltInConnection(
+  env: DbConnectEnv,
+  connections: BuiltInConnection[],
+  stored?: StoredConnectionInfo,
+): Promise<BuiltInConnection | undefined> {
   const picked = await vscode.window.showQuickPick(
     [
       ...connections.map((connection) => ({
@@ -309,7 +316,10 @@ async function pickBuiltInConnection(env: DbConnectEnv, connections: BuiltInConn
     { placeHolder: 'Select a database connection', ignoreFocusOut: true, matchOnDescription: true },
   );
   if (!picked) return undefined;
-  return picked.connection ?? runAddConnectionFlow(env);
+  if (picked.connection) return picked.connection;
+  return runAddConnectionFlow(env, undefined, stored
+    ? { server: stored.server, port: stored.port, user: stored.user, database: stored.database }
+    : undefined);
 }
 
 /** Opens the connection without a database, lists what the login can open and asks which one. */
@@ -338,7 +348,7 @@ async function connectBuiltIn(env: DbConnectEnv, stored: StoredConnectionInfo | 
     connection = findBuiltInMatch(connections, stored);
     if (!connection) logger.warn(`Direct reconnect: no saved built-in connection matches ${stored.server} — falling back to picker`);
   }
-  connection ??= await pickBuiltInConnection(env, connections);
+  connection ??= await pickBuiltInConnection(env, connections, stored);
   if (!connection) {
     logger.info('User cancelled connection picker');
     return undefined;

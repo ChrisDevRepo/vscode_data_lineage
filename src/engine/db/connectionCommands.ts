@@ -152,14 +152,19 @@ function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable
  *
  * @param env - Host services.
  * @param existing - Connection to edit; its id, unrelated fields and saved password are kept.
+ * @param initial - Values the steps start with when adding, for example from a saved project.
  * @returns The saved connection, or `undefined` when the user cancelled.
  */
-export async function runAddConnectionFlow(env: BuiltInEnv, existing?: BuiltInConnection): Promise<BuiltInConnection | undefined> {
+export async function runAddConnectionFlow(
+  env: BuiltInEnv,
+  existing?: BuiltInConnection,
+  initial?: Pick<WizardState, 'server' | 'port' | 'user' | 'database'>,
+): Promise<BuiltInConnection | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
   const id = existing?.id ?? randomUUID();
   const state: WizardState = existing
     ? { ...existing }
-    : {};
+    : { ...initial };
 
   const testOptions = () => (state.password !== undefined ? { password: state.password } : {});
   const draft = () => toConnection({ ...state, name: state.name ?? 'draft' }, id);

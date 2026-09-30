@@ -24,6 +24,8 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 Firewall and IP-allow-list errors are shown as the server reports them; Data Lineage does not change firewall rules. A password is stored only in VS Code secret storage — **Data Lineage: Update Database Password** replaces it, **Remove Database Connection** deletes it with the connection.
 
+Switching the provider keeps saved projects and their schema selection. On its next open a project reconnects through the selected provider: a saved built-in connection with the same server and user is used directly, otherwise the connection picker opens and **Add Connection…** starts from the project's server, user and database. The project then remembers the new connection.
+
 Database import needs metadata visibility such as `VIEW DEFINITION` plus permission to run the configured catalog queries; the built-in connection sends only the queries in [`DMV_QUERIES.md`](DMV_QUERIES.md). Profiling also needs `SELECT` on profiled tables and catalog visibility for `sys.partitions` row counts. `@lineage` reads only the already-loaded model and never opens a database connection.
 
 **Cross-database refs missing.** Fully qualified three- or four-part names can surface as virtual external nodes, but remote database internals are not imported. Unqualified names are ambiguous and may not resolve.

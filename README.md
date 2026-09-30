@@ -39,6 +39,8 @@ Built-in connections live in the application-scoped setting `dataLineageViz.data
 | Data Lineage: Remove Database Connection | Delete a connection and its stored password |
 | Data Lineage: Update Database Password | Replace the stored password |
 
+Switching the provider keeps saved projects and their schema selection. On its next open a project reconnects through the selected provider: a saved built-in connection with the same server and user is used directly, otherwise the connection picker opens and **Add Connection…** starts from the project's server, user and database. The project then remembers the new connection.
+
 A failed connection shows `<connection name>: <original driver message>` with the actions that fit the error, for example Update Password, Edit Connection, Choose Database, Trust Server Certificate, Retry or Show Log. The raw error is written to the Data Lineage output channel.
 
 ## Explore your lineage
