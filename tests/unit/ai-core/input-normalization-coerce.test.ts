@@ -37,4 +37,21 @@ describe('coerceStringifiedArguments', () => {
     expect(result.value).toBe(input);
     expect(result.paths).toEqual([]);
   });
+
+  it('decodes a stringified object whose strings carry raw newlines', () => {
+    const schema = { type: 'object', properties: { sections: { type: 'object', properties: { business: { type: 'string' } } } } };
+    const raw = '{"business": "Purpose: import orders.\n\n- Rules: filter regions."}';
+    expect(() => JSON.parse(raw)).toThrow();
+    const result = coerceStringifiedArguments({ sections: raw }, schema);
+    expect(result.value).toEqual({ sections: { business: 'Purpose: import orders.\n\n- Rules: filter regions.' } });
+    expect(result.paths).toEqual(['sections']);
+  });
+
+  it('keeps a string that is not JSON of the declared kind', () => {
+    const schema = { type: 'object', properties: { sections: { type: 'object' }, targetColumns: nullableArray } };
+    const input = { sections: 'Purpose: import orders', targetColumns: 'nul' };
+    const result = coerceStringifiedArguments(input, schema);
+    expect(result.value).toBe(input);
+    expect(result.paths).toEqual([]);
+  });
 });

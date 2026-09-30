@@ -5,6 +5,7 @@
  * Keeps boundary normalization deterministic and reusable across tool handlers,
  * state-machine init, and prompt rendering.
  */
+import { parsePartialJson } from '@langchain/core/output_parsers';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
 
@@ -200,18 +201,14 @@ function declaredTypes(schema: JsonSchemaNode | undefined): Set<string> {
 function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string, paths: string[]): unknown {
   const types = declaredTypes(schema);
   if (typeof value === 'string' && !types.has('string') && (types.has('array') || types.has('object'))) {
-    try {
-      const decoded: unknown = JSON.parse(value);
-      if (
-        (Array.isArray(decoded) && types.has('array')) ||
-        (isPlainObject(decoded) && types.has('object')) ||
-        (decoded === null && types.has('null'))
-      ) {
-        paths.push(path);
-        return coerce(decoded, schema, path, paths);
-      }
-    } catch {
-      return value;
+    const decoded: unknown = parsePartialJson(value);
+    if (
+      (Array.isArray(decoded) && types.has('array')) ||
+      (isPlainObject(decoded) && types.has('object')) ||
+      (decoded === null && value.trim() === 'null' && types.has('null'))
+    ) {
+      paths.push(path);
+      return coerce(decoded, schema, path, paths);
     }
     return value;
   }
@@ -240,6 +237,8 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
  * Some model servers return an array- or object-typed argument as a JSON string
  * (`"targetColumns": "[\"A\"]"`); the product cannot know which server it talks to, so the decode
  * runs once at the model boundary for every tool and model, driven by the declared schema alone.
+ * The decode is LangChain's `parsePartialJson`, which accepts raw control characters inside strings
+ * (a model that puts literal newlines in a stringified object) where `JSON.parse` throws.
  * The caller logs {@link StringifiedArgumentsResult.paths}.
  *
  * @param input - Tool arguments as the provider returned them.
