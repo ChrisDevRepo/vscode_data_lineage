@@ -8,6 +8,8 @@
 ### Fixed
 - DACPAC import keeps a foreign key's ON DELETE action (CASCADE, SET NULL, SET DEFAULT) and column names that contain a dot.
 - Table statistics: an all-NULL column shows no min, max or length instead of the text NULL, and on sampled tables NULL %, completeness and uniqueness are computed against the sample.
+- Database import keeps schemas whose names contain non-ASCII characters.
+- A database that shows no objects names the VIEW DEFINITION permission the login needs.
 
 ### Security
 - Dependency updates for security advisories: undici 7.30.0, markdown-it 14.3.2, brace-expansion 2.1.7 / 5.0.12, fast-uri 3.1.8.
