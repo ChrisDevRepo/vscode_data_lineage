@@ -635,7 +635,7 @@ export class NavigationEngine implements IHopStateMachine {
     const failed = new Set(failedPaths.map(path => path.split('.')[0]));
     const sections = failed.has('sections')
       ? []
-      : extractRawSectionAngles(raw.sections).filter(section => section.text.trim().length > 0);
+      : extractRawSectionAngles(raw.sections);
     const summary = !failed.has('summary') && typeof raw.summary === 'string' ? raw.summary.trim() : '';
     const fields: Partial<HopFindingKept> = {};
     for (const field of HELD_CARRIED_FIELDS) {

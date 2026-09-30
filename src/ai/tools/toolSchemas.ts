@@ -439,9 +439,9 @@ export const GetScopeBundleModelSchema = z.object({
  */
 const CapturedSectionsSchema = z.object({
   /** Pre-formatted section body written per `business_capture`. */
-  business: z.string().min(1).optional(),
+  business: z.string().optional(),
   /** Pre-formatted section body written per `technical_capture`. */
-  technical: z.string().min(1).optional(),
+  technical: z.string().optional(),
 }).strict();
 
 /** Model-facing output of {@link CapturedSectionsSchema}: at most one string per angle. */
@@ -724,9 +724,9 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     }
     return;
   }
-  const sectionsEmpty = value.sections === undefined
-    || (typeof value.sections === 'object' && value.sections !== null && Object.keys(value.sections).length === 0);
-  if (fresh && sectionsEmpty) {
+  const filled = new Set(Object.entries(value.sections ?? {})
+    .filter(([, body]) => typeof body === 'string' && body.trim() !== '').map(([angle]) => angle));
+  if (fresh && filled.size === 0) {
     ctx.addIssue({
       code: 'custom',
       path: ['sections'],
@@ -734,9 +734,9 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       params: { hint: 'Send sections: the section body keyed by angle.' },
     });
   }
-  if (bothAnglesRequired && typeof value.sections === 'object' && value.sections !== null && Object.keys(value.sections).length > 0) {
+  if (bothAnglesRequired && filled.size > 0) {
     for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
-      if ((value.sections as Record<string, unknown>)[angle] !== undefined) continue;
+      if (filled.has(angle)) continue;
       ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send sections.${angle}.` } });
     }
   }
@@ -856,7 +856,7 @@ function capturedSectionSchemaForClassification(
 ): z.ZodType<CapturedSectionsWire> {
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
   if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
-    const plainBody = z.string().min(1).optional();
+    const plainBody = z.string().optional();
     if (freshSubmission) {
       return z.strictObject({ business: plainBody, technical: plainBody }).meta({ required: [...CLASSIFICATION_KEPT_ANGLES.both] });
     }
@@ -865,7 +865,7 @@ function capturedSectionSchemaForClassification(
   }
   const [onlyAngle] = kept;
   const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-  const body = z.string().min(1).optional().describe(
+  const body = z.string().optional().describe(
     `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
   );
   return z.looseObject({ [onlyAngle]: body })

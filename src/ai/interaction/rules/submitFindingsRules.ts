@@ -70,8 +70,8 @@ export function validateSectionsAgainstClassification(
  *
  * @remarks
  * The converter for a validated payload (`toHopFinding` in `toolSchemas.ts`). Tolerant on purpose:
- * only the `business`/`technical` keys are read,
- * so a non-string value under one still counts toward coverage — the strict shape check is Zod's.
+ * only the `business`/`technical` keys are read, and a blank or non-string body is absent, so it
+ * never counts toward coverage and never overwrites a held body.
  *
  * @param rawSections - The unparsed `sections` value from the raw or normalized tool input.
  * @returns Angle-bearing entries suitable for {@link validateSectionsAgainstClassification};
@@ -84,7 +84,7 @@ export function extractRawSectionAngles(rawSections: unknown): CapturedSection[]
   for (const angle of ['business', 'technical'] as const) {
     if (!(angle in record)) continue;
     const text = record[angle];
-    out.push({ angle, text: typeof text === 'string' ? text : '' });
+    if (typeof text === 'string' && text.trim() !== '') out.push({ angle, text });
   }
   return out;
 }
