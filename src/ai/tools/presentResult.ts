@@ -343,11 +343,14 @@ export function heldSectionsForRepair(sections: PresentResultInput['sections']):
  * section body field — or, when the held draft has no section, that every section is resent.
  */
 export function presentResultRepairInstruction(resendList: readonly PresentResultRepairField[], stage: PresentResultStage, sectionsHeld = true): string {
-  const instruction = `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`;
-  if (!resendList.includes('sections')) return instruction;
-  return sectionsHeld
-    ? `${instruction} ${keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids'])}`
-    : `${instruction} No section is held: resend every section.`;
+  const wholeFields = resendList.filter(field => field === 'notes' || field === 'highlight_groups');
+  return [
+    `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
+    resendList.includes('sections')
+      ? (sectionsHeld ? keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids']) : 'No section is held: resend every section.')
+      : '',
+    wholeFields.length > 0 ? `${wholeFields.join(', ')}: a resend replaces the held list whole, so send every entry, corrected.` : '',
+  ].filter(Boolean).join(' ');
 }
 
 /**
@@ -991,11 +994,12 @@ export function validatePresentResult(
     return [...byState].map(([state, group]) => `${quoteIds(group)} — ${PRESENT_NODE_ID_STATE_TEXT[state]}`).join('; ');
   };
   /**
-   * Offenders elsewhere in the call, the accepted set, and the route back — appended to each site,
-   * in that order: the least recoverable fact (which id failed and why) is stated first.
+   * The valid set and the route back, stated once — on the first offending site, the reason line
+   * the replay keeps — after every offender in the call and its state.
    */
   let nodeIdHintNeeded = false;
   const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
+    if (nodeIdHintNeeded) return '';
     nodeIdHintNeeded = true;
     const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
     return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
