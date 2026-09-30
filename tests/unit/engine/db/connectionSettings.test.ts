@@ -318,7 +318,7 @@ describe('saved password follows the server it was entered for', () => {
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
-  interface Step { values?: string[]; pick?: string }
+  interface Step { values?: string[]; pick?: string; type?: string }
 
   function scriptWizard(steps: Step[]) {
     const prompts: string[] = [];
@@ -355,7 +355,17 @@ describe('saved password follows the server it was entered for', () => {
         onDidTriggerButton: reg('button'), onDidHide: reg('hide'), onDidAccept: reg('accept'), onDidChangeValue: reg('value'),
         show() {
           const step = steps[at++];
-          box.selectedItems = [box.items.find((i: { label: string }) => i.label === step.pick)];
+          if (step.type !== undefined) {
+            box.value = step.type;
+            box.activeItems = undefined;
+            on.value?.(step.type);
+            const typed = step.type.toLowerCase();
+            const shown = box.items.filter((i: { label: string }) => i.label.toLowerCase().includes(typed));
+            const ranked = box.sortByLabel === false ? shown : [...shown].sort((a: { label: string }, b: { label: string }) => a.label.length - b.label.length);
+            box.selectedItems = [box.activeItems?.[0] ?? ranked[0]];
+          } else {
+            box.selectedItems = [box.items.find((i: { label: string }) => i.label === step.pick)];
+          }
           on.accept();
         },
       };
@@ -434,6 +444,69 @@ describe('saved password follows the server it was entered for', () => {
     const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
     expect(saved.name).toBe('Any database');
     expect(saved.database).toBeUndefined();
+  });
+
+  it('typing part of "Choose when connecting" keeps that item active instead of the typed-name item', async () => {
+    host.stored = [valid];
+    const { run } = editWith([
+      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
+      { type: 'Choose when' }, { values: ['Any database'] },
+    ]);
+
+    await run();
+
+    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(saved.database).toBeUndefined();
+  });
+
+  it('a typed database name that matches no listed database is still offered and saved', async () => {
+    host.stored = [valid];
+    const { run } = editWith([
+      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
+      { type: 'Reporting' }, { values: ['Typed'] },
+    ]);
+
+    await run();
+
+    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(saved.database).toBe('Reporting');
+  });
+
+  it('a self-signed certificate on the final test offers Trust Server Certificate; confirming saves the connection trusted', async () => {
+    host.stored = [valid];
+    const { run } = editWith([
+      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
+      { values: ['AdventureWorks'] }, { values: ['Local'] },
+    ]);
+    const selfSigned = Object.assign(new Error('Failed to connect to localhost:1433 - self signed certificate'), { code: 'ESOCKET' });
+    host.openBuiltInSession.mockReset();
+    host.openBuiltInSession.mockRejectedValueOnce(selfSigned).mockRejectedValueOnce(selfSigned).mockResolvedValue({ dispose: async () => {} });
+    host.showErrorMessage.mockResolvedValueOnce('Trust Server Certificate');
+    host.showWarningMessage.mockResolvedValueOnce('Trust Certificate');
+
+    await run();
+
+    expect(host.showErrorMessage.mock.calls[0]).toContain('Trust Server Certificate');
+    expect(host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('localhost'), { modal: true }, 'Trust Certificate');
+    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(saved.trustServerCertificate).toBe(true);
+  });
+
+  it('declining the trust confirmation saves nothing trusted', async () => {
+    host.stored = [valid];
+    const { run } = editWith([
+      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
+      { values: ['AdventureWorks'] }, { values: ['Local'] },
+    ]);
+    const selfSigned = Object.assign(new Error('Failed to connect to localhost:1433 - self signed certificate'), { code: 'ESOCKET' });
+    host.openBuiltInSession.mockReset();
+    host.openBuiltInSession.mockRejectedValue(selfSigned);
+    host.showErrorMessage.mockResolvedValueOnce('Trust Server Certificate').mockResolvedValueOnce('Cancel');
+    host.showWarningMessage.mockResolvedValueOnce(undefined);
+
+    await run();
+
+    expect(host.updates).toHaveLength(0);
   });
 
   it('edit wizard deletes the saved password when the connection switches to Entra ID', async () => {

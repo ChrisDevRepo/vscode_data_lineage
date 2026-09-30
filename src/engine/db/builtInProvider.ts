@@ -106,21 +106,48 @@ function renderTemporal(d: Date, typeName: string, meta: CellMetadata): string {
   }
 }
 
+/** Longest float32 decimal needed to round-trip any `real` value. */
+const REAL_MAX_DIGITS = 9;
+/** Fixed scale of `money` and `smallmoney`. */
+const MONEY_SCALE = 4;
+
+/** The shortest decimal text that reads back as the same 32-bit `real`. */
+function renderReal(n: number): string {
+  const single = Math.fround(n);
+  for (let digits = 1; digits < REAL_MAX_DIGITS; digits++) {
+    const candidate = Number(single.toPrecision(digits));
+    if (Math.fround(candidate) === single) return String(candidate);
+  }
+  return String(Number(single.toPrecision(REAL_MAX_DIGITS)));
+}
+
+/**
+ * Renders an exact numeric with its declared scale.
+ *
+ * @remarks
+ * The driver delivers `decimal`, `numeric` and `money` as a double. Beyond the digits a double holds,
+ * padding to the scale would print digits the server never sent, so such a value keeps the double's
+ * shortest text instead.
+ */
+function renderScaled(n: number, scale: number): string {
+  return Math.abs(n) * 10 ** scale <= Number.MAX_SAFE_INTEGER ? n.toFixed(scale) : String(n);
+}
+
 function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
   switch (typeName) {
     case 'Decimal':
     case 'DecimalN':
     case 'Numeric':
     case 'NumericN':
-      return meta.scale === undefined ? String(n) : n.toFixed(meta.scale);
+      return meta.scale === undefined ? String(n) : renderScaled(n, meta.scale);
     case 'Money':
     case 'MoneyN':
     case 'SmallMoney':
-      return n.toFixed(4);
+      return renderScaled(n, MONEY_SCALE);
     case 'Real':
-      return String(parseFloat(n.toPrecision(7)));
+      return renderReal(n);
     case 'FloatN':
-      return meta.dataLength === 4 ? String(parseFloat(n.toPrecision(7))) : String(n);
+      return meta.dataLength === 4 ? renderReal(n) : String(n);
     default:
       return String(n);
   }

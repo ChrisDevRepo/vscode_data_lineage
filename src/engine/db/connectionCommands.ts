@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
 import { notifyInfo } from '../../utils/notifications';
 import { openBuiltInSession, listAccessibleDatabases, type BuiltInEnv } from './builtInProvider';
-import { describeConnectionError } from './connectionErrors';
+import { CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
   passwordSecretKey, passwordTooLong, readBuiltInConnections, upsertBuiltInConnection, type BuiltInConnection,
@@ -76,7 +76,7 @@ interface PickOptions<T extends vscode.QuickPickItem> {
   placeholder: string;
   items: T[];
   canGoBack: boolean;
-  /** Offers the typed text as an extra item, for values that may not be in the list. */
+  /** Offers the typed text as an extra item after the list, for values that may not be in it; a listed match stays active. */
   custom?: (typed: string) => T;
 }
 
@@ -95,9 +95,11 @@ function askPick<T extends vscode.QuickPickItem>(options: PickOptions<T>): Promi
     pick.onDidTriggerButton((button) => { if (button === vscode.QuickInputButtons.Back) done(BACK); });
     if (options.custom) {
       pick.onDidChangeValue((typed) => {
-        const trimmed = typed.trim();
-        const exact = options.items.some((i) => i.label.toLowerCase() === trimmed.toLowerCase());
-        pick.items = trimmed && !exact ? [...options.items, options.custom!(trimmed)] : options.items;
+        const trimmed = typed.trim().toLowerCase();
+        const exact = options.items.some((i) => i.label.toLowerCase() === trimmed);
+        pick.items = trimmed && !exact ? [...options.items, options.custom!(typed.trim())] : options.items;
+        const listed = trimmed ? options.items.find((i) => i.label.toLowerCase().includes(trimmed)) : undefined;
+        if (listed) pick.activeItems = [listed];
       });
     }
     pick.onDidAccept(() => done(pick.selectedItems[0]));
@@ -335,12 +337,18 @@ export async function runAddConnectionFlow(
             provider: 'builtIn', name: connection.name, server: connection.server, port: connection.port,
             database: connection.database, user: connection.user, authenticationType: connection.authenticationType,
             connectionId: connection.id, tenantId: connection.tenantId,
-          }).message;
+          });
         }
       });
       if (failure === 'cancelled') return undefined;
       if (failure) {
-        const choice = await vscode.window.showErrorMessage(failure, 'Edit', 'Cancel');
+        const offerTrust = !state.trustServerCertificate && failure.actions.some((a) => a.id === 'trustServerCertificate');
+        const trustLabel = CONNECTION_ERROR_LABELS.trustServerCertificate;
+        const choice = await vscode.window.showErrorMessage(failure.message, ...(offerTrust ? [trustLabel] : []), 'Edit', 'Cancel');
+        if (choice === trustLabel) {
+          if (await confirmTrustServerCertificate(connection)) state.trustServerCertificate = true;
+          continue;
+        }
         if (choice !== 'Edit') return undefined;
         at = 0;
         direction = 1;

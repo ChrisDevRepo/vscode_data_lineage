@@ -13,11 +13,11 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 | Error | Typical cause | Buttons |
 |---|---|---|
-| 18456 `Login failed for user` | Wrong password or user; Entra account without access | Update Password · Edit Connection (Entra: Sign in with another account) |
+| 18456 `Login failed for user` | Wrong password or user, or a database the login cannot open (SQL Server reports both the same way); Entra account without access | Update Password · Choose Database · Edit Connection (Entra: Sign in with another account) |
 | 4060 / 916 `Cannot open database` | Database missing or the login has no user in it | Choose Database · Edit Connection |
 | 40613 / 40197 / 40501 / 40532 | Azure database unavailable, busy or resuming | Retry |
 | `ETIMEOUT`, `ESOCKET`, `ENOTFOUND`, `ECONNREFUSED` | Wrong server or port, server stopped, network blocked | Edit Connection · Retry |
-| Certificate not trusted (self-signed) | Local or test server without a trusted certificate | Trust Server Certificate (asks first — only for a server you control) · Edit Connection |
+| Certificate not trusted (self-signed) | Development or test server without a trusted certificate; Azure SQL, Fabric and Synapse present trusted certificates | Trust Server Certificate (asks first; also offered when a new connection is tested) · Edit Connection |
 | Sign-in cancelled | Microsoft sign-in window closed | Sign In |
 | 229 / 297 / 300 | Login cannot read metadata | Copy GRANT Statement |
 | anything else | — | Show Log · Edit Connection |
@@ -28,7 +28,7 @@ The built-in connection retries a connect by itself on the transient errors 4060
 
 | Platform | Server name | Sign-in | Note |
 |---|---|---|---|
-| SQL Server (on-premises, Docker) | `host`, `host,port`, `host\instance` | SQL Login | Self-signed certificate: use Trust Server Certificate. A named instance needs the SQL Server Browser service (UDP 1434); with a port it is not used. |
+| SQL Server (on-premises) | `host`, `host,port`, `host\instance` | SQL Login | Self-signed certificate: use Trust Server Certificate. A named instance needs the SQL Server Browser service (UDP 1434); with a port it is not used. |
 | Azure SQL Database | `<server>.database.windows.net` | SQL Login or Microsoft Entra ID | A paused serverless database resumes on the first login (about a minute): the first connect can end with 40613 "not currently available" — choose Retry. |
 | Azure SQL Managed Instance | `<name>.<zone>.database.windows.net` (public endpoint: `,3342`) | SQL Login or Microsoft Entra ID | — |
 | Synapse dedicated SQL pool | `<workspace>.sql.azuresynapse.net` | SQL Login or Microsoft Entra ID | A paused pool must be resumed in Synapse first. |

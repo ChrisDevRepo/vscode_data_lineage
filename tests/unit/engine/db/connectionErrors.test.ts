@@ -74,7 +74,7 @@ const cases: Array<{ row: string; err: Error; target?: typeof builtIn; expected:
     err: driver("Cannot open server 'aw-srv' requested by the login. Client with IP address '203.0.113.7' is not allowed to access the server.  To enable access, use the Azure Management Portal or run sp_set_firewall_rule on the master database to create a firewall rule for this IP address or address range.", { code: 'ELOGIN', number: 40615 }),
     expected: ['showLog', 'editConnection'],
   },
-  { row: '18456 SQL login', err: driver("Login failed for user 'dlv_reader'.", { code: 'ELOGIN', number: 18456 }), expected: ['updatePassword', 'editConnection'] },
+  { row: '18456 SQL login (a wrong password or a database the login cannot open)', err: driver("Login failed for user 'dlv_reader'.", { code: 'ELOGIN', number: 18456 }), expected: ['updatePassword', 'chooseDatabase', 'editConnection'] },
   { row: '18456 Entra principal', err: driver("Login failed for user '<token-identified principal>'.", { code: 'ELOGIN' }), target: entra as never, expected: ['signInAnotherAccount', 'editConnection'] },
   { row: '4060 cannot open database', err: driver('Cannot open database "Sales" requested by the login. The login failed.', { code: 'ELOGIN', number: 4060 }), expected: ['chooseDatabase', 'editConnection'] },
   { row: '916 database access', err: driver('The server principal "dlv_reader" is not able to access the database "Sales" under the current security context.', { code: 'EREQUEST', number: 916 }), expected: ['chooseDatabase', 'editConnection'] },
@@ -128,8 +128,12 @@ describe('describeConnectionError — actions', () => {
 
   it('labels are the fixed button texts', () => {
     const labels = describeConnectionError(driver("Login failed for user 'x'.", { number: 18456 }), builtIn, hooks).actions.map((a) => a.label);
-    expect(labels).toEqual([CONNECTION_ERROR_LABELS.updatePassword, CONNECTION_ERROR_LABELS.editConnection]);
+    expect(labels).toEqual([CONNECTION_ERROR_LABELS.updatePassword, CONNECTION_ERROR_LABELS.chooseDatabase, CONNECTION_ERROR_LABELS.editConnection]);
     expect(CONNECTION_ERROR_LABELS.copyGrantStatement).toBe('Copy GRANT Statement');
+  });
+
+  it('a SQL login failure without a database offers no Choose Database', () => {
+    expect(ids(driver("Login failed for user 'x'.", { number: 18456 }), { ...builtIn, database: undefined })).toEqual(['updatePassword', 'editConnection']);
   });
 
   it('offers Retry only when the caller can retry, and Choose Database only when it can ask', () => {
@@ -253,7 +257,7 @@ describe('reportConnectionError', () => {
     expect(log.info).toHaveBeenCalledTimes(1);
     expect(String(log.info.mock.calls[0][0])).toContain("Login failed for user 'dlv_reader'.");
     expect(String(log.info.mock.calls[0][0])).toContain('number=18456');
-    expect(present).toHaveBeenCalledWith(message, 'Update Password', 'Edit Connection');
+    expect(present).toHaveBeenCalledWith(message, 'Update Password', 'Choose Database', 'Edit Connection');
     expect(message).toBe(`${NAME}: Login failed for user 'dlv_reader'.`);
   });
 

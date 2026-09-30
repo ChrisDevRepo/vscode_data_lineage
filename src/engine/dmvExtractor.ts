@@ -48,6 +48,9 @@ export interface DmvResults {
   serverPlatform?: string;
 }
 
+/** Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION. */
+const NO_USER_OBJECTS_WARNING = 'No user objects found in database. If the database has objects, the login needs VIEW DEFINITION on it.';
+
 /**
  * Processes schema-preview query results to build a lightweight summary of the database.
  *
@@ -80,7 +83,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   const schemas = Array.from(schemaMap.values()).sort((a, b) => b.nodeCount - a.nodeCount);
   const warnings: string[] = [];
   if (totalObjects === 0) {
-    warnings.push('No user objects found in database.');
+    warnings.push(NO_USER_OBJECTS_WARNING);
   }
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
@@ -123,7 +126,7 @@ export function buildModelFromDmv(
 
   const warnings: string[] = [];
   if (objects.length === 0) {
-    warnings.push('No user objects found in database.');
+    warnings.push(NO_USER_OBJECTS_WARNING);
   }
 
   return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform, source: 'database' };

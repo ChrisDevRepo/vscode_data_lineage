@@ -9,7 +9,7 @@
 import * as vscode from 'vscode';
 import type { Logger } from '../../utils/log';
 import type { StoredConnectionInfo } from '../shared/bridgeContract';
-import { readBuiltInConnections, upsertBuiltInConnection, describeConnection } from './connectionSettings';
+import { readBuiltInConnections, upsertBuiltInConnection, describeConnection, type BuiltInConnection } from './connectionSettings';
 import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from './dbSession';
 
 /** Identifier of an action a connection error can offer. */
@@ -60,6 +60,7 @@ const UNAVAILABLE_NUMBERS: ReadonlySet<number> = new Set([40613, 40197, 40501, 4
 const PERMISSION_NUMBERS: ReadonlySet<number> = new Set([229, 297, 300]);
 const NETWORK_CODES: ReadonlySet<string> = new Set(['ETIMEOUT', 'ESOCKET', 'ENOTFOUND', 'ECONNREFUSED']);
 
+const TRUST_CERTIFICATE = 'Trust Certificate';
 const CERTIFICATE_TEXT = /self[- ]signed certificate|unable to verify the first certificate|unable to get local issuer certificate|certificate chain|certificate (?:is not trusted|has expired)|CERT_[A-Z_]+/i;
 const NETWORK_TEXT = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|Failed to connect to .+ in \d+ms/i;
 const UNAVAILABLE_TEXT = /is not currently available|service is currently busy|encountered an error processing your request|requested by the login\.\s+The login failed/i;
@@ -186,12 +187,7 @@ export function describeConnectionError(
     trustServerCertificate: () => make('trustServerCertificate', async () => {
       const saved = readBuiltInConnections().find((c) => c.id === connectionId);
       if (!saved) return;
-      const confirmed = await vscode.window.showWarningMessage(
-        `Trust the certificate of ${describeConnection(saved)} without validating it? Do this only for a server you control, for example local Docker.`,
-        { modal: true },
-        'Trust Certificate',
-      );
-      if (confirmed !== 'Trust Certificate') return;
+      if (!await confirmTrustServerCertificate(saved)) return;
       await upsertBuiltInConnection({ ...saved, trustServerCertificate: true });
       await retry({ trustServerCertificate: true });
     }),
@@ -216,7 +212,7 @@ export function describeConnectionError(
   switch (kind) {
     case 'loginFailed':
       if (entra) add(managed(actions.signInAnotherAccount), managed(actions.editConnection));
-      else add(managed(actions.updatePassword), managed(actions.editConnection));
+      else add(managed(actions.updatePassword), target.database && hooks.chooseDatabase ? managed(actions.chooseDatabase) : undefined, managed(actions.editConnection));
       break;
     case 'cannotOpenDatabase':
       add(hooks.chooseDatabase ? managed(actions.chooseDatabase) : undefined, managed(actions.editConnection));
@@ -240,6 +236,21 @@ export function describeConnectionError(
       add(actions.showLog(), managed(actions.editConnection));
   }
   return { message, actions: wanted };
+}
+
+/**
+ * Asks, in a modal, whether to trust a server certificate without validating it.
+ *
+ * @param connection - The server the certificate belongs to.
+ * @returns `true` only when the user confirmed.
+ */
+export async function confirmTrustServerCertificate(connection: Pick<BuiltInConnection, 'server' | 'port' | 'database'>): Promise<boolean> {
+  const confirmed = await vscode.window.showWarningMessage(
+    `Trust the certificate of ${describeConnection(connection)} without validating it? Do this only for a server you know uses a self-signed certificate, such as a development or test server.`,
+    { modal: true },
+    TRUST_CERTIFICATE,
+  );
+  return confirmed === TRUST_CERTIFICATE;
 }
 
 /**

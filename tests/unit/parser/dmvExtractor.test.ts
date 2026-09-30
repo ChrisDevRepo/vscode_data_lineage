@@ -859,3 +859,15 @@ function testPkOrdinalFromDmv() {
   it('maps database platforms from DMV results', testDbPlatformFromDmv);
   it('maps primary-key ordinals from DMV results', testPkOrdinalFromDmv);
 });
+
+describe('empty metadata catalog', () => {
+  it('the schema preview warning names VIEW DEFINITION, the permission a login needs to see objects', async () => {
+    const { buildSchemaPreview } = await import('../../../src/engine/dmvExtractor');
+    const empty: SimpleExecuteResult = {
+      rowCount: 0,
+      columnInfo: ['schema_name', 'type_code', 'object_count'].map((columnName) => ({ columnName }) as IDbColumn),
+      rows: [],
+    };
+    expect(buildSchemaPreview(empty).warnings).toEqual([expect.stringMatching(/No user objects found.*VIEW DEFINITION/)]);
+  });
+});
