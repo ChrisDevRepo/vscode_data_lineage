@@ -6,14 +6,11 @@
 - Built-in SQL Server connections (setting `dataLineageViz.database.connectionProvider`): saved connections with SQL login or Microsoft Entra sign-in, passwords in VS Code secret storage, four connection commands, and connection errors shown as the original driver message with fitting actions. The mssql extension remains the default provider.
 
 ### Fixed
-- DACPAC import keeps a foreign key's ON DELETE action (CASCADE, SET NULL, SET DEFAULT) and column names that contain a dot.
-- Table statistics: an all-NULL column shows no min, max or length instead of the text NULL, and on sampled tables NULL %, completeness and uniqueness are computed against the sample.
-- Database import keeps schemas whose names contain non-ASCII characters.
-- A database that shows no objects names the VIEW DEFINITION permission the login needs.
+- DACPAC import reads object and column names and data types correctly.
 
-### Security
-- A saved SQL login password is sent only to the server, port and user it was saved for; after the connection is pointed elsewhere, the password is asked again.
-- Dependency updates for security advisories: undici 7.30.0, markdown-it 14.3.2, brace-expansion 2.1.7 / 5.0.12, fast-uri 3.1.8.
+### Dependencies
+- New: tedious (Microsoft's SQL Server driver for Node.js) for built-in connections.
+- Updated for security advisories: undici 7.30.0, markdown-it 14.3.2, brace-expansion 2.1.7 / 5.0.12, fast-uri 3.1.8.
 
 ## [1.2.1] - 2026-09-30
 
