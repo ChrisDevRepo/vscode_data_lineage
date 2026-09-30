@@ -9,6 +9,8 @@
 import type { ClassificationValue } from '../session/classification';
 import type { CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
 import type { ColumnTransformClass } from '../../engine/shared/bridgeContract';
+import type { DepthSideValue } from '../../engine/shared/explorationDepthContract';
+import type { ToolRejection } from '../support/toolErrorEnvelope';
 
 
 /**
@@ -107,7 +109,7 @@ export interface ColumnFlowEntry {
    * For writer procedures: the table column this node writes to.
    * When present, the lineage edge is `focus_node.out_col → writes_to.node.writes_to.col`.
    */
-  writes_to?: { node: string; col: string };
+  writes_to?: { node: string; col: string } | null;
   /**
    * Real upstream columns that continue this trace. Empty means the active column is
    * produced/terminates here and there is no upstream real column to route.
@@ -199,18 +201,15 @@ export interface HopNeighbor {
   /** False when this node is beyond the active depth budget. Always surfaced when budget is set. */
   in_budget?: boolean;
   /**
-   * False when this node's schema is outside the session's approved scope. Surfaced when a filter is active.
+   * Whether a route to this node would be admitted: inside the approved border (exclusions,
+   * direction) and the stated depth. Always surfaced; it is the same verdict the
+   * prune and route validators apply.
    *
    * @remarks
    * In SM sessions the approved scope is locked at `confirm_sm_start`; routes to out-of-scope
    * neighbors are deferred (not rejected) and surfaced at synthesis.
    */
   in_approved_scope?: boolean;
-  /**
-   * True when routing here would trigger engine-level handling:
-   * out-of-scope routes are recorded as a deferred question for post-session review.
-   */
-  would_trigger_action_required?: boolean;
 }
 
 /**
@@ -376,14 +375,14 @@ export interface RouteOutcome {
   deferred?: boolean;
   /**
    * Reason for deferral:
-   * - `schema` — route target is outside the approved schema allowlist; user will see it as a follow-up offer.
    * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
-   * - `schema_and_depth` — route target breaches both the schema allowlist and the stated depth border.
-   * - `budget` — an auto-enqueued (not model-named) route target is in-border but its addition would push the active scope past the turn's token/node budget; deferred rather than silently dropped.
    * - `depth_contracted_beyond_budget` — a non-bodied (table) target's bipartite contraction reached bodied neighbours outside the active BFS scope, so no hop was enqueued.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer.
    * - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer.
+   * - `schema` — route target's schema is outside the session's GUI schema filter, not a
+   *   user-authored exclusion; never loaded, so a named question is recorded as a follow-up offer
+   *   that can be granted through a new proposal.
    * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was already analyzed on an earlier hop; visit-once, no new hop.
    * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
    * - `carries_no_tracked_column` — an engine-auto-opened non-bodied target the committing
@@ -391,7 +390,7 @@ export interface RouteOutcome {
    *   post-commit walk ends the branch recorded not-kept instead of contracting through it;
    *   terminal, never deferred. An explicitly routed carrier is never dropped this way.
    */
-  reason?: 'schema' | 'depth' | 'schema_and_depth' | 'budget' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded' | SettledRouteReason;
+  reason?: 'depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
 }
 
 /**
@@ -428,13 +427,27 @@ export interface SupplementSkip {
   /**
    * Reason for the drop:
    * - `unresolved` — node id does not exist in the loaded graph model.
-   * - `excluded` — node exists but is outside the user's approved exclude filters
-   *   (`excludedNodeIds` / `excludedTypes` / `excludedSchemas`).
+   * - `excluded` — node exists but is outside the user's own approved exclude filters
+   *   (`excludedNodeIds` / `excludedTypes` / a schema the user typed that the GUI does not hide).
+   * - `out_of_allowlist` — node exists, but its schema is unticked in the GUI schema filter (the
+   *   session allowlist) — including a schema the user also typed, since the GUI hides it anyway.
+   *   `hint` always accompanies this reason.
+   * - `not_connected_to_trace` — node exists and is not excluded, but has no dependency path to the
+   *   traced graph — the wire form of `REJECTION_CODES.notConnectedToTrace`. `hint` always
+   *   accompanies this reason.
    *
-   * The session allowlist is not a refusal axis here: a follow-up request is itself the user's
-   * consent, so every named id that is not excluded is admitted before the border is read.
+   * Both `excluded` and `out_of_allowlist` are a hard wall for every supplement id, named directly
+   * or chain-reached: a follow-up asking for an out-of-filter object does not itself widen the
+   * border — it reopens approval for that object instead of admitting it.
    */
-  reason: 'excluded' | 'unresolved';
+  reason: 'excluded' | 'out_of_allowlist' | 'unresolved' | 'not_connected_to_trace';
+  /**
+   * Recovery text for the model, populated for `not_connected_to_trace` — a separate exploration on
+   * the id directly is the repair. Also populated for `out_of_allowlist` — starting a new
+   * `lineage_start_exploration` proposal that names it reopens the `confirm_sm_start` gate for the
+   * user's approval.
+   */
+  hint?: string;
 }
 
 /**
@@ -442,7 +455,7 @@ export interface SupplementSkip {
  * only two responses to a hop submission, looping until the engine drains the agenda).
  *
  * @remarks
- * `{ ok: true }` = **ack** (recorded, advance). `{ error, hint }` = **reject** — a Zod-/topology-only,
+ * `{ ok: true }` = **ack** (recorded, advance). A {@link ToolRejection} = **reject** — a Zod-/topology-only,
  * mode-pure validation failure the AI self-corrects from. There is no third outcome and no AI "done"
  * signal: termination is engine-owned (agenda drain), surfaced separately via `getHopContext().done`.
  */
@@ -452,25 +465,18 @@ export type SubmitResult =
       ok: true;
       /** Per-neighbor disposition for every neighbor this hop enqueued, deferred or found already settled; engine-side, never returned to the model. */
       route_outcomes?: RouteOutcome[];
+      /**
+       * CT tracked columns this hop's `column_flow` left unaccounted, by name — plain data, never a
+       * rejection. Whether a chain starts, ends, or stays incomplete at a hop is the model's
+       * decision. Absent when every active column was accounted for, or in BB.
+       */
+      unaccounted_columns?: string[];
       /** Set only on the supplement path when the supplemented agenda was already drained. */
       done?: true;
       /** Final synthesized result. Present iff `done: true`. */
       result?: SmResult;
     }
-  | {
-      /** Human-readable error code for AI feedback. */
-      error: string;
-      /** Optional technical details about the error. */
-      detail?: unknown;
-      /** The value that was expected by the validator. */
-      expected?: string;
-      /** The value that was actually received. */
-      got?: string;
-      /** Current state of the state machine. */
-      current_status?: SmStatus;
-      /** Next-action hint for the AI. */
-      hint?: string;
-    };
+  | ToolRejection;
 
 /**
  * Per-hop engine diagnostics — single structured snapshot for logging + AI visibility.
@@ -492,7 +498,7 @@ export interface DiagnosticsSnapshot {
   /** Active depth budget (null if none was passed). */
   depthBudget: number | null;
   /** Enforcement mode as configured. */
-  depthEnforcement: 'strict' | 'soft' | 'silent';
+  depthEnforcement: 'strict' | 'silent';
   /** Was the focus in the active schema allowlist? */
   inSchema: boolean;
   /** Verdict the AI emitted for this hop (`null` before any submit_findings). */
@@ -534,17 +540,17 @@ export interface DiagnosticsSnapshot {
  * @remarks
  * `hops` counts bodied nodes (view / procedure / function — agenda candidates);
  * `scope` is the total node count including non-bodied (table) nodes that BFS
- * surfaced. Names are capped at the renderer's display limit; `omitted` carries
- * the overflow count so the caller can render `+K more` without recounting.
+ * surfaced. Names are listed in full unless the caller bounds them; `omitted` carries
+ * the overflow count of a bounded list.
  */
 export interface ScopeSummaryLeaf {
   /** Bodied-node count (view / procedure / function) at this leaf — agenda candidates. */
   hops: number;
   /** Total node count at this leaf, including non-bodied (table / external) entries. */
   scope: number;
-  /** Display-capped list of object names at this leaf, alphabetised for stable rendering. */
+  /** Object names at this leaf, alphabetised for stable rendering. */
   nodeNames: string[];
-  /** Names beyond the display cap — `nodeNames.length + omitted === scope` for the leaf. */
+  /** Names beyond a caller's bound — `nodeNames.length + omitted === scope` for the leaf. */
   omitted: number;
 }
 
@@ -567,6 +573,11 @@ export interface ScopeSummary {
   origin: string;
   /** Human-readable origin label for gate/UI summaries; falls back to `origin` when unresolved. */
   originLabel?: string;
+  /**
+   * Model-authored goal statement from `mission_brief`, verbatim. Undefined when the model sent
+   * none — the gate renders no Goal line rather than backend-authored placeholder prose.
+   */
+  missionBrief?: string;
   /** Effective depth budget set at `start_exploration`; `null` when unbounded ("all"). */
   depth: number | null;
   /** AI-owned depth verdict that seeded the scope — drives the gate's depth chip label. */
@@ -585,6 +596,14 @@ export interface ScopeSummary {
   estimatedDdlTokens: number;
   /** Schema → type → leaf rollup used by `renderScopeSummaryMd` to reproduce the approval tree. */
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }>;
+  /**
+   * Per object-type list of lowercased names that recur in more than one schema of the loaded
+   * model — a model fact, computed once from the full node map, never from the proposed scope
+   * alone. The card renderer schema-qualifies a name in this set so a bare name never reads as a
+   * specific object when the model holds more than one by that name and type. Absent or empty
+   * for a type with no repeated name.
+   */
+  ambiguousObjectNames?: Record<string, readonly string[]>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
   activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
   /**
@@ -595,7 +614,7 @@ export interface ScopeSummary {
   scopeNotes: string[];
   /**
    * Gate-locked mission-type verdict. Surfaced at the approval gate because it is the field that
-   * constrains captured analysis: the per-dispatch `submit_findings` schema narrows `sections[].angle`
+   * constrains captured analysis: the per-dispatch `submit_findings` schema narrows the `sections` keys
    * to the angle(s) this value keeps, so a section of another angle is never authored. Undefined
    * until the AI sets it.
    */
@@ -650,9 +669,9 @@ export interface SmResult {
  * A route request to an out-of-approved-scope node, captured during an SM session.
  *
  * @remarks
- * Produced by the engine when a `submit_findings` route targets a node whose schema is
- * outside `approved_border.schemas`, whose depth exceeds `approved_border.depth_cap`, or
- * whose addition would push the active scope past the turn's token/node budget.
+ * Produced by the engine when a `submit_findings` route targets a node outside the approved
+ * border (schema, exclusion or direction), past an exact depth, pruned, or reached only as a
+ * contracted non-bodied carrier; a lead restored from an older record may still carry `budget`.
  * Derived from typed pending leads for the synthesis evidence envelope and native-chat follow-up
  * action.
  */
@@ -669,9 +688,10 @@ export interface DeferredQuestion {
    * Discriminator for why the route was deferred. `'budget'` — in-border but over the active
    * scope budget. `'pruned'` — the target was named in `prune_neighbors` and `questions` in the
    * same submission: the prune stands and the question survives as a follow-up instead of being
-   * dropped.
+   * dropped. `'contracted'` — retained in approved scope but not given separate hop analysis;
+   * still a real, answerable continuation.
    */
-  reason: 'schema' | 'depth' | 'schema_and_depth' | 'budget' | 'direction' | 'excluded' | 'pruned';
+  reason: 'schema' | 'depth' | 'budget' | 'direction' | 'excluded' | 'pruned' | 'contracted';
   /** Depth-from-origin of the target. Populated when `reason` includes 'depth'. */
   depth?: number;
   /** Hop number at which the deferral was recorded. */
@@ -742,8 +762,6 @@ export interface PendingLead {
 export interface ApprovedBorder {
   /** Lower-cased schemas in scope. */
   schemas: string[];
-  /** Individual node ids the user named in a follow-up; omitted when none has been admitted. */
-  node_ids?: string[];
   /** Effective depth ceiling including mode headroom and any session extensions, or null when no depth budget is set. */
   depth_cap: number | null;
 }
@@ -764,220 +782,22 @@ export interface EngineInitSnapshot {
   targetColumns?: [string, ...string[]];
   /** Exploration direction. */
   direction: 'upstream' | 'downstream' | 'bidirectional';
-  /** AI-owned depth verdict that seeded the scope, each unstated side at its seed. */
-  depthIntent: SeededDepthIntent;
+  /** AI-owned depth verdict that seeded the scope. */
+  depthIntent: DepthIntent;
   /** Sanitized mission brief. */
   mission_brief?: string;
 }
 
 /**
- * Reasonable default hop depth seeded when the user states no depth — the day-to-day
- * starting point that prune (shrink) and auto-add (grow) then adjust. Named so it is not a
- * magic number; mirrors {@link DEFAULT_CONFIG.trace.defaultUpstreamLevels}.
+ * AI-owned depth verdict, consumed by `NavigationEngine.init()`. The engine never parses prose
+ * for depth — every call names a level and an exactness for both sides, and the engine seeds and
+ * enforces the scope mechanically from this record; the backend never supplies a level of its own.
  */
-export const DEFAULT_SM_START_DEPTH = 3;
-
-/**
- * AI-owned depth verdict, consumed by `NavigationEngine.init()`. The engine never parses
- * prose for depth — it seeds the scope mechanically from this discriminated union.
- *
- * @remarks
- * `explicit` when the user literally named a level count; `full_frontier` when the user
- * asked for the whole chain ("all sources"); `default_start` when the user said nothing —
- * the engine seeds {@link DEFAULT_SM_START_DEPTH}, freely adjusted by prune/auto-add.
- * `asymmetric` carries each side on its own terms ({@link DepthSide}): a stated side binds, an
- * unstated side is the same soft seed as `default_start`, for that side only.
- */
-export type DepthIntent =
-  | { kind: 'explicit'; levels: number }
-  | { kind: 'full_frontier' }
-  | { kind: 'asymmetric'; upstream: DepthSide; downstream: DepthSide }
-  | { kind: 'default_start' };
-
-/**
- * One side of an asymmetric {@link DepthIntent}: a user-stated level count (a hard border; `0`
- * closes the side), `'all'`, or `null` when the user left the side unstated — seeded at
- * {@link DEFAULT_SM_START_DEPTH} with no ceiling, so it grows exactly like `default_start`.
- */
-export type DepthSide = number | 'all' | null;
-
-/**
- * {@link DepthIntent} as recorded on {@link EngineInitSnapshot}: every unstated asymmetric side
- * carries its seed. Which side binds is read from the engine's per-side ceilings, never from
- * this record.
- */
-export type SeededDepthIntent =
-  | Exclude<DepthIntent, { kind: 'asymmetric' }>
-  | { kind: 'asymmetric'; upstream: number | 'all'; downstream: number | 'all' };
-
-/**
- * Maps the entry-detector's depth verdict to a {@link DepthIntent}: a positive number is an
- * explicit level count, the `'all'` literal is the full frontier, and `null`/omitted (the
- * user said nothing) becomes the engine's default start seed. Extraction, never invention.
- *
- * @remarks
- * Per-side `null`/omitted inside an asymmetric object is the identical "unstated" signal as the
- * top-level scalar and stays `null` for that side — the soft default seed, never a border — and an
- * object with both sides unstated is `default_start`. An explicit per-side `0` is preserved verbatim
- * (never defaulted) because it carries the distinct, permanent direction-disable meaning enforced
- * later by `isReachableInApprovedDirection` in `smBase.ts`.
- *
- * @param verdict - Discrete depth value produced by the validated mission boundary.
- * @returns The exhaustive engine-owned depth intent.
- * @throws When a stated symmetric verdict is neither `'all'` nor a positive integer — the Zod
- * boundary already rejects those, so reaching here is an internal invariant violation that must
- * not be silently coerced into the default seed.
- */
-export function resolveDepthIntent(
-  verdict:
-    | number
-    | 'all'
-    | { upstream?: number | 'all' | null; downstream?: number | 'all' | null }
-    | null
-    | undefined,
-): DepthIntent {
-  if (verdict == null) return { kind: 'default_start' };
-  if (verdict && typeof verdict === 'object') {
-    const upstream = verdict.upstream ?? null;
-    const downstream = verdict.downstream ?? null;
-    if (upstream === null && downstream === null) return { kind: 'default_start' };
-    return { kind: 'asymmetric', upstream, downstream };
-  }
-  if (verdict === 'all') return { kind: 'full_frontier' };
-  if (typeof verdict === 'number' && verdict > 0) return { kind: 'explicit', levels: verdict };
-  throw new Error(`Invalid AI depth verdict: ${String(verdict)}`);
-}
-
-/**
- * Gates one asymmetric-depth side on provenance, independently of its sibling.
- *
- * @remarks
- * Only a finite positive count is ever ambiguous ("did the user say this, or did the model pick
- * it?"), so only that shape is dropped when `depthStated` is not `true`. `'all'` and the
- * direction-disabling `0` (see {@link ExplorationDepthSideSchema} in
- * `engine/shared/explorationDepthContract.ts`) are unambiguous by construction — `'all'` can only
- * grow scope and `0` is a permanent, deliberate border a model cannot land on by accident the way
- * it can invent a plausible level count — so both pass through verbatim regardless of
- * `depthStated`, and so does an already-unstated `null`/`undefined` side.
- *
- * @param side - One raw `upstream`/`downstream` value from the Zod-validated `depth` payload.
- * @param depthStated - The Zod-validated `depthStated` companion field.
- * @returns The side verbatim, or `undefined` when a finite positive count lacked provenance.
- */
-export function gateDepthSide(
-  side: number | 'all' | null | undefined,
-  depthStated: boolean | undefined,
-): number | 'all' | null | undefined {
-  return typeof side === 'number' && side > 0 && depthStated !== true ? undefined : side;
-}
-
-/**
- * Gates a raw `lineage_start_exploration` depth payload on its `depthStated` companion before
- * handing it to {@link resolveDepthIntent} — the one production call site
- * (`startExploration.ts`) that turns Zod-validated tool input into engine-owned intent.
- *
- * @remarks
- * `resolveDepthIntent` itself stays a pure shape mapper (a finite number always becomes
- * `explicit`/`asymmetric`) so its direct unit coverage keeps testing that mapping in isolation.
- * The provenance question — is this finite number the user's own literal count, or the model's
- * starting estimate — is answered here, at the tool-input boundary, because the host never reads
- * the user's sentence (`AGENTS.md` §Runtime Contract) and so cannot verify it any other way.
- * `depthStated` is the one place that intent is declared, not inferred from the shape of `depth`
- * alone: a finite scalar `depth` reaches {@link resolveDepthIntent} only when `depthStated` is
- * `true`; otherwise it is dropped to `undefined`, resolving to the same soft `default_start` seed
- * as an omitted `depth` — never a hard stop the model invented on its own. An asymmetric object is
- * gated per side via {@link gateDepthSide}, never as one unit: `'all'` and the direction-disabling
- * `0` on either side are exempt and always pass through, so `{upstream:'all',downstream:'all'}` or
- * `{upstream:0,downstream:'all'}` sent with no `depthStated` keeps its meaning instead of falling
- * back to a bidirectional `default_start` that reopens a side the model closed. `'all'` needs no
- * flag at the top level either — it can only ever grow the scope, never truncate it, so an unstated
- * `'all'` is already safe under the per-side gate.
- *
- * A demoted side becomes the unstated `null` side ({@link DepthSide}) — the soft seed that grows,
- * never a border — and when neither side keeps a value the payload is `default_start`. An object
- * keeping `'all'` or `0` on either side stays `'asymmetric'`: `effectiveDirection()` (`smBase.ts`)
- * only narrows the live traversal direction for that kind, so a genuine per-side `0` needs it to
- * reach its own permanent-disable effect regardless of `depthStated`.
- *
- * A demotion is logged by the caller (`startExploration.ts`), never silent.
- *
- * @param verdict - The Zod-validated `depth` field, before provenance gating.
- * @param depthStated - The Zod-validated `depthStated` companion field.
- * @returns The engine-owned depth intent; a side binds only when its finite value is user-stated
- * or it is the direction-disabling `0`.
- */
-export function resolveDepthIntentForBoundary(
-  verdict: RawDepthVerdict,
-  depthStated: boolean | undefined,
-): DepthIntent {
-  if (verdict && typeof verdict === 'object') {
-    return resolveDepthIntent({
-      upstream: gateDepthSide(verdict.upstream, depthStated),
-      downstream: gateDepthSide(verdict.downstream, depthStated),
-    });
-  }
-  return resolveDepthIntent(gateDepthSide(verdict, depthStated));
-}
-
-/** The Zod-validated `lineage_start_exploration` `depth` field, before provenance gating. */
-type RawDepthVerdict =
-  | number
-  | 'all'
-  | { upstream?: number | 'all' | null; downstream?: number | 'all' | null }
-  | null
-  | undefined;
-
-/**
- * Per-side view of a {@link DepthIntent}: every finite side is user-stated, `null` is unstated.
- *
- * @param intent - The engine-owned depth intent.
- * @returns Each side's {@link DepthSide}.
- */
-export function depthSidesOf(intent: DepthIntent): { upstream: DepthSide; downstream: DepthSide } {
-  switch (intent.kind) {
-    case 'explicit': return { upstream: intent.levels, downstream: intent.levels };
-    case 'full_frontier': return { upstream: 'all', downstream: 'all' };
-    case 'default_start': return { upstream: null, downstream: null };
-    case 'asymmetric': return { upstream: intent.upstream, downstream: intent.downstream };
-  }
-}
-
-/**
- * Resolves a gate-refine `depth` patch against the reviewed proposal's intent, per side.
- *
- * @remarks
- * A refine is a patch on the reviewed contract, like every other refine field: an omitted `depth`
- * keeps the reviewed intent, an asymmetric side the payload omits keeps the reviewed side, and a
- * side the payload sends is provenance-gated exactly as on a fresh proposal
- * ({@link resolveDepthIntentForBoundary}). One inheritance: with `depthStated` omitted, a finite
- * count equal to the reviewed stated count on that side keeps its binding, so re-sending an
- * unchanged depth never demotes what the user already stated. A scalar `depth` restates both sides.
- *
- * @param pending - The reviewed proposal's depth intent.
- * @param verdict - The refine's Zod-validated `depth` field, before provenance gating.
- * @param depthStated - The refine's Zod-validated `depthStated` companion field.
- * @returns The merged engine-owned depth intent.
- */
-export function mergeRefineDepthIntent(
-  pending: DepthIntent,
-  verdict: RawDepthVerdict,
-  depthStated: boolean | undefined,
-): DepthIntent {
-  if (verdict === undefined) return pending;
-  const reviewed = depthSidesOf(pending);
-  const statedFor = (side: 'upstream' | 'downstream', raw: unknown): boolean | undefined =>
-    depthStated === undefined && typeof raw === 'number' && raw > 0 && raw === reviewed[side]
-      ? true
-      : depthStated;
-  if (verdict && typeof verdict === 'object') {
-    const side = (name: 'upstream' | 'downstream'): DepthSide | undefined => {
-      const raw = verdict[name];
-      return raw === undefined ? reviewed[name] : gateDepthSide(raw, statedFor(name, raw));
-    };
-    return resolveDepthIntent({ upstream: side('upstream'), downstream: side('downstream') });
-  }
-  const bothReviewed = statedFor('upstream', verdict) === true && statedFor('downstream', verdict) === true;
-  return resolveDepthIntentForBoundary(verdict, bothReviewed ? true : depthStated);
+export interface DepthIntent {
+  /** Verdict for the upstream side; `levels: 0` permanently closes it. */
+  upstream: DepthSideValue;
+  /** Verdict for the downstream side; `levels: 0` permanently closes it. */
+  downstream: DepthSideValue;
 }
 
 /**
@@ -1002,8 +822,11 @@ export interface NavigationInitParams {
   targetColumns?: string[];
   /** Exploration direction; defaults to `bidirectional`. */
   direction?: 'upstream' | 'downstream' | 'bidirectional';
-  /** Depth verdict that seeds the scope; omitted resolves to the engine's default start. */
-  depthIntent?: DepthIntent;
+  /**
+   * Depth verdict that seeds and bounds the scope, one binding per side. The `lineage_start_exploration`
+   * tool boundary requires it on every fresh proposal — never a backend default for the AI.
+   */
+  depthIntent: DepthIntent;
   /** Object types excluded from the scope. */
   excludeTypes?: string[];
   /** Schemas excluded from the scope. */
@@ -1036,7 +859,7 @@ export interface EngineInternalsSnapshot {
   /** User-declared depth budget, or null when unbounded. */
   depthBudget: number | null;
   /** How strictly the depth budget is enforced. */
-  depthEnforcement: 'strict' | 'soft' | 'silent';
+  depthEnforcement: 'strict' | 'silent';
   /** Per-side ceilings, `null` where that side is unbounded; absent in a v1 checkpoint. */
   depthLimits?: { upstream: number | null; downstream: number | null };
   /** BFS depth-from-origin, flattened to `[nodeId, depth]` pairs (insertion order preserved). */
@@ -1051,8 +874,6 @@ export interface EngineInternalsSnapshot {
   userSchemas: string[];
   /** Session-scoped schema allowlist (grows via mid-session confirmations). */
   sessionAllowedSchemas: string[];
-  /** Node ids the user named in a follow-up; absent in a checkpoint written before id-level consent. */
-  sessionAllowedNodeIds?: string[];
   /** Object types the user excluded at init. */
   excludedTypes: string[];
   /** Schemas the user excluded at init. */
@@ -1213,8 +1034,8 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_analyzed'
       | 'prune_noop_queued'
       | 'prune_noop_out_of_scope'
-      | 'prune_origin_forbidden'
       | 'prune_carries_tracked_column'
+      | 'end_branch_carries_tracked_column'
       | 'question_not_neighbor';
 
 /**
@@ -1237,3 +1058,11 @@ export interface InvalidRoute {
 
 /** Discriminated union representing the engine's current aspect mode. */
 export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
+
+/** Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section angles, whether the summary, other field names. */
+export interface HeldSubmissionParts {
+  readonly sections: readonly string[];
+  readonly summary: boolean;
+  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`). */
+  readonly fields: readonly string[];
+}

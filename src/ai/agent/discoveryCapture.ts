@@ -1,9 +1,10 @@
 /** Detects a multi-object discovery walk from accepted graph-owned tool observations. */
 import { z } from 'zod';
 import type { ToolAttemptObservation } from './toolAttempt';
-import type { TurnEventSink } from '../runtime/turnEventSink';
+import type { AiSession } from '../session/session';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { readToolError } from '../support/toolErrorEnvelope';
+import { OVER_DISCOVERY_BUDGET_HINT } from '../support/tokenBudget';
 
 /** The captured walk used to seed the SM-offer pill / `lineage_start_exploration`. */
 interface DiscoveryWalk {
@@ -25,15 +26,25 @@ const OBJECT_DETAIL_TOOL = 'lineage_get_object_detail';
  * returns it for an oversized stored-run recall. Only an oversized *scope* request carries the
  * routing meaning: the user asked for a neighbourhood that has to be walked hop-by-hop. Matching on
  * the envelope alone turned "what did this run prune?" into a fresh exploration approval gate
- * instead of the narrowing hint the rejection already carries.
+ * instead of the recall rejection the model already reads.
  */
 const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 
+const NodeCountsView = z.object({ nodes: z.number() }).loose();
+
+/**
+ * The over-budget refusal as any catalog tool serves it: the rejection (`detail.counts`,
+ * `detail.scope_proposal`) or `lineage_search_ddl`'s partial reply (top-level `counts`) — both carry
+ * the budget code as `reason`.
+ */
 const OverBudgetResultView = z.object({
   reason: z.literal(REJECTION_CODES.overDiscoveryBudget),
-  counts: z.object({ nodes: z.number() }).loose().optional(),
+  counts: NodeCountsView.optional(),
   hint: z.string().optional(),
-  scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
+  detail: z.object({
+    counts: NodeCountsView.optional(),
+    scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
+  }).loose().optional(),
 }).loose();
 
 const ObjectDetailIdView = z.object({ id: z.string().trim().min(1) }).loose();
@@ -100,8 +111,6 @@ export interface OverBudgetNotice {
   readonly hint: string;
 }
 
-const DEFAULT_OVER_BUDGET_HINT = 'Scope exceeds the discovery budget. Narrow the request, or ask about a smaller part of the lineage.';
-
 /**
  * Reads an `over_discovery_budget` rejection from any tool result.
  *
@@ -123,37 +132,34 @@ export function readOverBudgetNotice(toolName: string, resultText: string): Over
   }
   const view = OverBudgetResultView.safeParse(raw);
   if (!view.success) return null;
-  return { toolName, nodes: view.data.counts?.nodes ?? null, hint: view.data.hint?.trim() || DEFAULT_OVER_BUDGET_HINT };
+  return { toolName, nodes: (view.data.detail?.counts ?? view.data.counts)?.nodes ?? null, hint: view.data.hint?.trim() || OVER_DISCOVERY_BUDGET_HINT };
 }
 
-/** Sinks that already showed the budget notice this turn — one notice per turn, however many rejections fire. */
-const budgetNoticeShown = new WeakSet<TurnEventSink>();
-
 /**
- * Emits the user-visible discovery-budget notice, once per turn.
+ * Queues the user-visible discovery-budget notice for the turn's closing markdown, once per turn.
  *
  * @remarks
- * The envelope itself is model-facing (an observation the model narrows against); without this
+ * The envelope itself is model-facing (an observation the model reads); without this
  * notice a budget rejection is silent to the user whenever the model does not mention it.
- * Recoverable, so it renders inline rather than claiming the turn's error presentation.
+ * Recoverable, so it renders inline with the answer rather than claiming the turn's error
+ * presentation.
  *
  * {@link SCOPE_BUNDLE_TOOL} is excluded: an oversized scope is not a rejection the user has to read
  * about, it is the mechanical reroute into the consent-gated exploration path
  * ({@link detectOverBudgetFromResult}), and the approval gate that opens next is the user-visible
  * signal. A notice there would announce an inline answer the turn is not going to give.
  *
- * @param sink - The turn's event sink.
+ * @param session - The session whose turn carries the notice to its closing markdown.
  * @param toolName - Tool that produced `resultText`.
  * @param resultText - The tool's serialized result.
  */
-export function emitDiscoveryBudgetNotice(sink: TurnEventSink, toolName: string, resultText: string): void {
+export function queueDiscoveryBudgetNotice(session: Pick<AiSession, 'queueClosingNotice'>, toolName: string, resultText: string): void {
   if (toolName === SCOPE_BUNDLE_TOOL) return;
-  if (budgetNoticeShown.has(sink)) return;
   const notice = readOverBudgetNotice(toolName, resultText);
   if (!notice) return;
-  budgetNoticeShown.add(sink);
   const scope = notice.nodes !== null && notice.nodes > 0 ? ` (${notice.nodes} projected nodes)` : '';
-  sink.error(
-    `**Discovery budget reached** — \`${notice.toolName}\` was rejected${scope}: the requested scope exceeds what one turn can load. The assistant will continue with what is already loaded; ask about a narrower part of the lineage, or start a detailed analysis, to cover the rest.`,
+  session.queueClosingNotice(
+    'discovery_budget',
+    `**Discovery budget reached** — \`${notice.toolName}\` was rejected${scope}: the requested scope is more than a quick answer loads (\`dataLineageViz.ai.discoveryNodeCap\`, \`dataLineageViz.ai.discoveryTokenBudget\`). Ask for a detailed analysis to cover it.`,
   );
 }

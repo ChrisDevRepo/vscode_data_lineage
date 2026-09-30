@@ -25,6 +25,13 @@ local stub via npm `overrides`. Some npm 10.x releases leave
 copies the stub into place. Run it by hand if `node_modules` was copied
 instead of installed, or if the bundle fails with `Could not resolve "langsmith"`.
 
+`@langchain/core` is pinned to an exact version and stays pinned. The npm
+override cannot reach code vendored inside `@langchain/core`, so the runtime
+tracing guard in `src/ai/host/agentRuntime.ts` refuses to run when the
+`LANGSMITH_TRACING*` or `LANGCHAIN_TRACING*` flags are set, and the bundle gate
+`assert-no-langsmith` fails on any LangSmith client signature. An
+outdated-dependency report is not a reason to unpin.
+
 ## Repository layout
 
 | Path | Owns |
@@ -118,17 +125,29 @@ live import derives one from the server.
   `getServerInfo` is the non-failing fallback, and failure of both records
   `Unknown database platform`. Query definitions live in
   [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and
-  [`DMV_QUERIES.md`](DMV_QUERIES.md).
+  [`DMV_QUERIES.md`](DMV_QUERIES.md). A change to the SQL sent to a live
+  database ships the matching `DMV_QUERIES.md` update in the same commit.
 - **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).
   On read, unrecognized fields are dropped; a project is discarded only when a
   required field is missing or of the wrong type. On write,
-  `StoredConnectionInfoSchema` stays `.strict()` so undeclared connection
+  `StoredConnectionInfoSchema` ([`bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)) stays `.strict()` so undeclared connection
   fields (including credentials) never enter the store. Any change to
   `Project` or `FilterProfile` needs a migration in `migrateProjectStore()`.
 - **AI run records** — [`src/ai/session/runStore.ts`](../src/ai/session/runStore.ts).
   One record per AI-authored bookmark, held in `globalState` under
-  `dataLineageViz.aiRun.<bookmarkId>`. `lineage_get_screen_state` is the only
-  reader.
+  `dataLineageViz.aiRun.<bookmarkId>`. `present_result` stamps the run ID onto
+  the view metadata and, once the presentation commits, captures the engine
+  checkpoint onto the session's presentation artifact; a failed capture is
+  logged at debug and never fails the answer. A bookmark save writes the record
+  only when the profile is AI-authored and its run ID matches the captured
+  presentation; a failed write logs a warning and the bookmark still saves.
+  `delete-view` and `delete-project` clear the record, and a new route that
+  removes a saved view must clear it too. Reads tolerate top-level keys from a
+  newer build; a record of another `schemaVersion` or with an invalid snapshot
+  reads as absent. A recall with `ids` or `filter` then uses the session's
+  completed run, and `lineage_get_screen_state` answers `no_run_memory` only when
+  neither exists. The record is never truncated for size.
+  `lineage_get_screen_state` is the only reader.
 
 ## SQL parsing pipeline
 
@@ -167,13 +186,21 @@ under [`src/bridge/`](../src/bridge/).
 
 Use the helpers in [`src/utils/log.ts`](../src/utils/log.ts) for extension
 logging. User-facing errors and warnings must go through the notification
-helpers rather than raw output-channel calls.
+helpers (`notifyError`, `notifyWarning`, `notifyInfo` in
+[`src/utils/notifications.ts`](../src/utils/notifications.ts)) rather than raw
+output-channel calls; each logs the full detail at the matching level before it
+shows the toast. Webview errors funnel through the bridge `'error'` message.
 
 `src/engine/` code never names `window` directly: a layout or build diagnostic
 raised in `graphBuilder.ts` goes through a `setGraphLogSink` callback the
 webview entry point installs at startup. The layer-direction gate step
 enforces the other half: `src/engine/**` must never import from
 `src/components/**`.
+
+`src/ai/**` reaches `src/engine/**` only through `src/engine/shared/*`. Imports
+that predate the rule are listed in `tests/unit/ai-core/rule-gates.test.ts`; the
+list may only shrink, and a new import of an engine module outside `shared/`
+fails that suite.
 
 ## AI runtime boundary
 
@@ -211,7 +238,7 @@ shrink. GitHub does not run this test framework.
 
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, output-template schema version, prompt golden sync, honest test labels, core case completeness, unit-project coverage, layer-direction, core coverage floors, unit tests, builds, and package checks. Run before push. |
+| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, output-template schema version, prompt golden sync, honest test labels, core case completeness, unit-project coverage, layer-direction, output-truncation baseline, core coverage floors, agent-runtime tests, builds, and package checks. Run before push. |
 | **Unit suite** | `npm test` | Every maintained unit test. |
 | **Protected core** | `npm run test:core` | Parser, engine, and webview unit projects. |
 | **Core coverage floors** | `npm run coverage:core` | Per-file thresholds on `sqlBodyParser.ts`, `graphAnalysis.ts`, `graphBuilder.ts`, `shared/sqlRegex.ts`, `shared/nodeIdResolution.ts`. |
@@ -219,6 +246,12 @@ shrink. GitHub does not run this test framework.
 | **Core subsets** | `npm run test:parser`, `npm run test:bfs` | Focused parser or graph traversal/analysis. |
 | **Test type-checking** | `npm run typecheck:tests` | Type-checks `tests/unit/**` against production source. |
 | **Optional Electron lanes** | `npm run test:edh` | Four smoke labels in a real VS Code host. See [`EDH_TESTING.md`](EDH_TESTING.md). |
+
+After an intended edit to a prompt surface (`assets/aiOutputTemplates.yaml`,
+`src/ai/prompting/`, `src/ai/agent/stagePrompts.ts`), refresh the golden-sync
+manifest with `node tests/tools/assert-golden-sync.mjs --update`. A new
+guarantee about the model-port boundary (`VscodeModelPort`) belongs in a
+port-level unit test; the Electron lanes stay scripted-only.
 
 Assert with vitest `expect`, and give each case its own `it` (or an `it.each`
 table).

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import { FloatingPortal } from '@floating-ui/react';
+import { FloatingFocusManager, FloatingPortal } from '@floating-ui/react';
 import { Button } from './Button';
 import { Tooltip } from './Tooltip';
+import { disabledControl } from './disabledControl';
 import { useDropdown } from '../../hooks/useDropdown';
 
 /** Props for the {@link ToolbarDropdown} component. */
@@ -14,12 +15,12 @@ interface ToolbarDropdownProps {
   icon: ReactNode;
   /** Tailwind width class for the floating panel; narrowed so only classes Tailwind emitted are reachable. */
   panelWidth: 'w-56' | 'w-96';
-  /** ARIA role for the floating panel; narrowed so a typo cannot ship an invalid role to assistive tech. */
-  panelRole: 'listbox' | 'menu';
   /** Accessible label for the floating panel. */
   ariaLabel: string;
-  /** `aria-haspopup` value for the trigger button (default `'listbox'`). */
-  ariaHaspopup?: boolean | 'true' | 'false' | 'menu' | 'listbox' | 'tree' | 'grid' | 'dialog';
+  /** When true, the trigger renders disabled and never opens the panel. */
+  disabled?: boolean;
+  /** Tooltip text shown on the trigger in place of {@link tooltipContent} while {@link disabled}. */
+  disabledReason?: string;
   /** Extra Tailwind classes appended to the panel element. */
   panelClassName?: string;
   /** Rows and controls for the panel body; positioning and dismissal are not their concern. */
@@ -32,31 +33,36 @@ interface ToolbarDropdownProps {
  * @remarks
  * Owns the {@link useDropdown} hook, the trigger `Button`, and the `FloatingPortal`
  * panel frame. Callers supply the icon and the panel content — everything else
- * (positioning, outside-click, `isNarrowed` dot, shadow, `isOpen` style) is here.
+ * (positioning, outside-click, focus into the panel and back to the trigger, `isNarrowed` dot,
+ * shadow, `isOpen` style) is here. The panel is a non-modal dialog, since every panel holds form
+ * controls.
  */
 export function ToolbarDropdown({
   tooltipContent,
   isNarrowed = false,
   icon,
   panelWidth,
-  panelRole,
   ariaLabel,
-  ariaHaspopup = 'listbox',
   panelClassName = '',
+  disabled = false,
+  disabledReason,
   children,
 }: ToolbarDropdownProps) {
-  const { isOpen, toggle, refs, floatingStyles, getFloatingProps } = useDropdown();
+  const { isOpen, toggle, refs, floatingStyles, context, getFloatingProps } = useDropdown();
+  const trigger = disabledControl(toggle, disabled, disabledReason, tooltipContent);
 
   return (
     <>
       <div className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}>
-        <Tooltip content={tooltipContent}>
+        <Tooltip content={trigger.tooltip}>
           <Button
             ref={refs.setReference}
-            onClick={toggle}
+            onClick={trigger.onClick}
             variant="icon"
+            disabled={trigger.disabled}
+            aria-label={ariaLabel}
             aria-expanded={isOpen}
-            aria-haspopup={ariaHaspopup}
+            aria-haspopup="dialog"
             style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
           >
             {icon}
@@ -65,17 +71,19 @@ export function ToolbarDropdown({
       </div>
 
       <FloatingPortal>
-        {isOpen && (
-          <div
-            ref={refs.setFloating}
-            style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
-            className={`${panelWidth} rounded-md shadow-lg z-50 p-2 ln-dropdown${panelClassName ? ` ${panelClassName}` : ''}`}
-            role={panelRole}
-            aria-label={ariaLabel}
-            {...getFloatingProps()}
-          >
-            {children}
-          </div>
+        {!disabled && isOpen && (
+          <FloatingFocusManager context={context} modal={false}>
+            <div
+              ref={refs.setFloating}
+              style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+              className={`${panelWidth} rounded-md shadow-lg z-50 p-2 ln-dropdown${panelClassName ? ` ${panelClassName}` : ''}`}
+              role="dialog"
+              aria-label={ariaLabel}
+              {...getFloatingProps()}
+            >
+              {children}
+            </div>
+          </FloatingFocusManager>
         )}
       </FloatingPortal>
     </>

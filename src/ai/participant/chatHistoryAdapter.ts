@@ -7,8 +7,12 @@
  *
  * The projection is bounded: replayed history is capped to the same turn-count and byte ceilings
  * as the session's canonical discovery transcript ({@link MAX_DISCOVERY_TRANSCRIPT_TURNS} /
- * {@link discoveryBlockBytes}), evicting oldest whole turns first, so native history —
+ * {@link contextBlockBytes}), evicting oldest whole turns first, so native history —
  * which only grows — can never push the assembled request past a model's input window.
+ *
+ * A replayed turn is also stripped of host-written UI framing (the approval gate's card header
+ * and button-reference notices) that never passed through the model — see
+ * {@link neutralizeGateCardArtifacts}.
  */
 import type * as vscode from 'vscode';
 import {
@@ -21,20 +25,27 @@ import {
 import {
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../session/session';
-import { discoveryBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
-import { longestPrefixFitting } from '../support/textTruncation';
+import { contextBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { safeIdentifier } from '../support/logIdentifier';
+import { GATE_CARD_HEADER, HOLD_GATE_NOTICE, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 
 /**
- * Maximum UTF-8 bytes replayed from one historical tool result — a single 60 KB DDL payload in an
- * old round must not consume the whole {@link discoveryBlockBytes} history budget.
+ * Maximum UTF-8 bytes of one historical tool result replayed — a single 60 KB DDL payload in an
+ * old round must not consume the whole {@link contextBlockBytes} history budget; a larger result
+ * is dropped with its call.
  */
 const MAX_HISTORY_TOOL_RESULT_BYTES = 8_192;
 
-const HISTORY_TRUNCATION_MARKER = '…[truncated to history memory bound]';
-
 /** Replaces evicted turns so the model knows the transcript is a tail, not the whole conversation. */
 const HISTORY_EVICTION_STUB = '[Earlier turns were evicted to keep the conversation within the model context budget.]';
+
+/**
+ * Replaces the native approval gate's interactive header ({@link GATE_CARD_HEADER}) when a prior
+ * card is replayed into history — the plan content that follows stays (a real prior proposal is
+ * real context); only the UI-authored framing is not the assistant's own words and is renamed as
+ * what it is: a fact about what the user was shown, never a template.
+ */
+const GATE_CARD_REPLAY_LEAD_IN = '\n\n_An exploration proposal was shown to the user for review:_\n\n';
 
 interface HistoryToolCall {
   readonly callId: string;
@@ -105,7 +116,7 @@ export function chatHistoryToModelMessages(
     for (const rawRound of rounds) {
       const round = record(rawRound);
       if (!round) continue;
-      const response = typeof round.response === 'string' ? round.response : '';
+      const response = neutralizeGateCardArtifacts(typeof round.response === 'string' ? round.response : '');
       const calls = pairedToolCalls(round.toolCalls, results, debug);
 
       if (calls.length > 0) {
@@ -125,13 +136,43 @@ export function chatHistoryToModelMessages(
     }
 
     if (!emittedMetadata) {
-      const markdown = responseMarkdown(turn.response);
+      const markdown = neutralizeGateCardArtifacts(responseMarkdown(turn.response));
       if (markdown) current.push(modelAssistantMessage(markdown));
     }
   }
   if (current.length > 0) groups.push(current);
 
   return boundReplayedHistory(groups, budget, debug);
+}
+
+/** `ChatResult.metadata` key set on the reply of a turn that rendered an approval card. */
+export const GATE_SHOWN_METADATA = 'gateShown';
+
+/**
+ * Names the slash command a plain-text reply continues.
+ *
+ * @param history - The native VS Code chat history for this participant.
+ * @returns The command of the latest request turn when its reply put no approval card in front of
+ *   the user (a clarifying question, a decline), so the answer to that question stays inside the
+ *   command the user chose; `undefined` when the latest request carried no command or its reply's
+ *   result metadata sets {@link GATE_SHOWN_METADATA}, whose next reply belongs to the gate.
+ * @remarks
+ * `ChatRequest.command` is empty on the reply turn even though the conversation is still the
+ * command's own request, and a command is the one mechanical statement of intent the runtime has
+ * (`slashCommands.ts`). The caller applies this only while the session is idle.
+ */
+export function continuedSlashCommand(history: vscode.ChatContext['history']): string | undefined {
+  let latestRequestIndex = -1;
+  for (let index = history.length - 1; index >= 0; index--) {
+    if (isRequestTurn(history[index])) { latestRequestIndex = index; break; }
+  }
+  if (latestRequestIndex < 0) return undefined;
+  const request = history[latestRequestIndex] as vscode.ChatRequestTurn;
+  if (!request.command) return undefined;
+  const reply = history[latestRequestIndex + 1];
+  const gateShown = reply !== undefined && !isRequestTurn(reply)
+    && record(record(reply.result)?.metadata)?.[GATE_SHOWN_METADATA] === true;
+  return gateShown ? undefined : request.command;
 }
 
 /**
@@ -154,7 +195,7 @@ function boundReplayedHistory(
     const size = groupBytes(groups[index]);
     if (
       kept.length > 0
-      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > discoveryBlockBytes(budget))
+      && (kept.length + 1 > MAX_DISCOVERY_TRANSCRIPT_TURNS || bytes + size > contextBlockBytes(budget))
     ) break;
     kept.unshift(groups[index]);
     bytes += size;
@@ -208,34 +249,27 @@ function pairedToolCalls(
       || !input
       || !Object.prototype.hasOwnProperty.call(results, callId)
     ) continue;
-    calls.push({
-      callId,
-      toolName,
-      input,
-      result: capHistoryToolResult(toolResultText(results[callId], debug), toolName, debug),
-    });
+    const result = toolResultText(results[callId], debug);
+    if (!fitsHistoryToolResult(result, toolName, debug)) continue;
+    calls.push({ callId, toolName, input, result });
   }
 
   return calls;
 }
 
 /**
- * Caps one replayed tool result at {@link MAX_HISTORY_TOOL_RESULT_BYTES}, marking the cut.
- *
- * @remarks
- * Logged the same way its sibling shrink, {@link boundReplayedHistory}, logs a turn eviction: a
- * reader reconstructing a hop from `host.log` must be able to tell that prior-turn evidence was
- * shortened, not just that the model-facing text carries a marker.
+ * Reports whether one replayed tool result fits {@link MAX_HISTORY_TOOL_RESULT_BYTES}; a result that
+ * does not is dropped whole with its call, never cut, and the drop is logged so a reader
+ * reconstructing a hop from `host.log` can tell prior-turn evidence was left out.
  */
-function capHistoryToolResult(text: string, toolName: string, debug?: (msg: string) => void): string {
+function fitsHistoryToolResult(text: string, toolName: string, debug?: (msg: string) => void): boolean {
   const bytes = utf8Bytes(text);
-  if (bytes <= MAX_HISTORY_TOOL_RESULT_BYTES) return text;
+  if (bytes <= MAX_HISTORY_TOOL_RESULT_BYTES) return true;
   debug?.(
-    `history tool result capped tool=${safeIdentifier(toolName, { extraChars: '.:-', replacement: '_', maxLength: 100, fallback: 'unknown' })}`
+    `history tool call dropped whole tool=${safeIdentifier(toolName, { extraChars: '.:-', replacement: '_', maxLength: 100, fallback: 'unknown' })}`
     + ` bytes=${bytes} cap=${MAX_HISTORY_TOOL_RESULT_BYTES}`,
   );
-  const budget = MAX_HISTORY_TOOL_RESULT_BYTES - utf8Bytes(HISTORY_TRUNCATION_MARKER);
-  return `${longestPrefixFitting(text, (prefix) => utf8Bytes(prefix) <= budget)}${HISTORY_TRUNCATION_MARKER}`;
+  return false;
 }
 
 function toolResultText(value: unknown, debug?: (msg: string) => void): string {
@@ -245,6 +279,31 @@ function toolResultText(value: unknown, debug?: (msg: string) => void): string {
     const content = record(part);
     return typeof content?.value === 'string' ? content.value : stringify(part, debug);
   }).join('');
+}
+
+/**
+ * Strips the native approval gate's UI-only framing from a turn's replayed text.
+ *
+ * @remarks
+ * `lineageParticipant.ts` writes {@link GATE_CARD_HEADER} and {@link HOLD_GATE_NOTICE} around a
+ * pending card, and a gate reply may write {@link UNREAD_GATE_REPLY}, straight to the chat stream —
+ * text the model never generated and never saw as its own. `ChatResponseTurn.response` carries it
+ * verbatim regardless, and the `toolCallsMetadata` round that would otherwise describe the
+ * exchange structurally is absent for a turn that ends on `hold` (no `toolCalls` array is
+ * recorded), so this text reaches {@link chatHistoryToModelMessages} through both the round
+ * `response` field and the {@link responseMarkdown} fallback. Replayed unchanged, it reads as the
+ * assistant's own prior utterance — a template complete with "Approve, change or cancel with the
+ * buttons below" and no origin, columns, or tool call attached to it — and the model then
+ * completes that template as text on the next turn instead of calling
+ * `lineage_start_exploration` again. The plan content in between the header and the trailer is
+ * kept: a real prior proposal is real context, only the interactive frame around it is not.
+ */
+function neutralizeGateCardArtifacts(markdown: string): string {
+  if (!markdown) return markdown;
+  return markdown
+    .split(GATE_CARD_HEADER).join(GATE_CARD_REPLAY_LEAD_IN)
+    .split(HOLD_GATE_NOTICE).join('')
+    .split(UNREAD_GATE_REPLY).join('');
 }
 
 function responseMarkdown(response: vscode.ChatResponseTurn['response']): string {

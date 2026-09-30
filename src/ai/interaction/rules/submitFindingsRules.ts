@@ -2,13 +2,11 @@ import type { ClassificationValue } from '../../session/classification';
 import { CLASSIFICATION_KEPT_ANGLES } from '../../session/classification';
 import type { CapturedSection } from '../../session/memoryManager';
 import type { Verdict } from '../../sm/smTypes';
-import type { InteractionRuleResult } from '../types';
-import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /**
  * Required section angles by locked classification, read from the same
  * {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema
- * (`tools/toolSchemas.ts`) narrows `sections[].angle` to. An off-lock angle can no
+ * (`tools/toolSchemas.ts`) narrows the `sections` keys to. An off-lock angle can no
  * longer be authored at all — it fails that schema before this validator ever runs —
  * so this rule only ever catches a locked angle that is missing, not a surplus one.
  */
@@ -18,25 +16,25 @@ const SECTION_RULES: Record<ClassificationValue, {
 }> = {
   business: {
     required: CLASSIFICATION_KEPT_ANGLES.business,
-    missingMsg: 'classification=business requires at least one section with angle="business".',
+    missingMsg: 'classification=business requires sections.business.',
   },
   technical: {
     required: CLASSIFICATION_KEPT_ANGLES.technical,
-    missingMsg: 'classification=technical requires at least one section with angle="technical".',
+    missingMsg: 'classification=technical requires sections.technical.',
   },
   both: {
     required: CLASSIFICATION_KEPT_ANGLES.both,
-    missingMsg: 'classification=both requires sections with angle="business" and angle="technical".',
+    missingMsg: 'classification=both requires both sections.business and sections.technical.',
   },
 };
 
 /**
- * Validates findings `sections[]` includes the angles required by the locked classification.
+ * Validates findings carry the `sections.business`/`sections.technical` keys required by the
+ * locked classification.
  *
  * @remarks
- * A `prune` verdict carries no analysis into the lineage answer — its sections are discarded
- * either way — so a prune is exempt from the angle requirement below, the same way the unlocked
- * branch already exempts it from the non-empty requirement.
+ * An `end_branch` verdict carries no analysis into the lineage answer — its sections are discarded
+ * either way — so it is exempt from both the angle requirement and the non-empty requirement.
  *
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
  * (`AiMemoryManager.getArchivedAngles`). A follow-up (`supplementAgenda`) revisits a node whose earlier sections
@@ -49,96 +47,45 @@ export function validateSectionsAgainstClassification(
   verdict: Verdict | undefined,
   archivedAngles?: ReadonlySet<'business' | 'technical'>,
 ): string | null {
+  if (verdict === 'end_branch') return null;
   const list = sections ?? [];
   if (!classification) {
-    return list.length === 0 ? 'sections[] must contain at least one section when verdict is analyze or pass.' : null;
+    return list.length === 0 ? 'sections must contain at least one of sections.business or sections.technical when verdict is analyze or passthrough.' : null;
   }
-  if (verdict === 'end_branch') return null;
   const rule = SECTION_RULES[classification];
   const angles = new Set(list.map(s => s.angle));
   const missing = rule.required.filter(req => !angles.has(req) && !archivedAngles?.has(req));
   if (missing.length === 0) return null;
   const kept = rule.required.filter(req => angles.has(req));
-  const missingText = missing.map(a => `missing angle="${a}"`).join(', ');
+  const missingText = missing.map(a => `missing sections.${a}`).join(', ');
   const keepText = kept.length > 0
-    ? ` Add the missing section and keep the ${kept.map(a => `angle="${a}"`).join(', ')} section already sent, both in one sections[] list.`
+    ? ` Add the missing key and keep ${kept.map(a => `sections.${a}`).join(', ')} already sent, both in the same sections object.`
     : '';
   return `${rule.missingMsg} This submission is ${missingText}.${keepText}`;
 }
 
 /**
- * Best-effort `sections[].angle` extraction from a raw, not-yet-Zod-validated submission payload.
+ * Converts a `sections` object keyed by angle into angle-bearing entries.
  *
  * @remarks
- * Reused by the `submit_findings` handler's Zod-failure branch so a schema failure and a missing
- * locked angle produce one combined hint instead of two sequential rejections. Deliberately
- * tolerant: only `angle` is read here, so an item missing `text` or carrying an extra key still
- * counts toward coverage — the strict shape check is Zod's job, not this one's.
+ * The converter for a validated payload (`toHopFinding` in `toolSchemas.ts`). Tolerant on purpose:
+ * only the `business`/`technical` keys are read, and a blank or non-string body is absent, so it
+ * never counts toward coverage and never overwrites a held body.
  *
  * @param rawSections - The unparsed `sections` value from the raw or normalized tool input.
  * @returns Angle-bearing entries suitable for {@link validateSectionsAgainstClassification};
- * anything not shaped like `{ angle: 'business' | 'technical', ... }` is dropped.
+ * anything not shaped like `{ business?: string, technical?: string }` is dropped.
  */
 export function extractRawSectionAngles(rawSections: unknown): CapturedSection[] {
-  if (!Array.isArray(rawSections)) return [];
+  if (typeof rawSections !== 'object' || rawSections === null || Array.isArray(rawSections)) return [];
+  const record = rawSections as Record<string, unknown>;
   const out: CapturedSection[] = [];
-  for (const item of rawSections) {
-    if (typeof item !== 'object' || item === null) continue;
-    const angle = (item as { angle?: unknown }).angle;
-    if (angle !== 'business' && angle !== 'technical') continue;
-    const text = (item as { text?: unknown }).text;
-    out.push({ angle, text: typeof text === 'string' ? text : '' });
+  for (const angle of ['business', 'technical'] as const) {
+    if (!(angle in record)) continue;
+    const text = record[angle];
+    if (typeof text === 'string' && text.trim() !== '') out.push({ angle, text });
   }
   return out;
-}
-
-/**
- * Maps authoritative NavigationEngine status/focus failures to the established model-facing
- * `submit_findings` envelopes. This helper is pure and does not re-evaluate engine state.
- *
- * @param failure - The guard failure returned by `NavigationEngine.submitFindings()`.
- * @returns The stable external envelope, or null for a non-guard engine result.
- */
-export function mapSubmitFindingsEngineGuard(
-  failure: { error: string; [key: string]: unknown },
-): InteractionRuleResult {
-  if (failure.error === REJECTION_CODES.invalidStatus) {
-    const status = String(failure.current_status ?? 'unknown');
-    if (status === 'complete') {
-      return {
-        error: REJECTION_CODES.explorationComplete,
-        hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
-        next_action: 'present_result',
-      };
-    }
-    return {
-      error: REJECTION_CODES.invalidStatus,
-      current_status: status,
-      hint: typeof failure.hint === 'string'
-        ? failure.hint
-        : `Engine is in status '${status}'. Expected 'awaiting_findings'.`,
-    };
-  }
-  if (failure.error === REJECTION_CODES.focusMismatch) {
-    const expected = typeof failure.expected === 'string' ? failure.expected : '';
-    const got = typeof failure.got === 'string' ? failure.got : '';
-    return {
-      error: REJECTION_CODES.focusNodeIdMismatch,
-      expected,
-      got,
-      hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${expected}. Resubmit with the correct focus_node_id.`,
-    };
-  }
-  if (failure.error === REJECTION_CODES.invalidFocusNode) {
-    const got = typeof failure.got === 'string' ? failure.got : '';
-    const expected = typeof failure.expected === 'string' ? failure.expected : undefined;
-    return {
-      error: REJECTION_CODES.invalidInput,
-      message: `focus_node_id \`${got}\` not found in the loaded model.`,
-      hint: activeSubmitFindingsRecoveryHint(expected),
-    };
-  }
-  return null;
 }
 
 /**

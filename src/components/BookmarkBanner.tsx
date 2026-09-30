@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import type { FilterProfile } from '../engine/projectStore';
 import { BOOKMARK_SOURCE_COLORS, BOOKMARK_SOURCE_LABELS } from '../engine/shared/bridgeContract';
-import { Tooltip } from './ui/Tooltip';
+import { ModeBanner } from './ModeBanner';
 import { ColumnViewToggle } from './ColumnViewToggle';
 
 interface BookmarkBannerProps {
@@ -25,9 +25,11 @@ interface BookmarkBannerProps {
 const SOURCE_LABELS = BOOKMARK_SOURCE_LABELS;
 const SOURCE_COLORS = BOOKMARK_SOURCE_COLORS;
 
+/** SVG path for the bookmark icon. */
+const BOOKMARK_ICON = 'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z';
+
 /**
- * A persistent banner displayed at the top of the graph canvas when an "Advanced Bookmark"
- * (an allowlist-based view) is active.
+ * Configures {@link ModeBanner} for an active "Advanced Bookmark" (an allowlist-based view).
  */
 export const BookmarkBanner = memo(function BookmarkBanner({
   profile,
@@ -42,39 +44,29 @@ export const BookmarkBanner = memo(function BookmarkBanner({
   const label = SOURCE_LABELS[source];
   const chipColor = SOURCE_COLORS[source];
 
-  return (
-    <div className="ln-bookmark-banner px-4 py-2 flex items-center justify-between">
-      <div className="flex items-center gap-2 min-w-0">
-        <span
-          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm shrink-0"
-          style={{
-            border: `1px solid ${chipColor}`,
-            color: chipColor,
-          }}
-        >
-          {label}
-        </span>
-        <Tooltip content={profile.name}>
-          <span className="text-sm font-semibold ln-text truncate">
-            {profile.name}
-          </span>
-        </Tooltip>
-        <span className="text-xs ln-text-muted shrink-0">
-          — {shownCount === totalCount ? `${totalCount} objects` : `${shownCount} of ${totalCount} objects`}
-        </span>
-      </div>
+  const viewToggle = columnViewAvailable && onToggleColumnView ? (
+    <ColumnViewToggle active={columnView} onToggle={onToggleColumnView} />
+  ) : null;
 
-      <div className="flex items-center gap-3 shrink-0 ml-3">
-        {columnViewAvailable && onToggleColumnView && (
-          <ColumnViewToggle active={columnView} onToggle={onToggleColumnView} />
-        )}
-        <button
-          onClick={onExit}
-          className="h-7 px-3 text-xs rounded-sm font-medium transition-colors ln-btn-secondary"
-        >
-          ✕ Exit View
-        </button>
-      </div>
-    </div>
+  return (
+    <ModeBanner
+      variant="bookmark"
+      icon={BOOKMARK_ICON}
+      title={profile.name}
+      subtitle={
+        <>
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm"
+            style={{ border: `1px solid ${chipColor}`, color: chipColor }}
+          >
+            {label}
+          </span>
+          {' '}
+          {shownCount === totalCount ? `${totalCount} objects` : `${shownCount} of ${totalCount} objects`}
+        </>
+      }
+      onClose={onExit}
+      extraControls={viewToggle}
+    />
   );
 });

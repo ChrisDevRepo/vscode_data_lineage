@@ -15,7 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { Command, INTERRUPT, isInterrupted } from '@langchain/langgraph';
+import { Command, GraphRecursionError, INTERRUPT, isInterrupted } from '@langchain/langgraph';
 import {
   modelUserMessage,
   isPortCancellation,
@@ -23,7 +23,7 @@ import {
   type ModelPort,
 } from '../model/modelPort';
 import { isCancellationOutcome } from '../support/cancellation';
-import type { IToolRegistry } from '../tools/registry';
+import { trackInFlightDispatch, type IToolRegistry } from '../tools/registry';
 import type { Logger } from '../../utils/log';
 import type { TurnEventSink } from '../runtime/turnEventSink';
 import type { TurnOutcome } from '../core/agentCore';
@@ -33,7 +33,6 @@ import { buildAgentGraph, turnRecursionLimit } from '../agent/graph';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
 import type { AgentStateUpdate, AgentErrorCode, GateDecision } from '../agent/state';
-import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 
 export { type GateDecision } from '../agent/state';
 
@@ -61,7 +60,7 @@ export interface AgentRuntimeDeps {
   readonly sink: TurnEventSink;
   /** Abort signal cancelling this turn; re-checked before every graph invoke and forwarded to the graph. */
   readonly signal?: AbortSignal;
-  /** Per-phase max LM step count; defaults to 50. */
+  /** Hop limit for the turn; defaults to the turn budget's `ai.maxRounds` value. */
   readonly maxRounds?: number;
   /**
    * Turn-ownership epoch captured for this turn (from {@link AiSession.beginTurn}).
@@ -126,7 +125,7 @@ export class AgentRuntime {
   private readonly getSession: () => AiSession;
   private readonly sink: TurnEventSink;
   private readonly signal: AbortSignal | undefined;
-  /** Effective per-turn hop limit — `deps.maxRounds` or {@link DEFAULT_MAX_ROUNDS} when omitted. */
+  /** Effective per-turn hop limit — `deps.maxRounds` or the turn budget's `ai.maxRounds` value when omitted. */
   public readonly maxRounds: number;
   /** Diagnostic detail behind the most recent non-`ok` {@link close}. */
   public lastFailureDetail: AgentFailureDetail | undefined;
@@ -136,23 +135,34 @@ export class AgentRuntime {
   private readonly logger: Logger | undefined;
   private readonly graph: ReturnType<typeof buildAgentGraph>;
   private readonly pendingGates = new Map<string, (d: GateDecision) => void>();
+  /**
+   * Settle-await for every tool dispatch in flight through this turn's registry.
+   *
+   * @remarks
+   * Awaited before {@link close} on every cancellation path, so a mutating tool's effect — a
+   * session write, an engine publish, a panel render — always finishes before the turn releases
+   * the lease, even when LangGraph's abort race already rejected `graph.invoke` while the
+   * dispatching node was still running. See {@link trackInFlightDispatch}.
+   */
+  private readonly dispatchSettled: () => Promise<void>;
 
   constructor(deps: AgentRuntimeDeps) {
     this.threadId = deps.threadId;
     this.getSession = deps.getSession;
     this.sink = deps.sink;
     this.signal = deps.signal;
-    this.maxRounds = deps.maxRounds ?? DEFAULT_MAX_ROUNDS;
+    this.maxRounds = deps.maxRounds ?? deps.model.budget.exploration.maxRounds;
     this.priorMessages = deps.priorMessages ?? [];
     this.turnEpoch = deps.turnEpoch;
     this.logger = deps.logger;
+    const tracked = trackInFlightDispatch(deps.registry);
+    this.dispatchSettled = tracked.settled;
     this.graph = buildAgentGraph({
       getSession: deps.getSession,
       model: deps.model,
-      registry: deps.registry,
+      registry: tracked.registry,
       sink: deps.sink,
       signal: deps.signal,
-      maxRounds: this.maxRounds,
       turnEpoch: deps.turnEpoch,
       logger: deps.logger,
       traceSyntheticRejection: deps.traceSyntheticRejection,
@@ -173,13 +183,13 @@ export class AgentRuntime {
       const config = {
         configurable: { thread_id: this.threadId },
         callbacks: [],
-        recursionLimit: turnRecursionLimit(this.maxRounds),
+        signal: this.signal,
       };
 
       for (;;) {
-        if (this.signal?.aborted) return this.close('cancelled');
         assertExternalTracingDisabled();
-        const result = await this.graph.invoke(input as never, config);
+        const recursionLimit = turnRecursionLimit(this.maxRounds, session.stateMachine?.scopeSize ?? 0);
+        const result = await this.graph.invoke(input as never, { ...config, recursionLimit });
         const interruptPayload = extractInterruptPayload(result);
         if (interruptPayload !== null) {
           const gate = PendingGateSchema.parse(interruptPayload);
@@ -187,7 +197,10 @@ export class AgentRuntime {
           input = new Command({ resume: decision });
           continue;
         }
-        if (this.signal?.aborted) return this.close('cancelled');
+        if (this.signal?.aborted) {
+          await this.dispatchSettled();
+          return this.close('cancelled');
+        }
 
         const state = result as {
           outcome?: TurnOutcome | null;
@@ -201,10 +214,14 @@ export class AgentRuntime {
     } catch (err) {
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
         this.logger?.debug('[AI] turn aborted — closed as cancelled');
+        await this.dispatchSettled();
         return this.close('cancelled');
       }
-      const msg = err instanceof Error ? err.message : String(err);
       this.logger?.error('[AI] LangGraph turn', err);
+      if (err instanceof GraphRecursionError) {
+        return this.close('error', 'Analysis stopped: internal step limit reached. Partial results are shown; this is a defect — please report it.');
+      }
+      const msg = err instanceof Error ? err.message : String(err);
       return this.close('error', msg);
     }
   }
@@ -257,8 +274,8 @@ export class AgentRuntime {
     this.lastFailureDetail = status !== 'ok' && error ? { message: error, code: detail?.code, stop: detail?.stop } : undefined;
     if (status === 'cancelled' || status === 'error') {
       const sess = this.getSession();
-      if (sess.phase.kind === 'exploring' || sess.phase.kind === 'awaiting_gate') {
-        const outcome = sess.enterIdle(this.turnEpoch);
+      if (sess.phase.kind === 'exploring') {
+        const outcome = sess.cancelPendingExploration(this.turnEpoch);
         if (outcome.kind === 'dropped_stale_turn') {
           this.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
         }

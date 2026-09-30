@@ -12,7 +12,6 @@ import type { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager
 import {
   BaseChatModel,
   type BaseChatModelCallOptions,
-  type BindToolsInput,
 } from '@langchain/core/language_models/chat_models';
 import type { BaseLanguageModelInput } from '@langchain/core/language_models/base';
 import {
@@ -23,15 +22,20 @@ import {
   ToolMessage,
   type BaseMessage,
   type MessageContent,
-  type ToolCall,
 } from '@langchain/core/messages';
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
-import { toJsonSchema } from '@langchain/core/utils/json_schema';
-import { isHostCancellationError, ModelPortError, type ModelPortErrorCode } from './modelPort';
-import { systemPromptHash, type WireEvent } from '../observability/wireLog';
-import { toWireMessage } from '../observability/vscodeWireLog';
+import {
+  isHostCancellationError,
+  messageProviderParts,
+  ModelPortError,
+  PROVIDER_PARTS_KEY,
+  type ModelPortErrorCode,
+} from './modelPort';
+import { systemPromptHash, type WireEvent, type WirePart } from '../observability/wireLog';
+import { toWireMessage, toWirePart } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
+import { STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../providers/structuredOutput';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
 export interface VscodeBridgeToolDefinition {
@@ -47,7 +51,12 @@ export interface VscodeBridgeToolDefinition {
 export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
   /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
+  /** `'auto'`, `'any'` (a tool call is required), `'none'`, or the name of the one tool the model must call. */
+  readonly tool_choice?: string;
 }
+
+/** A tool-bound bridge runnable, streamable for its raw `AIMessageChunk`s. */
+export type VscodeBridgeRunnable = Runnable<BaseLanguageModelInput, AIMessageChunk, VscodeLangChainCallOptions>;
 
 /** Constructor fields for one request-selected VS Code language model. */
 export interface VscodeLangChainBridgeFields {
@@ -98,11 +107,18 @@ export class VscodeLangChainBridge extends BaseChatModel<
    * Binds model-facing tool metadata. Execution remains graph/dispatcher-owned.
    */
   bindTools(
-    tools: BindToolsInput[],
+    tools: VscodeBridgeToolDefinition[],
     kwargs: Partial<VscodeLangChainCallOptions> = {},
-  ): Runnable<BaseLanguageModelInput, AIMessageChunk, VscodeLangChainCallOptions> {
-    const definitions = tools.map(toBridgeToolDefinition);
-    return this.withConfig({ tools: definitions, ...kwargs });
+  ): VscodeBridgeRunnable {
+    return this.withConfig({ tools, ...kwargs });
+  }
+
+  /** Binds one tool, described by its model-facing JSON Schema, forced via `tool_choice`, guaranteeing that exact call. */
+  bindStructuredOutputTool(inputSchema: Record<string, unknown>, functionName: string): VscodeBridgeRunnable {
+    return this.bindTools(
+      [{ name: functionName, description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION, inputSchema }],
+      { tool_choice: functionName },
+    );
   }
 
   /** True once either the bridge's own cancellation token or the LangChain call's abort signal fires. */
@@ -110,27 +126,20 @@ export class VscodeLangChainBridge extends BaseChatModel<
     return this.token.isCancellationRequested || Boolean(options.signal?.aborted);
   }
 
-  /** Collects the streaming bridge output into LangChain's non-streaming result shape. */
+  /** Folds the streaming bridge output into LangChain's non-streaming result shape. */
   async _generate(
     messages: BaseMessage[],
     options: this['ParsedCallOptions'],
     runManager?: CallbackManagerForLLMRun,
   ): Promise<ChatResult> {
-    let text = '';
-    const toolCalls: ToolCall[] = [];
+    let combined: ChatGenerationChunk | undefined;
     for await (const generation of this._streamResponseChunks(messages, options, runManager)) {
-      text += generation.text;
-      const chunkCalls = AIMessageChunk.isInstance(generation.message)
-        ? generation.message.tool_calls ?? []
-        : [];
-      for (const call of chunkCalls) {
-        toolCalls.push(call);
-      }
+      combined = combined ? combined.concat(generation) : generation;
     }
     return {
       generations: [{
-        text,
-        message: new AIMessage({ content: text, tool_calls: toolCalls }),
+        text: combined?.text ?? '',
+        message: combined?.message ?? new AIMessageChunk({ content: '' }),
       }],
     };
   }
@@ -149,8 +158,13 @@ export class VscodeLangChainBridge extends BaseChatModel<
     let iterator: AsyncIterator<unknown> | undefined;
     let reachedEof = false;
     const capture = this.wire
-      ? { text: '', calls: [] as Array<{ callId: string; name: string; input: unknown }> }
+      ? {
+          text: '',
+          calls: [] as Array<{ callId: string; name: string; input: unknown }>,
+          otherParts: [] as WirePart[],
+        }
       : undefined;
+    const providerParts: unknown[] = [];
     try {
       const nativeMessages = messages.map(toVscodeMessage);
       this.wire?.({
@@ -185,10 +199,18 @@ export class VscodeLangChainBridge extends BaseChatModel<
               type: 'wire-response',
               text: capture.text,
               toolCalls: capture.calls,
+              ...(capture.otherParts.length > 0 ? { otherParts: capture.otherParts } : {}),
             });
           }
           if (this.isCancelled(options)) {
             throw cancelledError();
+          }
+          if (providerParts.length > 0) {
+            const message = new AIMessageChunk({
+              content: '',
+              additional_kwargs: { [PROVIDER_PARTS_KEY]: providerParts },
+            });
+            yield new ChatGenerationChunk({ text: '', message });
           }
           break;
         }
@@ -216,6 +238,8 @@ export class VscodeLangChainBridge extends BaseChatModel<
           yield new ChatGenerationChunk({ text: '', message });
           continue;
         }
+        providerParts.push(part);
+        capture?.otherParts.push(toWirePart(part));
         const nonTextChars = streamedValueChars(part);
         if (nonTextChars > 0) {
           const message = new AIMessageChunk({ content: '', response_metadata: { nonTextChars } });
@@ -238,13 +262,21 @@ export class VscodeLangChainBridge extends BaseChatModel<
   }
 }
 
-/** Converts one LangChain message without adding history or helper prose. */
+/**
+ * Converts one LangChain message without adding history or helper prose.
+ *
+ * @remarks
+ * An assistant message replays the provider stream parts it carries ({@link PROVIDER_PARTS_KEY})
+ * as the original objects, ahead of its text and tool calls, in the order the provider streamed
+ * them: the model's own turn goes back verbatim, never rebuilt from the fields this bridge reads.
+ */
 export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
     return vscode.LanguageModelChatMessage.User(toTextParts(message.content), message.name);
   }
   if (AIMessage.isInstance(message)) {
     const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart> = [
+      ...messageProviderParts(message) as ReadonlyArray<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart>,
       ...toTextParts(message.content),
       ...(message.tool_calls ?? []).map((call) => {
         if (!call.id) {
@@ -309,44 +341,9 @@ function toTextParts(content: MessageContent): vscode.LanguageModelTextPart[] {
   return parts;
 }
 
-function toBridgeToolDefinition(tool: BindToolsInput): VscodeBridgeToolDefinition {
-  const candidate = tool as Record<string, unknown>;
-  const name = typeof candidate.name === 'string'
-    ? candidate.name
-    : readOpenAiFunctionField(candidate, 'name');
-  const description = typeof candidate.description === 'string'
-    ? candidate.description
-    : readOpenAiFunctionField(candidate, 'description');
-  const inputSchema = readInputSchema(candidate);
-  if (!name || !description || !inputSchema) {
-    throw new ModelPortError(
-      'invalid_request',
-      'LangChain tool requires name, description, and an input schema.',
-    );
-  }
-  return { name, description, inputSchema };
-}
-
-function readInputSchema(tool: Record<string, unknown>): Record<string, unknown> | null {
-  if (isRecord(tool.inputSchema)) return tool.inputSchema;
-  if (isRecord(tool.function) && isRecord(tool.function.parameters)) return tool.function.parameters;
-  if (!('schema' in tool) || !tool.schema) return null;
-  const schema = toJsonSchema(tool.schema as Parameters<typeof toJsonSchema>[0]);
-  return isRecord(schema) ? schema : null;
-}
-
-function readOpenAiFunctionField(
-  tool: Record<string, unknown>,
-  field: 'name' | 'description',
-): string {
-  return isRecord(tool.function) && typeof tool.function[field] === 'string'
-    ? tool.function[field]
-    : '';
-}
-
 function projectToolChoice(
   definitions: readonly VscodeBridgeToolDefinition[],
-  choice: VscodeLangChainCallOptions['tool_choice'],
+  choice: string | undefined,
 ): {
   tools: vscode.LanguageModelChatTool[];
   toolMode: vscode.LanguageModelChatToolMode;
@@ -354,15 +351,7 @@ function projectToolChoice(
   if (choice === 'none') {
     return { tools: [], toolMode: vscode.LanguageModelChatToolMode.Auto };
   }
-  const named = typeof choice === 'string' && !['auto', 'any'].includes(choice)
-    ? choice
-    : readNamedToolChoice(choice);
-  if (isRecord(choice) && !named) {
-    throw new ModelPortError(
-      'invalid_request',
-      'Unsupported LangChain tool choice object.',
-    );
-  }
+  const named = choice !== undefined && choice !== 'auto' && choice !== 'any' ? choice : undefined;
   const selected = named ? definitions.filter((definition) => definition.name === named) : definitions;
   if (named && selected.length !== 1) {
     throw new ModelPortError('invalid_request', `Required tool is not available: ${named}.`);
@@ -380,15 +369,6 @@ function projectToolChoice(
       ? vscode.LanguageModelChatToolMode.Required
       : vscode.LanguageModelChatToolMode.Auto,
   };
-}
-
-function readNamedToolChoice(choice: unknown): string | undefined {
-  if (!isRecord(choice)) return undefined;
-  if (typeof choice.name === 'string') return choice.name;
-  if (isRecord(choice.function) && typeof choice.function.name === 'string') {
-    return choice.function.name;
-  }
-  return undefined;
 }
 
 function normalizeBridgeError(

@@ -2,28 +2,23 @@
  * Executes active-hop submissions for the `lineage_submit_findings` tool.
  *
  * @remarks
- * Mode-specific boundary validation and state-machine submission stay local to
- * this handler. Turn-lease validation and effect serialization remain in the
- * registry wrapper.
+ * The input arrives already parsed against the mode-and-classification schema the hop served (the
+ * tool-attempt boundary owns that parse); engine-state rules and state-machine submission stay
+ * local to this handler. Turn-lease validation and effect serialization remain in the registry
+ * wrapper.
  */
 import { NavigationEngine } from '../../sm/smBase';
-import type { Verdict } from '../../sm/smTypes';
 import { sanitizeForLog } from '../../../utils/log';
-import {
-  submitFindingsSchemaForMode,
-} from '../../tools/toolSchemas';
+import { toHopFinding, type FlatSubmitFindings } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
-import { rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
+import { assignEvidenceIds } from '../../tools/presentResult';
+import { makeRejection } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-import {
-  extractRawSectionAngles,
-  mapSubmitFindingsEngineGuard,
-  validateSectionsAgainstClassification,
-} from '../../interaction/rules/submitFindingsRules';
+import { validateSectionsAgainstClassification } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
 /**
@@ -37,23 +32,16 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
       const sess = s.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
-      if (!engine) return s.logAndReturn('lineage_submit_findings', {
-        error: REJECTION_CODES.noActiveSession,
+      if (!engine) return s.logAndReturn('lineage_submit_findings', makeRejection({
+        code: REJECTION_CODES.noActiveSession,
         hint: 'No active exploration. Call lineage_start_exploration first.',
-        next_action: 'start_exploration',
-      }, input);
+        detail: { next_action: 'start_exploration' },
+      }), input);
 
       const rawInput: SubmitFindingsInputObject =
         input && typeof input === 'object' && !Array.isArray(input)
           ? input as SubmitFindingsInputObject
           : {};
-
-      if (!engine.columnAspect && rawInput.column_flow !== undefined) {
-        return s.logAndReturn('lineage_submit_findings', {
-          error: REJECTION_CODES.bbFieldUnknown,
-          hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional prune_neighbors/questions.',
-        }, rawInput);
-      }
 
       const modelNodeMap = getModelNodeMap(s.requireModel());
       const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
@@ -63,55 +51,34 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           `[Normalize] tool=submit_findings field=${event.field} from=${sanitizeForLog(event.from)} to=${sanitizeForLog(event.to)}`,
         );
       }
+      const flat = normalizedInput as FlatSubmitFindings;
 
-      const hopMode = engine.currentHopAnalysisMode;
-      const parsed = submitFindingsSchemaForMode(hopMode, sess.classification)
-        .safeParse(normalizedInput);
-      if (!parsed.success) {
-        const isCtMode = hopMode === 'ct';
-        const { reason: fieldErrors } = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: normalizedInput });
-        const modeLabel = isCtMode ? 'CT' : 'BB';
-        const summary = `Invalid ${modeLabel} submit_findings input — ${fieldErrors}.`;
-        const repairHint = zodFieldRepairHint(parsed.error, normalizedInput);
-        const rawAngles = extractRawSectionAngles((normalizedInput as { sections?: unknown }).sections);
-        const rawVerdict = (normalizedInput as { verdict?: unknown }).verdict;
-        const rawFocus = (normalizedInput as { focus_node_id?: unknown }).focus_node_id;
-        const angleHint = validateSectionsAgainstClassification(
-          rawAngles,
-          sess.classification,
-          typeof rawVerdict === 'string' ? rawVerdict as Verdict : undefined,
-          typeof rawFocus === 'string' ? sess.memory.getArchivedAngles(rawFocus) : undefined,
-        );
-        const hint = [summary, repairHint, angleHint].filter(Boolean).join(' ');
-        return s.logAndReturn('lineage_submit_findings', {
-          error: isCtMode ? REJECTION_CODES.ctFieldRequired : REJECTION_CODES.invalidInput,
-          hint,
-        }, normalizedInput);
+      const dropped = flat.verdict === 'end_branch'
+        ? [(flat.summary ?? '') !== '' ? 'summary' : '', Object.keys(flat.sections ?? {}).length > 0 ? 'sections' : '', flat.badge_label != null ? 'badge_label' : '']
+        : [(flat.reason ?? '').trim() !== '' ? 'reason' : ''];
+      if (dropped.some(Boolean)) {
+        s.logger.debug(`[Normalize] tool=submit_findings verdict=${flat.verdict} dropped=${dropped.filter(Boolean).join(',')}`);
       }
-
-      const finding = engine.applyHeldContent(parsed.data);
+      const finding = engine.applyHeldContent(toHopFinding(flat));
+      if ('code' in finding) return s.logAndReturn('lineage_submit_findings', finding, normalizedInput);
 
       const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
       const violation = validateSectionsAgainstClassification(finding.verdict === 'end_branch' ? [] : finding.sections, sess.classification, finding.verdict, archivedAngles);
       if (violation) {
-        return s.logAndReturn('lineage_submit_findings', {
-          error: REJECTION_CODES.classificationLockViolation,
+        return s.logAndReturn('lineage_submit_findings', makeRejection({
+          code: REJECTION_CODES.classificationLockViolation,
           hint: violation,
-        }, normalizedInput);
+        }), normalizedInput);
       }
 
-      const result = engine.submitFindings(finding, s.budget);
-      if ('error' in result) {
-        const detail = (result as { detail?: Array<{ id?: string; reason?: string }> }).detail;
+      const result = engine.submitFindings(finding);
+      if ('code' in result) {
+        const detail = result.detail as Array<{ id?: string; reason?: string }> | undefined;
         if (Array.isArray(detail)) {
           for (const d of detail) {
             if (d.reason) s.logger.debug(`[CT] rejection: id=${d.id ?? '?'} — ${d.reason}`);
           }
         }
-
-        const guardEnvelope = mapSubmitFindingsEngineGuard(result);
-        if (guardEnvelope) return s.logAndReturn('lineage_submit_findings', guardEnvelope, normalizedInput);
-
         return s.logAndReturn('lineage_submit_findings', result, normalizedInput);
       }
 
@@ -123,7 +90,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           scope: { nodes: result.result.fullNodes.length, edges: result.result.edges.length },
           suggested_sections: result.result.suggested_sections,
           node_states: result.result.node_states,
-          detail_slots: result.result.detail_slots,
+          detail_slots: assignEvidenceIds(result.result.detail_slots).slots,
         };
         return s.logAndReturn('lineage_submit_findings', { ...result, result: lmResult }, normalizedInput);
       }
@@ -157,6 +124,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         accepted_focus: finding.focus_node_id,
         hop: nextHop.hop,
         next_focus: nextHop.focus_node?.id,
+        ...(result.unaccounted_columns ? { unaccounted_columns: result.unaccounted_columns } : {}),
       }, normalizedInput);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

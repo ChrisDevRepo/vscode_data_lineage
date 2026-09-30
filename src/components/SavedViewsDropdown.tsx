@@ -1,9 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { FloatingPortal } from '@floating-ui/react';
+import { FloatingFocusManager, FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import type { FilterProfile } from '../engine/projectStore';
 import { useDropdown } from '../hooks/useDropdown';
+import { useReturnFocus } from '../hooks/useReturnFocus';
 
 interface SavedViewsDropdownProps {
   /** List of saved filter profiles (bookmarks) for the current project. */
@@ -35,10 +36,11 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   onDeleteView,
   onUpdateView,
 }: SavedViewsDropdownProps) {
-  const { isOpen, toggle, close, refs, floatingStyles, getFloatingProps } = useDropdown();
+  const { isOpen, toggle, close, refs, floatingStyles, context, getFloatingProps } = useDropdown();
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const deleteFocus = useReturnFocus<string>();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -69,8 +71,9 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
           onClick={() => isEnabled && toggle()}
           variant="icon"
           disabled={!isEnabled}
+          aria-label="Bookmarks"
           aria-expanded={isOpen}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
         {activeViewId ? (
@@ -87,11 +90,12 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
 
       <FloatingPortal>
         {isOpen && (
+          <FloatingFocusManager context={context} modal={false}>
           <div
             ref={refs.setFloating}
             style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
             className="w-72 rounded-md shadow-lg z-50 p-2 ln-dropdown"
-            role="menu"
+            role="dialog"
             aria-label="Bookmarks"
             {...getFloatingProps()}
           >
@@ -114,7 +118,11 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSave();
-                    if (e.key === 'Escape') { setIsAdding(false); setNewName(''); }
+                    if (e.key === 'Escape') {
+                      e.stopPropagation();
+                      setIsAdding(false);
+                      setNewName('');
+                    }
                   }}
                   placeholder="View name…"
                   className="w-full h-7 px-2 text-xs rounded-sm ln-input"
@@ -152,7 +160,8 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                           <Button
                             variant="ghost"
                             className="h-6 px-1.5 text-xs"
-                            onClick={() => setConfirmDeleteId(null)}
+                            onClick={() => { setConfirmDeleteId(null); deleteFocus.returnFocus(profile.id); }}
+                            autoFocus
                           >
                             Cancel
                           </Button>
@@ -165,7 +174,6 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                       <div
                         key={profile.id}
                         className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
-                        role="menuitem"
                         style={isActive ? { background: 'var(--ln-selection-bg)' } : undefined}
                       >
                         {/* Fixed-width icon slot for vertical alignment */}
@@ -231,6 +239,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                         </span>
                         <Tooltip content={`Delete "${profile.name}"`}>
                           <button
+                            ref={deleteFocus.triggerRef(profile.id)}
                             type="button"
                             className="shrink-0 p-0.5 rounded-sm ln-list-item"
                             onClick={() => setConfirmDeleteId(profile.id)}
@@ -248,6 +257,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
               </>
             )}
           </div>
+          </FloatingFocusManager>
         )}
       </FloatingPortal>
     </>

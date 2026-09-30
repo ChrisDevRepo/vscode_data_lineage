@@ -46,6 +46,17 @@ export function openPanel(
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
 
   if (activePanel) {
+    if (!loadDemo && getSession().graph) {
+      const existing = activePanel;
+      void confirmReplacePanel(bridgeLogger).then(async (replace) => {
+        if (!replace) return;
+        const disposed = new Promise<void>((resolve) => existing.onDidDispose(() => resolve()));
+        existing.dispose();
+        await disposed;
+        openPanel(context, title, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState);
+      });
+      return;
+    }
     bridgeLogger.info('Revealing existing panel');
     activePanel.reveal();
     if (loadDemo && activeTriggerDemo) {
@@ -151,6 +162,28 @@ export function openPanel(
       );
     }
   }, undefined, panelDisposables);
+}
+
+/**
+ * Asks whether the open lineage view, which holds a loaded graph, may be closed so the wizard can
+ * start. Only one lineage panel exists at a time, so starting the wizard means replacing it.
+ *
+ * @returns `true` when the user confirms the replacement.
+ */
+async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
+  const closeAndOpen = 'Close and Open Wizard';
+  const choice = await vscode.window.showWarningMessage(
+    'A Data Lineage view is already open. Close it and start the wizard?',
+    { modal: true },
+    closeAndOpen,
+  );
+  if (choice !== closeAndOpen) {
+    bridgeLogger.info('Open Wizard cancelled — keeping the existing panel.');
+    activePanel?.reveal();
+    return false;
+  }
+  bridgeLogger.info('Open Wizard confirmed — replacing the existing panel.');
+  return true;
 }
 
 import { buildWebviewCsp } from './utils/cspBuilder';

@@ -1,6 +1,7 @@
 /**
  * Covers the host-side exported `graphBuilder` surface that no test named: pathfinding,
- * the layout engine and its cache, graph metrics, and the no-layout build.
+ * the layout engine and its cache (including worker-computed seeding), graph metrics, and
+ * the no-layout build.
  *
  * These sit between the BFS trace and what the user sees. A defect here shows as a
  * correct trace rendered wrongly — a node missing from the view, an edge dropped —
@@ -12,12 +13,21 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  buildGraph,
   buildGraphNoLayout,
   computeShortestPath,
   dagreLayout,
   getGraphMetrics,
+  hasCachedLayout,
+  layoutCacheKey,
+  objectLayoutInput,
+  objectLayoutInputForGraph,
+  runDagre,
+  seedLayoutCache,
+  traceNodeIdsWithLevels,
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
+import { buildWebviewCsp } from '../../../src/utils/cspBuilder';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { loadAdventureWorksModel, makeGraph } from '../helpers/testUtils';
 
@@ -76,6 +86,40 @@ describe('getGraphMetrics', () => {
 });
 
 
+describe('layout cache seeding (worker prewarm)', () => {
+  it('serves buildGraph from positions computed outside the cache', async () => {
+    const model = await loadAdventureWorksModel();
+    const config = { ...DEFAULT_CONFIG, layout: { ...DEFAULT_CONFIG.layout, nodeSeparation: DEFAULT_CONFIG.layout.nodeSeparation + 7 } };
+    const input = objectLayoutInput(model, config);
+    expect(hasCachedLayout(input)).toBe(false);
+    const computed = runDagre(structuredClone(input));
+    for (const pos of computed.values()) pos.x += 100_000;
+    seedLayoutCache(input, computed);
+    expect(hasCachedLayout(input)).toBe(true);
+    const built = buildGraph(model, config);
+    for (const node of built.flowNodes) {
+      const seeded = computed.get(node.id);
+      if (seeded) expect(node.position).toEqual(seeded);
+    }
+  });
+
+  it('refuses to cache a layout that misses a node, such as a failed worker run', () => {
+    const input = {
+      nodeIds: ['Seed.A', 'Seed.B'],
+      edges: [{ source: 'Seed.A', target: 'Seed.B' }],
+      config: DEFAULT_CONFIG,
+    };
+    expect(seedLayoutCache(input, new Map())).toBe(false);
+    expect(seedLayoutCache(input, new Map([['Seed.A', { x: 0, y: 0 }]]))).toBe(false);
+    expect(hasCachedLayout(input)).toBe(false);
+    expect([...dagreLayout(input).keys()].sort()).toEqual(['Seed.A', 'Seed.B']);
+  });
+
+  it('allows the inline layout worker in the webview CSP', () => {
+    expect(buildWebviewCsp({ nonce: 'n', cspSource: 'vscode-resource:' })).toContain('worker-src blob:');
+  });
+});
+
 describe('dagreLayout', () => {
   const input = () => ({
     nodeIds: ['A', 'B', 'C'],
@@ -111,6 +155,26 @@ describe('dagreLayout', () => {
 
   it('returns an empty map for no nodes instead of throwing', () => {
     expect(dagreLayout({ nodeIds: [], edges: [], config: DEFAULT_CONFIG }).size).toBe(0);
+  });
+
+  it('serves the same cached layout regardless of node/edge array order', () => {
+    const first = dagreLayout(input());
+    const reordered = dagreLayout({
+      nodeIds: ['C', 'A', 'B'],
+      edges: [{ source: 'B', target: 'C' }, { source: 'A', target: 'B' }],
+      config: DEFAULT_CONFIG,
+    });
+    expect(reordered).toBe(first);
+  });
+
+  it('treats a different edge set as a different layout, not a cache hit', () => {
+    const first = dagreLayout(input());
+    const extraEdge = dagreLayout({
+      nodeIds: ['A', 'B', 'C'],
+      edges: [{ source: 'A', target: 'B' }, { source: 'B', target: 'C' }, { source: 'A', target: 'C' }],
+      config: DEFAULT_CONFIG,
+    });
+    expect(extraEdge).not.toBe(first);
   });
 });
 
@@ -183,5 +247,37 @@ describe('traceNodeWithLevels — edge membership', () => {
     const traced = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 1, 0);
     expect([...traced.nodeIds].sort()).toEqual(['A', 'ORIGIN']);
     expect([...traced.edgeIds].sort()).toEqual(['A→ORIGIN']);
+  });
+});
+
+describe('traceNodeIdsWithLevels', () => {
+  it('returns the same node set as traceNodeWithLevels and drops an unknown origin', () => {
+    const graph = chain();
+    expect(traceNodeIdsWithLevels(graph, 'B', 1, 1)).toEqual(traceNodeWithLevels(graph, 'B', 1, 1).nodeIds);
+    expect(traceNodeIdsWithLevels(graph, 'nope', 2, 2).size).toBe(0);
+  });
+});
+
+describe('layoutCacheKey', () => {
+  const input = {
+    nodeIds: ['B', 'A'],
+    edges: [{ source: 'A', target: 'B' }],
+    config: DEFAULT_CONFIG,
+  };
+
+  it('is stable under node order and changes when direction or node size changes', () => {
+    const key = layoutCacheKey(input);
+    expect(layoutCacheKey({ ...input, nodeIds: ['A', 'B'] })).toBe(key);
+    expect(layoutCacheKey({ ...input, direction: 'TB' })).not.toBe(key);
+    expect(layoutCacheKey({ ...input, sizeOf: () => ({ width: 10, height: 10 }) })).not.toBe(key);
+  });
+});
+
+describe('objectLayoutInputForGraph', () => {
+  it('lays out connected nodes and leaves an isolated node out of the Dagre input', () => {
+    const input = objectLayoutInputForGraph(chain(), DEFAULT_CONFIG);
+    expect(input.nodeIds).toEqual(expect.arrayContaining(['A', 'B', 'C', 'D']));
+    expect(input.nodeIds).not.toContain('Z');
+    expect(input.edges).toEqual(expect.arrayContaining([{ source: 'A', target: 'B' }]));
   });
 });

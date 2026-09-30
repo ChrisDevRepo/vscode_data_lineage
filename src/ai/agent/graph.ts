@@ -1,4 +1,5 @@
-import { END, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
+import { RemoveMessage } from '@langchain/core/messages';
+import { END, REMOVE_ALL_MESSAGES, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
 import {
   modelAssistantMessage,
   modelUserMessage,
@@ -11,16 +12,15 @@ import type { IToolRegistry } from '../tools/registry';
 import type { TurnEventSink, TurnStatusPhase } from '../runtime/turnEventSink';
 import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
-import { PendingGateSchema, type PendingGate } from '../session/sessionPhase';
+import { PendingGateSchema } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
 import { InvalidEngineCheckpointError } from '../sm/navigationSnapshotSchema';
 import { activeModeOf, type LmStage } from '../tools/toolPolicy';
 import {
+  StartExplorationCompletedProviderInputSchema,
   StartExplorationFreshProviderInputSchema,
   StartExplorationRefineProviderInputSchema,
-  StartExplorationSupplementProviderInputSchema,
   SubmitFindingsModelSchema,
-  type PresentResultRepairField,
 } from '../tools/toolSchemas';
 import {
   buildActiveContinuationAnchor,
@@ -31,24 +31,21 @@ import {
   buildSmEntrySystemPrompt,
   buildVisualPreviewSystemPrompt,
   deriveStagePromptContext,
-  tryBuildDeterministicContextAnswer,
   type StagePromptContext,
 } from '../prompting/hostPrompts';
-import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
-import { renderScopeSummaryMd } from '../prompting/scopeSummaryRenderer';
-import { buildPendingLeadMessages } from '../support/pendingLeadMessages';
+import { PREVIEW_REQUEST_MARKER, STALE_GATE_TRIGGER_REPLY, TRACE_REQUEST_MARKER, buildGateReplySystemPrompt, buildGateReplyUserPrompt, parseGateTrigger } from '../prompting/prompts';
+import { renderScopeSummaryMd, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 import { buildChatAnswer } from '../support/chatAnswer';
-import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolProvider';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
-import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, emitDiscoveryBudgetNotice } from './discoveryCapture';
-import { discoveryPreviewNarrative } from '../tools/presentResult';
+import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
+import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, formatProviderErrorDiagnostic, isTransportProviderError, trunc as truncStatusLabel, type ProviderErrorDiagnostic } from '../support/text';
+import { escapeDelimitedJson, escapePromptText, formatProviderErrorDiagnostic, isTransportProviderError, truncAtWordBoundary, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -70,19 +67,17 @@ import {
   executeToolAttempt,
   initialToolPhaseAttemptState,
   MAX_TOOL_PROVIDER_CALLS,
-  MAX_TOOL_SEMANTIC_FAILURES,
   recordToolAttempt,
   renderToolAttemptContext,
   type SyntheticRejectionTrace,
   type ToolAttemptResult,
-  type ToolFinishAnomaly,
   type ToolPhaseAttemptState,
 } from './toolAttempt';
 import {
   AgentState,
   EntryDetectionSchema,
   GateDecisionSchema,
-  RESET_HISTORY,
+  GateReplySchema,
   type AgentErrorCode,
   type AgentStateType,
   type AgentStateUpdate,
@@ -103,9 +98,6 @@ import {
  */
 const SELF_LOOPING_ONE_TIME_PHASES = 7;
 
-/** Why a phase's graph-owned attempt loop tripped its breaker. */
-type BreakerReason = 'semantic_failures' | 'provider_calls';
-
 /**
  * Graph transitions for nodes that neither self-loop nor scale with `maxRounds`.
  *
@@ -116,16 +108,6 @@ type BreakerReason = 'semantic_failures' | 'provider_calls';
  * not a policy knob.
  */
 const FIXED_TRANSITION_OVERHEAD = 7;
-
-/**
- * Chat text emitted when the user chooses to change a pending scope.
- *
- * @remarks
- * The turn has to close for VS Code to release the chat input, so this line states the
- * handover explicitly. The host prefills the input immediately afterwards.
- */
-const HOLD_GATE_NOTICE =
-  '\n\nType the scope change below and send it — the proposal above stays pending until then.';
 
 /** Absolute floor for {@link turnRecursionLimit} so short-`maxRounds` turns keep generous headroom. */
 const RECURSION_LIMIT_FLOOR = 50;
@@ -147,6 +129,25 @@ const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
   synthesis: 'Synthesising',
   completed: 'Following up',
 };
+
+/**
+ * The one chat-facing line for every last-render-step failure that still delivered the model's own
+ * text — one wording, read wherever the notice is shown so it can never drift between the
+ * synthesis-breaker path and the preview-dispatch path.
+ */
+const SYNTHESIS_RENDER_FAILED_NOTICE = '_The AI preview could not be rendered; details are in the debug log._';
+
+/**
+ * Display budget, in characters, for a chat status label carrying model-written prose (the
+ * committed or pruned hop summary) — about three lines of the chat pane at its default side-bar
+ * width, where a line holds roughly 45 characters.
+ *
+ * @remarks
+ * Distinct from `LOG_TRUNC_CONTENT` (`src/utils/log.ts`): that cap sizes a single-line debug log
+ * preview, not this multi-line chat surface, and reusing it here left the hop summary with no
+ * display budget of its own.
+ */
+const HOP_SUMMARY_CHAT_MAX_CHARS = 135;
 
 /**
  * Chat-facing text for each {@link RejectionChatGroup}, derived once from
@@ -180,17 +181,22 @@ function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>)
  * factor. Importing {@link MAX_TOOL_PROVIDER_CALLS} keeps the two constants in lockstep — raising the
  * per-phase call cap automatically widens this budget. The bound is the sum of three terms:
  * the {@link SELF_LOOPING_ONE_TIME_PHASES} one-time phases (each up to `MAX_TOOL_PROVIDER_CALLS`
- * steps), the active coordinator/worker loop (`maxRounds` rounds, each one coordinator step plus up to
- * `MAX_TOOL_PROVIDER_CALLS` worker self-loops), and {@link FIXED_TRANSITION_OVERHEAD} for the
+ * steps), the active coordinator/worker loop (`maxRounds` rounds, each one coordinator step plus, per
+ * accepted read and once more at the end, up to `MAX_TOOL_PROVIDER_CALLS` worker self-loops — the
+ * read itself and the no-progress replies in a row before it), and {@link FIXED_TRANSITION_OVERHEAD} for the
  * non-looping gate/plumbing nodes. Floored at {@link RECURSION_LIMIT_FLOOR}. A limit below the implied
  * transition count aborts a legitimate turn mid-analysis with an opaque LangGraph recursion error.
  *
  * @param maxRounds - The hop limit for the turn (`ai.maxRounds`).
+ * @param scopeSize - Size of the admitted exploration scope, `0` while none is admitted. Every accepted
+ *   read answers a distinct object of the scope, so it bounds the reads one round can make. LangGraph
+ *   counts steps per `invoke` from the resumed checkpoint, so the invoke that follows the consent
+ *   approval carries the limit of the scope that approval admitted.
  * @returns The recursion budget to pass to `graph.invoke`.
  */
-export function turnRecursionLimit(maxRounds: number): number {
+export function turnRecursionLimit(maxRounds: number, scopeSize: number): number {
   const oneTimePhaseSteps = SELF_LOOPING_ONE_TIME_PHASES * MAX_TOOL_PROVIDER_CALLS;
-  const activeLoopSteps = maxRounds * (1 + MAX_TOOL_PROVIDER_CALLS);
+  const activeLoopSteps = maxRounds * (1 + MAX_TOOL_PROVIDER_CALLS * (1 + scopeSize));
   return Math.max(
     RECURSION_LIMIT_FLOOR,
     oneTimePhaseSteps + activeLoopSteps + FIXED_TRANSITION_OVERHEAD,
@@ -227,8 +233,6 @@ export interface AgentGraphDeps {
   readonly sink: TurnEventSink;
   /** Cooperative cancellation signal from the host bridge. */
   readonly signal?: AbortSignal;
-  /** The hop limit for the turn (`ai.maxRounds`, default 50) — the outer bound on how many hops a request may take. */
-  readonly maxRounds?: number;
   /**
    * Turn-ownership epoch captured by the runtime for this turn (from {@link AiSession.beginTurn}).
    *
@@ -260,7 +264,6 @@ export interface AgentGraphDeps {
  * @returns The compiled production StateGraph.
  */
 export function buildAgentGraph(deps: AgentGraphDeps) {
-  const maxRounds = deps.maxRounds ?? DEFAULT_MAX_ROUNDS;
   const getCtx = (state: AgentStateType): StagePromptContext =>
     state.ctx ?? deriveStagePromptContext(deps.getSession().model, deps.getSession().filter, deps.getSession().uiState);
 
@@ -298,10 +301,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * @remarks
    * `fail` carries prose and an error code; which budget ended the turn is a separate enumerated
    * axis, and the only one a diagnostic consumer can read — lifecycle trace records deliberately
-   * hold no failure prose, so without this the difference between `semantic_failures`,
-   * `provider_calls`, and `output_limit` is unrecoverable after the fact. The active worker's own
-   * terminal already writes the same channel; routing every other budget stop through here keeps
-   * one mapping instead of repeating it per phase.
+   * hold no failure prose, so without this the stop reason is unrecoverable after the fact. The
+   * active worker's own terminal already writes the same channel; routing every other stop through
+   * here keeps one mapping instead of repeating it per phase.
    *
    * Severity follows meaning: the error line stays content-free — stop reason, counters, the last
    * rejection's tool, code, and issue paths — and the rejection prose, which is normal AI
@@ -314,14 +316,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    */
   const failStopped = (
     stopped: { readonly reason: string; readonly message: string; readonly errorCode?: AgentErrorCode },
-    attempt: Pick<ToolPhaseAttemptState, 'phase' | 'providerCalls' | 'semanticFailures' | 'rejections'>,
+    attempt: Pick<ToolPhaseAttemptState, 'phase' | 'noProgressCalls' | 'rejections'>,
   ): AgentStateUpdate => {
     const last = attempt.rejections[attempt.rejections.length - 1];
     const pathPart = last?.issuePaths && last.issuePaths.length > 0 ? ` issuePaths=${last.issuePaths.join(',')}` : '';
     const lastPart = last ? ` last=${last.toolName}:${last.code}${pathPart}` : '';
     deps.logger?.error(
       stopped.message,
-      `phase=${attempt.phase} reason=${stopped.reason} providerCalls=${attempt.providerCalls} semanticFailures=${attempt.semanticFailures}${lastPart}`,
+      `phase=${attempt.phase} reason=${stopped.reason} noProgressCalls=${attempt.noProgressCalls}${lastPart}`,
     );
     if (last) {
       deps.logger?.debug(
@@ -355,11 +357,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return fail(message);
   };
 
-  const truncationNote = (anomaly: ToolFinishAnomaly): string =>
-    anomaly === 'length'
-      ? '\n\n_⚠️ Response truncated: the model reached its output token limit._'
-      : '\n\n_⚠️ Response stopped by the provider content filter._';
-
   /**
    * Announces one in-phase repair retry in the same progress grammar the hop counter uses.
    *
@@ -387,10 +384,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     nextAttempt: ToolPhaseAttemptState,
     statusText?: string,
   ): void => {
-    if (nextAttempt.semanticFailures <= priorAttempt.semanticFailures) return;
+    if (nextAttempt.rejections.length <= priorAttempt.rejections.length) return;
     const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject}…`;
     const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
-    deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.semanticFailures} — ${rejectionCauseLabel(nextAttempt)})`);
+    deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.noProgressCalls} — ${rejectionCauseLabel(nextAttempt)})`);
   };
 
   /**
@@ -456,10 +453,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     phaseLabel: string,
     startedAt?: number,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res, deps.model.budget, message => deps.logger?.debug(message));
+    const nextAttempt = recordToolAttempt(priorAttempt, res);
     const last = nextAttempt.rejections[nextAttempt.rejections.length - 1];
     deps.logger?.debug(
-      `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`
+      `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`
       + `${startedAt !== undefined ? ` durationMs=${Math.max(0, Date.now() - startedAt)}` : ''}`
       + `${last ? ` lastReject=${last.toolName}:${last.code}` : ''}`,
     );
@@ -481,7 +478,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     onStop?: () => void,
   ): AgentStateUpdate | null => {
     if (res.stop === 'error') return { ...failProvider(res, providerFailMessage), toolAttempt: nextAttempt };
-    const stopped = attemptStop(nextAttempt, res.finishAnomaly, subject, incompleteSuffix);
+    const stopped = attemptStop(nextAttempt, subject, incompleteSuffix);
     if (stopped) {
       onStop?.();
       return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
@@ -511,6 +508,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * Whatever it returns, including a transport failure, is final; the calling node decides its
    * disposition (the active worker salvages already-submitted hops via
    * {@link isTransportProviderError}).
+   *
+   * @remarks
+   * `presentResultRepairDraftContext` shows the held section labels through {@link heldSectionsForRepair};
+   * the rejected call the model sent already carries every body.
    */
   const runToolAttempt = (
     plan: ConverseInstructionPlan,
@@ -519,11 +520,16 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     priorState,
     debugLog: message => deps.logger?.debug(message),
     traceSyntheticRejection: deps.traceSyntheticRejection,
-    presentResultRepairDraftHeld: deps.getSession().presentResultRepairDraft.hasRepairableDraft(),
     presentResultRepairDraftContext: () => {
       const held = deps.getSession().presentResultRepairDraft.get();
-      return held ? { sections: held.sections, notes: held.notes, highlight_groups: held.highlight_groups } : null;
+      return held ? { sections: heldSectionsForRepair(held.sections) } : null;
     },
+    holdRejectedPresentResult: (input, issuePaths) => {
+      const sess = deps.getSession();
+      if (sess.activeLmStage?.kind === 'visual_preview') return null;
+      return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis');
+    },
+    holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
   });
 
   /** Returns the cumulative attempt state for one phase, or a fresh state when the phase changed. */
@@ -531,47 +537,28 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     state.toolAttempt?.phase === phase ? state.toolAttempt : initialToolPhaseAttemptState(phase);
 
   /**
-   * Records one phase-terminating breaker trip as a secret-safe lifecycle line.
-   */
-  const tripBreaker = (
-    reason: BreakerReason,
-    attempt: Pick<ToolPhaseAttemptState, 'phase' | 'providerCalls' | 'semanticFailures' | 'rejections'>,
-  ): void => {
-    deps.logger?.debug(
-      `[AI] [Breaker] phase=${attempt.phase} reason=${reason} providerCalls=${attempt.providerCalls} semanticFailures=${attempt.semanticFailures}`,
-    );
-  };
-
-  /**
    * The one attempt-stop policy every self-looping phase applies after {@link recordToolAttempt}:
-   * maps an exhausted budget or truncated generation to its breaker trip, user note, and failure
-   * message. Returns `null` while the phase may keep looping. Callers wrap the message in their
-   * own `fail`-shaped update so phase-specific cleanup (repair drafts, active-hop reset) stays local.
+   * maps {@link MAX_TOOL_PROVIDER_CALLS} model replies without progress to the stuck-step stop and
+   * its failure message. Returns `null` while the phase may keep looping. Callers wrap the message
+   * in their own `fail`-shaped update so phase-specific cleanup (repair drafts, active-hop reset)
+   * stays local.
    */
   const attemptStop = (
     nextAttempt: ToolPhaseAttemptState,
-    finishAnomaly: ToolFinishAnomaly | undefined,
     subject: string,
     incompleteSuffix: string,
-  ): { reason: 'semantic_failures' | 'provider_calls' | 'output_limit'; message: string; errorCode?: AgentErrorCode } | null => {
-    if (nextAttempt.stopReason === 'semantic_failures') {
-      tripBreaker('semantic_failures', nextAttempt);
-      return { reason: 'semantic_failures', message: `${subject} stopped after ${MAX_TOOL_SEMANTIC_FAILURES} cumulative semantic failures.` };
-    }
-    if (nextAttempt.stopReason === 'provider_calls') {
-      tripBreaker('provider_calls', nextAttempt);
-      return { reason: 'provider_calls', message: `${subject} stopped after ${MAX_TOOL_PROVIDER_CALLS} provider calls ${incompleteSuffix}.` };
-    }
-    if (nextAttempt.stopReason === 'output_limit') {
-      const anomaly = finishAnomaly ?? 'length';
-      deps.sink.stream(truncationNote(anomaly));
-      return {
-        reason: 'output_limit',
-        message: `${subject} stopped because the model output was truncated (finishReason=${anomaly}).`,
-        errorCode: 'model_output_truncated',
-      };
-    }
-    return null;
+    at?: { readonly object: string; readonly completedHops: number },
+  ): { reason: 'no_progress'; message: string } | null => {
+    if (nextAttempt.stopReason !== 'no_progress') return null;
+    deps.logger?.debug(
+      `[AI] [Breaker] phase=${nextAttempt.phase} reason=no_progress noProgressCalls=${nextAttempt.noProgressCalls}`,
+    );
+    return {
+      reason: 'no_progress',
+      message: at
+        ? loopStopText(at, `${nextAttempt.noProgressCalls} model replies without progress on this step (limit ${MAX_TOOL_PROVIDER_CALLS})`)
+        : `${subject} made no progress after ${MAX_TOOL_PROVIDER_CALLS} model replies ${incompleteSuffix}.`,
+    };
   };
 
   type StandardPhaseDraft = Omit<ConversePlanDraft, 'kind' | 'registry' | 'sink' | 'signal'>;
@@ -591,7 +578,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       signal: deps.signal,
       ...draft,
       onToolResult: (toolName, input, isError, resultText) => {
-        emitDiscoveryBudgetNotice(deps.sink, toolName, resultText);
+        queueDiscoveryBudgetNotice(deps.getSession(), toolName, resultText);
         phaseHook?.(toolName, input, isError, resultText);
       },
     });
@@ -608,17 +595,17 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * When discovery's semantic-failure breaker trips with at least one accepted observation already
+   * When discovery's no-progress stop trips with at least one accepted observation already
    * held, the material the phase needs to answer is not lost: one further generation, tool calls
    * disabled (`toolChoice: 'none'`), asks the model to answer from what it already holds instead of
-   * ending the turn with no answer. Mirrors {@link trySalvageSynthesisDraft}'s "committed work
+   * ending the turn with no answer. Mirrors {@link renderHeldSynthesisDraft}'s "committed work
    * survives a breaker trip" precedent for the phase whose committed work is a set of accepted
    * observations rather than a held draft.
    *
    * @remarks
    * A duplicate-read stop is the common trigger: the correction hint on every such rejection already
    * tells the model its held observations answer the call it just repeated, but the model keeps
-   * re-issuing the read instead of answering, spending the phase's semantic budget on repeats of a
+   * re-issuing the read instead of answering, spending the phase's no-progress budget on repeats of a
    * call it already paid for. `toolChoice: 'none'` removes the tool it kept reaching for, so this
    * generation has no legal move but to answer from what {@link executeToolAttempt}'s own
    * retry-context assembly already rendered into its messages from `nextAttempt`.
@@ -635,7 +622,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     draft: StandardPhaseDraft,
   ): Promise<ToolAttemptResult | null> => {
     deps.logger?.debug(
-      `[AI] [Salvage] phase=discover reason=semantic_failures observations=${nextAttempt.observations.length}`
+      `[AI] [Salvage] phase=discover reason=no_progress observations=${nextAttempt.observations.length}`
       + ' — asking once more with tool calls disabled instead of discarding them.',
     );
     const plan = compileInstructionPlan({
@@ -645,7 +632,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       signal: deps.signal,
       ...draft,
       toolChoice: 'none',
-      requiresToolEvidence: false,
     });
     const result = await withLmStage(draft.stage, () => runToolAttempt(plan, nextAttempt));
     if (result.stop !== 'final' || result.text.trim().length === 0) {
@@ -681,32 +667,65 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, phase: 'detect_entry' };
     }
 
-    if (held) {
-      deps.logger?.debug(`[AI] [Gate] held proposal claims prompt as refinement — revision=${held.revision}`);
-      return {
-        ctx,
-        messages,
-        gate: held.gate,
-        gateDecision: { kind: 'refine', refine: { instruction: state.prompt } },
-        phase: 'gate_refine',
-      };
+    const trigger = parseGateTrigger(state.prompt);
+    if (trigger) {
+      if (!held || held.revision !== trigger.revision) {
+        deps.logger?.debug(`[AI] [Gate] ${trigger.action} for revision=${trigger.revision} ignored — pending=${held?.revision ?? 'none'}`);
+        deps.sink.stream(STALE_GATE_TRIGGER_REPLY);
+        return { ctx, messages, outcome: 'ok', toolAttempt: null, phase: 'done' };
+      }
+      deps.logger?.debug(`[AI] [Gate] ${trigger.action} turn claims held proposal — revision=${held.revision}`);
+      return trigger.action === 'approve'
+        ? { ctx, messages, gate: held.gate, gateDecision: { kind: 'approve', classes: held.gate.classes }, phase: 'gate_approve' }
+        : { ctx, messages, gate: held.gate, gateDecision: { kind: 'cancel' }, phase: 'gate_cancel' };
     }
 
-    const contextAnswer = tryBuildDeterministicContextAnswer(state.prompt, ctx);
-    if (contextAnswer) {
-      const assistantMessage = modelAssistantMessage(contextAnswer);
-      deps.sink.stream(contextAnswer);
-      sess.appendDiscoveryTurn(deps.model.budget, [
-        modelUserMessage(state.prompt),
-        assistantMessage,
-      ], [], message => deps.logger?.debug(message));
-      return {
-        ctx,
-        messages: [...messages, assistantMessage],
-        outcome: 'ok',
-        toolAttempt: null,
-        phase: 'done',
-      };
+    if (held && state.toolAttempt?.phase !== 'detect_entry') {
+      let action: 'approve' | 'change' | 'cancel' | 'other';
+      try {
+        const classified = await executeInstructionPlan(deps.model, compileInstructionPlan({
+          kind: 'structured',
+          phase: 'detect_entry',
+          contract: { id: 'gate_reply', schema: GateReplySchema },
+          facts: { memorySections: [] },
+          messages: [modelUserMessage(buildGateReplyUserPrompt(escapePromptText(held.gate.detail), escapePromptText(state.prompt)))],
+          system: buildGateReplySystemPrompt(),
+          signal: deps.signal,
+        }));
+        action = classified.action;
+      } catch (error) {
+        if (!(error instanceof StructuredOutputError)) throw error;
+        deps.logger?.debug(
+          `[AI] [Gate] typed-reply classification failed, proposal stays pending — revision=${held.revision} code=${error.code} reason=${sanitizeForLog(error.reason)}`,
+        );
+        deps.sink.stream(UNREAD_GATE_REPLY);
+        return { ctx, messages, outcome: 'ok', toolAttempt: null, phase: 'done' };
+      }
+      if (action === 'approve') {
+        deps.logger?.debug(`[AI] [Gate] typed reply approves held proposal — revision=${held.revision}`);
+        return {
+          ctx,
+          messages,
+          gate: held.gate,
+          gateDecision: { kind: 'approve', classes: held.gate.classes },
+          phase: 'gate_approve',
+        };
+      }
+      if (action === 'cancel') {
+        deps.logger?.debug(`[AI] [Gate] typed reply cancels held proposal — revision=${held.revision}`);
+        return { ctx, messages, gate: held.gate, gateDecision: { kind: 'cancel' }, phase: 'gate_cancel' };
+      }
+      if (action === 'change') {
+        deps.logger?.debug(`[AI] [Gate] held proposal claims prompt as refinement — revision=${held.revision}`);
+        return {
+          ctx,
+          messages,
+          gate: held.gate,
+          gateDecision: { kind: 'refine', refine: { instruction: state.prompt } },
+          phase: 'gate_refine',
+        };
+      }
+      deps.logger?.debug(`[AI] [Gate] typed reply is not about the held proposal — answered normally, revision=${held.revision} stays pending`);
     }
 
     if (sess.phase.kind === 'completed' && sess.resultGraph) {
@@ -717,9 +736,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const remainingProviderCalls = MAX_TOOL_PROVIDER_CALLS - priorAttempt.providerCalls;
     if (remainingProviderCalls < 1) {
       const exhaustedAttempt = priorAttempt.stopReason ? priorAttempt : recordToolAttempt(priorAttempt, {
-        stop: 'continue', providerCalls: 0, semanticFailures: 0, observations: [], rejections: [],
-      }, deps.model.budget);
-      const stopped = attemptStop(exhaustedAttempt, undefined, 'Entry detection', 'without a valid route');
+        stop: 'continue', providerCalls: 0, observations: [], rejections: [], messages: [],
+      });
+      const stopped = attemptStop(exhaustedAttempt, 'Entry detection', 'without a valid route');
       if (!stopped) throw new Error('Entry-detection graph-attempt guard failed to select a stop reason.');
       return { ...failStopped(stopped, exhaustedAttempt), ctx, messages, toolAttempt: exhaustedAttempt };
     }
@@ -727,7 +746,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? state.messages
       : [modelUserMessage(state.prompt)];
     const detectorMessages = priorAttempt.providerCalls > 0
-      ? [...base, modelUserMessage(renderToolAttemptContext(priorAttempt, deps.model.budget))]
+      ? [...base, ...await renderToolAttemptContext(priorAttempt, deps.model, message => deps.logger?.debug(message))]
       : base;
     const callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
@@ -747,25 +766,28 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       if (providerCalls < 1) {
         throw new Error('Structured-generation model-port contract violated: rejected output recorded no provider call.');
       }
+      const entryDetectionHint = error.hint ?? 'Return exactly one object matching the entry-detection schema.';
       const nextAttempt = recordToolAttempt(priorAttempt, {
         stop: 'continue',
         providerCalls,
-        semanticFailures: 1,
         observations: [],
         rejections: [{
           callId: '',
           toolName: 'entry_detection',
           code: error.code,
           reason: error.reason,
-          hint: 'Return exactly one object matching the entry-detection schema.',
+          hint: entryDetectionHint,
         }],
-      }, deps.model.budget, message => deps.logger?.debug(message));
+        messages: [
+          modelUserMessage(`Correction for entry_detection: ${error.reason} ${entryDetectionHint}`),
+        ],
+      });
       deps.logger?.debug(
-        `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} semanticFailures=${nextAttempt.semanticFailures} stop=${nextAttempt.stopReason ?? 'continue'}`,
+        `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} stop=${nextAttempt.stopReason ?? 'continue'}`,
       );
-      const stopped = attemptStop(nextAttempt, undefined, 'Entry detection', 'without a valid route');
+      const stopped = attemptStop(nextAttempt, 'Entry detection', 'without a valid route');
       if (stopped) {
-        const emptyStructuredOnly = nextAttempt.rejections.length >= MAX_TOOL_SEMANTIC_FAILURES
+        const emptyStructuredOnly = nextAttempt.rejections.length > 0
           && nextAttempt.rejections.every(rejection => rejection.code === REJECTION_CODES.emptyStructuredOutput);
         if (emptyStructuredOnly) {
           return {
@@ -789,7 +811,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messages,
       entry: entry.entry,
       executionTrigger: 'free_text',
-      targetColumns: entry.targetColumns,
+      targetColumns: entry.targetColumns ?? null,
       toolAttempt: null,
       phase: 'detect_entry',
     };
@@ -799,9 +821,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     deps.sink.status('scoping', 'Discovering context...');
     const discoveryInstruction = getDiscoveryInstructionCached(state);
     const priorAttempt = attemptStateFor(state, 'discover');
-    if (priorAttempt.providerCalls === 0) {
-      observeWrite(deps.getSession().clearDiscoveryScope(deps.turnEpoch));
-    }
     const messages = state.messages;
     const draft: StandardPhaseDraft = {
       stage: { kind: 'discover' },
@@ -810,14 +829,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       system: discoveryInstruction.system,
       detectGate: detectGateFromToolResult,
       detectReroute: detectOverBudgetFromResult,
-      requiresToolEvidence: priorAttempt.observations.length === 0,
       proseGate: 'buffer-until-tool',
     };
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'discover', draft, ['Discovery failed', 'Discovery', 'without an answer']);
     let res: ToolAttemptResult;
     let nextAttempt: ToolPhaseAttemptState;
     if (attempt.terminal) {
-      const salvaged = attempt.nextAttempt.stopReason === 'semantic_failures' && attempt.nextAttempt.observations.length > 0
+      const salvaged = attempt.nextAttempt.stopReason === 'no_progress' && attempt.nextAttempt.observations.length > 0
         ? await trySalvageDiscoveryAnswer(attempt.nextAttempt, draft)
         : null;
       if (!salvaged) return attempt.terminal;
@@ -834,14 +852,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop !== 'final') return { ...fail('Discovery ended without an accepted answer.'), toolAttempt: nextAttempt };
 
     const sess = deps.getSession();
-    const scope = sess.discoveryScopeArtifact;
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
       deps.logger?.debug(`[AI] [Discovery] malformed canonical output tool=${toolName} callId=${trunc(sanitizeForLog(callId), 64)} — skipped for walk capture`));
-    if (scope && scope.nodeIds.length >= 2) {
-      sess.recordDiscovery(scope.origin, scope.nodeIds.length, state.prompt, res.text);
-    } else if (walk) {
-      sess.recordDiscovery(walk.origin, walk.walkCount, state.prompt, walk.answer);
-    }
+    observeWrite(sess.settleDiscoveryTurn(deps.turnEpoch, state.prompt, res.text, walk, nextAttempt.observations.length > 0));
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
       : [];
@@ -849,6 +862,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       modelUserMessage(state.prompt),
       ...assistantMessage,
     ], nextAttempt.observations, message => deps.logger?.debug(message));
+    const closingNotices = sess.takeClosingNotices();
+    if (closingNotices) deps.sink.stream(closingNotices);
     return { outcome: 'ok', messages: assistantMessage, toolAttempt: null, phase: 'done' };
   };
 
@@ -869,7 +884,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const source = escapeDelimitedJson({
       question: sess.lastDiscoveryQuestion,
       answer_title: narrative.title ?? null,
-      answer_body: narrative.body,
+      answer_blocks: narrative.blocks,
       scope: { origin: scope.origin, direction: scope.direction, node_ids: scope.nodeIds, edges: scope.edges },
     });
     const messages = [modelUserMessage([
@@ -880,7 +895,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     ].join('\n'))];
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'visual_preview', {
       stage: { kind: 'visual_preview' },
-      presentResultRepairFields: () => sess.presentResultRepairDraft.getAuthorization(),
+      presentResultRepairFields: () => sess.presentResultRepairFields,
+      presentResultPreviewBlockCount: narrative.blocks.length,
       facts: { memorySections: ['discovery_answer', 'discovery_scope'] },
       messages,
       system: buildVisualPreviewSystemPrompt(getCtx(state)),
@@ -897,7 +913,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { ...fail('Visual preview ended without committing a preview.'), toolAttempt: nextAttempt };
     }
     const confirmation = 'Preview shown in the graph.';
-    deps.sink.stream(`\n\n${confirmation}`);
+    deps.sink.stream(`${sess.takeClosingNotices()}\n\n${confirmation}`);
     const assistantMessage = [modelAssistantMessage(confirmation)];
     sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
@@ -923,8 +939,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         sink: deps.sink,
         signal: deps.signal,
         detectGate: detectGateFromToolResult,
-        toolChoice: 'required',
-        requiredTerminalTool: 'lineage_start_exploration',
+        detectRefusal: detectRefusalFromToolResult,
         proseGate: 'buffer-until-tool',
     }), priorAttempt));
 
@@ -936,11 +951,22 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') {
       return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     }
-    const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration entry', 'without reaching the consent gate');
+    if (res.stop === 'refused') return refusedTerminal(res.refusal);
+    const stopped = attemptStop(nextAttempt, 'Exploration entry', 'without reaching the consent gate');
     if (stopped) return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
+    if (res.stop === 'final') {
+      return { outcome: 'ok', messages: [modelAssistantMessage(res.text)], toolAttempt: null, phase: 'done' };
+    }
     if (res.stop !== 'continue') return fail('Exploration did not reach the consent gate.');
     emitRepairProgress('sm_entry', 'Exploration entry', priorAttempt, nextAttempt);
     return { toolAttempt: nextAttempt, phase: 'sm_entry' };
+  };
+
+  /** Ends the turn on an admission refusal: the user reads it, no gate opens and no further model call runs. */
+  const refusedTerminal = (text: string | undefined): AgentStateUpdate => {
+    const refusal = text ?? '';
+    deps.sink.stream(refusal);
+    return { outcome: 'ok', messages: [modelAssistantMessage(refusal)], toolAttempt: null, phase: 'done' };
   };
 
   const gateNode = (state: AgentStateType): AgentStateUpdate => {
@@ -999,8 +1025,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       sink: deps.sink,
       signal: deps.signal,
       detectGate: detectGateFromToolResult,
-      toolChoice: 'required',
-      requiredTerminalTool: 'lineage_start_exploration',
+      detectRefusal: detectRefusalFromToolResult,
       proseGate: 'buffer-until-tool',
     }), priorAttempt));
 
@@ -1018,9 +1043,16 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         phase: 'gate',
       };
     }
-    const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Scope refinement', 'without reaching the consent gate');
+    if (res.stop === 'refused') {
+      deps.sink.error(res.refusal ?? '', true);
+      return { gate: state.gate, gateDecision: null, toolAttempt: null, phase: 'gate' };
+    }
+    const stopped = attemptStop(nextAttempt, 'Scope refinement', 'without reaching the consent gate');
     if (stopped) return keepPendingGate(stopped.message);
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'gate_refine' };
+    if (res.stop === 'final') {
+      return { outcome: 'ok', messages: [modelAssistantMessage(res.text)], gateDecision: null, toolAttempt: null, phase: 'done' };
+    }
     return keepPendingGate('the refinement did not produce a reviewable proposal.');
   };
 
@@ -1043,8 +1075,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       candidate.sessionId = sess.id;
       candidate.classification = proposal.classification;
       const initialized = candidate.init(proposal.init);
-      if ('error' in initialized) return { error: initialized.error };
-      deps.logger?.debug(`[AI] [Proposal] approved revision=${proposal.revision} origin=${sanitizeForLog(proposal.init.origin)} depth=${sanitizeForLog(JSON.stringify(proposal.init.depthIntent ?? { kind: 'default_start' }))}`);
+      if ('code' in initialized) return initialized;
+      deps.logger?.debug(`[AI] [Proposal] approved revision=${proposal.revision} origin=${sanitizeForLog(proposal.init.origin)} depth=${sanitizeForLog(JSON.stringify(proposal.init.depthIntent))}`);
       return candidate;
     });
     if (activation.kind === 'dropped_stale_turn') {
@@ -1056,10 +1088,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return fail(`Approved exploration could not start: ${activation.reason}`);
     }
     const engine = activation.engine as NavigationEngine;
-    applyGateClasses(state.gate, engine);
     if (cachedDiscoverySummary) engine.setDiscoverySummary(cachedDiscoverySummary);
     return {
-      messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
+      messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), modelUserMessage(buildActiveContinuationAnchor())],
       engineSnapshot: engine.toJSON(),
       phase: 'active_coordinator',
     };
@@ -1070,17 +1101,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    *
    * @remarks
    * The session deliberately stays in `awaiting_gate` with `pendingExploration` intact:
-   * that pair is what {@link detectEntryNode} reads to route the user's next prompt
-   * straight into `gate_refine`, and what keeps `isRefining` true inside the
-   * `start_exploration` handler.
+   * that pair is what {@link detectEntryNode} reads to resolve the next prompt against the
+   * proposal (a card trigger, or a typed reply classified approve/change/cancel/other), and what
+   * keeps `isRefining` true inside the `start_exploration` handler.
    */
-  const holdGateNode = (_state: AgentStateType): AgentStateUpdate => {
-    deps.sink.stream(HOLD_GATE_NOTICE);
-    return { outcome: 'ok', phase: 'done' };
-  };
+  const holdGateNode = (_state: AgentStateType): AgentStateUpdate => ({ outcome: 'ok', phase: 'done' });
 
   const cancelGateNode = (_state: AgentStateType): AgentStateUpdate => {
     observeWrite(deps.getSession().cancelPendingExploration(deps.turnEpoch));
+    deps.sink.stream('Exploration cancelled.');
     return { outcome: 'ok', phase: 'done' };
   };
 
@@ -1110,10 +1139,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     if (engine.status === 'error') {
       return failActiveIncomplete(state, engine, 'engine_error', 'Exploration engine entered an error state.');
-    }
-
-    if (state.activeHopCount >= maxRounds) {
-      return advanceToSynthesis(sess, engine);
     }
 
     if (!engine.currentFocus) {
@@ -1200,12 +1225,17 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       toolChoice: 'required',
       requiredTerminalTool: 'lineage_submit_findings',
       proseGate: 'buffer-until-tool',
+      freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
+      hopColumns: () => engine.hopSubmitColumns,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, input, isError) => {
         if (toolName === 'lineage_submit_findings' && !isError) {
           submitted = true;
           const finding = input as z.infer<typeof SubmitFindingsModelSchema>;
-          committedFinding.value = { summary: (finding.verdict === 'end_branch' ? finding.reason : finding.summary) ?? '', verdict: finding.verdict };
+          const summary = finding.verdict === 'end_branch'
+            ? finding.reason
+            : sess.memory.getResult().detail_slots.find(slot => slot.nodeId === focusId)?.summary;
+          committedFinding.value = { summary: summary ?? '', verdict: finding.verdict };
         }
       },
     }), priorAttempt));
@@ -1227,15 +1257,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
      *   that it does — a bare "stopped early" leaves the reader unable to tell which part of the
      *   graph is incomplete.
      */
-    const salvageSubmittedHops = (reason: string, stoppedOnLabel?: string): AgentStateUpdate => {
+    const salvageSubmittedHops = (reason: string, notice?: string): AgentStateUpdate => {
       deps.logger?.debug(
         `[AI] [Salvage] ${reason} after ${state.activeHopCount} submitted hop(s)`
         + ' — synthesising partial coverage instead of discarding the exploration',
       );
-      const where = stoppedOnLabel ? ` on ${stoppedOnLabel}` : '';
-      deps.sink.stream(
-        `\n\n_⚠️ Exploration stopped early${where} — presenting partial coverage from ${state.activeHopCount} completed hop(s)._`,
-      );
+      sess.queueClosingNotice('stopped_early', notice ? `_⚠️ ${notice}_` : stoppedEarlyNote(state.activeHopCount));
       return { ...advanceToSynthesis(sess, engine), toolAttempt: null };
     };
 
@@ -1250,20 +1277,22 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       };
     }
     if (deps.signal?.aborted) return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const stopped = attemptStop(nextAttempt, res.finishAnomaly, 'Exploration active hop', 'without submitting findings');
+    const stopped = attemptStop(nextAttempt, 'Exploration active hop', 'without submitting findings', {
+      object: focusId.replace(/[[\]]/g, ''),
+      completedHops: state.activeHopCount,
+    });
     if (stopped) {
-      if (shouldSalvageActiveStop(stopped.reason, state.activeHopCount)) {
+      if (shouldSalvageActiveStop(state.activeHopCount)) {
         deps.logger?.debug(
           `[AI] [Stop] phase=active reason=${stopped.reason} focus=${focusId}`
           + ` submittedHops=${state.activeHopCount} disposition=salvage — focus left undispositioned`,
         );
         emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'kept_undispositioned');
-        return salvageSubmittedHops(stopped.reason, focusLabel);
+        return salvageSubmittedHops(stopped.reason, stopped.message);
       }
       emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'failed');
       return {
         ...failActiveIncomplete(state, engine, stopped.reason, stopped.message),
-        ...(stopped.errorCode ? { errorCode: stopped.errorCode } : {}),
         toolAttempt: nextAttempt,
       };
     }
@@ -1289,12 +1318,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       const prunedMark = committedFinding.value.verdict === 'end_branch' ? '⛔ pruned — ' : '';
-      deps.sink.status('scoping', `_${prunedMark}${truncStatusLabel(committedFinding.value.summary, LOG_TRUNC_CONTENT)}_`);
+      deps.sink.status('scoping', `_${prunedMark}${truncAtWordBoundary(committedFinding.value.summary, HOP_SUMMARY_CHAT_MAX_CHARS)}_`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {
       engineSnapshot: engine.toJSON(),
-      messages: [RESET_HISTORY, anchor],
+      messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), anchor],
       activeHopCount: state.activeHopCount + 1,
       lastPruned: progress.pruned,
       toolAttempt: null,
@@ -1318,7 +1347,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return {
       outcome: 'error',
       error: message,
-      messages: [RESET_HISTORY, ...extractShortTermMemory(
+      messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), ...extractShortTermMemory(
         state.messages,
         modelUserMessage(buildActiveContinuationAnchor()),
       )],
@@ -1362,7 +1391,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'synthesis', {
       stage: { kind: 'synthesis' },
-      presentResultRepairFields: () => sess.presentResultRepairDraft.getAuthorization(),
+      presentResultRepairFields: () => sess.presentResultRepairFields,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: explorationFacts(engine.currentAnalysisMode, engine.currentTargetColumns ?? undefined, {
         classification,
@@ -1377,10 +1406,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
     }, ['Synthesis failed', 'Synthesis', 'without rendering a result']);
     if (attempt.terminal) {
-      const salvaged = attempt.nextAttempt.stopReason === 'semantic_failures'
-        && await trySalvageSynthesisDraft(deps, sess);
+      if (attempt.nextAttempt.stopReason === 'no_progress') renderHeldSynthesisDraft(deps, sess);
       sess.presentResultRepairDraft.clear();
-      if (!salvaged) return attempt.terminal;
+      return attempt.terminal;
     } else if (!sess.presentResultCalledThisTurn) {
       const { result: res, nextAttempt } = attempt;
       if (res.stop === 'continue') {
@@ -1399,11 +1427,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       intro: sess.resultGraph?.intro,
       closing: sess.resultGraph?.closing,
     });
-    if (chatAnswer) {
-      deps.sink.stream('\n\n' + chatAnswer);
+    const closing = sess.takeClosingNotices() + (chatAnswer ? '\n\n' + chatAnswer : '');
+    if (closing) {
+      deps.sink.stream(closing);
     }
-    for (const message of buildPendingLeadMessages(engine.pendingLeads)) {
-      deps.sink.stream(`\n\n${message}`);
+    if (sess.synthesisRenderDegradedReason) {
+      deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
     }
     observeWrite(sess.enterCompleted(deps.turnEpoch));
     return { outcome: 'ok', toolAttempt: null, phase: 'done' };
@@ -1416,20 +1445,21 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const messages = state.messages;
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'completed', {
       stage: { kind: 'completed' },
-      toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationSupplementProviderInputSchema]]),
+      toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationCompletedProviderInputSchema]]),
+      presentResultRepairFields: () => sess.presentResultRepairFields,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: { memorySections: ['conversation_history'] },
       messages,
       system: buildHostStageSystemPrompt('completed', getCtx(state)),
       detectGate: detectGateFromToolResult,
-      detectReroute: () => sess.phase.kind === 'exploring',
+      detectReroute: (toolName, resultText) => sess.phase.kind === 'exploring' || detectOverBudgetFromResult(toolName, resultText),
+      detectRefusal: detectRefusalFromToolResult,
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
       proseGate: 'buffer-until-tool',
     }, ['Follow-up failed', 'Follow-up', 'without completing', () => sess.presentResultRepairDraft.clear()]);
     if (attempt.terminal) {
       const salvaged = sess.bufferedFollowUpProse;
-      const budgetExhausted = attempt.terminal.activeStop === 'semantic_failures'
-        || attempt.terminal.activeStop === 'provider_calls';
+      const budgetExhausted = attempt.terminal.activeStop === 'no_progress';
       if (salvaged && budgetExhausted) {
         deps.logger?.debug(`[AI] [Follow-up] breaker tripped with ${salvaged.length} chars of buffered prose — delivering it instead of the error`);
         const answer = `${salvaged}\n\n_The graph was not changed — that step did not complete._`;
@@ -1441,12 +1471,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const { result: res, nextAttempt } = attempt;
     sess.bufferFollowUpProse(res.text);
     if (res.stop === 'gate') return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
+    if (res.stop === 'refused') return refusedTerminal(res.refusal);
     if (res.stop === 'reroute') {
+      if (sess.phase.kind !== 'exploring') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
       const live = sess.stateMachine as NavigationEngine | null;
       return {
         engineSnapshot: live ? live.toJSON() : state.engineSnapshot,
         activeHopCount: live ? safeHopCount(live) : state.activeHopCount,
-        messages: [RESET_HISTORY, modelUserMessage(buildActiveContinuationAnchor())],
+        messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), modelUserMessage(buildActiveContinuationAnchor())],
         toolAttempt: null,
         phase: 'active_coordinator',
       };
@@ -1463,9 +1495,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         closing: sess.resultGraph?.closing,
       })
       : null;
+    const closingNotices = sess.takeClosingNotices();
     if (followUpAnswer) {
       assistantText = followUpAnswer;
-      deps.sink.stream('\n\n' + assistantText);
+      deps.sink.stream(closingNotices + '\n\n' + assistantText);
+    } else if (closingNotices) {
+      deps.sink.stream(closingNotices);
     }
     const assistantMessage = assistantText
       ? [modelAssistantMessage(assistantText)]
@@ -1494,6 +1529,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       AGENT_NODES.visualPreview,
       AGENT_NODES.smEntry,
       AGENT_NODES.gateRefine,
+      AGENT_NODES.approveGate,
+      AGENT_NODES.cancelGate,
       AGENT_NODES.followUp,
       END,
     ])
@@ -1542,6 +1579,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       AGENT_NODES.followUp,
       AGENT_NODES.gate,
       AGENT_NODES.activeCoordinator,
+      AGENT_NODES.smEntry,
       END,
     ])
     .addEdge(AGENT_NODES.holdGate, END)
@@ -1584,6 +1622,8 @@ function logClassificationGating(
 function routeAfterDetectEntry(state: AgentStateType): string {
   if (state.outcome) return END;
   if (state.phase === 'detect_entry' && state.toolAttempt?.phase === 'detect_entry') return AGENT_NODES.detectEntry;
+  if (state.phase === 'gate_approve') return AGENT_NODES.approveGate;
+  if (state.phase === 'gate_cancel') return AGENT_NODES.cancelGate;
   if (state.phase === 'gate_refine') return AGENT_NODES.gateRefine;
   if (state.phase === 'follow_up') return AGENT_NODES.followUp;
   if (!state.entry) return END;
@@ -1623,6 +1663,7 @@ function routeAfterFollowUp(state: AgentStateType): string {
   if (state.phase === 'follow_up' && state.toolAttempt?.phase === 'completed') return AGENT_NODES.followUp;
   if (state.gate) return AGENT_NODES.gate;                              // Route B (divergent): gated fresh trace
   if (state.phase === 'active_coordinator') return AGENT_NODES.activeCoordinator; // Route B (retrace/supplement)
+  if (state.phase === 'sm_entry') return AGENT_NODES.smEntry;
   return END;                                                            // Route A (adjust) or chat answer
 }
 
@@ -1681,22 +1722,22 @@ function routeAfterSynthesis(state: AgentStateType): string {
 function detectGateFromToolResult(toolName: string, resultText: string): unknown | null {
   if (toolName !== 'lineage_start_exploration') return null;
   try {
-    const envelopeSchema = z.object({ error: z.literal(REJECTION_CODES.actionRequired) }).passthrough();
+    const envelopeSchema = z.object({ code: z.literal(REJECTION_CODES.actionRequired), detail: PendingGateSchema });
     const envelopeCheck = envelopeSchema.safeParse(JSON.parse(resultText));
-    if (!envelopeCheck.success) return null;
-
-    const check = PendingGateSchema.safeParse(envelopeCheck.data);
-    return check.success ? check.data : null;
+    return envelopeCheck.success ? envelopeCheck.data.detail : null;
   } catch {
     return null;
   }
 }
 
-function applyGateClasses(gate: PendingGate, engine: NavigationEngine): void {
-  for (const cls of gate.classes) {
-    if (cls.startsWith('schema:')) {
-      engine.extendAllowedSchemas(cls.slice(7));
-    }
+function detectRefusalFromToolResult(toolName: string, resultText: string): string | null {
+  if (toolName !== 'lineage_start_exploration') return null;
+  try {
+    const refusal = z.object({ code: z.literal(REJECTION_CODES.overActiveScopeBudget), reason: z.string().min(1) })
+      .safeParse(JSON.parse(resultText));
+    return refusal.success ? refusal.data.reason : null;
+  } catch {
+    return null;
   }
 }
 
@@ -1777,6 +1818,25 @@ function safeHopCount(engine: NavigationEngine): number {
   }
 }
 
+/** Generic partial-coverage line for a stop that names no object (a transport failure). */
+function stoppedEarlyNote(completedHops: number): string {
+  return `_⚠️ Exploration stopped early — presenting partial coverage from ${completedHops} completed hop(s)._`;
+}
+
+/**
+ * The user text of a per-hop loop stop: names the object, the value against its limit, and what
+ * the reader still has.
+ *
+ * @param at - The object the hop stopped on and the hops already submitted.
+ * @param cause - The counted value against its limit, e.g. `3 model replies without progress on this step (limit 3)`.
+ */
+function loopStopText(at: { readonly object: string; readonly completedHops: number }, cause: string): string {
+  const shown = at.completedHops > 0
+    ? `Results from the ${at.completedHops} completed hops are shown`
+    : 'No hop was completed';
+  return `Stopped at \`${at.object}\`: ${cause}. ${shown}; ask again, or exclude this object from the scope.`;
+}
+
 /**
  * Whether a stopped active hop salvages the exploration's submitted hops instead of failing the
  * turn.
@@ -1784,93 +1844,44 @@ function safeHopCount(engine: NavigationEngine): number {
  * @remarks
  * Salvage requires at least one SUBMITTED hop — `submittedHops` is the graph's `activeHopCount`,
  * which advances only on an accepted `lineage_submit_findings`; the engine's own hop counter
- * advances at focus dequeue and would salvage empty explorations. A truncation stop never
- * salvages: its `model_output_truncated` error exit and streamed truncation note must not be
- * followed by a success render.
+ * advances at focus dequeue and would salvage empty explorations.
  *
- * @param reason - The attempt-budget or truncation stop that ended the active hop.
  * @param submittedHops - The graph's `activeHopCount` at the point of the stop.
  * @returns Whether the turn should render the submitted hops instead of failing outright.
  */
-export function shouldSalvageActiveStop(
-  reason: 'semantic_failures' | 'provider_calls' | 'output_limit',
-  submittedHops: number,
-): boolean {
-  return submittedHops > 0 && reason !== 'output_limit';
+export function shouldSalvageActiveStop(submittedHops: number): boolean {
+  return submittedHops > 0;
 }
 
 /**
- * Whether a synthesis breaker trip can be salvaged by rendering the already-held
- * `lineage_present_result` draft instead of discarding it.
+ * Renders the synthesis phase's held `lineage_present_result` draft into the chat stream when a
+ * breaker trip ends the turn with no committed result.
  *
  * @remarks
- * Mirrors {@link shouldSalvageActiveStop}'s "committed partial work survives a breaker trip"
- * disposition, applied to the one committed-artifact shape synthesis produces: a full draft
- * {@link RepairDraftStore.hold | held} after a narrow, repairable `validatePresentResult` failure.
- * Scoped to the one authorization shape verified safe to auto-repair — `notes` is the draft's
- * ONLY outstanding field. Dropping it can only narrow what renders (`sections[]` /
- * `highlight_groups[]`, the structurally required fields, are untouched), so this never trades one
- * discarded turn for a differently-invalid one. A wider authorization (e.g. `sections`) is not
- * salvaged: emptying a required field is not evidenced safe and stays out of this repair's scope.
+ * The last render step failing never discards the model's own final text and the backend never
+ * resends a stripped `{ is_update: true, notes: [] }` patch to coax a narrower validation past —
+ * a content-shaping resend the model never sent is not one of ACCEPT / REJECT / NORMALIZE-WITH-LOG.
+ * The held draft's own intro, sections and closing render through
+ * the same assembler the preview uses ({@link orderAndAssemble}), unaltered, followed by one plain
+ * line stating the AI preview could not be rendered. `sess.markSynthesisRenderDegraded` records the
+ * cause for the participant's one-shot warning toast.
  *
- * @param repairFields - The held draft's authorized repair fields, or `null` when none is held.
+ * @param deps - Graph dependencies (chat sink, logger).
+ * @param sess - The live session, read for the held draft.
  */
-export function canSalvageSynthesisDraft(repairFields: readonly PresentResultRepairField[] | null): boolean {
-  return repairFields !== null && repairFields.length === 1 && repairFields[0] === 'notes';
-}
-
-/**
- * Renders the synthesis phase's held `lineage_present_result` draft one last time, through the
- * SAME repair-patch path a model's own `is_update:true` resend would take — `deps.registry`'s
- * canonical dispatch surface (`dispatchRegistryTool`, `toolAttempt.ts`, is literally
- * `registry.invoke(name, input)`), the handler's existing hold-and-amend branch
- * (`presentResult.ts`), and the existing `validatePresentResult` pipeline. No new rendering path,
- * no new tool, no second validation.
- *
- * Dispatched only when {@link canSalvageSynthesisDraft} allows it, so the one patch sent is always
- * `{ is_update: true, notes: [] }`: the held draft's sole outstanding repair field, resent empty.
- * The result graph, sections, badges, and highlight groups the model already authored render
- * unchanged; every note caption — including one that was a valid risk callout — is dropped with
- * it, and this is logged with the discarded count, never silent (the repo's normalize-with-log
- * contract, `.claude/rules/ai-surface.md`).
- *
- * @remarks
- * This is a blanket REJECT of `notes[]`, not the finer NORMALIZE-WITH-LOG repair of resending the
- * held notes minus only the reported offending ones: `validatePresentResult`
- * (`src/ai/tools/presentResult.ts`) computes which note indexes/ids failed (`issuePaths`,
- * `pathUnlinkableIds`) and states them in the rejection `hint`/`detail`, but neither survives past
- * that one rejection round — `RepairDraftStore.hold` (`repairDraftStore.ts`) only carries the held
- * draft and its authorized *field* list (`PresentResultRepairField[]`, e.g. `['notes']`), and the
- * session's own failure record (`AiSession.presentResultLastFailureReasonThisTurn`) is a
- * truncated, human-readable string, not the structured per-note indexes. Re-deriving "which note is
- * unlinkable" independently here would need the same resolved-node-id/state context
- * `validatePresentResult` holds and this call site does not — inventing that would be a second,
- * divergence-prone copy of the validator's own node-resolution logic, not a fix. Precise resend is
- * therefore out of this repair's reach without plumbing the offending indexes onto the held draft
- * (a `presentResult.ts`/`session.ts` change outside this fix's scope); until that lands, the whole
- * `notes[]` collection is the correct, honestly-logged REJECT rather than a silently narrower one.
- *
- * @param deps - Graph dependencies (registry dispatch surface, logger).
- * @param sess - The live session, read for the held draft's authorization and note count.
- * @returns Whether the salvage patch was accepted — `sess.presentResultCalledThisTurn` flips true.
- */
-async function trySalvageSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): Promise<boolean> {
-  if (!canSalvageSynthesisDraft(sess.presentResultRepairDraft.getAuthorization())) return false;
-  const discardedNoteCount = sess.presentResultRepairDraft.get()?.notes?.length ?? 0;
+function renderHeldSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): void {
+  const draft = sess.presentResultRepairDraft.get();
+  if (!draft) return;
+  const assembled = orderAndAssemble(draft.sections ?? [], {
+    title: draft.title,
+    intro: draft.intro,
+    closing: draft.closing,
+  });
+  const closing = sess.takeClosingNotices() + (assembled.description ? '\n\n' + assembled.description : '');
+  if (closing) deps.sink.stream(closing);
+  deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
   deps.logger?.debug(
-    '[AI] [Repair] synthesis breaker tripped with a held, notes-only-repairable draft — salvaging '
-    + `via one deterministic notes:[] patch (discarding all ${discardedNoteCount} held note(s), offending `
-    + 'indexes not reachable at this call site — REJECT of notes[], not a per-note repair) through the '
-    + 'existing repair-patch path instead of discarding the render.',
+    '[AI] [Repair] synthesis breaker tripped with a held draft — held text rendered to chat.',
   );
-  let resultText: string;
-  try {
-    resultText = await deps.registry.invoke('lineage_present_result', { is_update: true, notes: [] });
-  } catch (error) {
-    deps.logger?.debug(`[AI] [Repair] synthesis salvage dispatch threw — ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  }
-  const salvaged = sess.presentResultCalledThisTurn;
-  deps.logger?.debug(`[AI] [Repair] synthesis salvage ${salvaged ? 'accepted' : 'still rejected'} — ${trunc(resultText, 200)}`);
-  return salvaged;
+  sess.markSynthesisRenderDegraded('synthesis_breaker');
 }

@@ -9,7 +9,7 @@
  * mutates the object-view model.
  */
 
-import { dagreLayout } from './graphBuilder';
+import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName } from '../utils/sql';
 import type { ColumnAspectEdge, ColumnTransformClass, NodeVerdict } from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
@@ -245,8 +245,10 @@ export const COLUMN_NODE_BORDER_WIDTH = 2;
  * Both annotations render through React Flow's `NodeToolbar`, positioned outside the node box and
  * therefore invisible to Dagre. Added to the separation rather than the node height because Dagre
  * returns a centred box, and a taller box would need a compensating offset at every position read.
+ * Sized off {@link AI_BADGE_BAND} and {@link AI_NOTE_BAND} — the object view's reservation for the
+ * same `AiBadgeToolbar` / `AiNoteToolbar` components — so the two views stay in one governor.
  */
-export const COLUMN_AI_ANNOTATION_BAND = 32;
+export const COLUMN_AI_ANNOTATION_BAND = AI_BADGE_BAND + AI_NOTE_BAND;
 
 /**
  * Opacity of a column-view edge outside the hovered path.

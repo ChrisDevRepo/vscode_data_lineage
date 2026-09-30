@@ -48,7 +48,7 @@ Steps live in [`tests/tools/gate.mjs`](../tests/tools/gate.mjs): production and
 test type-checking, tool-manifest drift check, output-template schema-version
 check, prompt-golden-sync check, honest-test-label check, core-case-completeness check, unit-project
 coverage check, layer-direction guard (`src/engine/**` must not import
-`src/components/**`), core unit project under v8 coverage floors, agent-runtime
+`src/components/**`), output-truncation baseline check, core unit project under v8 coverage floors, agent-runtime
 unit project, both bundles plus the integration-test compile, package-content
 safety, and the no-LangSmith boundary. The gate reports every configured step
 instead of stopping after the first failure. It does not launch VS Code
@@ -70,9 +70,9 @@ npm run test:bfs
 (`tests/unit/parser`, `tests/unit/engine`, `tests/unit/webview`).
 `test:runtime` runs the lean agent-runtime smoke and contract tier
 (`tests/unit/ai-core`, `tests/unit/sm`) — tool registration, security
-boundaries, session lifecycle, architecture rule gates and the BB/CT node-set
-parity invariant; stubbed `vscode`, zero model calls. State-machine depth,
-prompt composition and repair behaviour are tested internally.
+boundaries, session lifecycle and architecture rule gates; stubbed `vscode`, zero
+model calls. State-machine depth, BB/CT node-set parity, prompt composition and
+repair behaviour are tested internally.
 
 `test:parser` covers SQL parsing and dependency extraction. `test:bfs` runs
 all of `tests/unit/engine` — graph construction, traversal, and analysis plus

@@ -58,7 +58,8 @@ const forbidden = [
   { pattern: /(?:^|\/)evidence(?:\/|$)/iu, label: 'evidence/ artifact directory' },
   { pattern: /\.vsix$/iu, label: 'packaged .vsix artifact' },
   { pattern: /(?:^|\/)\.verify[^/]*\//iu, label: 'package-verification scratch tree' },
-  { pattern: /(?:^|\/)debug\.log$/iu, label: 'debug.log artifact' },
+  { pattern: /\.log$/iu, label: 'log file' },
+  { pattern: /^\.g[^/]*\//iu, label: 'local worktree or .github tree' },
   { pattern: /^[^/]+\.dacpac$/iu, label: 'root-level dacpac' },
 ];
 

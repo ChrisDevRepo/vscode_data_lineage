@@ -135,6 +135,49 @@ export function filterRegistry<O>(reg: IToolRegistry<O>, allowed: ReadonlySet<st
   };
 }
 
+/** A registry view that also tracks every dispatch currently in flight. */
+export interface TrackedRegistry<O> {
+  /** Delegating view; every `invoke()` through it is tracked until its promise settles. */
+  readonly registry: IToolRegistry<O>;
+  /** Resolves once every dispatch in flight at call time has settled (accepted or rejected). */
+  settled(): Promise<void>;
+}
+
+/**
+ * Wraps a registry so the host turn boundary can await in-flight dispatch before it finalizes.
+ *
+ * @remarks
+ * A LangGraph node's task promise is not awaited by `graph.invoke` once an external `AbortSignal`
+ * wins the runner's internal race (`@langchain/langgraph/dist/pregel/runner.js`
+ * `_executeTasksWithRetry`): the node — and any `registry.invoke()` it is awaiting — keeps running
+ * after `graph.invoke` has already rejected. A host that closes the turn (releases the lease,
+ * finalizes session state) on that rejection races its own close against the tool's effect. This
+ * view is the one dispatch surface every phase's tool call goes through
+ * ({@link IToolRegistry.invoke}), so tracking here — not inside any one handler — covers every
+ * mutating tool without adding a second dispatch path.
+ * @param reg - The backing registry.
+ * @returns The tracked view plus the settle-await the host calls before finalizing a turn.
+ */
+export function trackInFlightDispatch<O>(reg: IToolRegistry<O>): TrackedRegistry<O> {
+  const inFlight = new Set<Promise<unknown>>();
+  const registry: IToolRegistry<O> = {
+    register: (tool) => reg.register(tool),
+    invoke: (name, input) => {
+      const call = Promise.resolve(reg.invoke(name, input));
+      inFlight.add(call);
+      call.catch(() => undefined).finally(() => inFlight.delete(call));
+      return call;
+    },
+    getTools: () => reg.getTools(),
+    get: (name) => reg.get(name),
+    has: (name) => reg.has(name),
+  };
+  return {
+    registry,
+    settled: async () => { await Promise.allSettled([...inFlight]); },
+  };
+}
+
 /** Returns a read-only registry view with provider schemas replaced for selected visible tools. */
 export function overrideRegistrySchemas<O>(
   reg: IToolRegistry<O>,

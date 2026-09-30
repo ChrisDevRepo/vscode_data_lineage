@@ -101,7 +101,7 @@ export function SuggestionList({
       style={{ ...style, maxHeight: 320 }}
     >
       {showVisibleHeader && (
-        <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim">
+        <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-muted">
           Visible
         </div>
       )}
@@ -118,7 +118,7 @@ export function SuggestionList({
       ))}
       {collapsedSuggestions.length > 0 && (
         <>
-          <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim border-t ln-border">
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-muted border-t ln-border">
             In Schema Cluster {'\u229e'}
           </div>
           {collapsedSuggestions.map((node, i) => (
@@ -140,7 +140,7 @@ export function SuggestionList({
       )}
       {otherSuggestions.length > 0 && (
         <>
-          <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-dim border-t ln-border">
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-muted border-t ln-border">
             Not in Current Filter {'\u2298'}
           </div>
           {otherSuggestions.map((node, i) => (

@@ -15,7 +15,8 @@ export function toWireMessage(message: vscode.LanguageModelChatMessage): WireMes
   return { role: message.role, parts: message.content.map(toWirePart) };
 }
 
-function toWirePart(part: unknown): WirePart {
+/** Normalizes one native message part; a part this capture does not model is kept as `other` JSON. */
+export function toWirePart(part: unknown): WirePart {
   if (part instanceof vscode.LanguageModelTextPart) {
     return { type: 'text', value: part.value };
   }

@@ -8,6 +8,7 @@ import {
   createSchemaColorMap,
   getSchemaColor,
   getSchemaColorFromMap,
+  getReadableTextColor,
 } from '../../../src/utils/schemaColors';
 
 const THIRTY_SCHEMAS = [
@@ -92,5 +93,22 @@ describe('schemaColors', () => {
   it('hashes a single schema case-insensitively and rejects empty names', () => {
     expect(getSchemaColor('dbo', true), 'single-schema hashing is case-insensitive').toBe(getSchemaColor('DBO', true));
     expect(() => createSchemaColorMap(['dbo', ''], true)).toThrow(/non-empty schema name/);
+  });
+
+  it('picks header text that meets WCAG AA on every schema palette color', () => {
+    const lum = (hex: string) => [1, 3, 5]
+      .map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+      .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+    const ratio = (a: string, b: string) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const colors = new Set([...createSchemaColorMap(THIRTY_SCHEMAS, true).values(), '#FFAD5C', '#F7E589', '#8AB8E6']);
+    for (const bg of colors) {
+      expect(ratio(bg, getReadableTextColor(bg)), `text on ${bg}`).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(getReadableTextColor('#ffffff')).toBe('#000000');
+    expect(getReadableTextColor('#000000')).toBe('#ffffff');
   });
 });

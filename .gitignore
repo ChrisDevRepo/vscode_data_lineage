@@ -19,8 +19,7 @@ PLAN*.md
 TASKLIST*
 
 # Environment
-.env
-.env.example
+.env*
 *.log
 
 # Ad-hoc debug dumps written by tests/tools — never tracked, never packaged
@@ -67,6 +66,8 @@ scripts/*
 !scripts/generate-tool-manifest.mjs
 # The postinstall hook runs this — it must be committable or fresh clones break.
 !scripts/repair-langsmith-stub.mjs
+# Regenerates THIRD_PARTY_NOTICES.md from the bundled package set.
+!scripts/generate-third-party-notices.mjs
 
 # Code-audit workspace (tool output, inventories, classification artifacts)
 .audit/

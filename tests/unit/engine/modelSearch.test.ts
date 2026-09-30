@@ -599,31 +599,31 @@ describe('model search — per-line matching', () => {
     expect(scanBodyMatches(nodes, regexFor('AS[^x]*SELECT'), procedure, () => true).total, 'a negated class never spans lines').toBe(0);
   });
 
-  it('reports an over-long line as searched only up to the cap, never silently skipped', () => {
+  it('locates a matching over-long line instead of serving a cut excerpt', () => {
     const longLine = `SELECT ${'c,'.repeat(SEARCH_LINE_MAX_CHARS)} TailToken FROM dbo.T`;
     const body: SearchableNode = {
       id: 'dbo.vwlong', name: 'vwLong', schema: 'dbo', type: 'view',
       bodyScript: ['CREATE VIEW dbo.vwLong AS', longLine, 'WHERE HeadToken = 1'].join('\n'),
     };
     const head = scanBodyMatches([body], regexFor('SELECT|HeadToken'), undefined, () => true);
-    expect(head.matches.map(m => m.line), 'hits inside the searched prefix and on ordinary lines are kept').toEqual([2, 3]);
-    expect(head.truncated, 'the over-long line is named with its object').toEqual([{ node: body, lines: [2] }]);
+    expect(head.matches.map(m => m.line), 'ordinary lines keep their rows; the long line adds none').toEqual([3]);
+    expect(head.oversized, 'the long line is located with its length and match offset').toEqual([
+      { node: body, lines: [{ line: 2, length: longLine.length, match_offset: 0 }] },
+    ]);
 
     const tail = scanBodyMatches([body], regexFor('TailToken'), undefined, () => true);
-    expect(tail.total, 'a hit past the cap is not reported').toBe(0);
-    expect(tail.truncated, 'the truncation is stated even when nothing matched').toEqual([{ node: body, lines: [2] }]);
+    expect(tail.total, 'the match past the old cap is found on the full line').toBe(0);
+    expect(tail.oversized, 'and located at its real offset').toEqual([
+      { node: body, lines: [{ line: 2, length: longLine.length, match_offset: longLine.indexOf('TailToken') }] },
+    ]);
   });
 
-  it('bounds a polynomial pattern to the line cap', () => {
-    const pattern = /a.*a.*x/im;
+  it('reports no locator when no matching line is over the limit', () => {
     const body: SearchableNode = {
       id: 'dbo.vwwide', name: 'vwWide', schema: 'dbo', type: 'view',
       bodyScript: 'a '.repeat(3_000),
     };
-    const start = performance.now();
-    const scanned = scanBodyMatches([body], pattern, undefined, () => true);
-    expect(performance.now() - start, 'one execution never runs past the cap').toBeLessThan(1_000);
-    expect(scanned.truncated).toHaveLength(1);
+    expect(scanBodyMatches([body], /zzz/im, undefined, () => true).oversized).toEqual([]);
   });
 
   it('leaves ordinary results unchanged and reports no truncation', () => {
@@ -636,7 +636,7 @@ describe('model search — per-line matching', () => {
       ['dbo.activecustomersview', 2],
       ['dbo.activecustomersview', 2],
     ]);
-    expect(scanned.truncated, 'no line reaches the cap').toEqual([]);
+    expect(scanned.oversized, 'no line reaches the limit').toEqual([]);
   });
 });
 

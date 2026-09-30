@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { SmState } from './smTypes';
 import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
+import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 
 /** Stable restore failure raised only by the strict navigation-checkpoint boundary. */
 export class InvalidEngineCheckpointError extends Error {
@@ -29,20 +30,55 @@ const NonNegativeInt = z.number().int().nonnegative();
 const NonEmptyStrings = z.array(NonEmptyString).min(1);
 const NonEmptyStringTuple = z.tuple([NonEmptyString], NonEmptyString);
 
-const DepthIntentSchema = z.discriminatedUnion('kind', [
+const DepthSideValueSchema = z.object({
+  levels: z.union([z.number().int().nonnegative(), z.literal('all')]),
+  exactness: z.enum(['exact', 'approximate']),
+}).strict();
+
+/** Current per-side depth record — required, both sides, no "unstated" side. */
+const CurrentDepthIntentSchema = z.object({
+  upstream: DepthSideValueSchema,
+  downstream: DepthSideValueSchema,
+}).strict().refine(intent => !bothSidesClosed(intent.upstream, intent.downstream), {
+  message: 'Depth cannot be 0 in both directions.',
+});
+
+/**
+ * Levels a pre-per-side checkpoint seeded for an unstated side: the mechanical default the retired
+ * `lineage_start_exploration` depth contract declared for an omitted side (its schema text read
+ * "Omitted/null defaults to 3"). Read-side only; a live call always states its own levels.
+ */
+const LEGACY_UNSTATED_DEPTH_LEVELS = 3;
+
+/**
+ * Pre-per-side checkpoint format, read tolerantly and mapped onto the current shape: a legacy
+ * finite/`'all'` side maps to `exact`, a legacy unstated (`null`) side maps to `approximate` at
+ * {@link LEGACY_UNSTATED_DEPTH_LEVELS}. An older init also wrote that default into an unstated
+ * `asymmetric` side, which therefore reads back as `exact`; the checkpoint's own `depthLimits`
+ * (`null` for such a side) still decide enforcement and how the depth is reported. This mapping
+ * exists only for reading an old checkpoint; a live call always names `exactness` itself.
+ */
+const LegacyDepthIntentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('explicit'), levels: z.number().int().positive() }).strict(),
   z.object({ kind: z.literal('full_frontier') }).strict(),
   z.object({
     kind: z.literal('asymmetric'),
-    upstream: z.union([z.number().int().nonnegative(), z.literal('all')]),
-    downstream: z.union([z.number().int().nonnegative(), z.literal('all')]),
-  }).strict().superRefine((data, ctx) => {
-    if (data.upstream === 0 && data.downstream === 0) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Asymmetric depth cannot be 0 in both directions.' });
-    }
-  }),
+    upstream: z.union([z.number().int().nonnegative(), z.literal('all')]).nullable(),
+    downstream: z.union([z.number().int().nonnegative(), z.literal('all')]).nullable(),
+  }).strict(),
   z.object({ kind: z.literal('default_start') }).strict(),
-]);
+]).transform((legacy) => {
+  const side = (value: number | 'all' | null | undefined): z.infer<typeof DepthSideValueSchema> =>
+    value == null ? { levels: LEGACY_UNSTATED_DEPTH_LEVELS, exactness: 'approximate' } : { levels: value, exactness: 'exact' };
+  switch (legacy.kind) {
+    case 'explicit': return { upstream: side(legacy.levels), downstream: side(legacy.levels) };
+    case 'full_frontier': return { upstream: side('all'), downstream: side('all') };
+    case 'asymmetric': return { upstream: side(legacy.upstream), downstream: side(legacy.downstream) };
+    case 'default_start': return { upstream: side(null), downstream: side(null) };
+  }
+});
+
+const DepthIntentSchema = z.union([CurrentDepthIntentSchema, LegacyDepthIntentSchema]);
 
 const ColumnEdgeSchema = z.object({
   hop_node: NonEmptyString,
@@ -187,7 +223,7 @@ const EngineInternalsSchema = z.object({
   originNodeId: NonEmptyString.nullable(),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']),
   depthBudget: NonNegativeInt.nullable(),
-  depthEnforcement: z.enum(['strict', 'soft', 'silent']),
+  depthEnforcement: z.enum(['strict', 'silent']),
   depthLimits: z.object({
     upstream: NonNegativeInt.nullable(),
     downstream: NonNegativeInt.nullable(),
@@ -224,6 +260,7 @@ const EngineInternalsSchema = z.object({
 }).strict().transform(({
   qualityGuards: _legacyQualityGuards,
   extendedDepthCap: _legacyExtendedDepthCap,
+  sessionAllowedNodeIds: _legacySessionAllowedNodeIds,
   ...internals
 }) => internals);
 

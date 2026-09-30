@@ -1,10 +1,11 @@
-import { memo, useMemo, useState } from 'react';
-import { FloatingPortal } from '@floating-ui/react';
+import { memo, useMemo, useRef, useState } from 'react';
+import { FloatingFocusManager, FloatingPortal, useInteractions, useListNavigation } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
 import type { ObjectType, AnalysisType, GraphMode } from '../engine/types';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';
 import { HelpModal } from './HelpModal';
 import { SchemaFilterDropdown } from './SchemaFilterDropdown';
 import { TypeFilterDropdown } from './TypeFilterDropdown';
@@ -13,7 +14,7 @@ import { ExclusionDropdown } from './ExclusionDropdown';
 import { SavedViewsDropdown } from './SavedViewsDropdown';
 import { SearchWithAutocomplete } from './SearchWithAutocomplete';
 import type { FilterProfile } from '../engine/projectStore';
-import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
+import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 
 interface ToolbarProps {
   /** The set of object types (table, view, etc.) currently active in the filter. */
@@ -42,6 +43,8 @@ interface ToolbarProps {
   onRefresh: () => void;
   /** Callback to re-extract metadata and completely rebuild the graph. */
   onRebuild?: () => void;
+  /** Whether a rebuild (re-extract or config-triggered) is currently in flight. */
+  isRebuilding?: boolean;
   /** Callback to return to the project selection screen. */
   onBack: () => void;
   /** Callback to open the DDL/SQL source viewer for the selected node. */
@@ -203,6 +206,7 @@ export const Toolbar = memo(function Toolbar({
   availableSchemas,
   onRefresh,
   onRebuild,
+  isRebuilding = false,
   onBack,
   onOpenDdlViewer,
   onExportDrawio,
@@ -253,7 +257,18 @@ export const Toolbar = memo(function Toolbar({
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [confirmingBack, setConfirmingBack] = useState(false);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
   const analysis = useDropdown();
+  const analysisItemsRef = useRef<Array<HTMLElement | null>>([]);
+  const [analysisActiveIndex, setAnalysisActiveIndex] = useState<number | null>(null);
+  const analysisListNav = useListNavigation(analysis.context, {
+    listRef: analysisItemsRef,
+    activeIndex: analysisActiveIndex,
+    onNavigate: setAnalysisActiveIndex,
+    loop: true,
+  });
+  const analysisNav = useInteractions([analysisListNav]);
+  useKeyboardShortcut(SHORTCUT_KEYS.exitMode, analysis.close, false, { priority: ESC_PRIORITY.overlay, active: analysis.isOpen });
 
   useKeyboardShortcut(SHORTCUT_KEYS.openHelp, () => setIsHelpOpen(true));
   useKeyboardShortcut(SHORTCUT_KEYS.toggleSchemaView, () => {
@@ -291,6 +306,8 @@ export const Toolbar = memo(function Toolbar({
       ? 'var(--ln-warning-fg)'
       : undefined;
 
+  const filterEditDisabledReason = isModeLocked ? 'Exit the current trace or view to edit filters' : undefined;
+
   const activeFilterCount = useMemo(() => [
     selectedSchemas.size < schemas.length && schemas.length > 0,
     types.size < 5,
@@ -302,7 +319,7 @@ export const Toolbar = memo(function Toolbar({
     <>
       <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
         <Tooltip content="Load New Project">
-          <Button onClick={() => isFilterDirty ? setConfirmingBack(true) : onBack()} variant="icon" aria-label="Load New Project">
+          <Button ref={backButtonRef} onClick={() => isFilterDirty ? setConfirmingBack(true) : onBack()} variant="icon" aria-label="Load New Project">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />
             </svg>
@@ -326,7 +343,8 @@ export const Toolbar = memo(function Toolbar({
         <div className="flex-1 min-w-[100px] max-w-[340px]">
           <SearchWithAutocomplete
             onExecuteSearch={onExecuteSearch}
-            onStartTrace={canStartNewScopedMode ? onStartTrace : undefined}
+            onStartTrace={onStartTrace}
+            startTraceDisabledReason={!canStartNewScopedMode ? 'Exit the current mode to start a new trace' : undefined}
             allNodes={allNodes}
             visibleNodeIds={visibleNodeIds}
             collapsedSchemaNodeIds={collapsedSchemaNodeIds}
@@ -354,8 +372,8 @@ export const Toolbar = memo(function Toolbar({
             </svg>
           </Button>
         </Tooltip>
-        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} isNarrowed={selectedSchemas.size < schemas.length && schemas.length > 0} />
-        <TypeFilterDropdown types={types} onToggleType={onToggleType} isNarrowed={types.size < 5} />
+        <SchemaFilterDropdown schemas={schemas} selectedSchemas={selectedSchemas} focusSchemas={focusSchemas} onToggleSchema={onToggleSchema} onSelectAll={onSelectAllSchemas} onSelectNone={onSelectNoneSchemas} onToggleFocusSchema={onToggleFocusSchema} isNarrowed={selectedSchemas.size < schemas.length && schemas.length > 0} disabled={isModeLocked} disabledReason={filterEditDisabledReason} />
+        <TypeFilterDropdown types={types} onToggleType={onToggleType} isNarrowed={types.size < 5} disabled={isModeLocked} disabledReason={filterEditDisabledReason} />
         {onToggleExternalRefs && onToggleExternalRefType && (
           <ExternalRefsDropdown
             showExternalRefs={showExternalRefs}
@@ -363,11 +381,13 @@ export const Toolbar = memo(function Toolbar({
             onToggleMaster={onToggleExternalRefs}
             onToggleSubType={onToggleExternalRefType}
             isNarrowed={!showExternalRefs || externalRefTypes.size < 2}
+            disabled={isModeLocked}
+            disabledReason={filterEditDisabledReason}
           />
         )}
         <div className="relative inline-flex">
           <Tooltip content={activeFilterCount > 0 ? `Refresh View (${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active)` : 'Refresh View'}>
-            <Button onClick={() => { onRefresh(); onResetExpandedSchemaView?.(); }} variant="icon" aria-label="Refresh View">
+            <Button onClick={() => { onRefresh(); onResetExpandedSchemaView?.(); }} variant="icon" aria-label="Refresh View" disabled={isRebuilding}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 17l5 5M22 17l-5 5" />
@@ -398,18 +418,22 @@ export const Toolbar = memo(function Toolbar({
             exclusionPatterns={exclusionPatterns}
             onAddPattern={onAddExclusionPattern}
             onRemovePattern={onRemoveExclusionPattern}
+            disabled={isModeLocked}
+            disabledReason={filterEditDisabledReason}
           />
         )}
 
         <Tooltip content={!canStartNewScopedMode && !isAnalysisActive ? 'Exit current mode to start analysis' : 'Graph Analysis'}>
           <Button
             ref={analysis.refs.setReference}
-            onClick={analysis.toggle}
+            {...analysisNav.getReferenceProps({ onClick: analysis.toggle })}
             variant="icon"
             className={isAnalysisActive ? 'ln-btn-icon-active ln-btn-icon-active--analysis' : ''}
             disabled={!canStartNewScopedMode && !isAnalysisActive}
             aria-label="Graph Analysis"
             aria-pressed={isAnalysisActive}
+            aria-haspopup="menu"
+            aria-expanded={analysis.isOpen}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605" />
@@ -418,41 +442,34 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
         <FloatingPortal>
           {analysis.isOpen && (
-            <div
-              ref={analysis.refs.setFloating}
-              style={{ ...analysis.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
-              className="w-52 rounded-md shadow-lg z-50 ln-dropdown"
-              role="menu"
-              aria-label="Graph analysis tools"
-              {...analysis.getFloatingProps()}
-            >
-              <div className="py-1">
-                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('islands'); }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
-                  Islands
-                </button>
-                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('hubs'); }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" /></svg>
-                  Hubs
-                </button>
-                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('orphans'); }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>
-                  Orphan Nodes
-                </button>
-                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('longest-path'); }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
-                  Longest Path
-                </button>
-                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('cycles'); }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
-                  Cycles
-                </button>
-                <button role="menuitem" className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2" onClick={() => { analysis.close(); onOpenAnalysis?.('external-refs'); }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
-                  External Refs
-                </button>
+            <FloatingFocusManager context={analysis.context} modal={false}>
+              <div
+                ref={analysis.refs.setFloating}
+                style={{ ...analysis.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+                className="w-52 rounded-md shadow-lg z-50 ln-dropdown"
+                role="menu"
+                aria-label="Graph analysis tools"
+                {...analysis.getFloatingProps(analysisNav.getFloatingProps())}
+              >
+                <div className="py-1">
+                  {ALL_ANALYSIS_TYPES.map((type, index) => (
+                    <button
+                      key={type}
+                      role="menuitem"
+                      tabIndex={analysisActiveIndex === index ? 0 : -1}
+                      className="w-full text-left px-3 py-1.5 text-sm ln-list-item flex items-center gap-2"
+                      {...analysisNav.getItemProps({
+                        ref: (node: HTMLButtonElement | null) => { analysisItemsRef.current[index] = node; },
+                        onClick: () => { analysis.close(); onOpenAnalysis?.(type); },
+                      })}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d={ANALYSIS_TYPE_INFO[type].icon} /></svg>
+                      {ANALYSIS_TYPE_INFO[type].title}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            </FloatingFocusManager>
           )}
         </FloatingPortal>
 
@@ -468,7 +485,7 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
         {onRebuild && (
           <Tooltip content="Refresh (re-read settings &amp; rebuild graph)">
-            <Button onClick={onRebuild} variant="icon" aria-label="Refresh (re-read settings and rebuild graph)">
+            <Button onClick={onRebuild} variant="icon" aria-label="Refresh (re-read settings and rebuild graph)" disabled={isRebuilding}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
               </svg>
@@ -504,7 +521,7 @@ export const Toolbar = memo(function Toolbar({
                   onClick={onToggleExpandedSchemaClusters}
                   variant="icon"
                   className={!showExpandedSchemaClusters ? 'ln-btn-icon-active' : ''}
-                  aria-label={showExpandedSchemaClusters ? 'Hide schema clusters' : 'Show schema clusters'}
+                  aria-label="Hide schema clusters"
                   aria-pressed={!showExpandedSchemaClusters}
                 >
                   {showExpandedSchemaClusters ? (
@@ -569,7 +586,7 @@ export const Toolbar = memo(function Toolbar({
                   ) : (
                     <>
                       <span className="font-medium" style={{ color: metricColor }}>{formatMetricCount(metrics.totalNodes)}</span>
-                      <span className="opacity-60">nodes</span>
+                      <span>nodes</span>
                     </>
                   )}
                 </span>
@@ -583,7 +600,7 @@ export const Toolbar = memo(function Toolbar({
         <div className="px-4 py-1.5 flex items-center gap-2 text-xs" style={{ background: 'var(--ln-bg-secondary)', borderBottom: '1px solid var(--ln-border)' }}>
           <span className="ln-text-muted">Leave current view? Unsaved changes will be lost.</span>
           <Button variant="ghost" className="h-6 px-2 text-xs" style={{ color: 'var(--ln-warning-fg)' }} onClick={() => { setConfirmingBack(false); onBack(); }}>Leave</Button>
-          <Button variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmingBack(false)}>Cancel</Button>
+          <Button variant="ghost" className="h-6 px-2 text-xs" onClick={() => { setConfirmingBack(false); backButtonRef.current?.focus(); }} autoFocus>Cancel</Button>
         </div>
       )}
 

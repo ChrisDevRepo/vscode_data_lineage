@@ -21,6 +21,8 @@ export class StructuredOutputError extends Error {
     public readonly reason: string,
     /** Stable classification used by graph retry policy. */
     public readonly code: StructuredOutputErrorCode = REJECTION_CODES.invalidStructuredOutput,
+    /** Schema-derived repair instruction; absent when the failure has no field-level repair. */
+    public readonly hint?: string,
   ) {
     super(`Structured output was rejected: ${reason}.`);
     this.name = 'StructuredOutputError';
@@ -28,22 +30,26 @@ export class StructuredOutputError extends Error {
 }
 
 /**
- * Builds a concise rejection reason for a missing or schema-invalid synthetic tool call.
+ * Builds a concise rejection reason and repair hint for a missing or schema-invalid synthetic tool call.
  *
  * @remarks
  * Routes the schema-invalid case through {@link rejectionFromZodError} — the sole producer of
- * auto-generated Zod reasons — so the model receives the actual violated predicate message
- * (`"<dottedPath>: <message>"`), not a path-only list it cannot self-correct from.
+ * auto-generated Zod reasons and of the field repair chain — so the model receives the violated
+ * predicate (`"<dottedPath>: <message>"`) and the schema-derived repair, as on the tool path.
  * @param callPresent - Whether the provider emitted the synthetic tool call.
  * @param error - The Zod validation failure when the emitted input failed schema validation.
- * @returns Bounded reason suitable for graph retry state.
+ * @param input - The parsed payload that failed validation; enables measured-size and type-mismatch text.
+ * @param schema - The schema the payload failed; enables the hints that name what it accepts.
+ * @returns Bounded reason for graph retry state; `hint` only for a schema-invalid payload.
  */
 export function structuredRejectReason(
   callPresent: boolean,
   error: z.ZodError | undefined,
-): string {
-  if (!callPresent) return `missing ${STRUCTURED_OUTPUT_TOOL} tool call`;
-  if (!error) return `invalid ${STRUCTURED_OUTPUT_TOOL} fields: schema mismatch`;
-  const { reason } = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput });
-  return `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${reason}`;
+  input?: unknown,
+  schema?: z.ZodType,
+): { reason: string; hint?: string } {
+  if (!callPresent) return { reason: `missing ${STRUCTURED_OUTPUT_TOOL} tool call` };
+  if (!error) return { reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: schema mismatch` };
+  const { reason, hint } = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput, input, schema });
+  return { reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${reason}`, hint };
 }

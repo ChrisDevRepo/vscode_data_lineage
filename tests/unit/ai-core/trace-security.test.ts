@@ -103,7 +103,7 @@ describe('trace security redaction', () => {
       requestId: 'request-1',
       generation: 3,
       direction: 'request',
-      url: 'https://openrouter.ai/api/v1/chat/completions',
+      url: 'https://api.fireworks.ai/inference/v1/chat/completions',
       method: 'POST',
       status: 200,
       body: { model: 'deepseek/deepseek-chat', messages: [{ role: 'system', content: 'Trace lineage.' }] },

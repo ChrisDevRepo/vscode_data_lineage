@@ -86,6 +86,8 @@ export type WireEvent =
       /** Raw provider stop reason, on lanes whose protocol reports one. */
       readonly finishReason?: string;
       readonly usage?: TokenUsage;
+      /** Stream parts that are neither text nor a tool call (reasoning, signatures), replayed verbatim on the next request; absent when none arrived. */
+      readonly otherParts?: readonly WirePart[];
     }
   | {
       /** Sanitized provider failure paired with the request that did not produce a response. */

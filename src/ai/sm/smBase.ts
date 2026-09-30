@@ -1,34 +1,36 @@
-import { DEFAULT_SM_START_DEPTH, EngineAspectMode, InvalidRoute, type DepthIntent, type DepthSide, type SeededDepthIntent } from './smTypes';
-import { buildSubmissionRejection, isAbsentKind, ROUTE_REJECTION_DIRECTIVE, type SubmissionFaults } from './smRouteValidation';
-import { checkActiveScopeAdmission, DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
-import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX } from '../tools/toolSchemas';
+import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
+import { buildSubmissionRejection, HELD_CORRECTION_ORDER, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, type SubmissionFaults } from './smRouteValidation';
+import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
+import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
-import { ASYMMETRIC_DEPTH_BOTH_ZERO, ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL } from '../../engine/shared/explorationDepthContract';
+import { ASYMMETRIC_DEPTH_BOTH_ZERO, bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
-import { bfsDepthMap, bfsReachable, type LogFn } from '../../engine/graphGuards';
+import { bfsDepthMap, bfsReachable, nodesCutByRemoval, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
-import { normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
+import { compileExclusionMatcher, normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, appendUniqueSectionText, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, ColumnCarry, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
-import { estimateTokens } from '../support/tokenBudget';
+import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { activeSubmitFindingsRecoveryHint } from '../interaction/rules/submitFindingsRules';
 
 /**
  * A hop neighbour plus the engine decisions already taken about it.
@@ -72,8 +74,8 @@ interface NavigationWorkingMemory extends WorkingMemory {
   };
   /** Active depth budget at session start (omitted when unbounded). */
   depth_budget?: number;
-  /** Checkpoint projection of the live enforcement mode — `strict` for an explicit/asymmetric depth intent, `silent` otherwise. */
-  depth_enforcement?: 'strict' | 'soft' | 'silent';
+  /** Checkpoint projection of the live enforcement mode — `strict` when any side has a finite exact depth, `silent` otherwise. */
+  depth_enforcement?: 'strict' | 'silent';
   /** Initial reviewed seed depth retained for diagnostics; never a route ceiling. */
   depth_cap?: number | null;
   /** Per-node explicit AI expansions beyond the initial seed. */
@@ -85,6 +87,9 @@ interface NavigationWorkingMemory extends WorkingMemory {
   /** Column-trace aspect, present when the session has `targetColumns`. */
   column_aspect?: ColumnAspect;
 }
+
+/** Optional kept-verdict fields a held draft restores when a retry omits them; CT `column_flow` is served-required, so a retry always resends it. */
+const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
 
 /**
  * Defines the core interface for the state machine handling exploration modes.
@@ -119,13 +124,8 @@ export interface IHopStateMachine {
   /** Current hop context for the engine. */
   getHopContext(): HopContext;
 
-  /**
-   * Submits the findings for the current step and calculates the next state.
-   *
-   * @param budget - The submitting turn's budget, which the active-scope admission guard is
-   *   measured against.
-   */
-  submitFindings(params: HopSubmission, budget?: TurnTokenBudget): SubmitResult;
+  /** Submits the findings for the current step and calculates the next state. */
+  submitFindings(params: HopSubmission): SubmitResult;
 
   /** Final result of the exploration session. */
   getResult(): SmResult;
@@ -163,46 +163,36 @@ export interface IHopStateMachine {
    * @returns Counts agendaed, contracted, or skipped (unknown / duplicate), plus `skippedDetails`
    *   naming which id was dropped and why.
    */
-  supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | { error: string; hint?: string };
+  supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection;
 }
 
 /**
- * The write path a border test serves. Each purpose fixes which of the three axes
- * (exclusion sets, approved-direction reachability, schema allowlist) participate — so
- * every call site consults an identical, self-documenting axis profile.
- *
- * @remarks
- * Axis profile per purpose: `route`/`contraction` = exclusions + direction + allowlist;
- * `supplement` = exclusions + allowlist (direction not re-tested for an already-surfaced lead);
- * `seed_bfs` = exclusions only, allowlist deliberately skipped so unlisted reachables survive to
- * become `schema:` gate classes; `display` = exclusion sets + allowlist, advisory only.
+ * The write path a border test serves. Every purpose tests the exclusion sets; `route` and
+ * `contraction` also test approved-direction reachability, while `supplement` (an already-surfaced
+ * lead) and `seed_bfs` (the walk that defines the direction) do not.
  */
-type BorderPurpose = 'route' | 'contraction' | 'supplement' | 'seed_bfs' | 'display';
+type BorderPurpose = 'route' | 'contraction' | 'supplement' | 'seed_bfs';
 
 /**
  * First failing border axis for a candidate node, or `in_border` when it clears every
  * participating axis. A discriminated verdict (not a boolean bag) so a caller can route each
- * outcome distinctly — e.g. the route path rejects `excluded`/`out_of_direction` but *defers*
- * `out_of_allowlist`.
+ * outcome distinctly — e.g. the route path rejects `excluded` but *defers* `out_of_direction`.
  */
 type BorderVerdict =
   | { kind: 'in_border' }
-  | { kind: 'excluded' }
-  | { kind: 'out_of_direction' }
-  | { kind: 'out_of_allowlist' };
+  | { kind: 'excluded'; axis: 'type' | 'schema' | 'node_id' }
+  | { kind: 'out_of_direction' };
 
 /**
  * Combined border + depth admission test for one route candidate. A record, not a boolean: the two
  * axes are reported to the model differently (schema gate name vs level count), so callers that
- * need the distinction read the axes while the completeness guard reads only `admitted`.
+ * need the distinction read the axes while others read only `admitted`.
  */
 type RouteAdmission = {
   /** First failing border axis, or `in_border`. */
   border: BorderVerdict;
   /** Breaching depth when a depth ceiling the user fixed is crossed, otherwise `null`. */
   depthBreach: number | null;
-  /** Depth the candidate was judged at — the number a deferred lead quotes. */
-  candidateDepth: number;
   /** True only when both axes clear: the router would accept a route to this node now. */
   admitted: boolean;
 };
@@ -211,11 +201,22 @@ type RouteAdmission = {
 const DEFERRAL_BOUNDARY_LABEL: Readonly<Record<DeferredQuestion['reason'], string>> = {
   schema: 'schema',
   depth: 'depth',
-  schema_and_depth: 'schema and depth',
   budget: 'budget',
   direction: 'direction',
   excluded: 'excluded',
   pruned: 'pruned',
+  contracted: 'contracted scope',
+};
+
+/** Follow-up lead reason for each deferral reason — exhaustive, so no reason falls through. */
+const LEAD_REASON_BY_DEFERRAL: Readonly<Record<DeferredQuestion['reason'], PendingLead['reason']>> = {
+  schema: 'schema_boundary',
+  depth: 'depth_boundary',
+  budget: 'budget',
+  direction: 'out_of_direction',
+  excluded: 'excluded',
+  pruned: 'pruned_by_ai',
+  contracted: 'contracted_scope',
 };
 
 /** Copies an agenda entry so a snapshot and the live agenda never share an array. */
@@ -254,6 +255,8 @@ interface ValidatedHop {
   stagedColumnEdges: ColumnEdge[];
   stagedCtNodeStates: Array<{ nodeId: string; action: SmNodeAction; source: SmNodeStateSource; reason: SmNodeStateReason; meta: { columns?: string[]; viaNodeId?: string; atHop?: number } }>;
   stagedColumnFlowEntries: number;
+  /** CT tracked columns this hop's column_flow left unaccounted; informational, never a rejection. */
+  unaccountedColumns: string[];
 }
 
 /**
@@ -378,10 +381,10 @@ export class NavigationEngine implements IHopStateMachine {
   protected depthLimits: { upstream: number; downstream: number } = NavigationEngine.UNBOUNDED_DEPTH_LIMITS;
   /**
    * Whether the approved depth is a hard border (`'strict'`) or an initial seed the model may grow
-   * (`'silent'`). Set from the AI's own `depthIntent`: a level count the AI copied from the user's
-   * question binds; an omitted depth does not.
+   * (`'silent'`). Set from the AI's own `depthIntent`: an `'exact'` side binds; an `'approximate'`
+   * side does not.
    */
-  protected depthEnforcement: 'strict' | 'soft' | 'silent' = 'silent';
+  protected depthEnforcement: 'strict' | 'silent' = 'silent';
   /**
    * Directed distance from the origin to every reachable node, per side; cleared whenever the BFS
    * seed is recomputed and refilled on the next depth read ({@link ensureDirectedDepths}).
@@ -397,36 +400,32 @@ export class NavigationEngine implements IHopStateMachine {
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
   /**
-   * Submission held only after a field-scoped failure a retry can correct without re-authoring the
-   * analysis — route/column incompleteness, or a field over its length cap — so a retry with empty
-   * sections can reuse already-valid authored prose. Other validation failures never establish held
-   * state.
+   * Submission held after a rejection a retry can correct without re-authoring the analysis — a
+   * schema rejection at the tool-attempt boundary ({@link holdRejectedSubmission}), a route/column
+   * fault, or a field over its length cap — so {@link applyHeldContent} restores what the retry
+   * omits. Other rejections never establish held state.
    */
-  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, HopFindingKept>();
+  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, { readonly failed: readonly string[] }>();
 
   /** Exploration direction set by `init`; consulted by `enqueueHop` when contracting reference nodes. */
   protected _direction: 'upstream' | 'downstream' | 'bidirectional' = 'bidirectional';
 
-  /** Schemas (lower-cased) in the user's active filter — the initial allowlist for route validation. */
+  /** Schemas (lower-cased) in the user's active filter. */
   protected userSchemas: Set<string> = new Set();
-  /** Session-scoped schema allowlist. Starts as a copy of {@link userSchemas}; grows via {@link extendAllowedSchemas}. */
+  /** Schemas the approved border admits, as reported in diagnostics and the approved border; the exclusion sets enforce it. Starts as a copy of {@link userSchemas}; `init` adds the origin's schema and every GUI-hidden schema the proposal's `excludeSchemas` no longer excludes. */
   protected sessionAllowedSchemas: Set<string> = new Set();
-  /**
-   * Node ids (lower-cased) the user named in a follow-up, admitted one by one.
-   *
-   * @remarks
-   * The narrow half of the allowlist axis: naming an object admits that object, never its schema
-   * siblings. Grows only through {@link admitSupplementTargets}.
-   */
-  protected sessionAllowedNodeIds: Set<string> = new Set();
   /** Object types the user asked to exclude (e.g. ['view','function']); pruned from scope at init. */
   protected excludedTypes: Set<string> = new Set();
   /** Schemas (lower-cased) the user asked to exclude; pruned from scope at init. */
   protected excludedSchemas: Set<string> = new Set();
   /** Specific node ids (lower-cased) the user asked to exclude; pruned from scope at init. */
   protected excludedNodeIds: Set<string> = new Set();
-  /** Object types hidden by the GUI filter at session start. Advisory only — diagnostic logs flag whether the AI honored them via `excludeTypes`. */
+  /** Object types hidden by the GUI filter at session start; the default `excludeTypes` of a proposal that states none. */
   protected guiHiddenTypes: Set<string> = new Set();
+  /** Schemas (lower-cased) hidden by the GUI filter at session start — the complement of {@link userSchemas} over every schema in the loaded model. Seeds a fresh proposal's default `excludeSchemas` ({@link getGuiHiddenSchemas}); never enforced on its own. */
+  protected guiHiddenSchemas: Set<string> = new Set();
+  /** Node ids (lower-cased) matching a GUI exclusion pattern at session start. Seeds a fresh proposal's default `excludeNodeIds` ({@link getGuiExcludedNodeIds}); never enforced on its own. */
+  protected guiExcludedNodeIds: Set<string> = new Set();
   /**
    * Specific node ids (lower-cased) the user asked to keep in scope but skip analysis on.
    * The hop dispatcher detects these on dequeue and auto-emits `verdict:'passthrough'` — topology
@@ -491,6 +490,21 @@ export class NavigationEngine implements IHopStateMachine {
     if (guiActiveTypes.length > 0) {
       this.guiHiddenTypes = new Set(ALL_OBJECT_TYPES.filter(t => !guiActiveTypes.includes(t)));
     }
+
+    if (schemas.length > 0) {
+      const allSchemas = new Set<string>();
+      for (const n of this.nodeMap.values()) allSchemas.add(n.schema.toLowerCase());
+      this.guiHiddenSchemas = new Set(Array.from(allSchemas).filter(s => !schemas.includes(s)));
+    }
+
+    const isGuiExcluded = compileExclusionMatcher(config.activeFilter?.exclusionPatterns ?? [], (pattern, err) => {
+      this.log('debug', `[Filter] Skipping invalid GUI exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`);
+    });
+    if (isGuiExcluded) {
+      for (const n of this.nodeMap.values()) {
+        if (isGuiExcluded(n)) this.guiExcludedNodeIds.add(n.id.toLowerCase());
+      }
+    }
   }
 
   /** Publishes this validated engine's memory while preserving the session memory object identity. */
@@ -504,43 +518,159 @@ export class NavigationEngine implements IHopStateMachine {
     return this.depthEnforcement === 'strict' ? this.depthBudget : null;
   }
 
-  /** Extends the session schema allowlist (case-insensitive) after the user confirms an out-of-filter route. */
-  public extendAllowedSchemas(schema: string): void {
-    this.sessionAllowedSchemas.add(schema.toLowerCase());
+  /**
+   * Object types the GUI filter hid at session start.
+   *
+   * @remarks
+   * The default `excludeTypes` baseline a fresh proposal is seeded with when the model states
+   * none of its own — a plain approve then keeps them out; an explicit `excludeTypes` on a later
+   * call replaces this default rather than adding to it.
+   */
+  public getGuiHiddenTypes(): string[] {
+    return Array.from(this.guiHiddenTypes);
+  }
+
+  /** Schemas the GUI filter hid at session start — the default `excludeSchemas` baseline, same override rule as {@link getGuiHiddenTypes}. */
+  public getGuiHiddenSchemas(): string[] {
+    return Array.from(this.guiHiddenSchemas);
+  }
+
+  /** Node ids matching a GUI exclusion pattern at session start — the default `excludeNodeIds` baseline, same override rule as {@link getGuiHiddenTypes}. */
+  public getGuiExcludedNodeIds(): string[] {
+    return Array.from(this.guiExcludedNodeIds);
   }
 
   /**
    * Canonical focus id of a currently-held finding, or `null` when none is held.
    *
    * @remarks
-   * Non-null means the prior `submit_findings` failed only on a field-scoped, correctable defect.
+   * Non-null means a rejected submit_findings of this focus left correctable parts held.
    */
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();
     if (!held) return null;
-    return resolveModelNodeId(held.focus_node_id, this.nodeMap)
-      ?? held.focus_node_id.toLowerCase()
-      ?? null;
+    return resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
   }
 
   /**
-   * Restores held prose only when a correction retry keeps the focus and sends no sections.
-   * A retry with authored sections is a deliberate replacement and remains unchanged.
+   * Overlays a correction retry on the held draft of the same focus: sections merge by angle
+   * ({@link RepairDraftStore.mergeByKey}), so an angle the retry omits keeps its held body, and an
+   * empty summary keeps the held one.
+   *
+   * Every other held field the retry omits (`badge_label`, `prune_neighbors`, `questions`) is
+   * restored unless the rejection that held it named that field as failed; a field
+   * the retry sends replaces the held one.
+   *
+   * @returns The submission to apply, or a `missing_field` rejection when a kept verdict carries no
+   *   sections and no summary and no held draft of this focus supplies them, or when neither the
+   *   retry nor a held draft supplies a non-empty summary. Empty sections with an authored summary
+   *   pass on: a revisit credits the angles already archived.
    */
-  public applyHeldContent(incoming: HopSubmission): HopSubmission {
+  public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
+    if (incoming.verdict === 'end_branch') return incoming;
     const held = this.heldFindingDraft.get();
-    if (!held || incoming.verdict === 'end_branch') return incoming;
-    const heldFocus = resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
     const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap) ?? incoming.focus_node_id.toLowerCase();
-    if (heldFocus !== inFocus || inFocus !== this.currentFocusNodeId) return incoming;
-    if (incoming.sections.length > 0) return incoming;
-    return this.heldFindingDraft.merge(incoming, (draft, patch) => {
-      return {
-        ...patch,
-        sections: draft.sections,
-        summary: draft.summary,
-      };
-    }) ?? incoming;
+    const heldForFocus = held
+      && (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) === inFocus
+      && inFocus === this.currentFocusNodeId
+      ? held
+      : null;
+    if (!heldForFocus) {
+      if (incoming.sections.length === 0 && !incoming.summary.trim()) {
+        return makeRejection({
+          code: REJECTION_CODES.missingField,
+          hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
+        });
+      }
+      return incoming.summary.trim() ? incoming : this.emptySummaryRejection();
+    }
+    this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
+    const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
+    const carried: Partial<HopFindingKept> = {};
+    for (const field of HELD_CARRIED_FIELDS) {
+      if (incoming[field] === undefined && heldForFocus[field] !== undefined && !failed.includes(field)) {
+        Object.assign(carried, { [field]: heldForFocus[field] });
+      }
+    }
+    const summary = incoming.summary.trim() ? incoming.summary : heldForFocus.summary;
+    if (!summary.trim()) return this.emptySummaryRejection();
+    return {
+      ...incoming,
+      ...carried,
+      sections: RepairDraftStore.mergeByKey(heldForFocus.sections, incoming.sections, section => section.angle ?? ''),
+      summary,
+    };
+  }
+
+  /** A kept verdict whose summary is empty with no held summary to restore. */
+  private emptySummaryRejection(): ToolRejection {
+    return makeRejection({
+      code: REJECTION_CODES.missingField,
+      hint: 'summary is empty and no summary is held for this node; resend the full call with summary: one sentence on what this node does to the data and hands on.',
+      issuePaths: ['summary'],
+    });
+  }
+
+  /**
+   * Holds the valid parts of a `submit_findings` call the tool-attempt boundary rejected, merged
+   * over a held draft of the same focus, so {@link applyHeldContent} restores them on the retry.
+   *
+   * @param input - The rejected payload as the model sent it.
+   * @param failedPaths - Dotted Zod issue paths of the rejection.
+   * @returns What the retry gets restored — held `sections` angles, whether a held `summary`, the
+   *   other held field names (a field this call failed excluded). An `end_branch` call reports
+   *   `null`, since a kept-verdict draft never applies to a cut; any other call that is not a kept
+   *   verdict of the current focus holds nothing new and reports the draft already held for the
+   *   current focus; `null` when nothing is held.
+   */
+  public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): HeldSubmissionParts | null {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
+    const raw = input as Record<string, unknown> & { focus_node_id?: unknown; verdict?: unknown };
+    if (raw.verdict === 'end_branch') return null;
+    if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
+    const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap) ?? raw.focus_node_id.toLowerCase();
+    if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
+    const failed = new Set(failedPaths.map(path => path.split('.')[0]));
+    const sections = failed.has('sections')
+      ? []
+      : extractRawSectionAngles(raw.sections);
+    const summary = !failed.has('summary') && typeof raw.summary === 'string' ? raw.summary.trim() : '';
+    const fields: Partial<HopFindingKept> = {};
+    for (const field of HELD_CARRIED_FIELDS) {
+      const value = raw[field];
+      if (failed.has(field) || value === undefined || value === null) continue;
+      Object.assign(fields, { [field]: structuredClone(value) });
+    }
+    const prior = this.heldFindingDraft.get();
+    const held = prior !== null && (resolveModelNodeId(prior.focus_node_id, this.nodeMap) ?? prior.focus_node_id.toLowerCase()) === focus
+      ? prior
+      : null;
+    const priorFailed = held ? this.heldFindingDraft.getAuthorization()?.failed ?? [] : [];
+    const draft: HopFindingKept = {
+      ...(held ?? {}),
+      ...Object.fromEntries(priorFailed.filter(field => (HELD_CARRIED_FIELDS as readonly string[]).includes(field)).map(field => [field, undefined])),
+      ...fields,
+      focus_node_id: raw.focus_node_id,
+      verdict: raw.verdict,
+      sections: held ? RepairDraftStore.mergeByKey(held.sections, sections, section => section.angle ?? '') : sections,
+      summary: summary || (held?.summary ?? ''),
+    };
+    const restored = HELD_CARRIED_FIELDS.filter(field => draft[field] !== undefined && !failed.has(field));
+    if (draft.sections.length === 0 && !draft.summary.trim() && restored.length === 0) return null;
+    this.heldFindingDraft.hold(draft, { failed: [...failed] });
+    return { sections: draft.sections.map(section => section.angle ?? ''), summary: draft.summary.trim().length > 0, fields: restored };
+  }
+
+  /** The parts a draft already held for the current focus still restores, unchanged; `null` when none is held. */
+  private heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
+    const held = this.heldFindingDraft.get();
+    if (held === null || (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) !== this.currentFocusNodeId) return null;
+    const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
+    return {
+      sections: held.sections.map(section => section.angle ?? ''),
+      summary: held.summary.trim().length > 0,
+      fields: HELD_CARRIED_FIELDS.filter(field => held[field] !== undefined && !failed.includes(field)),
+    };
   }
 
   /** Compatibility projection of unresolved scope-boundary leads for synthesis. */
@@ -548,7 +678,8 @@ export class NavigationEngine implements IHopStateMachine {
     return this.taskLedger.pendingLeads.flatMap(lead => {
       if (lead.status !== 'pending'
         || (lead.reason !== 'schema_boundary' && lead.reason !== 'depth_boundary' && lead.reason !== 'budget'
-          && lead.reason !== 'out_of_direction' && lead.reason !== 'excluded' && lead.reason !== 'pruned_by_ai')) return [];
+          && lead.reason !== 'out_of_direction' && lead.reason !== 'excluded' && lead.reason !== 'pruned_by_ai'
+          && lead.reason !== 'contracted_scope')) return [];
       const task = this.taskLedger.getTask(lead.taskId);
       if (!task) return [];
       return [{
@@ -561,6 +692,7 @@ export class NavigationEngine implements IHopStateMachine {
           : lead.reason === 'budget' ? 'budget' as const
           : lead.reason === 'out_of_direction' ? 'direction' as const
           : lead.reason === 'pruned_by_ai' ? 'pruned' as const
+          : lead.reason === 'contracted_scope' ? 'contracted' as const
           : 'excluded' as const,
         ...(lead.depth !== undefined ? { depth: lead.depth } : {}),
         atHop: lead.createdHop,
@@ -595,19 +727,13 @@ export class NavigationEngine implements IHopStateMachine {
    * Records the structured task and lead corresponding to an accepted scope-boundary deferral.
    *
    * @remarks
-   * `'schema_and_depth'` reports as `'schema_boundary'` (the stricter gate); the breaching depth
-   * still rides the lead's own `depth` field. `'budget'`, `'direction'`, `'excluded'` and `'pruned'`
+   * `'schema'` reports as `'schema_boundary'`. `'budget'`, `'direction'`, `'excluded'` and `'pruned'`
    * map 1:1 to their own `PendingLead['reason']` members — every added member is additive, so an
    * older checkpoint missing them still parses.
    */
   private recordPendingLead(entry: DeferredQuestion): void {
     const task = this.ensureDeferredTask(entry.nodeId, entry.question, entry.atHop);
-    const leadReason: PendingLead['reason'] = entry.reason === 'depth' ? 'depth_boundary'
-      : entry.reason === 'budget' ? 'budget'
-      : entry.reason === 'direction' ? 'out_of_direction'
-      : entry.reason === 'excluded' ? 'excluded'
-      : entry.reason === 'pruned' ? 'pruned_by_ai'
-      : 'schema_boundary';
+    const leadReason = LEAD_REASON_BY_DEFERRAL[entry.reason];
     this.taskLedger.ensureLead({
       taskId: task.id,
       nodeId: entry.nodeId,
@@ -870,21 +996,23 @@ export class NavigationEngine implements IHopStateMachine {
    * legitimate alternatives built in so the model never has to guess: BB for the object, real
    * columns for CT.
    */
-  private rejectNodeRefColumnTargets(nodeRefs: string[]): { error: string; hint: string } {
-    return {
-      error: NavigationEngine.TARGET_COLUMNS_NAME_OBJECTS,
-      hint: `targetColumns [${trunc(nodeRefs.join(', '), 200)}] resolve to objects in the loaded model, not columns. To trace an object, resend without targetColumns and analysisMode "bb". To trace columns, name the user-named columns of the origin instead.`,
-    };
+  private rejectNodeRefColumnTargets(nodeRefs: string[]): ToolRejection {
+    return makeRejection({
+      code: NavigationEngine.TARGET_COLUMNS_NAME_OBJECTS,
+      hint: `targetColumns [${nodeRefs.join(', ')}] resolve to objects in the loaded model, not columns. To trace an object, resend without targetColumns and analysisMode "bb". To trace columns, name the user-named columns of the origin instead.`,
+    });
   }
 
   /**
-   * Bounds CT active columns to the focus node's declared columns when the node has a column
-   * surface. Procedures/functions may write columns elsewhere, so absence of local columns is not
-   * proof that the target is absent there.
+   * Matches requested CT column strings against a node's declared columns (case/bracket-insensitive
+   * exact name or dotted-suffix). When the node exposes no column metadata, every requested entry
+   * is accepted as a bare, deduped name — procedures/functions may write columns elsewhere, so
+   * absence of local columns is not proof that the target is absent there, and `unmatched` stays
+   * empty in that case. `unmatched` is populated only when the node *does* declare columns and a
+   * requested entry matches none of them — the signal a fresh CT origin uses to reject a foreign
+   * column instead of silently dropping it.
    */
-  private resolveActiveColumnsForNode(nodeId: string, columns?: string[]): string[] | undefined {
-    if (!columns) return undefined;
-    if (columns.length === 0) return [];
+  private matchColumnsToNode(nodeId: string, columns: string[]): { resolved: string[]; unmatched: string[] } {
     const nodeColumns = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? [];
     if (nodeColumns.length === 0) {
       const bare: string[] = [];
@@ -896,18 +1024,68 @@ export class NavigationEngine implements IHopStateMachine {
         seen.add(key);
         bare.push(name);
       }
-      return bare;
+      return { resolved: bare, unmatched: [] };
     }
     const byNorm = new Map<string, string>(nodeColumns.map((c) => [normalizeColName(c.name), c.name]));
     const resolved: string[] = [];
+    const unmatched: string[] = [];
     for (const requested of columns) {
       const exact = byNorm.get(normalizeColName(requested));
       const lastSegment = requested.split('.').pop() ?? requested;
       const suffix = exact === undefined ? byNorm.get(normalizeColName(lastSegment)) : undefined;
       const match = exact ?? suffix;
-      if (match !== undefined && !resolved.includes(match)) resolved.push(match);
+      if (match !== undefined) {
+        if (!resolved.includes(match)) resolved.push(match);
+      } else {
+        unmatched.push(requested);
+      }
     }
-    return resolved;
+    return { resolved, unmatched };
+  }
+
+  /**
+   * Names a requested CT target explicitly qualified to a *different* loaded node
+   * (`Table.Column`, `[schema].[Table].[Column]`, …) — proof the model itself named another
+   * object, not merely a bare name that happens to also appear elsewhere. Used only by the
+   * fresh/refine CT origin validation in {@link init}; a bare, unqualified name keeps
+   * {@link matchColumnsToNode}'s charitable bare-acceptance for a column-metadata-less origin
+   * untouched — a procedure may legitimately write out a column declared on a table it reads.
+   * A qualifier the origin itself satisfies (its name, and its schema when one is given) is never
+   * foreign, even when another schema holds a same-named object.
+   */
+  private explicitlyForeignColumns(originNodeId: string, requested: readonly string[]): string[] {
+    const origin = this.nodeMap.get(originNodeId);
+    const foreign: string[] = [];
+    for (const raw of requested) {
+      const parts = splitSqlName(raw).map((part) => stripBrackets(part).trim()).filter((part) => part.length > 0);
+      if (parts.length < 2) continue;
+      const qualifier = normalizeColName(parts[parts.length - 2]);
+      const schemaQualifier = parts.length >= 3 ? normalizeColName(parts[parts.length - 3]) : null;
+      const names = (node: LineageNode): boolean => normalizeColName(node.name) === qualifier
+        && (schemaQualifier === null || normalizeColName(node.schema) === schemaQualifier);
+      if (origin && names(origin)) continue;
+      for (const [otherId, node] of this.nodeMap) {
+        if (otherId === originNodeId) continue;
+        if (names(node)) {
+          foreign.push(raw);
+          break;
+        }
+      }
+    }
+    return foreign;
+  }
+
+  /**
+   * Bounds CT active columns to the focus node's declared columns when the node has a column
+   * surface. Used for mid-trace narrowing (a downstream node may carry only some tracked columns);
+   * never for validating a fresh CT origin's requested columns — that needs {@link matchColumnsToNode}'s
+   * `unmatched` list, since silently dropping a foreign column here would be the same defect this
+   * method exists to avoid at the boundary.
+   */
+  private resolveActiveColumnsForNode(nodeId: string, columns?: string[]): string[] | undefined {
+    if (!columns) return undefined;
+    if (columns.length === 0) return [];
+    return this.matchColumnsToNode(nodeId, columns).resolved;
   }
 
 
@@ -917,22 +1095,17 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Collapses `this._direction` plus an asymmetric depth's per-side `0` into the single traversal
+   * Collapses `this._direction` plus a depth side of exactly `0` into the single traversal
    * direction actually approved for later hop growth.
    *
    * @remarks
-   * Only narrows a `'bidirectional'` session — a fixed direction already fully restricts. An
-   * asymmetric side of exactly `0` is a permanent exclusion of that direction (not just the initial
-   * seed); both sides `0` cannot reach here (rejected at the Zod boundary before `init()`).
+   * Only narrows a `'bidirectional'` session — a fixed direction already fully restricts. A side
+   * of exactly `0` is a permanent exclusion of that direction (not just the initial seed); both
+   * sides `0` cannot reach here (rejected at the Zod boundary before `init()`).
    */
   private effectiveDirection(): 'upstream' | 'downstream' | 'bidirectional' {
     if (this._direction !== 'bidirectional') return this._direction;
-    const depthIntent = this.currentDepthIntent;
-    if (depthIntent.kind === 'asymmetric') {
-      if (depthIntent.upstream === 0) return 'downstream';
-      if (depthIntent.downstream === 0) return 'upstream';
-    }
-    return 'bidirectional';
+    return directionFromDepth(this.currentDepthIntent);
   }
 
   /**
@@ -1041,27 +1214,32 @@ export class NavigationEngine implements IHopStateMachine {
    * The single scope-border test — is `node` inside the approved border for the given write path?
    *
    * @remarks
-   * Consolidates the exclusion-set / direction / schema-allowlist checks every write path shares,
-   * axes selected by `purpose` ({@link BorderPurpose}), check order fixed (exclusions → direction →
-   * allowlist).
+   * Consolidates the exclusion-set / direction checks every write path shares, axes selected by
+   * `purpose` ({@link BorderPurpose}), check order fixed (exclusions → direction). A GUI-hidden
+   * schema is a default exclusion, so the exclusion axis is the one schema wall. The schema axis is
+   * tested last among the exclusions, so an `excluded` verdict names `schema` only when no
+   * user-authored type or node-id exclusion also holds the node.
    *
    * @param purpose - Which write path is asking, fixing the participating axes.
    */
   private checkBorder(nodeId: string, node: LineageNode, purpose: BorderPurpose): BorderVerdict {
     const checkDirection = purpose === 'route' || purpose === 'contraction';
-    const checkAllowlist = purpose !== 'seed_bfs';
 
-    if (this.excludedTypes.has(node.type.toLowerCase())) return { kind: 'excluded' };
-    if (this.excludedSchemas.has(node.schema.toLowerCase())) return { kind: 'excluded' };
-    if (this.excludedNodeIds.has(nodeId.toLowerCase())) return { kind: 'excluded' };
+    if (this.excludedTypes.has(node.type.toLowerCase())) return { kind: 'excluded', axis: 'type' };
+    if (this.excludedNodeIds.has(nodeId.toLowerCase())) return { kind: 'excluded', axis: 'node_id' };
+    if (this.excludedSchemas.has(node.schema.toLowerCase())) return { kind: 'excluded', axis: 'schema' };
     if (checkDirection && !this.isReachableInApprovedDirection(nodeId)) return { kind: 'out_of_direction' };
-    if (checkAllowlist
-      && this.sessionAllowedSchemas.size > 0
-      && !this.sessionAllowedSchemas.has(node.schema.toLowerCase())
-      && !this.sessionAllowedNodeIds.has(nodeId.toLowerCase())) {
-      return { kind: 'out_of_allowlist' };
-    }
     return { kind: 'in_border' };
+  }
+
+  /**
+   * Whether an `excluded` border verdict traces to the GUI schema filter (the node's schema is
+   * unticked) rather than a user-authored exclusion pattern (`excludeTypes`/`excludeNodeIds`, or a
+   * schema the user typed that the GUI did not already hide), so a supplement skip or route
+   * deferral can tell the model the `confirm_sm_start` repair.
+   */
+  private isGuiHiddenSchemaBorder(border: BorderVerdict, node: LineageNode): boolean {
+    return border.kind === 'excluded' && border.axis === 'schema' && this.guiHiddenSchemas.has(node.schema.toLowerCase());
   }
 
   /**
@@ -1085,7 +1263,6 @@ export class NavigationEngine implements IHopStateMachine {
     return {
       border,
       depthBreach,
-      candidateDepth,
       admitted: border.kind === 'in_border' && depthBreach === null,
     };
   }
@@ -1133,26 +1310,19 @@ export class NavigationEngine implements IHopStateMachine {
     return this.depthBudget;
   }
 
-  /**
-   * Depth verdict captured at {@link init}, each asymmetric side reported by its binding.
-   *
-   * @remarks
-   * The init record keeps an unstated side at its seed; the per-side ceiling is what binds, so a
-   * finite seed with no ceiling reads back as the unstated `null` side ({@link DepthSide}) — the
-   * same answer on a fresh engine and on one restored from a checkpoint.
-   */
+  /** Fallback depth verdict for a {@link currentDepthIntent} read before {@link init} ever ran. */
+  private static readonly UNSET_DEPTH_INTENT: DepthIntent = Object.freeze({
+    upstream: { levels: 'all' as const, exactness: 'approximate' as const },
+    downstream: { levels: 'all' as const, exactness: 'approximate' as const },
+  });
+
+  /** Depth verdict captured at {@link init}, verbatim. */
   public get currentDepthIntent(): DepthIntent {
-    const seeded = this.initSnapshot?.depthIntent ?? { kind: 'default_start' };
-    if (seeded.kind !== 'asymmetric') return seeded;
-    const bound = (side: 'upstream' | 'downstream'): DepthSide => {
-      const value = seeded[side];
-      return typeof value === 'number' && !Number.isFinite(this.depthLimits[side]) ? null : value;
-    };
-    return { kind: 'asymmetric', upstream: bound('upstream'), downstream: bound('downstream') };
+    return this.initSnapshot?.depthIntent ?? NavigationEngine.UNSET_DEPTH_INTENT;
   }
 
   /** Depth-enforcement mode captured at {@link init}. */
-  public get currentDepthEnforcement(): 'strict' | 'soft' | 'silent' {
+  public get currentDepthEnforcement(): 'strict' | 'silent' {
     return this.depthEnforcement;
   }
 
@@ -1169,6 +1339,20 @@ export class NavigationEngine implements IHopStateMachine {
   /** Target columns captured at {@link init} (null when no column-trace aspect). */
   public get currentTargetColumns(): string[] | null {
     return this.initSnapshot?.targetColumns ?? null;
+  }
+
+  /**
+   * The column facts that narrow this hop's served `column_flow`: the tracked columns when an
+   * upstream trace accepts only those as `out_col`, and whether the focus is a procedure (the one
+   * node that may name a `writes_to` target).
+   */
+  public get hopSubmitColumns(): SubmitFindingsHopColumns {
+    const focus = this.currentFocusNodeId ? this.nodeMap.get(this.currentFocusNodeId) : undefined;
+    const active = this.tracer?.activeColumns.filter(Boolean) ?? [];
+    return {
+      outCols: this.columnTraceDirection() === 'upstream' && active.length > 0 ? [...active] : null,
+      writesTo: focus?.type === 'procedure',
+    };
   }
 
   /** Explicit analysis mode captured at {@link init}. */
@@ -1193,12 +1377,14 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * Single source of truth — the gate's "Scope: N" line and the rendered tree both come
-   * from this object so the count and the tree never diverge. Cap is honoured per leaf
-   * to keep gate detail under chat-message size limits; overflow surfaced as `omitted`.
+   * from this object so the count and the tree never diverge. Every in-scope name is listed;
+   * `omitted` counts the names past `namesPerType` when a caller bounds the list.
+   * `ambiguousObjectNames` is computed from the full {@link nodeMap}, not the proposed scope
+   * alone, so a name is flagged even when only one of its colliding schemas is in scope.
    *
-   * @param namesPerType - Cap on names listed under each (schema,type) pair. Default 8.
+   * @param namesPerType - Names listed under each (schema,type) pair; every name by default.
    */
-  public getScopeSummary(namesPerType = 8): ScopeSummary {
+  public getScopeSummary(namesPerType = Number.POSITIVE_INFINITY): ScopeSummary {
     const bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }> = {};
     let hopCount = 0;
 
@@ -1230,16 +1416,41 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    const schemasByTypeName = new Map<string, Set<string>>();
+    for (const n of this.nodeMap.values()) {
+      const type = n.type ?? 'external';
+      const key = `${type}\u0000${n.name.toLowerCase()}`;
+      const schemas = schemasByTypeName.get(key) ?? new Set<string>();
+      schemas.add(n.schema.toLowerCase());
+      schemasByTypeName.set(key, schemas);
+    }
+    const ambiguousObjectNames: Record<string, string[]> = {};
+    for (const [key, schemas] of schemasByTypeName) {
+      if (schemas.size < 2) continue;
+      const [type, lowerName] = key.split('\u0000');
+      (ambiguousObjectNames[type] ??= []).push(lowerName);
+    }
+
     const estimatedDdlChars = this.estimateScopeDdlChars();
     const originNode = this.originNodeId ? this.nodeMap.get(this.originNodeId) : undefined;
     const originLabel = originNode ? `${originNode.schema}.${originNode.name}` : (this.originNodeId ?? '');
-    const canonicalNodeId = (id: string): string => resolveModelNodeId(id, this.nodeMap) ?? id;
+    const canonicalNodeId = (id: string): string => {
+      const key = resolveModelNodeId(id, this.nodeMap) ?? id;
+      const node = this.nodeMap.get(key);
+      return node ? `[${node.schema}].[${node.name}]` : key;
+    };
+    const schemaNames = new Map<string, string>();
+    for (const n of this.nodeMap.values()) {
+      const key = n.schema.toLowerCase();
+      if (this.excludedSchemas.has(key) && !schemaNames.has(key)) schemaNames.set(key, n.schema);
+    }
 
     return {
       hopCount,
       scopeCount: this.scopeNodeIds.size,
       origin: this.originNodeId ?? '',
       originLabel,
+      missionBrief: this.currentMissionBrief ?? undefined,
       depth: this.depthBudget,
       depthIntent: this.currentDepthIntent,
       direction: this._direction,
@@ -1249,10 +1460,11 @@ export class NavigationEngine implements IHopStateMachine {
       estimatedDdlChars,
       estimatedDdlTokens: estimateTokens(estimatedDdlChars),
       bySchema,
+      ambiguousObjectNames,
       scopeNotes: this.memory.getScopeNotes(),
       classification: this.classification,
       activeFilters: {
-        schemas: Array.from(this.excludedSchemas).sort(),
+        schemas: Array.from(this.excludedSchemas, key => schemaNames.get(key) ?? key).sort(),
         types: Array.from(this.excludedTypes).sort(),
         nodeIds: Array.from(this.excludedNodeIds, canonicalNodeId).sort(),
         passNodeIds: Array.from(this.passNodeIds, canonicalNodeId).sort(),
@@ -1344,30 +1556,25 @@ export class NavigationEngine implements IHopStateMachine {
   private _lastCurrentTask = '';
 
   /** Sets up the navigation map to prepare for traversal. */
-  public init(params: NavigationInitParams): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | { error: string; hint?: string; unresolved_excludeNodeIds?: string[]; unresolved_passNodeIds?: string[] } {
-    if (params.depthIntent?.kind === 'asymmetric' && (params.direction ?? 'bidirectional') !== 'bidirectional') {
-      return {
-        error: ASYMMETRIC_DEPTH_REQUIRES_BIDIRECTIONAL,
-        hint: 'Resend this refine with direction "bidirectional" — asymmetric depths require it and the prior proposal kept a single direction — or use one direction with a symmetric depth.',
-      };
-    }
-    if (params.depthIntent?.kind === 'asymmetric' && params.depthIntent.upstream === 0 && params.depthIntent.downstream === 0) {
-      return {
-        error: ASYMMETRIC_DEPTH_BOTH_ZERO,
+  public init(params: NavigationInitParams): { ok: true; scopeSize: number; agendaSize: number; scopeSchemas: string[] } | ToolRejection {
+    const depthIntent: DepthIntent = params.depthIntent;
+    if (bothSidesClosed(depthIntent.upstream, depthIntent.downstream)) {
+      return makeRejection({
+        code: ASYMMETRIC_DEPTH_BOTH_ZERO,
         hint: 'This refine closes the last open side: resend depth with at least one side ≥ 1 or "all".',
-      };
+      });
     }
     if (params.analysisMode === 'ct' && (!params.targetColumns || params.targetColumns.length === 0)) {
-      return {
-        error: REJECTION_CODES.missingField,
+      return makeRejection({
+        code: REJECTION_CODES.missingField,
         hint: 'Resend with at least one named targetColumns value for CT, or change analysisMode to "bb" and resend.',
-      };
+      });
     }
     if (params.analysisMode === 'bb' && params.targetColumns !== undefined) {
-      return {
-        error: REJECTION_CODES.ctFieldForbiddenInBb,
-        hint: 'Omit targetColumns and resubmit the BB specification. If the provider emits an empty array, the encoding boundary normalizes it automatically.',
-      };
+      return makeRejection({
+        code: REJECTION_CODES.ctFieldForbiddenInBb,
+        hint: 'Omit targetColumns and resubmit the BB specification.',
+      });
     }
     const wasRefine = this.initSnapshot !== null;
     const prevScopeSize = this.scopeNodeIds.size;
@@ -1386,12 +1593,15 @@ export class NavigationEngine implements IHopStateMachine {
     const passIds = partition(params.passNodeIds ?? []);
     if (excludeIds.unresolved.length > 0 || passIds.unresolved.length > 0) {
       this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
-      return {
-        error: 'unknown_node_ids',
+      return makeRejection({
+        code: 'unknown_node_ids',
+        reason: [
+          ...(excludeIds.unresolved.length > 0 ? [`excludeNodeIds not in the loaded model: ${excludeIds.unresolved.join(', ')}`] : []),
+          ...(passIds.unresolved.length > 0 ? [`passNodeIds not in the loaded model: ${passIds.unresolved.join(', ')}`] : []),
+        ].join('; '),
         hint: "These ids don't exist in the loaded model after bracket/case normalization. Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
-        unresolved_excludeNodeIds: excludeIds.unresolved,
-        unresolved_passNodeIds: passIds.unresolved,
-      };
+        detail: { unresolved_excludeNodeIds: excludeIds.unresolved, unresolved_passNodeIds: passIds.unresolved },
+      });
     }
     if (excludeIds.resolved.length + passIds.resolved.length > 0) {
       this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}]`);
@@ -1400,10 +1610,10 @@ export class NavigationEngine implements IHopStateMachine {
     const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap);
     const originNode = resolvedOriginId ? this.nodeMap.get(resolvedOriginId) : null;
     if (!originNode) {
-      return {
-        error: 'origin_not_found',
+      return makeRejection({
+        code: 'origin_not_found',
         hint: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns (case-insensitive match against the loaded graph).',
-      };
+      });
     }
 
     const analysisMode: 'bb' | 'ct' = params.analysisMode ?? ((params.targetColumns?.length ?? 0) > 0 ? 'ct' : 'bb');
@@ -1415,17 +1625,19 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[AI] [CT] target columns [${trunc(nodeRefs.join(','), 120)}] resolve to objects, not columns — rejecting start`);
         return this.rejectNodeRefColumnTargets(nodeRefs);
       }
-      const resolved = this.resolveActiveColumnsForNode(originNode.id, effectiveTargetColumns) ?? [];
-      if (resolved.length === 0) {
-        const declared = getNodeColumns(originNode.id, this.nodeMap, this.store ?? undefined) ?? [];
+      const declared = getNodeColumns(originNode.id, this.nodeMap, this.store ?? undefined) ?? [];
+      const { resolved, unmatched } = this.matchColumnsToNode(originNode.id, effectiveTargetColumns);
+      const explicitlyForeign = this.explicitlyForeignColumns(originNode.id, effectiveTargetColumns);
+      if (resolved.length === 0 || unmatched.length > 0 || explicitlyForeign.length > 0) {
         const declaredNames = declared.map((c) => c.name);
-        this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] not found on origin ${originNode.id} — rejecting (no zero-trace fallback)`);
-        return {
-          error: 'unknown_columns',
+        const offending = unmatched.length > 0 ? unmatched : (explicitlyForeign.length > 0 ? explicitlyForeign : effectiveTargetColumns);
+        this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] offending=[${offending.join(',')}] not on origin ${originNode.id} — rejecting (no partial-trace fallback)`);
+        return makeRejection({
+          code: 'unknown_columns',
           hint: declaredNames.length > 0
-            ? `targetColumns [${effectiveTargetColumns.join(', ')}] are not columns on ${originNode.id}. Its columns are: [${trunc(declaredNames.join(', '), 300)}]. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
-            : `${originNode.id} exposes no column metadata to trace. Ask the user to clarify or switch analysisMode to "bb".`,
-        };
+            ? `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}. Its columns are: [${declaredNames.join(', ')}]. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
+            : `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}, which exposes no column metadata of its own. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`,
+        });
       }
       this.log('debug', `[Admit] guard=ct_target_columns phase=init focus=${originNode.id} active=${resolved.length} — tracing [${resolved.join(', ')}]`);
       resolvedActiveColumns = resolved;
@@ -1453,82 +1665,46 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
-    this.excludedSchemas = new Set((params.excludeSchemas ?? []).map(s => s.toLowerCase()));
-    this.excludedNodeIds = new Set(excludeIds.resolved.map(s => s.toLowerCase()));
+
+    const originSchema = originNode.schema.toLowerCase();
+    const originId = originNode.id.toLowerCase();
+    this.excludedSchemas = new Set((params.excludeSchemas ?? [...this.guiHiddenSchemas]).map(s => s.toLowerCase()).filter(s => s !== originSchema));
+    this.excludedNodeIds = new Set(excludeIds.resolved.map(s => s.toLowerCase()).filter(id => id !== originId));
+    if (excludeIds.resolved.some(id => id.toLowerCase() === originId)) {
+      this.log('debug', `[Border] origin ${originNode.id} named in excludeNodeIds — kept in scope as the origin`);
+    }
     this.passNodeIds = new Set(passIds.resolved.map(s => s.toLowerCase()));
+    if (this.userSchemas.size > 0) {
+      const openedByProposal = params.excludeSchemas === undefined
+        ? []
+        : [...this.guiHiddenSchemas].filter(schema => !this.excludedSchemas.has(schema));
+      this.sessionAllowedSchemas = new Set([...this.userSchemas, originSchema, ...openedByProposal]);
+    }
 
     this.originNodeId = originNode.id;
     const direction = params.direction || 'bidirectional';
-    const depthIntent: DepthIntent = params.depthIntent ?? { kind: 'default_start' };
-    let seedDepth: number;
-    let depthLabel: string;
-    switch (depthIntent.kind) {
-      case 'explicit':
-        this.depthBudget = depthIntent.levels;
-        this.depthEnforcement = 'strict';
-        this.depthLimits = { upstream: depthIntent.levels, downstream: depthIntent.levels };
-        seedDepth = depthIntent.levels;
-        depthLabel = String(seedDepth);
-        break;
-      case 'full_frontier':
-        this.depthBudget = null;
-        this.depthEnforcement = 'silent';
-        this.depthLimits = NavigationEngine.UNBOUNDED_DEPTH_LIMITS;
-        seedDepth = Number.POSITIVE_INFINITY;
-        depthLabel = 'all';
-        break;
-      case 'asymmetric': {
-        const sideLimit = (value: DepthSide): number =>
-          value === 'all' || value === null ? Number.POSITIVE_INFINITY : value;
-        this.depthLimits = {
-          upstream: sideLimit(depthIntent.upstream),
-          downstream: sideLimit(depthIntent.downstream),
-        };
-        const bothFinite = Number.isFinite(this.depthLimits.upstream)
-          && Number.isFinite(this.depthLimits.downstream);
-        this.depthBudget = bothFinite
-          ? Math.max(this.depthLimits.upstream, this.depthLimits.downstream)
-          : null;
-        this.depthEnforcement = Number.isFinite(this.depthLimits.upstream) || Number.isFinite(this.depthLimits.downstream)
-          ? 'strict'
-          : 'silent';
-        const sideSeed = (value: DepthSide): number =>
-          value === null ? DEFAULT_SM_START_DEPTH : sideLimit(value);
-        seedDepth = Math.max(sideSeed(depthIntent.upstream), sideSeed(depthIntent.downstream));
-        const sideLabel = (value: DepthSide): string => (value === null ? `default:${DEFAULT_SM_START_DEPTH}` : String(value));
-        depthLabel = `up=${sideLabel(depthIntent.upstream)} down=${sideLabel(depthIntent.downstream)}`;
-        break;
-      }
-      case 'default_start':
-        this.depthBudget = DEFAULT_SM_START_DEPTH;
-        this.depthEnforcement = 'silent';
-        this.depthLimits = NavigationEngine.UNBOUNDED_DEPTH_LIMITS;
-        seedDepth = DEFAULT_SM_START_DEPTH;
-        depthLabel = `default:${DEFAULT_SM_START_DEPTH}`;
-        this.log('debug', `[Depth] default applied levels=${DEFAULT_SM_START_DEPTH} reason=ai_and_user_omitted_depth`);
-        break;
-      default: {
-        const _exhaustive: never = depthIntent;
-        throw new Error(`unhandled depth intent: ${JSON.stringify(_exhaustive)}`);
-      }
-    }
+    const sideLimit = (side: DepthSideValue): number => (side.levels === 'all' ? Number.POSITIVE_INFINITY : side.levels);
+    this.depthLimits = {
+      upstream: depthIntent.upstream.exactness === 'exact' ? sideLimit(depthIntent.upstream) : Number.POSITIVE_INFINITY,
+      downstream: depthIntent.downstream.exactness === 'exact' ? sideLimit(depthIntent.downstream) : Number.POSITIVE_INFINITY,
+    };
+    const bothFinite = Number.isFinite(this.depthLimits.upstream) && Number.isFinite(this.depthLimits.downstream);
+    this.depthBudget = bothFinite ? Math.max(this.depthLimits.upstream, this.depthLimits.downstream) : null;
+    this.depthEnforcement = Number.isFinite(this.depthLimits.upstream) || Number.isFinite(this.depthLimits.downstream)
+      ? 'strict'
+      : 'silent';
+    const sideLabel = (side: DepthSideValue): string => `${side.levels}:${side.exactness}`;
+    const depthLabel = `up=${sideLabel(depthIntent.upstream)} down=${sideLabel(depthIntent.downstream)}`;
     const capSide = (value: number): string => (Number.isFinite(value) ? String(value) : 'all');
     this.log(
       'debug',
-      `[Depth] resolved intent=${depthIntent.kind} label=${depthLabel} `
+      `[Depth] resolved ${depthLabel} `
       + `enforcement=${this.depthEnforcement} `
       + `cap=up:${capSide(this.depthLimits.upstream)}/down:${capSide(this.depthLimits.downstream)} `
       + `budget=${this.depthBudget ?? 'none'}`,
     );
     this.budgetExpansions = [];
-    const seededIntent: SeededDepthIntent = depthIntent.kind === 'asymmetric'
-      ? {
-        kind: 'asymmetric',
-        upstream: depthIntent.upstream ?? DEFAULT_SM_START_DEPTH,
-        downstream: depthIntent.downstream ?? DEFAULT_SM_START_DEPTH,
-      }
-      : depthIntent;
-    this.scopeNodeIds = this.computeBfsScope(originNode.id, direction, seededIntent);
+    this.scopeNodeIds = this.computeBfsScope(originNode.id, direction);
 
     let initialActiveColumns = effectiveTargetColumns;
     if (analysisMode === 'ct' && effectiveTargetColumns && effectiveTargetColumns.length > 0) {
@@ -1576,7 +1752,7 @@ export class NavigationEngine implements IHopStateMachine {
     const contractParts = [
       originNode.id,
       params.direction || 'bidirectional',
-      depthIntent.kind === 'explicit' ? `explicit:${depthIntent.levels}` : depthIntent.kind,
+      `${sideLabel(depthIntent.upstream)}|${sideLabel(depthIntent.downstream)}`,
       Array.from(this.scopeNodeIds).sort().join(','),
       Array.from(this.excludedTypes).sort().join(','),
       Array.from(this.excludedSchemas).sort().join(','),
@@ -1599,7 +1775,7 @@ export class NavigationEngine implements IHopStateMachine {
         ? { targetColumns: [...effectiveTargetColumns] as [string, ...string[]] }
         : {}),
       direction: this._direction,
-      depthIntent: seededIntent,
+      depthIntent,
       mission_brief: params.mission_brief,
     };
     const rootTask = this.taskLedger.ensureTask(this.taskInputFor({
@@ -1620,27 +1796,76 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Admits follow-up targets by id, widening the allowlist for each one named.
+   * Nodes physically connected to the traced graph, plus every batch id reachable from it —
+   * directly or transitively through another batch id.
    *
    * @remarks
-   * Id-scoped, never schema-scoped, and monotonic — repeated follow-ups can only widen. Exclusion
-   * sets stay a hard wall: an excluded id is never admitted, checked via the same {@link checkBorder}
-   * the supplement write path applies, so this site cannot drift from it.
+   * Multi-source BFS seeded from `scopeNodeIds ∪ visited`, ignoring `removedSet` (a prune hides a
+   * node from the render, it does not sever a physical edge — same rationale as
+   * {@link scopeBoundedPathToOrigin}), and walking only into nodes already seeded or named in
+   * `batchIds`. A batch id whose only path back runs through an object outside both sets is never
+   * discovered — the graph the id must connect to is the traced one, not the whole loaded model.
    *
-   * @param nodeIds - Follow-up targets, canonical or free-cased; unresolvable and excluded ids are ignored.
-   * @returns The canonical ids actually admitted, so the reply can name them.
+   * @param batchIds - Candidate ids from one `supplement` call, so a chain within the same request
+   *   can connect through each other even before any of them is itself admitted.
+   * @returns Every seed plus every batch id reachable from a seed or another reachable batch id.
    */
-  private admitSupplementTargets(nodeIds: readonly string[]): string[] {
+  private tracedGraphReachable(batchIds: ReadonlySet<string>): Set<string> {
+    const reachable = new Set<string>([...this.scopeNodeIds, ...this.visited]);
+    const allowed = new Set<string>([...reachable, ...batchIds]);
+    const queue = [...reachable];
+    let idx = 0;
+    while (idx < queue.length) {
+      const id = queue[idx++];
+      for (const nid of this.graph.neighbors(id)) {
+        if (reachable.has(nid) || !allowed.has(nid)) continue;
+        reachable.add(nid);
+        queue.push(nid);
+      }
+    }
+    return reachable;
+  }
+
+  /**
+   * Finds follow-up targets that clear the border but have no dependency path to the traced graph.
+   *
+   * @remarks
+   * Unresolvable and excluded ids are left to the caller, which reports them with their own
+   * reasons ({@link checkBorder} is the same test). A resolved, non-excluded id with no path to the
+   * traced graph ({@link tracedGraphReachable}) is refused here rather than admitted into a view
+   * `present_result`'s closed-graph invariant could never close.
+   *
+   * @param nodeIds - Follow-up targets, canonical or free-cased.
+   * @returns The connected ids (logged), plus one {@link SupplementSkip} per unconnected id.
+   */
+  private admitSupplementTargets(nodeIds: readonly string[]): { admitted: string[]; skipped: SupplementSkip[] } {
     const admitted: string[] = [];
+    const skipped: SupplementSkip[] = [];
+    const candidates: Array<{ raw: string; node: LineageNode }> = [];
     for (const raw of nodeIds) {
-      const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      const id = resolveModelNodeId(raw, this.nodeMap);
       const node = id ? this.nodeMap.get(id) : undefined;
-      if (!node || this.checkBorder(node.id, node, 'supplement').kind === 'excluded') continue;
-      this.sessionAllowedNodeIds.add(node.id.toLowerCase());
+      if (!node) continue;
+      const border = this.checkBorder(node.id, node, 'supplement');
+      if (border.kind === 'excluded') continue;
+      candidates.push({ raw, node });
+    }
+    const batchIds = new Set(candidates.map(c => c.node.id));
+    const tracedReachable = this.tracedGraphReachable(batchIds);
+    for (const { node } of candidates) {
+      if (!tracedReachable.has(node.id)) {
+        skipped.push({
+          nodeId: node.id,
+          reason: REJECTION_CODES.notConnectedToTrace,
+          hint: `${node.id} is not connected to this trace; trace it on its own with lineage_start_exploration origin=${node.id}.`,
+        });
+        this.log('debug', `[Border] supplement refuse hop=${this.hopCount} id=${node.id} reason=${REJECTION_CODES.notConnectedToTrace}`);
+        continue;
+      }
       admitted.push(node.id);
     }
     if (admitted.length > 0) this.log('info', `[Border] supplement admit ids=[${admitted.join(',')}]`);
-    return admitted;
+    return { admitted, skipped };
   }
 
   /**
@@ -1665,8 +1890,10 @@ export class NavigationEngine implements IHopStateMachine {
    * Walks a chain add from each named id and returns the named ids followed by every object reached.
    *
    * @remarks
-   * The walk stops at a user-excluded object, so what the user removed and the branch reachable
-   * only through it stay out. Objects already analysed are not re-queued — only the named ids are
+   * The walk stops at an object the border refuses — a user exclusion or the GUI schema filter —
+   * so the branch reachable only through it stays out too; the refused object itself is still
+   * reported (`admitSupplementTargets` names it `excluded` or `out_of_allowlist`) rather than
+   * silently swallowed. Objects already analysed are not re-queued — only the named ids are
    * re-analysed on request.
    *
    * @returns Named ids first, then reached ids in breadth-first order, without duplicates.
@@ -1677,12 +1904,19 @@ export class NavigationEngine implements IHopStateMachine {
     const result: string[] = [...nodeIds];
     const seen = new Set(nodeIds.map(id => id.toLowerCase()));
     for (const raw of nodeIds) {
-      const start = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      const start = resolveModelNodeId(raw, this.nodeMap);
       if (!start || !this.graph.hasNode(start)) continue;
       bfsFromNode(this.graph, start, (key, _attr, depth) => {
         if (key === start) return false;
         const node = this.nodeMap.get(key);
-        if (!node || this.checkBorder(key, node, 'supplement').kind === 'excluded') return true;
+        if (!node) return true;
+        if (this.checkBorder(key, node, 'supplement').kind === 'excluded') {
+          if (!seen.has(key.toLowerCase())) {
+            seen.add(key.toLowerCase());
+            result.push(key);
+          }
+          return true;
+        }
         if (!seen.has(key.toLowerCase()) && !this.visited.has(key)) {
           seen.add(key.toLowerCase());
           result.push(key);
@@ -1699,24 +1933,30 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * Only callable when `status === 'complete'`. A prune this run made is not a veto here (see
-   * {@link unprune}) — only {@link excludedNodeIds} remains a hard wall.
+   * {@link unprune}) — the exclusion sets, a GUI-hidden schema included, remain a hard wall, whether
+   * the id is named directly or reached only through a chain walk. Status moves to `awaiting_findings`
+   * only when at least one id was agendaed; an all-refused call leaves `status` at `complete` so a
+   * fresh {@link NavigationInitParams} proposal is not blocked by a live-engine check.
    *
    * @param leadIds - Host-selected pending leads; never accepted from a model tool payload.
    * @returns Counts for agendaed, contracted, and skipped ids, plus per-node `skippedDetails`
-   *   naming which id was dropped and why (`excluded` | `unresolved`), or a structured error.
+   *   naming which id was dropped and why (`excluded` | `out_of_allowlist` | `unresolved` |
+   *   `not_connected_to_trace`, the last two refusals carrying a `hint`), or a structured error. A
+   *   partial admit — some ids agendaed, others skipped — is always `{ ok: true, ... }`, never
+   *   silent: every skip is named.
    */
-  public supplementAgenda(nodeIds: string[], leadIds: string[] = [], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | { error: string; hint?: string } {
+  public supplementAgenda(nodeIds: string[], leadIds: string[] = [], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection {
     if (this._status !== 'complete') {
-      return {
-        error: REJECTION_CODES.supplementRequiresCompleteEngine,
+      return makeRejection({
+        code: REJECTION_CODES.supplementRequiresCompleteEngine,
         hint: `supplementAgenda is only valid after the prior exploration has completed (status === 'complete'). Current status: ${this._status}.`,
-      };
+      });
     }
     if ((!Array.isArray(nodeIds) || nodeIds.length === 0) && (!Array.isArray(leadIds) || leadIds.length === 0)) {
-      return {
-        error: REJECTION_CODES.supplementEmpty,
+      return makeRejection({
+        code: REJECTION_CODES.supplementEmpty,
         hint: 'supplement requires at least one node id in supplement.nodeIds — pending leads are host-selected and cannot be supplied here. Name the ids from the completed exploration you want extended; if no node is left to extend, do not resend an empty supplement — answer from the completed exploration, or start a fresh exploration by providing an origin instead of supplement.',
-      };
+      });
     }
 
     const leadEntries = leadIds.map(leadId => {
@@ -1725,37 +1965,46 @@ export class NavigationEngine implements IHopStateMachine {
       return lead && task ? { lead, task } : null;
     });
     if (leadEntries.some(entry => !entry)) {
-      return {
-        error: 'invalid_pending_lead',
+      return makeRejection({
+        code: 'invalid_pending_lead',
         hint: 'Use an unresolved pending lead id from the completed exploration, or provide explicit supplement nodeIds.',
-      };
+      });
     }
 
     if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
     const requested = [
-      ...nodeIds.map(nodeId => ({ nodeId, question: `Supplement: investigate ${nodeId} on user follow-up`, taskId: undefined as string | undefined, leadId: undefined as string | undefined })),
+      ...nodeIds.map(nodeId => ({ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined })),
       ...leadEntries.map(entry => ({ nodeId: entry!.lead.nodeId, question: entry!.task.question, taskId: entry!.task.id, leadId: entry!.lead.id })),
     ];
 
-    this.admitSupplementTargets(requested.map(request => request.nodeId));
+    const admission = this.admitSupplementTargets(requested.map(request => request.nodeId));
+    const unconnectedIds = new Set(admission.skipped.map(skip => skip.nodeId.toLowerCase()));
 
     const agendaBefore = this._agenda.length;
-    let skipped = 0;
-    const skippedDetails: SupplementSkip[] = [];
+    let skipped = admission.skipped.length;
+    const skippedDetails: SupplementSkip[] = [...admission.skipped];
     for (const request of requested) {
       const raw = request.nodeId;
-      const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      const id = resolveModelNodeId(raw, this.nodeMap);
       if (!id) {
         this.log('debug', `[Supplement] refuse hop=${this.hopCount} id=${raw} reason=unresolved`);
         skippedDetails.push({ nodeId: raw, reason: 'unresolved' });
         skipped++;
         continue;
       }
+      if (unconnectedIds.has(id.toLowerCase())) continue;
       const supNode = this.nodeMap.get(id);
       const supBorder = supNode ? this.checkBorder(id, supNode, 'supplement') : null;
       if (supBorder && supBorder.kind !== 'in_border') {
-        this.log('debug', `[Supplement] refuse hop=${this.hopCount} id=${id} reason=excluded`);
-        skippedDetails.push({ nodeId: id, reason: 'excluded' });
+        const isAllowlistBoundary = !!supNode && this.isGuiHiddenSchemaBorder(supBorder, supNode);
+        const reason = isAllowlistBoundary ? 'out_of_allowlist' as const : 'excluded' as const;
+        this.log('debug', `[Supplement] refuse hop=${this.hopCount} id=${id} reason=${reason}`);
+        const guiFilterHint = isAllowlistBoundary
+          ? `${id} is outside the GUI schema filter (schema '${supNode!.schema}' is unticked), not a user-authored exclusion; start a new lineage_start_exploration proposal naming ${id}, with excludeSchemas sent and omitting '${supNode!.schema}' (a fresh proposal defaults excludeSchemas back to the GUI-hidden list, so omitting the field re-excludes it), for the user to approve at the confirm_sm_start gate.`
+          : undefined;
+        skippedDetails.push(guiFilterHint
+          ? { nodeId: id, reason, hint: guiFilterHint }
+          : { nodeId: id, reason });
         skipped++;
         continue;
       }
@@ -1786,10 +2035,10 @@ export class NavigationEngine implements IHopStateMachine {
     const agendaed = this._agenda.length - agendaBefore;
     const contracted = requested.length - agendaed - skipped;
 
-    this._status = 'awaiting_findings';
+    if (agendaed > 0) this._status = 'awaiting_findings';
 
     const modeLabel = this.mode.kind === 'ct' ? 'sm (ct)' : 'sm';
-    this.log('info', `[Supplement] added ${requested.length} requested tasks → agendaed=${agendaed} contracted=${contracted} skipped=${skipped}; mode=${modeLabel}, status=awaiting_findings`);
+    this.log('info', `[Supplement] added ${requested.length} requested tasks → agendaed=${agendaed} contracted=${contracted} skipped=${skipped}; mode=${modeLabel}, status=${this._status}`);
 
     return { ok: true, agendaed, contracted, skipped, skippedDetails };
   }
@@ -1903,8 +2152,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     workingMemory.approved_border = {
-      schemas: Array.from(this.sessionAllowedSchemas).sort(),
-      ...(this.sessionAllowedNodeIds.size > 0 ? { node_ids: Array.from(this.sessionAllowedNodeIds).sort() } : {}),
+      schemas: Array.from(this.sessionAllowedSchemas).filter(schema => !this.excludedSchemas.has(schema.toLowerCase())).sort(),
       depth_cap: this.computeDepthCap(),
     };
     workingMemory.deferred_count = this.deferredQuestions.length;
@@ -2009,36 +2257,44 @@ export class NavigationEngine implements IHopStateMachine {
    * reachable from the origin only through it ({@link cutUnreachable}). In CT the carry each
    * neighbour is enqueued with is derived from this submit's own `column_flow`.
    *
-   * Active-scope budget: routes named in `questions` are admitted first; engine-derived routes
-   * (auto-opened neighbours and `column_flow` references) are then admitted in one accumulating
-   * pass, and each one that would push the projected scope past the budget is deferred as a
-   * `'budget'` follow-up and logged. Only an over-budget `questions` route rejects the submit
-   * with `over_active_scope_budget`.
-   *
-   * @param budget - The submitting turn's budget the active-scope admission guard is measured
-   *   against; the shipped defaults apply where a caller runs outside a turn.
+   * The round and starting-column limits are checked only at admission (proposal, scope change,
+   * supplement), against the same full-reach preview this hop loop then walks — nothing here stops
+   * or defers a route for scope size once the run is approved.
    */
-  public submitFindings(params: HopSubmission, budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET): SubmitResult {
+  public submitFindings(params: HopSubmission): SubmitResult {
+    if (this._status === 'complete') {
+      return makeRejection({
+        code: REJECTION_CODES.explorationComplete,
+        hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
+        detail: { next_action: 'present_result' },
+      });
+    }
     if (this._status !== 'awaiting_findings') {
-      const hint = this._status === 'complete'
-        ? 'The engine already completed this exploration. Produce the synthesis output (chat prose + present_result) now — do not call submit_findings again.'
-        : this._status === 'error'
-          ? 'The engine is in an error state. Call start_exploration to begin a fresh exploration.'
-          : `Engine is in status '${this._status}'. Expected 'awaiting_findings'. Wait for a hop context, or restart via start_exploration if the session was wiped.`;
-      return { error: REJECTION_CODES.invalidStatus, current_status: this._status, hint };
+      const hint = this._status === 'error'
+        ? 'The engine is in an error state. Call start_exploration to begin a fresh exploration.'
+        : `Engine is in status '${this._status}'. Expected 'awaiting_findings'. Wait for a hop context, or restart via start_exploration if the session was wiped.`;
+      return makeRejection({ code: REJECTION_CODES.invalidStatus, hint, detail: { current_status: this._status } });
     }
 
     try {
-      this.heldFindingDraft.clear();
     const invalidRoutes: InvalidRoute[] = [];
     const routeOutcomes: RouteOutcome[] = [];
     const rawFocusId = params.focus_node_id;
     const focusId = resolveModelNodeId(rawFocusId, this.nodeMap) ?? rawFocusId?.toLowerCase();
     if (!focusId || !this.nodeMap.has(focusId)) {
-      return { error: REJECTION_CODES.invalidFocusNode, got: rawFocusId, expected: this.currentFocusNodeId ?? undefined };
+      return makeRejection({
+        code: REJECTION_CODES.invalidInput,
+        reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
+        hint: activeSubmitFindingsRecoveryHint(this.currentFocusNodeId ?? undefined),
+      });
     }
     if (focusId !== this.currentFocusNodeId) {
-      return { error: REJECTION_CODES.focusMismatch, expected: this.currentFocusNodeId ?? undefined, got: focusId };
+      const expected = this.currentFocusNodeId ?? '';
+      return makeRejection({
+        code: REJECTION_CODES.focusNodeIdMismatch,
+        hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${expected}. Resubmit with the correct focus_node_id.`,
+        detail: { expected, got: focusId },
+      });
     }
     if (params.verdict === 'end_branch') return this.submitEndBranch(params, focusId);
     const finding: HopFindingKept = params;
@@ -2060,15 +2316,14 @@ export class NavigationEngine implements IHopStateMachine {
     if (lengthViolations.length > 0) {
       const measured = lengthViolations.map(v => `${v.path}: ${v.chars} chars, limit ${v.limit}`).join('; ');
       this.memory.recordRejection(focusId, `${REJECTION_CODES.fieldLengthExceeded}: ${measured}`, this.hopCount);
-      this.heldFindingDraft.hold(structuredClone(finding));
-      return {
-        error: REJECTION_CODES.fieldLengthExceeded,
-        hint: `${measured}. Nothing was committed. Your analysis is held: resubmit submit_findings for ${focusId} with the listed field(s) shortened — send sections: [] to keep the prose you already authored, or new sections to replace it.`,
+      this.heldFindingDraft.hold(structuredClone(finding), { failed: lengthViolations.map(v => v.path.split('.')[0]) });
+      return makeRejection({
+        code: REJECTION_CODES.fieldLengthExceeded,
+        hint: `${measured}. Nothing was committed. Shorten the listed field(s) for ${focusId}. ${HELD_CORRECTION_ORDER}`,
         detail: lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit })),
-      };
+        issuePaths: lengthViolations.map(v => v.path),
+      });
     }
-    let columnChainFault: SubmissionFaults['columnChain'];
-
     const acceptedNids = new Set<string>();
     const scopeAddNids = new Set<string>();
     const deferredRoutes: ValidatedHop['deferredRoutes'] = [];
@@ -2140,7 +2395,6 @@ export class NavigationEngine implements IHopStateMachine {
       requested.add(nid);
       routeRequests.push({ nodeId: nid, question: q.question });
     });
-    const questionedNids = new Set(requested);
     for (const [nid, question] of flowQuestionByNode) {
       if (requested.has(nid) || !this.nodeMap.has(nid)) continue;
       requested.add(nid);
@@ -2166,7 +2420,7 @@ export class NavigationEngine implements IHopStateMachine {
       const targetNode = this.nodeMap.get(target.resolved);
       if (!targetNode) continue;
       const { border, depthBreach } = this.admitsRoute(target.resolved, targetNode, focusId);
-      if (border.kind === 'excluded' || border.kind === 'out_of_direction' || border.kind === 'out_of_allowlist'
+      if (border.kind === 'excluded' || border.kind === 'out_of_direction'
         || depthBreach !== null) {
         outOfScopePruneIds.add(target.resolved);
         invalidRoutes.push({
@@ -2197,9 +2451,17 @@ export class NavigationEngine implements IHopStateMachine {
       const admission = this.admitsRoute(nid, nNode, focusId);
       const routeBorder = admission.border;
       if (routeBorder.kind === 'excluded') {
-        routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: 'excluded' });
-        deferredRoutes.push({ nodeId: nNode.id, schema: nNode.schema, question: req.question, reason: 'excluded', depth: undefined });
-        this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=excluded`);
+        const isAllowlistBoundary = this.isGuiHiddenSchemaBorder(routeBorder, nNode);
+        const deferReason = isAllowlistBoundary ? 'schema' as const : 'excluded' as const;
+        routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: deferReason });
+        deferredRoutes.push({
+          nodeId: nNode.id,
+          schema: nNode.schema,
+          question: req.question,
+          reason: deferReason,
+          depth: isAllowlistBoundary ? admission.depthBreach ?? undefined : undefined,
+        });
+        this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=${deferReason}`);
         continue;
       }
       if (routeBorder.kind === 'out_of_direction') {
@@ -2209,47 +2471,21 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
-      const schemaBlocked = routeBorder.kind === 'out_of_allowlist';
-
-      const { depthBreach, candidateDepth } = admission;
-      if (schemaBlocked || depthBreach !== null) {
-        const deferReason: 'schema' | 'depth' | 'schema_and_depth' = schemaBlocked
-          ? (depthBreach !== null ? 'schema_and_depth' : 'schema')
-          : 'depth';
+      const { depthBreach } = admission;
+      if (depthBreach !== null) {
         deferredRoutes.push({
           nodeId: nNode.id,
           schema: nNode.schema,
           question: req.question,
-          reason: deferReason,
-          depth: depthBreach ?? candidateDepth,
+          reason: 'depth',
+          depth: depthBreach,
         });
-        routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: deferReason });
-        if (depthBreach !== null) {
-          this.log(
-            'debug',
-            `[Depth] border reached hop=${this.hopCount} id=${nNode.id} ← ${focusId} `
-            + `depth=${depthBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`,
-          );
-        }
-        continue;
-      }
-
-      const overBudget = !questionedNids.has(nid) && !this.scopeNodeIds.has(nid)
-        && !checkActiveScopeAdmission(
-          budget,
-          this.scopeNodeIds.size + scopeAddNids.size + 1,
-          this.estimateScopeDdlChars([...scopeAddNids, nid]),
-        ).ok;
-      if (overBudget) {
-        deferredRoutes.push({
-          nodeId: nNode.id,
-          schema: nNode.schema,
-          question: req.question,
-          reason: 'budget',
-          depth: undefined,
-        });
-        routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: 'budget' });
-        this.log('debug', `[Budget] neighbor deferred hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=over_scope_budget staged=+${scopeAddNids.size}`);
+        routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: 'depth' });
+        this.log(
+          'debug',
+          `[Depth] border reached hop=${this.hopCount} id=${nNode.id} ← ${focusId} `
+          + `depth=${depthBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`,
+        );
         continue;
       }
 
@@ -2260,10 +2496,6 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (this.tracer && finding.column_flow) {
       const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection);
-      if (valResult.error) {
-        return valResult.error;
-      }
-
       invalidRoutes.push(...valResult.invalidRoutes);
       for (const e of valResult.stagedEdges) e.hop = this.hopCount;
       stagedColumnEdges.push(...valResult.stagedEdges);
@@ -2287,7 +2519,7 @@ export class NavigationEngine implements IHopStateMachine {
         id: nid,
         path: pruneTargets.find(t => (t.resolved ?? t.raw.toLowerCase()) === nid)?.path,
         available_columns: carried,
-        reason: `\`${nid}\` carries tracked column${carried.length === 1 ? '' : 's'} [${carried.join(', ')}] that a column_flow entry already named, so it stays in the result for the rest of the run.`,
+        reason: `\`${nid}\` carries tracked column${carried.length === 1 ? '' : 's'} [${carried.join(', ')}] that a column_flow entry names${this.declaredRouteIds.has(nid) ? '' : ' in this submission'}, so it cannot be pruned.`,
       });
     }
 
@@ -2336,81 +2568,30 @@ export class NavigationEngine implements IHopStateMachine {
       }
     }
 
+    let unaccountedColumns: string[] = [];
     if (this.tracer) {
       const submittedFlow = finding.column_flow ?? [];
-      const contradicted = this.declaredActiveColumnsOf(focusId);
-      const declaresNoTrackedColumns =
-        finding.verdict === 'passthrough' && submittedFlow.length === 0 && contradicted.length === 0;
-      const unaccounted = declaresNoTrackedColumns ? [] : this.tracer.unaccountedActiveColumns(submittedFlow, traceDirection);
-      if (unaccounted.length > 0) {
-        columnChainFault = {
-          focusId,
-          unaccounted,
-          available: [...this.tracer.activeColumns],
-          contradicted: [...contradicted],
-          traceDirection,
-        };
-      }
-      if (declaresNoTrackedColumns) {
-        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=declares_none — declares none of the active columns [${this.tracer.activeColumns.join(', ')}], column chain ends here`);
-      } else if (unaccounted.length === 0) {
+      unaccountedColumns = this.tracer.unaccountedActiveColumns(submittedFlow, traceDirection);
+      if (unaccountedColumns.length > 0) {
+        this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=unaccounted columns=[${unaccountedColumns.join(', ')}] — left to the model, not rejected`);
+      } else {
         this.log('debug', `[Admit] guard=ct_completeness phase=active focus=${focusId} reason=all_accounted active=${this.tracer.activeColumns.length}`);
       }
     }
 
     const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
-    const reported = buildSubmissionRejection({
-      routes: fatalRoutes,
-      columnChain: columnChainFault,
-    });
+    const reported = buildSubmissionRejection({ routes: fatalRoutes });
     if (reported) {
-      const rejectedRefs = fatalRoutes.length + (columnChainFault?.unaccounted.length ?? 0);
-      if (rejectedRefs > 0) this.lastRoutedRejected = rejectedRefs;
+      if (fatalRoutes.length > 0) this.lastRoutedRejected = fatalRoutes.length;
       for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-      if (columnChainFault) {
-        this.memory.recordRejection(focusId, `${REJECTION_CODES.columnChainIncomplete}: ${columnChainFault.unaccounted.join(', ')}`, this.hopCount);
-      }
-      if (reported.hold) this.heldFindingDraft.hold(structuredClone(finding));
+      if (reported.hold) this.heldFindingDraft.hold(structuredClone(finding), { failed: fatalRoutes.flatMap(r => r.path?.split('.')[0] ?? []) });
       return reported.rejection;
-    }
-
-    if (scopeAddNids.size > 0) {
-      const projectedNodes = this.scopeNodeIds.size + scopeAddNids.size;
-      const admission = checkActiveScopeAdmission(budget, projectedNodes, this.estimateScopeDdlChars(scopeAddNids));
-      if (!admission.ok) {
-        this.lastRoutedRejected = scopeAddNids.size;
-        this.memory.recordRejection(focusId, `${REJECTION_CODES.overActiveScopeBudget}: +${scopeAddNids.size} neighbors would exceed the exploration budget`, this.hopCount);
-        this.heldFindingDraft.hold(structuredClone(finding));
-        const staged = scopeAddNids.size;
-        const stagedIds = [...scopeAddNids].join(', ');
-        const budgets = `(nodes ${admission.counts.nodes}/${admission.limits.node_cap}, est. tokens ${admission.counts.tokens}/${admission.limits.token_budget})`;
-        const flowNamed = [...scopeAddNids].filter(isDeclared);
-        const prunable = [...scopeAddNids].filter(nid => !isDeclared(nid));
-        const one = flowNamed.length === 1;
-        const flowNamedHint = `Visiting ${staged} new neighbor${staged === 1 ? '' : 's'} (${stagedIds}) would exceed the exploration budget ${budgets}. Your analysis is held: resend submit_findings without the questions entr${one ? 'y' : 'ies'} for ${flowNamed.join(', ')} — a column_flow names ${one ? 'it' : 'them'}, so prune_neighbors refuses ${one ? 'it' : 'them'}; without a question the engine keeps ${one ? 'it' : 'each one'} as a follow-up when the budget has no room.`
-          + (prunable.length > 0 ? ` For ${prunable.join(', ')}, drop the question the same way or name ${prunable.length === 1 ? 'it' : 'them'} in prune_neighbors.` : '');
-        return {
-          error: REJECTION_CODES.overActiveScopeBudget,
-          hint: flowNamed.length > 0
-            ? flowNamedHint
-            : staged === 1
-              ? `Visiting 1 new neighbor (${stagedIds}) would exceed the exploration budget ${budgets}. Your analysis is held: resend submit_findings with that neighbor in prune_neighbors — the hop closes on what it already has and the engine synthesizes. Say what it would have added in sections[].text if it matters to the answer.`
-              : `Visiting ${staged} new neighbors (${stagedIds}) would exceed the exploration budget ${budgets}. Your analysis is held: resend submit_findings with the neighbors not essential to the question in prune_neighbors; every neighbor you keep is visited.`,
-          detail: {
-            staged_routes: scopeAddNids.size,
-            projected_nodes: admission.counts.nodes,
-            node_cap: admission.limits.node_cap,
-            projected_tokens: admission.counts.tokens,
-            token_budget: admission.limits.token_budget,
-          },
-        };
-      }
-      this.log('debug', `[Admit] guard=active_scope_budget phase=active focus=${focusId} routes=+${scopeAddNids.size} nodes=${admission.counts.nodes}/${admission.limits.node_cap} tokens=${admission.counts.tokens}/${admission.limits.token_budget}`);
     }
 
     const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
     for (const notice of notices) {
       this.memory.recordRejection(notice.id, `\`${notice.id}\`: ${ROUTE_REJECTION_DIRECTIVE[notice.kind]}`, this.hopCount);
+      this.log('debug', `[Notice] hop=${this.hopCount} id=${notice.id} kind=${notice.kind} code=${ROUTE_REJECTION_CODE[notice.kind]}`);
     }
     for (const raw of unresolvedQuestions) {
       this.log('debug', `[Agenda] question dropped hop=${this.hopCount} id=${raw} ← ${focusId} reason=unresolved`);
@@ -2421,16 +2602,17 @@ export class NavigationEngine implements IHopStateMachine {
     return this.applyValidatedHop({
       focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
       carryByNode, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges, stagedCtNodeStates,
-      stagedColumnFlowEntries, autoOpenedNids,
+      stagedColumnFlowEntries, autoOpenedNids, unaccountedColumns,
     });
     } catch (err: unknown) {
       this.log('error', '[Engine] Exception in submitFindings', err);
       this._status = 'error';
-      return {
-        error: 'engine_crash',
+      const message = err instanceof Error ? err.message : String(err);
+      return makeRejection({
+        code: 'engine_crash',
+        reason: message || undefined,
         hint: 'The engine crashed while processing findings. Call start_exploration to restart the session.',
-        detail: err instanceof Error ? err.message : String(err),
-      };
+      });
     }
   }
 
@@ -2444,20 +2626,6 @@ export class NavigationEngine implements IHopStateMachine {
     if (this.effectiveDirection() === 'upstream') return false;
     if (nodeId === this.originNodeId) return true;
     return this.directedDepthsFor(nodeId)?.downstream !== undefined;
-  }
-
-  /**
-   * Active tracked columns the node itself declares, by name.
-   *
-   * @param nodeId - Canonical node id.
-   * @returns The tracer's active columns present on the node; empty in BB.
-   */
-  private declaredActiveColumnsOf(nodeId: string): string[] {
-    if (!this.tracer) return [];
-    const declaredNorm = new Set(
-      (getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? []).map(c => normalizeColName(c.name)),
-    );
-    return this.tracer.activeColumns.filter(c => declaredNorm.has(normalizeColName(c)));
   }
 
   /**
@@ -2515,11 +2683,7 @@ export class NavigationEngine implements IHopStateMachine {
   private submitEndBranch(finding: HopFindingEndBranch, focusId: string): SubmitResult {
     const faults: SubmissionFaults = { routes: [] };
     if (focusId === this.originNodeId) {
-      const declared = this.declaredActiveColumnsOf(focusId);
-      const keepClause = declared.length > 0
-        ? ` ${focusId} declares tracked column${declared.length > 1 ? 's' : ''} [${declared.join(', ')}], so a passthrough must carry a column_flow entry for each of them — column_flow:[] is refused here.`
-        : '';
-      faults.originPrune = { focusId, keepClause };
+      faults.originPrune = { focusId };
     } else if (this.tracer) {
       const carried = this.tracer.determineActiveColumnsForCandidate(
         focusId, [], this.writtenCarrierIds(focusId), undefined, this.columnTraceDirection(),
@@ -2527,7 +2691,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (carried.length > 0) {
         this.log('debug', `[Prune] end_branch refused hop=${this.hopCount} id=${focusId} reason=carries_tracked_column columns=[${carried.join(', ')}]`);
         faults.routes.push({
-          kind: 'prune_carries_tracked_column',
+          kind: 'end_branch_carries_tracked_column',
           id: focusId,
           path: 'verdict',
           available_columns: carried,
@@ -2586,9 +2750,7 @@ export class NavigationEngine implements IHopStateMachine {
   private cutUnreachable(cutNodeId: string, removedBefore: ReadonlySet<string>): void {
     const origin = this.originNodeId;
     if (!origin) return;
-    const before = bfsReachable(this.graph, origin, removedBefore, undefined, this.scopeNodeIds);
-    const after = bfsReachable(this.graph, origin, this.removedSet, undefined, this.scopeNodeIds);
-    const dropped = [...before].filter(id => !after.has(id) && !this.removedSet.has(id) && !this.visited.has(id));
+    const dropped = nodesCutByRemoval(this.graph, origin, removedBefore, this.removedSet, this.scopeNodeIds, this.visited);
     for (const id of dropped) {
       this.removedSet.add(id);
       this.pruneBallots.delete(id);
@@ -2612,7 +2774,7 @@ export class NavigationEngine implements IHopStateMachine {
     const {
       focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
       carryByNode, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges, stagedCtNodeStates,
-      stagedColumnFlowEntries, autoOpenedNids,
+      stagedColumnFlowEntries, autoOpenedNids, unaccountedColumns,
     } = staged;
     let lineageQuestionsByNode: Map<string, string[]> | undefined;
     this.lastRoutedNew = 0;
@@ -2752,8 +2914,42 @@ export class NavigationEngine implements IHopStateMachine {
     this._status = 'exploring';
     this.heldFindingDraft.clear();
     const outcomes = routeOutcomes.length > 0 ? { route_outcomes: routeOutcomes } : {};
+    const columnStatus = unaccountedColumns.length > 0 ? { unaccounted_columns: unaccountedColumns } : {};
 
-    return { ok: true, ...outcomes };
+    return { ok: true, ...outcomes, ...columnStatus };
+  }
+
+  /**
+   * Measures the scope for the exploration admission check: total nodes, rounds (the hops the run
+   * takes: those already taken, one per unvisited procedure, view or function, one per queued
+   * table, and one per supplement target — a table or an already-visited node takes a fresh hop)
+   * and the distinct starting trace columns.
+   *
+   * @param extraIds - Node ids a pending supplement would add; measured together with the scope so
+   *   the check is cumulative.
+   */
+  public measureAdmissionScope(extraIds: readonly string[] = []): ProposedScope {
+    const extra = new Set(extraIds);
+    const ids = new Set(this.scopeNodeIds);
+    for (const id of extra) ids.add(id);
+    let rounds = this.hopCount;
+    for (const nid of ids) {
+      const n = this.nodeMap.get(nid);
+      if (!n) continue;
+      const takesHop = extra.has(nid)
+        || (SCRIPT_TYPES.has(n.type) ? !this.visited.has(nid) && !this.removedSet.has(nid) : this._agenda.has(nid));
+      if (takesHop) rounds++;
+    }
+    return { nodes: ids.size, rounds, columns: new Set(this.currentTargetColumns ?? []).size };
+  }
+
+  /**
+   * Measures the scope a supplement would produce — the existing scope plus every object the
+   * supplement would admit — without changing the engine. A supplement selects no starting columns.
+   */
+  public measureSupplementScope(nodeIds: readonly string[], chain?: SupplementChain): ProposedScope {
+    const named = chain ? this.expandSupplementChain(nodeIds, chain) : nodeIds;
+    return { ...this.measureAdmissionScope(this.admitSupplementTargets(named).admitted), columns: 0 };
   }
 
   /**
@@ -2761,20 +2957,11 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @returns The total character count.
    */
-  public estimateScopeDdlChars(stagedAdditions?: Iterable<string>): number {
+  public estimateScopeDdlChars(): number {
     let total = 0;
     for (const nid of this.scopeNodeIds) {
       const ddl = getNodeDdl(nid, this.nodeMap, this.store ?? undefined);
-      if (ddl) {
-        total += ddl.length;
-      }
-    }
-    if (stagedAdditions) {
-      for (const nid of stagedAdditions) {
-        if (this.scopeNodeIds.has(nid)) continue;
-        const ddl = getNodeDdl(nid, this.nodeMap, this.store ?? undefined);
-        if (ddl) total += ddl.length;
-      }
+      if (ddl) total += ddl.length;
     }
     return total;
   }
@@ -2782,34 +2969,33 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Evaluates the breadth-first search reachability for initializing traversal scope.
    *
+   * @remarks
+   * Walks to {@link depthLimits}, already resolved by `init()` for the approved intent — an exact
+   * side there is finite (or `Infinity` for `'all'`) exactly as enforced at hop time, and an
+   * approximate side is `Infinity`, so the dry-run preview this feeds sees the same full reach the
+   * approval it proposes would actually admit.
+   *
    * @param startId - Starting node identifier.
    * @param direction - Direction of graph traversal ('upstream', 'downstream', 'bidirectional').
-   * @param depthIntent - Approved starting scope depth, each unstated side at its seed.
    * @returns A set of valid node identifiers reachable within the depth parameters.
    */
   private computeBfsScope(
     startId: string,
     direction: 'upstream' | 'downstream' | 'bidirectional',
-    depthIntent: SeededDepthIntent,
   ): Set<string> {
     const seen = new Set<string>();
     this.depthFromOrigin.clear();
     this.directedDepths.clear();
     this.directedDepthsFilled = false;
 
-    const limit = (side: 'upstream' | 'downstream'): number => {
-      switch (depthIntent.kind) {
-        case 'explicit': return depthIntent.levels;
-        case 'full_frontier': return Number.POSITIVE_INFINITY;
-        case 'default_start': return DEFAULT_SM_START_DEPTH;
-        case 'asymmetric': {
-          const value = depthIntent[side];
-          return value === 'all' ? Number.POSITIVE_INFINITY : value;
-        }
-      }
-    };
+    const limit = (side: 'upstream' | 'downstream'): number => this.depthLimits[side];
+    const hasFilters = this.excludedTypes.size > 0 || this.excludedSchemas.size > 0 || this.excludedNodeIds.size > 0;
     const walk = (mode: 'inbound' | 'outbound', maxDepth: number): void => {
       bfsFromNode(this.graph, startId, (key, _attr, depth) => {
+        if (hasFilters && key !== startId) {
+          const node = this.nodeMap.get(key);
+          if (node && this.checkBorder(key, node, 'seed_bfs').kind !== 'in_border') return true;
+        }
         seen.add(key);
         const prior = this.depthFromOrigin.get(key);
         if (prior === undefined || depth < prior) this.depthFromOrigin.set(key, depth);
@@ -2818,16 +3004,6 @@ export class NavigationEngine implements IHopStateMachine {
     };
     if (direction === 'upstream' || direction === 'bidirectional') walk('inbound', limit('upstream'));
     if (direction === 'downstream' || direction === 'bidirectional') walk('outbound', limit('downstream'));
-
-    const hasFilters = this.excludedTypes.size > 0 || this.excludedSchemas.size > 0 || this.excludedNodeIds.size > 0;
-    if (hasFilters) {
-      for (const id of Array.from(seen)) {
-        if (id === startId) continue;
-        const node = this.nodeMap.get(id);
-        if (!node) continue;
-        if (this.checkBorder(id, node, 'seed_bfs').kind !== 'in_border') seen.delete(id);
-      }
-    }
 
     return seen;
   }
@@ -2995,6 +3171,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (pruneVoters.length < voters.length) {
       if (pruneVoters.length > 0) {
         this.log('debug', `[Prune] resolve id=${nodeId} kept votes=${pruneVoters.length}/${voters.length}`);
+        this.memory.recordRejection(nodeId, `\`${nodeId}\`: prune_neighbors could not remove it — another sender's route still keeps it in the answer.`, this.hopCount);
       }
       return;
     }
@@ -3072,7 +3249,7 @@ export class NavigationEngine implements IHopStateMachine {
       .map(taskId => this.taskLedger.getTask(taskId)?.question)
       .filter((question): question is string => Boolean(question));
     for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
-      for (const question of questions.length ? questions : [`Continue through ${entry.nodeId}`]) {
+      for (const question of questions.length ? questions : ['']) {
         this.enqueueHop(nid, question, entry.depth + 1, entry.priority, { carry: forwardedCarry });
       }
     }
@@ -3266,7 +3443,7 @@ export class NavigationEngine implements IHopStateMachine {
       const continues = columnContinuation === null || columnContinuation.has(nid);
       const neighborCarry = continues || forwardedCarry.kind === 'row_role_only' ? forwardedCarry : { kind: 'carry' as const, columns: [] };
       const reAnchor = continues && neighbor && SCRIPT_TYPES.has(neighbor.type)
-        ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry))
+        ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry), question.trim().length > 0)
         : '';
       if (!continues) {
         this.log('debug', `[Agenda] question not forwarded hop=${this.hopCount} id=${nid} ← ${targetId} reason=other_side`);
@@ -3415,7 +3592,6 @@ export class NavigationEngine implements IHopStateMachine {
     const inSet = new Set(this.graph.inNeighbors(focusId));
     const outSet = new Set(this.graph.outNeighbors(focusId));
     const ids = Array.from(new Set([...inSet, ...outSet]));
-    const hasSchemaFilter = this.sessionAllowedSchemas.size > 0;
     const edgeVerb = new Map<string, string>();
     for (const e of this.model.edges) {
       if (e.source !== focusId && e.target !== focusId) continue;
@@ -3448,17 +3624,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (d !== undefined) neighbor.depth_from_origin = d;
       neighbor.in_budget = this.scopeNodeIds.has(nid);
 
-      const displayBorder = this.checkBorder(nid, n, 'display');
-
-      if (hasSchemaFilter) {
-        neighbor.in_approved_scope = displayBorder.kind !== 'out_of_allowlist';
-      }
-
-      if (displayBorder.kind === 'excluded') {
-        neighbor.in_approved_scope = false;
-      } else if (displayBorder.kind === 'out_of_allowlist') {
-        neighbor.would_trigger_action_required = true;
-      }
+      neighbor.in_approved_scope = this.admitsRoute(nid, n, focusId).admitted;
       return neighbor;
     });
   }
@@ -3498,6 +3664,8 @@ export class NavigationEngine implements IHopStateMachine {
    *   same contract with two differences from `reachable`: an engine-written `non_bodied_passthrough` on a committed edge is not retention
    *   evidence (treated as absent), and a border node's membership bypasses `removedSet`, so a prune that pulled it out of the render can
    *   still leave it named on a committed edge — routed through the sink check here, the one case a prune verdict does not already answer.
+   *   Off the border every in-scope node is inside the approved schema set, so a schema the approval opened through `excludeSchemas`
+   *   is classified exactly like one the GUI filter ticked.
    * @returns Ids to drop; reachable ones leave the render, border ones leave the delivered chain.
    */
   private undispositionedSinkIds(reachable: ReadonlySet<string>, columnBorder: ReadonlySet<string>): Set<string> {
@@ -3506,7 +3674,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (id === this.originNodeId) continue;
       const state = this.nodeStates.get(id);
       const onBorder = columnBorder.has(id);
-      const engineRecord = onBorder && state?.source === 'engine';
+      const engineRecord = onBorder && state?.source === 'engine' && state.reason === 'non_bodied_passthrough';
       const borderPruned = onBorder && state?.action === 'prune';
       if (state !== undefined && !engineRecord && !borderPruned) continue;
       if (this.taskLedger.investigationTasks.some(task => task.nodeId === id && task.status !== 'deferred')) continue;
@@ -3737,7 +3905,6 @@ export class NavigationEngine implements IHopStateMachine {
       totalNodes: this._totalNodes,
       userSchemas: Array.from(this.userSchemas),
       sessionAllowedSchemas: Array.from(this.sessionAllowedSchemas),
-      sessionAllowedNodeIds: Array.from(this.sessionAllowedNodeIds),
       excludedTypes: Array.from(this.excludedTypes),
       excludedSchemas: Array.from(this.excludedSchemas),
       excludedNodeIds: Array.from(this.excludedNodeIds),
@@ -3769,7 +3936,9 @@ export class NavigationEngine implements IHopStateMachine {
    * The runtime handles (`model` / `graph` / `log` / `store`) are rebuilt by the caller from
    * the loaded model and the per-window logger — they are deliberately not serialized. Restore
    * overlays only a snapshot accepted by the strict checkpoint boundary; it does not infer omitted
-   * task, agenda, memory, or engine state from older telemetry projections.
+   * task, agenda, memory, or engine state from older telemetry projections. The GUI-hidden
+   * schemas are derived from the run's own recorded GUI selection, never from the filter in force
+   * at restore time.
    *
    * @param rawSnapshot - Current-format checkpoint payload validated before reconstruction.
    * @param model - The loaded database model (same topology the snapshot was taken against).
@@ -3834,8 +4003,10 @@ export class NavigationEngine implements IHopStateMachine {
     engine._bodiedScopeSize = internals.bodiedScopeSize;
     engine._totalNodes = internals.totalNodes;
     engine.userSchemas = new Set(internals.userSchemas);
+    engine.guiHiddenSchemas = engine.userSchemas.size > 0
+      ? new Set([...engine.nodeMap.values()].map(n => n.schema.toLowerCase()).filter(schema => !engine.userSchemas.has(schema)))
+      : new Set();
     engine.sessionAllowedSchemas = new Set(internals.sessionAllowedSchemas);
-    engine.sessionAllowedNodeIds = new Set(internals.sessionAllowedNodeIds ?? []);
     engine.excludedTypes = new Set(internals.excludedTypes);
     engine.excludedSchemas = new Set(internals.excludedSchemas);
     engine.excludedNodeIds = new Set(internals.excludedNodeIds);

@@ -203,6 +203,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       }
 
       if (msg.type === 'dacpac-model') {
+        isDemoRef.current = msg.isDemo === true;
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
         setSchemaPreview(null);  // clear Phase 1 state once Phase 2 model arrives

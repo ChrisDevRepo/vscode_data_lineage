@@ -17,6 +17,7 @@ import {
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
+import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
 export interface ScreenStateInput {
@@ -34,6 +35,8 @@ export interface ScreenStateInput {
   readonly getStoredRun?: StoredRunReader;
   /** Resolver for an object's current DDL text; drives the staleness comparison. */
   readonly getDdl?: (id: string) => string | undefined;
+  /** Zero-based offset of the id-list page to serve; `0` (default) is the first page. */
+  readonly offset?: number;
 }
 
 /** Inputs of one stored-run recall query. */
@@ -54,6 +57,8 @@ export interface RunRecallInput {
   readonly getDdl?: (id: string) => string | undefined;
   /** Predicate telling whether an id still exists in the loaded model. */
   readonly isInModel?: (id: string) => boolean;
+  /** Whether the session holds an exploration proposal awaiting approval or refinement. */
+  readonly hasPendingProposal?: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -80,33 +85,29 @@ function screenStateParts(uiState: unknown): { ui: Record<string, unknown> | nul
   return { ui, extras: asRecord(ui?.screenState) };
 }
 
-/**
- * Caps an id list at {@link SCREEN_STATE_MAX_IDS}, reporting the overflow as a count beside the ids.
- *
- * @remarks
- * The count is a sibling field, never an array element: a model copying ids out of this payload
- * would otherwise carry a prose sentinel into `present_result`, where it rejects as an unknown id.
- *
- * @param ids - The full id list.
- * @returns The retained ids and how many were dropped (`0` when nothing was capped).
- */
-function capIds(ids: readonly string[]): { ids: string[]; omitted: number } {
-  if (ids.length <= SCREEN_STATE_MAX_IDS) return { ids: [...ids], omitted: 0 };
-  return { ids: [...ids.slice(0, SCREEN_STATE_MAX_IDS)], omitted: ids.length - SCREEN_STATE_MAX_IDS };
+/** One page of every screen-fact list: the shared offset and whether any list continues past it. */
+interface ListPage {
+  readonly offset: number;
+  more: boolean;
+}
+
+/** Slices one list to the page, recording on `page` when items remain beyond it. */
+function pageOf<T>(page: ListPage, items: readonly T[]): T[] {
+  const end = page.offset + SCREEN_STATE_MAX_IDS;
+  if (items.length > end) page.more = true;
+  return items.slice(page.offset, end);
 }
 
 /**
- * Emits a capped id list as `<key>`, plus `<key>_omitted` only when ids were dropped.
+ * Emits one page of an id list as `<key>`.
  *
+ * @param page - The shared page; marked as continuing when this list has more ids.
  * @param key - The payload field name carrying the ids.
  * @param ids - The full id list.
- * @returns A spreadable fragment holding the retained ids and, when capped, the dropped count.
+ * @returns A spreadable fragment holding the page's ids.
  */
-function spreadCapped(key: string, ids: readonly string[]): Record<string, unknown> {
-  const capped = capIds(ids);
-  return capped.omitted > 0
-    ? { [key]: capped.ids, [`${key}_omitted`]: capped.omitted }
-    : { [key]: capped.ids };
+function spreadPaged(page: ListPage, key: string, ids: readonly string[]): Record<string, unknown> {
+  return { [key]: pageOf(page, ids) };
 }
 
 function asLevel(value: unknown): number | 'all' | null {
@@ -130,33 +131,25 @@ function asTraceLevel(value: unknown): number | 'all' {
  * Reports a stored run's depth per side as the run bound it.
  *
  * @remarks
- * The init record keeps an unstated asymmetric side at its seed count; the persisted per-side
- * ceiling is what bound it, so a finite seed whose `depthLimits` side is `null` reads back as the
- * unstated `null` side — the rule `NavigationEngine.currentDepthIntent` applies. A record with no
- * `depthLimits` reports the seed as stored.
+ * `depthIntent` is the per-side `{levels, exactness}` record (`explorationDepthContract.ts`). A
+ * finite `levels` is reported only when the persisted `depthLimits` ceiling for that side actually
+ * bound the run; a `null` ceiling means the count never became a border (an approximate side, or a
+ * legacy checkpoint's seeded default read back as exact), so it reads back as the unstated `null`.
  */
 function presentDepth(
   init: Record<string, unknown> | null,
   internals: Record<string, unknown> | null,
 ): { upstream: number | 'all' | null; downstream: number | 'all' | null } {
   const intent = asRecord(init?.depthIntent);
-  let upstream: number | 'all' | null = null;
-  let downstream: number | 'all' | null = null;
-  if (intent?.kind === 'explicit') {
-    upstream = asLevel(intent.levels);
-    downstream = upstream;
-  } else if (intent?.kind === 'asymmetric') {
-    const limits = asRecord(internals?.depthLimits);
-    const bound = (side: 'upstream' | 'downstream'): number | 'all' | null => {
-      const level = asLevel(intent[side]);
-      return typeof level === 'number' && limits !== null && limits[side] === null ? null : level;
-    };
-    upstream = bound('upstream');
-    downstream = bound('downstream');
-  } else if (intent?.kind === 'full_frontier') {
-    upstream = 'all';
-    downstream = 'all';
-  }
+  const limits = asRecord(internals?.depthLimits);
+  const sideValue = (side: 'upstream' | 'downstream'): number | 'all' | null => {
+    const sideIntent = asRecord(intent?.[side]);
+    if (!sideIntent) return null;
+    const level = asLevel(sideIntent.levels);
+    return typeof level === 'number' && limits !== null && limits[side] === null ? null : level;
+  };
+  let upstream = sideValue('upstream');
+  let downstream = sideValue('downstream');
   const direction = asString(init?.direction);
   if (direction === 'upstream') downstream = 0;
   if (direction === 'downstream') upstream = 0;
@@ -178,6 +171,7 @@ function staleIds(run: StoredAiRun, getDdl: ((id: string) => string | undefined)
 }
 
 function presentAiRun(
+  page: ListPage,
   run: StoredAiRun | undefined,
   getDdl: ((id: string) => string | undefined) | undefined,
 ): Record<string, unknown> | null {
@@ -194,14 +188,14 @@ function presentAiRun(
     origin: asString(init?.origin) ?? run.origin,
     depth: presentDepth(init, internals),
     scope: asStringList(snapshot.scopeNodeIds).length,
-    analyzed: countAction('analyze'),
+    ...presentAnalyzedSet(run, page),
     pruned: countAction('prune'),
     stale_objects: staleIds(run, getDdl).length,
     open_questions: recallOpenLeads(run).length,
   };
 }
 
-function presentTrace(uiTrace: Record<string, unknown> | null, scope: RenderStateSnapshot['traceScope']): Record<string, unknown> | null {
+function presentTrace(page: ListPage, uiTrace: Record<string, unknown> | null, scope: RenderStateSnapshot['traceScope']): Record<string, unknown> | null {
   const mode = asString(scope?.mode) ?? asString(uiTrace?.mode);
   if (!mode || mode === 'none') return null;
   const traced = asStringList(scope?.tracedNodeIds);
@@ -211,12 +205,12 @@ function presentTrace(uiTrace: Record<string, unknown> | null, scope: RenderStat
     downstream: asTraceLevel(uiTrace?.downstreamLevels),
     mode,
     nodes: traced.length,
-    ...spreadCapped('added_by_user', asStringList(scope?.manualAddedNodeIds)),
-    ...spreadCapped('pruned_by_user', asStringList(scope?.manualPrunedNodeIds)),
+    ...spreadPaged(page, 'added_by_user', asStringList(scope?.manualAddedNodeIds)),
+    ...spreadPaged(page, 'pruned_by_user', asStringList(scope?.manualPrunedNodeIds)),
   };
 }
 
-function presentAnalysis(analytics: ScreenStateExtras['analytics']): Record<string, unknown> | null {
+function presentAnalysis(page: ListPage, analytics: ScreenStateExtras['analytics']): Record<string, unknown> | null {
   const type = asString(analytics?.type);
   if (!type) return null;
   const groups = Array.isArray(analytics?.groups) ? analytics.groups : [];
@@ -231,13 +225,14 @@ function presentAnalysis(analytics: ScreenStateExtras['analytics']): Record<stri
   return {
     type,
     active_group: asString(asRecord(active)?.label),
-    ...spreadCapped('active_group_node_ids', activeIds),
+    ...spreadPaged(page, 'active_group_node_ids', activeIds),
     group_count: rows.length,
-    groups: rows.slice(0, SCREEN_STATE_MAX_IDS),
+    groups: pageOf(page, rows),
   };
 }
 
 function presentBookmark(
+  page: ListPage,
   bookmark: ScreenStateExtras['bookmark'],
   getStoredRun: StoredRunReader | undefined,
   getDdl: ((id: string) => string | undefined) | undefined,
@@ -253,8 +248,8 @@ function presentBookmark(
     name,
     source,
     nodes: nodeIds.length,
-    ...spreadCapped('node_ids', nodeIds),
-    ai_run: presentAiRun(run, getDdl),
+    ...spreadPaged(page, 'node_ids', nodeIds),
+    ai_run: presentAiRun(page, run, getDdl),
   };
 }
 
@@ -271,13 +266,16 @@ export function presentScreenState(input: ScreenStateInput): {
 } {
   const { ui, extras } = screenStateParts(input.uiState);
   const renderState = asRecord(input.renderState);
+  const page: ListPage = { offset: input.offset ?? 0, more: false };
   const screen = {
     trace: presentTrace(
+      page,
       asRecord(ui?.trace),
       asRecord(renderState?.traceScope) as RenderStateSnapshot['traceScope'],
     ),
-    analysis: presentAnalysis(asRecord(extras?.analytics) as ScreenStateExtras['analytics']),
+    analysis: presentAnalysis(page, asRecord(extras?.analytics) as ScreenStateExtras['analytics']),
     bookmark: presentBookmark(
+      page,
       asRecord(extras?.bookmark) as ScreenStateExtras['bookmark'],
       input.getStoredRun,
       input.getDdl,
@@ -287,6 +285,7 @@ export function presentScreenState(input: ScreenStateInput): {
       visible_nodes: asCount(input.filteredCount),
       total_nodes: asCount(input.totalNodes),
     },
+    ...(page.more ? { next_cursor: String(page.offset + SCREEN_STATE_MAX_IDS) } : {}),
   };
   const chars = JSON.stringify(screen).length;
   return { screen, _token_estimate: { chars, estimated_tokens: estimateTokens(chars) } };
@@ -295,6 +294,13 @@ export function presentScreenState(input: ScreenStateInput): {
 function withEstimate(payload: Record<string, unknown>): Record<string, unknown> {
   const chars = JSON.stringify(payload).length;
   return { ...payload, _token_estimate: { chars, estimated_tokens: estimateTokens(chars) } };
+}
+
+/** The rejection with its own token estimate riding in `detail`, beside any facts already there. */
+function rejectionWithEstimate(rejection: ToolRejection): ToolRejection {
+  const chars = JSON.stringify(rejection).length;
+  const detail = rejection.detail !== null && typeof rejection.detail === 'object' ? rejection.detail : {};
+  return { ...rejection, detail: { ...detail, _token_estimate: { chars, estimated_tokens: estimateTokens(chars) } } };
 }
 
 function definedOnly(entry: Record<string, unknown>): Record<string, unknown> {
@@ -324,6 +330,20 @@ function nodeStatesOf(run: StoredAiRun): Record<string, unknown>[] {
     const state = asRecord(raw);
     return state && asString(state.nodeId) !== null ? [state] : [];
   });
+}
+
+/**
+ * The objects the stored run analysed, as a count plus the id list — one page on the screen card, whole on a scoped recall.
+ *
+ * @remarks
+ * Carried by the screen card and by every scoped recall alike, so a read narrowed to one class or
+ * to a few ids still states the run's full analysed set instead of reading as the whole run.
+ */
+function presentAnalyzedSet(run: StoredAiRun, page?: ListPage): Record<string, unknown> {
+  const analyzed = nodeStatesOf(run)
+    .filter(state => state.action === 'analyze')
+    .map(state => asString(state.nodeId) as string);
+  return { analyzed: analyzed.length, analyzed_ids: page ? pageOf(page, analyzed) : analyzed };
 }
 
 function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unknown>[] {
@@ -421,15 +441,17 @@ function overBudgetHint(input: RunRecallInput, chars: number, tokenBudget: numbe
  * @param input - The resolved query and the session's read-only resolvers.
  * @returns The recall payload, or a rejection envelope, with its token estimate.
  */
-export function presentRunRecall(input: RunRecallInput): Record<string, unknown> {
+export function presentRunRecall(input: RunRecallInput): Record<string, unknown> | ToolRejection {
   const run = resolveAppliedRun(input);
   if (!run) {
-    return withEstimate({
-      error: REJECTION_CODES.noRunMemory,
-      hint: 'No AI run is stored for the applied view. Apply an AI bookmark saved after a run, or start a new exploration.',
-    });
+    return rejectionWithEstimate(makeRejection({
+      code: REJECTION_CODES.noRunMemory,
+      hint: input.hasPendingProposal
+        ? 'No AI run is stored yet — the held proposal is still awaiting approval or refinement. Reference the proposal already in this turn, or wait for it to be approved before recalling a run.'
+        : 'No AI run is stored for the applied view. Apply an AI bookmark saved after a run, or start a new exploration.',
+    }));
   }
-  const head = { run_id: run.runId, saved_at: run.savedAt };
+  const head = { run_id: run.runId, saved_at: run.savedAt, ...presentAnalyzedSet(run) };
   const payload: Record<string, unknown> = input.ids
     ? { ...head, objects: recallIds(run, input) }
     : input.filter === 'pruned' ? { ...head, pruned: recallPruned(run) }
@@ -437,8 +459,8 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
     : { ...head, stale: recallStale(run, input.getDdl) };
   const chars = JSON.stringify(payload).length;
   const admission = checkScopeBudget(input.budget, 0, chars);
-  if (!admission.ok) {
-    return withEstimate({ ...admission, hint: overBudgetHint(input, chars, admission.limits.token_budget) });
+  if (admission) {
+    return rejectionWithEstimate({ ...admission, hint: overBudgetHint(input, chars, admission.detail.limits.token_budget) });
   }
   return withEstimate(payload);
 }

@@ -1,10 +1,11 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useTransition } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel, type CustomNodeData } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
-import { buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode } from '../engine/traceScope';
+import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, unionConnectingPaths } from '../engine/traceScope';
 import { directNeighborIds } from '../engine/graphGuards';
+import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
 /**
  * Return type for the useInteractiveTrace hook, providing state and control actions.
@@ -44,7 +45,32 @@ interface UseInteractiveTraceReturn {
   addTraceNeighbor: (nodeId: string) => void;
   /** Removes one safe node from the current trace scope. */
   pruneTraceNode: (nodeId: string) => void;
+  /** Node count a trace from the current origin at the given depths would render — BFS only, no layout. */
+  estimateTraceSize: (upstreamLevels: number, downstreamLevels: number) => number;
+  /**
+   * Shows only the origin→target routes for the given targets, against the pre-focus scope;
+   * an empty list restores it. False, scope untouched, when a route is unreachable.
+   */
+  setFocusTargets: (targetIds: string[]) => boolean;
+  /** Restores the scope stashed by the last focus, or ends the trace when nothing was stashed. */
+  exitFocusPaths: () => void;
+  /** Whether a tree focus narrowing is on stage. */
+  isFocusPaths: boolean;
+  /** Targets whose routes the focus shows; empty outside a focus. */
+  focusTargetIds: readonly string[];
+  /** The pre-focus trace while a focus is on stage, else the trace itself; the navigator lists it. */
+  navigatorTrace: TraceState;
+  /** Drops manual add/prune edits, restoring the starting scope while staying in the trace. */
+  resetTraceToStart: () => void;
+  /** Adds a batch of direct scope neighbors in one update (tree level growth). */
+  addTraceNeighbors: (nodeIds: string[]) => void;
+  /** Traversal graph over the trace scope, shared by tree path lighting and focus paths; null outside a trace. */
+  traceScopeGraph: Graph | null;
+  /** Unfiltered traversal graph over the whole model; null until a model is loaded. */
+  fullGraph: Graph | null;
 }
+
+const NO_TARGETS: readonly string[] = [];
 
 /** Initial trace state factory */
 const createInitialTrace = (config: ExtensionConfig): TraceState => ({
@@ -72,11 +98,8 @@ function isDirectNeighborOfScope(
   candidateNodeId: string,
 ): boolean {
   if (visibleNodeIds.has(candidateNodeId)) return false;
-  for (const visibleId of visibleNodeIds) {
-    if (directNeighborIds(model, visibleId, 'in').includes(candidateNodeId)) return true;
-    if (directNeighborIds(model, visibleId, 'out').includes(candidateNodeId)) return true;
-  }
-  return false;
+  return directNeighborIds(model, candidateNodeId, 'in').some(id => visibleNodeIds.has(id))
+    || directNeighborIds(model, candidateNodeId, 'out').some(id => visibleNodeIds.has(id));
 }
 
 /** Pick BFS graph — auto-promotes to fullGraph when node is filtered out. */
@@ -117,6 +140,8 @@ export function useInteractiveTrace(
 ): UseInteractiveTraceReturn {
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
   const [useFullModel, setUseFullModel] = useState(false);
+  const [focus, setFocus] = useState<{ previous: TraceState; targetIds: readonly string[] } | null>(null);
+  const [, startTransition] = useTransition();
 
   const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
 
@@ -124,6 +149,7 @@ export function useInteractiveTrace(
   useFullModelRef.current = useFullModel;
 
   const startTraceConfig = useCallback((nodeId: string) => {
+    setFocus(null);
     setTrace(createTrace(config, {
       mode: 'configuring',
       selectedNodeId: nodeId,
@@ -157,17 +183,20 @@ export function useInteractiveTrace(
         `[Trace] 0 results for "${nodeId}" — exists in model but has no connections` });
     }
 
-    setTrace(createTrace(config, {
-      mode: 'filtered',
-      selectedNodeId: nodeId,
-      upstreamLevels: config.trace.defaultUpstreamLevels,
-      downstreamLevels: config.trace.defaultDownstreamLevels,
-      baseNodeIds: nodeIds,
-      baseEdgeIds: edgeIds,
-      tracedNodeIds: nodeIds,
-      tracedEdgeIds: edgeIds,
-      autoPromoted,
-    }));
+    setFocus(null);
+    startTransition(() => {
+      setTrace(createTrace(config, {
+        mode: 'filtered',
+        selectedNodeId: nodeId,
+        upstreamLevels: config.trace.defaultUpstreamLevels,
+        downstreamLevels: config.trace.defaultDownstreamLevels,
+        baseNodeIds: nodeIds,
+        baseEdgeIds: edgeIds,
+        tracedNodeIds: nodeIds,
+        tracedEdgeIds: edgeIds,
+        autoPromoted,
+      }));
+    });
   }, [graph, fullGraph, config]);
 
   const applyTrace = useCallback(
@@ -197,22 +226,26 @@ export function useInteractiveTrace(
         `[Trace] Apply: "${trace.selectedNodeId}" up=${upstreamLevels} down=${downstreamLevels} fullModel=${useFullModelRef.current}${autoPromoted ? ' (auto-promoted)' : ''} → ${nodeIds.size} nodes, ${edgeIds.size} edges (${ms}ms)`
       });
 
-      setTrace(createTrace(config, {
-        mode: 'applied',
-        selectedNodeId: trace.selectedNodeId,
-        upstreamLevels,
-        downstreamLevels,
-        baseNodeIds: nodeIds,
-        baseEdgeIds: edgeIds,
-        tracedNodeIds: nodeIds,
-        tracedEdgeIds: edgeIds,
-        autoPromoted,
-      }));
+      setFocus(null);
+      startTransition(() => {
+        setTrace(createTrace(config, {
+          mode: 'applied',
+          selectedNodeId: trace.selectedNodeId,
+          upstreamLevels,
+          downstreamLevels,
+          baseNodeIds: nodeIds,
+          baseEdgeIds: edgeIds,
+          tracedNodeIds: nodeIds,
+          tracedEdgeIds: edgeIds,
+          autoPromoted,
+        }));
+      });
     },
     [config, graph, fullGraph, trace.selectedNodeId]
   );
 
   const startPathFinding = useCallback((nodeId: string) => {
+    setFocus(null);
     setTrace(createTrace(config, {
       mode: 'pathfinding',
       selectedNodeId: nodeId,
@@ -245,6 +278,7 @@ export function useInteractiveTrace(
       `[Trace] Path: "${trace.selectedNodeId}" → "${targetNodeId}" found, ${result.nodeIds.size} nodes (${ms}ms)`
     });
 
+    setFocus(null);
     setTrace(createTrace(config, {
       mode: 'path-applied',
       selectedNodeId: trace.selectedNodeId,
@@ -268,6 +302,7 @@ export function useInteractiveTrace(
     window.vscode?.postMessage({ type: 'log', text:
       `[Trace] Analysis subset: ${analysisType ?? 'unknown'} — ${nodeIds.size} nodes, ${edgeIds.size} edges (flowNodes: ${flowNodes.length})`
     });
+    setFocus(null);
     setTrace(createTrace(config, {
       mode: 'analysis',
       analysisType,
@@ -318,35 +353,20 @@ export function useInteractiveTrace(
     });
   }, [graph, fullGraph, model, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels]);
 
-  const addTraceNeighbor = useCallback((nodeId: string) => {
-    if (!model) return;
-    setTrace(prev => {
-      if (!isEditableTraceMode(prev.mode)) return prev;
-      if (!isDirectNeighborOfScope(model, prev.tracedNodeIds, nodeId)) return prev;
-      const manualAddedNodeIds = new Set(prev.manualAddedNodeIds);
-      const manualPrunedNodeIds = new Set(prev.manualPrunedNodeIds);
-      manualAddedNodeIds.add(nodeId);
-      manualPrunedNodeIds.delete(nodeId);
-      const scope = buildVisibleTraceScope(prev.baseNodeIds, manualAddedNodeIds, manualPrunedNodeIds, model.edges);
-      return {
-        ...prev,
-        manualAddedNodeIds,
-        manualPrunedNodeIds,
-        tracedNodeIds: scope.nodeIds,
-        tracedEdgeIds: scope.edgeIds,
-      };
-    });
-  }, [model]);
-
   const pruneTraceNode = useCallback((nodeId: string) => {
     if (!model || !fullGraph) return;
     setTrace(prev => {
       if (!isEditableTraceMode(prev.mode) || nodeId === prev.selectedNodeId) return prev;
-      if (!canPruneTraceNode(fullGraph, prev.selectedNodeId, prev.tracedNodeIds, nodeId).safe) return prev;
+      const check = canPruneTraceNode(fullGraph, prev.selectedNodeId, prev.tracedNodeIds, nodeId);
+      if (!check.safe) return prev;
       const manualAddedNodeIds = new Set(prev.manualAddedNodeIds);
       const manualPrunedNodeIds = new Set(prev.manualPrunedNodeIds);
       manualAddedNodeIds.delete(nodeId);
       manualPrunedNodeIds.add(nodeId);
+      for (const cutId of check.cutNodeIds ?? []) {
+        manualAddedNodeIds.delete(cutId);
+        manualPrunedNodeIds.add(cutId);
+      }
       const scope = buildVisibleTraceScope(prev.baseNodeIds, manualAddedNodeIds, manualPrunedNodeIds, model.edges);
       return {
         ...prev,
@@ -361,6 +381,7 @@ export function useInteractiveTrace(
   const endTrace = useCallback((onComplete?: () => void) => {
     setTrace(createInitialTrace(config));
     setUseFullModel(false);
+    setFocus(null);
     if (onComplete) {
       setTimeout(onComplete, 0);
     }
@@ -385,6 +406,9 @@ export function useInteractiveTrace(
       if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
         return { tracedNodes: flowNodes, tracedEdges: flowEdges, traceGraph: null };
       }
+      if (trace.tracedNodeIds.size > config.renderLimit) {
+        return { tracedNodes: [], tracedEdges: [], traceGraph: null };
+      }
 
       const synthesize = baseRenderLimited || useFullModel || !!trace.autoPromoted || trace.manualAddedNodeIds.size > 0;
       const { nodes, edges, graph: tGraph } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model, synthesize);
@@ -393,5 +417,114 @@ export function useInteractiveTrace(
     [flowNodes, flowEdges, trace, config, model, useFullModel, baseRenderLimited]
   );
 
-  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode };
+  /** Node count a trace from the current origin at the given depths would render — resolves the same BFS graph {@link applyTrace} would use. */
+  const estimateTraceSize = useCallback((upstreamLevels: number, downstreamLevels: number): number => {
+    if (!trace.selectedNodeId) return 0;
+    const { bfsGraph } = resolveBfsGraph(trace.selectedNodeId, useFullModelRef.current, graph, fullGraph);
+    if (!bfsGraph) return 0;
+    return traceSizeByDepth(bfsGraph, trace.selectedNodeId, upstreamLevels, downstreamLevels);
+  }, [graph, fullGraph, trace.selectedNodeId]);
+
+  /** Traversal graph over the trace scope; the flow-provided graph exists only on synthesized traces. */
+  const traceScopeGraph = useMemo(() => {
+    if (traceGraph) return traceGraph;
+    if (!model || !isEditableTraceMode(trace.mode) || trace.tracedNodeIds.size === 0) return null;
+    return buildTraceScopeGraph(model, trace.tracedNodeIds);
+  }, [traceGraph, model, trace.mode, trace.tracedNodeIds]);
+
+  /** Scope graph the focus routes resolve against: the pre-focus scope, never the narrowed one. */
+  const focusBaseGraph = useMemo(
+    () => (focus && model ? buildTraceScopeGraph(model, focus.previous.tracedNodeIds) : traceScopeGraph),
+    [focus, model, traceScopeGraph],
+  );
+
+  const exitFocusPaths = useCallback(() => {
+    if (focus) {
+      setFocus(null);
+      setTrace(focus.previous);
+    } else {
+      endTrace();
+    }
+  }, [focus, endTrace]);
+
+  /**
+   * Shows every path connecting the origin and each checked target, unioned.
+   *
+   * All-or-nothing per call: when any route is unreachable the scope is untouched. Routes always
+   * resolve against the pre-focus scope, so a target hidden by the current focus can be added.
+   */
+  const setFocusTargets = useCallback((targetIds: string[]): boolean => {
+    const base = focus?.previous ?? trace;
+    if (targetIds.length === 0) {
+      if (focus) exitFocusPaths();
+      return true;
+    }
+    if (!base.selectedNodeId || !isEditableTraceMode(base.mode) || !focusBaseGraph) return false;
+    const union = unionConnectingPaths(focusBaseGraph, base.selectedNodeId, targetIds);
+    if (!union) {
+      window.vscode?.postMessage({ type: 'log', text: `[Trace] Focus paths skipped — a route is unreachable`, level: 'debug' });
+      return false;
+    }
+    window.vscode?.postMessage({ type: 'log', text:
+      `[Trace] Focus paths: "${base.selectedNodeId}" → ${targetIds.length} targets, ${union.nodeIds.size} nodes, ${union.edgeIds.size} edges`
+    });
+    setFocus({ previous: base, targetIds });
+    setTrace(createTrace(config, {
+      mode: 'path-applied',
+      selectedNodeId: base.selectedNodeId,
+      targetNodeId: null,
+      upstreamLevels: 0,
+      downstreamLevels: 0,
+      baseNodeIds: union.nodeIds,
+      baseEdgeIds: union.edgeIds,
+      tracedNodeIds: union.nodeIds,
+      tracedEdgeIds: union.edgeIds,
+    }));
+    return true;
+  }, [config, trace, focus, focusBaseGraph, exitFocusPaths]);
+
+  const resetTraceToStart = useCallback(() => {
+    if (!model) return;
+    setTrace(prev => {
+      if (!isEditableTraceMode(prev.mode)) return prev;
+      if (prev.manualAddedNodeIds.size === 0 && prev.manualPrunedNodeIds.size === 0) return prev;
+      const scope = buildVisibleTraceScope(prev.baseNodeIds, new Set(), new Set(), model.edges);
+      return {
+        ...prev,
+        manualAddedNodeIds: new Set(),
+        manualPrunedNodeIds: new Set(),
+        tracedNodeIds: scope.nodeIds,
+        tracedEdgeIds: scope.edgeIds,
+      };
+    });
+  }, [model]);
+
+  const addTraceNeighbors = useCallback((nodeIds: string[]) => {
+    if (!model || nodeIds.length === 0) return;
+    setTrace(prev => {
+      if (!isEditableTraceMode(prev.mode)) return prev;
+      const manualAddedNodeIds = new Set(prev.manualAddedNodeIds);
+      const manualPrunedNodeIds = new Set(prev.manualPrunedNodeIds);
+      let changed = false;
+      for (const nodeId of nodeIds) {
+        if (!isDirectNeighborOfScope(model, prev.tracedNodeIds, nodeId)) continue;
+        manualAddedNodeIds.add(nodeId);
+        manualPrunedNodeIds.delete(nodeId);
+        changed = true;
+      }
+      if (!changed) return prev;
+      const scope = buildVisibleTraceScope(prev.baseNodeIds, manualAddedNodeIds, manualPrunedNodeIds, model.edges);
+      return {
+        ...prev,
+        manualAddedNodeIds,
+        manualPrunedNodeIds,
+        tracedNodeIds: scope.nodeIds,
+        tracedEdgeIds: scope.edgeIds,
+      };
+    });
+  }, [model]);
+
+  const addTraceNeighbor = useCallback((nodeId: string) => addTraceNeighbors([nodeId]), [addTraceNeighbors]);
+
+  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths: focus !== null, focusTargetIds: focus?.targetIds ?? NO_TARGETS, navigatorTrace: focus?.previous ?? trace, resetTraceToStart, addTraceNeighbors, traceScopeGraph, fullGraph };
 }
