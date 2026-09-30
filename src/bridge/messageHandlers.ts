@@ -26,7 +26,7 @@ import {
   executeSimpleQuery, withQueryTimeout, isPhase2Query, type DmvQuery, type DbConnectEnv,
 } from '../engine/connectionManager';
 import { DATABASE_CONFIG_SECTION, getConnectionProvider, type DbSession } from '../engine/db/dbSession';
-import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
+import { isDbConnectionError, isDriverError, redactSecrets, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
 import { type IConnectionInfo, type SimpleExecuteResult } from '../types/mssql';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
 import { type StatsMode } from '../engine/profilingEngine';
@@ -1183,8 +1183,9 @@ async function withDbProgressHost(
         );
         host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
       } else {
-        host.log('error', 'DB', title, err);
-        host.postMessage({ type: 'db-error', message: err instanceof Error ? err.message : String(err), phase: 'connect' });
+        const message = redactSecrets(err instanceof Error ? err.message : String(err));
+        host.log('error', 'DB', `${title}: ${message}`);
+        host.postMessage({ type: 'db-error', message, phase: 'connect' });
       }
     } finally {
       if (session) {

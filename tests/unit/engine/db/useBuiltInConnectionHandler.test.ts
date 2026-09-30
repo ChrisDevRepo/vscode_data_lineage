@@ -18,6 +18,7 @@ vi.mock('vscode', async (importOriginal) => {
   return {
     ...actual,
     ConfigurationTarget: { Global: 1, Workspace: 2 },
+    ProgressLocation: { Notification: 15 },
     workspace: {
       getConfiguration: (section: string) => {
         cfg.sections.push(section);
@@ -28,6 +29,12 @@ vi.mock('vscode', async (importOriginal) => {
   };
 });
 
+const connectDatabase = vi.hoisted(() => vi.fn());
+vi.mock('../../../../src/engine/connectionManager', async (importOriginal) => ({
+  ...await importOriginal<Record<string, unknown>>(),
+  connectDatabase: (...args: unknown[]) => connectDatabase(...args),
+}));
+
 const { createMessageHandlers } = await import('../../../../src/bridge/messageHandlers');
 
 function handlers() {
@@ -35,6 +42,8 @@ function handlers() {
   const host = {
     postMessage: vi.fn((m: Record<string, unknown>) => { posted.push(m); return Promise.resolve(true); }),
     log: vi.fn(),
+    withProgress: (_options: unknown, task: (progress: unknown, token: unknown) => Promise<void>) =>
+      task({ report: vi.fn() }, { isCancellationRequested: false }),
     getConfiguration: vi.fn().mockReturnValue({ get: () => undefined }),
   };
   const bundle = createMessageHandlers(
@@ -48,7 +57,7 @@ function handlers() {
     false,
     vi.fn(),
   );
-  return { handlers: bundle.handlers, posted };
+  return { handlers: bundle.handlers, posted, host };
 }
 
 describe('use-builtin-connection', () => {
@@ -61,5 +70,19 @@ describe('use-builtin-connection', () => {
     expect(cfg.update).toHaveBeenCalledTimes(1);
     expect(cfg.update).toHaveBeenCalledWith('connectionProvider', 'builtIn', 1);
     expect(posted.find((m) => m.type === 'mssql-status')).toMatchObject({ type: 'mssql-status', available: true });
+  });
+});
+
+describe('db-connect failures outside the connection error path', () => {
+  it('redacts secrets in the log and in the message posted to the webview', async () => {
+    connectDatabase.mockRejectedValue(new Error('Bad connection string Password=abc123;Server=x'));
+    const { handlers: h, posted, host } = handlers();
+
+    await h['db-connect']({ type: 'db-connect' } as never);
+
+    const error = posted.find((m) => m.type === 'db-error');
+    expect(String(error?.message)).not.toContain('abc123');
+    expect(String(error?.message)).toContain('Password=[removed]');
+    expect(JSON.stringify((host.log as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('abc123');
   });
 });

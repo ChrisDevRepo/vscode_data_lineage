@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import type { IExtension, IConnectionInfo, IConnectionSharingService } from '../../types/mssql';
 import { Logger } from '../../utils/log';
+import { redactSecrets } from './connectionErrors';
 import type { StoredConnectionInfo } from '../shared/bridgeContract';
 import type { DbSession } from './dbSession';
 
@@ -176,7 +177,7 @@ export async function reconnectMssqlConnection(
     logger.info(`Reconnected (${Date.now() - reconnectStart}ms)`);
     return { connectionUri, connectionInfo: profile };
   } catch (err) {
-    logger.warn(`Direct reconnect failed: ${err instanceof Error ? err.message : String(err)} — falling back to picker`);
+    logger.warn(`Direct reconnect failed: ${redactSecrets(err instanceof Error ? err.message : String(err))} — falling back to picker`);
     return undefined;
   }
 }

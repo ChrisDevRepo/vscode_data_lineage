@@ -137,6 +137,34 @@ function toConnection(state: WizardState, id: string): BuiltInConnection {
   });
 }
 
+function hostChanged(previous: BuiltInConnection | undefined, next: Pick<BuiltInConnection, 'server' | 'port'>): boolean {
+  return previous !== undefined && (previous.server !== next.server || previous.port !== next.port);
+}
+
+/**
+ * Keeps the saved password consistent with the connection it belongs to.
+ *
+ * @remarks
+ * A supplied password is stored for SQL login. An Entra ID connection holds no password, so any
+ * saved one is deleted. A saved password is also deleted when an existing connection changes
+ * server, port, authentication type or user without a new password, so it is never sent to a
+ * different host or account.
+ */
+async function reconcilePassword(
+  secrets: vscode.SecretStorage,
+  previous: BuiltInConnection | undefined,
+  saved: BuiltInConnection,
+  password: string | undefined,
+): Promise<void> {
+  const key = passwordSecretKey(saved.id);
+  if (saved.authenticationType !== 'sqlLogin') { await secrets.delete(key); return; }
+  if (password !== undefined) { await secrets.store(key, password); return; }
+  const identityChanged = hostChanged(previous, saved)
+    || previous?.authenticationType !== saved.authenticationType
+    || previous?.user !== saved.user;
+  if (previous && identityChanged) await secrets.delete(key);
+}
+
 function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable<T> {
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, task);
 }
@@ -151,7 +179,9 @@ function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable
  * saved connection is test-connected once more before it is written.
  *
  * @param env - Host services.
- * @param existing - Connection to edit; its id, unrelated fields and saved password are kept.
+ * @param existing - Connection to edit; its id, unrelated fields and saved password are kept. A
+ *   changed server or port resets certificate trust and requires the password to be entered again;
+ *   a changed user does the same for the password.
  * @param initial - Values the steps start with when adding, for example from a saved project.
  * @returns The saved connection, or `undefined` when the user cancelled.
  */
@@ -179,7 +209,12 @@ export async function runAddConnectionFlow(
           value: state.server ? (state.port ? `${state.server},${state.port}` : state.server) : '',
           validate: (v) => (parseServerInput(v) ? undefined : 'Enter a host, or host,port with a port from 1 to 65535.'),
         });
-        if (typeof answer === 'string') Object.assign(state, { port: undefined }, parseServerInput(answer));
+        if (typeof answer === 'string') {
+          Object.assign(state, { port: undefined }, parseServerInput(answer));
+          state.trustServerCertificate = hostChanged(existing, state as Pick<BuiltInConnection, 'server' | 'port'>)
+            ? false
+            : existing?.trustServerCertificate;
+        }
         return outcome(answer);
       },
     },
@@ -220,7 +255,9 @@ export async function runAddConnectionFlow(
             return 'back';
           }
         }
-        const keepSaved = existing?.authenticationType === 'sqlLogin';
+        const keepSaved = existing?.authenticationType === 'sqlLogin'
+          && !hostChanged(existing, state as Pick<BuiltInConnection, 'server' | 'port'>)
+          && existing.user === state.user;
         const answer = await askInput({
           step: n, canGoBack: true, password: true,
           prompt: keepSaved ? 'Password — leave empty to keep the saved password' : 'Password — stored in the VS Code secret store',
@@ -304,9 +341,7 @@ export async function runAddConnectionFlow(
         continue;
       }
       await upsertBuiltInConnection(connection, logger);
-      if (state.authenticationType === 'sqlLogin' && state.password !== undefined) {
-        await env.secrets.store(passwordSecretKey(id), state.password);
-      }
+      await reconcilePassword(env.secrets, existing, connection, state.password);
       notifyInfo(logger, 'Save database connection', `Saved connection "${connection.name}".`, { connectionId: id });
       return connection;
     }
@@ -349,7 +384,10 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: (c: Built
  *
  * @remarks
  * `dataLineageViz.addDatabaseConnection` accepts `{ connection, password? }`; with an argument it
- * validates, saves to user settings and the secret store without prompting, and returns the id.
+ * validates, saves to user settings and the secret store without prompting, and returns the id;
+ * replacing an existing id that changes server, port, user or authentication type drops its saved
+ * password unless a new one is supplied. `removeDatabaseConnection` with an argument removes the
+ * connection without the confirmation modal, so other extensions can call it.
  * The other commands take an optional connection id and otherwise show a picker; edit returns the
  * saved id and update-password returns whether a password was stored.
  */
@@ -370,10 +408,9 @@ export function registerConnectionCommands(
         throw new Error(`Invalid database connection: ${problems}`);
       }
       const connection = BuiltInConnectionSchema.parse({ ...parsed.data.connection, id: parsed.data.connection.id ?? randomUUID() });
+      const previous = readBuiltInConnections(logger).find((c) => c.id === connection.id);
       await upsertBuiltInConnection(connection, logger);
-      if (parsed.data.password !== undefined && connection.authenticationType === 'sqlLogin') {
-        await context.secrets.store(passwordSecretKey(connection.id), parsed.data.password);
-      }
+      await reconcilePassword(context.secrets, previous, connection, parsed.data.password);
       logger.info(`Saved database connection ${connection.id} (${describeConnection(connection)})`);
       return connection.id;
     }),

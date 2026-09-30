@@ -17,6 +17,8 @@ const host = vi.hoisted(() => ({
   showInformationMessage: vi.fn(),
   showErrorMessage: vi.fn(),
   withProgress: vi.fn(),
+  getSession: vi.fn(),
+  openBuiltInSession: vi.fn(),
 }));
 
 vi.mock('vscode', async (importOriginal) => {
@@ -26,6 +28,7 @@ vi.mock('vscode', async (importOriginal) => {
     ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
     ProgressLocation: { Notification: 15 },
     QuickInputButtons: { Back: { iconPath: 'back' } },
+    authentication: { getSession: (...a: unknown[]) => host.getSession(...a) },
     commands: {
       registerCommand: (id: string, fn: (...args: any[]) => any) => { host.handlers.set(id, fn); return { dispose: () => host.handlers.delete(id) }; },
       executeCommand: vi.fn(),
@@ -50,6 +53,11 @@ vi.mock('vscode', async (importOriginal) => {
   };
 });
 
+vi.mock('../../../../src/engine/db/builtInProvider', () => ({
+  openBuiltInSession: (...a: unknown[]) => host.openBuiltInSession(...a),
+  listAccessibleDatabases: async () => ['AdventureWorks'],
+}));
+
 const {
   BuiltInConnectionSchema, readBuiltInConnections, passwordSecretKey,
 } = await import('../../../../src/engine/db/connectionSettings');
@@ -71,7 +79,7 @@ beforeEach(() => {
   host.stored = undefined;
   host.updates.length = 0;
   host.handlers.clear();
-  for (const fn of [host.showInputBox, host.showQuickPick, host.createInputBox, host.createQuickPick, host.showWarningMessage, host.showInformationMessage, host.showErrorMessage, host.withProgress]) fn.mockReset();
+  for (const fn of [host.showInputBox, host.showQuickPick, host.createInputBox, host.createQuickPick, host.showWarningMessage, host.showInformationMessage, host.showErrorMessage, host.withProgress, host.getSession, host.openBuiltInSession]) fn.mockReset();
 });
 
 describe('BuiltInConnectionSchema', () => {
@@ -204,6 +212,195 @@ describe('connection commands', () => {
 
     expect(host.showInputBox.mock.calls[0][0]).toMatchObject({ password: true });
     expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), 'new-pw');
+  });
+});
+
+describe('saved password follows the server it was entered for', () => {
+  const trusted = { ...valid, trustServerCertificate: true };
+  const key = passwordSecretKey(valid.id);
+  const add = (arg: unknown) => host.handlers.get('dataLineageViz.addDatabaseConnection')!(arg);
+
+  it('addDatabaseConnection deletes the saved password when an existing id moves to another server', async () => {
+    host.stored = [valid];
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await add({ connection: { ...valid, server: 'other' } });
+
+    expect(secrets.delete).toHaveBeenCalledWith(key);
+    expect(secrets.store).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['port', { port: 1444 }],
+    ['user', { user: 'other' }],
+    ['authentication type', { authenticationType: 'entraId', user: undefined }],
+  ])('addDatabaseConnection deletes the saved password when the %s changes', async (_label, patch) => {
+    host.stored = [valid];
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await add({ connection: { ...valid, ...patch } });
+
+    expect(secrets.delete).toHaveBeenCalledWith(key);
+  });
+
+  it('addDatabaseConnection stores the supplied password instead when the server changes', async () => {
+    host.stored = [valid];
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await add({ connection: { ...valid, server: 'other' }, password: 'fresh' });
+
+    expect(secrets.store).toHaveBeenCalledWith(key, 'fresh');
+    expect(secrets.delete).not.toHaveBeenCalled();
+  });
+
+  it('addDatabaseConnection keeps the saved password when only the name changes', async () => {
+    host.stored = [valid];
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await add({ connection: { ...valid, name: 'Renamed' } });
+
+    expect(secrets.delete).not.toHaveBeenCalled();
+  });
+
+  it('removeDatabaseConnection with an argument removes without a confirmation modal', async () => {
+    host.stored = [valid];
+    const { context } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(valid.id);
+
+    expect(host.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  interface Step { values?: string[]; pick?: string }
+
+  function scriptWizard(steps: Step[]) {
+    const prompts: string[] = [];
+    const rejected: string[] = [];
+    let at = 0;
+    const listeners = () => {
+      const on: Record<string, (...a: any[]) => void> = {};
+      const reg = (name: string) => (fn: (...a: any[]) => void) => { on[name] = fn; return { dispose() {} }; };
+      return { on, reg };
+    };
+    host.createInputBox.mockImplementation(() => {
+      const { on, reg } = listeners();
+      const box: Record<string, any> = {
+        value: '', validationMessage: undefined, dispose() {},
+        onDidTriggerButton: reg('button'), onDidHide: reg('hide'), onDidAccept: reg('accept'),
+        show() {
+          prompts.push(String(box.prompt));
+          const step = steps[at++];
+          for (const value of step.values ?? []) {
+            box.value = value;
+            box.validationMessage = undefined;
+            on.accept();
+            if (box.validationMessage === undefined) return;
+            rejected.push(String(box.validationMessage));
+          }
+        },
+      };
+      return box;
+    });
+    host.createQuickPick.mockImplementation(() => {
+      const { on, reg } = listeners();
+      const box: Record<string, any> = {
+        items: [], selectedItems: [], dispose() {},
+        onDidTriggerButton: reg('button'), onDidHide: reg('hide'), onDidAccept: reg('accept'), onDidChangeValue: reg('value'),
+        show() {
+          const step = steps[at++];
+          box.selectedItems = [box.items.find((i: { label: string }) => i.label === step.pick)];
+          on.accept();
+        },
+      };
+      return box;
+    });
+    return { prompts, rejected };
+  }
+
+  function editWith(steps: Step[]) {
+    host.withProgress.mockImplementation((_options: unknown, task: () => unknown) => task());
+    host.openBuiltInSession.mockResolvedValue({ dispose: async () => {} });
+    const wizard = scriptWizard(steps);
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+    const run = () => host.handlers.get('dataLineageViz.editDatabaseConnection')!(valid.id);
+    return { wizard, secrets, run };
+  }
+
+  it('edit wizard resets certificate trust and requires a password when the server changes', async () => {
+    host.stored = [trusted];
+    const { wizard, secrets, run } = editWith([
+      { values: ['other,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: ['', 'fresh'] },
+      { pick: 'AdventureWorks' }, { values: ['Moved'] },
+    ]);
+
+    await run();
+
+    expect(wizard.rejected).toEqual(['A password is required.']);
+    expect(wizard.prompts.find((p) => /Password/.test(p))).not.toMatch(/keep/i);
+    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(saved).toMatchObject({ server: 'other', name: 'Moved' });
+    expect(saved.trustServerCertificate).not.toBe(true);
+    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), 'fresh');
+  });
+
+  it('edit wizard requires a password when only the port changes', async () => {
+    host.stored = [trusted];
+    const { wizard, run } = editWith([
+      { values: ['localhost,1444'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: ['', 'fresh'] },
+      { pick: 'AdventureWorks' }, { values: ['Moved'] },
+    ]);
+
+    await run();
+
+    expect(wizard.rejected).toEqual(['A password is required.']);
+    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(saved.trustServerCertificate).not.toBe(true);
+  });
+
+  it('edit wizard keeps the saved password and trust when the server is unchanged', async () => {
+    host.stored = [trusted];
+    const { wizard, secrets, run } = editWith([
+      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
+      { pick: 'AdventureWorks' }, { values: ['Renamed'] },
+    ]);
+
+    await run();
+
+    expect(wizard.rejected).toEqual([]);
+    expect(wizard.prompts.find((p) => /Password/.test(p))).toMatch(/keep/i);
+    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(saved.trustServerCertificate).toBe(true);
+    expect(secrets.store).not.toHaveBeenCalled();
+    expect(secrets.delete).not.toHaveBeenCalled();
+  });
+
+  it('edit wizard deletes the saved password when the connection switches to Entra ID', async () => {
+    host.stored = [valid];
+    host.getSession.mockResolvedValue({});
+    const { secrets, run } = editWith([
+      { values: ['localhost,1433'] }, { pick: 'Microsoft Entra ID' }, { pick: 'AdventureWorks' }, { values: ['Entra'] },
+    ]);
+
+    await run();
+
+    expect(secrets.delete).toHaveBeenCalledWith(passwordSecretKey(valid.id));
+  });
+
+  it('addDatabaseConnection deletes the saved password when the saved connection is Entra ID', async () => {
+    host.stored = [valid];
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await add({ connection: { ...valid, authenticationType: 'entraId', user: undefined }, password: 'ignored' });
+
+    expect(secrets.delete).toHaveBeenCalledWith(key);
+    expect(secrets.store).not.toHaveBeenCalled();
   });
 });
 

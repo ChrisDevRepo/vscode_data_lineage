@@ -273,6 +273,19 @@ describe('connectDatabase — mssqlExtension', () => {
     expect((err as InstanceType<typeof DbConnectionError>).target.provider).toBe('mssqlExtension');
   });
 
+  it('redacts secrets in the direct-reconnect warning', async () => {
+    mssqlConnect.mockRejectedValue(new Error('Login failed. Password=abc123'));
+    const warn = vi.fn();
+    const logged = { debug() {}, info() {}, warn, error() {}, trace() {} } as never;
+    await connectDatabase({ ...env, outputChannel: logged }, { server: 'localhost', database: 'AdventureWorks', user: 'sa', authenticationType: 'SqlLogin' }).catch(() => undefined);
+    mssqlConnect.mockReset();
+    mssqlConnect.mockResolvedValue('uri://mssql');
+    const reconnectWarning = warn.mock.calls.map((c) => String(c[0])).find((m) => /Direct reconnect failed/.test(m));
+    expect(reconnectWarning).toBeDefined();
+    expect(reconnectWarning).not.toContain('abc123');
+    expect(reconnectWarning).toContain('Password=[removed]');
+  });
+
   it('reports a missing extension with the install instruction', async () => {
     host.getExtension.mockReset();
     await expect(connectDatabase(env)).rejects.toThrow(/not installed or is disabled/);
