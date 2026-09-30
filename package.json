@@ -853,7 +853,7 @@
     "serialize-javascript": "^7.0.5",
     "diff": "^8.0.3",
     "js-yaml@4": "4.3.2",
-    "fast-uri": "3.1.7",
+    "fast-uri": "3.1.8",
     "browserslist": "4.28.8",
     "baseline-browser-mapping": "2.11.21"
   },
