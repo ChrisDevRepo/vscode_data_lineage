@@ -33,9 +33,8 @@ const SECTION_RULES: Record<ClassificationValue, {
  * locked classification.
  *
  * @remarks
- * A `prune` verdict carries no analysis into the lineage answer — its sections are discarded
- * either way — so a prune is exempt from the angle requirement below, the same way the unlocked
- * branch already exempts it from the non-empty requirement.
+ * An `end_branch` verdict carries no analysis into the lineage answer — its sections are discarded
+ * either way — so it is exempt from both the angle requirement and the non-empty requirement.
  *
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
  * (`AiMemoryManager.getArchivedAngles`). A follow-up (`supplementAgenda`) revisits a node whose earlier sections
@@ -48,11 +47,11 @@ export function validateSectionsAgainstClassification(
   verdict: Verdict | undefined,
   archivedAngles?: ReadonlySet<'business' | 'technical'>,
 ): string | null {
+  if (verdict === 'end_branch') return null;
   const list = sections ?? [];
   if (!classification) {
     return list.length === 0 ? 'sections must contain at least one of sections.business or sections.technical when verdict is analyze or passthrough.' : null;
   }
-  if (verdict === 'end_branch') return null;
   const rule = SECTION_RULES[classification];
   const angles = new Set(list.map(s => s.angle));
   const missing = rule.required.filter(req => !angles.has(req) && !archivedAngles?.has(req));

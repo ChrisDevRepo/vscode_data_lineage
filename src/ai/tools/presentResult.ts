@@ -994,8 +994,8 @@ export function validatePresentResult(
     return [...byState].map(([state, group]) => `${quoteIds(group)} — ${PRESENT_NODE_ID_STATE_TEXT[state]}`).join('; ');
   };
   /**
-   * The valid set and the route back, stated once — on the first offending site, the reason line
-   * the replay keeps — after every offender in the call and its state.
+   * The valid set and the route back, stated once — on the first offending site — after every
+   * offender in the call and its state.
    */
   let nodeIdHintNeeded = false;
   const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
