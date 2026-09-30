@@ -75,14 +75,6 @@ export const HELD_CORRECTION_ORDER =
   `Your analysis is held: ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
 
 /**
- * True for a correctable field-scoped content error. The engine holds the finding draft for a
- * rejection made only of these, and {@link buildRouteValidationRejection} states that hold.
- */
-function isContentKind(kind: InvalidRouteKind): boolean {
-  return !isAbsentKind(kind);
-}
-
-/**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the
  * model gets a specific, structured classification; mixed kinds fall back to the generic code.
  * Exported so a nonfatal (absent-kind) notice can be logged to `host.log` with the same code the
@@ -137,7 +129,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], holdsDraft
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
   const hint = [
     ...distinctKinds.map(k => ROUTE_REJECTION_DIRECTIVE[k]),
-    holdsDraft && errors.length > 0 && errors.every(e => isContentKind(e.kind)) ? HELD_CORRECTION_ORDER : '',
+    holdsDraft ? HELD_CORRECTION_ORDER : '',
   ].filter(Boolean).join(' ');
   return makeRejection({
     code,
@@ -188,6 +180,6 @@ export function buildSubmissionRejection(
     };
   }
   if (faults.routes.length === 0) return null;
-  const hold = !endBranch && faults.routes.every(r => isContentKind(r.kind));
+  const hold = !endBranch;
   return { rejection: buildRouteValidationRejection(faults.routes, hold), hold };
 }
