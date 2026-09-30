@@ -1428,15 +1428,10 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  *
  * @remarks
  * A sole authorized field is `required` in the served schema, so a patch without it fails as a
- * missing property and the provider sees the contract before it drafts. `superRefine`s in one
- * required-shape rule for several fields: a patch naming none of the authorized fields (only
- * `is_update`, or nothing at all) rejects here, at the same Zod boundary as every other structural
- * violation, with one issue per authorized field so `issuePaths` names the whole authorized set.
- * Without this, an empty patch parsed successfully, merged nothing into the held draft, and
- * re-ran the full held-draft validation — reproducing the identical prior rejection with no signal
- * that the patch itself carried no correction. This is a prevalidation reject (`vscodeModelPort.ts`
- * / the harness port both `safeParse` against this exact schema object before dispatch), never a
- * check added after the handler runs.
+ * missing property. Several fields `superRefine` one rule: a patch naming none of them (only
+ * `is_update`, or nothing) rejects at the Zod boundary with one issue per authorized field, so
+ * `issuePaths` names the whole set instead of an empty patch re-running the held-draft validation.
+ * Both ports `safeParse` against this exact schema object before dispatch.
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
@@ -1459,7 +1454,7 @@ export function presentResultRepairPatchSchemaForFields(
     ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
     : staged;
   const strict = declared.strict().superRefine((data, ctx) => {
-    if (keys.length === 0) return;
+    if (keys.length < 2) return;
     const touchesAuthorizedField = keys.some(
       key => (data as Record<string, unknown>)[key] !== undefined,
     );
