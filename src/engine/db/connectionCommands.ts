@@ -106,6 +106,9 @@ function askPick<T extends vscode.QuickPickItem>(options: PickOptions<T>): Promi
   });
 }
 
+/** Database-step item that saves the connection without a database, as the mssql extension's optional database. */
+const CHOOSE_WHEN_CONNECTING = 'Choose when connecting';
+
 interface WizardState {
   server?: string;
   port?: number;
@@ -174,7 +177,7 @@ function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable
  * Runs the add (or, with `existing`, edit) wizard and saves the result.
  *
  * @remarks
- * Six steps — server, authentication, user, password or Microsoft sign-in, database, display name —
+ * Six steps — server, authentication, user, password or Microsoft sign-in, optional database, display name —
  * each with a Back button after the first. The database list comes from a test connection made
  * before the database is chosen; when the list cannot be read the step falls back to free text. The
  * saved connection is test-connected once more before it is written.
@@ -285,18 +288,20 @@ export async function runAddConnectionFlow(
         if (!databases || databases.length === 0) {
           const typed = await askInput({
             step: n, canGoBack: true, value: state.database ?? '',
-            prompt: 'Database name — the list could not be read from the server',
-            validate: (v) => (v.trim() ? undefined : 'A database name is required.'),
+            prompt: 'Database name (optional) — leave empty to choose when connecting',
           });
-          if (typeof typed === 'string') state.database = typed.trim();
+          if (typeof typed === 'string') state.database = typed.trim() || undefined;
           return outcome(typed);
         }
         const answer = await askPick({
-          step: n, canGoBack: true, placeholder: 'Database',
-          items: databases.map((label): vscode.QuickPickItem => ({ label, picked: label === state.database })),
+          step: n, canGoBack: true, placeholder: 'Database (optional)',
+          items: [
+            { label: CHOOSE_WHEN_CONNECTING, description: 'Ask for the database when a new project starts', picked: !state.database },
+            ...databases.map((label): vscode.QuickPickItem => ({ label, picked: label === state.database })),
+          ],
           custom: (label) => ({ label, description: 'Use this name' }),
         });
-        if (typeof answer === 'object') state.database = answer.label;
+        if (typeof answer === 'object') state.database = answer.label === CHOOSE_WHEN_CONNECTING ? undefined : answer.label;
         return outcome(answer);
       },
     },

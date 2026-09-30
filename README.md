@@ -34,7 +34,7 @@ Built-in connections live in the application-scoped setting `dataLineageViz.data
 
 | Command | Purpose |
 |---|---|
-| Data Lineage: Add Database Connection | Six-step wizard (server, authentication, user, password or sign-in, database, display name) that tests the connection before saving |
+| Data Lineage: Add Database Connection | Six-step wizard (server, authentication, user, password or sign-in, optional database, display name) that tests the connection before saving. Without a database, the database is chosen when a new project starts |
 | Data Lineage: Edit Database Connection | Change a saved connection |
 | Data Lineage: Remove Database Connection | Delete a connection and its stored password |
 | Data Lineage: Update Database Password | Replace the stored password |

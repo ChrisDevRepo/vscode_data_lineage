@@ -384,6 +384,20 @@ describe('saved password follows the server it was entered for', () => {
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
+  it('the database is optional: choosing "Choose when connecting" saves the connection without one', async () => {
+    host.stored = [valid];
+    const { run } = editWith([
+      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
+      { pick: 'Choose when connecting' }, { values: ['Any database'] },
+    ]);
+
+    await run();
+
+    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(saved.name).toBe('Any database');
+    expect(saved.database).toBeUndefined();
+  });
+
   it('edit wizard deletes the saved password when the connection switches to Entra ID', async () => {
     host.stored = [valid];
     host.getSession.mockResolvedValue({});
