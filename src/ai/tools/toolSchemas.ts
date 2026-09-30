@@ -687,14 +687,15 @@ const END_BRANCH_EXCLUDED_FIELDS = ['prune_neighbors', 'questions'] as const;
  * {@link toHopFinding}, as `summary` and `sections` are on `end_branch`. `summary` may be empty only when a held draft
  * exists (`fresh` unset), and the engine keeps the held summary. A fresh kept verdict under a `both`
  * lock that sends a non-empty `sections` names each missing angle in the same parse as any shape
- * fault; `end_branch` sections are inert and never checked. Each fault is one
+ * fault; `end_branch` sections are inert and never checked. An invalid or missing `verdict` is
+ * reported once by its own enum issue and skips every verdict-dependent check. Each fault is one
  * issue on its own path, so the rejection names the exact field to drop or add. `column_flow` is
  * served-required in CT (always in the served `required` list, never omissible at the schema level)
  * so its own content check runs for every verdict rather than joining
  * {@link END_BRANCH_EXCLUDED_FIELDS}'s omission-only check.
  */
 function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, mode: 'bb' | 'ct', fresh: boolean, bothAnglesRequired = false): void {
-  if (typeof value !== 'object' || value === null) return;
+  if (typeof value !== 'object' || value === null || !HopVerdictSchema.safeParse(value.verdict).success) return;
   const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
   if (value.verdict === 'end_branch') {
     for (const field of END_BRANCH_EXCLUDED_FIELDS) {
