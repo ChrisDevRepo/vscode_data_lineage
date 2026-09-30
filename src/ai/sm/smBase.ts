@@ -1845,7 +1845,7 @@ export class NavigationEngine implements IHopStateMachine {
     const skipped: SupplementSkip[] = [];
     const candidates: Array<{ raw: string; node: LineageNode }> = [];
     for (const raw of nodeIds) {
-      const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      const id = resolveModelNodeId(raw, this.nodeMap);
       const node = id ? this.nodeMap.get(id) : undefined;
       if (!node) continue;
       const border = this.checkBorder(node.id, node, 'supplement');
@@ -1906,7 +1906,7 @@ export class NavigationEngine implements IHopStateMachine {
     const result: string[] = [...nodeIds];
     const seen = new Set(nodeIds.map(id => id.toLowerCase()));
     for (const raw of nodeIds) {
-      const start = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      const start = resolveModelNodeId(raw, this.nodeMap);
       if (!start || !this.graph.hasNode(start)) continue;
       bfsFromNode(this.graph, start, (key, _attr, depth) => {
         if (key === start) return false;
@@ -1987,7 +1987,7 @@ export class NavigationEngine implements IHopStateMachine {
     const skippedDetails: SupplementSkip[] = [...admission.skipped];
     for (const request of requested) {
       const raw = request.nodeId;
-      const id = this.nodeMap.has(raw) ? raw : this.nodeMap.has(raw.toLowerCase()) ? raw.toLowerCase() : null;
+      const id = resolveModelNodeId(raw, this.nodeMap);
       if (!id) {
         this.log('debug', `[Supplement] refuse hop=${this.hopCount} id=${raw} reason=unresolved`);
         skippedDetails.push({ nodeId: raw, reason: 'unresolved' });
