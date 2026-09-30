@@ -9,10 +9,10 @@ import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
 import { notifyInfo } from '../../utils/notifications';
 import { openBuiltInSession, listAccessibleDatabases, type BuiltInEnv } from './builtInProvider';
-import { CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
+import { CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError, redactSecrets } from './connectionErrors';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
-  passwordSecretKey, passwordTooLong, readBuiltInConnections, upsertBuiltInConnection, type BuiltInConnection,
+  passwordSecretKey, passwordTooLong, readBuiltInConnections, savePassword, upsertBuiltInConnection, type BuiltInConnection,
 } from './connectionSettings';
 
 const WIZARD_TITLE = 'Add Database Connection';
@@ -153,8 +153,9 @@ function hostChanged(previous: BuiltInConnection | undefined, next: Pick<BuiltIn
  * @remarks
  * A supplied password is stored for SQL login. An Entra ID connection holds no password, so any
  * saved one is deleted. A saved password is also deleted when an existing connection changes
- * server, port, authentication type or user without a new password, so it is never sent to a
- * different host or account.
+ * server, port, authentication type or user without a new password, or when the previous entry is
+ * unknown (for example a hand-edited one that failed validation), so it is never sent to a different
+ * host or account.
  */
 async function reconcilePassword(
   secrets: vscode.SecretStorage,
@@ -164,11 +165,11 @@ async function reconcilePassword(
 ): Promise<void> {
   const key = passwordSecretKey(saved.id);
   if (saved.authenticationType !== 'sqlLogin') { await secrets.delete(key); return; }
-  if (password !== undefined) { await secrets.store(key, password); return; }
+  if (password !== undefined) { await savePassword(secrets, saved, password); return; }
   const identityChanged = hostChanged(previous, saved)
     || previous?.authenticationType !== saved.authenticationType
     || previous?.user !== saved.user;
-  if (previous && identityChanged) await secrets.delete(key);
+  if (identityChanged) await secrets.delete(key);
 }
 
 function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable<T> {
@@ -285,7 +286,7 @@ export async function runAddConnectionFlow(
             try { return await listAccessibleDatabases(session, env); } finally { await session.dispose(); }
           });
         } catch (err) {
-          logger.debug(`Database list unavailable for ${state.server}: ${err instanceof Error ? err.message : String(err)}`);
+          logger.debug(`Database list unavailable for ${state.server}: ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
         }
         if (!databases || databases.length === 0) {
           const typed = await askInput({
@@ -457,7 +458,7 @@ export function registerConnectionCommands(
         validateInput: passwordTooLong,
       });
       if (password === undefined) return false;
-      await context.secrets.store(passwordSecretKey(target.id), password);
+      await savePassword(context.secrets, target, password);
       logger.info(`Updated saved password for database connection ${target.id}`);
       return true;
     }),

@@ -59,7 +59,7 @@ vi.mock('../../../../src/engine/db/builtInProvider', () => ({
 }));
 
 const {
-  BuiltInConnectionSchema, readBuiltInConnections, passwordSecretKey,
+  BuiltInConnectionSchema, readBuiltInConnections, passwordSecretKey, encodeSavedPassword, readSavedPassword, savePassword,
 } = await import('../../../../src/engine/db/connectionSettings');
 const { registerConnectionCommands } = await import('../../../../src/engine/db/connectionCommands');
 
@@ -151,7 +151,7 @@ describe('connection commands', () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ id, server: 'localhost', authenticationType: 'sqlLogin', user: 'sa' });
     expect(JSON.stringify(saved)).not.toContain('s3cret');
-    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(id), 's3cret');
+    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(id), encodeSavedPassword({ ...valid, id }, 's3cret'));
     for (const prompt of [host.showInputBox, host.showQuickPick, host.createInputBox, host.createQuickPick, host.withProgress]) {
       expect(prompt).not.toHaveBeenCalled();
     }
@@ -250,7 +250,7 @@ describe('connection commands', () => {
     await host.handlers.get('dataLineageViz.updateDatabasePassword')!(valid.id);
 
     expect(host.showInputBox.mock.calls[0][0]).toMatchObject({ password: true });
-    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), 'new-pw');
+    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), encodeSavedPassword(valid as never, 'new-pw'));
   });
 });
 
@@ -284,6 +284,16 @@ describe('saved password follows the server it was entered for', () => {
     expect(secrets.delete).toHaveBeenCalledWith(key);
   });
 
+  it('addDatabaseConnection deletes a saved password whose previous entry could not be read', async () => {
+    host.stored = [{ ...valid, port: 'not-a-port' }];
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    await add({ connection: { ...valid, server: 'other' } });
+
+    expect(secrets.delete).toHaveBeenCalledWith(key);
+  });
+
   it('addDatabaseConnection stores the supplied password instead when the server changes', async () => {
     host.stored = [valid];
     const { context, secrets } = makeContext();
@@ -291,7 +301,7 @@ describe('saved password follows the server it was entered for', () => {
 
     await add({ connection: { ...valid, server: 'other' }, password: 'fresh' });
 
-    expect(secrets.store).toHaveBeenCalledWith(key, 'fresh');
+    expect(secrets.store).toHaveBeenCalledWith(key, encodeSavedPassword({ ...valid, server: 'other' } as never, 'fresh'));
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
@@ -398,7 +408,7 @@ describe('saved password follows the server it was entered for', () => {
     const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
     expect(saved).toMatchObject({ server: 'other', name: 'Moved' });
     expect(saved.trustServerCertificate).not.toBe(true);
-    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), 'fresh');
+    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), encodeSavedPassword({ ...valid, server: 'other' } as never, 'fresh'));
   });
 
   it('edit wizard requires a password when only the port changes', async () => {
@@ -536,5 +546,42 @@ describe('saved password follows the server it was entered for', () => {
 describe('passwordSecretKey', () => {
   it('namespaces the secret by connection id', () => {
     expect(passwordSecretKey('abc')).toBe('dataLineageViz.database.password.abc');
+  });
+});
+
+describe('saved password binding', () => {
+  function memorySecrets() {
+    const stored: Record<string, string> = {};
+    return {
+      stored,
+      get: async (k: string) => stored[k],
+      store: async (k: string, v: string) => { stored[k] = v; },
+    };
+  }
+  const conn = { id: 'c1', server: 'tcp:SQL.example.com', port: 1433, user: 'sa' };
+
+  it('returns the password for the server, port and user it was saved for', async () => {
+    const secrets = memorySecrets();
+    await savePassword(secrets, conn, 'pw');
+    expect(secrets.stored[passwordSecretKey('c1')]).not.toBe('pw');
+    await expect(readSavedPassword(secrets, { ...conn, server: 'sql.example.com' })).resolves.toBe('pw');
+  });
+
+  it.each([
+    ['server', { server: 'attacker.example.com' }],
+    ['port', { port: 1434 }],
+    ['user', { user: 'other' }],
+  ])('returns no password when the %s differs from the one it was saved for', async (_label, patch) => {
+    const secrets = memorySecrets();
+    await savePassword(secrets, conn, 'pw');
+    await expect(readSavedPassword(secrets, { ...conn, ...patch })).resolves.toBeUndefined();
+  });
+
+  it('returns no password for an unbound or unreadable stored value', async () => {
+    const secrets = memorySecrets();
+    secrets.stored[passwordSecretKey('c1')] = 'plain-text';
+    await expect(readSavedPassword(secrets, conn)).resolves.toBeUndefined();
+    secrets.stored[passwordSecretKey('c1')] = '{"password":"pw"}';
+    await expect(readSavedPassword(secrets, conn)).resolves.toBeUndefined();
   });
 });

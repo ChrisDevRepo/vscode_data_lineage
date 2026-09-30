@@ -855,11 +855,17 @@ const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>'
  * @param raw - Entity-encoded text as read from model.xml.
  * @returns The decoded text.
  */
+/** XML 1.0 `Char` production: a reference to any other code point is not well-formed text. */
+function isXmlChar(cp: number): boolean {
+  return cp === 0x9 || cp === 0xA || cp === 0xD
+    || (cp >= 0x20 && cp <= 0xD7FF) || (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
+}
+
 function decodeXmlText(raw: string): string {
   return raw.replace(/&(?:#x([0-9A-Fa-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/g, (_, hex, dec, name) => {
     if (name) return PREDEFINED_ENTITIES[name];
     const cp = hex !== undefined ? parseInt(hex, 16) : parseInt(dec, 10);
-    return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
+    return isXmlChar(cp) ? String.fromCodePoint(cp) : '\uFFFD';
   });
 }
 

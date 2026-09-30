@@ -1306,11 +1306,11 @@ async function handleTableStatsRequestHost(
       return;
     }
     host.log('error', 'Stats', 'Profiling', err);
-    void postToDetail(panel, { type: 'table-stats-error', message: err instanceof Error ? err.message : String(err) }, logger);
+    void postToDetail(panel, { type: 'table-stats-error', message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
   } finally {
     if (perRequest && session) {
       await releaseSession(session).catch((err: unknown) =>
-        host.log('warn', 'Stats', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`));
+        host.log('warn', 'Stats', `Disconnect failed: ${redactSecrets(err instanceof Error ? err.message : String(err))}`));
     }
   }
 }

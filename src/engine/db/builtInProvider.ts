@@ -10,7 +10,8 @@ import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '.
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
-import { passwordSecretKey, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
+import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
+import { redactSecrets } from './connectionErrors';
 import { MicrosoftSignInError, type DbQueryOptions, type DbSession } from './dbSession';
 import type { DmvQuery } from '../connectionManager';
 
@@ -207,7 +208,7 @@ class BuiltInSession implements DbSession {
   ) {
     connection.on('error', (err: Error) => {
       this.failure = err;
-      this.logger.debug(`Connection error on ${label}: ${err.message}`);
+      this.logger.debug(`Connection error on ${label}: ${redactSecrets(err.message)}`);
     });
     connection.on('end', () => { this.closed = true; });
   }
@@ -332,13 +333,13 @@ async function resolveAuthentication(
   if (!connection.user) {
     throw new Error('The SQL login has no user name. Edit the connection to add one.');
   }
-  let password = passwordOverride ?? await env.secrets.get(passwordSecretKey(connection.id));
+  let password = passwordOverride ?? await readSavedPassword(env.secrets, connection);
   if (password === undefined) {
     logger.debug(`No saved password for connection ${connection.id} — prompting`);
     const prompted = await promptForPassword(connection);
     if (!prompted) return undefined;
     password = prompted.password;
-    if (prompted.save) await env.secrets.store(passwordSecretKey(connection.id), password);
+    if (prompted.save) await savePassword(env.secrets, connection, password);
   }
   return { type: 'default', options: { userName: connection.user, password } };
 }

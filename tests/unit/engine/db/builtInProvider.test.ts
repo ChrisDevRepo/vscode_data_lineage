@@ -78,11 +78,14 @@ const { openBuiltInSession, mapCell, listAccessibleDatabases } = await import('.
 const yamlQueries = (yaml.load(readFileSync(rootPath('assets', 'dmvQueries.yaml'), 'utf8')) as { queries: DmvQuery[] }).queries;
 const yamlSql = (name: string): string => yamlQueries.find((q) => q.name === name)!.sql;
 const { MicrosoftSignInError } = await import('../../../../src/engine/db/dbSession');
+const { encodeSavedPassword } = await import('../../../../src/engine/db/connectionSettings');
 const { CancellationTokenSource } = await import('vscode');
 
 const outputChannel = { debug() {}, info() {}, warn() {}, error() {}, trace() {} } as never;
 
-function makeEnv(stored: Record<string, string> = {}) {
+/** Secret store seeded with passwords saved for `bound` (default: the `sqlLogin` connection). */
+function makeEnv(passwords: Record<string, string> = {}, bound: { id: string; server: string; port?: number; user?: string } = sqlLogin) {
+  const stored = Object.fromEntries(Object.entries(passwords).map(([k, v]) => [k, encodeSavedPassword(bound, v)]));
   const secrets = {
     get: vi.fn(async (k: string) => stored[k]),
     store: vi.fn(async (k: string, v: string) => { stored[k] = v; }),
@@ -268,8 +271,9 @@ describe('openBuiltInSession — credentials', () => {
   });
 
   it('splits host\\instance into server and instanceName and leaves the port to the SQL Browser lookup', async () => {
-    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
-    await openBuiltInSession({ ...sqlLogin, server: 'dbhost\\SQLEXPRESS', port: undefined }, env);
+    const instance = { ...sqlLogin, server: 'dbhost\\SQLEXPRESS', port: undefined };
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' }, instance);
+    await openBuiltInSession(instance, env);
     const config = fake.connections[0].config;
     expect(config.server).toBe('dbhost');
     expect(config.options.instanceName).toBe('SQLEXPRESS');
@@ -277,8 +281,9 @@ describe('openBuiltInSession — credentials', () => {
   });
 
   it('an explicit port wins over an instance name, which the driver would otherwise refuse', async () => {
-    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
-    await openBuiltInSession({ ...sqlLogin, server: 'dbhost\\SQLEXPRESS', port: 1444 }, env);
+    const instance = { ...sqlLogin, server: 'dbhost\\SQLEXPRESS', port: 1444 };
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' }, instance);
+    await openBuiltInSession(instance, env);
     const config = fake.connections[0].config;
     expect(config.server).toBe('dbhost');
     expect(config.options.port).toBe(1444);
@@ -323,7 +328,17 @@ describe('openBuiltInSession — credentials', () => {
     expect(ui.showInputBox).toHaveBeenCalledTimes(1);
     expect(ui.showInputBox.mock.calls[0][0]).toMatchObject({ password: true });
     expect(fake.connections[0].config.authentication.options.password).toBe('typed-pw');
-    expect(secrets.store).toHaveBeenCalledWith('dataLineageViz.database.password.c1', 'typed-pw');
+    expect(secrets.store).toHaveBeenCalledWith('dataLineageViz.database.password.c1', encodeSavedPassword(sqlLogin, 'typed-pw'));
+  });
+
+  it('a password saved for another server is not sent after the connection is re-pointed; the user is asked', async () => {
+    ui.showInputBox.mockResolvedValue(undefined);
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'saved-pw' });
+
+    await expect(openBuiltInSession({ ...sqlLogin, server: 'attacker.example.com' }, env)).resolves.toBeUndefined();
+
+    expect(ui.showInputBox).toHaveBeenCalledTimes(1);
+    expect(fake.connections).toHaveLength(0);
   });
 
   it('a prompted password is not stored when the user declines to save it', async () => {

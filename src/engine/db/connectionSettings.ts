@@ -24,6 +24,65 @@ export function passwordSecretKey(id: string): string {
   return `${PASSWORD_SECRET_PREFIX}${id}`;
 }
 
+/** The identity a saved password was entered for. */
+type PasswordBinding = Pick<BuiltInConnection, 'id' | 'server' | 'port' | 'user'>;
+
+const SavedPasswordSchema = z.object({
+  server: z.string(), port: z.number().optional(), user: z.string(), password: z.string(),
+});
+
+function bindingOf(connection: PasswordBinding): { server: string; port?: number; user: string } {
+  return { server: dropTcpPrefix(connection.server).toLowerCase(), port: connection.port, user: connection.user ?? '' };
+}
+
+/**
+ * Secret-store value for a password, bound to the server, port and user it was entered for.
+ *
+ * @param connection - The connection the password belongs to.
+ * @param password - The SQL login password.
+ */
+export function encodeSavedPassword(connection: PasswordBinding, password: string): string {
+  return JSON.stringify({ ...bindingOf(connection), password });
+}
+
+/**
+ * Stores the SQL login password of a connection, bound to its server, port and user.
+ *
+ * @param secrets - VS Code secret storage.
+ * @param connection - The connection the password belongs to.
+ * @param password - The SQL login password.
+ */
+export async function savePassword(
+  secrets: Pick<vscode.SecretStorage, 'store'>, connection: PasswordBinding, password: string,
+): Promise<void> {
+  await secrets.store(passwordSecretKey(connection.id), encodeSavedPassword(connection, password));
+}
+
+/**
+ * Reads the saved SQL login password of a connection.
+ *
+ * @remarks
+ * A password saved for another server, port or user — for example after `settings.json` was edited
+ * to point the connection elsewhere — or an unreadable value counts as no saved password, so it is
+ * never sent to a host it was not entered for.
+ *
+ * @param secrets - VS Code secret storage.
+ * @param connection - The connection to read the password for.
+ */
+export async function readSavedPassword(
+  secrets: Pick<vscode.SecretStorage, 'get'>, connection: PasswordBinding,
+): Promise<string | undefined> {
+  const raw = await secrets.get(passwordSecretKey(connection.id));
+  if (raw === undefined) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  const saved = SavedPasswordSchema.safeParse(parsed);
+  if (!saved.success) return undefined;
+  const expected = bindingOf(connection);
+  const matches = saved.data.server === expected.server && saved.data.port === expected.port && saved.data.user === expected.user;
+  return matches ? saved.data.password : undefined;
+}
+
 const MAX_TCP_PORT = 65535;
 
 /** SQL Server `sysname` length: bounds names, logins and database names. */

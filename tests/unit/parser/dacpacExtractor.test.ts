@@ -450,7 +450,7 @@ async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
       <Model>
         <Element Type="SqlTable" Name="[my schema].[r&amp;d &lt;t&gt;]">
-          <Relationship Name="Columns">${column('say &quot;hi&quot;', '[int]')}${column('vc', '[varchar]', '<Property Name="IsMax" Value="True" />')}${column('nv', '[nvarchar]', '<Property Name="IsMax" Value="True" />')}${column('vb', '[varbinary]', '<Property Name="IsMax" Value="True" />')}${column('n50', '[nvarchar]', '<Property Name="Length" Value="50" />')}${column('g', '[sys].[geography]')}
+          <Relationship Name="Columns">${column('say &quot;hi&quot;', '[int]')}${column('vc', '[varchar]', '<Property Name="IsMax" Value="True" />')}${column('nv', '[nvarchar]', '<Property Name="IsMax" Value="True" />')}${column('vb', '[varbinary]', '<Property Name="IsMax" Value="True" />')}${column('n50', '[nvarchar]', '<Property Name="Length" Value="50" />')}${column('g', '[sys].[geography]')}${column('bad&#0;x&#xD800;y', '[int]')}
           </Relationship>
         </Element>
       </Model>
@@ -470,6 +470,7 @@ async function testNamesAndTypesRoundTrip() {
   expect(byName.get('vb'), 'IsMax keeps (max) on varbinary').toBe('varbinary(max)');
   expect(byName.get('n50'), 'a declared length is untouched').toBe('nvarchar(50)');
   expect(byName.get('g'), 'a sys-qualified CLR type reads as its bare name').toBe('geography');
+  expect([...byName.keys()], 'a reference to a code point XML forbids decodes to U+FFFD').toContain('bad\uFFFDx\uFFFDy');
 }
 
 

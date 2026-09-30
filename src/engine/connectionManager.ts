@@ -31,7 +31,7 @@ import {
 import { listAccessibleDatabases, openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
 import { describeConnection, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
-import { targetFromStored, type ConnectionErrorHooks } from './db/connectionErrors';
+import { redactSecrets, targetFromStored, type ConnectionErrorHooks } from './db/connectionErrors';
 
 export { MSSQL_EXTENSION_ID };
 
@@ -382,7 +382,7 @@ async function pickDatabase(env: DbConnectEnv, connection: BuiltInConnection): P
     }
   } catch (err) {
     if (err instanceof MicrosoftSignInError) throw new DbConnectionError(builtInTarget(connection, undefined), err);
-    Logger.create(env.outputChannel, 'DB').debug(`Database list unavailable for ${connection.server}: ${err instanceof Error ? err.message : String(err)}`);
+    Logger.create(env.outputChannel, 'DB').debug(`Database list unavailable for ${connection.server}: ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
   }
   if (names.length > 0) {
     return vscode.window.showQuickPick(names, { placeHolder: `Database on ${connection.server}`, ignoreFocusOut: true });

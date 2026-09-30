@@ -116,6 +116,12 @@ describe('describeConnectionError — text', () => {
     expect(message.startsWith(`${NAME}: Login failed.`)).toBe(true);
   });
 
+  it('redactSecrets removes JSON credential fields and "Password: value" text', () => {
+    const text = redactSecrets('Config {"server":"x","password":"hun\\"ter2","accessToken":"tok-9876"} Password: s3cr3t, token: abcd');
+    for (const secret of ['hun', 'ter2', 'tok-9876', 's3cr3t', 'abcd']) expect(text).not.toContain(secret);
+    expect(text).toContain('"server":"x"');
+  });
+
   it('redactSecrets leaves ordinary text alone', () => {
     expect(redactSecrets("Cannot open database \"Sales\" requested by the login.")).toBe("Cannot open database \"Sales\" requested by the login.");
   });

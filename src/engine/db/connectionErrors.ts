@@ -99,13 +99,15 @@ export function isDriverError(err: unknown): boolean {
  *
  * @remarks
  * Driver messages do not normally contain secrets; this guards the rare one that echoes a
- * connection string, a bearer token or a JWT.
+ * connection string, a JSON credential field, a bearer token or a JWT.
  */
 export function redactSecrets(text: string): string {
   return text
     .replace(/eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*/g, '[token removed]')
     .replace(/\bBearer\s+[\w.~+/=-]{8,}/gi, 'Bearer [token removed]')
-    .replace(/\b(password|pwd|token|secret|accesstoken)\s*=\s*[^;\s]+/gi, '$1=[removed]');
+    .replace(/\b(password|pwd|token|secret|accesstoken)\s*=\s*[^;\s]+/gi, '$1=[removed]')
+    .replace(/("(?:password|pwd|token|secret|accessToken)"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[removed]"')
+    .replace(/\b(password|pwd|token|secret|accesstoken)\s*:\s*[^;,\s]+/gi, '$1: [removed]');
 }
 
 function classify(err: unknown): ErrorKind {
@@ -278,7 +280,7 @@ export function reportConnectionError(
     try {
       await chosen.run();
     } catch (actionErr) {
-      logger.warn(`Action "${chosen.label}" failed: ${errorMessage(actionErr)}`);
+      logger.warn(`Action "${chosen.label}" failed: ${redactSecrets(errorMessage(actionErr))}`);
     }
   })();
   return { message, actions, answered };
