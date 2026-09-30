@@ -288,10 +288,9 @@ function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line
 }
 
 /**
- * Standing repair instruction for a schema-invalid tool call. Truthful for the port-level reject:
- * nothing is held at that layer, so the model must resend the complete call — the instruction
- * directs a minimal edit, it does not promise server-side reuse. A keyed resend is stated only by the
- * held-draft hints, where a draft is held; before the first parse nothing is, so a full resend is correct.
+ * The generic resend rule of a schema-invalid tool call whose tool holds no draft: the complete call is
+ * resent with a minimal edit. It is the only resend directive a rejection carries; a tool that holds a
+ * draft states its own held rule in its place.
  */
 export const INVALID_TOOL_INPUT_REPAIR_HINT
   = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
@@ -401,16 +400,15 @@ function nestedKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
   }
   const parts = [...clauses].map(([where, { keys, allowed }]) =>
     `remove ${[...keys].map(quoteKey).join(', ')} from ${where} (it accepts only ${allowed.join(', ')})`);
-  return `Resend the tool call: ${parts.join('; ')}. Keep every other field unchanged.`;
+  const sentence = parts.join('; ');
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
 }
 
 /**
  * Repair hint for an `invalid_tool_input` rejection carrying at least one `unrecognized_keys` issue.
  *
  * @remarks
- * The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} says "keep every other field unchanged" —
- * wrong for a key the schema rejects outright, since resending it reproduces the same failure.
- * This names the offending key(s) and directs removal, stated alongside any other flagged field's
+ * Names the offending key(s) and directs removal; the resend rule is the caller's.
  *
  * @param error - The Zod validation failure under {@link rejectionFromZodError}.
  * @param schema - The schema the payload failed; when given, a key nested in an object or array element
@@ -428,18 +426,13 @@ function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): strin
   const keyList = offendingKeys.map(quoteKey).join(', ');
   const nested = error.issues.some((issue) => issue.code === 'unrecognized_keys' && issue.path.length > 0);
   const removal = nested
-    ? `Resend the tool call without the unrecognized field${plural ? 's' : ''} ${keyList} where ${plural ? 'they were' : 'it was'} `
+    ? `Remove the unrecognized field${plural ? 's' : ''} ${keyList} where ${plural ? 'they were' : 'it was'} `
       + 'nested — a field this tool defines at another level goes at that level; anything else is not part of '
-      + 'this tool\'s input. Keep every other field unchanged.'
-    : `Resend the tool call with the unrecognized field${plural ? 's' : ''} ${keyList} removed entirely — `
-      + `${plural ? 'they are' : 'it is'} not part of this tool's input schema at all, so do not resend `
-      + `${plural ? 'them' : 'it'} under any name or nesting; keep every other field unchanged.`;
-
-  const hasOtherIssues = error.issues.some((issue) => issue.code !== 'unrecognized_keys');
-  return hasOtherIssues
-    ? `${removal} Separately, correct the other offending field(s) named above; resend every element of a corrected `
-      + 'list, repeating the unflagged elements exactly as first sent.'
-    : removal;
+      + 'this tool\'s input.'
+    : `Remove the unrecognized field${plural ? 's' : ''} ${keyList} entirely — `
+      + `${plural ? 'they are' : 'it is'} not part of this tool's input schema at all, so do not send `
+      + `${plural ? 'them' : 'it'} under any name or nesting.`;
+  return removal;
 }
 
 /**
@@ -447,7 +440,7 @@ function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): strin
  * absent from the call altogether, not merely of the wrong type.
  *
  * @remarks
- * The standing {@link INVALID_TOOL_INPUT_REPAIR_HINT} presumes the field is present and merely
+ * The generic {@link INVALID_TOOL_INPUT_REPAIR_HINT} presumes the field is present and merely
  * wrong, so a model told only that loops the identical omission. This names the missing field(s)
  * and directs addition, checked after {@link unrecognizedKeyRepairHint} since the two issue kinds
  * never share a path.
@@ -478,14 +471,8 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
     ? ''
     : ` ${nullable.map((field) => `"${field}"`).join(', ')} must be present; send null when ${nullable.length > 1 ? 'they do' : 'it does'} not apply.`;
   const addition = `Field${plural ? 's' : ''} ${fieldList} ${plural ? 'are' : 'is'} ${MISSING_FIELD_FRAGMENT}, `
-    + `not present with the wrong type — resend the full tool call with ${plural ? 'them' : 'it'} added at the `
-    + `required type; keep every other field unchanged.${nullNote}`;
-
-  const hasOtherIssues = error.issues.some((issue) => !isMissingFieldIssue(issue));
-  return hasOtherIssues
-    ? `${addition} Separately, correct the other offending field(s) named above; resend every element of a corrected `
-      + 'list, repeating the unflagged elements exactly as first sent.'
-    : addition;
+    + `not present with the wrong type — add ${plural ? 'them' : 'it'} at the required type.${nullNote}`;
+  return addition;
 }
 
 /**
@@ -495,7 +482,8 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
  * An unrecognized key first (removal is unambiguous), then a field absent outright (addition), a
  * present value of the wrong JSON type, and an array outside its size bound.
  * Both sub-hints are schema-derived, so any caller composing its own reject envelope gets the same
- * repair intelligence {@link rejectionFromZodError} already gives.
+ * repair intelligence {@link rejectionFromZodError} already gives. A hint states the fault and the
+ * field repair only; the resend rule is appended once by the caller.
  *
  * @param error - The Zod validation failure.
  * @param input - The rejected payload; required to tell "absent" from "present but wrong type" —
@@ -653,7 +641,7 @@ function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecogn
  * or engine.
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
- * {@link zodFieldRepairHint}, then {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input`
+ * {@link zodFieldRepairHint}, followed by the one generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input`
  * (the value that failed parsing) enabling measured-size and scalar-echo enrichment; optional `schema`
  * (the schema it failed) enabling the hints that name what the schema accepts.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
@@ -689,7 +677,7 @@ export function rejectionFromZodError(
   return makeRejection({
     code: opts.code,
     reason: z.prettifyError(new z.ZodError(collapsed)),
-    hint: opts.hint ?? zodFieldRepairHint(error, opts.input, opts.schema) ?? INVALID_TOOL_INPUT_REPAIR_HINT,
+    hint: opts.hint ?? [zodFieldRepairHint(error, opts.input, opts.schema), INVALID_TOOL_INPUT_REPAIR_HINT].filter(Boolean).join(' '),
     issuePaths,
   });
 }

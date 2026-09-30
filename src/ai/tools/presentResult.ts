@@ -4,7 +4,7 @@
  */
 import {
   PresentResultModelSchema,
-  PresentResultRepairPatchSchema,
+  PresentResultAuthorizableRepairSchema,
   normalizePresentSectionLabel,
   PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
@@ -137,10 +137,10 @@ function presentNodeIdHint(stage: PresentResultStage): string {
 export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
 /**
  * A validated `present_result` repair patch — the single source of truth, inferred from
- * {@link PresentResultRepairPatchSchema} (itself `.pick().partial()`-derived from the model schema)
+ * {@link PresentResultAuthorizableRepairSchema} (itself `.pick().partial()`-derived from the model schema)
  * so it can never hand-drift out of sync with the fields a full author may emit.
  */
-export type PresentResultRepairPatch = z.infer<typeof PresentResultRepairPatchSchema>;
+export type PresentResultRepairPatch = z.infer<typeof PresentResultAuthorizableRepairSchema>;
 
 /** What a held-draft rejection authorized: the presentation fields a resend may patch. */
 export interface PresentResultRepairAuthorization {

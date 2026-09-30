@@ -60,10 +60,11 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       }
       const flat = normalizedInput as FlatSubmitFindings;
 
-      if (flat.verdict === 'end_branch' && (flat.summary !== '' || Object.keys(flat.sections).length > 0)) {
-        s.logger.debug(
-          `[Normalize] tool=submit_findings verdict=end_branch dropped=${[flat.summary !== '' ? 'summary' : '', Object.keys(flat.sections).length > 0 ? 'sections' : ''].filter(Boolean).join(',')}`,
-        );
+      const dropped = flat.verdict === 'end_branch'
+        ? [(flat.summary ?? '') !== '' ? 'summary' : '', Object.keys(flat.sections ?? {}).length > 0 ? 'sections' : '', flat.badge_label != null ? 'badge_label' : '']
+        : [(flat.reason ?? '').trim() !== '' ? 'reason' : ''];
+      if (dropped.some(Boolean)) {
+        s.logger.debug(`[Normalize] tool=submit_findings verdict=${flat.verdict} dropped=${dropped.filter(Boolean).join(',')}`);
       }
       const finding = engine.applyHeldContent(toHopFinding(flat));
       if ('code' in finding) return s.logAndReturn('lineage_submit_findings', finding, normalizedInput);

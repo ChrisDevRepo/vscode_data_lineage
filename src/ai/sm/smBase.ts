@@ -1,4 +1,4 @@
-import { EngineAspectMode, InvalidRoute, type DepthIntent } from './smTypes';
+import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
 import { buildSubmissionRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, type SubmissionFaults } from './smRouteValidation';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
@@ -623,13 +623,15 @@ export class NavigationEngine implements IHopStateMachine {
    * @param input - The rejected payload as the model sent it.
    * @param failedPaths - Dotted Zod issue paths of the rejection.
    * @returns What the retry gets restored — held `sections` angles, whether a held `summary`, the
-   *   other held field names (a field this call failed excluded). A call that is not a kept verdict
-   *   of the current focus holds nothing new and reports the draft already held for the current
-   *   focus; `null` when nothing is held.
+   *   other held field names (a field this call failed excluded). An `end_branch` call reports
+   *   `null`, since a kept-verdict draft never applies to a cut; any other call that is not a kept
+   *   verdict of the current focus holds nothing new and reports the draft already held for the
+   *   current focus; `null` when nothing is held.
    */
-  public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): { sections: string[]; summary: boolean; fields: string[] } | null {
+  public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): HeldSubmissionParts | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
     const raw = input as Record<string, unknown> & { focus_node_id?: unknown; verdict?: unknown };
+    if (raw.verdict === 'end_branch') return null;
     if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap) ?? raw.focus_node_id.toLowerCase();
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
@@ -665,7 +667,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** The parts a draft already held for the current focus still restores, unchanged; `null` when none is held. */
-  private heldPartsOfCurrentFocus(): { sections: string[]; summary: boolean; fields: string[] } | null {
+  private heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
     const held = this.heldFindingDraft.get();
     if (held === null || (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) !== this.currentFocusNodeId) return null;
     const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
@@ -2695,7 +2697,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (carried.length > 0) {
         this.log('debug', `[Prune] end_branch refused hop=${this.hopCount} id=${focusId} reason=carries_tracked_column columns=[${carried.join(', ')}]`);
         faults.routes.push({
-          kind: 'prune_carries_tracked_column',
+          kind: 'end_branch_carries_tracked_column',
           id: focusId,
           path: 'verdict',
           available_columns: carried,

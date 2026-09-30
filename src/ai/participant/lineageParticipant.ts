@@ -38,6 +38,8 @@ import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import {
   applyNativeChatBoundary,
   chatHistoryToModelMessages,
+  continuedSlashCommand,
+  GATE_SHOWN_METADATA,
 } from './chatHistoryAdapter';
 
 interface PendingNativeGate {
@@ -321,14 +323,16 @@ export class LineageParticipant {
       traceVerbose: traceWriter?.isVerbose(),
       budget: turnBudget,
     });
-    const prompt = request.command
-      ? `/${request.command} ${request.prompt}`.trimEnd()
+    const command = request.command
+      ?? (session.phase.kind === 'idle' ? continuedSlashCommand(chatContext.history) : undefined);
+    const prompt = command
+      ? `/${command} ${request.prompt}`.trimEnd()
       : expandRunTracePrompt(expandShowGraphPreviewPrompt(request.prompt, session), session);
     const sink = new TurnEventSink(
       (event) => this.write(stream, token, (out) => this.writeEvent(event, out, request.prompt, requestId)),
     );
     this.logger.info(
-      `[${session.id}] native turn start model=${request.model.id} command=${request.command ?? 'none'} history=${chatContext.history.length}`,
+      `[${session.id}] native turn start model=${request.model.id} command=${command ?? 'none'} history=${chatContext.history.length}`,
     );
     const priorMessages = chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) => this.logger.debug(msg));
 
@@ -344,6 +348,7 @@ export class LineageParticipant {
         requestId,
         status: result.outcome,
         modelCalls: result.modelCalls,
+        ...(this.pendingGate?.requestId === requestId ? { [GATE_SHOWN_METADATA]: true } : {}),
       };
       if (result.outcome !== 'error') {
         this.logger.info(

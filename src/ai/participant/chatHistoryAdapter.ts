@@ -145,6 +145,36 @@ export function chatHistoryToModelMessages(
   return boundReplayedHistory(groups, budget, debug);
 }
 
+/** `ChatResult.metadata` key set on the reply of a turn that rendered an approval card. */
+export const GATE_SHOWN_METADATA = 'gateShown';
+
+/**
+ * Names the slash command a plain-text reply continues.
+ *
+ * @param history - The native VS Code chat history for this participant.
+ * @returns The command of the latest request turn when its reply put no approval card in front of
+ *   the user (a clarifying question, a decline), so the answer to that question stays inside the
+ *   command the user chose; `undefined` when the latest request carried no command or its reply's
+ *   result metadata sets {@link GATE_SHOWN_METADATA}, whose next reply belongs to the gate.
+ * @remarks
+ * `ChatRequest.command` is empty on the reply turn even though the conversation is still the
+ * command's own request, and a command is the one mechanical statement of intent the runtime has
+ * (`slashCommands.ts`). The caller applies this only while the session is idle.
+ */
+export function continuedSlashCommand(history: vscode.ChatContext['history']): string | undefined {
+  let latestRequestIndex = -1;
+  for (let index = history.length - 1; index >= 0; index--) {
+    if (isRequestTurn(history[index])) { latestRequestIndex = index; break; }
+  }
+  if (latestRequestIndex < 0) return undefined;
+  const request = history[latestRequestIndex] as vscode.ChatRequestTurn;
+  if (!request.command) return undefined;
+  const reply = history[latestRequestIndex + 1];
+  const gateShown = reply !== undefined && !isRequestTurn(reply)
+    && record(record(reply.result)?.metadata)?.[GATE_SHOWN_METADATA] === true;
+  return gateShown ? undefined : request.command;
+}
+
 /**
  * Applies the history budget: keeps the newest whole turns that fit both the turn-count and byte
  * ceilings, evicting oldest-first, and replaces anything evicted with one stub message.

@@ -1036,6 +1036,7 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_out_of_scope'
       | 'prune_origin_forbidden'
       | 'prune_carries_tracked_column'
+      | 'end_branch_carries_tracked_column'
       | 'question_not_neighbor';
 
 /**
@@ -1058,3 +1059,11 @@ export interface InvalidRoute {
 
 /** Discriminated union representing the engine's current aspect mode. */
 export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
+
+/** Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section angles, whether the summary, other field names. */
+export interface HeldSubmissionParts {
+  readonly sections: readonly string[];
+  readonly summary: boolean;
+  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`). */
+  readonly fields: readonly string[];
+}

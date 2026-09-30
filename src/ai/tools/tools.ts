@@ -262,6 +262,10 @@ function validateQuery(query: string): ToolRejection | null {
  * pass that tags them. A per-row `t` is read row by row, while an answer grouped by kind states one
  * number per heading — served, that number cannot drift from the list it heads.
  *
+ * `name_match` resolves a typed object name: the rows whose name equals the query, narrowed to the
+ * user's filtered scope when any of them sits in it, as `unique` or `ambiguous` with their ids.
+ * Absent for regex, list-all and substring-only hits.
+ *
  * @param model - The database model.
  * @param query - The search query.
  * @param types - Optional filter for object types.
@@ -373,6 +377,12 @@ export function searchObjects(
     [...typeCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
   );
 
+  const exactNameRows = isRegex || listAllInSchemas
+    ? []
+    : taggedResults.filter(r => r.match === 'name' && String((r as Record<string, unknown>).n).toLowerCase() === effectiveQuery.toLowerCase());
+  const inScopeRows = exactNameRows.filter(r => r.in_user_filter);
+  const resolvedIds = (inScopeRows.length > 0 ? inScopeRows : exactNameRows).map(r => String((r as Record<string, unknown>).id));
+
   const visibleNodeCount = activeFilter
     ? countVisibleNodes(model, activeFilter)
     : model.nodes.length;
@@ -391,6 +401,7 @@ export function searchObjects(
     total: taggedResults.length,
     by_type: byType,
     filter_context: filterContext,
+    ...(resolvedIds.length > 0 ? { name_match: { status: resolvedIds.length === 1 ? 'unique' : 'ambiguous', ids: resolvedIds } } : {}),
     ...(columnCursor !== undefined ? { next_cursor: columnCursor } : {}),
   };
 

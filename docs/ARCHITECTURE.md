@@ -108,8 +108,8 @@ Model input crosses three layers, in this order:
   nothing echoed); a payload that does not parse never reaches a handler, and a
   handler never parses again. The `submit_findings` content caps are advertised
   in the JSON schema but enforced in `NavigationEngine` (§Result and
-  presentation ownership), because a parse rejection carries no held draft and
-  no repairable classification.
+  presentation ownership), because an over-length field is a field-scoped content
+  error the engine rejects against its held draft with a repairable classification.
 - **Policy rejection** — phase- and state-dependent checks a schema cannot
   express ([`src/ai/interaction/`](../src/ai/interaction/)), returned through
   one shared error envelope. A code belongs in
@@ -453,9 +453,11 @@ from prose:
   IDENTITY versus TRANSFORMATION); it drives the Column Detail view's
   passthrough versus transformation line;
 - `end_branch` — off the answer path, knowable only after reading its SQL. It
-  carries only a reason, never on the origin (`prune_origin_forbidden`), and
+  carries only a reason (`summary`, `sections` and `badge_label` sent with it are
+  dropped), never on the origin (`prune_origin_forbidden`), and
   never on a node carrying a tracked column a visited neighbor's `column_flow`
-  declared on it (`prune_carries_tracked_column`, naming the columns). Stored
+  declared on it (`prune_carries_tracked_column`, naming the columns; the hint
+  asks for `analyze` or `passthrough` instead). Stored
   internally as node action `prune`.
 
 A neighbor prune is narrower than `end_branch`: it targets an adjacent object
@@ -750,9 +752,10 @@ express: node-id resolution against the result graph and highlight, section and
 note coverage. `submit_findings` advertises its caps without parsing them:
 `badge_label` and `column_flow[].upstream_columns[].note` are checked in
 `NavigationEngine` ahead of every mutation as a repairable single-field
-rejection against a held finding draft, and the retry names only the section
-angle it changes: `RepairDraftStore.mergeByKey` keeps every other held angle and
-an empty summary keeps the held one. Nothing is silently truncated on either path;
+rejection against a held finding draft. The retry resends the full call
+(`sections: {}` and `summary: ""` keep the held values) and names only the
+section angle it changes: `RepairDraftStore.mergeByKey` keeps every other held
+angle and an empty summary keeps the held one. Nothing is silently truncated on either path;
 engine-authored prose is fitted to the cap where it is written, never submitted
 over it.
 

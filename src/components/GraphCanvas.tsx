@@ -53,7 +53,7 @@ import { DetailSearchSidebar } from './DetailSearchSidebar';
 import type { FilterState, TraceState, ObjectType, ExtensionConfig, DatabaseModel, AnalysisMode, AnalysisType } from '../engine/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import { getSchemaColor, getExternalNodeColor, AI_COLOR_HEX, AI_COLOR_GLOW, resolveAiColor } from '../utils/schemaColors';
-import { NODE_WIDTH, NODE_HEIGHT, buildGraphologyGraph } from '../engine/graphBuilder';
+import { NODE_WIDTH, NODE_HEIGHT } from '../engine/graphBuilder';
 import { effectiveOverviewThreshold } from '../engine/graphDisplayMode';
 import { ColumnTraceNode } from './ColumnTraceNode';
 import {
@@ -478,6 +478,8 @@ interface GraphCanvasProps {
   onToggleTraceTreeCollapsed?: () => void;
   /** Traversal graph over the trace scope, shared by tree path lighting and focus paths. */
   traceScopeGraph?: Graph | null;
+  /** Full-model traversal graph backing the tree and row path lighting. */
+  modelGraph?: Graph | null;
   /** Shows only the routes to the given targets; an empty list restores the full trace. */
   setFocusTargets?: (targetIds: string[]) => boolean;
   /** Exits an active focus, restoring the full scope. */
@@ -685,6 +687,7 @@ export function GraphCanvas({
   isTraceTreeCollapsed,
   onToggleTraceTreeCollapsed,
   traceScopeGraph,
+  modelGraph = null,
   setFocusTargets,
   exitFocusPaths,
   isFocusPaths,
@@ -1120,9 +1123,6 @@ export function GraphCanvas({
   const [treeRoute, setTreeRoute] = useState<{ targetId: string; nodeIds: ReadonlySet<string>; edgeIds: ReadonlySet<string> } | null>(null);
   /** The row route while its row is still the selection; a canvas click elsewhere drops it. */
   const activeRoute = treeRoute && treeRoute.targetId === highlightedNodeId ? treeRoute : null;
-
-  /** Full-model traversal graph backing the tree and row path lighting. */
-  const modelGraph = useMemo(() => (model ? buildGraphologyGraph(model) : null), [model]);
 
   /**
    * Selects a tree row's node on the canvas once. A row click focuses (react-arborist `onFocus`)

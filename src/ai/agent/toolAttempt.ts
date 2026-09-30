@@ -28,6 +28,7 @@ import {
 } from '../model/modelPort';
 import { assertToolPairingWellFormed } from '../model/messageWellFormed';
 import type { TurnEventSink } from '../runtime/turnEventSink';
+import type { HeldSubmissionParts } from '../sm/smTypes';
 import {
   escapePromptText,
   formatProviderErrorDiagnostic,
@@ -262,14 +263,6 @@ export interface ToolAttemptResult {
   readonly providerError?: ProviderErrorDiagnostic;
 }
 
-/** Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section angles, whether the summary, other field names. */
-export interface HeldSubmissionParts {
-  readonly sections: readonly string[];
-  readonly summary: boolean;
-  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`). */
-  readonly fields: readonly string[];
-}
-
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` when nothing was held. */
 export type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
 
@@ -278,12 +271,10 @@ export type HoldRejectedPresentResult = (input: unknown, issuePaths: readonly st
 
 const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
 
-/** Resend rule of a schema rejection whose tool holds nothing for the retry. */
-const NOTHING_HELD_RESEND = 'Nothing is held; resend the full call with the failed field(s) corrected.';
-
 /**
- * Resend rule of a schema rejection of `lineage_submit_findings` whose valid parts are held: the
- * held labels (never their content) and the value that keeps each one in the full resend.
+ * The one resend rule of a schema rejection of `lineage_submit_findings` whose valid parts are held: the
+ * held labels (never their content), the fields every resend carries, and the value that keeps each
+ * held part in the full resend.
  */
 function heldSubmissionRule(held: HeldSubmissionParts): string {
   const labels = [
@@ -292,8 +283,8 @@ function heldSubmissionRule(held: HeldSubmissionParts): string {
     ...held.fields,
   ].join(', ');
   const keepValues = [...(held.sections.length > 0 ? ['sections: {}'] : []), ...(held.summary ? ['summary: ""'] : [])];
-  return `Held: ${labels}. Resend the full call with the failed field(s) corrected`
-    + (keepValues.length > 0 ? `; send ${keepValues.join(' and ')} to keep the held ${keepValues.length > 1 ? 'values' : 'value'}` : '')
+  return `Held: ${labels}. Resend the full call: always focus_node_id, verdict and every other required field; the failed field(s) corrected`
+    + (keepValues.length > 0 ? `; ${keepValues.join(' and ')} keep the held ${keepValues.length > 1 ? 'values' : 'value'}` : '')
     + (held.fields.length > 0 ? `; omit ${held.fields.join(', ')} to keep ${held.fields.length > 1 ? 'them' : 'it'}` : '')
     + '.'
     + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '');
@@ -640,9 +631,7 @@ function rejectionFromInvalid(
     code: call.code,
     message: call.reason,
     correction: {
-      ...(call.code === REJECTION_CODES.invalidToolInput
-        ? { hint: call.hint !== undefined ? call.hint : INVALID_TOOL_INPUT_REPAIR_HINT }
-        : {}),
+      ...(call.code === REJECTION_CODES.invalidToolInput && call.hint !== undefined ? { hint: call.hint } : {}),
       ...(call.code === REJECTION_CODES.unknownTool ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
@@ -1012,15 +1001,16 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     if (!call.valid) {
       const rejected = rejectionFromInvalid(call, input.registry);
       const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
-      const nothingHeld = (data: ToolOutcomeData): ToolOutcomeData => (call.hint === undefined ? data : withRepairHint(data, NOTHING_HELD_RESEND));
-      let data = rejected;
+      let resend: string | undefined = schemaRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
       if (schemaRejected && call.toolName === SUBMIT_FINDINGS_TOOL && input.holdRejectedSubmission) {
         const held = input.holdRejectedSubmission(call.input, call.issuePaths ?? []);
-        data = held ? withRepairHint(rejected, heldSubmissionRule(held)) : nothingHeld(rejected);
+        if (held) resend = heldSubmissionRule(held);
       } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
         const repair = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []);
-        data = repair ? withRepairHint(rejected, repair) : input.presentResultRepairDraftContext?.() ? rejected : nothingHeld(rejected);
+        if (repair) resend = repair;
+        else if (input.presentResultRepairDraftContext?.()) resend = undefined;
       }
+      let data = resend ? withRepairHint(rejected, resend) : rejected;
       data = withHeldDraftDetail(data, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection);
       const rejection = outcome.rejection!;

@@ -2,8 +2,8 @@
 /**
  * Pins the reload contract: a second `dacpac-model` frame into an already-open panel renders that
  * second model, never the one it replaces — with identical settings, with changed settings in the
- * same frame, and with a `rebuild-config` frame landing mid-load. `GraphCanvas` is mocked to its
- * `flowNodes` prop.
+ * same frame, and with a `rebuild-config` frame landing mid-load; the canvas receives the trace hook's
+ * full-model graph rather than building its own. `GraphCanvas` is mocked to its props.
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -14,10 +14,12 @@ import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 
 let lastFlowNodeCount = -1;
+let lastModelGraphOrder = -1;
 
 vi.mock('../../../src/components/GraphCanvas', () => ({
-  GraphCanvas: (props: { flowNodes: { id: string }[] }) => {
+  GraphCanvas: (props: { flowNodes: { id: string }[]; modelGraph?: { order: number } | null }) => {
     lastFlowNodeCount = props.flowNodes.length;
+    lastModelGraphOrder = props.modelGraph?.order ?? -1;
     return null;
   },
 }));
@@ -34,6 +36,7 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   lastFlowNodeCount = -1;
+  lastModelGraphOrder = -1;
 });
 
 afterEach(() => {
@@ -89,6 +92,11 @@ describe('reload into an already-open panel', () => {
     const { firstCount, secondCount } = await loadTwice(objectViewConfig);
     expect(firstCount).toBeGreaterThan(0);
     expect(secondCount).toBeGreaterThan(firstCount);
+  }, 15000);
+
+  it('passes the full-model graph of the loaded model to the canvas', async () => {
+    const { secondCount } = await loadTwice(objectViewConfig);
+    expect(lastModelGraphOrder).toBeGreaterThanOrEqual(secondCount);
   }, 15000);
 
   it('renders the second model when rebuild-config lands between its build and the next render', async () => {

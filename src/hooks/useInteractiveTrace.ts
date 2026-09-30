@@ -66,6 +66,8 @@ interface UseInteractiveTraceReturn {
   addTraceNeighbors: (nodeIds: string[]) => void;
   /** Traversal graph over the trace scope, shared by tree path lighting and focus paths; null outside a trace. */
   traceScopeGraph: Graph | null;
+  /** Unfiltered traversal graph over the whole model; null until a model is loaded. */
+  fullGraph: Graph | null;
 }
 
 const NO_TARGETS: readonly string[] = [];
@@ -524,5 +526,5 @@ export function useInteractiveTrace(
 
   const addTraceNeighbor = useCallback((nodeId: string) => addTraceNeighbors([nodeId]), [addTraceNeighbors]);
 
-  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths: focus !== null, focusTargetIds: focus?.targetIds ?? NO_TARGETS, navigatorTrace: focus?.previous ?? trace, resetTraceToStart, addTraceNeighbors, traceScopeGraph };
+  return { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths: focus !== null, focusTargetIds: focus?.targetIds ?? NO_TARGETS, navigatorTrace: focus?.previous ?? trace, resetTraceToStart, addTraceNeighbors, traceScopeGraph, fullGraph };
 }

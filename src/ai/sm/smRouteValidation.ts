@@ -12,7 +12,7 @@
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { keyedResendRule } from '../support/repairDraftStore';
-import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
@@ -60,7 +60,9 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_origin_forbidden:
     'The origin node anchors the lineage and cannot be pruned. Remove it from prune_neighbors.',
   prune_carries_tracked_column:
-    'A column_flow — committed earlier, or in this same submission — names this node for the tracked columns listed above, and a node a column flows through stays in the result. Remove it from prune_neighbors, or, if this submission named it by mistake, drop that column_flow entry instead; when it is this focus, submit analyze or passthrough (upstream_columns: [] where a column ends here) instead of end_branch.',
+    'A column_flow names this node for the tracked columns listed above, and a node a column flows through stays in the result. Remove it from prune_neighbors.',
+  end_branch_carries_tracked_column:
+    'This focus carries the tracked columns listed above and stays in the result: submit analyze or passthrough (upstream_columns: [] where a column ends here) instead of end_branch.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
 };
@@ -71,7 +73,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
  * authored survives the correction instead of being re-authored from scratch.
  */
 const HELD_CORRECTION_ORDER =
-  `Your analysis is held: resend submit_findings with only the fields named above corrected. ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
+  `Your analysis is held: ${INVALID_TOOL_INPUT_REPAIR_HINT} ${keyedResendRule('sections', 'angle')} An empty summary keeps the held summary.`;
 
 /**
  * True for a correctable field-scoped content error. The engine holds the finding draft for a
@@ -104,6 +106,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
   prune_origin_forbidden: REJECTION_CODES.pruneOriginForbidden,
   prune_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
+  end_branch_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
   question_not_neighbor: REJECTION_CODES.routeValidationFailed,
 };
 

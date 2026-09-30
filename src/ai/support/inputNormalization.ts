@@ -202,7 +202,11 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
   if (typeof value === 'string' && !types.has('string') && (types.has('array') || types.has('object'))) {
     try {
       const decoded: unknown = JSON.parse(value);
-      if ((Array.isArray(decoded) && types.has('array')) || (isPlainObject(decoded) && types.has('object'))) {
+      if (
+        (Array.isArray(decoded) && types.has('array')) ||
+        (isPlainObject(decoded) && types.has('object')) ||
+        (decoded === null && types.has('null'))
+      ) {
         paths.push(path);
         return coerce(decoded, schema, path, paths);
       }
@@ -229,7 +233,8 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
 }
 
 /**
- * Decodes JSON-string values where the tool's JSON Schema declares an array or object.
+ * Decodes JSON-string values where the tool's JSON Schema declares an array or object, or `null`
+ * beside one of them.
  *
  * @remarks
  * Some model servers return an array- or object-typed argument as a JSON string

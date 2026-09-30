@@ -1232,7 +1232,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         if (toolName === 'lineage_submit_findings' && !isError) {
           submitted = true;
           const finding = input as z.infer<typeof SubmitFindingsModelSchema>;
-          committedFinding.value = { summary: (finding.verdict === 'end_branch' ? finding.reason : finding.summary) ?? '', verdict: finding.verdict };
+          const summary = finding.verdict === 'end_branch'
+            ? finding.reason
+            : sess.memory.getResult().detail_slots.find(slot => slot.nodeId === focusId)?.summary;
+          committedFinding.value = { summary: summary ?? '', verdict: finding.verdict };
         }
       },
     }), priorAttempt));

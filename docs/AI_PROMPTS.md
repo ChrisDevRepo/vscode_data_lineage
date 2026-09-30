@@ -293,6 +293,11 @@ stored for it, the call answers `no_run_memory` with the repair.
 
 ### Start exploration
 
+The origin comes from `lineage_search_objects`, whose `name_match` resolves a
+typed name deterministically: exact-name rows, narrowed to the user's filtered
+schemas when any sit in them, served as `unique` or `ambiguous` ids. The model
+asks in text only on `ambiguous`.
+
 A fresh `lineage_start_exploration` proposal requires an origin, an explicit
 analysis mode, and an answer classification. BB traces whole objects and does
 not accept named target columns. CT requires user-named `targetColumns`.
@@ -325,12 +330,17 @@ per-hop verdict: `analyze` (transforms data on the answer path), `passthrough`
 (on the path, handing values on unchanged), or `end_branch` (removes this node,
 and every open node reachable only through it, from the result for the rest of
 the run). A kept verdict (`analyze` or `passthrough`) requires `sections` and
-`summary`, and may add `badge_label`; `end_branch` requires `reason`, refuses `badge_label`,
-`prune_neighbors` and `questions`, and ignores any `summary` or `sections` sent
-with it.
+`summary`, and may add `badge_label`; `end_branch` requires `reason`, refuses
+`prune_neighbors` and `questions`, and takes `summary` and `sections` omitted
+or ignores them, and `badge_label`, when sent. `summary`, `sections` and
+`reason` are served optional at the schema; the verdict-dependent requirement
+(a kept verdict still needs `sections` and `summary`) is enforced at parse.
+A kept verdict ignores any `reason` sent with it (logged, never rejected).
 `end_branch` is refused on the start object (`prune_origin_forbidden`) and on a
 node a committed `column_flow` has already named for a tracked column
-(`prune_carries_tracked_column`).
+(`prune_carries_tracked_column`; the hint asks for `analyze` or `passthrough` with
+`upstream_columns: []` where a column ends there). A neighbour prune on such a node
+carries the same code and the one repair "remove it from `prune_neighbors`".
 
 - BB accepts the focus verdict, classified sections, and two optional
   neighbor-decision arrays: `prune_neighbors` (`[{id, reason}]`, based on this
@@ -377,7 +387,11 @@ dispatches as one unit) and tie-breaks a ready set by tier, then distance from
 the origin, then id; a node is visited at most once.
 
 The locked answer classification determines which section angles are required.
-Validation requires the locked angles to be present; off-classification
+Validation requires the locked angles to be present: under a `both` lock a fresh
+submission serves `sections.business` and `sections.technical` in the JSON Schema
+`required` list (the `sections` object itself is optional; `end_branch` omits it, and an
+`end_branch` sending `{}` is still accepted), and a retry with a held draft serves them
+optional; off-classification
 sections are then dropped deterministically at commit (not rejected — a
 surplus section is not a field-scoped defect the held-draft repair flow could
 patch), so a business-only answer cannot carry technical sections. Neighbor,
@@ -416,7 +430,9 @@ prompt reasons from.
 Validation is field-scoped and runs before commit, and it is structural only.
 Markdown and math formatting never reject a call: an expression the renderer
 cannot parse degrades to its original source text on screen. A held-draft retry
-may repair only the rejected fields, each list merged by key (`sections` by label,
+resends the full call, and a rejection carries one resend directive (the generic
+minimal-edit rule, or the held rule naming the held parts); only the rejected fields
+are repaired, each list merged by key (`sections` by label,
 `submit_findings` sections by angle) with a held entry left unnamed kept as authored; graph membership, node associations,
 and highlights remain unchanged.
 

@@ -66,7 +66,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_objects', inputSchema: SearchObjectsInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search for database objects by name or column.',
-    modelDescription: 'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, and `in_user_filter`. When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.',
+    modelDescription: 'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.',
     progressLabel: 'Searching database objects…',
   },
   {

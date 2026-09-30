@@ -29,7 +29,7 @@ import {
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import { MergedSectionsSchema, normalizePresentSectionLabel } from '../../tools/toolSchemas';
+import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
@@ -59,9 +59,6 @@ function findUncoveredCtChainNodes(
   const linked = new Set<string>();
   for (const sec of input.sections ?? []) {
     for (const id of sec.node_ids ?? []) linked.add(lc(id));
-  }
-  for (const group of input.highlight_groups ?? []) {
-    for (const id of group.node_ids ?? []) linked.add(lc(id));
   }
   for (const note of input.notes ?? []) linked.add(lc(note.node_id));
   return required.filter(id => !linked.has(lc(id)));
@@ -192,9 +189,16 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         presentInput = mergePresentResultRepairPatch(held, patch, authorization);
         const merged = MergedSectionsSchema.safeParse({ sections: presentInput.sections });
         if (!merged.success) {
+          const owed = new Set<string>(['sections', ...authorization.fields.filter(field => presentInput[field] === undefined)]);
+          const fields = PRESENT_RESULT_REPAIR_FIELDS.filter(field => owed.has(field));
+          sess.presentResultRepairDraft.hold(presentInput, { fields });
+          const sectionsHeld = (held.sections?.length ?? 0) > 0;
+          const instruction = presentResultRepairInstruction(fields, isVisualPreview ? 'visual_preview' : 'synthesis', sectionsHeld);
           return reject(rejectionFromZodError(merged.error, {
             code: REJECTION_CODES.validation,
-            hint: `${presentResultRepairInstruction(['sections'], isVisualPreview ? 'visual_preview' : 'synthesis')} The merge left the report with no section to keep; a section stays unless it is dropped.`,
+            hint: sectionsHeld
+              ? `${instruction} The merge left the report with no section to keep; a section stays unless it is dropped.`
+              : instruction,
           }));
         }
       } else if (isVisualPreview) {
@@ -219,6 +223,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         : 'synthesis';
 
       const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
+
+      const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
+        if (!held) return reject(rejection);
+        sess.presentResultRepairDraft.hold(presentInput, { fields: [field] });
+        return reject({ ...rejection, hint: `${rejection.hint} ${presentResultRepairInstruction([field], presentResultStage)}` });
+      };
 
       if (previewNarrative) {
         const partition = findStartOrderIssues(presentInput.sections ?? []);
@@ -289,7 +299,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const currentSet = new Set(resolvedNodeIds);
         const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap);
         if (addResolution.unresolved.length > 0) {
-          return reject(makeRejection({
+          return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
             reason: `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
@@ -302,7 +312,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
           : [];
         if (outOfScope.length > 0) {
-          return reject(makeRejection({
+          return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
             reason: `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
             hint: 'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
@@ -319,7 +329,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
         const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap);
         if (pruneResolution.unresolved.length > 0) {
-          return reject(makeRejection({
+          return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
             reason: `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs, then retry present_result.',
@@ -438,12 +448,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           field: 'sections',
           messages: [
             `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes)}.`,
-            'For each one: add its id to a sections[].node_ids, or to any highlight_groups[].node_ids, or give it one grounded notes[] entry. Tables carry the traced column even when they have no detail slot.',
+            'For each one: add its id to a sections[].node_ids, or give it one grounded notes[] entry. Tables carry the traced column even when they have no detail slot.',
           ],
           repairFields: ['sections', 'highlight_groups', 'notes'],
           paths: ['sections', 'highlight_groups', 'notes'],
           entryIds: uncoveredCtNodes,
-          soleHint: 'Fix CT node coverage only: link each named node in a section, a highlight group, or notes.',
+          soleHint: 'Fix CT node coverage only: link each named node in a section or notes.',
         });
       }
       if (unrenderedSlotIds.length > 0) {
