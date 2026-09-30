@@ -14,6 +14,7 @@ import {
   filterAfterAiPreviewDiscard,
   deriveRenderLimitFallback,
   largestFittingTraceDepth,
+  traceReduceDepthLevels,
   collapseLastExpandedSchema,
   retainExistingSchemas,
   serializeExpandedSchemas,
@@ -176,6 +177,34 @@ describe('largestFittingTraceDepth', () => {
       { upstream: 0, downstream: 0, count: 1 },
     ];
     expect(largestFittingTraceDepth(candidates, 2000)).toEqual({ upstream: 0, downstream: 0, count: 1 });
+  });
+});
+
+describe('traceReduceDepthLevels', () => {
+  it('keeps a zero side at zero on a one-sided trace', () => {
+    expect(traceReduceDepthLevels(3, 0, 10)).toEqual([
+      { upstream: 0, downstream: 0 },
+      { upstream: 1, downstream: 0 },
+      { upstream: 2, downstream: 0 },
+      { upstream: 3, downstream: 0 },
+    ]);
+  });
+
+  it('caps each side at its own depth on an asymmetric trace', () => {
+    expect(traceReduceDepthLevels(1, 3, 10)).toEqual([
+      { upstream: 0, downstream: 0 },
+      { upstream: 1, downstream: 1 },
+      { upstream: 1, downstream: 2 },
+      { upstream: 1, downstream: 3 },
+    ]);
+  });
+
+  it('stops probing at the probe ceiling', () => {
+    expect(traceReduceDepthLevels(Infinity, 0, 2)).toEqual([
+      { upstream: 0, downstream: 0 },
+      { upstream: 1, downstream: 0 },
+      { upstream: 2, downstream: 0 },
+    ]);
   });
 });
 

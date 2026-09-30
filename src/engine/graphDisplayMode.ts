@@ -332,6 +332,24 @@ export function largestFittingTraceDepth(
 }
 
 /**
+ * Depths a render-limit "reduce depth" suggestion probes: each level from 0 up to the deeper side,
+ * with every side capped at its own current depth, so a side the trace does not follow stays at 0.
+ *
+ * @param maxProbe - Deepest level probed, bounding the BFS count work.
+ */
+export function traceReduceDepthLevels(
+  upstreamLevels: number,
+  downstreamLevels: number,
+  maxProbe: number,
+): Array<Omit<TraceDepthCandidate, 'count'>> {
+  const deepest = Math.min(Math.max(upstreamLevels, downstreamLevels), maxProbe);
+  return Array.from({ length: deepest + 1 }, (_, level) => ({
+    upstream: Math.min(upstreamLevels, level),
+    downstream: Math.min(downstreamLevels, level),
+  }));
+}
+
+/**
  * Node count a trace from `nodeId` at the given depths would render — BFS only, never layout, so
  * it is cheap enough to probe several candidate depths (a render-limit "reduce depth" suggestion,
  * a depth-choice count label) before committing to one.

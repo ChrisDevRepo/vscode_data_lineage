@@ -17,6 +17,7 @@ import {
   aiPreviewDisplayFilter,
   filterAfterAiPreviewDiscard,
   largestFittingTraceDepth,
+  traceReduceDepthLevels,
   collapseLastExpandedSchema,
   retainExistingSchemas,
   serializeExpandedSchemas,
@@ -1596,10 +1597,9 @@ export function App() {
   const traceReduceCandidate = useMemo(
     () => traceReduceSelectedNodeId
       ? largestFittingTraceDepth(
-          Array.from({ length: Math.min(trace.upstreamLevels, trace.downstreamLevels, TRACE_REDUCE_MAX_PROBE_DEPTH) + 1 }, (_, level) => ({
-            upstream: level,
-            downstream: level,
-            count: estimateTraceSize(level, level),
+          traceReduceDepthLevels(trace.upstreamLevels, trace.downstreamLevels, TRACE_REDUCE_MAX_PROBE_DEPTH).map(depth => ({
+            ...depth,
+            count: estimateTraceSize(depth.upstream, depth.downstream),
           })),
           config.renderLimit,
         )
@@ -1705,7 +1705,7 @@ export function App() {
               onClick={() => applyTrace(traceReduceCandidate.upstream, traceReduceCandidate.downstream)}
               className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-primary"
             >
-              Reduce depth to {traceReduceCandidate.upstream + traceReduceCandidate.downstream}
+              Reduce depth to ↑{traceReduceCandidate.upstream} ↓{traceReduceCandidate.downstream}
             </button>
           )}
           {renderLimitFallback.offerSchemaView && (
