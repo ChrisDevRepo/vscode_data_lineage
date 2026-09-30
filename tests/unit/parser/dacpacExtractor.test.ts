@@ -27,6 +27,22 @@ async function makeExternalRefDacpac(): Promise<Uint8Array> {
 }
 
 
+/** A DACPAC foreign key keeps its ON DELETE action and a view column keeps a dotted bracketed name. */
+async function testFkDeleteActionAndDottedColumns() {
+  const model = await loadAdventureWorksModel();
+  const detail = model.nodes.find(n => n.id === '[sales].[salesorderdetail]');
+  const fk = detail?.fks?.find(f => f.name === 'FK_SalesOrderDetail_SalesOrderHeader_SalesOrderID');
+  expect(fk?.onDelete, 'OnDeleteAction=1 maps to CASCADE').toBe('CASCADE');
+  const noAction = model.nodes.flatMap(n => n.fks ?? []).find(f => f.name === 'FK_SalesOrderDetail_SpecialOfferProduct_SpecialOfferIDProductID');
+  expect(noAction?.onDelete, 'no OnDeleteAction property stays NO ACTION').toBe('NO ACTION');
+
+  const candidate = model.nodes.find(n => n.id === '[humanresources].[vjobcandidate]');
+  const names = candidate?.columns?.map(c => c.name) ?? [];
+  expect(names, 'dotted column name is kept whole').toContain('Name.Prefix');
+  expect(names, 'dotted column name is not cut at the dot').not.toContain('Prefix');
+}
+
+
 async function testExtraction() {
   const model = await loadAdventureWorksModel();
 
@@ -618,6 +634,7 @@ async function testComputedColumnTypeBorrowing() {
   it('decodes predefined XML entities in served text, never inside CDATA', testPredefinedEntityDecoding);
   it('reports import errors', testImportErrorHandling);
   it('extracts constraints', testConstraints);
+  it('keeps the FK delete action and dotted column names', testFkDeleteActionAndDottedColumns);
   it('maps DSP platforms', testParseDspPlatform);
   it('records database platforms in the model', testDbPlatformInModel);
   it('records primary-key ordinals', testPkOrdinalInModel);

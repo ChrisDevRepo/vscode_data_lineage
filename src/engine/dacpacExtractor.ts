@@ -537,7 +537,7 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
     if (rel['@_Name'] !== 'Columns') continue;
     for (const entry of asArray(rel.Entry)) {
       for (const colEl of asArray(entry.Element)) {
-        const colName = stripBrackets((colEl['@_Name'] ?? '').split('.').pop() ?? '');
+        const colName = lastNamePart(colEl['@_Name'] ?? '');
         const props = asArray(colEl.Property);
         const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
         const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
@@ -637,7 +637,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
         for (const specEl of asArray(entry.Element)) {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
-          const colName = stripBrackets(colRef.split('.').pop() ?? '');
+          const colName = lastNamePart(colRef);
           uqColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
         }
       }
@@ -650,7 +650,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       if (!constraintName) continue;
       const ckColRefs = getRelRefs(el, 'CheckExpressionDependencies');
       if (ckColRefs.length === 1) {
-        const colName = stripBrackets(ckColRefs[0].split('.').pop() ?? '');
+        const colName = lastNamePart(ckColRefs[0]);
         if (colName) ckColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
       }
 
@@ -663,10 +663,10 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       const foreignTableRef = getRelRefs(el, 'ForeignTable')[0];
       if (!foreignTableRef) continue;
       const { schema: refSchema, objectName: refTable } = parseName(foreignTableRef);
-      const parentCols  = getRelRefs(el, 'Columns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
-      const refColsList = getRelRefs(el, 'ForeignColumns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
+      const parentCols  = getRelRefs(el, 'Columns').map(r => lastNamePart(r)).filter(Boolean);
+      const refColsList = getRelRefs(el, 'ForeignColumns').map(r => lastNamePart(r)).filter(Boolean);
       if (parentCols.length === 0 || parentCols.length !== refColsList.length) continue;
-      const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'DeleteAction')?.['@_Value'] ?? '';
+      const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'OnDeleteAction')?.['@_Value'] ?? '';
       const onDelete = FK_DELETE_ACTION[deleteVal] ?? 'NO ACTION';
       const list = fkMap.get(tableKey) ?? [];
       list.push({ name: constraintName, columns: parentCols, refSchema, refTable, refColumns: refColsList, onDelete });
@@ -682,7 +682,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
         for (const specEl of asArray(entry.Element)) {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
-          const colName = stripBrackets(colRef.split('.').pop() ?? '');
+          const colName = lastNamePart(colRef);
           if (colName) pkOrdinalMap.set(`${tableKey}.${colName.toLowerCase()}`, ordinal++);
         }
       }
@@ -879,13 +879,22 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
 }
 
 /**
+ * Returns the last part of a qualified name, unbracketed; a dot inside `[...]` stays part of the name.
+ *
+ * @param ref - A qualified reference such as `[Schema].[View].[Name.Prefix]`.
+ */
+function lastNamePart(ref: string): string {
+  return stripBrackets(splitSqlName(ref).pop() ?? '');
+}
+
+/**
  * Checks if a reference is object-level (schema.object) rather than column-level.
  *
  * @param name - The reference string.
  * @returns `true` if it looks like an object-level reference.
  */
 function isObjectLevelRef(name: string): boolean {
-  const parts = stripBrackets(name).split('.');
+  const parts = splitSqlName(name).map(stripBrackets);
   return parts.length === 2 && !parts[1].startsWith('@');
 }
 
