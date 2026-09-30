@@ -43,13 +43,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           ? input as SubmitFindingsInputObject
           : {};
 
-      if (!engine.columnAspect && rawInput.column_flow !== undefined) {
-        return s.logAndReturn('lineage_submit_findings', makeRejection({
-          code: REJECTION_CODES.bbFieldUnknown,
-          hint: 'This session is in BB mode — `column_flow` is not accepted. Submit verdict + sections + optional prune_neighbors/questions.',
-        }), rawInput);
-      }
-
       const modelNodeMap = getModelNodeMap(s.requireModel());
       const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
       const normalizedInput = normalized.input;

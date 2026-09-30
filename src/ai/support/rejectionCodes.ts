@@ -7,8 +7,6 @@
  * then interpolate this constant, so a rename cannot drift between the guard and the prompt.
  */
 export const REJECTION_CODES = {
-  /** `submit_findings` carries a CT-only field (`column_flow`) in a BB session. */
-  bbFieldUnknown: 'bb_field_unknown',
   /** Tool called outside the current phase's `toolPolicy` allow-list. */
   offPolicy: 'off_policy',
   /** `start_exploration` while the session's exploration is already live (one-shot per turn). */
