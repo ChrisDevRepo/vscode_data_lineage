@@ -325,8 +325,21 @@ export function createMessageHandlers(
     }
   }
 
+  /**
+   * Installs a newly loaded model.
+   *
+   * @remarks
+   * The detail panel shows a node of the previous model, so it is cleared; a DACPAC model drops the
+   * previous database connection, so table statistics cannot reach the database it came from.
+   */
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
+    if (!isDb) lastConnectionInfo = undefined;
+    lastDetailNode = null;
+    if (detailPanel) {
+      detailPanel.title = 'Detail';
+      void postToDetail(detailPanel, { type: 'detail-clear' }, bridgeLogger);
+    }
   }
 
   /** Clears a filter view's stored AI run record, logging rather than throwing on failure. */
@@ -437,7 +450,9 @@ export function createMessageHandlers(
                 void postToDetail(detailPanel, { type: 'detail-clear' }, bridgeLogger);
               }
             } else if (m.type === 'table-stats-request') {
-              if (detailPanel) {
+              if (detailPanel && !getSession().isDbSession) {
+                void postToDetail(detailPanel, { type: 'table-stats-error', message: 'Table statistics need a database project.' }, bridgeLogger);
+              } else if (detailPanel) {
                 await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, statsConnState, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
               }
             } else if (m.type === 'close-detail') {

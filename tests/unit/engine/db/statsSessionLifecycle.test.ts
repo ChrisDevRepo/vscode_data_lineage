@@ -1,6 +1,7 @@
 /**
  * Pins the table-statistics connection lifetime: a built-in connection is opened per request and
- * closed afterwards; an mssql-extension connection is negotiated once and reused.
+ * closed afterwards; an mssql-extension connection is negotiated once and reused; a DACPAC model never
+ * reaches a database.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../../src/bridge/host';
@@ -55,7 +56,7 @@ function fakeSession(kind: string) {
   };
 }
 
-async function requestStatsTwice(): Promise<void> {
+async function requestStatsTwice(isDbSession = true): Promise<void> {
   const host = {
     postMessage: vi.fn().mockResolvedValue(true),
     log: vi.fn(),
@@ -65,7 +66,7 @@ async function requestStatsTwice(): Promise<void> {
   const { handlers } = createMessageHandlers(
     host,
     { globalState: { get: vi.fn(), update: vi.fn() }, secrets: {} } as never,
-    () => ({ isDbSession: true }) as never,
+    () => ({ isDbSession }) as never,
     { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() } as never,
     () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
     vi.fn(),
@@ -103,5 +104,13 @@ describe('table statistics connection lifetime', () => {
 
     expect(connectDatabase).toHaveBeenCalledTimes(1);
     expect(session.dispose).not.toHaveBeenCalled();
+  });
+
+  it('a request from a detail panel while a DACPAC model is loaded never connects', async () => {
+    provider = 'builtIn';
+
+    await requestStatsTwice(false);
+
+    expect(connectDatabase).not.toHaveBeenCalled();
   });
 });
