@@ -9,6 +9,7 @@
  */
 
 import { escapePromptText } from '../support/text';
+import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
 import type { InvestigationTask } from '../sm/smTypes';
 
 /**
@@ -363,8 +364,8 @@ function buildFollowUpPrompt(): string {
     '  its body. Send `text` only for a section you rewrite or a new or renamed',
     '  label, re-deriving what you cannot quote exactly; change only the `node_ids` you were asked to.',
     '- Change graph color/role labels such as `source`, `transform`, or `target`: update `highlight_groups[]`',
-    '  and call `lineage_present_result`. `add_node_ids` reveals objects this exploration already',
-    '  analysed; an object it has not analysed joins through the supplement below.',
+    `  and call \`lineage_present_result\`. \`add_node_ids\` ${ADD_NODE_IDS_REVEALS};`,
+    '  an object it has not analysed joins through the supplement below.',
     '- Change description text shown with the graph: update `title`, `intro`,',
     '  `sections[].text`, and/or `closing` in `lineage_present_result`.',
     '- Change note text below the graph: update `notes[]` (`node_id`, `caption`) in',

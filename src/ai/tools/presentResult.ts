@@ -11,7 +11,7 @@ import {
 } from './toolSchemas';
 import { quoteIds } from '../support/text';
 import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
-import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
@@ -77,6 +77,9 @@ export const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, str
  */
 export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
 
+/** What `add_node_ids` reveals; the follow-up instruction and the unknown-id route state it identically. */
+export const ADD_NODE_IDS_REVEALS = 'reveals objects this exploration already analysed';
+
 /**
  * The route back for a real id the render does not carry, per stage — only what the tool accepts.
  *
@@ -87,7 +90,7 @@ export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
  * other stage is left with prose.
  */
 const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
-  completed: 'A real id outside the result graph can be brought into the view with add_node_ids.',
+  completed: `A real id outside the result graph can be brought into the view with add_node_ids, which ${ADD_NODE_IDS_REVEALS}.`,
   synthesis: 'The result graph is locked this stage.',
   visual_preview: 'The result graph is locked this stage; the answer text is served as blocks.',
 };
@@ -1048,17 +1051,12 @@ export function validatePresentResult(
   }
 
   if (errors.length > 0) {
-    const fieldList = [...failedFields];
     const resendList = [...repairFields];
     const repairInstructed = allRepairable && resendList.length > 0;
-    const resendSentence = !repairInstructed && resendList.length > 0 ? ` Resend only these fields: ${resendList.join(', ')}.` : '';
-    const fieldHint = repairInstructed ? undefined : fieldList.length === 1
-      ? `Fix ${fieldList[0]} only.${resendSentence}`
-      : `Fix these fields: ${fieldList.join(', ')}.${resendSentence}`;
     const hint = [
-      fieldHint,
+      repairInstructed ? undefined : `Fix ${[...failedFields].join(', ')}.`,
       nodeIdHintNeeded ? presentNodeIdHint(stage) : undefined,
-      repairInstructed ? presentResultRepairInstruction(resendList, stage) : undefined,
+      repairInstructed ? presentResultRepairInstruction(resendList, stage) : INVALID_TOOL_INPUT_REPAIR_HINT,
     ].filter(Boolean).join(' ');
     const unlinkable = [...pathUnlinkableIds].map(([path, ids], index) => ({
       path,

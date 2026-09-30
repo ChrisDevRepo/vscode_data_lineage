@@ -425,14 +425,9 @@ function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): strin
   const plural = offendingKeys.length > 1;
   const keyList = offendingKeys.map(quoteKey).join(', ');
   const nested = error.issues.some((issue) => issue.code === 'unrecognized_keys' && issue.path.length > 0);
-  const removal = nested
-    ? `Remove the unrecognized field${plural ? 's' : ''} ${keyList} where ${plural ? 'they were' : 'it was'} `
-      + 'nested — a field this tool defines at another level goes at that level; anything else is not part of '
-      + 'this tool\'s input.'
-    : `Remove the unrecognized field${plural ? 's' : ''} ${keyList} entirely — `
-      + `${plural ? 'they are' : 'it is'} not part of this tool's input schema at all, so do not send `
-      + `${plural ? 'them' : 'it'} under any name or nesting.`;
-  return removal;
+  return nested
+    ? `Remove ${keyList} where ${plural ? 'they were' : 'it was'} nested; a field this tool defines at another level goes at that level.`
+    : `Remove ${keyList} entirely; do not send ${plural ? 'them' : 'it'} under any name or nesting.`;
 }
 
 /**
@@ -512,11 +507,10 @@ function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
     if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
     const value = resolveAtPath(input, issue.path);
     if (value === undefined) continue;
-    const received = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
     const nullNote = acceptsNullAt(schema, issue.path) ? ', or null when it does not apply' : '';
     const node = jsonSchemaNodeAt(schema, issue.path);
     const example = issue.expected === 'object' && node ? JSON.stringify(exampleOf(node)) : undefined;
-    return `"${issue.path.join('.')}" must be a JSON ${issue.expected}, not a ${received}; send the ${issue.expected} directly${example ? `, shaped like ${example}` : ''}${nullNote}.`;
+    return `Send the ${issue.expected} directly${example ? `, shaped like ${example}` : ''}${nullNote}.`;
   }
   return undefined;
 }
