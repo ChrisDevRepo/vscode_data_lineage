@@ -57,8 +57,6 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors.',
-  prune_origin_forbidden:
-    'Remove it from prune_neighbors.',
   prune_carries_tracked_column: 'Remove it from prune_neighbors.',
   end_branch_carries_tracked_column:
     'Submit analyze or passthrough (upstream_columns: [] where a column ends here) instead of end_branch.',
@@ -95,7 +93,6 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_analyzed: REJECTION_CODES.routeValidationFailed,
   prune_noop_queued: REJECTION_CODES.routeValidationFailed,
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
-  prune_origin_forbidden: REJECTION_CODES.pruneOriginForbidden,
   prune_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
   end_branch_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
   question_not_neighbor: REJECTION_CODES.routeValidationFailed,

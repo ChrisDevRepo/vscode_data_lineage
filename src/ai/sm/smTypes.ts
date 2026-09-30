@@ -1034,7 +1034,6 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_analyzed'
       | 'prune_noop_queued'
       | 'prune_noop_out_of_scope'
-      | 'prune_origin_forbidden'
       | 'prune_carries_tracked_column'
       | 'end_branch_carries_tracked_column'
       | 'question_not_neighbor';
