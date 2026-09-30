@@ -695,7 +695,7 @@ const END_BRANCH_EXCLUDED_FIELDS = ['prune_neighbors', 'questions'] as const;
  * so its own content check runs for every verdict rather than joining
  * {@link END_BRANCH_EXCLUDED_FIELDS}'s omission-only check.
  */
-function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, mode: 'bb' | 'ct', fresh: boolean, bothAnglesRequired = false): void {
+function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, mode: 'bb' | 'ct', fresh: boolean, classification?: ClassificationValue): void {
   if (typeof value !== 'object' || value === null || !HopVerdictSchema.safeParse(value.verdict).success) return;
   const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
   if (value.verdict === 'end_branch') {
@@ -725,6 +725,23 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       });
     }
     return;
+  }
+  const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
+  const bothAnglesRequired = fresh && keptAngles?.length === CLASSIFICATION_KEPT_ANGLES.both.length;
+  if (keptAngles?.length === 1 && typeof value.sections === 'object' && value.sections !== null) {
+    const [onlyAngle] = keptAngles;
+    const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
+    const surplus = Object.keys(value.sections).filter((key) => key !== onlyAngle);
+    if (surplus.includes(offAngle)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sections'],
+        message: `"${offAngle}" is not kept under classification=${classification}`,
+        params: { hint: `Fold the ${offAngle} content into "${onlyAngle}" and drop the "${offAngle}" key.` },
+      });
+    }
+    const unknown = surplus.filter((key) => key !== offAngle);
+    if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
   }
   const filled = new Set(Object.entries(value.sections ?? {})
     .filter(([, body]) => typeof body === 'string' && body.trim() !== '').map(([angle]) => angle));
@@ -797,10 +814,8 @@ function finalizeSubmitFindingsSchema(
   fresh: boolean,
   classification?: ClassificationValue,
 ): z.ZodType<FlatSubmitFindings> {
-  const bothAnglesRequired = fresh && classification !== undefined
-    && CLASSIFICATION_KEPT_ANGLES[classification].length === CLASSIFICATION_KEPT_ANGLES.both.length;
   return schema
-    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode, fresh, bothAnglesRequired))) as z.ZodType<FlatSubmitFindings>;
+    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode, fresh, classification))) as z.ZodType<FlatSubmitFindings>;
 }
 
 /**
@@ -832,8 +847,9 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  * ({@link CLASSIFICATION_KEPT_ANGLES}).
  *
  * @remarks
- * One kept angle drops the other key. Sending it raises a custom issue whose hint says to fold
- * that key's content into the kept angle. The fold guidance also lives on the kept key's
+ * One kept angle drops the other key. Sending it on a kept verdict raises a custom issue from
+ * {@link refineSubmitFindingsShape} whose hint says to fold that key's content into the kept angle;
+ * `end_branch` sections are inert, so the key is never refused there. The fold guidance also lives on the kept key's
  * description, where the model reads it before authoring.
  * `both` keeps both angles, each key optional so `{}` stays valid with `end_branch`; a fresh
  * submission additionally serves both keys in the JSON Schema `required` list (the validator stays
@@ -871,18 +887,6 @@ function capturedSectionSchemaForClassification(
     `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
   );
   return z.looseObject({ [onlyAngle]: body })
-    .superRefine((value, ctx) => {
-      const surplus = Object.keys(value).filter((key) => key !== onlyAngle);
-      if (surplus.includes(offAngle)) {
-        ctx.addIssue({
-          code: 'custom',
-          message: `"${offAngle}" is not kept under classification=${classification}`,
-          params: { hint: `Fold the ${offAngle} content into "${onlyAngle}" and drop the "${offAngle}" key.` },
-        });
-      }
-      const unknown = surplus.filter((key) => key !== offAngle);
-      if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', keys: unknown, message: 'Unrecognized keys' });
-    })
     .meta({ additionalProperties: false }) as unknown as z.ZodType<CapturedSectionsWire>;
 }
 
