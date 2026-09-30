@@ -125,15 +125,13 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   summaries ride in a fixed-size sliding window, the full findings archive
   accumulates engine-side and is replayed once at synthesis rather than per
   hop, and rejection history compacts to a bounded ring of one-line entries.
-  A rejected tool call is echoed back into history as a native tool-call and
-  tool-result pair: only the newest rejection is replayed. When the rejection's
-  issue paths project onto list entries, the replayed arguments are those
-  bounded correction fragments; a pathless rejection (a route or prune refusal)
-  or one flagging a scalar field replays the whole bounded submitted call, never
-  `{}`. For `present_result`, whose rejected draft the session holds and renders
-  as its own block, the replayed call carries the name and call id only, so no
-  section text is sent twice in one attempt. The replayed exchange ends on the
-  rejection's tool result; no host-authored user turn follows it. Hop context
+  The retry history is the phase's append-only provider-native transcript:
+  every attempt appends the model's own `AIMessage` followed by one
+  `ToolMessage` per call in call order — the accepted result or the rejection.
+  Nothing is rebuilt or rewritten; when the transcript outgrows its budget,
+  whole leading attempt groups are dropped, oldest first, never a partial
+  message. The exchange ends on the rejection's tool result; no host-authored
+  user turn follows it. Hop context
   is node-proportional and non-cumulative: a large focus-node DDL raises one
   hop's message and is gone the next.
 - Synthesis starts from a fresh completion envelope containing the archived
@@ -162,7 +160,7 @@ Business and technical capture follow the locked classification. Column-trace
 capture is available only in CT mode. Structural capture replaces business and
 technical capture on non-bodied focus nodes and renders on its own, with no
 header. On a bodied focus the capture recipe opens with an engine-owned header
-that an overlay cannot replace: one `sections[]` entry per angle, SQL quoted
+that an overlay cannot replace: a `sections` object keyed by angle, SQL quoted
 only as an exact substring of the focus DDL, and the `not established from the
 available SQL` wording. The business, technical and structural-callout keys
 carry only their numbered items and the ⚠️ rule, never a copy of that header.
@@ -353,7 +351,7 @@ carries the same code and the one repair "remove it from `prune_neighbors`".
   queued or removed is a no-op (`prune_noop_visited`, `prune_noop_analyzed`,
   `prune_noop_queued`, `prune_noop_removed`) and changes nothing.
 - CT accepts the same focus verdicts and neighbor-decision arrays, plus a
-  required `column_flow` on a kept verdict. Each active tracked column must be
+  `column_flow` served-required on every verdict (`[]` with `end_branch`). Each active tracked column must be
   continued or marked terminal; an empty flow is valid only when the focus
   carries no active tracked-column interaction. CT is BB plus column tracking:
   the engine verifies every declared column against the loaded model and
@@ -391,10 +389,9 @@ Validation requires the locked angles to be present: under a `both` lock a fresh
 submission serves `sections.business` and `sections.technical` in the JSON Schema
 `required` list (the `sections` object itself is optional; `end_branch` omits it, and an
 `end_branch` sending `{}` is still accepted), and a retry with a held draft serves them
-optional; off-classification
-sections are then dropped deterministically at commit (not rejected — a
-surplus section is not a field-scoped defect the held-draft repair flow could
-patch), so a business-only answer cannot carry technical sections. Neighbor,
+optional. Under a single-angle lock the off-angle key is rejected at the
+schema with a hint to fold its content into the kept angle, so a business-only
+answer cannot carry technical sections. Neighbor,
 column, and prune checks run before commit. A rejected submission does
 not partially update findings, lifecycle, or scheduling state. Rejections return a
 machine-readable error, corrective hint, and relevant valid-set details.
@@ -429,8 +426,9 @@ prompt reasons from.
 
 Validation is field-scoped and runs before commit, and it is structural only.
 Markdown and math formatting never reject a call: an expression the renderer
-cannot parse degrades to its original source text on screen. A held-draft retry
-resends the full call, and a rejection carries one resend directive (the generic
+cannot parse degrades to its original source text on screen. A `submit_findings`
+held retry resends the full call; a `present_result` held repair sends only the
+corrected fields. A rejection carries one resend directive (the generic
 minimal-edit rule, or the held rule naming the held parts); only the rejected fields
 are repaired, each list merged by key (`sections` by label,
 `submit_findings` sections by angle) with a held entry left unnamed kept as authored; graph membership, node associations,
