@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.2] - 2026-10-01
+
+### Added
+- Built-in SQL Server connections (SQL login or Microsoft Entra ID) replace the SQL Server (mssql) extension's connection-sharing API, which Microsoft is retiring ([#57](https://github.com/ChrisDevRepo/vscode_data_lineage/issues/57)). Select them with `dataLineageViz.database.connectionProvider`; the mssql extension stays the default for now.
+
+### Fixed
+- DACPAC import reads object and column names and data types correctly.
+
+### Dependencies
+- New for built-in connections: tedious, @microsoft/vscode-azext-azureauth.
+- Security updates: undici, markdown-it, brace-expansion, fast-uri.
+
 ## [1.2.1] - 2026-09-30
 
 ### Added

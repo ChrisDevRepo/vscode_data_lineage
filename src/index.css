@@ -1506,6 +1506,28 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   background: transparent;
   border: 1px solid var(--ln-border);
 }
+.ln-provider-notice {
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid var(--ln-wizard-warning);
+  color: var(--ln-wizard-fg);
+}
+.ln-start-screen .ln-panel .ln-provider-notice > svg,
+.ln-provider-warning-icon {
+  color: var(--ln-wizard-warning);
+}
+.ln-provider-warning-badge {
+  color: var(--ln-wizard-warning);
+  border: 1px solid var(--ln-wizard-warning);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.ln-btn-compact {
+  padding: 0.25rem 0.75rem;
+}
 .ln-status-body {
   color: var(--ln-fg-muted);
   opacity: 0.9;
@@ -1576,6 +1598,14 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   color: var(--ln-wizard-fg);
   opacity: 1;
   border-color: var(--ln-wizard-btn-border);
+}
+.ln-start-screen .ln-panel .ln-input {
+  background: var(--ln-wizard-input-bg);
+  color: var(--ln-wizard-fg);
+  border-color: var(--ln-wizard-btn-border);
+}
+.ln-start-screen .ln-panel .ln-input::placeholder {
+  color: var(--ln-wizard-fg-dim);
 }
 .ln-start-screen .ln-panel .ln-schema-list {
   background: var(--ln-wizard-input-bg);

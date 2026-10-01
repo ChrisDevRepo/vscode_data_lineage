@@ -44,7 +44,7 @@ interface GraphDisplayModeInput {
 }
 
 /**
- * Seeds the user-owned graph view mode when a model is first loaded or Reset All runs.
+ * Seeds the user-owned graph view mode when a model is first loaded or Refresh View runs.
  *
  * @remarks
  * Compares against the lesser of the configured threshold and the render limit, so Object View

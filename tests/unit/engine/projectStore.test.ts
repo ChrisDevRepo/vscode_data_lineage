@@ -341,6 +341,33 @@ describe('stripSensitiveFields → persisted shape', () => {
   });
 });
 
+describe('stored connection provider fields', () => {
+  const base = { server: 'sql.example.net', database: 'AdventureWorks' };
+
+  it('a record written before provider selection reads as valid and carries no provider', () => {
+    const parsed = StoredConnectionInfoSchema.parse({ ...base, authenticationType: 'SqlLogin', user: 'sa' });
+    expect(parsed.provider).toBeUndefined();
+    expect(parsed.connectionId).toBeUndefined();
+  });
+
+  it('a built-in record round-trips through a full save-then-load cycle', () => {
+    const project = createProject('Built-in', {
+      type: 'database',
+      connectionInfo: { ...base, authenticationType: 'sqlLogin', user: 'sa', provider: 'builtIn', connectionId: 'c-1' },
+      sourceName: 'sql.example.net / AdventureWorks',
+      schemas: ['dbo'],
+    });
+    const store = migrateProjectStore({ schemaVersion: 1, projects: [project], lastOpenedId: project.id });
+    const connection = store.projects[0].connection;
+    expect(connection.type === 'database' && connection.connectionInfo).toMatchObject({ provider: 'builtIn', connectionId: 'c-1' });
+  });
+
+  it('rejects an unknown provider and still rejects a password key', () => {
+    expect(StoredConnectionInfoSchema.safeParse({ ...base, provider: 'carrierPigeon' }).success).toBe(false);
+    expect(StoredConnectionInfoSchema.safeParse({ ...base, provider: 'builtIn', password: 'x' }).success).toBe(false);
+  });
+});
+
 describe('project bridge contract', () => {
   it('preserves the complete current project shape in projects-list messages', () => {
     const project = createProject('AW', dacpacConn);

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '../engine/types';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame, type ConnectionProviderId } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
 /**
@@ -43,8 +43,12 @@ export interface DacpacLoaderState {
   filePath: string | null;
   /** The current status message to show in the UI. */
   status: StatusMessage | null;
-  /** Whether the MSSQL extension is available for live connections. */
+  /** Whether the selected connection provider can open live connections. */
   mssqlAvailable: boolean | null;
+  /** The connection provider the extension reported, or `null` before the first status message. */
+  connectionProvider: ConnectionProviderId | null;
+  /** Switches `dataLineageViz.database.connectionProvider` to the built-in provider. */
+  switchToBuiltInConnection: () => void;
   /** Whether the project should immediately visualize upon load (e.g., demo or restore). */
   pendingAutoVisualize: boolean;
   /** Whether the UI should transition to the graph view. */
@@ -99,6 +103,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [filePath, setFilePath] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [mssqlAvailable, setMssqlAvailable] = useState<boolean | null>(null);
+  const [connectionProvider, setConnectionProvider] = useState<ConnectionProviderId | null>(null);
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
@@ -176,6 +181,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
       if (msg.type === 'mssql-status') {
         setMssqlAvailable(msg.available);
+        setConnectionProvider(msg.provider ?? null);
         return;
       }
 
@@ -308,6 +314,10 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     vscodeApi.postMessage({ type: 'db-connect' });
   }, [vscodeApi]);
 
+  const switchToBuiltInConnection = useCallback(() => {
+    vscodeApi.postMessage({ type: 'use-builtin-connection' });
+  }, [vscodeApi]);
+
   const cancelLoading = useCallback(() => {
     setIsLoading(false);
     setLoadingContext(null);
@@ -345,7 +355,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   return {
     model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, filePath, status,
-    mssqlAvailable, pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current,
+    mssqlAvailable, connectionProvider, switchToBuiltInConnection, pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current,
     openFile, resetToStart, loadProject, loadDemo, connectToDatabase, cancelLoading,
     clearAutoVisualize, clearPendingVisualize, visualize,
     toggleSchema, selectAllSchemas, clearAllSchemas,

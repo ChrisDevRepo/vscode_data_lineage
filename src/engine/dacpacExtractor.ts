@@ -321,6 +321,11 @@ async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string
 /**
  * Parses the raw XML string into a structured object using `fast-xml-parser`.
  *
+ * @remarks
+ * Entity processing stays off so a hostile DOCTYPE cannot expand entities. The five predefined entities
+ * and character references in `Name` attributes are decoded afterwards by {@link decodeXmlText}, so an
+ * object or column named `a&b` is read as `a&b`; `Value` attributes and text are decoded where they are read.
+ *
  * @param xml - The XML string to parse.
  * @returns An object containing the elements array and the DSP name.
  */
@@ -332,6 +337,7 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string }
     parseTagValue: true,
     trimValues: true,
     processEntities: false,
+    attributeValueProcessor: (attrName, value) => (attrName === 'Name' ? decodeXmlText(value) : value),
     cdataPropName: CDATA_PROP,
   });
 
@@ -537,7 +543,7 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
     if (rel['@_Name'] !== 'Columns') continue;
     for (const entry of asArray(rel.Entry)) {
       for (const colEl of asArray(entry.Element)) {
-        const colName = stripBrackets((colEl['@_Name'] ?? '').split('.').pop() ?? '');
+        const colName = lastNamePart(colEl['@_Name'] ?? '');
         const props = asArray(colEl.Property);
         const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
         const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
@@ -567,14 +573,15 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
             for (const tsEntry of asArray(colRel.Entry)) {
               for (const tsEl of asArray(tsEntry.Element)) {
                 const tsProps = asArray(tsEl.Property);
-                length = tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
+                const isMax = tsProps.find(p => p['@_Name'] === 'IsMax')?.['@_Value'] === 'True';
+                length = isMax ? '-1' : tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
                 precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
                 scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
                 for (const typeRel of asArray(tsEl.Relationship)) {
                   if (typeRel['@_Name'] !== 'Type') continue;
                   for (const typeEntry of asArray(typeRel.Entry)) {
                     for (const ref of asArray(typeEntry.References)) {
-                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']) : '?';
+                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']).replace(/^sys\./i, '') : '?';
                     }
                   }
                 }
@@ -637,7 +644,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
         for (const specEl of asArray(entry.Element)) {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
-          const colName = stripBrackets(colRef.split('.').pop() ?? '');
+          const colName = lastNamePart(colRef);
           uqColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
         }
       }
@@ -650,7 +657,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       if (!constraintName) continue;
       const ckColRefs = getRelRefs(el, 'CheckExpressionDependencies');
       if (ckColRefs.length === 1) {
-        const colName = stripBrackets(ckColRefs[0].split('.').pop() ?? '');
+        const colName = lastNamePart(ckColRefs[0]);
         if (colName) ckColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
       }
 
@@ -663,10 +670,10 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
       const foreignTableRef = getRelRefs(el, 'ForeignTable')[0];
       if (!foreignTableRef) continue;
       const { schema: refSchema, objectName: refTable } = parseName(foreignTableRef);
-      const parentCols  = getRelRefs(el, 'Columns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
-      const refColsList = getRelRefs(el, 'ForeignColumns').map(r => stripBrackets(r.split('.').pop() ?? '')).filter(Boolean);
+      const parentCols  = getRelRefs(el, 'Columns').map(r => lastNamePart(r)).filter(Boolean);
+      const refColsList = getRelRefs(el, 'ForeignColumns').map(r => lastNamePart(r)).filter(Boolean);
       if (parentCols.length === 0 || parentCols.length !== refColsList.length) continue;
-      const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'DeleteAction')?.['@_Value'] ?? '';
+      const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'OnDeleteAction')?.['@_Value'] ?? '';
       const onDelete = FK_DELETE_ACTION[deleteVal] ?? 'NO ACTION';
       const list = fkMap.get(tableKey) ?? [];
       list.push({ name: constraintName, columns: parentCols, refSchema, refTable, refColumns: refColsList, onDelete });
@@ -682,7 +689,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
         for (const specEl of asArray(entry.Element)) {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
-          const colName = stripBrackets(colRef.split('.').pop() ?? '');
+          const colName = lastNamePart(colRef);
           if (colName) pkOrdinalMap.set(`${tableKey}.${colName.toLowerCase()}`, ordinal++);
         }
       }
@@ -848,11 +855,17 @@ const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>'
  * @param raw - Entity-encoded text as read from model.xml.
  * @returns The decoded text.
  */
+/** XML 1.0 `Char` production: a reference to any other code point is not well-formed text. */
+function isXmlChar(cp: number): boolean {
+  return cp === 0x9 || cp === 0xA || cp === 0xD
+    || (cp >= 0x20 && cp <= 0xD7FF) || (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
+}
+
 function decodeXmlText(raw: string): string {
   return raw.replace(/&(?:#x([0-9A-Fa-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/g, (_, hex, dec, name) => {
     if (name) return PREDEFINED_ENTITIES[name];
     const cp = hex !== undefined ? parseInt(hex, 16) : parseInt(dec, 10);
-    return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '\uFFFD';
+    return isXmlChar(cp) ? String.fromCodePoint(cp) : '\uFFFD';
   });
 }
 
@@ -879,13 +892,22 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
 }
 
 /**
+ * Returns the last part of a qualified name, unbracketed; a dot inside `[...]` stays part of the name.
+ *
+ * @param ref - A qualified reference such as `[Schema].[View].[Name.Prefix]`.
+ */
+function lastNamePart(ref: string): string {
+  return stripBrackets(splitSqlName(ref).pop() ?? '');
+}
+
+/**
  * Checks if a reference is object-level (schema.object) rather than column-level.
  *
  * @param name - The reference string.
  * @returns `true` if it looks like an object-level reference.
  */
 function isObjectLevelRef(name: string): boolean {
-  const parts = stripBrackets(name).split('.');
+  const parts = splitSqlName(name).map(stripBrackets);
   return parts.length === 2 && !parts[1].startsWith('@');
 }
 

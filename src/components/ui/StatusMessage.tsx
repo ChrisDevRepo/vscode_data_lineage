@@ -38,11 +38,15 @@ const MAX_BODY = 120;
 
 /**
  * Displays a typed status banner with loading, success, or error styling.
+ *
+ * @remarks
+ * An error shows its full message, since the cause is often at the end of a driver message; other
+ * types shorten long text and keep the full text in a hover tooltip.
  */
 export const StatusMessage = memo(function StatusMessage({ text, type }: StatusMessageProps) {
   const title = extractTitle(text, type);
-  const body = text.length > MAX_BODY ? text.slice(0, MAX_BODY) + '…' : text;
-  const needsTooltip = text.length > MAX_BODY;
+  const needsTooltip = type !== 'error' && text.length > MAX_BODY;
+  const body = needsTooltip ? text.slice(0, MAX_BODY) + '…' : text;
 
   const content = (
     <div className={`flex items-start gap-2 px-3 py-2 rounded-sm ln-status-${type}`}>

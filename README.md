@@ -18,10 +18,34 @@ Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric
 ## Get started
 
 1. Run **Data Lineage: Open Wizard** (`Ctrl+Shift+P`).
-2. Pick a `.dacpac` file — or **Connect to Database** via the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql).
+2. Pick a `.dacpac` file — or **Connect to Database** (see [Database projects](#database-projects)).
 3. Select schemas and click **Visualize**.
 
 No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to explore the AdventureWorks sample.
+
+## Database projects
+
+A live database is read through one of two connection providers, chosen with the setting `dataLineageViz.database.connectionProvider`:
+
+- `mssqlExtension` (default) — connections come from the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql), which Microsoft is retiring the connection API of.
+- `builtIn` — connections are stored by this extension and opened with a bundled SQL Server driver; no other extension is needed. The wizard offers **Use Built-in Connection** while the default is active.
+
+Built-in connections live in the application-scoped setting `dataLineageViz.database.connections` (server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption). Passwords are never written to settings: they go to VS Code's secret storage under `dataLineageViz.database.password.<id>`, and a missing password is asked for once with the option to save it. `entraId` connections sign in with a Microsoft account through VS Code. Microsoft Fabric accepts Microsoft Entra ID only; the server name forms per platform are listed in [Troubleshooting](docs/TROUBLESHOOTING.md#import-and-connection).
+
+| Command | Purpose |
+|---|---|
+| Data Lineage: Add Database Connection | Six-step wizard (server, authentication, user, password or sign-in, optional database, display name) that tests the connection before saving. Without a database, the database is chosen when a new project starts |
+| Data Lineage: Edit Database Connection | Change a saved connection |
+| Data Lineage: Remove Database Connection | Delete a connection and its stored password |
+| Data Lineage: Update Database Password | Replace the stored password |
+
+The connection picker the wizard shows lists the same Edit, Update Password and Remove actions below the saved connections. Removing always asks first; saved projects that used the connection stay and ask for a connection on their next open.
+
+Data Lineage only reads. Every statement it sends is a read-only query from [`assets/dmvQueries.yaml`](assets/dmvQueries.yaml) (or your `dataLineageViz.dmvQueriesFile`) or a table-statistics query, and built-in connections declare read-only intent (`ApplicationIntent=ReadOnly`). SQL Server has no read-only connection mode; the guarantee against writes is a login with read permissions only. Required permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables to profile for table statistics.
+
+Switching the provider keeps saved projects and their schema selection. On its next open a project reconnects through the selected provider: a saved built-in connection with the same server and user is used directly, otherwise the connection picker opens and **Add Connection…** starts from the project's server, user and database. The project then remembers the new connection.
+
+A failed connection shows `<connection name>: <original driver message>` with the actions that fit the error, for example Update Password, Edit Connection, Choose Database, Trust Server Certificate, Retry or Show Log. The raw error is written to the Data Lineage output channel.
 
 ## Explore your lineage
 

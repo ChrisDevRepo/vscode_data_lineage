@@ -26,7 +26,7 @@ import {
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue, IServerInfo } from '../types/mssql';
-import { schemaKey } from '../utils/sql';
+import { quoteIdentifier, schemaKey } from '../utils/sql';
 
 /**
  * Aggregates raw query results from various system catalog views.
@@ -47,6 +47,9 @@ export interface DmvResults {
   /** Platform derived from MSSQL server metadata when the platform query is unavailable. */
   serverPlatform?: string;
 }
+
+/** Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION. */
+const NO_USER_OBJECTS_WARNING = 'No user objects found in database. If the database has objects, the login needs VIEW DEFINITION on it.';
 
 /**
  * Processes schema-preview query results to build a lightweight summary of the database.
@@ -80,7 +83,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   const schemas = Array.from(schemaMap.values()).sort((a, b) => b.nodeCount - a.nodeCount);
   const warnings: string[] = [];
   if (totalObjects === 0) {
-    warnings.push('No user objects found in database.');
+    warnings.push(NO_USER_OBJECTS_WARNING);
   }
   return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
 }
@@ -123,7 +126,7 @@ export function buildModelFromDmv(
 
   const warnings: string[] = [];
   if (objects.length === 0) {
-    warnings.push('No user objects found in database.');
+    warnings.push(NO_USER_OBJECTS_WARNING);
   }
 
   return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform, source: 'database' };
@@ -335,7 +338,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     const objType = DMV_TYPE_MAP[typeCode];
     if (!objType) continue;
 
-    const fullName = `[${schemaName}].[${objectName}]`;
+    const fullName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(objectName)}`;
     const id = normalizeName(fullName);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -382,11 +385,11 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
     if (!depSchema) continue;
 
     const targetName = depDatabase
-      ? `[${depDatabase}].[${depSchema}].[${depName}]`
-      : `[${depSchema}].[${depName}]`;
+      ? `${quoteIdentifier(depDatabase)}.${quoteIdentifier(depSchema)}.${quoteIdentifier(depName)}`
+      : `${quoteIdentifier(depSchema)}.${quoteIdentifier(depName)}`;
 
     deps.push({
-      sourceName: `[${refSchema}].[${refName}]`,
+      sourceName: `${quoteIdentifier(refSchema)}.${quoteIdentifier(refName)}`,
       targetName,
     });
   }
@@ -409,7 +412,7 @@ function extractAllObjects(result: SimpleExecuteResult): ExtractedObject[] {
     const objType = DMV_TYPE_MAP[typeCode];
     if (!objType) continue;
 
-    const fullName = `[${schemaName}].[${objectName}]`;
+    const fullName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(objectName)}`;
     const id = normalizeName(fullName);
     if (seen.has(id)) continue;
     seen.add(id);

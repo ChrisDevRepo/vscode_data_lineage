@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { rootPath } from '../helpers/testUtils';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { DEFAULT_AI_ENABLED } from '../../../src/configCore';
+import { DEFAULT_CONNECTION_PROVIDER } from '../../../src/engine/db/dbSession';
 import { DEFAULT_MAX_ROUNDS } from '../../../src/ai/core/agentCore';
 import {
   DEFAULT_DISCOVERY_NODE_CAP,
@@ -47,6 +48,8 @@ const runtimeDefaults: Record<string, unknown> = {
   'dataLineageViz.renderLimit': DEFAULT_CONFIG.renderLimit,
   'dataLineageViz.parseRulesFile': '',
   'dataLineageViz.dmvQueriesFile': '',
+  'dataLineageViz.database.connectionProvider': DEFAULT_CONNECTION_PROVIDER,
+  'dataLineageViz.database.connections': [],
   'dataLineageViz.ai.enabled': DEFAULT_AI_ENABLED,
   'dataLineageViz.ai.maxRounds': DEFAULT_MAX_ROUNDS,
   'dataLineageViz.ai.maxTraceColumns': DEFAULT_MAX_TRACE_COLUMNS,

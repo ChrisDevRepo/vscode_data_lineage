@@ -441,10 +441,18 @@ export const BOOKMARK_SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['sou
   user: 'Saved view',
 };
 
+/** Identifier of the implementation that opens database connections. */
+export const ConnectionProviderIdSchema = z.enum(['mssqlExtension', 'builtIn']);
+export type ConnectionProviderId = z.infer<typeof ConnectionProviderIdSchema>;
+
 /**
- * Stored MSSQL connection metadata.
+ * Stored database connection metadata.
  *
  * @remarks
+ * `provider` and `connectionId` identify how the connection is reopened: a record without
+ * `provider` was written for the mssql extension and reads as `mssqlExtension`; `connectionId`
+ * names a `dataLineageViz.database.connections` entry and never carries a credential.
+ *
  * `.strict()` is load-bearing: unknown fields — a leaked `password` above all — are rejected
  * rather than persisted or replayed to the webview. Tolerance is granted per named field only,
  * because `migrateProjectStore` discards any stored record that fails this schema, and Integrated,
@@ -461,9 +469,11 @@ export const StoredConnectionInfoSchema = z.object({
   port: z.coerce.number().optional(),
   encrypt: z.union([z.string(), z.boolean()]).optional(),
   trustServerCertificate: z.boolean().optional(),
+  provider: ConnectionProviderIdSchema.optional(),
+  connectionId: z.string().optional(),
 }).strict();
 
-/** Stored MSSQL connection metadata. See {@link StoredConnectionInfoSchema} for the persistence-tolerance contract. */
+/** Stored database connection metadata. See {@link StoredConnectionInfoSchema} for the persistence-tolerance contract. */
 export type StoredConnectionInfo = z.infer<typeof StoredConnectionInfoSchema>;
 
 const DacpacConnectionSchema = z.object({
@@ -717,7 +727,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('db-cancelled') }),
   z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string() }),
   z.object({ type: z.literal('last-dacpac-gone') }),
-  z.object({ type: z.literal('mssql-status'), available: z.boolean() }),
+  z.object({ type: z.literal('mssql-status'), available: z.boolean(), provider: ConnectionProviderIdSchema.optional() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
   z.object({ type: z.literal('reload-source') }),
@@ -780,6 +790,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('render-state'), renderState: RenderStateSnapshotSchema }),
   z.object({ type: z.literal('db-connect') }),
   z.object({ type: z.literal('check-mssql') }),
+  z.object({ type: z.literal('use-builtin-connection') }),
   z.object({
     type: z.literal('save-view'),
     projectId: z.string(),
