@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -143,6 +143,26 @@
         "command": "dataLineageViz.searchObjects",
         "title": "Data Lineage: Search Objects",
         "icon": "$(search)"
+      },
+      {
+        "command": "dataLineageViz.addDatabaseConnection",
+        "title": "Add Database Connection",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.editDatabaseConnection",
+        "title": "Edit Database Connection",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.removeDatabaseConnection",
+        "title": "Remove Database Connection",
+        "category": "Data Lineage"
+      },
+      {
+        "command": "dataLineageViz.updateDatabasePassword",
+        "title": "Update Database Password",
+        "category": "Data Lineage"
       }
     ],
     "keybindings": [],
@@ -164,7 +184,7 @@
             "default": 2000,
             "minimum": 10,
             "maximum": 5000,
-            "markdownDescription": "Maximum number of database objects admitted to the webview working graph, including virtual external-reference nodes. A selection over this limit is refused with an error instead of being loaded — select fewer schemas or raise this setting. Allowed values are 10 to 5000; a larger working graph takes longer to load. A refused selection is not loaded for `@lineage` either. React Flow rendering is separately capped by `renderLimit`.",
+            "markdownDescription": "Maximum database objects loaded into the graph (10–5000). A selection over the limit is refused; select fewer schemas or raise this setting.",
             "scope": "resource"
           },
           "dataLineageViz.renderLimit": {
@@ -172,7 +192,7 @@
             "default": 750,
             "minimum": 100,
             "maximum": 1500,
-            "markdownDescription": "Maximum rendered nodes before showing a warning instead of the graph. Prevents browser performance issues with very large visualizations. AI tools and BFS operate on the full model regardless of this limit.",
+            "markdownDescription": "Maximum rendered nodes before showing a warning instead of the graph. Prevents browser performance issues with very large visualizations.",
             "scope": "resource"
           },
           "dataLineageViz.excludePatterns": {
@@ -181,7 +201,7 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Regex patterns applied when a source is opened to exclude objects from the webview graph (e.g. `_TEST$`, `^staging\\\\.`). Matched against `schema.object`; `%` is accepted as a wildcard. Requires reloading the data source to take effect. The complete host snapshot remains available to `@lineage`. For ad-hoc filtering without reload, use the Exclusion Rules toolbar button.",
+            "markdownDescription": "Regex patterns that exclude objects from the graph when a source is opened (e.g. `_TEST$`, `^staging\\\\.`). Matched against `schema.object`; `%` is accepted as a wildcard. Requires reloading the data source.",
             "scope": "resource"
           },
           "dataLineageViz.externalRefs.enabled": {
@@ -193,7 +213,7 @@
           "dataLineageViz.overview.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Enable Schema View. When enabled and a loaded graph exceeds `overview.threshold` nodes (capped at `renderLimit`), the graph starts in schema-level cluster nodes; at or below the threshold it starts in Object View. After load, the toolbar Object View / Schema View toggle controls the surface until Reset All or a new load.",
+            "markdownDescription": "Enable Schema View. When a loaded graph exceeds `overview.threshold` nodes it starts in schema-level cluster nodes; otherwise in Object View.",
             "scope": "resource"
           },
           "dataLineageViz.overview.threshold": {
@@ -201,7 +221,7 @@
             "default": 150,
             "minimum": 10,
             "maximum": 1000,
-            "markdownDescription": "Controls whether the graph defaults to Schema View or the classic Object View on initial load. If the loaded database has more nodes than this threshold, it starts in Schema View. At or below this threshold, it starts fully expanded in the classic Object View. A threshold above `renderLimit` is treated as `renderLimit`, so Object View never starts over the render limit. This is evaluated only on initial load or 'Reset All'.",
+            "markdownDescription": "Node count above which the graph starts in Schema View; at or below it starts in Object View. Evaluated on initial load and Refresh View.",
             "scope": "resource"
           },
           "dataLineageViz.overview.schemaDoubleClickBehavior": {
@@ -242,6 +262,97 @@
             "default": "",
             "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
             "scope": "resource"
+          },
+          "dataLineageViz.database.connectionProvider": {
+            "type": "string",
+            "enum": [
+              "mssqlExtension",
+              "builtIn"
+            ],
+            "default": "mssqlExtension",
+            "enumDescriptions": [
+              "Use connections saved in the SQL Server (mssql) extension. Microsoft is retiring this API.",
+              "Connect directly with Data Lineage's own connections (SQL login or Microsoft Entra ID). Passwords stay in the VS Code secret store."
+            ],
+            "markdownDescription": "Where database connections come from. With `builtIn`, add connections with **Data Lineage: Add Database Connection**.",
+            "scope": "application"
+          },
+          "dataLineageViz.database.connections": {
+            "type": "array",
+            "default": [],
+            "scope": "application",
+            "markdownDescription": "Built-in database connections. Passwords are kept in VS Code secure storage.\n\n**Manage:** [Add](command:dataLineageViz.addDatabaseConnection) · [Edit](command:dataLineageViz.editDatabaseConnection) · [Update Password](command:dataLineageViz.updateDatabasePassword) · [Remove](command:dataLineageViz.removeDatabaseConnection)",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "name",
+                "server",
+                "authenticationType"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "markdownDescription": "Stable identifier; also names the secret-store entry of the password."
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Display name."
+                },
+                "server": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Server host name or address."
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "description": "TCP port. Defaults to 1433."
+                },
+                "database": {
+                  "type": "string",
+                  "description": "Database to open. Leave empty to choose at connect time."
+                },
+                "authenticationType": {
+                  "type": "string",
+                  "description": "Sign-in type. Windows authentication is not supported.",
+                  "enum": [
+                    "sqlLogin",
+                    "entraId"
+                  ],
+                  "enumDescriptions": [
+                    "SQL Server login with user name and password.",
+                    "Microsoft Entra ID sign-in through VS Code."
+                  ]
+                },
+                "user": {
+                  "type": "string",
+                  "description": "SQL login user name."
+                },
+                "accountId": {
+                  "type": "string",
+                  "description": "Id of the Microsoft account in VS Code to sign in with."
+                },
+                "tenantId": {
+                  "type": "string",
+                  "description": "Microsoft Entra tenant id to sign in to."
+                },
+                "encrypt": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Encrypt the connection."
+                },
+                "trustServerCertificate": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Trust the server certificate without validation. Use only for servers you control."
+                }
+              }
+            }
           }
         }
       },
@@ -440,32 +551,32 @@
             "default": 50,
             "minimum": 5,
             "maximum": 100,
-            "markdownDescription": "Maximum rounds per `@lineage` deep analysis. Each object the analysis reads takes one round: every procedure, view or function in the scope, and a table only where the analysis reads it itself (a starting table or one named in a follow-up). An analysis whose scope needs more rounds is not started, and the chat says so. Read on every request."
+            "markdownDescription": "Maximum rounds per `@lineage` deep analysis. Each procedure, view or function it reads takes one round. Read on every request."
           },
           "dataLineageViz.ai.maxTraceColumns": {
             "type": "integer",
             "default": 10,
             "minimum": 1,
-            "markdownDescription": "Maximum starting columns one `@lineage` column trace may follow. A column trace with more selected columns is not started, and the chat says so. Columns the trace picks up along the way are not counted. Read on every request."
+            "markdownDescription": "Maximum starting columns one `@lineage` column trace may follow. Read on every request."
           },
           "dataLineageViz.ai.discoveryNodeCap": {
             "type": "integer",
             "default": 10,
             "minimum": 1,
             "maximum": 30,
-            "markdownDescription": "Maximum scope nodes the AI may pull during a single discovery-phase catalog request before the request is escalated to a deep analysis that needs your approval. Discovery answers small ad-hoc questions in chat; a larger request is escalated to a deep analysis for your approval."
+            "markdownDescription": "Maximum scope nodes the AI may pull in a single discovery-phase catalog request before it escalates to a deep analysis that needs your approval."
           },
           "dataLineageViz.ai.discoveryTokenBudget": {
             "type": "integer",
             "default": 10000,
             "minimum": 1000,
             "maximum": 32000,
-            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request, further capped at one eighth of the selected model's input window. Exceeding either this or the node cap escalates to a deep analysis that needs your approval."
+            "markdownDescription": "Maximum estimated DDL tokens for a single discovery-phase catalog request, further capped at one eighth of the selected model's input window. Exceeding it escalates to a deep analysis that needs your approval."
           },
           "dataLineageViz.ai.outputTemplateFile": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Path to custom AI output templates YAML. Controls how `@lineage` formats summary, description, badges, highlights, and notes. Leave empty for built-in defaults. Use Command Palette → *Create AI Output Templates* to scaffold. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)"
+            "markdownDescription": "Path to custom AI output templates YAML. Controls how `@lineage` formats summary, description, badges, highlights, and notes. Leave empty for built-in defaults. Use Command Palette → *Create AI Output Templates* to scaffold. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md)\n\nAll settings are described in the [settings reference](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)."
           }
         }
       }
@@ -806,6 +917,7 @@
     "@floating-ui/react": "0.27.20",
     "@langchain/core": "1.2.3",
     "@langchain/langgraph": "1.4.10",
+    "@microsoft/vscode-azext-azureauth": "5.1.1",
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "12.11.6",
     "comlink": "4.4.2",
@@ -823,6 +935,7 @@
     "react": "19.3.0",
     "react-arborist": "3.16.0",
     "react-dom": "19.3.0",
+    "tedious": "20.0.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
@@ -853,7 +966,7 @@
     "serialize-javascript": "^7.0.5",
     "diff": "^8.0.3",
     "js-yaml@4": "4.3.2",
-    "fast-uri": "3.1.7",
+    "fast-uri": "3.1.8",
     "browserslist": "4.28.8",
     "baseline-browser-mapping": "2.11.21"
   },

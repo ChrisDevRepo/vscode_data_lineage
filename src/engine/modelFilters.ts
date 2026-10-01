@@ -13,6 +13,17 @@ import { compileExclusionMatcher } from '../utils/sql';
 
 export { applyIsolationFilter } from './shared/modelFilters';
 
+/**
+ * The admit/refuse comparison behind {@link checkObjectLimit}, for a surface that has only a count
+ * (the wizard's schema preview) and no built model yet.
+ *
+ * @param count - Object count of the selection.
+ * @param limit - The configured `dataLineageViz.maxNodes` value.
+ */
+export function exceedsObjectLimit(count: number, limit: number): boolean {
+  return count > limit;
+}
+
 /** Result of {@link checkObjectLimit}: the model admitted, or the count that refused it. */
 export type ObjectLimitCheck =
   | { ok: true; model: DatabaseModel }
@@ -31,7 +42,7 @@ export type ObjectLimitCheck =
  */
 export function checkObjectLimit(model: DatabaseModel, limit: number): ObjectLimitCheck {
   const count = model.nodes.length;
-  if (count > limit) return { ok: false, count, limit };
+  if (exceedsObjectLimit(count, limit)) return { ok: false, count, limit };
   return { ok: true, model };
 }
 

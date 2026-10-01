@@ -14,6 +14,19 @@ loading and settings actions.
 
 ---
 
+## Database connections
+
+A live database is read through the provider set in `dataLineageViz.database.connectionProvider`:
+
+- **`mssqlExtension`** (default) — a connection profile saved in the MSSQL extension. Microsoft is retiring that connection API; the wizard shows a notice with **Use Built-in Connection**.
+- **`builtIn`** — a connection saved by Data Lineage (**Add / Edit / Remove Database Connection**, **Update Database Password**), SQL login or Microsoft Entra ID, opened with a bundled driver. Windows authentication is not supported. Passwords stay in VS Code secret storage; Entra sign-in uses the Microsoft account in VS Code (browser sign-in, MFA supported) through Microsoft's `@microsoft/vscode-azext-azureauth`, as the mssql extension does. The account is chosen in VS Code's own account picker, which also offers signing in to another account; the directory (tenant) follows: the account's only one, otherwise a pick that starts with the home directory. Both are saved with the connection (`accountId`, `tenantId`). Azure SQL and Microsoft Fabric SQL endpoints use the same sign-in. The database name is typed — a login that exists only inside one database cannot list the server's databases — and the connection test reports a database that cannot be opened. Saved projects that still use the mssql extension show a "! Old connection" badge in the Saved Projects list, with the migration advice on hover.
+
+> **Hint:** manage built-in connections and their passwords with the Command Palette commands **Add / Edit / Remove Database Connection** and **Update Database Password**. The Settings page shows VS Code's standard **Edit in settings.json** link for list settings; editing the JSON by hand is not needed.
+
+Both providers run only the queries in [`DMV_QUERIES.md`](DMV_QUERIES.md) and table profiling. Errors show the driver message unchanged, with actions that fit it — see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
+
+---
+
 ## Keyboard shortcuts
 
 All shortcuts are local to the graph webview — the extension registers no VS Code
@@ -120,6 +133,8 @@ work instead of answering from bad data.
 ## Exclusion rules
 
 Hide nodes from the graph using pattern-based rules. Rules apply in real time — no data reload needed.
+
+To hide objects on every load, list the same patterns in `dataLineageViz.excludePatterns`. That setting is applied when a source is opened and takes effect after the data source is reloaded.
 
 ### Three ways to add a rule
 
@@ -386,10 +401,15 @@ registration follows it.
 
 ## Advanced settings
 
-Search "dataLineageViz" in VS Code Settings. The Settings UI and
+Run **Data Lineage: Settings** or search "dataLineageViz" in VS Code Settings. The Settings UI and
 `contributes.configuration` section of `package.json` are the source of truth
-for current defaults, ranges, and descriptions. Controls are grouped around
-import/parsing, graph layout, trace/analysis, `@lineage`, and profiling.
+for current defaults, ranges, and descriptions; the Settings text stays short and links here for detail.
+Controls are grouped around import/parsing, database connection, table statistics, graph layout,
+trace/analysis, and `@lineage`.
+
+Settings that apply only after the data source is reloaded: `maxNodes`, `excludePatterns`,
+`externalRefs.enabled`, `parseRulesFile` and `dmvQueriesFile`. `ai.enabled` applies after a window reload;
+the other `ai.*` limits are read on every request.
 
 Customization contracts are documented separately:
 
@@ -406,3 +426,74 @@ The file includes sanitized provider-error records for failed model requests, so
 the command does not open or change VS Code's output-channel log-level picker.
 The diagnostics can contain schema, table, column, SQL, prompt, response, and
 tool-payload text; never commit them and review them before sharing.
+
+### Settings reference
+
+Defaults and ranges below match `package.json`; the Settings UI shows the short form of each description.
+
+#### Import and parsing
+
+| Setting | Default | Detail |
+|---|---|---|
+| `maxNodes` | 2000 (10–5000) | Objects, including virtual external-reference nodes, admitted to the working graph. A selection over the limit is refused with an error that names the count, the limit and the setting; nothing is loaded. Select fewer schemas or raise the limit; a larger working graph takes longer to load. See [Rendering limits](#rendering-limits). |
+| `renderLimit` | 750 (100–1500) | Nodes drawn at once. Above it, the graph shows a *Render limit reached* notice instead of drawing, which keeps the webview responsive on very large graphs. See [Rendering limits](#rendering-limits). |
+| `excludePatterns` | `[]` | Case-insensitive regular expressions, matched against `schema.name` and the full name; `%` is a wildcard. Applied when a source is opened. For filtering without a reload use the toolbar exclusion rules ([Exclusion rules](#exclusion-rules)). |
+| `externalRefs.enabled` | on | Detects references that are not catalog objects — `OPENROWSET` file paths and cross-database three-part names — and draws them as virtual external nodes. Off creates none. External Tables are catalog objects and are unaffected. |
+| `overview.enabled` | on | Allows Schema View. Off keeps every load in Object View and hides the Schema View toggle. See [Schema View](#schema-view). |
+| `overview.threshold` | 150 (10–1000) | Object count above which a new load starts in Schema View; at or below it the graph starts in Object View. Values above `renderLimit` count as `renderLimit`. Checked on load and on **Refresh View**, then the toolbar toggle decides. |
+| `overview.schemaDoubleClickBehavior` | `expandOnly` | `expand` adds the double-clicked schema to the expanded schemas; `expandOnly` makes it the only expanded one. |
+| `parseRulesFile` | empty | Custom parse rules YAML; empty uses the built-in rules. Scaffold with **Data Lineage: Create Parse Rules**; contract in [`PARSE_RULES.md`](PARSE_RULES.md). Applies after reload. |
+
+#### Database connection
+
+| Setting | Default | Detail |
+|---|---|---|
+| `database.connectionProvider` | `mssqlExtension` | Where live connections come from; application-scoped. See [Database connections](#database-connections). |
+| `database.connections` | `[]` | Connections of the `builtIn` provider: server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption. Passwords are kept in VS Code secret storage under `dataLineageViz.database.password.<id>`. Manage entries with **Add / Edit / Remove Database Connection**; replace a password with **Update Database Password**. Hand-editing the JSON is not needed. |
+| `dmvQueryTimeout` | 120 s (10–600) | Time allowed per metadata query; raise for large databases. |
+| `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; contract in [`DMV_QUERIES.md`](DMV_QUERIES.md). Applies after reload. |
+
+#### Table statistics
+
+Database import only; behavior and limits in [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
+
+| Setting | Default | Detail |
+|---|---|---|
+| `tableStatistics.enabled` | on | Shows column statistics and row counts in the table design viewer. |
+| `tableStatistics.standardModeEnabled` | on | Offers Standard mode (adds MIN/MAX, string length range, AVG, STDEV, zero and empty counts). Off leaves Quick mode, which runs lighter queries. |
+| `tableStatistics.excludeExternalTables` | on | Skips external tables, which query remote sources (S3, Blob, other databases) and can be slow and costly. |
+| `tableStatistics.queryTimeout` | 60 s (10–600) | Time allowed per profiling query. |
+| `tableStatistics.sampleThreshold` | 100000 (0–999999999) | Row count above which a table is sampled instead of fully scanned; `0` always samples. |
+| `tableStatistics.sampleSize` | 10000 (100–1000000) | Rows sampled on large tables. |
+| `tableStatistics.useApproxDistinct` | on | Uses `APPROX_COUNT_DISTINCT` instead of exact `COUNT(DISTINCT)`: much faster, about 2% error. Requires SQL Server 2019 or later; turn off on older versions. |
+| `tableStatistics.maxColumns` | 50 (1–500) | Columns profiled per table; the rest are skipped, which keeps queries on wide tables bounded. |
+
+#### Layout, trace and analysis
+
+| Setting | Default | Detail |
+|---|---|---|
+| `layout.direction` | `LR` | `LR` left to right, `TB` top to bottom. |
+| `layout.edgeStyle` | `default` | `default` bezier curves, `smoothstep` rounded steps, `step` sharp steps, `straight` straight lines. |
+| `layout.edgeAnimation` | on | Animates edges while a trace runs. |
+| `layout.highlightAnimation` | off | Animates edges when a node is clicked. |
+| `layout.minimapEnabled` | on | Shows the minimap. |
+| `layout.rankSeparation` | 120 px (20–300) | Gap between dependency layers; horizontal in `LR`, vertical in `TB`. |
+| `layout.nodeSeparation` | 30 px (10–200) | Gap between nodes within a layer. |
+| `trace.defaultUpstreamLevels` | 3 (0–99) | Levels of inputs a trace starts with. |
+| `trace.defaultDownstreamLevels` | 3 (0–99) | Levels of outputs a trace starts with. |
+| `analysis.hubMinDegree` | 8 (1–50) | Connections an object needs to be listed as a hub. |
+| `analysis.islandMaxSize` | 500 (2–1000) | Largest connected group reported as an island; lower it (for example 5) to list only small isolated groups. |
+| `analysis.longestPathMinNodes` | 5 (2–50) | Objects a chain needs to appear in longest-path analysis. |
+
+#### `@lineage`
+
+| Setting | Default | Detail |
+|---|---|---|
+| `ai.enabled` | on | Registers the `@lineage` participant and the AI tools; see [Disable](#disable). Reload the window after changing it. |
+| `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis, one for each procedure, view or function it reads; a table counts only where the analysis reads it itself. An analysis that needs more is not started and the chat says so. |
+| `ai.maxTraceColumns` | 10 (min 1) | Starting columns one column trace may follow; columns picked up along the way are not counted. A trace that selects more is not started and the chat names the limit. |
+| `ai.discoveryNodeCap` | 10 (1–30) | Scope nodes a discovery answer may pull in one request before it is offered as a deep analysis for approval. |
+| `ai.discoveryTokenBudget` | 10000 (1000–32000) | Estimated DDL tokens for one discovery request, further capped at one eighth of the selected model's input window. Exceeding it or the node cap offers a deep analysis for approval. |
+| `ai.outputTemplateFile` | empty | Custom output templates YAML controlling summary, description, badges, highlights and notes; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
+
+The `ai.*` limits are read on every request.

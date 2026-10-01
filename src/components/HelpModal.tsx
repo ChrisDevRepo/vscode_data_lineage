@@ -128,7 +128,7 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
           <FeatureCard
             icon="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"
             title="Stable View Modes"
-            desc="The threshold is checked only on load or Reset All. After that, the toolbar toggle owns the view; filters and deletes do not auto-switch it. Render limit remains the safety gate."
+            desc="The threshold is checked only on load or Refresh View. After that, the toolbar toggle owns the view; filters and deletes do not auto-switch it. Render limit remains the safety gate."
           />
           <FeatureCard
             icon="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"

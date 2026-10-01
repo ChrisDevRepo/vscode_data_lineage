@@ -27,6 +27,22 @@ async function makeExternalRefDacpac(): Promise<Uint8Array> {
 }
 
 
+/** A DACPAC foreign key keeps its ON DELETE action and a view column keeps a dotted bracketed name. */
+async function testFkDeleteActionAndDottedColumns() {
+  const model = await loadAdventureWorksModel();
+  const detail = model.nodes.find(n => n.id === '[sales].[salesorderdetail]');
+  const fk = detail?.fks?.find(f => f.name === 'FK_SalesOrderDetail_SalesOrderHeader_SalesOrderID');
+  expect(fk?.onDelete, 'OnDeleteAction=1 maps to CASCADE').toBe('CASCADE');
+  const noAction = model.nodes.flatMap(n => n.fks ?? []).find(f => f.name === 'FK_SalesOrderDetail_SpecialOfferProduct_SpecialOfferIDProductID');
+  expect(noAction?.onDelete, 'no OnDeleteAction property stays NO ACTION').toBe('NO ACTION');
+
+  const candidate = model.nodes.find(n => n.id === '[humanresources].[vjobcandidate]');
+  const names = candidate?.columns?.map(c => c.name) ?? [];
+  expect(names, 'dotted column name is kept whole').toContain('Name.Prefix');
+  expect(names, 'dotted column name is not cut at the dot').not.toContain('Prefix');
+}
+
+
 async function testExtraction() {
   const model = await loadAdventureWorksModel();
 
@@ -420,6 +436,44 @@ async function testPhase1Phase2Bridge() {
 }
 
 
+/** Builds an in-memory dacpac whose single table exercises entity-encoded names, `IsMax` types and a `sys`-qualified CLR type. */
+async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  const column = (name: string, type: string, props = '') => `
+        <Entry><Element Type="SqlSimpleColumn" Name="[my schema].[r&amp;d &lt;t&gt;].[${name}]">
+          <Relationship Name="TypeSpecifier"><Entry><Element Type="SqlTypeSpecifier">${props}
+            <Relationship Name="Type"><Entry><References ExternalSource="BuiltIns" Name="${type}" /></Entry></Relationship>
+          </Element></Entry></Relationship>
+        </Element></Entry>`;
+  zip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
+      <Model>
+        <Element Type="SqlTable" Name="[my schema].[r&amp;d &lt;t&gt;]">
+          <Relationship Name="Columns">${column('say &quot;hi&quot;', '[int]')}${column('vc', '[varchar]', '<Property Name="IsMax" Value="True" />')}${column('nv', '[nvarchar]', '<Property Name="IsMax" Value="True" />')}${column('vb', '[varbinary]', '<Property Name="IsMax" Value="True" />')}${column('n50', '[nvarchar]', '<Property Name="Length" Value="50" />')}${column('g', '[sys].[geography]')}${column('bad&#0;x&#xD800;y', '[int]')}
+          </Relationship>
+        </Element>
+      </Model>
+    </DataSchemaModel>`);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+async function testNamesAndTypesRoundTrip() {
+  const model = await extractDacpac(await makeNameAndTypeDacpac());
+  const table = model.nodes.find(n => n.type === 'table');
+  expect(table?.name, 'XML entities in an object name are decoded').toBe('r&d <t>');
+  expect(table?.schema).toBe('my schema');
+  const byName = new Map((table?.columns ?? []).map(c => [c.name, c.type]));
+  expect([...byName.keys()], 'XML entities in a column name are decoded').toContain('say "hi"');
+  expect(byName.get('vc'), 'IsMax keeps (max) on varchar').toBe('varchar(max)');
+  expect(byName.get('nv'), 'IsMax keeps (max) on nvarchar').toBe('nvarchar(max)');
+  expect(byName.get('vb'), 'IsMax keeps (max) on varbinary').toBe('varbinary(max)');
+  expect(byName.get('n50'), 'a declared length is untouched').toBe('nvarchar(50)');
+  expect(byName.get('g'), 'a sys-qualified CLR type reads as its bare name').toBe('geography');
+  expect([...byName.keys()], 'a reference to a code point XML forbids decodes to U+FFFD').toContain('bad\uFFFDx\uFFFDy');
+}
+
+
 async function testDacpacExtractionOptions() {
   const buffer = await makeExternalRefDacpac();
 
@@ -618,12 +672,14 @@ async function testComputedColumnTypeBorrowing() {
   it('decodes predefined XML entities in served text, never inside CDATA', testPredefinedEntityDecoding);
   it('reports import errors', testImportErrorHandling);
   it('extracts constraints', testConstraints);
+  it('keeps the FK delete action and dotted column names', testFkDeleteActionAndDottedColumns);
   it('maps DSP platforms', testParseDspPlatform);
   it('records database platforms in the model', testDbPlatformInModel);
   it('records primary-key ordinals', testPkOrdinalInModel);
   it('bridges phase-one and phase-two extraction', testPhase1Phase2Bridge);
   it('retains the cross-schema catalog under filtering', testCrossSchemaCatalogUnderFilter);
   it('honors DACPAC extraction options', testDacpacExtractionOptions);
+  it('decodes entity-encoded names and keeps (max) and CLR type names', testNamesAndTypesRoundTrip);
 
   it('extracts from a byte view at a nonzero offset', async () => {
     const file = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));

@@ -167,6 +167,39 @@ flowchart LR
 | Shared helpers | [`src/ai/support/`](../src/ai/support/) | Presentation, normalization, truncation, token budget, and rejection-envelope utilities |
 | UI bridge | [`src/panelProvider.ts`](../src/panelProvider.ts) | Result delivery and main webview routing |
 
+## Database connection providers
+
+Live ingestion opens one `DbSession` ([`src/engine/db/dbSession.ts`](../src/engine/db/dbSession.ts)) per
+operation through `connectDatabase` in [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
+The setting `dataLineageViz.database.connectionProvider` selects the implementation; the DMV and profiling
+code sees only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, `dispose`).
+
+- **`mssqlExtension`** (default) — [`mssqlExtensionProvider.ts`](../src/engine/db/mssqlExtensionProvider.ts) wraps the
+  mssql extension's connection API (legacy `connect` or saved profiles with connection sharing). Sessions stay
+  with that extension and are not closed by this one.
+- **`builtIn`** — [`builtInProvider.ts`](../src/engine/db/builtInProvider.ts) opens a `tedious` connection loaded by
+  dynamic import and bundled by esbuild. It serializes requests, cancels on the wire when `dataLineageViz.dmvQueryTimeout`
+  elapses, returns the first result set, and is closed after the operation. With this provider nothing looks up,
+  activates or calls the mssql extension, and `extensionDependencies` stays empty.
+- **Connection store** — [`connectionSettings.ts`](../src/engine/db/connectionSettings.ts) reads the application-scoped
+  array `dataLineageViz.database.connections` tolerantly and validates every write; the item schema has no password
+  property. Passwords live in `SecretStorage` under `dataLineageViz.database.password.<id>`. Entra connections request a
+  `microsoft` session for `https://database.windows.net//.default` (plus `VSCODE_TENANT:<tenant>`) and pass the token to
+  the driver.
+- **Commands and wizard** — [`connectionCommands.ts`](../src/engine/db/connectionCommands.ts) registers add, edit,
+  remove and update-password; `addDatabaseConnection` also accepts a Zod-validated `{connection, password?}` argument
+  and then runs without prompts, except the certificate-trust confirmation when the argument turns trust on.
+- **Errors** — [`connectionErrors.ts`](../src/engine/db/connectionErrors.ts) is the one owner of connection failure
+  presentation for both providers. The message is `<connection name>: <original driver text>` with secrets redacted;
+  actions are chosen by error number, code or text pattern and are never retried automatically.
+- **Persistence** — `StoredConnectionInfoSchema` carries optional `provider` and `connectionId`; a record without
+  `provider` reads as `mssqlExtension`. When a stored record names a different provider than the setting, the setting
+  wins and one info message says so.
+- **Webview** — `mssql-status` carries `provider`; while `mssqlExtension` is active the wizard shows an inline retirement
+  notice whose button posts `use-builtin-connection`, and the host sets the setting to `builtIn` globally.
+
+`src/ai` never imports these modules; the AI surface cannot open a connection.
+
 ## Conversation lifecycle
 
 ```mermaid

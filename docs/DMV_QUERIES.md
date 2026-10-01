@@ -11,8 +11,8 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 
 ## Prerequisites
 
-- **MSSQL extension** (`ms-mssql.mssql`) installed and a connection profile configured.
-- **`VIEW DEFINITION`** permission on the target database.
+- A connection: the built-in connection, or a profile in the MSSQL extension (`ms-mssql.mssql`) — see `dataLineageViz.database.connectionProvider`.
+- Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables to profile for table statistics. Nothing else is needed.
 - Supported platforms: SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool.
 
 ## What gets executed and when — read the SQL yourself
@@ -34,6 +34,7 @@ Nothing runs automatically in the background. The standard import path uses:
 |-------|---------|------|
 | Phase 1 | `schema-preview` | Runs first to populate the schema-selection wizard. |
 | Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the extension uses authoritative MSSQL server metadata; if neither source is available, the model records `Unknown database platform` without failing the import. |
+| Built-in connection | `platform-info` | A built-in connection (`dataLineageViz.database.connectionProvider` = `builtIn`) reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. The database name is typed, not listed. |
 | Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
 | Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
 
@@ -170,7 +171,7 @@ Used for the table design preview in the SQL viewer.
 | `table_name` | string | Table name |
 | `ordinal` | int | Column position (1-based) |
 | `column_name` | string | Column name |
-| `type_name` | string | Data type (`int`, `nvarchar`, etc.) |
+| `type_name` | string | Data type (`int`, `nvarchar`, etc.); a CLR type such as `hierarchyid`, `geography` or `geometry` has no system type id and is named by its user type |
 | `max_length` | int | Max length in bytes (-1 = `max`) |
 | `precision` | int | Numeric precision |
 | `scale` | int | Numeric scale |

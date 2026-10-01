@@ -12,6 +12,8 @@
  */
 
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
+import type { SimpleExecuteResult } from '../types/mssql';
+import { quoteIdentifier } from '../utils/sql';
 
 /**
  * Statistical profile for a single column.
@@ -37,7 +39,7 @@ export interface ColumnStats {
   max?: string;
   /** Numeric mean. */
   mean?: number;
-  /** Population standard deviation. */
+  /** Sample standard deviation (`STDEV`). */
   stdDev?: number;
   /** Minimum string length. */
   minLength?: number;
@@ -95,6 +97,9 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
   sql_variant: 'skip', timestamp: 'skip', rowversion: 'skip', sysname: 'skip',
 };
 
+/** String types whose `= ''` comparison also matches whitespace-only values, so emptiness is measured by byte length instead. */
+const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set(['varchar', 'nvarchar']);
+
 /**
  * Extracts the base type name from a complex type string (e.g., 'varchar(max)' -> 'varchar').
  *
@@ -119,11 +124,28 @@ export function classifyColumn(col: ColumnDef): ColCategory {
   return TYPE_CATEGORIES[base] ?? 'skip';
 }
 
+const qi = quoteIdentifier;
+
 /**
- * Safely bracket-quotes a SQL identifier.
+ * Result-column alias of one aggregate of the column at `index` in the profiled column list.
+ * Positional, so the alias length is independent of the column name (an identifier is at most
+ * 128 characters) and two columns can never share an alias.
  */
-function qi(name: string): string {
-  return `[${name.replace(/\]/g, ']]')}]`;
+function aggregateAlias(index: number, suffix: string): string {
+  return `c${index}_${suffix}`;
+}
+
+/** Largest magnitude a float column may hold for AVG and STDEV to stay inside the float range (the variance squares each value). */
+const FLOAT_MOMENT_LIMIT = '1E+150';
+
+/**
+ * Builds a mean or standard-deviation aggregate over a float column that cannot raise an
+ * arithmetic overflow: values beyond {@link FLOAT_MOMENT_LIMIT} are left out of the aggregate and
+ * their presence turns the statistic into NULL, which the reader reports as absent.
+ */
+function floatMomentFragment(aggregate: 'AVG' | 'STDEV', qn: string, alias: string): string {
+  const inRange = `CASE WHEN ABS(${qn}) <= ${FLOAT_MOMENT_LIMIT} THEN ${qn} END`;
+  return `CASE WHEN MAX(ABS(${qn})) > ${FLOAT_MOMENT_LIMIT} THEN NULL ELSE ${aggregate}(${inRange}) END AS ${alias}`;
 }
 
 /**
@@ -162,7 +184,7 @@ export function buildColumnAggregations(
   const result: ColumnAggregation[] = [];
   let profiled = 0;
 
-  for (const col of cols) {
+  for (const [index, col] of cols.entries()) {
     const cat = classifyColumn(col);
     if (cat === 'skip') continue;
 
@@ -171,7 +193,7 @@ export function buildColumnAggregations(
 
     const qn = qi(col.name);
     const fragments: string[] = [];
-    const alias = (suffix: string) => qi(`${col.name}__${suffix}`);
+    const alias = (suffix: string) => qi(aggregateAlias(index, suffix));
 
     if (useApprox) {
       fragments.push(`APPROX_COUNT_DISTINCT(${qn}) AS ${alias('d')}`);
@@ -188,8 +210,13 @@ export function buildColumnAggregations(
       if (cat === 'integer' || cat === 'decimal') {
         fragments.push(`MIN(${qn}) AS ${alias('min')}`);
         fragments.push(`MAX(${qn}) AS ${alias('max')}`);
-        fragments.push(`AVG(CAST(${qn} AS float)) AS ${alias('avg')}`);
-        fragments.push(`STDEV(CAST(${qn} AS float)) AS ${alias('sd')}`);
+        if (extractBaseType(col.type) === 'float') {
+          fragments.push(floatMomentFragment('AVG', qn, alias('avg')));
+          fragments.push(floatMomentFragment('STDEV', qn, alias('sd')));
+        } else {
+          fragments.push(`AVG(CAST(${qn} AS float)) AS ${alias('avg')}`);
+          fragments.push(`STDEV(CAST(${qn} AS float)) AS ${alias('sd')}`);
+        }
         if (isNullable) {
           fragments.push(`SUM(CASE WHEN ${qn} = 0 THEN 1 ELSE 0 END) AS ${alias('z')}`);
         }
@@ -199,7 +226,8 @@ export function buildColumnAggregations(
       } else if (cat === 'string') {
         fragments.push(`MIN(LEN(${qn})) AS ${alias('minl')}`);
         fragments.push(`MAX(LEN(${qn})) AS ${alias('maxl')}`);
-        fragments.push(`SUM(CASE WHEN ${qn} = '' THEN 1 ELSE 0 END) AS ${alias('e')}`);
+        const isEmpty = VARIABLE_LENGTH_STRINGS.has(extractBaseType(col.type)) ? `DATALENGTH(${qn}) = 0` : `${qn} = ''`;
+        fragments.push(`SUM(CASE WHEN ${isEmpty} THEN 1 ELSE 0 END) AS ${alias('e')}`);
       }
     }
 
@@ -208,6 +236,9 @@ export function buildColumnAggregations(
 
   return result;
 }
+
+/** Result column that carries the number of rows a `TABLESAMPLE` query actually read. */
+export const SAMPLE_ROWS_ALIAS = '__rows';
 
 /**
  * Assembles the full profiling SELECT statement with optional sampling.
@@ -248,8 +279,9 @@ export function buildProfilingQuery(
       tablesampleClause = ` TABLESAMPLE(${pct} PERCENT)`;
     }
   }
+  const sampleRowsAgg = tablesampleClause ? `COUNT_BIG(*) AS ${qi(SAMPLE_ROWS_ALIAS)},\n  ` : '';
 
-  return `SELECT ${topClause}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
+  return `SELECT ${topClause}${sampleRowsAgg}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
 }
 
 /**
@@ -270,7 +302,7 @@ function qiStr(name: string): string {
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
 FROM sys.partitions p
-WHERE p.object_id = OBJECT_ID('${qiStr(schema)}.${qiStr(tableName)}')
+WHERE p.object_id = OBJECT_ID(N'${qiStr(schema)}.${qiStr(tableName)}')
   AND p.index_id IN (0, 1)`;
 }
 
@@ -370,7 +402,10 @@ export function parseProfilingResult(
     return n;
   }
 
-  for (const col of cols) {
+  const sampleRows = sampled && row[SAMPLE_ROWS_ALIAS] !== undefined ? safeInt(row[SAMPLE_ROWS_ALIAS], 'sample rows') : 0;
+  const denominator = sampleRows > 0 ? sampleRows : rowCount;
+
+  for (const [index, col] of cols.entries()) {
     const cat = classifyColumn(col);
     const isNullable = col.nullable === 'NULL';
 
@@ -388,11 +423,11 @@ export function parseProfilingResult(
       continue;
     }
 
-    const distinctCount = safeInt(row[`${col.name}__d`], `${col.name} distinct`);
-    const nullCount = isNullable ? safeInt(row[`${col.name}__n`], `${col.name} nulls`) : null;
-    const nullPercent = nullCount !== null && rowCount > 0 ? (nullCount / rowCount) * 100 : null;
-    const completeness = nullCount !== null && rowCount > 0 ? 1 - (nullCount / rowCount) : 1;
-    const uniqueness = rowCount > 0 ? Math.min(distinctCount / rowCount, 1) : 0;
+    const distinctCount = safeInt(row[aggregateAlias(index, 'd')], `${col.name} distinct`);
+    const nullCount = isNullable ? safeInt(row[aggregateAlias(index, 'n')], `${col.name} nulls`) : null;
+    const nullPercent = nullCount !== null && denominator > 0 ? (nullCount / denominator) * 100 : null;
+    const completeness = nullCount !== null && denominator > 0 ? 1 - (nullCount / denominator) : 1;
+    const uniqueness = denominator > 0 ? Math.min(distinctCount / denominator, 1) : 0;
 
     const entry: ColumnStats = {
       name: col.name,
@@ -404,30 +439,47 @@ export function parseProfilingResult(
       uniqueness,
     };
 
-    const minRaw = row[`${col.name}__min`];
-    const maxRaw = row[`${col.name}__max`];
+    const minRaw = row[aggregateAlias(index, 'min')];
+    const maxRaw = row[aggregateAlias(index, 'max')];
     const isDatetime = cat === 'datetime';
     if (minRaw !== undefined) entry.min = isDatetime ? compactDate(minRaw) : minRaw;
     if (maxRaw !== undefined) entry.max = isDatetime ? compactDate(maxRaw) : maxRaw;
 
-    const avgRaw = row[`${col.name}__avg`];
-    const sdRaw = row[`${col.name}__sd`];
+    const avgRaw = row[aggregateAlias(index, 'avg')];
+    const sdRaw = row[aggregateAlias(index, 'sd')];
     if (avgRaw !== undefined) entry.mean = parseFloat(avgRaw) || 0;
     if (sdRaw !== undefined) entry.stdDev = parseFloat(sdRaw) || 0;
 
-    const minlRaw = row[`${col.name}__minl`];
-    const maxlRaw = row[`${col.name}__maxl`];
+    const minlRaw = row[aggregateAlias(index, 'minl')];
+    const maxlRaw = row[aggregateAlias(index, 'maxl')];
     if (minlRaw !== undefined) entry.minLength = safeInt(minlRaw, `${col.name} minLen`);
     if (maxlRaw !== undefined) entry.maxLength = safeInt(maxlRaw, `${col.name} maxLen`);
 
-    const zRaw = row[`${col.name}__z`];
+    const zRaw = row[aggregateAlias(index, 'z')];
     if (zRaw !== undefined) entry.zeroCount = safeInt(zRaw, `${col.name} zeroCount`);
 
-    const eRaw = row[`${col.name}__e`];
+    const eRaw = row[aggregateAlias(index, 'e')];
     if (eRaw !== undefined) entry.emptyCount = safeInt(eRaw, `${col.name} emptyCount`);
 
     columns.push(entry);
   }
 
   return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+/**
+ * Turns the single row of a profiling query into the name → value map {@link parseProfilingResult}
+ * reads. A NULL cell is left out, so an aggregate over no values (MIN of an all-NULL column) is
+ * absent rather than the text `NULL`.
+ *
+ * @param result - The profiling query result; only the first row is read.
+ */
+export function profilingRowFromResult(result: SimpleExecuteResult): Record<string, string> {
+  const row: Record<string, string> = {};
+  const cells = result.rows[0] ?? [];
+  result.columnInfo.forEach((column, i) => {
+    const cell = cells[i];
+    if (cell && !cell.isNull) row[column.columnName] = cell.displayValue;
+  });
+  return row;
 }

@@ -583,13 +583,13 @@ function testExpandSchemaPlaceholder() {
 
   const sql = `SELECT * FROM sys.objects o\nINNER JOIN sys.schemas s ON o.schema_id = s.schema_id\nWHERE s.name IN ({{SCHEMAS}})`;
   const expanded = expandSchemaPlaceholder(sql, ['dbo', 'Sales']);
-  expect(expanded.includes("s.name IN ('dbo', 'Sales')"), 'Basic: schema list expanded').toBe(true);
+  expect(expanded.includes("s.name IN (N'dbo', N'Sales')"), 'Basic: schema list expanded as Unicode literals').toBe(true);
   expect(!expanded.includes('{{SCHEMAS}}'), 'Basic: no placeholder remnants').toBe(true);
 
   const depsSql = `SELECT * FROM sys.sql_expression_dependencies d\nWHERE (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))`;
   const expandedDeps = expandSchemaPlaceholder(depsSql, ['dbo']);
-  expect(expandedDeps.includes("s1.name IN ('dbo')"), 'Multi: first placeholder expanded').toBe(true);
-  expect(expandedDeps.includes("d.referenced_schema_name IN ('dbo')"), 'Multi: second placeholder expanded').toBe(true);
+  expect(expandedDeps.includes("s1.name IN (N'dbo')"), 'Multi: first placeholder expanded').toBe(true);
+  expect(expandedDeps.includes("d.referenced_schema_name IN (N'dbo')"), 'Multi: second placeholder expanded').toBe(true);
   expect(!expandedDeps.includes('{{SCHEMAS}}'), 'Multi: no placeholder remnants').toBe(true);
 
   const noPlaceholder = `SELECT * FROM sys.objects`;
@@ -597,7 +597,10 @@ function testExpandSchemaPlaceholder() {
   expect(unchanged === noPlaceholder, 'No placeholder: SQL unchanged').toBe(true);
 
   const injected = expandSchemaPlaceholder(sql, ["O'Brien"]);
-  expect(injected.includes("'O''Brien'"), 'SQL injection: single quote escaped').toBe(true);
+  expect(injected.includes("N'O''Brien'"), 'SQL injection: single quote escaped').toBe(true);
+
+  const unicode = expandSchemaPlaceholder(sql, ['Ärger日本']);
+  expect(unicode.includes("N'Ärger日本'"), 'Unicode: a non-ASCII schema name keeps its characters (N literal)').toBe(true);
 
   const empty = expandSchemaPlaceholder(sql, []);
   expect(empty.includes('s.name IN ()'), 'Empty: produces IN ()').toBe(true);
@@ -852,10 +855,52 @@ function testPkOrdinalFromDmv() {
   expect(legacyId!.pkOrdinal === undefined, 'Legacy (no pk_ordinal col): pkOrdinal absent — no crash').toBe(true);
 }
 
+  it('keeps "]" in object, schema, column and dependency names', () => {
+    const results: DmvResults = {
+      nodes: makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), [
+        [cell('we]ird'), cell('t]x'), cell('U '), nullCell()],
+        [cell('dbo'), cell('vSrc'), cell('V '), cell('SELECT 1')],
+      ]),
+      columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), [
+        [cell('we]ird'), cell('t]x'), cell('1'), cell('c]1'), cell('int'), cell('4'), cell('10'), cell('0'), cell('1'), cell('0'), cell('0')],
+      ]),
+      dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), [
+        [cell('dbo'), cell('vSrc'), cell('we]ird'), cell('t]x')],
+      ]),
+    };
+    const model = buildModelFromDmv(results);
+    const table = model.nodes.find(n => n.type === 'table');
+    expect(table?.schema).toBe('we]ird');
+    expect(table?.name).toBe('t]x');
+    expect(table?.id).toBe('[we]ird].[t]x]');
+    expect(table?.columns?.map(c => c.name)).toEqual(['c]1']);
+    expect(model.schemas.map(s => s.name)).toContain('we]ird');
+    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]ird].[t]x] -> [dbo].[vsrc]');
+  });
+
+  it('the columns query names a CLR type through its user type', () => {
+    const config = yaml.load(readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8')) as { queries: Array<{ name: string; sql: string }> };
+    const sql = config.queries.find(q => q.name === 'columns')!.sql;
+    expect(sql).toContain('COALESCE(TYPE_NAME(c.system_type_id), TYPE_NAME(c.user_type_id)) AS type_name');
+    expect(sql).toMatch(/GROUP BY[^]*COALESCE\(TYPE_NAME\(c\.system_type_id\), TYPE_NAME\(c\.user_type_id\)\)/);
+  });
+
   it('expands schema placeholders', testExpandSchemaPlaceholder);
   it('keeps placeholders in configured queries', testYamlQueriesHavePlaceholder);
   it('classifies phase-two queries', testPhase2QueryPredicate);
   it('preserves expanded SQL structure', testExpandedSqlStructure);
   it('maps database platforms from DMV results', testDbPlatformFromDmv);
   it('maps primary-key ordinals from DMV results', testPkOrdinalFromDmv);
+});
+
+describe('empty metadata catalog', () => {
+  it('the schema preview warning names VIEW DEFINITION, the permission a login needs to see objects', async () => {
+    const { buildSchemaPreview } = await import('../../../src/engine/dmvExtractor');
+    const empty: SimpleExecuteResult = {
+      rowCount: 0,
+      columnInfo: ['schema_name', 'type_code', 'object_count'].map((columnName) => ({ columnName }) as IDbColumn),
+      rows: [],
+    };
+    expect(buildSchemaPreview(empty).warnings).toEqual([expect.stringMatching(/No user objects found.*VIEW DEFINITION/)]);
+  });
 });

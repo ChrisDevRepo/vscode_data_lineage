@@ -85,7 +85,7 @@ export const SchemaSelector = memo(function SchemaSelector({
                 className="inline-block rounded-full shrink-0"
                 style={{ width: 8, height: 8, backgroundColor: color }}
               />
-              <span className="text-xs flex-1 truncate">{schema.name}</span>
+              <span className="text-xs flex-1 truncate" title={schema.name}>{schema.name}</span>
               <span className="text-[10px] tabular-nums ln-text-muted">{schema.nodeCount}</span>
             </label>
           );

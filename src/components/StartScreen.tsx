@@ -6,6 +6,7 @@ import { StatusMessage } from './ui/StatusMessage';
 import { Spinner } from './ui/Spinner';
 import { useReturnFocus } from '../hooks/useReturnFocus';
 import type { Project, FilterProfile } from '../engine/projectStore';
+import { MSSQL_PROJECT_HINT, WARNING_ICON_PATH, usesMssqlExtension } from './mssqlRetiring';
 
 interface StartScreenProps {
   projects: Project[];
@@ -71,7 +72,7 @@ function projectTooltip(project: Project): ReactNode {
   const schemas = schemaLine(project.connection.schemas);
   const bm = bookmarkSummary(project.filterProfiles);
   const detail = project.connection.type === 'dacpac'
-    ? truncatePath(project.connection.path, 50)
+    ? project.connection.path
     : `${project.connection.connectionInfo.database} on ${project.connection.connectionInfo.server}`;
 
   return (
@@ -94,6 +95,12 @@ function projectTooltip(project: Project): ReactNode {
       </div>
       {schemas && <div style={{ opacity: 0.55, fontSize: 11 }}>{schemas}</div>}
       {bm && <div style={{ opacity: 0.55, fontSize: 11 }}>{bm}</div>}
+      {usesMssqlExtension(project) && (
+        <div className="flex items-start gap-1.5" style={{ fontSize: 11 }}>
+          <IconWarning />
+          <span>{MSSQL_PROJECT_HINT}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -218,8 +225,9 @@ export const StartScreen = memo(function StartScreen({
             return (
               <div
                 key={project.id}
-                className="flex items-center gap-3 pr-3 rounded-sm ln-file-picker ln-list-item"
+                className="flex items-center pr-3 rounded-sm ln-file-picker ln-list-item"
               >
+                <Tooltip content={projectTooltip(project)} maxWidth={320} className="ln-tooltip--wizard" asChild>
                 <button
                   type="button"
                   className="flex items-center gap-3 flex-1 min-w-0 pl-3 py-2 text-left cursor-pointer"
@@ -227,23 +235,14 @@ export const StartScreen = memo(function StartScreen({
                   disabled={isLoading}
                   aria-busy={isLoading}
                 >
-                <span className="text-base shrink-0" aria-hidden="true">
-                  {isLoading ? <Spinner className="w-4 h-4" /> : (
-                    <span style={{
-                      background: 'var(--ln-wizard-btn-bg)',
-                      borderRadius: 3,
-                      padding: '1px 4px',
-                      fontSize: 9,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                      opacity: 0.7,
-                    }}>
-                      {project.connection.type === 'dacpac' ? 'DAC' : 'DB'}
-                    </span>
-                  )}
-                </span>
+                {isLoading && <Spinner className="w-4 h-4 shrink-0" />}
                 <span className="block flex-1 min-w-0">
-                  <span className="block text-sm font-medium truncate">{project.name}</span>
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-medium truncate">{project.name}</span>
+                    {usesMssqlExtension(project) && (
+                      <span role="img" aria-label={MSSQL_PROJECT_HINT} className="shrink-0 ln-provider-warning-badge">! Old connection</span>
+                    )}
+                  </span>
                   <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{detail}</span>
                   {schemas && (
                     <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{schemas}</span>
@@ -253,6 +252,7 @@ export const StartScreen = memo(function StartScreen({
                   )}
                 </span>
                 </button>
+                </Tooltip>
                 {!isLoading && (
                   <Tooltip content={`Delete "${project.name}"`} className="ln-tooltip--wizard">
                     <Button
@@ -330,6 +330,14 @@ export const StartScreen = memo(function StartScreen({
     </WizardPanel>
   );
 });
+
+function IconWarning() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0 ln-provider-warning-icon" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d={WARNING_ICON_PATH} />
+    </svg>
+  );
+}
 
 function IconClose() {
   return (

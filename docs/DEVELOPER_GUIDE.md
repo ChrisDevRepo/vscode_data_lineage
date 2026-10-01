@@ -121,12 +121,20 @@ live import derives one from the server.
 - **DMV** — [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts) +
   [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
   After schema selection, platform detection completes before the
-  selected-schema model is built: `platform-info` is preferred, MSSQL
+  selected-schema model is built: `platform-info` is preferred, the session's
   `getServerInfo` is the non-failing fallback, and failure of both records
   `Unknown database platform`. Query definitions live in
   [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and
   [`DMV_QUERIES.md`](DMV_QUERIES.md). A change to the SQL sent to a live
   database ships the matching `DMV_QUERIES.md` update in the same commit.
+- **Connection providers** — [`src/engine/db/`](../src/engine/db/). `connectDatabase`
+  returns a `DbSession` from either the mssql extension or the built-in `tedious`
+  provider, selected by `dataLineageViz.database.connectionProvider`; saved
+  built-in connections live in `dataLineageViz.database.connections` with
+  passwords in `SecretStorage`. Connection errors are presented only by
+  `connectionErrors.ts`. Tests: [`tests/unit/engine/db/`](../tests/unit/engine/db/);
+  the `builtIn` tests assert the mssql extension is never touched. Runtime
+  contract: [`ARCHITECTURE.md`](ARCHITECTURE.md) §Database connection providers.
 - **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).
   On read, unrecognized fields are dropped; a project is discarded only when a
   required field is missing or of the wrong type. On write,

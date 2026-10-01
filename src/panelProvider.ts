@@ -6,7 +6,8 @@ import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
 import { summarizeZodError } from './bridge/host';
-import { createMessageHandlers, isMssqlAvailable, PROJECT_STORE_KEY } from './bridge/messageHandlers';
+import { createMessageHandlers, PROJECT_STORE_KEY } from './bridge/messageHandlers';
+import { getConnectionAvailability } from './engine/connectionManager';
 import {
   BRIDGE_PROTOCOL_VERSION,
   MainPanelToExtensionMsgSchema,
@@ -119,13 +120,17 @@ export function openPanel(
 
   activeTriggerDemo = triggerDemoLoad;
 
-  let mssqlAvailable = isMssqlAvailable();
-  vscode.extensions.onDidChange(() => {
-    const available = isMssqlAvailable();
-    if (available === mssqlAvailable) return;
-    mssqlAvailable = available;
-    bridgeLogger.info(`SQL Server (mssql) extension is now ${available ? 'available' : 'unavailable'} — re-posting mssql-status.`);
-    void host.postMessage({ type: 'mssql-status', available });
+  let connectionStatus = getConnectionAvailability();
+  const repostConnectionStatus = (reason: string) => {
+    const status = getConnectionAvailability();
+    if (status.available === connectionStatus.available && status.provider === connectionStatus.provider) return;
+    connectionStatus = status;
+    bridgeLogger.info(`Database connection status changed (${reason}): provider=${status.provider} available=${status.available} — re-posting mssql-status.`);
+    void host.postMessage({ type: 'mssql-status', ...status });
+  };
+  vscode.extensions.onDidChange(() => repostConnectionStatus('extensions changed'), undefined, panelDisposables);
+  vscode.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration('dataLineageViz.database.connectionProvider')) repostConnectionStatus('setting changed');
   }, undefined, panelDisposables);
 
   panel.onDidDispose(() => {
