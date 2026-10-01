@@ -1615,7 +1615,7 @@ function logClassificationGating(
 ): void {
   if (gatedKeys.length === 0) return;
   deps.logger?.debug(
-    `[AI] [Prompt] classification gated capture key(s) — stage=${stage} classification=${sanitizeForLog(classification)} keys=${sanitizeForLog(gatedKeys.join(', '))}`,
+    `[AI] [Prompt] capture keys excluded by classification — stage=${stage} classification=${sanitizeForLog(classification)} keys=${sanitizeForLog([...new Set(gatedKeys)].join(', '))}`,
   );
 }
 

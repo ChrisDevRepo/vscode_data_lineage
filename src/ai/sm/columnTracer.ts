@@ -424,8 +424,8 @@ export interface ColumnFlowTargetResolution {
  * Attribution edges (one per upstream real column) land on `writes_to.node` when the entry names
  * it, else on the focus. The {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier
  * relation that keeps the column chain connected to the traced origin: a named `writes_to` states
- * it directly, and when the entry omits it at a bodied focus that declares no `out_col` of its
- * own (a writer procedure — the column cannot live on it), the carrier is derived from facts the
+ * it directly, explicit `null` declares no table write, and omission at a bodied focus that declares
+ * no `out_col` of its own derives the carrier from facts the
  * engine already holds: the unique non-script out-neighbour the focus writes whose committed
  * spine column matches `out_col`. An entry whose own upstream supplier is that carrier records a
  * read, not a continuation, and derives nothing; zero or several matching carriers derive nothing
@@ -460,7 +460,7 @@ export function resolveColumnFlowTarget(
     ? (getNodeColumns(focusNode.id, nodeMap) ?? []).some(c => normalizeColName(c.name) === normalizeColName(entry.out_col))
     : false;
   const defaultResolution: ColumnFlowTargetResolution = { attributionTo: focusId, attributionCol: entry.out_col, writerEdge: null };
-  if (!focusNode || carriesOutCol || !SCRIPT_TYPES.has(focusNode.type)) return defaultResolution;
+  if (entry.writes_to === null || !focusNode || carriesOutCol || !SCRIPT_TYPES.has(focusNode.type)) return defaultResolution;
 
   const carriers = model.edges
     .filter(e => e.source.toLowerCase() === focusId.toLowerCase())
