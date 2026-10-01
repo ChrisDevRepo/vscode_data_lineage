@@ -161,7 +161,9 @@ export class ColumnTracer {
    * @remarks
    * Terminal/current-node production (`upstream_columns: []`) stages no edge and spawns no
    * question. Each question is labelled by `edge.from_col`, not `edge.to_col`, so the wording
-   * matches that hop's own `<column_trace>` active-column label.
+   * matches that hop's own `<column_trace>` active-column label. Writer edges
+   * (`from_node === hop_node`) never spawn one: they attribute the focus's own write, they do not
+   * continue the chain into the focus again.
    *
    * @param focusId - The id of the focus node.
    * @param hopCount - The hop count matching the edges to query.
@@ -169,7 +171,7 @@ export class ColumnTracer {
    */
   getColumnLineageQuestionsByNode(focusId: string, hopCount: number): Map<string, string[]> {
     const hopEdges = this.aspect.edges.filter(
-      e => e.hop_node === focusId && e.hop === hopCount,
+      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node,
     );
     const byNode = new Map<string, string[]>();
     if (hopEdges.length === 0) return byNode;
@@ -274,7 +276,9 @@ export class ColumnTracer {
         continue;
       }
 
-      const toNodeId = entry.writes_to?.node ? resolveModelNodeId(entry.writes_to.node, nodeMap) : focusId;
+      const stagedBeforeEntry = stagedEdges.length;
+      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap, model, this.aspect.edges);
+      const toNodeId = resolvedTarget?.attributionTo ?? null;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
       if (entry.writes_to && !toNodeObj) {
         invalidRoutes.push({ kind: 'absent_contributor', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to target "${entry.writes_to.node}" is absent from the loaded model.` });
@@ -294,7 +298,7 @@ export class ColumnTracer {
           continue;
         }
       }
-      const toCol = entry.writes_to?.col ?? entry.out_col;
+      const toCol = resolvedTarget?.attributionCol ?? entry.out_col;
       if (toNodeObj && toNodeObj.type !== 'procedure' && toNodeObj.type !== 'function') {
         const toCols = new Set<string>((getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
         if (toCols.size > 0 && !toCols.has(normalizeColName(toCol))) {
@@ -381,8 +385,94 @@ export class ColumnTracer {
           ...(cont.note ? { note: cont.note } : {}),
         });
       }
+
+      const writerEdge = resolvedTarget?.writerEdge ?? null;
+      const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
+      if (stagedEdges.length > stagedBeforeEntry && writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)) {
+        stagedEdges.push({
+          hop: 0, // Assigned by caller
+          hop_node: focusId,
+          from_node: focusId,
+          from_col: entry.out_col,
+          to_node: writerEdge.toNode,
+          to_col: writerEdge.toCol,
+        });
+        if (writerEdge.derived) {
+          log?.('debug', `[CT] writes_to omitted at writer "${focusId}" — staged writer edge onto carrier "${writerEdge.toNode}" (${entry.out_col}) from the model graph and the committed spine`);
+        }
+      }
     }
 
     return { invalidRoutes, stagedEdges };
   }
+}
+
+/** Where one `column_flow` entry's recorded columns land, and the writer edge it stages. */
+export interface ColumnFlowTargetResolution {
+  /** Node the attribution edges land on: `writes_to.node` when named, else the focus. */
+  attributionTo: string;
+  /** Column the attribution edges land on: `writes_to.col` when named, else `out_col`. */
+  attributionCol: string;
+  /** The focus→carrier writer edge staged beside the attribution edges; absent when none is determined. */
+  writerEdge: { toNode: string; toCol: string; derived: boolean } | null;
+}
+
+/**
+ * Resolves where one `column_flow` entry's recorded columns land.
+ *
+ * @remarks
+ * Attribution edges (one per upstream real column) land on `writes_to.node` when the entry names
+ * it, else on the focus. The {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier
+ * relation that keeps the column chain connected to the traced origin: a named `writes_to` states
+ * it directly, and when the entry omits it at a bodied focus that declares no `out_col` of its
+ * own (a writer procedure — the column cannot live on it), the carrier is derived from facts the
+ * engine already holds: the unique non-script out-neighbour the focus writes whose committed
+ * spine column matches `out_col`. An entry whose own upstream supplier is that carrier records a
+ * read, not a continuation, and derives nothing; zero or several matching carriers derive nothing
+ * — the engine never chooses between them.
+ *
+ * @param entry - The submitted column-flow entry.
+ * @param focusId - Canonical id of the focus node.
+ * @param nodeMap - Map of all available lineage nodes.
+ * @param model - The underlying database model.
+ * @param committedEdges - Column edges committed before this submission.
+ * @returns The attribution target and writer edge to stage, or `null` when `writes_to` names a
+ * node absent from the loaded model.
+ */
+export function resolveColumnFlowTarget(
+  entry: ColumnFlowEntry,
+  focusId: string,
+  nodeMap: Map<string, LineageNode>,
+  model: DatabaseModel,
+  committedEdges: ReadonlyArray<ColumnEdge>,
+): ColumnFlowTargetResolution | null {
+  if (entry.writes_to?.node) {
+    const toNode = resolveModelNodeId(entry.writes_to.node, nodeMap);
+    if (!toNode) return null;
+    return {
+      attributionTo: toNode,
+      attributionCol: entry.writes_to.col,
+      writerEdge: { toNode, toCol: entry.writes_to.col, derived: false },
+    };
+  }
+  const focusNode = nodeMap.get(focusId);
+  const carriesOutCol = focusNode
+    ? (getNodeColumns(focusNode.id, nodeMap) ?? []).some(c => normalizeColName(c.name) === normalizeColName(entry.out_col))
+    : false;
+  const defaultResolution: ColumnFlowTargetResolution = { attributionTo: focusId, attributionCol: entry.out_col, writerEdge: null };
+  if (!focusNode || carriesOutCol || !SCRIPT_TYPES.has(focusNode.type)) return defaultResolution;
+
+  const carriers = model.edges
+    .filter(e => e.source.toLowerCase() === focusId.toLowerCase())
+    .map(e => nodeMap.get(e.target))
+    .filter((n): n is LineageNode => !!n && !SCRIPT_TYPES.has(n.type))
+    .filter(carrier => committedEdges.some(e =>
+      (e.from_node === carrier.id && normalizeColName(e.from_col) === normalizeColName(entry.out_col))
+      || (e.to_node === carrier.id && normalizeColName(e.to_col) === normalizeColName(entry.out_col))));
+  if (carriers.length !== 1) return defaultResolution;
+  const carrier = carriers[0];
+  const suppliedByCarrier = entry.upstream_columns.some(ref =>
+    (resolveModelNodeId(ref.node, nodeMap) ?? ref.node.toLowerCase()) === carrier.id);
+  if (suppliedByCarrier) return defaultResolution;
+  return { ...defaultResolution, writerEdge: { toNode: carrier.id, toCol: entry.out_col, derived: true } };
 }

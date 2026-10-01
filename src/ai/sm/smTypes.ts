@@ -106,8 +106,11 @@ export interface ColumnFlowEntry {
   /** Column name on the focus node, or procedure parameter prefixed with @. */
   out_col: string;
   /**
-   * For writer procedures: the table column this node writes to.
-   * When present, the lineage edge is `focus_node.out_col → writes_to.node.writes_to.col`.
+   * For writer procedures: the table column this node writes to. Either form stages the writer
+   * edge `focus_node.out_col → writes_to.node.writes_to.col` beside the attribution edges
+   * `upstream → writes_to.node`: a named `writes_to` states it directly, and an omitted one at a
+   * focus that declares no `out_col` of its own has the engine derive the written carrier from
+   * the committed spine — both forms span one connected chain.
    */
   writes_to?: { node: string; col: string } | null;
   /**
@@ -140,7 +143,8 @@ interface ColumnRef {
 
 /**
  * One directed edge in the accumulated column lineage chain.
- * Built from validated `column_flow` submissions, one edge per upstream real column.
+ * Built from validated `column_flow` submissions: one edge per upstream real column, plus the
+ * focus→carrier writer edge each entry with a resolved write target stages.
  */
 export interface ColumnEdge {
   /** Focus node where this edge was analyzed. */

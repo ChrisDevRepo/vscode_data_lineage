@@ -24,7 +24,7 @@ import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, ColumnCarry, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
-import { ColumnTracer } from "./columnTracer";
+import { ColumnTracer, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
@@ -2538,17 +2538,23 @@ export class NavigationEngine implements IHopStateMachine {
 
       if (this.tracer && finding.column_flow) {
         for (const entry of finding.column_flow) {
-          const toNode = entry.writes_to?.node ? (resolveModelNodeId(entry.writes_to.node, this.nodeMap) ?? entry.writes_to.node.toLowerCase()) : focusId;
-          const toCol  = entry.writes_to?.col  ?? entry.out_col;
-          const toNodeObj = this.nodeMap.get(toNode);
-          if (toNodeObj && !SCRIPT_TYPES.has(toNodeObj.type)) {
-            stagedCtNodeStates.push({
-              nodeId: toNode,
-              action: 'passthrough',
-              source: 'engine',
-              reason: 'non_bodied_passthrough',
-              meta: { columns: [toCol], viaNodeId: focusId, atHop: this.hopCount },
-            });
+          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.model, this.tracer.edges);
+          const targets: Array<readonly [string, string]> = resolved
+            ? (resolved.writerEdge && resolved.writerEdge.toNode !== resolved.attributionTo
+              ? [[resolved.attributionTo, resolved.attributionCol], [resolved.writerEdge.toNode, resolved.writerEdge.toCol]]
+              : [[resolved.attributionTo, resolved.attributionCol]])
+            : [];
+          for (const [targetId, targetCol] of targets) {
+            const targetObj = this.nodeMap.get(targetId);
+            if (targetObj && !SCRIPT_TYPES.has(targetObj.type)) {
+              stagedCtNodeStates.push({
+                nodeId: targetId,
+                action: 'passthrough',
+                source: 'engine',
+                reason: 'non_bodied_passthrough',
+                meta: { columns: [targetCol], viaNodeId: focusId, atHop: this.hopCount },
+              });
+            }
           }
           for (const ref of entry.upstream_columns) {
             const fromNode = resolveModelNodeId(ref.node, this.nodeMap);

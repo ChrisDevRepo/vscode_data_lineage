@@ -581,7 +581,7 @@ const OUT_COL_DESCRIPTION = 'A column from the `<column_trace>` Active columns l
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
-  writes_to: ColumnFlowWritesToObject.nullish().describe('Procedure focus: the written target as an object {"node": table id, "col": column name}; null when none.'),
+  writes_to: ColumnFlowWritesToObject.nullish().describe('Procedure focus: the carrier table that receives out_col, as {"node": table id, "col": column name}. Name it whenever this hop writes the traced column into a table, so the recorded chain stays attached to that carrier; null only when this hop writes no table.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
     'Two states by focus: at a bodied focus, the real upstream columns the node READS that contribute to out_col ' +
     '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the neighbours ' +
