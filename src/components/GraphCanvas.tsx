@@ -144,19 +144,47 @@ const AI_PANEL_REFIT_DELAY = 80;
  * generation when `schedule` fires — a later user gesture or fit bumps it past that point and this
  * one becomes a no-op instead of running.
  *
- * @returns A cancel that clears the scheduled callback directly (effect cleanup / unmount).
+ * @param ready - Whether the intended graph has arrived and is measured; false defers another frame.
+ * @returns A cancel that clears the latest scheduled callback (effect cleanup / unmount).
  */
 export function scheduleFit(
   generationRef: { current: number },
   fire: () => void,
   schedule: (run: () => void) => number = (run) => requestAnimationFrame(run),
   clear: (id: number) => void = (id) => cancelAnimationFrame(id),
+  ready: () => boolean = () => true,
 ): () => void {
   const generation = ++generationRef.current;
-  const id = schedule(() => {
-    if (generationRef.current === generation) fire();
+  let cancelled = false;
+  let id: number;
+  const run = () => {
+    if (cancelled || generationRef.current !== generation) return;
+    if (!ready()) { id = schedule(run); return; }
+    fire();
+  };
+  id = schedule(run);
+  return () => { cancelled = true; clear(id); };
+}
+
+/** Whether React Flow has received and measured the graph a pending fit will frame. */
+export function graphReadyForFit(
+  expectedNodes: readonly FlowNode[], expectedEdges: readonly FlowEdge[],
+  renderedNodes: readonly FlowNode[], renderedEdges: readonly FlowEdge[],
+): boolean {
+  const expectedVisible = expectedNodes.filter(node => !node.hidden);
+  const renderedVisible = renderedNodes.filter(node => !node.hidden);
+  if (expectedVisible.length !== renderedVisible.length || expectedEdges.length !== renderedEdges.length) return false;
+  const renderedById = new Map(renderedVisible.map(node => [node.id, node]));
+  if (!expectedVisible.every(node => {
+    const rendered = renderedById.get(node.id);
+    return rendered && rendered.position.x === node.position.x && rendered.position.y === node.position.y
+      && (rendered.measured?.width ?? 0) > 0 && (rendered.measured?.height ?? 0) > 0;
+  })) return false;
+  const renderedEdgeById = new Map(renderedEdges.map(edge => [edge.id, edge]));
+  return expectedEdges.every(edge => {
+    const rendered = renderedEdgeById.get(edge.id);
+    return rendered?.source === edge.source && rendered.target === edge.target;
   });
-  return () => clear(id);
 }
 
 /** Largest zoom the canvas allows. */
@@ -760,6 +788,11 @@ export function GraphCanvas({
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getEdges, setViewport } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
+  const graphRebuildingRef = useRef(isRebuilding);
+  graphRebuildingRef.current = isRebuilding;
+  const nodesInitializedRef = useRef(nodesInitialized);
+  nodesInitializedRef.current = nodesInitialized;
+  const displayedGraphRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] }>({ nodes: flowNodes, edges: flowEdges });
   const vscodeApi = useVsCode();
 
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
@@ -1265,19 +1298,28 @@ export function GraphCanvas({
    * running.
    *
    * @remarks
-   * Deferred a frame because each caller runs while the nodes it means to frame are still being
-   * measured, and `fitView` on an unmeasured node frames the wrong box.
+   * Waits until React Flow has the requested node positions, measured bounds and edges. A view
+   * arriving before measurement must not frame stale bounds from the previous graph.
    *
    * @returns A cancel to return directly as an effect's cleanup.
    */
   const fitGraph = useCallback((): (() => void) => scheduleFit(
     fitGenerationRef,
     () => { void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION }); },
-  ), [fitView]);
+    undefined, undefined,
+    () => {
+      const targetNodes = columnViewActive ? displayedGraphRef.current.nodes : flowNodes;
+      const targetEdges = columnViewActive ? displayedGraphRef.current.edges : flowEdges;
+      return !graphRebuildingRef.current && (nodesInitializedRef.current || targetNodes.every(node => node.hidden))
+        && graphReadyForFit(targetNodes, targetEdges, getNodes(), getEdges());
+    },
+  ), [fitView, flowNodes, flowEdges, getNodes, getEdges, columnViewActive]);
+
+  const shownTraceMode = ['applied', 'filtered', 'path-applied', 'analysis'].includes(trace.mode) ? trace.mode : null;
 
   /**
-   * The sole owner of fit-on-graph-change: every `flowNodes` update — including a trace ending and
-   * the graph reverting to its pre-trace shape — reframes here, once. A manual add/prune trace-scope
+   * Fits graph changes and newly shown AI, trace and analytics views, including repeated shows
+   * whose node membership is unchanged. A stored viewport restoration still takes precedence. A manual add/prune trace-scope
    * edit is the one graph change this owner does not reframe for, since the edited node is already
    * on screen and a fit there would move the view out from under the click that caused it.
    */
@@ -1319,7 +1361,8 @@ export function GraphCanvas({
     }
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     return fitGraph();
-  }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+  }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode, aiPreview, analysisMode,
+    shownTraceMode, trace.tracedNodeIds]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   const [notesVisible, setNotesVisible] = useState(true);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
@@ -1762,6 +1805,7 @@ export function GraphCanvas({
     const routeEdgeIds = activeRoute?.edgeIds ?? (isFocusPaths ? trace.tracedEdgeIds : undefined);
     return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current, routeEdgeIds);
   }, [localEdges, highlightedNodeId, activeRoute, isFocusPaths, trace.tracedEdgeIds, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
+  displayedGraphRef.current = { nodes: displayNodes, edges: displayEdges };
 
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),

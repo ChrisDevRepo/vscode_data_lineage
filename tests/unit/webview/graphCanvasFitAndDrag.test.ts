@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { getNodesBounds, getViewportForBounds, type Node as FlowNode } from '@xyflow/react';
 import {
   applyPendingViewport,
+  graphReadyForFit,
   canvasMinZoom,
   isUserMoveEvent,
   mergeIncomingNodesPreservingDrag,
@@ -223,5 +224,66 @@ describe('canvasMinZoom — a fit is never clamped short of the laid-out graph',
 
   it('keeps the default floor before the pane has a size', () => {
     expect(canvasMinZoom(rankedLayout(70, 800, true), 0, 0, PADDING)).toBe(MIN_CANVAS_ZOOM);
+  });
+});
+
+
+describe('shown graph fitting waits for the requested layout', () => {
+  const expected = [{ id: 'a', position: { x: 200, y: 300 }, data: {} }];
+  const measured = () => expected.map(node => ({ ...node, measured: { width: 220, height: 80 } }));
+  it.each(['AI preview', 'trace', 'analytics'])('%s arrival waits beyond the first frame, then fits exactly once', () => {
+    const generation = { current: 0 };
+    const frames: Array<() => void> = [];
+    const fire = vi.fn();
+    let rendered = [{ ...expected[0], position: { x: 0, y: 0 } }];
+    const schedule = (run: () => void) => frames.push(run);
+    scheduleFit(generation, fire, schedule, vi.fn(), () => graphReadyForFit(expected, [], rendered, []));
+    frames.shift()!();
+    expect(fire).not.toHaveBeenCalled();
+    rendered = expected;
+    frames.shift()!();
+    expect(fire).not.toHaveBeenCalled();
+    rendered = measured();
+    frames.shift()!();
+    expect(fire).toHaveBeenCalledTimes(1);
+    expect(frames).toHaveLength(0);
+  });
+  it('empty and fully hidden graphs need no node measurements', () => {
+    expect(graphReadyForFit([], [], [], [])).toBe(true);
+    expect(graphReadyForFit(expected.map(node => ({ ...node, hidden: true })), [], [], [])).toBe(true);
+    expect(graphReadyForFit([], [], measured(), [])).toBe(false);
+  });
+  it('same node membership does not make the old layout ready', () => {
+    const old = measured().map(node => ({ ...node, position: { x: 0, y: 0 } }));
+    expect(graphReadyForFit(expected, [], old, [])).toBe(false);
+    expect(graphReadyForFit(expected, [], measured(), [])).toBe(true);
+  });
+  it('waits for edges from the same graph, including changed directed endpoints', () => {
+    const edges = [{ id: 'e', source: 'a', target: 'b' }];
+    expect(graphReadyForFit(expected, edges, measured(), [])).toBe(false);
+    expect(graphReadyForFit(expected, edges, measured(), [{ ...edges[0], source: 'b', target: 'a' }])).toBe(false);
+    expect(graphReadyForFit(expected, edges, measured(), edges)).toBe(true);
+  });
+  it('a user gesture while waiting wins even when measurements arrive later', () => {
+    const generation = { current: 0 }; const frames: Array<() => void> = []; const fire = vi.fn();
+    let ready = false;
+    scheduleFit(generation, fire, run => frames.push(run), vi.fn(), () => ready);
+    frames.shift()!(); generation.current++; ready = true; frames.shift()!();
+    expect(fire).not.toHaveBeenCalled(); expect(frames).toHaveLength(0);
+  });
+  it('cleanup cancels the latest readiness frame and stale callbacks cannot re-arm it', () => {
+    const frames: Array<() => void> = []; const clear = vi.fn(); const fire = vi.fn();
+    const cancel = scheduleFit({ current: 0 }, fire, run => frames.push(run), clear, () => false);
+    frames.shift()!(); const waiting = frames.shift()!; cancel(); waiting();
+    expect(clear).toHaveBeenCalled(); expect(fire).not.toHaveBeenCalled(); expect(frames).toHaveLength(0);
+  });
+  it('a repeated display supersedes an earlier pending fit for identical membership', () => {
+    const frames: Array<() => void> = []; const generation = { current: 0 }; const first = vi.fn(); const second = vi.fn();
+    const schedule = (run: () => void) => frames.push(run);
+    scheduleFit(generation, first, schedule, vi.fn(), () => false);
+    frames.shift()!();
+    scheduleFit(generation, second, schedule, vi.fn(), () => true);
+    frames.splice(0).forEach(run => run());
+    expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledTimes(1);
   });
 });
