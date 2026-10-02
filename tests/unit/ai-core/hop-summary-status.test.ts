@@ -1,0 +1,226 @@
+/** Chat-status previews end naturally while findings and model context retain the full summary. */
+import { describe, expect, it } from 'vitest';
+import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
+import type { ModelPort } from '../../../src/ai/model/modelPort';
+import { TurnEventSink, type NativeGateEvent, type TurnEvent } from '../../../src/ai/runtime/turnEventSink';
+import { AiSession } from '../../../src/ai/session/session';
+import type { PresentationArtifact } from '../../../src/ai/session/types';
+import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import type { HopSubmission } from '../../../src/ai/sm/smTypes';
+import { makeGraph } from '../../../tests/unit/helpers/testUtils';
+import { makeModel, makeNode } from '../../../tests/unit/sm/helpers/fixtures';
+import { ScriptedModelPort, scriptedRegistry, validCall } from '../../harness/scriptedModelPort';
+
+const GATE_RESULT = JSON.stringify({
+  code: 'action_required',
+  reason: 'review revision 1',
+  detail: {
+    gate: 'confirm_sm_start',
+    classes: [],
+    nodeIds: [],
+    detail: 'review revision 1',
+    proposalRevision: 1,
+  },
+});
+
+/** Well above the chat display budget; a repeated clause gives word boundaries to fold at. */
+const LONG_SUMMARY = 'Origin joins the customer and order tables on the shared key before aggregating totals. '.repeat(6).trim();
+const SHORT_SUMMARY = 'Origin joins the customer and order tables.';
+
+/** Seeds a real BFS graph: one origin fanning out (upstream) to `leafCount` sibling leaves. */
+function seedFanOutLineage(session: AiSession, leafCount: number): string[] {
+  const leaves = Array.from({ length: leafCount }, (_, i) => `[ai].[Leaf${i}]`);
+  const nodes = [
+    makeNode({ id: '[ai].[Origin]', schema: 'ai', name: 'Origin', type: 'view', bodyScript: 'CREATE VIEW [ai].[Origin] AS SELECT 1 AS X' }),
+    ...leaves.map(id => makeNode({ id, schema: 'ai', name: id.replace(/[[\]]/g, '').split('.')[1], type: 'view', bodyScript: `CREATE VIEW ${id} AS SELECT 1 AS X` })),
+  ];
+  const edges: Array<[string, string]> = leaves.map(id => [id, '[ai].[Origin]']);
+  session.model = makeModel(nodes, edges, ['ai']);
+  session.graph = makeGraph(
+    nodes.map(n => ({ id: n.id, schema: n.schema, name: n.name, type: n.type })),
+    edges,
+  );
+  return leaves;
+}
+
+function seedProposal(session: AiSession, epoch: number, scopeCount: number): void {
+  session.storePendingExploration({
+    init: {
+      question: 'Trace Origin upstream.',
+      origin: '[ai].[Origin]',
+      analysisMode: 'bb',
+      direction: 'upstream',
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
+    },
+    classification: 'business',
+    activeFilter: {
+      schemas: [],
+      types: [],
+      hideIsolated: false,
+      focusSchemas: [],
+      showExternalRefs: false,
+      externalRefTypes: [],
+    },
+    summary: {
+      hopCount: scopeCount,
+      scopeCount,
+      origin: '[ai].[Origin]',
+      depth: null,
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
+      direction: 'upstream',
+      analysisMode: 'bb',
+      columnAspectActive: false,
+      estimatedDdlChars: 0,
+      estimatedDdlTokens: 0,
+      bySchema: {
+        ai: {
+          hops: scopeCount,
+          scope: scopeCount,
+          byType: { view: { hops: scopeCount, scope: scopeCount, nodeNames: [], omitted: 0 } },
+        },
+      },
+      scopeNotes: [],
+      activeFilters: { schemas: [], types: [], nodeIds: [], passNodeIds: [] },
+    },
+  }, epoch);
+}
+
+/** Collects turn events and hands out each native gate as it is emitted. */
+function makeGateSink() {
+  const events: TurnEvent[] = [];
+  const waiters: Array<(gate: NativeGateEvent) => void> = [];
+  const pending: NativeGateEvent[] = [];
+  const sink = new TurnEventSink((event) => {
+    events.push(event);
+    if (event.type !== 'gate') return;
+    const waiter = waiters.shift();
+    if (waiter) waiter(event);
+    else pending.push(event);
+  });
+  const nextGate = (): Promise<NativeGateEvent> => {
+    const gate = pending.shift();
+    return gate ? Promise.resolve(gate) : new Promise(resolve => waiters.push(resolve));
+  };
+  return { events, sink, nextGate };
+}
+
+/**
+ * Submits through the REAL engine and, on acceptance, dequeues the next agenda entry — mirroring
+ * `submitFindings.ts`'s own post-commit `getHopContext()` call.
+ */
+function submitAndAdvance(engine: NavigationEngine, finding: HopSubmission) {
+  const result = engine.submitFindings(finding);
+  if (!('code' in result)) engine.getHopContext();
+  return result;
+}
+
+/** Commits a minimal presentation artifact through the same public, turn-guarded write the real handler uses. */
+function commitStubPresentation(session: AiSession, epoch: number): string {
+  session.commitPresentResultSuccess(epoch, {
+    name: 'Test Result',
+    nodeIds: [],
+    aiMetadata: { summary: 'test', description: 'test' },
+  } as unknown as PresentationArtifact);
+  return JSON.stringify({ ok: true });
+}
+
+const statusLabels = (events: readonly TurnEvent[]): string[] =>
+  events.filter((e): e is Extract<TurnEvent, { type: 'status' }> => e.type === 'status').map(e => e.label);
+
+/**
+ * Runs one approved two-hop turn through the real runtime. The scripted handler commits
+ * `LONG_SUMMARY` for the origin and `SHORT_SUMMARY` for the leaf; `leafCallSummary` is what the
+ * model's leaf call itself carries.
+ */
+async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSummary = SHORT_SUMMARY, leafVerdict: 'analyze' | 'end_branch' = 'analyze'): Promise<{ labels: string[]; archive: string; requests: string }> {
+  const session = new AiSession();
+  const leaves = seedFanOutLineage(session, 1);
+  const epoch = session.beginTurn();
+  seedProposal(session, epoch, leaves.length + 1);
+
+  const { registry } = scriptedRegistry([
+    { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
+    { name: 'lineage_start_exploration', result: GATE_RESULT },
+    {
+      name: 'lineage_submit_findings',
+      result: (): string => {
+        const engine = session.stateMachine as NavigationEngine;
+        const isOrigin = engine.currentFocus === '[ai].[Origin]';
+        const finding: HopSubmission = !isOrigin && leafVerdict === 'end_branch'
+          ? { focus_node_id: engine.currentFocus!, verdict: 'end_branch', reason: leafCommittedSummary }
+          : {
+              focus_node_id: engine.currentFocus!,
+              sections: [{ angle: 'business', text: isOrigin ? LONG_SUMMARY : leafCommittedSummary }],
+              summary: isOrigin ? LONG_SUMMARY : leafCommittedSummary,
+              verdict: 'analyze',
+              ...(isOrigin ? { questions: leaves.map(id => ({ nodeId: id, question: `origin of ${id}?` })) } : {}),
+            };
+        return JSON.stringify(submitAndAdvance(engine, finding));
+      },
+    },
+    { name: 'lineage_present_result', result: () => commitStubPresentation(session, epoch) },
+  ]);
+
+  const script = [
+    { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
+    { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: LONG_SUMMARY, verdict: 'analyze' })] },
+    { toolCalls: [validCall('submit-leaf-0', 'lineage_submit_findings', leafVerdict === 'end_branch' ? { reason: leafCallSummary, verdict: leafVerdict } : { summary: leafCallSummary, verdict: leafVerdict })] },
+    { toolCalls: [validCall('present-1', 'lineage_present_result', {})] },
+  ];
+  const model = new ScriptedModelPort(script);
+  const turn = makeGateSink();
+  const runtime = new AgentRuntime({
+    threadId: 'hop-summary-truncation',
+    getSession: () => session,
+    model: model as unknown as ModelPort,
+    registry,
+    sink: turn.sink,
+    turnEpoch: epoch,
+    maxRounds: 10,
+  });
+
+  const running = runtime.run('/trace [ai].[Origin]');
+  const gate = await turn.nextGate();
+  expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
+  const outcome = await running;
+  expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
+
+  return {
+    labels: statusLabels(turn.events).filter(label => label.startsWith('_') && label.endsWith('_')),
+    archive: JSON.stringify((session.stateMachine as NavigationEngine).toJSON().memory),
+    requests: JSON.stringify(model.requests),
+  };
+}
+
+describe('hop summary chat-label display budget', () => {
+  it('includes a pruned prefix inside the visible budget without changing the committed summary', async () => {
+    const { labels, archive, requests } = await hopSummaryLabelsForTurn(LONG_SUMMARY, LONG_SUMMARY, 'end_branch');
+    const pruned = labels.find(label => label.startsWith('_⛔ pruned — '));
+    expect(pruned).toBeDefined();
+    expect(pruned!.length).toBeLessThanOrEqual(137);
+    expect(pruned).toBe('_⛔ pruned — Origin joins the customer and order tables on the shared key before aggregating totals..._');
+    expect(archive).toContain(LONG_SUMMARY);
+    expect(requests).toContain(LONG_SUMMARY);
+  });
+
+  it('folds a long status at a sentence boundary and keeps a short status unchanged', async () => {
+    expect(LONG_SUMMARY.length).toBeGreaterThan(400);
+    const {labels: hopSummaryLabels, archive, requests} = await hopSummaryLabelsForTurn(SHORT_SUMMARY);
+    expect(archive).toContain(LONG_SUMMARY);
+    expect(requests).toContain(LONG_SUMMARY);
+    expect(hopSummaryLabels).toHaveLength(2);
+
+    const [foldedLabel, untouchedLabel] = hopSummaryLabels;
+    // Wrapped in `_..._`: the display budget plus the two markdown-italics delimiters.
+    expect(foldedLabel.length).toBeLessThanOrEqual(137);
+    expect(foldedLabel).toBe('_Origin joins the customer and order tables on the shared key before aggregating totals..._');
+    expect(foldedLabel).not.toContain(LONG_SUMMARY);
+    expect(untouchedLabel).toBe(`_${SHORT_SUMMARY}_`);
+  });
+
+  it('shows the committed summary when the accepted call carried an empty one that a held draft supplied', async () => {
+    const {labels: hopSummaryLabels} = await hopSummaryLabelsForTurn('');
+    expect(hopSummaryLabels).toHaveLength(2);
+    expect(hopSummaryLabels[1]).toBe(`_${SHORT_SUMMARY}_`);
+  });
+});

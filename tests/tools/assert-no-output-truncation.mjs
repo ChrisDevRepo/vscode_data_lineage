@@ -23,9 +23,10 @@ const LOG_CALL = /\.(?:debug|info|warn|error|trace|log)\(|\b(?:log|debugLog|onDe
  */
 export const ALLOWLIST = [
   { file: 'src/ai/prompting/scopeSummaryRenderer.ts', symbol: 'CARD_OBJECT_TYPE_LIMIT', reason: 'card-summary-view: visible "…" line, full list in the full view' },
-  { file: 'src/ai/agent/graph.ts', symbol: 'HOP_SUMMARY_CHAT_MAX_CHARS', reason: 'hop-thinking-trim: visible "…" on the progress line' },
+  { file: 'src/ai/agent/graph.ts', symbol: 'HOP_SUMMARY_CHAT_MAX_CHARS', reason: 'hop-thinking-trim: visible "..." on the progress line' },
   { file: 'src/ai/support/text.ts', symbol: 'PROVIDER_ERROR_MAX', reason: 'provider error shown with visible "…", full text in the log' },
-  { file: 'src/ai/support/text.ts', symbol: 'slice(0, max - 1)', reason: 'trunc/truncAtWordBoundary definitions; call sites are policed here' },
+  { file: 'src/ai/support/text.ts', symbol: 'slice(0, max - 1)', reason: 'trunc definition; call sites are policed here' },
+  { file: 'src/ai/support/text.ts', symbol: 'slice(0, max - 3)', reason: 'hop-thinking-trim: status preview reserves three visible ellipsis characters; call sites are policed here' },
   { file: 'src/ai/agent/graph.ts', symbol: 'rejectReason=${trunc(', reason: 'log-only: value reaches a log line, trace or debug dump, never a user or model surface' },
   { file: 'src/ai/model/vscodeModelPort.ts', symbol: 'tool-input-keys-dropped', reason: 'log-only: value reaches a log line, trace or debug dump, never a user or model surface' },
   { file: 'src/ai/model/vscodeModelPort.ts', symbol: 'tool-input-decoded', reason: 'log-only: value reaches a log line, trace or debug dump, never a user or model surface' },

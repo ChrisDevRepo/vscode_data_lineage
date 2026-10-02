@@ -1320,7 +1320,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       const prunedMark = committedFinding.value.verdict === 'end_branch' ? '⛔ pruned — ' : '';
-      deps.sink.status('scoping', `_${prunedMark}${truncAtWordBoundary(committedFinding.value.summary, HOP_SUMMARY_CHAT_MAX_CHARS)}_`);
+      deps.sink.status('scoping', `_${truncAtWordBoundary(`${prunedMark}${committedFinding.value.summary}`, HOP_SUMMARY_CHAT_MAX_CHARS)}_`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {
