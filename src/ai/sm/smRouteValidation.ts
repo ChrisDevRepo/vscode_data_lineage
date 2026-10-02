@@ -1,5 +1,5 @@
 /**
- * Prune/column validation rejection policy for the Navigation Engine (BB xor CT, mode-pure).
+ * Shared prune validation and column-reference rejection policy for the Navigation Engine.
  *
  * @remarks
  * Pure, engine-state-free: maps a structural {@link InvalidRouteKind} to its machine error code
@@ -57,9 +57,6 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors.',
-  prune_carries_tracked_column: 'Remove it from prune_neighbors.',
-  end_branch_carries_tracked_column:
-    'Submit analyze or passthrough (upstream_columns: [] where a column ends here) instead of end_branch.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
 };
@@ -93,8 +90,6 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_analyzed: REJECTION_CODES.routeValidationFailed,
   prune_noop_queued: REJECTION_CODES.routeValidationFailed,
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
-  prune_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
-  end_branch_carries_tracked_column: REJECTION_CODES.pruneCarriesTrackedColumn,
   question_not_neighbor: REJECTION_CODES.routeValidationFailed,
 };
 
@@ -125,7 +120,9 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], holdsDraft
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
   const hint = [
-    ...distinctKinds.map(k => ROUTE_REJECTION_DIRECTIVE[k]),
+    ...distinctKinds.filter(kind => kind !== 'untracked_out_col'
+      || errors.some(error => error.kind === kind && error.path?.endsWith('.out_col')))
+      .map(kind => ROUTE_REJECTION_DIRECTIVE[kind]),
     holdsDraft ? HELD_CORRECTION_ORDER : '',
   ].filter(Boolean).join(' ');
   return makeRejection({

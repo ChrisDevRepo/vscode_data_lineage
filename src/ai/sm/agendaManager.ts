@@ -44,31 +44,16 @@ export interface AgendaEntry {
   lineageQuestions?: string[];
 }
 
-/**
- * Resolves the carry decision when two enqueues land on one node.
- *
- * @remarks
- * The one surviving cross-hop column-carry conflict rule in the engine (the same-hop rule is a
- * rejection, not a merge — see `smBase.ts` `routeCarryFor`). A stated decision beats an unstated
- * one, and the later statement wins between two stated ones: an absent carry is "no opinion" and
- * never overwrites what is already recorded, while a router that names columns or a row role has
- * judged this exact neighbor and its word stands until the router says otherwise. This is how a
- * route's `columns: 'none'` against a node an EARLIER hop already committed `column_flow` columns
- * to is honored rather than rejected — neither statement is wrong for the hop that made it, so the
- * later one simply supersedes on the shared agenda entry (the earlier committed column can still
- * resurface at dispatch; see `smBase.ts` `getHopContext`).
- *
- * @param existing - Carry already on the queued entry, if any.
- * @param incoming - Carry supplied by the re-push, if any.
- * @returns The carry to record, or `undefined` when neither side stated one.
- */
+/** Unions column demands; a row-only arrival cannot erase an existing demand. */
 function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): ColumnCarry | undefined {
-  if (incoming === undefined) return existing;
-  return incoming;
+  if (existing?.kind === 'carry' || incoming?.kind === 'carry') {
+    return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : []) };
+  }
+  return incoming ?? existing;
 }
 
 /** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
-function mergeUnique(existing: string[] | undefined, incoming: string[]): string[] {
+function mergeUnique(existing: readonly string[] | undefined, incoming: readonly string[]): string[] {
   const merged = new Set(existing ?? []);
   for (const value of incoming) merged.add(value);
   return Array.from(merged);
@@ -196,7 +181,7 @@ export class AgendaManager {
       const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry);
       if (carry) existing.columnCarry = carry;
       if (carry?.kind === 'row_role_only') {
-        if (entry.activeColumns !== undefined) existing.activeColumns = [...entry.activeColumns];
+        existing.activeColumns = [];
       } else if (entry.activeColumns) {
         existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns);
       }

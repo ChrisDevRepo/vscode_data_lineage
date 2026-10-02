@@ -378,8 +378,13 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   } else {
     if (init?.analysisMode !== 'ct') issue('CT snapshot requires CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
     if (init?.analysisMode === 'ct' && JSON.stringify(init.targetColumns) !== JSON.stringify(snapshot.columnAspect.target_columns)) issue('CT init targets must equal columnAspect targets', ['engineInternals', 'initSnapshot', 'targetColumns']);
+    // CT is BB plus the column aspect: a session may dispatch columnless branches as analytical
+    // tasks, but it always holds at least one column task and never a BB root — the mission root
+    // of a CT session is created as its first column task. Every record written by an older
+    // build (all tasks column_lineage) satisfies this unchanged.
+    if (![...tasks.values()].some(task => task.kind === 'column_lineage')) issue('CT snapshot requires at least one column-lineage task', ['engineInternals', 'investigationTasks']);
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
-      if (task.kind !== 'column_lineage') issue('CT snapshot requires column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
+      if (task.kind === 'root') issue('CT snapshot cannot carry a BB root task', ['engineInternals', 'investigationTasks', i, 'kind']);
     });
     snapshot.agenda.forEach((entry, i) => {
       if (entry.activeColumns === undefined) issue('CT agenda requires activeColumns projection', ['agenda', i, 'activeColumns']);

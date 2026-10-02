@@ -21,6 +21,7 @@ out/**/*.d.ts
 tsconfig.json
 tsconfig.integration.json
 .vscode-test.mjs
+.vscode-test.ai.mjs
 vite.config.ts
 vitest.config.ts
 esbuild.config.mjs
@@ -71,9 +72,8 @@ debug.log
 # as the actual delivery formats.
 dist/assets/KaTeX_*.ttf
 
-# Internal agent artifacts (gitignored, but vsce ignores .gitignore — each needs its own
-# entry). GLM.md is the agent orientation map, .glm-skills/ the vendored GLM skills catalog,
-# .agents/ the repo's agent skills and MCP config. None of these belong in a VSIX. Keep this
+# Agent instructions and skills are development documentation (gitignored files are still
+# considered by vsce, so each needs its own entry). None of these belong in a VSIX. Keep this
 # list in step with the agent-file block in .gitignore and the forbidden patterns in
 # tests/tools/assert-package-contents.mjs — .gitignore alone excludes nothing from a VSIX.
 GLM*

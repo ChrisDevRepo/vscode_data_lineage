@@ -17,14 +17,14 @@ import { edgeApiType } from '../support/aiPresenter';
 import { bfsDepthMap, bfsReachable, nodesCutByRemoval, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
-import { AiMemoryManager, appendUniqueSectionText, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
+import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, ColumnCarry, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
-import { ColumnTracer, resolveColumnFlowTarget } from "./columnTracer";
+import { ColumnTracer, columnEndpointKeyFactory, reachableColumnEndpoints, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
@@ -36,22 +36,19 @@ import { activeSubmitFindingsRecoveryHint } from '../interaction/rules/submitFin
  * A hop neighbour plus the engine decisions already taken about it.
  *
  * @remarks
- * A neighbour named in a committed `column_flow` edge is prune-refused for the rest of the run
- * ({@link declaredRouteIds}), and the routed non-bodied carrier the engine contracted into the
- * current focus is prune-refused at that focus; an accepted route alone locks nothing. Disclosing
- * those locks here stops a hop proposing a prune the engine will refuse anyway.
+ * The non-bodied carrier contracted into the current focus is already visited and cannot be
+ * pruned at that focus. Column evidence does not create additional retention protections.
  */
 export interface HopNeighborDisclosure extends HopNeighbor {
   /**
-   * Named in a committed `column_flow`, or the routed non-bodied carrier the engine contracted
-   * into this focus, so a prune of it is refused.
+   * The non-bodied carrier already contracted into this focus, protected by the visit-once rule.
    */
   prune_protected?: boolean;
   /** Already analyzed on an earlier hop; a prune cannot remove committed analysis. */
   already_visited?: boolean;
   /** Already pruned on an earlier hop; a removed node stays removed. */
   already_removed?: boolean;
-  /** Columns a committed `column_flow` edge already attributes to this neighbour, CT only — a stated `columns: 'none'` contradicts this set rather than narrowing it. */
+  /** Columns a committed `column_flow` edge attributes to this neighbour, as evidence only. */
   attributed_columns?: string[];
   /**
    * This neighbour is unreachable from the origin in the approved direction (a downstream write
@@ -240,8 +237,6 @@ interface ValidatedHop {
   finding: HopFindingKept;
   /** Neighbours this hop enqueues, resolved: model questions, column_flow-named nodes, then every open neighbour not pruned. */
   routeRequests: Array<{ nodeId: string; question: string }>;
-  /** Route-request ids the engine auto-opened (no model-authored question): the only contraction targets the write-sink gate may terminate. */
-  autoOpenedNids: Set<string>;
   routeOutcomes: RouteOutcome[];
   acceptedNids: Set<string>;
   scopeAddNids: Set<string>;
@@ -326,15 +321,6 @@ export class NavigationEngine implements IHopStateMachine {
   private pruneBallots = new Map<string, Map<string, 'prune' | 'keep'>>();
   /** Focus nodes the AI cut via `verdict=end_branch` in CT mode. Surfaced as `ctPrunedNodeIds`. */
   protected ctPrunedFocusIds = new Set<string>();
-  /**
-   * CT: the nodes a committed `column_flow` entry named for a traced column.
-   *
-   * @remarks
-   * A non-bodied endpoint is contracted by the bipartite agenda rule ({@link enqueueHop}) and gets
-   * no agenda entry or detail slot, so this set is the backend's own record of the declaration —
-   * consulted by `submitFindings`'s `prune_neighbors` admission (a declared node stays for the run).
-   */
-  protected declaredRouteIds = new Set<string>();
   /**
    * Nodes the last {@link getResult} removed from the render as undispositioned sinks, surfaced as
    * `renderDroppedNodeIds` so the render states its own disposition explicitly.
@@ -772,17 +758,15 @@ export class NavigationEngine implements IHopStateMachine {
    * The single home for the CT/BB task fork: a CT task is `column_lineage` carrying the columns the
    * hop tracks, a BB task is the plain kind with no column state.
    *
-   * @param preferredColumns - Columns this task tracks; the target set is used when empty.
-   * @throws When column tracing is active but no column can be attributed to the task.
+   * @param preferredColumns - Columns this task tracks; an empty list creates an object task.
    */
   private taskInputFor(
     common: Omit<InvestigationTaskInput, 'kind' | 'activeColumns'>,
     bbKind: 'root' | 'analytical',
     preferredColumns: readonly string[] | undefined,
   ): InvestigationTaskInput {
-    if (!this.tracer) return { ...common, kind: bbKind };
-    const columns = preferredColumns?.length ? preferredColumns : this.tracer.targetColumns;
-    if (!columns?.length) throw new Error('CT tasks require at least one active column');
+    if (!this.tracer || !preferredColumns?.length) return { ...common, kind: bbKind };
+    const columns = preferredColumns;
     return { ...common, kind: 'column_lineage', activeColumns: [...columns] as [string, ...string[]] };
   }
 
@@ -1088,6 +1072,50 @@ export class NavigationEngine implements IHopStateMachine {
     return this.matchColumnsToNode(nodeId, columns).resolved;
   }
 
+
+  /**
+   * Resolves the transient tracked-column identities this hop received, from task ancestry and
+   * the committed column record — never from a column name that merely exists on a node.
+   *
+   * @remarks
+   * For each active column of the current column tasks, the ancestry chain is walked from the
+   * task's own node upward. An ancestor resolves only through the committed record: every edge
+   * landing on it whose `to_col` matches, plus every output it explicitly staged (its
+   * `writes_to`/attribution targets) — all of them, with no first-match collapse. An unresolved
+   * ancestor keeps the walk going, so the original incoming source is preserved through nodes
+   * that declared no connection; the one name-based anchor is the root task's node — the trace
+   * origin, whose target columns are definitionally tracked before any edge exists.
+   */
+  private incomingColumnRefs(): Array<{ node: string; col: string }> {
+    if (!this.tracer || !this.currentFocusNodeId) return [];
+    const refs = new Map<string, { node: string; col: string }>();
+    for (const task of this.getCurrentTasks()) {
+      if (task.kind !== 'column_lineage') continue;
+      for (const col of task.activeColumns) {
+        const normalized = normalizeColName(col);
+        let context: InvestigationTask | undefined = task;
+        while (context) {
+          const node = context.nodeId;
+          if (node !== undefined) {
+            const committed = this.tracer.edges.filter(edge =>
+              (edge.to_node === node || edge.hop_node === node) && normalizeColName(edge.to_col) === normalized);
+            if (committed.length > 0) {
+              for (const edge of committed) {
+                refs.set(`${edge.to_node}|${normalized}`, { node: edge.to_node, col: edge.to_col });
+              }
+              break;
+            }
+            if (!context.parentTaskId && this.matchColumnsToNode(node, [col]).resolved.length > 0) {
+              refs.set(`${node}|${normalized}`, { node, col });
+              break;
+            }
+          }
+          context = context.parentTaskId ? this.taskLedger.getTask(context.parentTaskId) : undefined;
+        }
+      }
+    }
+    return [...refs.values()];
+  }
 
   /** Returns the column-trace side; a bidirectional session traces columns upstream. */
   private columnTraceDirection(): 'upstream' | 'downstream' {
@@ -2083,7 +2111,9 @@ export class NavigationEngine implements IHopStateMachine {
           this.log,
           this.columnTraceDirection(),
         );
-        const bound = this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
+        const bound = this.columnTraceDirection() === 'downstream'
+          ? [...new Set([...spineBound, ...(candidate.activeColumns ?? [])])]
+          : this.resolveActiveColumnsForNode(candidate.nodeId, spineBound) ?? [];
         const statedRowRole = candidate.columnCarry?.kind === 'row_role_only';
         if (statedRowRole && bound.length > 0) {
           this.log('debug', `[Normalize] dispatch carry hop=${this.hopCount} id=${candidate.nodeId} from=none to=[${bound.join(', ')}] — a committed column_flow edge attributes traced columns to this node`);
@@ -2343,19 +2373,58 @@ export class NavigationEngine implements IHopStateMachine {
       if (!carryByNode.has(nid)) carryByNode.set(nid, new Set());
       carryByNode.get(nid)!.add(col);
     };
+    const incomingRefs = this.incomingColumnRefs();
     if (this.tracer && finding.column_flow) {
-      for (const entry of finding.column_flow) {
-        for (const ref of entry.upstream_columns) {
-          const nid = resolveModelNodeId(ref.node, this.nodeMap) ?? ref.node.toLowerCase();
-          addCarry(nid, ref.col);
-          if (!flowQuestionByNode.has(nid)) {
-            flowQuestionByNode.set(nid, `Trace ${ref.col} as upstream input for ${entry.out_col}.`);
+      const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, incomingRefs);
+      invalidRoutes.push(...validated.invalidRoutes);
+      for (const edge of validated.stagedEdges) edge.hop = this.hopCount;
+      stagedColumnEdges.push(...validated.stagedEdges);
+    }
+    if (this.tracer && finding.column_flow) {
+      if (traceDirection === 'upstream') {
+        for (const entry of finding.column_flow) {
+          for (const ref of entry.upstream_columns) {
+            const nid = resolveModelNodeId(ref.node, this.nodeMap) ?? ref.node.toLowerCase();
+            addCarry(nid, ref.col);
+            if (!flowQuestionByNode.has(nid)) {
+              flowQuestionByNode.set(nid, `Trace ${nid}.${ref.col} as upstream input for ${focusId}.${entry.out_col}.`);
+            }
           }
         }
-        if (this.onDownstreamSide(focusId) && this.graph.hasNode(focusId)) {
-          const writesTo = entry.writes_to?.node ? resolveModelNodeId(entry.writes_to.node, this.nodeMap) : null;
-          for (const nid of this.graph.outNeighbors(focusId)) {
-            if (this.onDownstreamSide(nid)) addCarry(nid, writesTo === nid && entry.writes_to?.col ? entry.writes_to.col : entry.out_col);
+      }
+      // A focus on the downstream side (the origin itself counts) forwards its tracked outputs
+      // to its consumers whatever the trace direction — a bidirectional session traces columns
+      // upstream while its origin still owes the declared column downstream.
+      if (this.onDownstreamSide(focusId) && this.graph.hasNode(focusId)) {
+        const key = columnEndpointKeyFactory(this.nodeMap);
+        const links = stagedColumnEdges.map(edge => ({ from: key(edge.from_node, edge.from_col), to: key(edge.to_node, edge.to_col) }));
+        const reachable = reachableColumnEndpoints(new Set(incomingRefs.map(ref => key(ref.node, ref.col))), links, 'downstream');
+        const outputs = new Map<string, { node: string; col: string }>();
+        const terminalColumns = new Set<string>();
+        for (const entry of finding.column_flow) {
+          if (focusId !== this.originNodeId && entry.upstream_columns.length === 0) {
+            terminalColumns.add(normalizeColName(entry.out_col));
+            continue;
+          }
+          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
+          if (!resolved) continue;
+          const output = { node: resolved.attributionTo, col: resolved.attributionCol };
+          const outputKey = key(output.node, output.col);
+          if (reachable.has(outputKey)) outputs.set(outputKey, output);
+        }
+        const mappedInputs = new Set(links.map(link => link.from));
+        for (const ref of incomingRefs) {
+          const endpoint = key(ref.node, ref.col);
+          if (!mappedInputs.has(endpoint) && !terminalColumns.has(normalizeColName(ref.col))) {
+            outputs.set(endpoint, ref);
+          }
+        }
+        const continuation = [...outputs.values()];
+        for (const nid of this.graph.outNeighbors(focusId)) {
+          if (!this.onDownstreamSide(nid)) continue;
+          for (const ref of continuation) addCarry(nid, ref.col);
+          if (continuation.length > 0) {
+            flowQuestionByNode.set(nid, `Trace downstream use of ${continuation.map(ref => `${ref.node}.${ref.col}`).join(', ')} in ${nid}; record any output mapping from its SQL.`);
           }
         }
       }
@@ -2396,16 +2465,14 @@ export class NavigationEngine implements IHopStateMachine {
       routeRequests.push({ nodeId: nid, question: q.question });
     });
     for (const [nid, question] of flowQuestionByNode) {
-      if (requested.has(nid) || !this.nodeMap.has(nid)) continue;
+      if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid)) continue;
       requested.add(nid);
       routeRequests.push({ nodeId: nid, question });
     }
-    const autoOpenedNids = new Set<string>();
     for (const nid of this.requiredNeighborIds(focusId)) {
       if (requested.has(nid) || pruneNeighborIds.has(nid)) continue;
       requested.add(nid);
       routeRequests.push({ nodeId: nid, question: '' });
-      autoOpenedNids.add(nid);
       this.log('debug', `[Agenda] open neighbor hop=${this.hopCount} focus=${focusId} id=${nid} — routed, not pruned`);
     }
     for (const nid of this.borderDeferredNeighborIds(focusId)) {
@@ -2416,7 +2483,6 @@ export class NavigationEngine implements IHopStateMachine {
     const outOfScopePruneIds = new Set<string>();
     for (const target of pruneTargets) {
       if (!target.resolved || target.resolved === this.originNodeId) continue;
-      if (this.declaredRouteIds.has(target.resolved)) continue;
       const targetNode = this.nodeMap.get(target.resolved);
       if (!targetNode) continue;
       const { border, depthBreach } = this.admitsRoute(target.resolved, targetNode, focusId);
@@ -2436,7 +2502,7 @@ export class NavigationEngine implements IHopStateMachine {
       pruneTargets: pruneTargets.filter(t => !t.resolved || !outOfScopePruneIds.has(t.resolved)),
       visitedIds: new Set([
         ...this.visited,
-        ...pruneTargets.flatMap(t => t.resolved && !this.declaredRouteIds.has(t.resolved) && this.isCarrierInto(t.resolved, focusId) ? [t.resolved] : []),
+        ...pruneTargets.flatMap(t => t.resolved && this.isCarrierInto(t.resolved, focusId) ? [t.resolved] : []),
       ]),
       removedIds: this.removedSet,
       notedIds: new Set(this.memory.notedNodeIds),
@@ -2494,55 +2560,20 @@ export class NavigationEngine implements IHopStateMachine {
       if (!this.scopeNodeIds.has(nid)) scopeAddNids.add(nid);
       this.log('debug', `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${trunc(req.question, 80)}`);
     }
-    if (this.tracer && finding.column_flow) {
-      const valResult = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection);
-      invalidRoutes.push(...valResult.invalidRoutes);
-      for (const e of valResult.stagedEdges) e.hop = this.hopCount;
-      stagedColumnEdges.push(...valResult.stagedEdges);
-    }
-
-    const stagedRouteIds = new Set<string>();
-    for (const e of stagedColumnEdges) {
-      stagedRouteIds.add(e.from_node);
-      stagedRouteIds.add(e.to_node);
-    }
-    const isDeclared = (nid: string): boolean => this.declaredRouteIds.has(nid) || stagedRouteIds.has(nid);
     for (const nid of actionPolicy.acceptedPruneIds) {
-      if (!isDeclared(nid)) {
-        prunedNeighborNids.add(nid);
-        continue;
-      }
-      const carried = this.declaredColumnsOn(nid, stagedColumnEdges);
-      this.log('debug', `[Prune] prune_neighbor refused hop=${this.hopCount} id=${nid} reason=carries_tracked_column columns=[${carried.join(', ')}]`);
-      invalidRoutes.push({
-        kind: 'prune_carries_tracked_column',
-        id: nid,
-        path: pruneTargets.find(t => (t.resolved ?? t.raw.toLowerCase()) === nid)?.path,
-        available_columns: carried,
-        reason: `\`${nid}\` carries tracked column${carried.length === 1 ? '' : 's'} [${carried.join(', ')}] that a column_flow entry names${this.declaredRouteIds.has(nid) ? '' : ' in this submission'}, so it cannot be pruned.`,
-      });
+      prunedNeighborNids.add(nid);
     }
 
     {
-      const flowNotes = (finding.column_flow ?? []).flatMap(entry =>
-        (entry.upstream_columns ?? []).map(ref => ref.note ?? ''),
-      );
-      stagedSections = appendUniqueSectionText(
-        finding.sections ?? [],
-        flowNotes,
-        focusId,
-        message => this.log('debug', message),
-      );
+      stagedSections = finding.sections ?? [];
       stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       stagedSummaryChars = finding.summary?.length ?? 0;
 
       if (this.tracer && finding.column_flow) {
         for (const entry of finding.column_flow) {
-          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.model, this.tracer.edges);
+          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
           const targets: Array<readonly [string, string]> = resolved
-            ? (resolved.writerEdge && resolved.writerEdge.toNode !== resolved.attributionTo
-              ? [[resolved.attributionTo, resolved.attributionCol], [resolved.writerEdge.toNode, resolved.writerEdge.toCol]]
-              : [[resolved.attributionTo, resolved.attributionCol]])
+            ? [[resolved.attributionTo, resolved.attributionCol]]
             : [];
           for (const [targetId, targetCol] of targets) {
             const targetObj = this.nodeMap.get(targetId);
@@ -2608,7 +2639,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.applyValidatedHop({
       focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
       carryByNode, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges, stagedCtNodeStates,
-      stagedColumnFlowEntries, autoOpenedNids, unaccountedColumns,
+      stagedColumnFlowEntries, unaccountedColumns,
     });
     } catch (err: unknown) {
       this.log('error', '[Engine] Exception in submitFindings', err);
@@ -2635,75 +2666,17 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Columns committed or same-submit column edges name on `nodeId`.
-   *
-   * @param nodeId - Canonical node id.
-   * @param staged - This submit's staged edges, not yet committed.
-   * @returns Distinct column names, in first-seen order.
-   */
-  private declaredColumnsOn(nodeId: string, staged: readonly ColumnEdge[]): string[] {
-    const cols = new Set<string>();
-    for (const e of [...(this.tracer?.edges ?? []), ...staged]) {
-      if (e.from_node === nodeId && e.from_col) cols.add(e.from_col);
-      if (e.to_node === nodeId && e.to_col) cols.add(e.to_col);
-    }
-    return [...cols];
-  }
-
-  /**
-   * The committing focus whose pure-write edge reaches a carrier no tracked column crosses.
-   *
-   * @remarks
-   * CT is BB plus the column aspect: the judgement reads only the column record, reusing
-   * {@link declaredColumnsOn} — the same test the `prune_carries_tracked_column` refusal
-   * applies to a bodied prune — so BB (no tracer, no record) never terminates here and the
-   * branch keys on the column aspect's presence, never on a mode name. A carrier the focus
-   * does not purely write (a supplier, a mutual edge, or no known reach edge) keeps
-   * contracting: its attribution arrives on a later hop's flow, and only a write-only sink
-   * can be judged column-free today. The staged edges of the committing submit are already
-   * committed when the post-commit walk runs, so the committed record alone judges them. The
-   * caller gates this to engine-auto opens: a carrier the model routed explicitly is dispatched
-   * for the model to judge at its own focus, never terminated here.
-   *
-   * @param targetId - Canonical id of the non-bodied contraction target.
-   * @returns The focus id whose write-only edge the carrier hangs off, or `null` to contract.
-   */
-  private columnFreeSinkVia(targetId: string): string | null {
-    if (!this.tracer) return null;
-    const via = this.currentFocusNodeId ?? this.originNodeId;
-    if (!via || !this.graph.hasNode(via) || !this.graph.hasNode(targetId)) return null;
-    if (!this.graph.hasDirectedEdge(via, targetId) || this.graph.hasDirectedEdge(targetId, via)) return null;
-    if (this.declaredColumnsOn(targetId, []).length > 0) return null;
-    return via;
-  }
-
-  /**
    * Validates and commits an `end_branch` submit: the focus leaves the result and the branch
    * behind it is cut.
    *
    * @remarks
-   * Refused on the origin, and — the declared-column guard — on a node carrying a tracked column
-   * an already-visited neighbour's column_flow named. Nothing else is checked: the model decides
-   * what is cut, the engine only whether the cut is structurally allowed.
+   * Refused on the origin. The shared object decision determines the cut; column evidence
+   * adds no retention rule.
    */
   private submitEndBranch(finding: HopFindingEndBranch, focusId: string): SubmitResult {
     const faults: SubmissionFaults = { routes: [] };
     if (focusId === this.originNodeId) {
       faults.originPrune = { focusId };
-    } else if (this.tracer) {
-      const carried = this.tracer.determineActiveColumnsForCandidate(
-        focusId, [], this.writtenCarrierIds(focusId), undefined, this.columnTraceDirection(),
-      );
-      if (carried.length > 0) {
-        this.log('debug', `[Prune] end_branch refused hop=${this.hopCount} id=${focusId} reason=carries_tracked_column columns=[${carried.join(', ')}]`);
-        faults.routes.push({
-          kind: 'end_branch_carries_tracked_column',
-          id: focusId,
-          path: 'verdict',
-          available_columns: carried,
-          reason: `\`${focusId}\` carries tracked column${carried.length === 1 ? '' : 's'} [${carried.join(', ')}] that a visited neighbor's column_flow named, so it stays in the result for the rest of the run.`,
-        });
-      }
     }
     const reported = buildSubmissionRejection(faults, true);
     if (reported) {
@@ -2780,7 +2753,7 @@ export class NavigationEngine implements IHopStateMachine {
     const {
       focusId, finding, routeRequests, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
       carryByNode, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges, stagedCtNodeStates,
-      stagedColumnFlowEntries, autoOpenedNids, unaccountedColumns,
+      stagedColumnFlowEntries, unaccountedColumns,
     } = staged;
     let lineageQuestionsByNode: Map<string, string[]> | undefined;
     this.lastRoutedNew = 0;
@@ -2830,10 +2803,6 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (this.tracer && stagedColumnEdges.length > 0) {
       this.tracer.edges.push(...stagedColumnEdges);
-      for (const e of stagedColumnEdges) {
-        this.declaredRouteIds.add(e.from_node);
-        this.declaredRouteIds.add(e.to_node);
-      }
       lineageQuestionsByNode = this.tracer.getColumnLineageQuestionsByNode(focusId, this.hopCount);
       this.log('debug', `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this.tracer.edges.length} active_cols=${this.tracer.activeColumns.join(',')}`);
     }
@@ -2876,11 +2845,10 @@ export class NavigationEngine implements IHopStateMachine {
       const dispositions = new Map<string, RouteSkipDisposition>();
       this.enqueueHop(nid, req.question, 0, 2, {
         dispositions,
-        carry: this.neighborCarryFor(nid, carryByNode),
+        carry: this.neighborCarryFor(nid, carryByNode, req.question),
         lineageQuestions: columnQuestions,
         freshScopeExpansion: isFreshExpansion,
         admitContractedBodiedTarget: !targetIsBodied,
-        gateWriteSink: autoOpenedNids.has(nid),
       });
       const added = this._agenda.length - agendaSizeBefore;
       this.lastRoutedNew += Math.max(0, added);
@@ -3134,8 +3102,8 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Records the current focus's keep on `nodeId`: a live route, question, or column declaration
-   * reached it ({@link castBallot}). A keep from the same sender that voted to prune it on an
+   * Records the current focus's keep on `nodeId`: a live route or question reached it
+   * ({@link castBallot}). A keep from the same sender that voted to prune it on an
    * earlier, reactivated hop supersedes that sender's own earlier vote — it never overrides a
    * different sender's still-standing vote, which `tryResolvePrune` reads fresh off every ballot
    * on every resolution attempt.
@@ -3247,7 +3215,9 @@ export class NavigationEngine implements IHopStateMachine {
     const spineBound = this.tracer
       ? this.tracer.determineActiveColumnsForCandidate(entry.nodeId, entry.activeColumns ?? [], new Set(), this.log, this.columnTraceDirection())
       : entry.activeColumns;
-    const carried = this.tracer ? (this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []) : spineBound;
+    const carried = this.tracer && this.columnTraceDirection() !== 'downstream'
+      ? this.resolveActiveColumnsForNode(entry.nodeId, spineBound) ?? []
+      : spineBound;
     const forwardedCarry: ColumnCarry = entry.columnCarry?.kind === 'row_role_only'
       ? entry.columnCarry
       : { kind: 'carry', columns: carried ?? [] };
@@ -3317,19 +3287,9 @@ export class NavigationEngine implements IHopStateMachine {
        */
       readonly admitContractedBodiedTarget?: boolean;
       /**
-       * Whether this call runs in the post-commit neighbor walk for an engine-auto open, where
-       * a write-only non-bodied carrier no tracked column crosses terminates the branch recorded
-       * not-kept instead of contracting through (see {@link columnFreeSinkVia}). Set only by the
-       * commit path for auto-opened neighbours: an explicitly routed carrier stays model-owned
-       * (it contracts to its bodied writers, a prune of it from a writer it was contracted into is
-       * a no-op, and it stays prunable from the reader that routed it), and supplement and user
-       * pass-through forwarding keep the topology unconditionally.
-       */
-      readonly gateWriteSink?: boolean;
-      /**
        * Records every node this call (and its contraction recursion) left un-enqueued, keyed by node id: `already_visited` /
-       * `already_pruned` for the visit-once skip, `not_enqueued` for an out-of-scope or depth-deferred contraction,
-       * `carries_no_tracked_column` for a write-only carrier no tracked column crosses. The route
+       * `already_pruned` for the visit-once skip, `not_enqueued` for an out-of-scope or depth-deferred contraction.
+       * The route
        * commit turns the settled entries into `route_outcomes` so a route with no effect is stated, never left `accepted:true`.
        */
       readonly dispositions?: Map<string, RouteSkipDisposition>;
@@ -3344,7 +3304,6 @@ export class NavigationEngine implements IHopStateMachine {
       existingTaskId,
       parentTaskId,
       admitContractedBodiedTarget = false,
-      gateWriteSink = false,
       dispositions,
     } = opts;
     if (!this.scopeNodeIds.has(targetId) && priority !== 3) {
@@ -3421,19 +3380,8 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (visitedRefs.has(targetId)) return;
     visitedRefs.add(targetId);
-    const sinkVia = gateWriteSink ? this.columnFreeSinkVia(targetId) : null;
-    if (sinkVia !== null) {
-      dispositions?.set(targetId, 'carries_no_tracked_column');
-      this.memory.recordRejection(
-        targetId,
-        `\`${targetId}\` is written by \`${sinkVia}\` but no tracked column crosses that edge — the branch ends here, recorded not-kept. A neighbour named in \`questions\` is visited instead of ended — name it there if it answers the question.`,
-        this.hopCount,
-      );
-      this.log('debug', `[Disposition] contraction drop ${targetId} — write-only carrier, no tracked-column edge via=${sinkVia} hop=${this.hopCount}`);
-      return;
-    }
     const ctCarried = this.tracer
-      ? this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(carry, activeColumns)) ?? []
+      ? (this.columnTraceDirection() === 'downstream' ? this.agendaColumnsFor(carry, activeColumns) ?? [] : this.resolveActiveColumnsForNode(targetId, this.agendaColumnsFor(carry, activeColumns)) ?? [])
       : undefined;
     const carried = ctCarried ?? activeColumns;
     const forwardedCarry: ColumnCarry = carry.kind === 'row_role_only' ? carry : { kind: 'carry', columns: carried ?? [] };
@@ -3499,23 +3447,51 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * The column decision one enqueued neighbour carries, derived from the submit's own column_flow.
+   * The column decision one enqueued neighbour carries, derived from the submit's own
+   * `column_flow` and its routing question.
    *
    * @remarks
-   * A neighbour the column_flow names carries those columns; in CT a kept neighbour it names in none
-   * of them is explored for its row-set effect (`row_role_only`). A plain BB session holds no
+   * A neighbour the column_flow names carries those columns. A neighbour whose question names an
+   * active traced column carries that column too — an incoming question about a source column is
+   * a column task even before the destination name is known, so the asked hop gets the rider
+   * rather than a row-role visit that cannot record the answer. Otherwise, in CT, a kept
+   * neighbour is explored for its row-set effect (`row_role_only`). A plain BB session holds no
    * tracer, so it carries an inert empty list (a `row_role_only` carry is CT-only and refused by
-   * the BB checkpoint schema). A `row_role_only` that contradicts an EARLIER hop's committed spine
-   * is rebound at dispatch by {@link getHopContext}, so no committed column is dropped.
+   * the BB checkpoint schema). A `row_role_only` that contradicts an EARLIER hop's committed
+   * spine is rebound at dispatch by {@link getHopContext}, so no committed column is dropped.
    *
    * @param nodeId - The resolved neighbour.
    * @param carryByNode - node → columns, from this hop's column_flow.
+   * @param question - The question this hop attached to the neighbour; empty for engine opens.
    * @returns The carry decision to enqueue with.
    */
-  private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>): ColumnCarry {
+  private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>, question: string): ColumnCarry {
     if (!this.tracer) return { kind: 'carry', columns: [] };
     const cols = carryByNode.get(nodeId);
-    return cols && cols.size > 0 ? { kind: 'carry', columns: [...cols] } : { kind: 'row_role_only' };
+    const named = this.activeColumnsNamedIn(question);
+    const columns = [...new Set([...(cols ?? []), ...named])];
+    return columns.length > 0 ? { kind: 'carry', columns } : { kind: 'row_role_only' };
+  }
+
+  /**
+   * Active traced columns the routing question names as whole terms.
+   *
+   * @remarks
+   * The question is the model's own explicit fact; matching its text against the hop's small
+   * active set routes a column the model already asked about — it never invents an endpoint or a
+   * link. The match is term-bounded and case-insensitive, so a qualified spelling
+   * (`vwCalc.Discount`, `[Discount]`) names the same column.
+   *
+   * @param question - The routing question text; empty when the engine opened the neighbour.
+   */
+  private activeColumnsNamedIn(question: string): string[] {
+    if (!this.tracer || question.trim().length === 0) return [];
+    return this.tracer.activeColumns.filter(col => {
+      const term = col.trim();
+      if (!term) return false;
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(?:^|[^\\w])${escaped}(?:[^\\w]|$)`, 'i').test(question);
+    });
   }
 
   /**
@@ -3619,7 +3595,7 @@ export class NavigationEngine implements IHopStateMachine {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: edgeDirection,
         edge_type: edgeVerb.get(nid) ?? 'read', boundary, ...(cols?.length ? { cols } : {}),
-        ...(this.declaredRouteIds.has(nid) || this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
+        ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
         ...(attributedColumns.length ? { attributed_columns: attributedColumns } : {}),
@@ -3872,7 +3848,7 @@ export class NavigationEngine implements IHopStateMachine {
       memory: this.memory.toJSON(),
       engineInternals: this.serializeInternals(),
       ...(this.renderDroppedIds.size > 0 ? { renderDroppedNodeIds: Array.from(this.renderDroppedIds) } : {}),
-      ctDeclaredRouteIds: Array.from(this.declaredRouteIds),
+      ctDeclaredRouteIds: [...new Set((this.tracer?.edges ?? []).flatMap(edge => [edge.from_node, edge.to_node]))],
       ...(this.tracer ? {
         lineageQuestionsLastHop: [...this._pendingLineageQuestions],
         ctPrunedNodeIds: Array.from(this.ctPrunedFocusIds),
@@ -4033,7 +4009,6 @@ export class NavigationEngine implements IHopStateMachine {
     engine.initSnapshot = internals.initSnapshot;
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
-    engine.declaredRouteIds = new Set(snapshot.ctDeclaredRouteIds ?? []);
     engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);
     log('debug', '[Prune] restore does not carry pending neighbor-prune votes; a node mid-vote at checkpoint time resolves on the votes cast after this restore.');
 

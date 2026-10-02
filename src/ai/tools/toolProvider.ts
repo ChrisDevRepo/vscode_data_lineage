@@ -89,7 +89,6 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.columnSelfLoop]: 'column_mapping',
   [REJECTION_CODES.writesToNamesReader]: 'column_mapping',
   [REJECTION_CODES.prunedContributor]: 'column_mapping',
-  [REJECTION_CODES.pruneCarriesTrackedColumn]: 'source_selection',
   [REJECTION_CODES.routeValidationFailed]: 'source_selection',
   [REJECTION_CODES.pruneOriginForbidden]: 'source_selection',
   [REJECTION_CODES.validation]: 'answer_format',

@@ -1,6 +1,6 @@
 # Custom DMV Queries
 
-Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). Every query, every column, and every WHERE filter is yours to read, audit, and override — nothing about the SQL is hidden inside the extension.
+Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). You can inspect the built-in SQL and override it in your workspace.
 
 ## Setup
 
@@ -12,17 +12,17 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 ## Prerequisites
 
 - A connection: the built-in connection, or a profile in the MSSQL extension (`ms-mssql.mssql`) — see `dataLineageViz.database.connectionProvider`.
-- Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables to profile for table statistics. Nothing else is needed.
+- Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on tables for profiling. Custom queries may need additional permissions.
 - Supported platforms: SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool.
 
-## What gets executed and when — read the SQL yourself
+## Query execution
 
 Every executed DMV query is logged to the **Data Lineage Viz** Output channel with the `[DB]` category. To see what hit your database:
 
 1. `View → Output → Data Lineage Viz`.
 2. Set the channel log level to **Debug** (gear icon → Set Log Level → Debug). Phase milestones are at INFO; the per-query SQL is at DEBUG.
 3. Open the wizard and run an import.
-4. Each query is logged on execution as `[DB] Executing <name> (step/total) — SQL: <first 300 chars>`. Copy / paste into SSMS to validate before scaling to a production server.
+4. Each query is logged on execution as `[DB] Executing <name> (step/total) — SQL: <first 300 chars>`.
 
 The 300-character cap is intentional for log hygiene. For the full built-in
 SQL, read [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). Custom SQL is
@@ -38,10 +38,8 @@ Nothing runs automatically in the background. The standard import path uses:
 | Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
 | Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
 
-`constraints` is executed, but its result is not currently attached to the
-`DmvResults` passed to the extractor, so constraint rows do not reach the table
-design view. These are current implementation limitations, not customization
-promises.
+The current live import executes `constraints` but does not pass those rows to
+the extractor, so they do not enrich the table design view.
 
 The built-in Phase 2 queries use `{{SCHEMAS}}`, which the extension expands to
 the comma-separated, single-quoted schema list before execution (for example
@@ -93,7 +91,7 @@ queries:
 
 ## Expected columns — the contract
 
-Each query must return the columns below. Column matching is case-insensitive and extra columns are ignored. The host currently validates `platform-info` before using it; the main extraction queries are consumed by column name without a complete preflight check, so test custom result shapes before production use.
+Each query must return the columns below. Column matching is case-insensitive and extra columns are ignored. The host currently validates `platform-info` before using it; the main extraction queries have no complete preflight check, so test custom result shapes before production use.
 
 ### `schema-preview` — schema object counts (Phase 1)
 
@@ -105,7 +103,7 @@ Each query must return the columns below. Column matching is case-insensitive an
 
 ### `all-objects` — full object catalog (Phase 1, optional)
 
-Runs before the Phase 2 sweep. Returns all objects across **all schemas** (no DDL, no columns). Used to classify cross-schema dependencies as "known" vs "unresolved" and to provide correct schema casing in the dependency details panel. If absent or failing, cross-schema references into unselected schemas stay unclassified.
+Used to identify dependencies into unselected schemas and preserve schema casing.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -136,12 +134,8 @@ Runs before the Phase 2 sweep. Returns all objects across **all schemas** (no DD
 
 ### `platform-info` — platform detection
 
-The shipped query returns one row identifying the database engine. The
-extension maps it to `DatabaseModel.dbPlatform`, which is passed unchanged to
-the AI context and tool metadata. If the query is unavailable, MSSQL server
-metadata supplies the same mapping as a non-failing authoritative fallback.
-The import remains usable if neither source is available, but the platform is
-explicitly recorded as unknown rather than silently labelled SQL Server.
+Returns one row identifying the platform stored in the model. If unavailable,
+the extension tries server metadata, then records `Unknown database platform`.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -171,7 +165,7 @@ Used for the table design preview in the SQL viewer.
 | `table_name` | string | Table name |
 | `ordinal` | int | Column position (1-based) |
 | `column_name` | string | Column name |
-| `type_name` | string | Data type (`int`, `nvarchar`, etc.); a CLR type such as `hierarchyid`, `geography` or `geometry` has no system type id and is named by its user type |
+| `type_name` | string | Data type (`int`, `nvarchar`, etc.); CLR types such as `hierarchyid`, `geography` and `geometry` use their user-type name |
 | `max_length` | int | Max length in bytes (-1 = `max`) |
 | `precision` | int | Numeric precision |
 | `scale` | int | Numeric scale |
@@ -219,22 +213,13 @@ CK rows are **column-level only** (`parent_column_id != 0`). Table-level CHECK c
 
 ## What must stay fixed
 
-- **`version`** — must equal the `version` of the shipped
-  [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) for this release. The
-  shipped file is the contract, and it is its own source of truth. A custom
-  file declaring a different version, or omitting the field, is skipped with a
-  VS Code warning notification naming both versions plus a log entry to the
-  **Data Lineage Viz** output channel, and the built-in queries are used for
-  that import — so a file written against an older query set never runs against
-  a contract it no longer matches. A release bumps this whenever a
-  change would invalidate an older custom file: a runtime query renamed or
-  removed, a required column added or renamed, or changed `{{SCHEMAS}}`
-  expansion. After an upgrade, run **Data Lineage: Create DMV Queries** to
-  scaffold a copy at the current version and re-apply your edits.
+- **`version`** — must match the shipped YAML. A missing or different version
+  triggers a warning and built-in fallback. After an upgrade, run **Data
+  Lineage: Create DMV Queries** and re-apply your edits to the current version.
 - **Runtime query names** — the current import path requires
   `schema-preview`, `nodes`, `columns`, and `dependencies`. `all-objects`,
-  `constraints`, and `platform-info` are optional definitions; MSSQL server
-  metadata supplies platform context when `platform-info` is unavailable, and a
+  `constraints`, and `platform-info` are optional definitions; server
+  metadata is tried when `platform-info` is unavailable, and a
   missing `all-objects` leaves cross-schema references unclassified.
 - **Required column names** — the columns listed above must be present in the result set.
 - **Column semantics** — `type_code` must return `sys.objects.type` codes (or `ET` for external tables).

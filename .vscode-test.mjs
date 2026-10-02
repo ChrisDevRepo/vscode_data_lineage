@@ -1,5 +1,4 @@
-// Extension Development Host lanes. Rationale for the lane split, what each proves, and the
-// scripted-vs-real distinction live in docs/EDH_TESTING.md.
+// Extension Development Host smoke lanes and their limits are documented in docs/EDH_TESTING.md.
 //
 // Test files are the tsconfig.integration.json output under `out/test/`, not the TypeScript sources.
 import { defineConfig } from '@vscode/test-cli';
@@ -30,8 +29,7 @@ export default defineConfig([
     ...shared,
     label: 'bare-environment',
     files: 'out/test/tests/integration/bare-environment.test.js',
-    // No provider fixture, deliberately: this lane proves the extension survives a host with no
-    // chat model, no Copilot and no mssql. Adding the fixture supplies a model and voids the proof.
+    // No model provider fixture or database extension is installed in this lane.
     launchArgs: ['--disable-extensions'],
   },
   {
@@ -46,8 +44,8 @@ export default defineConfig([
     ...shared,
     label: 'tools',
     files: 'out/test/tests/integration/tools-invoke.test.js',
-    // No provider fixture, deliberately: a model in the host would make a green result
-    // unattributable to `vscode.lm.invokeTool`.
+    // No provider fixture: a model in the host would make this result unattributable to
+    // `vscode.lm.invokeTool`.
     launchArgs: ['--disable-extensions'],
   },
   {

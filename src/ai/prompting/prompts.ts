@@ -777,7 +777,7 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.join(', ')}]`,
-      `    This list is the whole tracked set for this hop, and it outranks the sub-question above: a column the sub-question names but this list omits is not tracked here — \`column_flow\` may not name it, and what the node does with it belongs in \`sections\`.`,
+      `    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`,
       `  </column_trace>`,
     );
   }

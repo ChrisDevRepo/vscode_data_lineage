@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs", "moduleResolution": "node", "esModuleInterop": true,
+    "outDir": "../../out/test-headless", "rootDir": "../..",
+    "types": ["node"], "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "declaration": false, "declarationMap": false, "sourceMap": false,
+    "skipLibCheck": true, "noEmit": false
+  },
+  "include": ["./**/*.ts", "../../src/types/**/*.d.ts"]
+}

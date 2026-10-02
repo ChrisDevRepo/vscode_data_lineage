@@ -260,6 +260,16 @@ export class AiSession {
     return this.presentResultRepairDraft.getAuthorization()?.fields ?? null;
   }
 
+  /** Highlight label indexes authorized for leaf-only repair, or `null` for ordinary field repair. */
+  public get presentResultRepairHighlightLabelIndexes(): readonly number[] | null {
+    return this.presentResultRepairDraft.getAuthorization()?.highlightLabelIndexes ?? null;
+  }
+
+  /** Held section text leaves authorized for indexed repair, or `null` for ordinary section repair. */
+  public get presentResultRepairSectionTextLeaves(): PresentResultRepairAuthorization['sectionTextLeaves'] | null {
+    return this.presentResultRepairDraft.getAuthorization()?.sectionTextLeaves ?? null;
+  }
+
   /**
    * Reason the current turn's synthesis rendered the model's held text without a working
    * preview/panel step, or `null` when the last render was clean. Set by

@@ -21,58 +21,19 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   exploration loop.
 - The outer graph owns phase transitions, model generations, semantic retries,
   interrupts, synthesis, and turn settlement.
-- The agent runtime uses LangGraph and LangChain as designed: the model
-  adapter is a custom `BaseChatModel` over `vscode.lm`, history is LangChain
-  messages under LangGraph's message reducer, and cancellation rides the run
-  config. Own code covers product rules only; the sequential tool executor is
-  the one deliberate departure from the library default, because gates, the
-  turn lease and ordered effects forbid parallel tool execution.
-- Own code carries only product rules no library provides (phase rules, turn
-  lease, approval gate, id resolution, memory policy). Zod is the single schema
-  source for tool input, its model-facing JSON Schema and its error text; the
-  VS Code language-model API supplies model facts such as token counts. A
-  malformed model call is rejected by its schema with a hint rather than
-  repaired by a special case, and a rejection is the tool result of the call it
-  rejects, in one shape emitted where the rule is checked.
-- `NavigationEngine` owns agenda, scope, lifecycle state, route/prune checks,
-  graph closure, and completion.
-- **Backend and model roles.** In hop-by-hop, the backend alone routes: it
-  schedules hops, guards, verifies that objects are correct, and drives the
-  defined process — phase changes (discovery → consent → hop-by-hop →
-  synthesis) and the metadata-driven prompt for each phase. It tracks which
-  neighbors it has routed and which still owe one, and ends hop-by-hop only
-  when the agenda drains or a bounded stop is reached — never when the model
-  calls it finished (§Conversation lifecycle). It applies only stated,
-  deterministic rules and never authors content, infers intent, guesses what a
-  node needs, defers on speculation, judges relevance, or rewrites the
-  model's findings. Content judgement belongs to the model alone: a node's
-  status and findings at its own visit, and, per not-yet-visited neighbor, one
-  action — a prune, a question, or (by omission) inclusion, plus columns in
-  CT. The backend's own bookkeeping name for that included outcome is a
-  route; that name is not a routing decision, since routing names only the
-  backend's agenda, which the model neither reads nor sets. The model names
-  an object to visit next only in the completed phase, past the AI preview,
-  as a follow-up that supplements the existing exploration or opens a fresh
-  one (§Synthesis and completed follow-ups). In CT the backend checks every
-  declared column against the loaded model and carries tracked columns
-  forward as context (§BB and column-trace modes); where a chain starts or
-  ends, which columns join, and whether the columns are complete are the
-  model's calls, and a tracked column not yet accounted for is served back to
-  it as data, never enforced. Every backend response to model output is
-  ACCEPT, REJECT (code plus recovery hint), or NORMALIZE-WITH-LOG; a rejection
-  reaches the model with its hint, a normalization is written to the host log,
-  and each non-accepted per-route outcome is written to the host log as one
-  line: the hop ack returns none of them to the model, and a deferred route
-  reaches the final report as a follow-up lead. This is the standard split of agent
-  frameworks: the application owns control flow and validation, the model owns
-  decisions.
-- **Instructions.** Each stage prompt states the task, the deliverable, the
-  tools, and only the invariants the tool schemas cannot express. Each rule has
-  one home; a field's meaning lives in its Zod `.describe()`, which ships with
-  the tool on every call. No worked example is built from a fixture, and no
-  sentence is written to patch one observed failure — such a sentence is
-  removed, not extended. Template and wording detail:
-  [`AI_PROMPTS.md`](AI_PROMPTS.md).
+- The runtime uses LangGraph for phase control and a custom LangChain
+  `BaseChatModel` over `vscode.lm`. Tools execute sequentially because gates,
+  the turn lease, and ordered mutations require it.
+- `NavigationEngine` owns scope, agenda, lifecycle, validation, pruning,
+  graph closure, and termination. The model authors findings, neighbor prune
+  decisions, questions, and column evidence. It does not schedule hops or
+  declare exploration complete.
+- Input validation returns structured rejection codes and recovery hints.
+  Normalization is logged. Column references are checked against the loaded
+  model; missing provenance remains unresolved rather than being inferred.
+- Stage prompts describe the task and invariants not expressible by tool
+  schemas. Field contracts live in the tool schemas; customizable content lives
+  in the output templates. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 - Model tools pass through the local canonical registry, phase policy, and
   strict Zod dispatcher. Production does not route its own calls through
   `vscode.lm.invokeTool`. `package.json` `languageModelTools` is the
@@ -323,43 +284,18 @@ revision still pending. Every gate emission mints a new gate
 id, so a superseded card's buttons resolve nothing. No `NavigationEngine` is
 published as active until approval succeeds.
 
-The card is a summarized view, fact lines only — no AI-authored prose reaches it,
-so the goal, the discovery summary and noted constraints stay full-plan-only.
-It states depth per side (`≈` marks an estimate; no separate direction line, the
-depth line names the side(s) it covers), estimated hop and node counts, schemas
-in whichever wording is shortest, tracing mode and columns, analysis angle,
-in-scope objects grouped by type and capped at three lines (the rest folded into
-one `…` line), exclusions (schemas and objects; excluded object types are
-full-plan-only), passthroughs and a removed filter, each list rendered in full.
-Its **Show full plan** follow-up is the only follow-up offered while the gate is
-open, and the card's closing line sits above the buttons so that the card stays
-the response's last markdown (VS Code folds every part before it). The follow-up
-renders, from the held proposal and without a model call, the discovery summary (when the proposal carries one) ahead of the
-plan, then every in-scope object uncut, with the card's buttons again — the
-same underlying scope data the model's own gate copy carries, reordered and
-never folded for the user, while the model-facing copy (discovery summary
-trailing) keeps its own order and cap unchanged. The plan splits rules by
-source: **From the question** is what the user stated; **Read as** is the
-assistant's mechanization (exclusions, passthroughs, schema/type filters);
-**Plan** is what the assistant chose (hop and scope counts, tracing mode, an
-estimated depth), followed by every in-scope object. Which strength a
-rule carries is a typed field — the host enforces it and never guesses from
-prose. Depth is the concrete instance: `depth` (`ExplorationDepthSelectionSchema`,
-`src/engine/shared/explorationDepthContract.ts`) is a required per-side shape,
-both `upstream` and `downstream` always present, each carrying its own `levels`
-and `exactness` — `'exact'` for a count the user stated, `'approximate'` for
-the model's own estimate — never inferred from whether `levels` carries a
-number, and never a backend-supplied default for an unstated side. `levels: 0`
-permanently closes that direction for the session whatever its `exactness`, and
-both sides `0` is rejected at the schema (`asymmetric_depth_both_zero`). An
-`'exact'` side is enforced as a border per direction: a node inside either
-side's own ceiling is admitted. An `'approximate'` side is shown on the plan
-but does not bound the scope. A missing
-`depth` is rejected at the tool boundary (`missingField`, [`handlers/startExploration.ts`](../src/ai/tools/handlers/startExploration.ts)). Once approved, the border a rule carries
-holds for the whole hop-by-hop run; the model may extend a hard value only
-after synthesis, as a deferred lead or `supplement` follow-up, or through a
-fresh refine at this same gate carrying the user's own correction — never by
-its own initiative mid-run.
+The card summarizes engine-owned scope facts. **Show full plan** displays
+all in-scope objects, discovery context, and the source of each rule without a
+model call. The model cannot rewrite the card's scope facts.
+
+Depth is a required per-side shape in
+[`explorationDepthContract.ts`](../src/engine/shared/explorationDepthContract.ts).
+Both `upstream` and `downstream` carry `levels` and `exactness`: `exact`
+enforces a stated border; `approximate` displays an estimate without bounding
+scope. `levels: 0` closes that side, and both sides zero is rejected.
+A node within either side's permitted ceiling is admitted. Approved hard
+borders hold throughout the run; changing them requires a gate refinement or
+post-result follow-up.
 
 The approval is a contract over rules, never over individual objects: schemas,
 the level up and the level down, object types, exclusions, and the discovery
@@ -414,36 +350,19 @@ On the wire, a kept hop states its neighbor decisions as `prune_neighbors`
 (`[{id, reason}]`) and optional `questions` (`[{nodeId, question}]`); the
 focus-node verdict is `analyze`, `passthrough` or `end_branch`.
 
-**One visit per node.** The backend schedules until every in-scope node has
-had exactly one hop, in BB and CT alike. A hop never travels back to a visited
+**One visit per bodied node.** Retained SQL-bodied nodes receive one hop,
+in BB and CT alike; non-bodied objects are contracted as described below. A hop never travels back to a visited
 node; it reads its own body and its neighbors' columns, never a neighbor's
 SQL, and a question about a neighbor's logic reaches that neighbor as a note.
 Revisiting a node is a follow-up after the result is delivered, never part of
 exploration.
 
-**Scheduling** is the textbook worklist schedule, computed from recorded state
-only:
-
-- *Direction.* A note travels from the node that can ask to the node that
-  answers: in an upstream trace a consumer is visited before its producer;
-  downstream, a producer before its consumer; a bidirectional run applies each
-  rule on its own side and orders nothing across sides. Edges contract through
-  non-bodied carriers.
-- *Readiness* (Kahn, 1962). A node is ready when every in-scope node that can
-  still send it a note has been visited or pruned. The worklist drains ready
-  nodes until none is queued (Aho, Lam, Sethi and Ullman, *Compilers*, ch. 9).
-- *Loops* (Tarjan, 1972). Strongly connected components are condensed, so a
-  loop is scheduled as one unit, earliest first inside it by the tie-break. With
-  no revisit, a loop gets one pass.
-- *Tie-break.* Priority-queue topological order: the origin and follow-up tier
-  first, then directed distance from the origin, then node id. Column count,
-  question length and arrival order play no part.
-- *Dynamic order* (Pearce and Kelly, 2006). Readiness is recomputed at every
-  dequeue, so a prune releases the nodes waiting on it and scope growth can
-  delay a queued node.
-
-The condensation of the live graph is acyclic, so a ready node exists whenever
-the queue is non-empty; no stalemate fallback exists or is needed.
+**Scheduling** uses the contracted note graph. Upstream consumers precede
+producers; downstream producers precede consumers. A node becomes ready once
+its remaining potential senders have been visited or pruned. Strongly connected
+components are condensed so cycles receive one pass. Ready nodes are ordered
+by tier, directed distance from the origin, then node id. Readiness is
+recomputed after topology changes.
 
 **Message passing.** At each hop the model records the focus node's findings
 and, for not-yet-visited neighbors only, a note: a prune (`prune_neighbors`,
@@ -457,7 +376,7 @@ neither visited nor deferred. A neighbor the hop names in a question or in
 `direction`, or `depth`. A question shapes what
 that hop is asked, never whether it happens. In CT, what a kept neighbor carries comes from the
 hop's `column_flow` — the columns `upstream_columns` names on it (and, on the
-downstream side, what the focus writes to its readers); a kept neighbor named
+downstream side, the explicit model-authored write mapping); a kept neighbor named
 in none is visited row-role-only. A node's inbox — every
 note on its incoming edges — is rendered as one templated block built only from
 recorded facts: the sender, the carrier, the columns, and the sender's verbatim
@@ -487,33 +406,16 @@ from prose:
   passthrough versus transformation line;
 - `end_branch` — off the answer path, knowable only after reading its SQL. It
   carries only a reason (`summary`, `sections` and `badge_label` sent with it are
-  dropped), never on the origin (`prune_origin_forbidden`), and
-  never on a node carrying a tracked column a visited neighbor's `column_flow`
-  declared on it (`prune_carries_tracked_column`, naming the columns; the hint
-  asks for `analyze` or `passthrough` instead). Stored
-  internally as node action `prune`.
+  dropped), never on the origin (`prune_origin_forbidden`). Stored internally
+  as node action `prune`; object-retention decisions use the shared BB contract.
 
-A neighbor prune is narrower than `end_branch`: it targets an adjacent object
-the hop has not visited, based on the focus's SQL alone, and it is one
-sender's vote on that edge, not an immediate removal. A pruned neighbor
-resolves once every live sender — every in-scope, unvisited node that can
-still reach it — has been heard: removed only if every sender that took a
-position on it voted prune, kept the moment any sender routes it, questions
-it, or (in CT) names it in `column_flow`. A sole live sender's vote resolves
-at once, the same immediacy a single-sender prune always had. A vote still
-pending when the agenda empties — its remaining senders reachable only
-through the pruned neighbor itself, as on a cycle — resolves on the votes
-cast, and the unheard senders are logged. A reactivated
-sender casting a fresh verdict on a neighbor it kept or pruned earlier
-replaces its own prior vote, never adds a second one, so a live sender's
-current position, not its first, decides the vote. While a neighbor's vote is
-pending it is offered to every other sender exactly as an untouched one is —
-never disclosed as already-removed — and it is never enqueued on the
-pruner's behalf. A neighbor that already owns a queued hop is never pulled,
-and a declared column carrier is refused with the same code, whether the
-neighbor is untouched or its vote is still pending. Repeated attempts against
-an object already resolved removed are accepted as already-pruned no-ops; an
-attempt against one still pending is a fresh vote.
+A neighbor prune is a sender's vote based on the focus SQL, not necessarily
+an immediate removal. It resolves after the remaining live senders finish:
+all recorded votes must be prune votes for removal; a keep vote preserves the
+object. A sole sender's vote resolves immediately. If the agenda empties with
+votes pending on a cycle, resolution uses the votes already cast and logs the
+unheard senders. A reactivated sender replaces its own previous vote.
+Queued or visited neighbors are not pulled from the agenda by a later prune.
 
 **The cut.** Once an accepted `end_branch` or a neighbor-prune vote resolves
 removed, it also removes every unvisited node reachable from the origin only
@@ -527,21 +429,17 @@ model, and no would-orphan refusal exists.
 Tables and other non-bodied nodes are never visited: with no SQL body to read,
 their status is keep or prune only. A note addressed to one is forwarded to
 its bodied writers or readers (bipartite contraction), and readiness is
-computed on that contracted graph. In CT, where the committing focus only
-reads or only writes the carrier, the note's question and columns reach only
-the side the tracked column continues to; a neighbor on the other side is
-still queued, with no question and no columns, and the skipped forward is
-logged. The model is never the owner of a
+computed on that contracted graph. Reader/writer relationships determine
+structural routing; they do not establish column attribution. Recorded column
+links and source-qualified unresolved questions retain their source identity
+when forwarded. A neighbor without column work still receives BB guidance. The model is never the owner of a
 completion flag; synthesis starts when the engine reaches its terminal
 condition.
 
-In CT, once a committed `column_flow` entry names a node for a traced column
-(`upstream_columns` or `writes_to`), that node is protected from
-`prune_neighbors` and from its own `end_branch` for the rest of the run. Per-hop memory resets to the anchor, so a later hop cannot recall a
-relevance the run already established. The protection is additive on the
-tracer and empty in BB. A non-bodied target is contracted the instant it is
-enqueued, so the declaration record is what refuses a later prune of a
-declared dead-end table.
+In column trace, column evidence does not create
+separate object-retention rules. Object decisions use the shared BB path;
+column links and unresolved source-qualified questions remain evidence for the
+model to interpret (§BB and column-trace modes).
 
 ### Synthesis and completed follow-ups
 
@@ -626,63 +524,56 @@ BB is whole-object analysis. It supports focus verdicts and engine-validated
 neighbor decisions (`prune_neighbors`, `questions`); every remaining open
 in-scope neighbor not pruned is enqueued and visited once, automatically.
 
-CT is BB plus column tracking, never a parallel traversal. It runs the same
-agenda, the same approved scope, the same retention, and the same lifecycle.
-What it adds is that the AI records in `column_flow` which upstream columns
-feed each output column, and that the engine tracks and verifies those
-records. CT is activated only for explicitly named target columns and
-requires structured `column_flow` at every active submission.
+CT is BB plus column tracking, never a parallel traversal. It requires
+the same deterministic object graph as BB for the same question, scope and
+object decisions, with no write-sink exception. Columns add evidence;
+their absence does not remove an otherwise retained object. Classification
+changes the explanation, not the graph.
 
-A focus with no body of its own (a storage table) declares continuation, not attribution:
-its `column_flow` names the neighbours on its carrier side carrying the tracked column
-unchanged, and the column is attributed on the writer's own hop, where the body is in view.
-Continuation rides the existing route machinery — same routes, same prunes, same node set as
-BB — so the CT graph cannot diverge from the BB graph beyond the one write-sink exception stated
-below. Where the engine holds no carrier-side
-neighbour data the edge is accepted unverified and logged, the same tolerance an unverifiable
-column already gets.
+Each hop uses the shared BB contract. Presence of the column aspect adds the
+CT rider; without that aspect the hop is pure BB, including within a CT
+exploration. The aspect, not the session mode name, selects the hop contract.
+CT starts only for explicitly named target columns. The model records column
+provenance in `column_flow` when the column aspect is present; it decides where a
+chain starts or ends and what the available SQL establishes. Unresolved column
+work remains a source-qualified question, identifying the object and column
+whose mapping is unresolved, rather than an inferred link.
 
-The engine's role over `column_flow` is verification, not authorship. It
-checks every declared column against the loaded model and rejects a reference
-the model cannot support. The engine stores the tracked columns, hands them on
-to the next object as served context, carries a tracked column across a table
-by name, and checks that every column link the model records joins two real
-columns. Where a chain starts or ends, whether a new column joins, and whether
-the accounted columns are complete are the model's decisions: tracked columns
-not yet accounted for are served as data, never enforced as an obligation. Validated upstream column edges drive continuation
-and emphasis; they never bound the result. The result scope is the approved
-BFS scope in both modes, so an object that restricts the row set, sets the
-grain, or feeds a sibling column is retained even though it carries no column
-edge.
+Served procedure CT entries require a nullable `writes_to`: a declared
+object/column destination or `null` for no table write. Stored records retain
+an optional field for tolerant reads; an omitted destination is not inferred.
+For downstream tracing, `out_col` can be the resolved output rename, not just
+the incoming column name.
+Downstream continuation follows validated column edges in their data-flow
+direction, including an explicitly recorded writer-to-destination edge. A
+second contributor to a reached output remains attribution evidence; it does
+not seed that contributor's other outputs. Upstream validation uses endpoint
+connectivity to retain the contributors to the tracked output.
+An empty contributor list ends column continuation at a non-origin hop; it
+does not forward the incoming name to later objects. The origin can seed its
+requested output, including an explicit terminal write. Object traversal
+continues under the shared BB decisions.
+When a hop maps only some incoming columns, the remaining source-qualified
+column tasks stay unresolved and continue alongside the recorded outputs.
+Mapped inputs are replaced by their outputs; an explicit terminal declaration
+ends that input's continuation.
 
-A behaviour both modes share has one implementation and one instruction. At
-the AI preview / synthesis surface, the column-trace presentation block
-replaces the whole-object block (same graph, presented differently). At the
-per-hop instruction surface, the whole-object instruction always ships, and a
-neighbor that carries traced columns earns the column-trace rider on top; a
-neighbor that only shapes rows gets the whole-object instruction alone.
+The backend owns routing, scope, lifecycle, and validation of recorded object
+and column references. It stores model-authored links and passes recorded
+context forward. It does not infer a write mapping from column names or choose
+a carrier because only one candidate remains. A non-bodied storage object
+provides structural context; attribution comes from the SQL body that proves
+it, as interpreted by the model. Reader/writer relationships retain their SQL meaning and edge direction; the
+AI interprets their column semantics. Those relationships alone do not prove
+a column mapping. Missing evidence remains unresolved.
 
-What a kept neighbor carries is derived from the hop's own `column_flow`,
-never stated per neighbor: the columns `upstream_columns` names on it, and on
-the downstream side of the trace the `out_col` the focus writes to its readers
-(or `writes_to.col` for the named write target). `ColumnCarry` (`smTypes.ts`)
-has exactly two states — `carry` (the derived columns) and `row_role_only` (a
-kept neighbor named in no entry, dispatched as a plain object). BB derives no
-carry at all. `questions` carry no columns in either mode.
-
-The carry persists on the agenda entry (`columnCarry`). At dispatch, a
-dequeued CT candidate's base active-column set is `[]` when the carry is
-`row_role_only`, otherwise the entry's own recorded `activeColumns`; spine
-recovery — the accumulated committed `column_flow` edges, bound against the
-node's own declared columns — overrides that base only when it resolves
-non-empty. No other fallback exists: a stale seed-target set is never
-re-applied to a node several hops from where it was resolved. A column edge
-committed at an earlier hop is never dropped by a later hop's
-`row_role_only`: the dispatch-time spine bind in `getHopContext` binds it
-(logged as `[Normalize] dispatch carry`), and the committed edge's
-continuation question is dispatched with it.
+Object detail and hop context use shared object detail sections, including
+CTE evidence. A CTE is local SQL evidence for its owning object; it has no
+separate storage subsystem or traversal graph.
 
 A column edge carries an optional multi-select transform classification.
+Synthesis receives the recorded expression note and transform classes with
+each edge; these fields do not alter the object's authored detail sections.
 `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts` is the
 single home for the five values. They align to OpenLineage's
 `ColumnLineageDatasetFacet` transformation types.
@@ -699,55 +590,24 @@ DIRECT means the upstream value reaches the output; INDIRECT means no value
 crosses the edge and the node only decided which rows appear. The field is
 optional on both contracts, and the engine never fills it in.
 
-Scheduling, the inbox, and node status are the same in both modes (§Active
-exploration): the visit order is identical, and CT adds only columns on a note
-and `column_flow` on a finding.
+Scheduling, the inbox, and node status use the shared BB path. Both modes
+expose the same structural neighbors and routing eligibility. A neighbor that
+only shapes rows is still explored under BB; column state does not narrow
+approved scope or silently end a write-sink branch.
 
-Neighbor visibility is the same in both modes, structurally: CT presents the
-focus node's full neighbor set, exactly as BB does, and routing eligibility
-is never filtered by column state — a neighbor that carries none of the
-traced columns is still routable, dispatched under the whole-object contract.
-Neighbor prune is the same topology-safe engine path in both modes; CT adds
-column-flow verification on top of that path.
+Operational sinks are described according to the answer's classification: a
+business answer can fold a run-audit sink into a short mention, a technical
+answer explains its mechanics, and `both` combines them. That presentation
+choice does not change retention.
 
-One exception lets CT subtract a node BB would keep: the write-sink gate. It
-follows the output templates' sink policy — a sink that does not hold the
-traced column's values is operational, not lineage of that column. In the
-post-commit neighbor walk, a neighbor the engine opened automatically (no
-model-authored question) that has no body of its own, that the committing
-focus writes without reading back, and that no committed `column_flow` edge
-names with a tracked column ends the branch instead of being contracted
-through. It is recorded not-kept with the settled route reason
-`carries_no_tracked_column` and a rejection note telling the model to route
-beyond it explicitly if it answers the question; left undispositioned, it
-leaves the render as a side-effect sink. The gate keys on the column record's
-presence, never on a mode name, so BB — which has no column record — never
-applies it; a carrier the model routed explicitly is dispatched for the model
-to judge at its own focus, and the seed, supplement and user pass-through
-forwarding are never gated. The implementation is `columnFreeSinkVia` in
-[`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts).
-
-Independently of BB and CT, the answer's classification decides how an
-operational sink is described, never whether it is traversed: a business answer
-folds a run-audit sink (which procedure ran, when, with what outcome) into a
-one-line mention on the node it hangs off, a technical answer describes it in
-full, and `both` is the union of the two. A question that names neither angle is
-classified `both`.
-
-Given identical routing decisions, the two modes reach an identical node set,
-the write-sink gate above excepted: nothing else in CT's column handling can
-exclude a neighbor BB would keep, because every CT route now states an explicit column decision (`carry`
-or `row_role_only`) and no fallback exists to reinterpret a missing one. The
-internal state-machine suite pins this by driving one fixture through
-independent BB and CT engine instances and asserting their `getResult().fullNodes`
-id sets are equal, including a column-less branch reachable only through a
-`row_role_only` hop. That two independently-run
-traces of the *same question* issue matching routing decisions in the first
-place is a property of the model's own behaviour, not something any engine
-mechanism enforces. The internal state-machine suite ("CT chain connectivity") pins a
-related but distinct invariant — that the committed `column_flow` edges form
-one connected component reaching the origin, so a column chain can never start
-detached from the traced origin.
+Graph parity and column-chain connectivity are separate verification concerns.
+Identical object decisions must yield identical BB and CT node sets, including
+column-less branches and write-only sinks. Column evidence must remain tied to
+its declared source and the traced origin. Independently generated model
+decisions are not proof of engine parity; deterministic comparisons must hold
+scope and object decisions fixed. Independent live runs may make different
+relevance choices; exact graph equality is a measured result, not a guarantee
+about model nondeterminism.
 
 The webview renders the result through engine-owned node types
 (`CustomNodeData`, `ColumnTraceNodeData` in
@@ -775,14 +635,18 @@ its original source text. Nodes may remain visible without a badge or
 highlight; pruning is the only operation that removes them from the answer
 graph.
 
-A `present_result` bound — an authored label's length, the legend-group count,
+A `present_result` bound — a name, title, section label or highlight label's length,
 a blank required field, a repeated section label — is one Zod declaration on the
 model schema. The JSON schema the model reads states it as a typed constraint
 (`maxLength`, `maxItems`, `minLength`), the tool-attempt boundary rejects a violation
-with the measured size against the limit, and the handler's boundary parse enforces
-the same schema. `validatePresentResult` keeps only what a schema cannot
+against the same schema before the handler runs. `validatePresentResult` keeps only what a schema cannot
 express: node-id resolution against the result graph and highlight, section and
-note coverage. `submit_findings` advertises its caps without parsing them:
+note coverage. Highlight labels are trimmed, must be nonempty, and have a
+60-character hard limit for GUI readability, with a soft authoring target of
+about 40 characters. An overlong label is rejected for shortening rather than
+truncated. A presentation needs at least one highlight group; group count has
+no upper bound. Color, node-ID and object-shape validation remain in the schema.
+`submit_findings` advertises its caps without parsing them:
 `badge_label` and `column_flow[].upstream_columns[].note` are checked in
 `NavigationEngine` ahead of every mutation as a repairable single-field
 rejection against a held finding draft. The retry resends the full call
@@ -799,9 +663,14 @@ unnamed held section is kept as authored. A resent section may omit its
 stage's body field (`text`; `start` in the preview) or `node_ids` to keep the held
 values, and the hint names only the field the stage's schema accepts. The rejection shows the model the
 held section labels (with the start block of a preview section) and nothing the
-rejected call already carries. `notes` and `highlight_groups` resend as a whole
-list. A held draft is cleared only on success or turn reset, never by a failed
-retry.
+rejected call already carries. Structural repairs resend `notes` and
+`highlight_groups` as whole lists. A rejection confined to highlight labels
+instead authorizes `highlight_groups` objects with a zero-based `index` and
+replacement `label`. A rejection confined to section labels or text authorizes
+`sections` objects with an `index` and only the listed replacement fields.
+These indexed repairs preserve colors, node IDs, other text and array order.
+The assembled full report is validated before commit. A held draft is cleared
+only on success or turn reset, never by a failed retry.
 
 Every captured SQL fence served to synthesis carries an evidence id in its
 info string (```` ```sql S7 ````). Section text may reuse a block by writing

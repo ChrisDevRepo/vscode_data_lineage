@@ -20,6 +20,7 @@ TASKLIST*
 
 # Environment
 .env*
+!/.env.example
 *.log
 
 # Ad-hoc debug dumps written by tests/tools — never tracked, never packaged
@@ -29,9 +30,8 @@ debug*.txt
 .DS_Store
 Thumbs.db
 
-# AI assistant files — NEVER commit to this public repo.
-# Local agent context, prompts, credentials, and internal instructions. Patterns match in any
-# directory. A glob never matches a leading dot, so every name carries its dotted twin.
+# Vendor-specific instructions remain ignored. The shared root guide and allowlisted .agents
+# rules/skills are public; unselected .agents content remains ignored.
 AGENTS*
 .AGENTS*
 CLAUDE*
@@ -51,8 +51,30 @@ codex.md
 .cursorrules
 .aider*
 .continue/
-.agents/
+.agents/*
+!.agents/
+!.agents/rules/
+!.agents/skills/
+.agents/rules/*
+!.agents/rules/*.md
+.agents/skills/*
+!.agents/skills/testing/
+!.agents/skills/trace-debug/
+!.agents/skills/prompt-playground/
+!.agents/skills/prompt-change/
+!.agents/skills/testing/SKILL.md
+!.agents/skills/trace-debug/SKILL.md
+!.agents/skills/prompt-playground/SKILL.md
+!.agents/skills/prompt-change/SKILL.md
+.agents/skills/*/*
+!.agents/skills/testing/SKILL.md
+!.agents/skills/trace-debug/SKILL.md
+!.agents/skills/prompt-playground/SKILL.md
+!.agents/skills/prompt-change/SKILL.md
 .muse/
+
+# Public vendor-neutral agent entry point.
+!/AGENTS.md
 
 # Internal Developer Docs
 *internal*/

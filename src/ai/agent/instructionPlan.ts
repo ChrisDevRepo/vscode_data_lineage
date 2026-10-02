@@ -33,6 +33,7 @@ import {
   type SubmitFindingsHopColumns,
   type PresentResultRepairField,
 } from '../tools/toolSchemas';
+import type { PresentResultRepairAuthorization } from '../tools/presentResult';
 
 /** Model-call phase labels emitted by the production LangGraph runtime. */
 export type InstructionPhase =
@@ -143,6 +144,10 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly toolSchemaOverrides?: ReadonlyMap<string, z.ZodType>;
   /** Live ephemeral session fact read at each provider step; never copied into frame/context state. */
   readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
+  /** Held highlight indexes whose labels alone are authorized for repair; read live with the fields. */
+  readonly presentResultRepairHighlightLabelIndexes?: () => readonly number[] | null;
+  /** Held section text leaves authorized for indexed repair; read live with the fields. */
+  readonly presentResultRepairSectionTextLeaves?: () => PresentResultRepairAuthorization['sectionTextLeaves'] | null;
   /** Whether a committed report from this run exists for `present_result` to amend; read live. */
   readonly presentResultRetainableSections?: () => boolean;
   /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
@@ -324,6 +329,8 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     facts,
     toolSchemaOverrides,
     presentResultRepairFields,
+    presentResultRepairHighlightLabelIndexes,
+    presentResultRepairSectionTextLeaves,
     freshSubmission,
     hopColumns,
     presentResultRetainableSections,
@@ -363,7 +370,14 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (liveRepairResolver) {
     liveResolvers.set(
       'lineage_present_result',
-      () => presentResultSchemaForPhase(stage.kind, presentResultRepairFields(), presentResultRetainableSections?.() ?? false, presentResultPreviewBlockCount),
+      () => presentResultSchemaForPhase(
+        stage.kind,
+        presentResultRepairFields(),
+        presentResultRetainableSections?.() ?? false,
+        presentResultPreviewBlockCount,
+        presentResultRepairHighlightLabelIndexes?.() ?? undefined,
+        presentResultRepairSectionTextLeaves?.() ?? undefined,
+      ),
     );
   }
   if (liveResolvers.size) registry = resolveRegistrySchemas(registry, liveResolvers);

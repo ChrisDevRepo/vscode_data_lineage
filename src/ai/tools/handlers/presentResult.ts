@@ -176,7 +176,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let presentInput: PresentResultInput;
       if (held && authorization) {
         const patch = input as PresentResultRepairPatch;
-        const textlessNewLabels = findTextlessNewSectionLabels(held.sections, patch.sections ?? []);
+        const textlessNewLabels = authorization.sectionTextLeaves
+          ? []
+          : findTextlessNewSectionLabels(
+            held.sections,
+            (patch.sections ?? []) as Parameters<typeof findTextlessNewSectionLabels>[1],
+          );
         if (textlessNewLabels.length > 0) {
           const body = isVisualPreview ? 'start' : 'text';
           return reject(makeRejection({

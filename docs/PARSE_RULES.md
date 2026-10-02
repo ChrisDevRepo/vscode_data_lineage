@@ -11,17 +11,10 @@ SQL-body dependencies are extracted by a multi-pass regex engine driven by metad
 
 ## Parsing pipeline
 
-The parser neutralises non-code text, applies YAML rules in priority order,
-normalises captures, and resolves ordinary references against the loaded
-catalog before creating graph edges. Block-comment removal treats a bracketed
-identifier as opaque the same way it already treats a quoted string: an
-apostrophe or a `/*` inside `[Bob's Table]` cannot open a string literal or a
-comment, and a doubled `]]` inside the brackets reads as an escaped `]`, not
-the end of the name — so a commented-out object placed after such a name is
-still removed and does not surface as a dependency. File and URL rules can
-inspect raw SQL because their values live in string literals. See
-[`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts) for the current
-preprocessing implementation.
+The parser removes comments and neutralises string literals, applies YAML
+rules in priority order, normalises captures, and resolves references against
+the loaded catalog. Bracketed identifiers and escaped brackets are preserved.
+File and URL rules inspect raw SQL because their values occur in string literals.
 
 ## Rule schema
 
@@ -30,11 +23,11 @@ Each entry in `rules:` carries:
 | Field | Required | Purpose |
 |-------|----------|---------|
 | `name` | ✓ | Stable identifier for logs and tests. |
-| `enabled` |  | Opt-out switch: only `enabled: false` skips the rule. Omitting it — or giving it any other value — runs the rule, and validation never inspects the field. |
+| `enabled` |  | Set `false` to skip the rule; defaults to enabled. |
 | `priority` | ✓ | Lower runs first. Choose custom priorities after the shipped rules listed in the built-in YAML. |
 | `category` | ✓ | One of `preprocessing` \| `source` \| `target` \| `exec` \| `external_ref`. Drives edge direction. |
-| `pattern` | ✓ | JavaScript regex. **Capture group 1** must be the object reference (or, for `external_ref`, the URL / path inside quotes). |
-| `flags` | ✓ | Regex flags. **Must include `g`** — a rule whose flags omit it is rejected by name, because a non-global pattern either hangs the scan or silently under-matches. `gi` is the usual choice. |
+| `pattern` | ✓ | JavaScript regex that must not match an empty string. **Capture group 1** must be the object reference (or, for `external_ref`, the URL / path inside quotes). |
+| `flags` | ✓ | Regex flags; **must include `g`**. `gi` is the usual choice. |
 | `description` |  | Human-readable hint shown in logs and errors. |
 | `replacement` | preprocessing only | Replacement string applied by a custom preprocessing pass. The built-in `clean_sql` entry documents the built-in cleansing pipeline; editing it has no effect. |
 | `kind` | ✓ for `external_ref` | Non-empty label (e.g. `openrowset`, `copy_from`, `bulk_from`); a rule without it is skipped. |
@@ -55,27 +48,21 @@ CTAS-style targets, procedure calls, and file references from `OPENROWSET`,
 [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml) for the
 current names and regex bodies; that file is the source of truth.
 
-Not supported: temp tables (`#local`, `##global`), table variables (`@name`), and CTE names are
-never lineage nodes — a captured name starting with `#` or `@`, or carrying no schema
-qualifier, is discarded before edge extraction. A data flow that crosses procedures through a global temp table (one procedure
-writes `##t`, another reads it) therefore produces no edge between the two procedures, and the
-AI column trace ends at that boundary.
+Temp tables (`#local`, `##global`), table variables (`@name`), CTE names,
+and unqualified captures are not lineage nodes. Flow through a shared global
+temp table therefore does not connect procedures in the graph.
 
 ### Known boundaries
 
-Constructs a regex set cannot reach, or reaches only partially. Each is a silent under-capture —
-the object is a real dependency and no edge is emitted — and each is left as is because the
-construct is rare on the supported platforms. Scoped by platform where that matters.
+These constructs can lose references in SQL-body parsing. Native DACPAC or DMV
+metadata may still supply dependencies.
 
 | Construct | Behaviour | Where it applies |
 |---|---|---|
-| `FREETEXTTABLE(dbo.T, col, 'terms')` | the table is not captured | SQL Server, Azure SQL. Full-text search does not exist on Synapse dedicated or Fabric Warehouse |
-| `OPENDATASOURCE(...)...` | nothing is captured, including the four-part table name | SQL Server, Azure SQL only |
+| `FREETEXTTABLE(dbo.T, ...)` / `CONTAINSTABLE(dbo.T, ...)` | the table is not captured | Where full-text table functions are available |
+| `OPENDATASOURCE(...)...` | nothing is captured, including the four-part table name | Where the SQL dialect supports this syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | neither table is captured | partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list followed by `UNION`, `OPTION`, `PIVOT` or `TABLESAMPLE`, or containing a table variable | the whole list fails to normalise, so tables after the first are lost | legacy bodies on any platform |
-
-`CONTAINSTABLE`, `WITH XMLNAMESPACES`, and `CROSS APPLY x.Doc.nodes(...)` are
-handled: the base table is captured and no phantom reference is produced.
 
 ## XML fallback direction
 
@@ -100,9 +87,7 @@ Run the maintained parser subset:
 npm run test:parser
 ```
 
-There is no snapshot test script. A green parser run does not prove that every
-dependency edge is unchanged, so review affected SQL cases and their expected
-edge direction explicitly.
+Review affected SQL cases and expected edge directions as well as the test result.
 
 For ad-hoc verification:
 
@@ -119,7 +104,7 @@ When working on a single SP, point the wizard at one schema, narrow the model, a
 - Add new patterns rather than modifying built-ins. Rule precedence is by
   `priority`; inspect the built-in YAML and place custom rules after the shipped
   priorities unless an earlier pass is intentional.
-- The capture group 1 contract is non-negotiable. If your regex needs more than one group, use non-capturing groups (`(?:...)`) for everything except the object reference.
+- Use non-capturing groups (`(?:...)`) except for the object reference in group 1.
 - For dialect-specific syntax (Synapse `LABEL`, Fabric quirks) prefer adding a sibling rule guarded by the dialect's keyword rather than editing a generic rule's regex.
 - If a captured identifier does not resolve against the catalog, the parser
   omits the ordinary catalog edge; use DEBUG logging to review dropped

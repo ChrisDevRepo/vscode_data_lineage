@@ -106,11 +106,11 @@ export interface ColumnFlowEntry {
   /** Column name on the focus node, or procedure parameter prefixed with @. */
   out_col: string;
   /**
-   * For writer procedures: the table column this node writes to. Either form stages the writer
-   * edge `focus_node.out_col → writes_to.node.writes_to.col` beside the attribution edges
-   * `upstream → writes_to.node`: a named `writes_to` states it directly, and an omitted one at a
-   * focus that declares no `out_col` of its own has the engine derive the written carrier from
-   * the committed spine — both forms span one connected chain.
+   * Explicit destination column written by this focus. A named destination stages
+   * `focus_node.out_col → writes_to.node.writes_to.col`, including terminal writes with no
+   * upstream contributors. Contributor attribution lands on the named destination.
+   * Explicit null records no table write; omission attributes to the focus without inferring
+   * a destination from topology or matching column names.
    */
   writes_to?: { node: string; col: string } | null;
   /**
@@ -389,22 +389,15 @@ export interface RouteOutcome {
    *   that can be granted through a new proposal.
    * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was already analyzed on an earlier hop; visit-once, no new hop.
    * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
-   * - `carries_no_tracked_column` — an engine-auto-opened non-bodied target the committing
-   *   focus purely writes carries no tracked column on any committed column edge, so the
-   *   post-commit walk ends the branch recorded not-kept instead of contracting through it;
-   *   terminal, never deferred. An explicitly routed carrier is never dropped this way.
+   * - `carries_no_tracked_column` — legacy checkpoint reason; no longer emitted.
    */
   reason?: 'depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
 }
 
-/**
- * Why a routed node got no hop: visit-once for the first two (an earlier hop settled them),
- * and the column-gated contraction drop for the third (a write-only carrier no tracked column
- * crosses — terminal, recorded through the rejection envelope, never deferred).
- */
+/** Settled route reasons. `carries_no_tracked_column` is retained only for historical checkpoints. */
 export type SettledRouteReason = 'already_visited' | 'already_pruned' | 'carries_no_tracked_column';
 
-/** Per-node enqueue disposition recorded while committing one route: settled by an earlier hop, not enqueued for a scope/depth reason, or dropped by the column-gated contraction. */
+/** Per-node enqueue disposition: settled by an earlier hop or not enqueued for a scope/depth reason. */
 export type RouteSkipDisposition = SettledRouteReason | 'not_enqueued';
 
 /**
@@ -988,10 +981,8 @@ export interface SmState {
    */
   ctPrunedNodeIds?: string[];
   /**
-   * Nodes a committed CT `column_flow` entry named for a traced column (`declaredRouteIds` on the
-   * live engine), under a `ct`-prefixed key kept for compatibility with stored runs; a checkpoint
-   * written before the neighbor-decision contract may also hold ids a removed route list declared.
-   * Absent on a checkpoint written before the field was persisted; restore treats that as empty.
+   * Recorded column-edge endpoint IDs. The historical checkpoint key remains readable;
+   * object retention is independent of this projection.
    */
   ctDeclaredRouteIds?: string[];
   /**
@@ -1038,8 +1029,6 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_analyzed'
       | 'prune_noop_queued'
       | 'prune_noop_out_of_scope'
-      | 'prune_carries_tracked_column'
-      | 'end_branch_carries_tracked_column'
       | 'question_not_neighbor';
 
 /**

@@ -38,21 +38,6 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 }
 
 /**
- * The column aspect of the hop decision, rendered by {@link buildSmProtocol} on a CT hop on top of
- * the neighbor decisions in the active phase prompt.
- *
- * @remarks
- * `column_flow[].upstream_columns` stays the sole structural channel for column precision: it
- * records the value path the engine continues and opens no route; the analytical answer belongs
- * in the capture narration, never in this field.
- */
-const COLUMN_DECISION_ADDENDUM = [
-  'CT is column-first on top of those same decisions — these add the column aspect:',
-  '- `column_flow[].upstream_columns` holds real upstream node+column refs only — the value path the engine carries to the next hop, derived from the DDL. Resolve hidden column names with `lineage_get_neighbor_columns`.',
-  '- `<lineage_questions>` already carries the column A→B continuation; the analytical answer goes in `sections`.',
-] as const;
-
-/**
  * Builds the static active-phase SM protocol block: the column aspect of the hop, rendered only
  * when the hop carries tracked columns.
  *
@@ -66,7 +51,7 @@ const COLUMN_DECISION_ADDENDUM = [
  */
 export function buildSmProtocol({ targetColumns }: { targetColumns?: string[] }): string {
   if (!targetColumns || targetColumns.length === 0) return '';
-  return [...COLUMN_DECISION_ADDENDUM, '', buildColumnAspectPrompt(targetColumns)].join('\n');
+  return buildColumnAspectPrompt(targetColumns);
 }
 
 
@@ -290,7 +275,11 @@ export function buildCtSynthesisBlock(
     return lines.join('\n');
   }
   for (const e of edges) {
-    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})`);
+    const metadata = [
+      ...(e.transforms?.length ? [`transforms: ${e.transforms.join(', ')}`] : []),
+      ...(e.note ? [`expression: ${escapePromptText(e.note)}`] : []),
+    ];
+    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})${metadata.length ? ` — ${metadata.join('; ')}` : ''}`);
   }
   lines.push('');
   const directionEdges = nodeEdges.length > 0
@@ -300,7 +289,7 @@ export function buildCtSynthesisBlock(
   lines.push(...buildDirectionLines(originNodeId, direction));
   if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
     lines.push('');
-    lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
+    lines.push(`Excluded object branches: ${ctPrunedNodeIds.join(', ')}`);
   }
   const groups = computeFlowRoleGroups(originNodeId, directionEdges,
     nodeEdges.length > 0 ? undefined : new Set(edges.map(e => e.hop_node)));

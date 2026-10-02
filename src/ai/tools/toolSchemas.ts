@@ -577,11 +577,11 @@ const ColumnFlowWritesToObject = z.object({
  * One `column_flow` entry. Served closed (`additionalProperties: false`); a surplus key the model
  * still sends is stripped by Zod's default object parse and logged by the model port.
  */
-const OUT_COL_DESCRIPTION = 'A column from the `<column_trace>` Active columns list, as named on this node; for a procedure, the column it writes.';
+const OUT_COL_DESCRIPTION = 'Output column resolved from this hop\'s column task; for a procedure, the column it writes to writes_to.';
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
-  writes_to: ColumnFlowWritesToObject.nullish().describe('Procedure focus: the carrier table that receives out_col, as {"node": table id, "col": column name}. Name it whenever this hop writes the traced column into a table, so the recorded chain stays attached to that carrier; null only when this hop writes no table.'),
+  writes_to: ColumnFlowWritesToObject.nullish().describe('Actual destination object and column for this procedure\'s output, as declared by its SQL; null when it writes no table.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
     'Two states by focus: at a bodied focus, the real upstream columns the node READS that contribute to out_col ' +
     '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the neighbours ' +
@@ -908,7 +908,11 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const outCol = first === undefined
     ? ColumnFlowEntrySchema.shape.out_col
     : z.enum([first, ...rest]).describe(OUT_COL_DESCRIPTION);
-  const shape = { ...ColumnFlowEntrySchema.shape, out_col: outCol };
+  const shape = {
+    ...ColumnFlowEntrySchema.shape,
+    out_col: outCol,
+    writes_to: ColumnFlowEntrySchema.shape.writes_to.unwrap().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
+  };
   const entry = (hop.writesTo
     ? z.object(shape)
     : z.object({ out_col: shape.out_col, upstream_columns: shape.upstream_columns })
@@ -1054,12 +1058,11 @@ export const PRESENT_RESULT_TITLE_MAX = 120;
  * which states its role and deliberately no character target.
  */
 export const PRESENT_RESULT_SECTION_LABEL_MAX = 90;
-/** Hard cap on a `highlight_groups[].label`; its soft target is the `highlights` output template. */
+/**
+ * Hard boundary that keeps graph legend labels readable in the GUI. The softer authoring target is
+ * owned by the `highlights` output template.
+ */
 export const PRESENT_RESULT_HIGHLIGHT_LABEL_MAX = 60;
-/** Max color groups on one rendered result — a small cap keeps the graph legend scannable. */
-export const PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX = 5;
-const HIGHLIGHT_GROUPS_OVER_MAX = `highlight_groups exceeds maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`;
-
 /**
  * Identity of a section label: whitespace collapsed, trimmed, case-folded. Two labels with the same
  * key name the same section, in a submission, a repair patch and a committed report alike.
@@ -1172,7 +1175,7 @@ const NotesModelSchema = z.array(NoteSchema)
  * Schema for a visual highlight group, grouping nodes by a shared role or status.
  */
 const HighlightGroupSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX, overLength(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX)).trim().min(1, 'Group label is required').describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
+  label: z.string().trim().min(1, 'Group label is required').max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX, overLength(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX)).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
   color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
@@ -1268,8 +1271,8 @@ export const PresentResultModelSchema = z.object({
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
-  highlight_groups: z.array(HighlightGroupSchema).min(1).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX, HIGHLIGHT_GROUPS_OVER_MAX).describe(
-    'REQUIRED, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
+  highlight_groups: z.array(HighlightGroupSchema).min(1).describe(
+    'REQUIRED, at least 1 group. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
   sections: sectionList(PresentResultSectionSchema).describe(
     'Required final report sections, at least one. Every node analysed and captured this turn '
@@ -1326,6 +1329,8 @@ function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T)
  * @param retainable - Whether a committed report from this run exists to amend.
  * @param previewBlockCount - Served `answer_blocks` count; the preview stage's block ids are
  *   exactly `B1`..`B<count>`.
+ * @param highlightLabelIndexes - Held highlight entries whose labels alone may be replaced.
+ * @param sectionTextLeaves - Held section indexes and text leaves that alone may be replaced.
  * @returns The schema this stage offers the model.
  */
 export function presentResultSchemaForPhase(
@@ -1333,8 +1338,10 @@ export function presentResultSchemaForPhase(
   repairFields: readonly PresentResultRepairField[] | null = null,
   retainable = false,
   previewBlockCount = 0,
+  highlightLabelIndexes?: readonly number[],
+  sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount);
+  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionTextLeaves);
   if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
   const synthesis = phase === 'synthesis';
   const schema = retainable
@@ -1432,25 +1439,82 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * `is_update`, or nothing) rejects at the Zod boundary with one issue per authorized field, so
  * `issuePaths` names the whole set instead of an empty patch re-running the held-draft validation.
  * Both ports `safeParse` against this exact schema object before dispatch.
+ *
+ * @param fields - Held presentation fields authorized by the rejection.
+ * @param phase - Stage serving the repair schema.
+ * @param previewBlockCount - Number of engine-served preview blocks.
+ * @param highlightLabelIndexes - Highlight entries restricted to `{index, label}` leaf repair.
+ * @param sectionTextLeaves - Section entries restricted to indexed `label`/`text` leaf repair.
+ * @returns A strict schema for exactly the authorized repair transaction.
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
   phase?: string,
   previewBlockCount = 0,
+  highlightLabelIndexes?: readonly number[],
+  sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
 ): z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>> {
   const keys = [...new Set<PresentResultRepairField>(fields)].sort();
   const preview = phase === 'visual_preview';
-  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${keys.join(',')}`;
+  const labelIndexes = highlightLabelIndexes ? [...new Set(highlightLabelIndexes)].sort((left, right) => left - right) : undefined;
+  const sectionLeaves = sectionTextLeaves?.map(leaf => ({ index: leaf.index, fields: [...new Set(leaf.fields)].sort() }))
+    .sort((left, right) => left.index - right.index);
+  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
   const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
   const picked = PresentResultAuthorizableRepairSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultAuthorizableRepairSchema.shape, true>>,
   );
-  const staged = preview && keys.includes('sections')
+  let staged = (preview && keys.includes('sections')
     ? picked.extend({ sections: previewSchemas(previewBlockCount).patchSections })
-    : picked;
-  const declared = keys.length === 1
+    : picked) as z.ZodObject<z.ZodRawShape>;
+  if (labelIndexes) {
+    const entrySchemas = labelIndexes.map(index => z.object({
+      index: z.literal(index).describe('Zero-based index of the held highlight group named by the rejection.'),
+      label: HighlightGroupSchema.shape.label.describe('Replacement containing only this held group\'s short shared role or status, ending before any dash, colon, example or member list.'),
+    }).strict());
+    const entrySchema = entrySchemas.length === 1
+      ? entrySchemas[0]!
+      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
+    staged = staged.extend({
+      highlight_groups: z.array(entrySchema).length(labelIndexes.length).superRefine((entries, ctx) => {
+        const seen = new Set<number>();
+        for (const [entryIndex, entry] of entries.entries()) {
+          if (seen.has(entry.index)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Highlight label index ${entry.index} is duplicated.` });
+          }
+          seen.add(entry.index);
+        }
+      }).describe(`Correct only the held overlong highlight labels at zero-based indexes ${labelIndexes.join(', ')}. Send one {index, label} entry per listed index; colors, node_ids, other labels and group order remain held.`),
+    });
+  }
+  if (sectionLeaves) {
+    const entrySchemas = sectionLeaves.map(leaf => z.object({
+      index: z.literal(leaf.index).describe('Zero-based index of the held section named by the rejection.'),
+      ...(leaf.fields.includes('label') ? {
+        label: PresentResultSectionSchema.shape.label.describe('Corrected held section label.'),
+      } : {}),
+      ...(leaf.fields.includes('text') ? {
+        text: PresentResultSectionSchema.shape.text.describe('Corrected held section body.'),
+      } : {}),
+    }).strict());
+    const entrySchema = entrySchemas.length === 1
+      ? entrySchemas[0]!
+      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
+    staged = staged.extend({
+      sections: z.array(entrySchema).length(sectionLeaves.length).superRefine((entries, ctx) => {
+        const seen = new Set<number>();
+        for (const [entryIndex, entry] of entries.entries()) {
+          if (seen.has(entry.index)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Section text index ${entry.index} is duplicated.` });
+          seen.add(entry.index);
+        }
+      }).describe(`Correct only rejected text leaves on held sections: ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Node links, other text and order remain held.`),
+    });
+  }
+  const declared = labelIndexes || sectionLeaves
+    ? staged.required(Object.fromEntries(keys.map(key => [key, true])) as Record<string, true>)
+    : keys.length === 1
     ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
     : staged;
   const strict = declared.strict().superRefine((data, ctx) => {

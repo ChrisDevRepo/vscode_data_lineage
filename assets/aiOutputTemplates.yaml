@@ -181,24 +181,7 @@ structural_summary:
 column_trace_capture:
   stages: [active]
   instruction: |
-    <purpose>
-    Account for EVERY active tracked column — each gets one explicit decision:
-      → Continue it:  a column_flow entry mapping it to its upstream source column(s).
-      → It ends here: a column_flow entry with upstream_columns: [] (terminal — produced here, no upstream real column).
-    </purpose>
-
-    ## Before submitting — verify
-    □ A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
-    □ `sections` — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
-
-    ## Verdict — the `verdict` field decides it; column_flow follows
-    On `analyze`, column_flow carries each active column — upstream_columns: []
-    where the value originates here (stored base column, hardcoded literal, system
-    function such as GETDATE() or NEWID()). On `passthrough`, column_flow names the
-    upstream column; its writer is visited next, where full attribution
-    resolves.
-    Off-trace (no tracked column here): column_flow: [] — the node stays for what it
-    does to the rows, stated in `sections`.
+    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. An empty upstream list states that the value originates here; unresolved mappings remain questions.
 
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompting/prompts.ts. No separate per-angle templates
