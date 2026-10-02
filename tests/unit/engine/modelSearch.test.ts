@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   compileSearchRegex,
   regexRejectHint,
@@ -560,6 +560,19 @@ describe('model search — enclosing predicate', () => {
 });
 
 describe('compileSearchRegex — ReDoS guard', () => {
+  it('does not charge scheduler delay to a benign pattern', () => {
+    const wallClock = vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(60_000)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(60_000);
+    try {
+      expect(compileSearchRegex('SELECT|HeadToken').ok).toBe(true);
+    } finally {
+      wallClock.mockRestore();
+    }
+  });
+
   it('refuses exponential patterns without hanging on its own probe', () => {
     for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {
       const start = performance.now();

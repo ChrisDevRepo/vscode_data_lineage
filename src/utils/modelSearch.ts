@@ -77,8 +77,8 @@ const SIDEBAR_LINE_CAP = 50;
  */
 const DEAD_LINE_PREFIX = '--';
 
-/** Heuristic ReDoS guard budget, in milliseconds, applied by {@link compileSearchRegex}. */
-const REDOS_BUDGET_MS = 5;
+/** Current-thread CPU budget, in microseconds, applied by {@link compileSearchRegex}. */
+const REDOS_BUDGET_MICROSECONDS = 5_000;
 
 /**
  * Repeating units the ReDoS guard builds its probe inputs from.
@@ -114,11 +114,12 @@ const REDOS_SAMPLE_STEP_CHARS = 4;
  */
 const REDOS_SCALE_MAX_CHARS = 6400;
 
-/** Whether one probe run of `regex` over `sample` exceeds the ReDoS guard budget. */
+/** Whether one probe run of `regex` over `sample` exceeds the current-thread CPU budget. */
 function probeExceedsBudget(regex: RegExp, sample: string): boolean {
-  const start = performance.now();
+  const start = process.threadCpuUsage();
   regex.test(sample);
-  return performance.now() - start > REDOS_BUDGET_MS;
+  const elapsed = process.threadCpuUsage(start);
+  return elapsed.user + elapsed.system > REDOS_BUDGET_MICROSECONDS;
 }
 
 /** Whether `regex` exceeds the ReDoS guard budget on `sample` twice in a row, so one garbage-collection pause cannot refuse a benign pattern. */
@@ -131,8 +132,9 @@ function confirmedOverBudget(regex: RegExp, sample: string): boolean {
  * budget.
  *
  * @remarks
- * Uses `performance.now()` (sub-ms precision) instead of `Date.now()` (1ms / 15ms on Windows). An
- * over-budget run is confirmed by {@link confirmedOverBudget} before the pattern is refused.
+ * Uses current-thread CPU time so host scheduling, model inference in another process and garbage
+ * collection pauses cannot make a benign pattern look expensive. An over-budget run is confirmed
+ * by {@link confirmedOverBudget} before the pattern is refused.
  */
 function exceedsRedosBudget(regex: RegExp): boolean {
   for (const unit of REDOS_SAMPLE_UNITS) {
@@ -153,7 +155,7 @@ function exceedsRedosBudget(regex: RegExp): boolean {
  *
  * @remarks
  * The reason travels with the rejection so the hint is derived from the measurement that actually
- * happened. A `redos` verdict is a wall-clock heuristic, and re-running it can disagree with itself.
+ * happened. A `redos` verdict is based on CPU consumed by the regex on the calling thread.
  */
 type SearchRegexResult =
   /** The pattern compiled and stayed inside the ReDoS budget. */

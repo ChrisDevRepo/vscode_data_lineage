@@ -18,6 +18,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     testTimeout: 10_000,
+    // The default is availableParallelism - 1 (17 workers on the development host). Parallel
+    // jsdom/React imports at that width starve their own fake-timer `act` transactions when a local
+    // model uses the same machine. Four workers keep the deterministic gate bounded under that
+    // supported concurrent workload without weakening assertions or extending timeouts.
+    maxWorkers: 4,
     // `.tsx` alongside `.ts` for the component tests that mount a webview leaf; the unit tsconfig
     // already includes `**/*.tsx` and inherits `jsx: react-jsx`. Same lane, not a new one.
     include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],
