@@ -45,7 +45,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapePromptText, formatProviderErrorDiagnostic, isTransportProviderError, truncAtWordBoundary, type ProviderErrorDiagnostic } from '../support/text';
+import { escapeDelimitedJson, escapePromptText, formatProviderErrorDiagnostic, isTransportProviderError, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -136,18 +136,6 @@ const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
  * synthesis-breaker path and the preview-dispatch path.
  */
 const SYNTHESIS_RENDER_FAILED_NOTICE = '_The AI preview could not be rendered; details are in the debug log._';
-
-/**
- * Display budget, in characters, for a chat status label carrying model-written prose (the
- * committed or pruned hop summary) — about three lines of the chat pane at its default side-bar
- * width, where a line holds roughly 45 characters.
- *
- * @remarks
- * Distinct from `LOG_TRUNC_CONTENT` (`src/utils/log.ts`): that cap sizes a single-line debug log
- * preview, not this multi-line chat surface, and reusing it here left the hop summary with no
- * display budget of its own.
- */
-const HOP_SUMMARY_CHAT_MAX_CHARS = 135;
 
 /**
  * Chat-facing text for each {@link RejectionChatGroup}, derived once from
@@ -1320,7 +1308,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       const prunedMark = committedFinding.value.verdict === 'end_branch' ? '⛔ pruned — ' : '';
-      deps.sink.status('scoping', `_${truncAtWordBoundary(`${prunedMark}${committedFinding.value.summary}`, HOP_SUMMARY_CHAT_MAX_CHARS)}_`);
+      deps.sink.status('scoping', `_${prunedMark}${committedFinding.value.summary}_`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {

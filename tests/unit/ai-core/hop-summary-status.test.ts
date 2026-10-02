@@ -1,4 +1,4 @@
-/** Chat-status previews end naturally while findings and model context retain the full summary. */
+/** Committed hop status labels and model context retain complete summaries, including held drafts. */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
@@ -192,29 +192,25 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
   };
 }
 
-describe('hop summary chat-label display budget', () => {
-  it('includes a pruned prefix inside the visible budget without changing the committed summary', async () => {
+describe('complete committed hop summary status', () => {
+  it('includes the pruned prefix and complete committed summary', async () => {
     const { labels, archive, requests } = await hopSummaryLabelsForTurn(LONG_SUMMARY, LONG_SUMMARY, 'end_branch');
     const pruned = labels.find(label => label.startsWith('_⛔ pruned — '));
     expect(pruned).toBeDefined();
-    expect(pruned!.length).toBeLessThanOrEqual(137);
-    expect(pruned).toBe('_⛔ pruned — Origin joins the customer and order tables on the shared key before aggregating totals..._');
+    expect(pruned).toBe(`_⛔ pruned — ${LONG_SUMMARY}_`);
     expect(archive).toContain(LONG_SUMMARY);
     expect(requests).toContain(LONG_SUMMARY);
   });
 
-  it('folds a long status at a sentence boundary and keeps a short status unchanged', async () => {
+  it('keeps complete long and short status labels unchanged', async () => {
     expect(LONG_SUMMARY.length).toBeGreaterThan(400);
     const {labels: hopSummaryLabels, archive, requests} = await hopSummaryLabelsForTurn(SHORT_SUMMARY);
     expect(archive).toContain(LONG_SUMMARY);
     expect(requests).toContain(LONG_SUMMARY);
     expect(hopSummaryLabels).toHaveLength(2);
 
-    const [foldedLabel, untouchedLabel] = hopSummaryLabels;
-    // Wrapped in `_..._`: the display budget plus the two markdown-italics delimiters.
-    expect(foldedLabel.length).toBeLessThanOrEqual(137);
-    expect(foldedLabel).toBe('_Origin joins the customer and order tables on the shared key before aggregating totals..._');
-    expect(foldedLabel).not.toContain(LONG_SUMMARY);
+    const [completeLabel, untouchedLabel] = hopSummaryLabels;
+    expect(completeLabel).toBe(`_${LONG_SUMMARY}_`);
     expect(untouchedLabel).toBe(`_${SHORT_SUMMARY}_`);
   });
 
