@@ -119,7 +119,7 @@ function captureRecipeHeader(classification: ClassificationValue | undefined): s
       : '`{"' + kept[0] + '": …}` — classification=' + classification + ' keeps only this key';
   return [
     '### Capture recipe',
-    `Submit \`sections\` as ${shape}, and put every bullet below — including the ⚠️ callout bullet — inside that key's string value. Markdown without headings. Back each grain predicate, formula and ⚠️ line with one short \`\`\`sql fence of its deciding expression, an exact substring of \`bb_ddl\`; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,
+    `Submit \`sections\` as ${shape}, and put every applicable recipe item below inside that key's string value. Markdown without headings. Back each grain predicate, formula and any evidence-supported ⚠️ line with one short \`\`\`sql fence of its deciding expression, an exact substring of \`bb_ddl\`; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks; a ⚠️ line is not required.`,
   ].join('\n\n');
 }
 

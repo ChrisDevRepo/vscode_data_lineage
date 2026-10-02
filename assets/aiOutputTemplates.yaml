@@ -148,7 +148,7 @@ technical_capture:
     5. Steps as a numbered walk.
     6. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
     7. Error handling: TRY/CATCH, retry, locking.
-    8. Evidence-bound callouts. Never mention indexes, index use, seeks, scans, statistics, cardinality, plans, join strategies or runtime costs unless matching catalog, plan or runtime evidence was supplied; when it was not, omit those dimensions entirely, even if the user requested them, after stating once in factual prose that the evidence was not supplied. Use ⚠️ only for a consequence the supplied SQL proves, quoting the deciding expression and its row or value effect. Describe observable expression shapes factually without labeling them harmful; a function or conversion on the comparison value alone is not a transformation of the searched column.
+    8. Evidence boundary, not an output item: do not add an item 8 heading, evidence-review section or ⚠️ line merely because this recipe lists this rule. Put filters, literals, defaults, time functions, predicate shapes and assignments under Rules, Formulas or Steps as factual behavior. A literal or default is not a defect without supplied schema or business evidence for a requirement it violates. Use ⚠️ only when the supplied SQL alone proves a specific row or value consequence, or supplied evidence proves a violated requirement; quote the deciding expression and that evidence. Never mention indexes, index use, seeks, scans, statistics, cardinality, plans, join strategies or runtime costs unless matching catalog, plan or runtime evidence was supplied; if the user requested an unavailable dimension, state once in factual prose that its evidence was not supplied.
   example: ""
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────
@@ -159,7 +159,7 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    In either angle, one ⚠️ line per statement that silently loses, duplicates, overwrites or defaults rows — including a multi-statement write with no wrapping transaction, where a failure between the statements leaves rows lost or doubled: quote it and say its effect on the rows.
+    Apply the evidence boundary above to structural callouts too. A ⚠️ is optional and only for row or value loss, duplication, or overwrite that the supplied SQL itself proves. For a no-transaction failure window, require at least two ordered writes to persistent data: the first changes persistent state and a later persistent write is needed to complete the same operation. Temporary objects, variables, reads, calculations, and steps before a single persistent write do not create that failure window. State literals and defaults as facts unless supplied schema or business evidence proves an adverse effect.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
