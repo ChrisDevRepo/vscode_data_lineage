@@ -148,7 +148,7 @@ technical_capture:
     5. Steps as a numbered walk.
     6. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
     7. Error handling: TRY/CATCH, retry, locking.
-    8. Antipatterns: a ⚠️ line per non-sargable or converting predicate, per-row UDF or correlated subquery, unguarded UPDATE or DELETE, or read-before-write order.
+    8. Evidence-bound callouts. Never mention indexes, index use, seeks, scans, statistics, cardinality, plans, join strategies or runtime costs unless matching catalog, plan or runtime evidence was supplied; when it was not, omit those dimensions entirely, even if the user requested them, after stating once in factual prose that the evidence was not supplied. Use ⚠️ only for a consequence the supplied SQL proves, quoting the deciding expression and its row or value effect. Describe observable expression shapes factually without labeling them harmful; a function or conversion on the comparison value alone is not a transformation of the searched column.
   example: ""
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────
