@@ -299,6 +299,9 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
 
   const isTruthy = (v: string) => v === '1' || v.toLowerCase() === 'true';
   const objectColumns = new Map<string, ColumnDef[]>();
+  const columnsByIdentity = new Map<string, ColumnDef>();
+  const columnIdentity = (schema: string, object: string, column: string) =>
+    JSON.stringify([schema, object, column]);
 
   for (const row of results.columns.rows) {
     const schema = cellValue(row, colColIdx, 'schema_name');
@@ -324,6 +327,32 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
       if (pk > 0) col.pkOrdinal = pk;
     }
     objectColumns.get(key)!.push(col);
+    columnsByIdentity.set(columnIdentity(schema, table, col.name), col);
+  }
+
+  const depColIdx = buildColumnIndex(results.dependencies);
+  for (const row of results.dependencies.rows) {
+    const referencingColumn = cellValue(row, depColIdx, 'referencing_column');
+    const referencedSchema = cellValue(row, depColIdx, 'referenced_schema');
+    const referencedName = cellValue(row, depColIdx, 'referenced_name');
+    if (!referencingColumn || !referencedSchema || !referencedName) continue;
+    const column = columnsByIdentity.get(columnIdentity(
+      cellValue(row, depColIdx, 'referencing_schema'),
+      cellValue(row, depColIdx, 'referencing_name'), referencingColumn,
+    ));
+    if (!column) continue;
+    const server = cellValue(row, depColIdx, 'referenced_server');
+    const database = cellValue(row, depColIdx, 'referenced_database');
+    const referencedColumn = cellValue(row, depColIdx, 'referenced_column');
+    const externalParts = server ? [quoteIdentifier(server), database ? quoteIdentifier(database) : '']
+      : database ? [quoteIdentifier(database)] : [];
+    const referenceParts = [...externalParts, ...[referencedSchema, referencedName, ...(referencedColumn ? [referencedColumn] : [])].map(quoteIdentifier)];
+    const sourceElementType = externalParts.length === 0 ? cellValue(row, depColIdx, 'referenced_type') : '';
+    (column.expressionDependencies ??= []).push({
+      reference: referenceParts.join('.'),
+      ...(sourceElementType && { sourceElementType }),
+      ...(externalParts.length > 0 && { externalSource: externalParts.join('.') }),
+    });
   }
 
   const objects: ExtractedObject[] = [];

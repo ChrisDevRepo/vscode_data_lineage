@@ -330,11 +330,11 @@ export interface ColumnDef {
 
 /** Exact source metadata for a column expression reference, without inferred SQL semantics. */
 export interface ColumnExpressionDependency {
-  /** Verbatim nonempty DACPAC References.Name, including any column qualification. */
+  /** Source reference identity, including column qualification; DACPAC References.Name remains verbatim. */
   reference: string;
-  /** Exact XML Type of the element resolved within the same DACPAC, when available. */
+  /** Exact local source type: DACPAC XML Type or DMV sys.objects.type, when resolved. */
   sourceElementType?: string;
-  /** Verbatim external source identity; such a reference is not resolved against local elements. */
+  /** External source identity; such a reference is not resolved against local elements. */
   externalSource?: string;
 }
 

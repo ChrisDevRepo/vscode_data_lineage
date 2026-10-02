@@ -238,7 +238,8 @@ queries:
   - name: dependencies
     phase: 2
     description: >
-      Phase 2: object-level SQL expression dependencies (referencing → referenced).
+      Phase 2: object-level SQL expression dependencies (referencing → referenced),
+      with optional catalog-bound column identities and referenced object types.
       Filters to referenced_schema_name IS NOT NULL — only rows where SQL Server
       resolved the reference to a concrete schema at SP/view creation time are returned.
       Unqualified references (EXEC SomeProc without schema prefix) have
@@ -253,10 +254,22 @@ queries:
         o1.name AS referencing_name,
         d.referenced_schema_name AS referenced_schema,
         d.referenced_entity_name AS referenced_name,
-        d.referenced_database_name AS referenced_database
+        d.referenced_database_name AS referenced_database,
+        d.referenced_server_name AS referenced_server,
+        c1.name AS referencing_column,
+        c2.name AS referenced_column,
+        o2.type AS referenced_type
       FROM sys.sql_expression_dependencies d
       INNER JOIN sys.objects o1 ON d.referencing_id = o1.object_id
       INNER JOIN sys.schemas s1 ON o1.schema_id = s1.schema_id
+      LEFT JOIN sys.columns c1 ON c1.object_id = d.referencing_id
+                              AND c1.column_id = d.referencing_minor_id
+      LEFT JOIN sys.objects o2 ON o2.object_id = d.referenced_id
+                              AND d.referenced_class = 1
+                              AND d.referenced_database_name IS NULL
+                              AND d.referenced_server_name IS NULL
+      LEFT JOIN sys.columns c2 ON c2.object_id = o2.object_id
+                              AND c2.column_id = d.referenced_minor_id
       WHERE d.referenced_schema_name IS NOT NULL
         AND d.referenced_entity_name IS NOT NULL
         AND o1.is_ms_shipped = 0

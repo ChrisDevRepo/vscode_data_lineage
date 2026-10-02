@@ -204,6 +204,22 @@ CK rows are **column-level only** (`parent_column_id != 0`). Table-level CHECK c
 | `referenced_schema` | string | Schema of the referenced object |
 | `referenced_name` | string | Name of the referenced object |
 | `referenced_database` *(optional)* | string/null | Database name for cross-database references. Used to build `[db].[schema].[object]` identifiers. Not validated — omit if your DB engine doesn't expose it. |
+| `referenced_server` *(optional)* | string/null | Server name for a declared cross-server column-expression reference. |
+| `referencing_column` *(optional)* | string/null | Exact catalog column name resolved from `referencing_id` and `referencing_minor_id`; absent for object-level dependencies. |
+| `referenced_column` *(optional)* | string/null | Exact referenced column name resolved from local `referenced_id` and `referenced_minor_id`, when supplied. |
+| `referenced_type` *(optional)* | string/null | Exact local `sys.objects.type` code, such as `FN` for a SQL scalar function or `IF` for an inline table-valued function. External references remain unclassified. |
+
+The built-in query retains these fields with left joins, preserving object-level dependency rows.
+Only a supplied `referencing_column` that matches a loaded column receives
+`ColumnDef.expressionDependencies`; an object-level dependency never binds a function to every output.
+References preserve server/database/schema/object/column qualification, with SQL identifier quoting.
+These declarations identify dependencies, not semantic value contributors. Custom queries that omit
+the optional fields retain their existing behavior.
+
+SQL Server can report object-level references with `referencing_minor_id = 0`; this does not identify
+which projected view output invokes a function. This adapter leaves such output bindings unresolved.
+Column dependency availability also differs for schema-bound and non-schema-bound objects; see
+[Microsoft's catalog contract](https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
 
 ## What you can customise
 
