@@ -1979,6 +1979,31 @@ export class NavigationEngine implements IHopStateMachine {
     return result;
   }
 
+  /** Recovers established scalar obligations for a follow-up without inferring new callers. */
+  private supplementCarryFor(nodeId: string, selectedTask?: InvestigationTask): ColumnCarry {
+    const ordinary: ColumnCarry = { kind: 'carry', columns: this.tracer?.targetColumns ?? [] };
+    if (!this.tracer || this.nodeMap.get(nodeId)?.type !== 'function') return ordinary;
+    const targets = uniqueScalarReturnTargets(
+      selectedTask?.kind === 'column_lineage' && selectedTask.returnTargets
+        ? selectedTask.returnTargets
+        : this.taskLedger.investigationTasks.flatMap(task =>
+          task.nodeId === nodeId && task.kind === 'column_lineage' ? task.returnTargets ?? [] : []),
+    );
+    if (targets.length) {
+      const outputs = targets.map(target => {
+        const bound = resolveScalarReturnTarget(nodeId, target, this.nodeMap, this.store);
+        if (!bound || !this.scopeNodeIds.has(bound.node)) {
+          throw new InvalidEngineCheckpointError(['engineInternals.investigationTasks.returnTargets']);
+        }
+        return bound;
+      });
+      return { kind: 'scalar_return', outputs };
+    }
+    return getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length
+      ? ordinary
+      : { kind: 'row_role_only' };
+  }
+
   /**
    * Extends a completed exploration with additional nodes for analysis.
    *
@@ -2030,11 +2055,28 @@ export class NavigationEngine implements IHopStateMachine {
 
     const admission = this.admitSupplementTargets(requested.map(request => request.nodeId));
     const unconnectedIds = new Set(admission.skipped.map(skip => skip.nodeId.toLowerCase()));
+    const admittedIds = new Set(admission.admitted);
+    // Validate every recovered binding before any target is unpruned or queued.
+    const prepared = requested.map(request => {
+      const id = resolveModelNodeId(request.nodeId, this.nodeMap);
+      const selectedTask = request.taskId ? this.taskLedger.getTask(request.taskId) : undefined;
+      const carry: ColumnCarry = id && admittedIds.has(id)
+        ? this.supplementCarryFor(id, selectedTask)
+        : { kind: 'carry', columns: this.tracer?.targetColumns ?? [] };
+      const replaceTask = !!selectedTask && (carry.kind === 'row_role_only'
+        || (carry.kind === 'scalar_return' && !(selectedTask.kind === 'column_lineage' && selectedTask.returnTargets)));
+      return {
+        ...request,
+        carry,
+        existingTaskId: replaceTask ? undefined : request.taskId,
+        parentTaskId: replaceTask ? request.taskId : undefined,
+      };
+    });
 
     const agendaBefore = this._agenda.length;
     let skipped = admission.skipped.length;
     const skippedDetails: SupplementSkip[] = [...admission.skipped];
-    for (const request of requested) {
+    for (const request of prepared) {
       const raw = request.nodeId;
       const id = resolveModelNodeId(raw, this.nodeMap);
       if (!id) {
@@ -2070,16 +2112,16 @@ export class NavigationEngine implements IHopStateMachine {
       if (wasVisited) this.visited.delete(id);
       const existingDepth = this.depthFromOrigin.get(id);
       const depth = typeof existingDepth === 'number' ? existingDepth : 0;
-      const supplementColumns = this.tracer?.targetColumns;
       if (request.leadId) this.taskLedger.scheduleLead(request.leadId);
       for (const lead of this.taskLedger.pendingLeads) {
         if (lead.status === 'pending' && lead.nodeId.toLowerCase() === id.toLowerCase()) this.taskLedger.scheduleLead(lead.id);
       }
       this.enqueueHop(id, request.question, depth, 3, {
-        carry: { kind: 'carry', columns: supplementColumns ?? [] },
+        carry: request.carry,
         freshScopeExpansion: wasNewToScope,
         reactivated: wasVisited,
-        existingTaskId: request.taskId,
+        existingTaskId: request.existingTaskId,
+        parentTaskId: request.parentTaskId,
       });
     }
 

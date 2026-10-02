@@ -615,6 +615,12 @@ upstream list can document local production. Multiple callers sharing a column
 name remain separate obligations. Existing queued tasks merge demands without
 changing traversal order or scheduling a second visit.
 
+A completed function follow-up retains the selected task's qualified destinations,
+or unions its prior scalar tasks when the function is named directly. Bindings are
+revalidated before the follow-up changes engine state. A columnless function with
+no established return binding receives a BB visit with the unavailable-binding
+diagnostic; a follow-up never guesses new caller obligations.
+
 Checkpoints with scalar return carry or qualified task targets use
 `snapshotVersion: 2`; ordinary records remain version 1. The current decoder
 reads both, rejects qualified fields in version 1 and inconsistent projections,

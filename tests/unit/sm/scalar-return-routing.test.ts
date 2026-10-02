@@ -180,6 +180,74 @@ describe('declared scalar return routing', () => {
     const { engine, graph } = start(); const checkpoint = engine.toJSON();
     expect(() => NavigationEngine.fromJSON(checkpoint, world([]).model, graph, () => {}, {})).toThrow('invalid or incompatible');
   });
+  it.each([false, true])('retains scalar caller bindings on a completed follow-up and queued restore (restore=%s)', restore => {
+    const started = start();
+    let engine = started.engine;
+    engine.getHopContext();
+    expect(engine.submitFindings(flow())).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toEqual({ done: true });
+    if (restore) engine = NavigationEngine.fromJSON(engine.toJSON(), started.model, started.graph, () => {}, {});
+    expect(engine.supplementAgenda([fn, fn])).toMatchObject({ ok: true, agendaed: 1 });
+    const queued = engine.toJSON();
+    expect(queued.agenda).toMatchObject([{ activeColumns: ['Gross'], columnCarry: { kind: 'scalar_return', outputs: [target] } }]);
+    engine = NavigationEngine.fromJSON(queued, started.model, started.graph, () => {}, {});
+    expect(engine.getHopContext()).toMatchObject({ analysis_mode: 'ct', caller_output_targets: [target] });
+    expect(submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns).safeParse({ ...flow(), sections: { technical: 'Scalar follow-up' } }).success).toBe(true);
+    const before = structuredClone(engine.columnAspect!.edges);
+    expect(engine.submitFindings({ ...flow(), column_flow: [] })).toMatchObject({ code: 'route_validation_failed' });
+    expect(engine.columnAspect!.edges).toEqual(before);
+    expect(engine.submitFindings(flow())).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges.at(-1)).toMatchObject({ hop_node: fn, from_node: tax, from_col: 'Rate', to_node: caller, to_col: 'Gross' });
+    expect(engine.getHopContext()).toEqual({ done: true });
+    expect(engine.toJSON().hopCount).toBe(3);
+  });
+  it('keeps an unbound columnless function under BB when supplemented', () => {
+    const { engine } = start([]);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...flow(), column_flow: [] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toEqual({ done: true });
+    expect(engine.supplementAgenda([fn])).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ analysis_mode: 'bb' });
+    expect(engine.peekHopContext()).toMatchObject({ current_task: expect.stringContaining('No declared scalar caller output binding') });
+    expect(engine.peekHopContext()?.caller_output_targets).toBeUndefined();
+    expect(engine.submitFindings({ ...flow(), column_flow: [] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toEqual({ done: true });
+  });
+  it('rejects a stale recovered binding before mutating the completed engine', () => {
+    const { engine, model } = start();
+    engine.getHopContext();
+    expect(engine.submitFindings(flow())).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toEqual({ done: true });
+    const before = engine.toJSON();
+    model.nodes[0]!.columns![0]!.expressionDependencies = [];
+    expect(() => engine.supplementAgenda([caller, fn])).toThrow('invalid or incompatible');
+    expect(engine.toJSON()).toEqual(before);
+  });
+  it.each(['scalar', 'ordinary', 'unbound'] as const)('preserves pending-lead accounting on a %s function follow-up', kind => {
+    const { engine, model, graph } = kind === 'unbound' ? start([]) : start();
+    engine.getHopContext();
+    expect(engine.submitFindings(kind === 'unbound' ? { ...flow(), column_flow: [] } : flow())).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toEqual({ done: true });
+    const checkpoint = engine.toJSON();
+    const ledger = new TaskLedger();
+    ledger.restore(checkpoint.engineInternals.investigationTasks, checkpoint.engineInternals.pendingLeads);
+    const task = kind === 'scalar'
+      ? ledger.investigationTasks.find(task => task.kind === 'column_lineage' && task.returnTargets)!
+      : ledger.ensureTask({ kind: 'column_lineage', source: 'model', question: 'Recheck scalar contribution', nodeId: fn, parentTaskId: ledger.investigationTasks[0]!.id, activeColumns: ['Gross'], createdHop: engine.currentHop });
+    ledger.setTaskStatus(task.id, 'deferred');
+    const lead = ledger.ensureLead({ taskId: task.id, nodeId: fn, fromNodeId: caller, reason: 'depth_boundary', schema: 'ct', valueToUser: 'Recheck scalar contribution', createdHop: engine.currentHop });
+    checkpoint.engineInternals.investigationTasks = [...ledger.investigationTasks];
+    checkpoint.engineInternals.pendingLeads = [...ledger.pendingLeads];
+    let followup = NavigationEngine.fromJSON(checkpoint, model, graph, () => {}, {});
+    expect(followup.supplementAgenda([], [lead.id])).toMatchObject({ ok: true, agendaed: 1 });
+    followup = NavigationEngine.fromJSON(followup.toJSON(), model, graph, () => {}, {});
+    expect(followup.getHopContext()).toMatchObject({ analysis_mode: kind === 'unbound' ? 'bb' : 'ct' });
+    expect(followup.peekHopContext()?.caller_output_targets).toEqual(kind === 'unbound' ? undefined : [target]);
+    expect(followup.submitFindings(kind === 'unbound' ? { ...flow(), column_flow: [] } : flow())).toHaveProperty('ok', true);
+    expect(followup.getHopContext()).toEqual({ done: true });
+    expect(followup.toJSON().engineInternals.pendingLeads.find(item => item.id === lead.id)?.status).toBe('resolved');
+    expect(followup.investigationTasks.find(item => item.id === task.id)?.status).toBe('resolved');
+  });
   it('merges two real caller tasks and resumes both same-name obligations without double commits', () => {
     const { model } = world(); const second = '[ct].[second]', root = '[ct].[root]';
     model.nodes.push({ ...model.nodes[0]!, id: second, fullName: second, name: 'second' });
@@ -212,6 +280,16 @@ describe('declared scalar return routing', () => {
     const task = inconsistent.engineInternals.investigationTasks.find(task => task.kind === 'column_lineage' && task.returnTargets);
     if (task?.kind === 'column_lineage') task.activeColumns.push('Other');
     expect(() => parseNavigationSnapshot(inconsistent)).toThrow();
+    expect(resumed.getHopContext()).toEqual({ done: true });
+    expect(resumed.supplementAgenda([fn])).toMatchObject({ ok: true, agendaed: 1 });
+    const followup = NavigationEngine.fromJSON(resumed.toJSON(), fullModel, graph, () => {}, {});
+    expect(followup.getHopContext().caller_output_targets).toEqual(hop.caller_output_targets);
+    const followupEdges = structuredClone(followup.columnAspect!.edges);
+    expect(followup.submitFindings(flow())).toMatchObject({ code: 'route_validation_failed' });
+    expect(followup.columnAspect!.edges).toEqual(followupEdges);
+    expect(followup.submitFindings({ ...flow(), column_flow: hop.caller_output_targets!.map(returns_to => ({ ...flow().column_flow[0]!, returns_to })) })).toHaveProperty('ok', true);
+    expect(followup.getHopContext()).toEqual({ done: true });
+    expect(followup.toJSON().hopCount).toBe(5);
   });
   it('keeps same-spelling caller targets as separate obligations and task identities', () => {
     const { model } = world(); const second = '[ct].[second]';
