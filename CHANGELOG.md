@@ -3,7 +3,7 @@
 ## [1.2.3] - 2026-10-01
 
 ### Fixed
-- DACPAC import preserves UDF parameters and return types when the function signature is stored inside its implementation, so analysis receives the complete function definition.
+- Parameterized functions imported from DACPACs now retain their parameters and return types when the signature is stored inside the function implementation.
 - Column traces stage the writer→carrier relation of a writer procedure even when the hop omits `writes_to`, so the column-lineage view stays one chain connected to the traced origin instead of detaching the branches a writer feeds ([#59](https://github.com/ChrisDevRepo/vscode_data_lineage/issues/59)).
 
 ## [1.2.2] - 2026-10-01
@@ -12,7 +12,7 @@
 - Built-in SQL Server connections (SQL login or Microsoft Entra ID) replace the SQL Server (mssql) extension's connection-sharing API, which Microsoft is retiring ([#57](https://github.com/ChrisDevRepo/vscode_data_lineage/issues/57)). Select them with `dataLineageViz.database.connectionProvider`; the mssql extension stays the default for now.
 
 ### Fixed
-- DACPAC import reads object and column names and data types correctly.
+- DACPAC import handles encoded names, dotted column names, `(max)` lengths, CLR type names and foreign-key actions.
 
 ### Dependencies
 - New for built-in connections: tedious, @microsoft/vscode-azext-azureauth.
