@@ -3595,10 +3595,10 @@ export class NavigationEngine implements IHopStateMachine {
    * `column_flow` and its routing question.
    *
    * @remarks
-   * A neighbour the column_flow names carries those columns. A neighbour whose question names an
-   * active traced column carries that column too — an incoming question about a source column is
-   * a column task even before the destination name is known, so the asked hop gets the rider
-   * rather than a row-role visit that cannot record the answer. Otherwise, in CT, a kept
+   * A neighbour the column_flow names carries those columns. Upstream question mentions carry
+   * only columns declared on that neighbour; missing metadata does not establish a column task.
+   * Downstream questions retain incoming source names before the destination name is known.
+   * Otherwise, in CT, a kept
    * neighbour is explored for its row-set effect (`row_role_only`). A plain BB session holds no
    * tracer, so it carries an inert empty list (a `row_role_only` carry is CT-only and refused by
    * the BB checkpoint schema). A `row_role_only` that contradicts an EARLIER hop's committed
@@ -3625,7 +3625,13 @@ export class NavigationEngine implements IHopStateMachine {
     }));
     if (outputs.length) return { kind: 'scalar_return', outputs };
     const cols = carryByNode.get(nodeId);
-    const named = this.activeColumnsNamedIn(question);
+    const mentioned = this.activeColumnsNamedIn(question);
+    // Upstream mentions must belong to the neighbor; downstream tasks retain incoming source names.
+    const named = this.columnTraceDirection() === 'upstream'
+      ? getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length
+        ? this.matchColumnsToNode(nodeId, mentioned).resolved
+        : []
+      : mentioned;
     const columns = [...new Set([...(cols ?? []), ...named])];
     return columns.length > 0 ? { kind: 'carry', columns } : { kind: 'row_role_only' };
   }
