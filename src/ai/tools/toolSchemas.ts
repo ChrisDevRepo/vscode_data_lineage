@@ -3,6 +3,7 @@
  * Zero VS Code imports — pure schema definitions.
  */
 import { z } from 'zod';
+import { droppedScalarReturnFieldError } from '../support/inputNormalization';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -582,6 +583,7 @@ const OUT_COL_DESCRIPTION = 'Output column resolved from this hop\'s column task
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
   writes_to: ColumnFlowWritesToObject.nullish().describe('Actual destination object and column for this procedure\'s output, as declared by its SQL; null when it writes no table.'),
+  returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
     'Two states by focus: at a bodied focus, the real upstream columns the node READS that contribute to out_col ' +
     '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the neighbours ' +
@@ -900,6 +902,7 @@ function capturedSectionSchemaForClassification(
 export interface SubmitFindingsHopColumns {
   readonly outCols: readonly string[] | null;
   readonly writesTo: boolean;
+  readonly returnTargets?: readonly { readonly node: string; readonly col: string }[];
 }
 
 /** Projects {@link ColumnFlowSchema} onto one hop: `out_col` as the hop's tracked-column enum, `writes_to` only for a procedure focus. */
@@ -909,10 +912,19 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     ? ColumnFlowEntrySchema.shape.out_col
     : z.enum([first, ...rest]).describe(OUT_COL_DESCRIPTION);
   const shape = {
-    ...ColumnFlowEntrySchema.shape,
     out_col: outCol,
+    upstream_columns: ColumnFlowEntrySchema.shape.upstream_columns,
     writes_to: ColumnFlowEntrySchema.shape.writes_to.unwrap().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
   };
+  if (hop.returnTargets?.length) {
+    const destinations = hop.returnTargets.map(target => z.object({
+      out_col: z.literal(target.col),
+      returns_to: z.object({ node: z.literal(target.node), col: z.literal(target.col) }).strict(),
+      upstream_columns: shape.upstream_columns,
+    }).strict());
+    const entry = destinations.length === 1 ? destinations[0]! : z.union(destinations as [typeof destinations[number], typeof destinations[number], ...Array<typeof destinations[number]>]);
+    return z.array(entry).describe('One entry per qualified caller_output_target; returns_to is required. Read the supplied caller SQL and function body to identify real contributors; [] upstream only when the target terminates locally.');
+  }
   const entry = (hop.writesTo
     ? z.object(shape)
     : z.object({ out_col: shape.out_col, upstream_columns: shape.upstream_columns })
@@ -956,7 +968,7 @@ export function submitFindingsSchemaForMode(
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
 ): z.ZodType<FlatSubmitFindings> {
-  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}` : '';
+  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}` : '';
   if (!classification && !hopKey) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
@@ -1610,6 +1622,10 @@ export function parseToolInput<T extends z.ZodType>(
   | { readonly ok: true; readonly data: z.output<T> }
   | { readonly ok: false; readonly error: ToolRejection } {
   const parsed = schema.safeParse(input);
-  if (parsed.success) return { ok: true, data: parsed.data };
+  if (parsed.success) {
+    const returnFieldError = droppedScalarReturnFieldError(input, parsed.data);
+    if (returnFieldError) return { ok: false, error: rejectionFromZodError(returnFieldError, { code: REJECTION_CODES.invalidInput, input, schema }) };
+    return { ok: true, data: parsed.data };
+  }
   return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
 }

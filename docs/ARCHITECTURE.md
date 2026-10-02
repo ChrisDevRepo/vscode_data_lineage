@@ -596,6 +596,33 @@ DIRECT means the upstream value reaches the output; INDIRECT means no value
 crosses the edge and the node only decided which rows appear. The field is
 optional on both contracts, and the engine never fills it in.
 
+A compiler-declared scalar projection carries its qualified real caller output into
+an admitted function task. The optional column `expressionDependencies` metadata
+must identify the loaded local scalar function (`SqlScalarFunction`, or catalog
+`FN`/`FS`); external, unresolved, table-valued, and absent declarations cannot
+bind a return. Identity preserves identifier boundaries, including embedded dots.
+The hop exposes exact `caller_output_targets` and loaded `caller_objects` SQL.
+The model binds actual arguments to formal parameters and authors contributors;
+the engine does not infer contributors from a declaration or SQL text.
+
+On this task, each destination requires one `column_flow` entry with `returns_to`
+matching the caller node and column, and `out_col` matching that column. This
+relation is separate from, and excludes, `writes_to`. Contributor edges land on
+the real caller output with the function as `hop_node`; scalar functions acquire
+no synthetic columns, formal-parameter endpoints, or writer edges. Missing flow,
+missing destinations, or a prune cannot settle the task. An explicit empty
+upstream list can document local production. Multiple callers sharing a column
+name remain separate obligations. Existing queued tasks merge demands without
+changing traversal order or scheduling a second visit.
+
+Checkpoints with scalar return carry or qualified task targets use
+`snapshotVersion: 2`; ordinary records remain version 1. The current decoder
+reads both, rejects qualified fields in version 1 and inconsistent projections,
+and revalidates declared bindings against the loaded model on resume. Missing
+binding evidence leaves ordinary row-only function visits under BB with an
+unavailable-binding diagnostic; those visits do not prove a complete directed
+column path. Older metadata and checkpoints never acquire guessed bindings.
+
 Scheduling, the inbox, and node status use the shared BB path. Both modes
 expose the same structural neighbors and routing eligibility. A neighbor that
 only shapes rows is still explored under BB; column state does not narrow

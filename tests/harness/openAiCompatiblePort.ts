@@ -634,7 +634,9 @@ export class OpenAiCompatiblePort implements ModelPort {
               `[AI] provider-port decoded stringified arguments tool=${part.toolName} paths=${trunc(sanitizeForLog(decoded.paths.join(',')), 200)}`,
             );
           }
-          const parsed = definition.inputSchema.safeParse(effectiveInput);
+          const initialParse = definition.inputSchema.safeParse(effectiveInput);
+          const returnFieldError = initialParse.success && part.toolName === 'lineage_submit_findings' ? inputNormalization.droppedScalarReturnFieldError(effectiveInput, initialParse.data) : undefined;
+          const parsed = returnFieldError ? { success: false as const, error: returnFieldError } : initialParse;
           const droppedKeyPaths = (inputNormalization as Record<string, unknown>).droppedKeyPaths as
             ((raw: unknown, parsedValue: unknown) => string[]) | undefined;
           const dropped = parsed.success && droppedKeyPaths ? droppedKeyPaths(effectiveInput, parsed.data) : [];

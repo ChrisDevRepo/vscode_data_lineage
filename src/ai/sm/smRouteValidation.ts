@@ -41,6 +41,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours on this focus\'s carrier side — the available routes above list them — carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
   self_loop_column:
     'Point writes_to at the real downstream target this node writes to, or omit writes_to so it defaults to the focus node - an upstream_columns entry cannot be identical to its own writes_to target (the offending node.col is named above).',
+  bad_return_target:
+    'Supply one column_flow entry for each exact caller_output_targets destination, with returns_to matching that node and column and out_col matching its column. Do not use writes_to on scalar-return tasks; identify real contributors from the supplied caller and function SQL.',
   bad_writes_to_target:
     'Point writes_to at the node and column this hop actually writes — usually the focus itself, so omit writes_to and let it default. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
   pruned_contributor:
@@ -82,6 +84,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   bad_contributor_col: REJECTION_CODES.contributorColNotOnSource,
   non_writer_continuation: REJECTION_CODES.continuationNotWriter,
   self_loop_column: REJECTION_CODES.columnSelfLoop,
+  bad_return_target: REJECTION_CODES.routeValidationFailed,
   bad_writes_to_target: REJECTION_CODES.writesToNamesReader,
   pruned_contributor: REJECTION_CODES.prunedContributor,
   prune_absent: REJECTION_CODES.routeValidationFailed,

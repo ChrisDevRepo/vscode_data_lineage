@@ -29,7 +29,7 @@ import {
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 import { rejectionFromZodError, zodFieldRepairHint, zodUnrecognizedKeys } from '../support/toolErrorEnvelope';
-import { coerceStringifiedArguments, droppedKeyPaths } from '../support/inputNormalization';
+import { coerceStringifiedArguments, droppedKeyPaths, droppedScalarReturnFieldError } from '../support/inputNormalization';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
@@ -192,7 +192,9 @@ export class VscodeModelPort implements ModelPort {
           };
         } else {
           const decodedArgs = this.decodeStringifiedArguments(toolName, args, toModelJsonSchema(definition.inputSchema));
-          const parsed = definition.inputSchema.safeParse(decodedArgs);
+          const initialParse = definition.inputSchema.safeParse(decodedArgs);
+          const returnFieldError = initialParse.success && toolName === 'lineage_submit_findings' ? droppedScalarReturnFieldError(decodedArgs, initialParse.data) : undefined;
+          const parsed = returnFieldError ? { success: false as const, error: returnFieldError } : initialParse;
           const dropped = parsed.success ? droppedKeyPaths(decodedArgs, parsed.data) : [];
           if (dropped.length > 0) {
             this.options.debugLog?.(

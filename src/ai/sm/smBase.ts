@@ -22,11 +22,12 @@ import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnEndpointKeyFactory, reachableColumnEndpoints, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
+import { resolveScalarReturnTarget, uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
@@ -225,7 +226,7 @@ function cloneAgendaEntry(entry: AgendaEntry): AgendaEntry {
     depth: entry.depth,
     ...(entry.activeColumns ? { activeColumns: [...entry.activeColumns] } : {}),
     ...(entry.columnCarry
-      ? { columnCarry: entry.columnCarry.kind === 'carry' ? { kind: 'carry' as const, columns: [...entry.columnCarry.columns] } : entry.columnCarry }
+      ? { columnCarry: entry.columnCarry.kind === 'carry' ? { kind: 'carry' as const, columns: [...entry.columnCarry.columns] } : entry.columnCarry.kind === 'scalar_return' ? { kind: 'scalar_return' as const, outputs: entry.columnCarry.outputs.map(target => ({ ...target })) } : { ...entry.columnCarry } }
       : {}),
     ...(entry.lineageQuestions ? { lineageQuestions: [...entry.lineageQuestions] } : {}),
   };
@@ -761,13 +762,14 @@ export class NavigationEngine implements IHopStateMachine {
    * @param preferredColumns - Columns this task tracks; an empty list creates an object task.
    */
   private taskInputFor(
-    common: Omit<InvestigationTaskInput, 'kind' | 'activeColumns'>,
+    common: Omit<InvestigationTaskInput, 'kind' | 'activeColumns' | 'returnTargets'>,
     bbKind: 'root' | 'analytical',
     preferredColumns: readonly string[] | undefined,
+    returnTargets?: readonly ScalarReturnTarget[],
   ): InvestigationTaskInput {
     if (!this.tracer || !preferredColumns?.length) return { ...common, kind: bbKind };
     const columns = preferredColumns;
-    return { ...common, kind: 'column_lineage', activeColumns: [...columns] as [string, ...string[]] };
+    return { ...common, kind: 'column_lineage', activeColumns: [...columns] as [string, ...string[]], ...(returnTargets?.length ? { returnTargets: returnTargets.map(target => ({ ...target })) } : {}) };
   }
 
   /** Creates a structurally mode-valid deferred task without changing agenda state. */
@@ -1091,6 +1093,10 @@ export class NavigationEngine implements IHopStateMachine {
     const refs = new Map<string, { node: string; col: string }>();
     for (const task of this.getCurrentTasks()) {
       if (task.kind !== 'column_lineage') continue;
+      if (task.returnTargets) {
+        for (const target of task.returnTargets) refs.set(`${target.node}|${normalizeColName(target.col)}`, { ...target });
+        continue;
+      }
       const columns = new Set([...this.tracer.activeColumns, ...task.activeColumns]);
       for (const col of columns) {
         const normalized = normalizeColName(col);
@@ -1381,6 +1387,22 @@ export class NavigationEngine implements IHopStateMachine {
     return {
       outCols: this.columnTraceDirection() === 'upstream' && active.length > 0 ? [...active] : null,
       writesTo: focus?.type === 'procedure',
+      ...(this.currentReturnTargets().length ? { returnTargets: this.currentReturnTargets() } : {}),
+    };
+  }
+
+  /** Qualified destinations carried by the active task ledger, without column-name collapse. */
+  private currentReturnTargets(): ScalarReturnTarget[] {
+    return uniqueScalarReturnTargets(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' ? task.returnTargets ?? [] : []));
+  }
+
+  /** Context evidence for the declared scalar return task, supplied only at its function hop. */
+  private scalarReturnContext(): Pick<HopContext, 'caller_output_targets' | 'caller_objects'> {
+    const targets = this.currentReturnTargets();
+    if (!targets.length) return {};
+    return {
+      caller_output_targets: targets,
+      caller_objects: [...new Set(targets.map(target => target.node))].map(node => ({ node, ddl: getNodeDdl(node, this.nodeMap, this.store ?? undefined) ?? '' })),
     };
   }
 
@@ -2104,7 +2126,14 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
-      if (this.tracer) {
+      if (candidate.columnCarry?.kind === 'scalar_return') {
+        for (const target of candidate.columnCarry.outputs) {
+          if (!this.scopeNodeIds.has(target.node) || !resolveScalarReturnTarget(candidate.nodeId, target, this.nodeMap, this.store)) {
+            throw new InvalidEngineCheckpointError(['agenda.columnCarry.outputs']);
+          }
+        }
+        candidate.activeColumns = [...new Set(candidate.columnCarry.outputs.map(target => target.col))];
+      } else if (this.tracer) {
         const spineBound = this.tracer.determineActiveColumnsForCandidate(
           candidate.nodeId,
           candidate.activeColumns ?? [],
@@ -2199,6 +2228,7 @@ export class NavigationEngine implements IHopStateMachine {
       analysis_mode: this.currentHopAnalysisMode,
       agenda_remaining: this._agenda.length,
       focus_node: focusNode,
+      ...this.scalarReturnContext(),
       neighbors: this.buildNeighborList(entry.nodeId),
       working_memory: workingMemory,
     };
@@ -2273,6 +2303,7 @@ export class NavigationEngine implements IHopStateMachine {
       analysis_mode: this.currentHopAnalysisMode,
       agenda_remaining: this._agenda.length,
       focus_node: focusNode,
+      ...this.scalarReturnContext(),
       neighbors: this.buildNeighborList(focusId),
       current_task: this.currentFocusQuestion ?? this._lastCurrentTask ?? undefined,
     };
@@ -2327,7 +2358,10 @@ export class NavigationEngine implements IHopStateMachine {
         detail: { expected, got: focusId },
       });
     }
-    if (params.verdict === 'end_branch') return this.submitEndBranch(params, focusId);
+    if (params.verdict === 'end_branch') {
+      if (this.currentReturnTargets().length) return buildSubmissionRejection({ routes: [{ kind: 'bad_return_target', id: focusId, path: 'column_flow', reason: 'A declared scalar return task must explicitly account for every real caller output; pruning does not settle those destinations.' }] })!.rejection;
+      return this.submitEndBranch(params, focusId);
+    }
     const finding: HopFindingKept = params;
     const lengthViolations: Array<{ path: string; chars: number; limit: number }> = [];
     if (finding.badge_label !== undefined && finding.badge_label.length > SUBMIT_FINDINGS_BADGE_LABEL_MAX) {
@@ -2375,8 +2409,8 @@ export class NavigationEngine implements IHopStateMachine {
       carryByNode.get(nid)!.add(col);
     };
     const incomingRefs = this.incomingColumnRefs();
-    if (this.tracer && finding.column_flow) {
-      const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, incomingRefs);
+    if (this.tracer && (finding.column_flow || this.currentReturnTargets().length)) {
+      const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, incomingRefs, this.currentReturnTargets());
       invalidRoutes.push(...validated.invalidRoutes);
       for (const edge of validated.stagedEdges) edge.hop = this.hopCount;
       stagedColumnEdges.push(...validated.stagedEdges);
@@ -2469,6 +2503,13 @@ export class NavigationEngine implements IHopStateMachine {
       if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid)) continue;
       requested.add(nid);
       routeRequests.push({ nodeId: nid, question });
+    }
+    // A queued function may owe a second caller even though no new traversal is required.
+    for (const nid of focusNeighborIds) {
+      if (!this._agenda.has(nid) || requested.has(nid) || pruneNeighborIds.has(nid)) continue;
+      if (this.neighborCarryFor(nid, carryByNode, '').kind !== 'scalar_return') continue;
+      requested.add(nid);
+      routeRequests.push({ nodeId: nid, question: '' });
     }
     for (const nid of this.requiredNeighborIds(focusId)) {
       if (requested.has(nid) || pruneNeighborIds.has(nid)) continue;
@@ -3352,12 +3393,15 @@ export class NavigationEngine implements IHopStateMachine {
       return;
     }
 
-    const activeColumns = carry.kind === 'carry' ? carry.columns.filter(Boolean) : undefined;
+    const activeColumns = carry.kind === 'carry' ? carry.columns.filter(Boolean) : carry.kind === 'scalar_return' ? [...new Set(carry.outputs.map(target => target.col))] : undefined;
     if (!this.tracer && activeColumns?.length) {
       throw new Error('BB agenda tasks must not carry active columns');
     }
     if (SCRIPT_TYPES.has(node.type)) {
-      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId);
+      if (this.tracer && node.type === 'function' && carry.kind === 'row_role_only' && !getNodeColumns(node.id, this.nodeMap, this.store ?? undefined)?.length) {
+        question = `${question}${question ? '\n' : ''}No declared scalar caller output binding is available for this function. This visit does not resolve a caller's column contribution; do not invent function columns or return destinations.`;
+      }
+      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined);
       const alreadyQueued = this._agenda.has(targetId);
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       if (!alreadyQueued && (freshScopeExpansion || reactivated)) {
@@ -3369,7 +3413,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     if (priority === 3) {
-      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId);
+      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined);
       const alreadyQueued = this._agenda.has(targetId);
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       if (!alreadyQueued && !SCRIPT_TYPES.has(node.type)) {
@@ -3468,6 +3512,16 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>, question: string): ColumnCarry {
     if (!this.tracer) return { kind: 'carry', columns: [] };
+    const endpoints = [
+      ...this.incomingColumnRefs(),
+      ...(this.currentFocusNodeId ? this.tracer.activeColumns.map(col => ({ node: this.currentFocusNodeId!, col })) : []),
+    ];
+    const outputs = uniqueScalarReturnTargets(endpoints.flatMap(target => {
+      if (!this.scopeNodeIds.has(target.node)) return [];
+      const bound = resolveScalarReturnTarget(nodeId, target, this.nodeMap, this.store);
+      return bound ? [bound] : [];
+    }));
+    if (outputs.length) return { kind: 'scalar_return', outputs };
     const cols = carryByNode.get(nodeId);
     const named = this.activeColumnsNamedIn(question);
     const columns = [...new Set([...(cols ?? []), ...named])];
@@ -3506,7 +3560,7 @@ export class NavigationEngine implements IHopStateMachine {
    * @returns `ct` when the branch may still carry a traced column, `bb` when it carries none.
    */
   private carryAnalysisMode(carry: ColumnCarry): 'bb' | 'ct' {
-    return this.hopModeFromColumnList(carry.kind === 'row_role_only' ? [] : carry.columns);
+    return this.hopModeFromColumnList(carry.kind === 'row_role_only' ? [] : carry.kind === 'scalar_return' ? carry.outputs.map(target => target.col) : carry.columns);
   }
 
   /** Empty or absent columns (or no tracer) dispatch as BB; a named column set is CT. */
@@ -3527,7 +3581,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private carryToRecord(carry: ColumnCarry): { columnCarry?: ColumnCarry } {
     if (!this.tracer) return {};
-    return { columnCarry: carry.kind === 'carry' ? { kind: 'carry', columns: [...carry.columns] } : carry };
+    return { columnCarry: carry.kind === 'carry' ? { kind: 'carry', columns: [...carry.columns] } : carry.kind === 'scalar_return' ? { kind: 'scalar_return', outputs: carry.outputs.map(target => ({ ...target })) } : { ...carry } };
   }
 
   /**
@@ -3540,6 +3594,7 @@ export class NavigationEngine implements IHopStateMachine {
   private agendaColumnsFor(carry: ColumnCarry, activeColumns: string[] | undefined): string[] | undefined {
     if (!this.tracer) return undefined;
     if (carry.kind === 'row_role_only') return [];
+    if (carry.kind === 'scalar_return') return [...new Set(carry.outputs.map(target => target.col))];
     if (activeColumns !== undefined) return activeColumns;
     const fallback = this.tracer.targetColumns;
     return fallback ? [...fallback] : undefined;
@@ -3553,6 +3608,7 @@ export class NavigationEngine implements IHopStateMachine {
     activeColumns: string[] | undefined,
     existingTaskId?: string,
     parentTaskId: string | undefined = this.currentFocusTaskIds[0],
+    returnTargets?: readonly ScalarReturnTarget[],
   ): InvestigationTask {
     const existing = existingTaskId ? this.taskLedger.getTask(existingTaskId) : undefined;
     if (existing) return existing;
@@ -3562,7 +3618,7 @@ export class NavigationEngine implements IHopStateMachine {
       nodeId,
       parentTaskId,
       createdHop: this.hopCount,
-    }, 'analytical', activeColumns));
+    }, 'analytical', activeColumns, returnTargets));
   }
 
   /**
@@ -3834,7 +3890,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public toJSON(): SmState {
     const snapshot: SmState = {
-      snapshotVersion: 1,
+      snapshotVersion: this.taskLedger.investigationTasks.some(task => task.kind === 'column_lineage' && task.returnTargets) || this._agenda.entries.some(entry => entry.columnCarry?.kind === 'scalar_return') ? 2 : 1,
       columnAspect: this.tracer?.state ?? null,
       status: this._status,
       hopCount: this.hopCount,
@@ -4011,6 +4067,12 @@ export class NavigationEngine implements IHopStateMachine {
     engine._pendingLineageQuestions = [...(snapshot.lineageQuestionsLastHop ?? [])];
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
     engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);
+    for (const task of engine.taskLedger.investigationTasks) {
+      if (task.kind !== 'column_lineage' || !task.returnTargets) continue;
+      if (!task.nodeId || task.returnTargets.some(target => !engine.scopeNodeIds.has(target.node) || !resolveScalarReturnTarget(task.nodeId!, target, engine.nodeMap, engine.store))) {
+        throw new InvalidEngineCheckpointError(['engineInternals.investigationTasks.returnTargets']);
+      }
+    }
     log('debug', '[Prune] restore does not carry pending neighbor-prune votes; a node mid-vote at checkpoint time resolves on the votes cast after this restore.');
 
     return engine;

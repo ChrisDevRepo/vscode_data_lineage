@@ -5,6 +5,7 @@
  * Keeps boundary normalization deterministic and reusable across tool handlers,
  * state-machine init, and prompt rendering.
  */
+import { z } from 'zod';
 import { parsePartialJson } from '@langchain/core/output_parsers';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
@@ -45,6 +46,13 @@ export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): strin
   if (!raw || typeof raw !== 'object' || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
   return Object.entries(raw as Record<string, unknown>).flatMap(([key, value]) =>
     key in parsed ? droppedKeyPaths(value, (parsed as Record<string, unknown>)[key], at(key)) : [at(key)]);
+}
+
+/** Rejects a scalar destination that an ordinary hop schema would strip, preserving unrelated legacy strips. */
+export function droppedScalarReturnFieldError(raw: unknown, parsed: unknown): z.ZodError | undefined {
+  const paths = droppedKeyPaths(raw, parsed).filter(path => /^column_flow\.\d+\.returns_to$/.test(path));
+  if (!paths.length) return undefined;
+  return new z.ZodError(paths.map(path => ({ code: 'unrecognized_keys', path: path.split('.').slice(0, -1).map(part => /^\d+$/.test(part) ? Number(part) : part), keys: ['returns_to'], message: 'returns_to is unavailable on this ordinary hop.' })));
 }
 
 /** One field-level ID canonicalization applied to a cloned `submit_findings` payload. */

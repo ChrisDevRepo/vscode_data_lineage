@@ -1,3 +1,4 @@
+import { resolveScalarReturnTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { resolveModelNodeId } from '../support/inputNormalization';
@@ -235,11 +236,18 @@ export class ColumnTracer {
     removedSet: ReadonlySet<string> | undefined,
     traceDirection: 'upstream' | 'downstream',
     incomingRefs?: readonly { node: string; col: string }[],
+    returnTargets: readonly { node: string; col: string }[] = [],
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
 
     const columnFlow = finding.verdict === 'end_branch' ? [] : finding.column_flow ?? [];
+    if (returnTargets.length) {
+      for (const target of returnTargets) {
+        const entries = columnFlow.filter(entry => entry.returns_to && resolveModelNodeId(entry.returns_to.node, nodeMap) === target.node && normalizeColName(entry.returns_to.col) === normalizeColName(target.col));
+        if (entries.length !== 1) invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: 'column_flow', reason: `Scalar caller destination ${target.node}.${target.col} requires exactly one authored returns_to entry.` });
+      }
+    }
     if (columnFlow.length === 0) {
       return { invalidRoutes, stagedEdges };
     }
@@ -272,6 +280,20 @@ export class ColumnTracer {
     for (let entryIndex = 0; entryIndex < columnFlow.length; entryIndex++) {
       const entry = columnFlow[entryIndex];
       const outNorm = normalizeColName(entry.out_col);
+      if (focusNode.type === 'function' && validFocusCols.size === 0 && !entry.returns_to) {
+        invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: 'This function declares no real output columns. Only a supplied scalar caller destination can receive its authored contribution.' });
+        continue;
+      }
+      if (returnTargets.length || entry.returns_to) {
+        const target = entry.returns_to;
+        const bound = target ? resolveScalarReturnTarget(focusId, target, nodeMap, store) : null;
+        if (!bound || entry.writes_to !== undefined || normalizeColName(entry.out_col) !== normalizeColName(bound.col)
+          || !returnTargets.some(expected => expected.node === bound.node && normalizeColName(expected.col) === normalizeColName(bound.col))) {
+          invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.returns_to`, reason: 'returns_to must identify one supplied compiler-declared scalar caller output, match out_col, and exclude writes_to.' });
+          continue;
+        }
+      }
+
       if (traceDirection === 'upstream' && !activeNorm.includes(outNorm)) {
         const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
         invalidRoutes.push(existsOnNode
@@ -280,7 +302,7 @@ export class ColumnTracer {
         continue;
       }
 
-      if (validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
+      if (!entry.returns_to && validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
           invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, available_columns: Array.from(validFocusCols).sort() });
         continue;
       }
@@ -375,6 +397,10 @@ export class ColumnTracer {
           }
         } else {
           const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
+          if (validNeighborCols.size === 0 && neighbor.type === 'function') {
+            invalidRoutes.push({ kind: 'bad_contributor_col', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: 'This function declares no real columns; formal parameters and return_value are not upstream model columns. Its supplied scalar-return task records contributors at the real caller output.' });
+            continue;
+          }
           if (validNeighborCols.size === 0) {
             log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — neighbour declares no columns, accepting unverified`);
           } else if (!validNeighborCols.has(normalizeColName(cont.col))) {
@@ -529,6 +555,11 @@ export function resolveColumnFlowTarget(
   focusId: string,
   nodeMap: Map<string, LineageNode>,
 ): ColumnFlowTargetResolution | null {
+  if (entry.returns_to) {
+    const toNode = resolveModelNodeId(entry.returns_to.node, nodeMap);
+    if (!toNode) return null;
+    return { attributionTo: toNode, attributionCol: entry.returns_to.col, writerEdge: null };
+  }
   if (entry.writes_to?.node) {
     const toNode = resolveModelNodeId(entry.writes_to.node, nodeMap);
     if (!toNode) return null;

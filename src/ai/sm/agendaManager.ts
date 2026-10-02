@@ -46,6 +46,10 @@ export interface AgendaEntry {
 
 /** Unions column demands; a row-only arrival cannot erase an existing demand. */
 function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): ColumnCarry | undefined {
+  if (existing?.kind === 'scalar_return' || incoming?.kind === 'scalar_return') {
+    const outputs = [...(existing?.kind === 'scalar_return' ? existing.outputs : []), ...(incoming?.kind === 'scalar_return' ? incoming.outputs : [])];
+    return { kind: 'scalar_return', outputs: [...new Map(outputs.map(target => [JSON.stringify([target.node.toLowerCase(), target.col.toLowerCase()]), { ...target }])).values()] };
+  }
   if (existing?.kind === 'carry' || incoming?.kind === 'carry') {
     return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : []) };
   }

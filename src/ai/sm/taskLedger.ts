@@ -1,4 +1,4 @@
-import type { InvestigationTask, PendingLead } from './smTypes';
+import type { InvestigationTask, PendingLead, ScalarReturnTarget } from './smTypes';
 
 /**
  * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state.
@@ -26,7 +26,7 @@ export type InvestigationTaskInput = {
   /** Root or analytical task: no traced column rides along. */
   | { kind: 'root' | 'analytical'; activeColumns?: never }
   /** Column-lineage task: the traced columns it must follow, at least one. */
-  | { kind: 'column_lineage'; activeColumns: [string, ...string[]] }
+  | { kind: 'column_lineage'; activeColumns: [string, ...string[]]; returnTargets?: ScalarReturnTarget[] }
 );
 
 /** Normalizes authored questions for exact identity comparison without substring matching. */
@@ -63,7 +63,7 @@ export class TaskLedger {
   /** Returns immutable copies in insertion order. */
   public get investigationTasks(): ReadonlyArray<InvestigationTask> {
     return Array.from(this.tasks.values(), task => task.kind === 'column_lineage'
-      ? { ...task, activeColumns: [...task.activeColumns] as [string, ...string[]] }
+      ? { ...task, activeColumns: [...task.activeColumns] as [string, ...string[]], ...(task.returnTargets ? { returnTargets: task.returnTargets.map(target => ({ ...target })) } : {}) }
       : { ...task });
   }
 
@@ -130,6 +130,9 @@ export class TaskLedger {
       input.nodeId?.toLowerCase() ?? '',
       input.parentTaskId ?? '',
       identityColumns ?? [],
+      ...(input.kind === 'column_lineage' && input.returnTargets
+        ? [input.returnTargets.map(target => [target.node.toLowerCase(), target.col.toLowerCase()]).sort()]
+        : []),
     ]);
     return this.upsertByIdentity(
       this.tasks,
@@ -140,6 +143,7 @@ export class TaskLedger {
       existing => existing,
       id => ({
         ...input,
+        ...(input.kind === 'column_lineage' && input.returnTargets ? { returnTargets: input.returnTargets.map(target => ({ ...target })) } : {}),
         id,
         status: input.status ?? 'pending',
         ...(canonicalColumns ? { activeColumns: canonicalColumns as [string, ...string[]] } : {}),

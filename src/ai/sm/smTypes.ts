@@ -113,6 +113,8 @@ export interface ColumnFlowEntry {
    * a destination from topology or matching column names.
    */
   writes_to?: { node: string; col: string } | null;
+  /** Declared real caller output supplied by a scalar-return task; never a table write. */
+  returns_to?: ScalarReturnTarget;
   /**
    * Real upstream columns that continue this trace. Empty means the active column is
    * produced/terminates here and there is no upstream real column to route.
@@ -250,6 +252,10 @@ export interface HopContext {
   agenda_remaining?: number;
   /** The node currently being analyzed. */
   focus_node?: HopFocusNode;
+  /** Exact compiler-declared real destinations for the active scalar return task. */
+  caller_output_targets?: ScalarReturnTarget[];
+  /** Loaded caller SQL supplied beside formal parameters for semantic argument binding. */
+  caller_objects?: Array<{ node: string; ddl: string }>;
   /** List of immediate neighbors available for further exploration. */
   neighbors?: HopNeighbor[];
   /** The specific sub-goal guiding this hop. */
@@ -333,22 +339,20 @@ export type HopFinding = HopFindingKept | HopFindingEndBranch;
  */
 export type HopSubmission = HopFinding;
 
+/** A qualified real caller column whose expression declares the scalar function. */
+export interface ScalarReturnTarget {
+  readonly node: string;
+  readonly col: string;
+}
+
 /**
- * The per-neighbor column decision travelling with one queued hop.
- *
- * @remarks
- * Two states, discriminated so no reader infers meaning from an empty array:
- * `carry` — exactly these columns travel to the neighbor (an empty list is the engine's own
- * resolution "none of the traced columns bind on this node", which the tracer may still recover
- * at dispatch);
- * `row_role_only` — no committed `column_flow` names the neighbor for a traced column, so it is
- * dispatched as a plain whole-object neighbor and no target set is padded back onto it.
- * The engine derives one of the two from the committing hop's `column_flow`; nothing constructs
- * a "no opinion" carry.
+ * Explicit per-neighbor column demand: ordinary columns, row-only investigation, or compiler-declared
+ * scalar caller outputs. Qualified outputs stay separate when callers share a column name.
  */
 export type ColumnCarry =
   | { readonly kind: 'carry'; readonly columns: readonly string[] }
-  | { readonly kind: 'row_role_only' };
+  | { readonly kind: 'row_role_only' }
+  | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
 
 /**
  * How a node served the traced columns at the hop that dispatched it.
@@ -728,6 +732,8 @@ export type InvestigationTask = InvestigationTaskBase & (
       kind: 'column_lineage';
       /** Non-empty canonical column context for this CT task. */
       activeColumns: [string, ...string[]];
+      /** Qualified compiler-declared caller outputs; absent on ordinary column tasks. */
+      returnTargets?: ScalarReturnTarget[];
     }
 );
 
@@ -921,7 +927,7 @@ export interface EngineInternalsSnapshot {
  */
 export interface SmState {
   /** Current fail-closed persistence contract version. */
-  snapshotVersion: 1;
+  snapshotVersion: 1 | 2;
   /** The current aspect mode (e.g. column tracing). */
   columnAspect: ColumnAspect | null;
   /** The current lifecycle status. */
@@ -1022,6 +1028,7 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'non_writer_continuation'
       | 'self_loop_column'
       | 'bad_writes_to_target'
+      | 'bad_return_target'
       | 'pruned_contributor'
       | 'prune_absent'
       | 'prune_noop_removed'
