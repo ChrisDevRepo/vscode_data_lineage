@@ -187,6 +187,15 @@ export function graphReadyForFit(
   });
 }
 
+/** Skip fits until the graph-data update paired with a saved viewport arrives. */
+export function skipFitForPendingViewport(
+  preserveVersion: number, consumedVersion: { current: number }, nodeDataChanged: boolean,
+): boolean {
+  if (preserveVersion === consumedVersion.current) return false;
+  if (nodeDataChanged) consumedVersion.current = preserveVersion;
+  return true;
+}
+
 /** Largest zoom the canvas allows. */
 const MAX_CANVAS_ZOOM = 2;
 
@@ -792,11 +801,12 @@ export function GraphCanvas({
   graphRebuildingRef.current = isRebuilding;
   const nodesInitializedRef = useRef(nodesInitialized);
   nodesInitializedRef.current = nodesInitialized;
-  const displayedGraphRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] }>({ nodes: flowNodes, edges: flowEdges });
+  const displayedGraphRef = useRef({ nodes: flowNodes, edges: flowEdges, sourceNodes: flowNodes, sourceEdges: flowEdges });
   const vscodeApi = useVsCode();
 
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
+  const [syncedGraph, setSyncedGraph] = useState({ nodes: flowNodes, edges: flowEdges });
   const [columnView, setColumnView] = useState(false);
 
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
@@ -1308,13 +1318,14 @@ export function GraphCanvas({
     () => { void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION }); },
     undefined, undefined,
     () => {
-      const targetNodes = columnViewActive ? displayedGraphRef.current.nodes : flowNodes;
-      const targetEdges = columnViewActive ? displayedGraphRef.current.edges : flowEdges;
-      return !graphRebuildingRef.current && (nodesInitializedRef.current || targetNodes.every(node => node.hidden))
-        && graphReadyForFit(targetNodes, targetEdges, getNodes(), getEdges());
+      const displayed = displayedGraphRef.current;
+      return displayed.sourceNodes === flowNodes && displayed.sourceEdges === flowEdges
+        && !graphRebuildingRef.current && (nodesInitializedRef.current || displayed.nodes.every(node => node.hidden))
+        && graphReadyForFit(displayed.nodes, displayed.edges, getNodes(), getEdges());
     },
   ), [fitView, flowNodes, flowEdges, getNodes, getEdges, columnViewActive]);
 
+  const nodesAtLastFitEffectRef = useRef(flowNodes);
   const shownTraceMode = ['applied', 'filtered', 'path-applied', 'analysis'].includes(trace.mode) ? trace.mode : null;
 
   /**
@@ -1324,6 +1335,8 @@ export function GraphCanvas({
    * on screen and a fit there would move the view out from under the click that caused it.
    */
   useEffect(() => {
+    const nodeDataChanged = nodesAtLastFitEffectRef.current !== flowNodes;
+    nodesAtLastFitEffectRef.current = flowNodes;
     const previousTrace = traceAtLastGraphChangeRef.current;
     const currentTrace = currentTraceRef.current;
     traceAtLastGraphChangeRef.current = currentTrace;
@@ -1354,11 +1367,7 @@ export function GraphCanvas({
         return;
       }
     }
-    const preserveVersion = viewportPreserveVersionRef.current;
-    if (preserveVersion !== consumedViewportPreserveVersionRef.current) {
-      consumedViewportPreserveVersionRef.current = preserveVersion;
-      return;
-    }
+    if (skipFitForPendingViewport(viewportPreserveVersionRef.current, consumedViewportPreserveVersionRef, nodeDataChanged)) return;
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     return fitGraph();
   }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode, aiPreview, analysisMode,
@@ -1408,10 +1417,12 @@ export function GraphCanvas({
     } else {
       setLocalNodes(flowNodes);
     }
+    setSyncedGraph(current => ({ ...current, nodes: flowNodes }));
   }, [flowNodes]);
 
   useEffect(() => {
     setLocalEdges(flowEdges.map(withEdgeBaseWidthVar));
+    setSyncedGraph(current => ({ ...current, edges: flowEdges }));
   }, [flowEdges]);
 
   const pendingViewportRef = useRef(pendingViewport);
@@ -1452,6 +1463,7 @@ export function GraphCanvas({
    * than deriving drag state from `applyNodeChanges` position events (which arrive one frame late).
    */
   const handleNodeDragStart: OnNodeDrag = useCallback((_event, node, nodes) => {
+    fitGenerationRef.current++;
     draggingNodeIdsRef.current = new Set((nodes.length ? nodes : [node]).map(n => n.id));
   }, []);
 
@@ -1461,12 +1473,14 @@ export function GraphCanvas({
    * shape. See {@link mergeIncomingNodesPreservingDrag}.
    */
   const handleNodeDragStop: OnNodeDrag = useCallback((_event, node, nodes) => {
+    fitGenerationRef.current++;
     const draggingIds = draggingNodeIdsRef.current ?? new Set((nodes.length ? nodes : [node]).map(n => n.id));
     draggingNodeIdsRef.current = null;
     const deferred = deferredFlowNodesRef.current;
     if (!deferred) return;
     deferredFlowNodesRef.current = null;
     setLocalNodes(current => mergeIncomingNodesPreservingDrag(deferred, current, draggingIds));
+    setSyncedGraph(current => ({ ...current, nodes: deferred }));
   }, []);
 
   /**
@@ -1805,7 +1819,7 @@ export function GraphCanvas({
     const routeEdgeIds = activeRoute?.edgeIds ?? (isFocusPaths ? trace.tracedEdgeIds : undefined);
     return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current, routeEdgeIds);
   }, [localEdges, highlightedNodeId, activeRoute, isFocusPaths, trace.tracedEdgeIds, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
-  displayedGraphRef.current = { nodes: displayNodes, edges: displayEdges };
+  displayedGraphRef.current = { nodes: displayNodes, edges: displayEdges, sourceNodes: syncedGraph.nodes, sourceEdges: syncedGraph.edges };
 
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),

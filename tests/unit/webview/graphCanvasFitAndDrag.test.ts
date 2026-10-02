@@ -10,6 +10,7 @@ import { getNodesBounds, getViewportForBounds, type Node as FlowNode } from '@xy
 import {
   applyPendingViewport,
   graphReadyForFit,
+  skipFitForPendingViewport,
   canvasMinZoom,
   isUserMoveEvent,
   mergeIncomingNodesPreservingDrag,
@@ -285,5 +286,40 @@ describe('shown graph fitting waits for the requested layout', () => {
     scheduleFit(generation, second, schedule, vi.fn(), () => true);
     frames.splice(0).forEach(run => run());
     expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('pending saved camera survives metadata before deferred graph arrival', () => {
+  it('AI preview clearing leaves the preservation token armed until actual node data changes', () => {
+    const consumed = { current: 0 }; const generation = { current: 7 };
+    const setViewport = vi.fn(); const fit = vi.fn();
+    // restoreViewSnapshot clears aiPreview and arms a saved viewport before its transition lands.
+    if (!skipFitForPendingViewport(1, consumed, false)) scheduleFit(generation, fit, run => { run(); return 1; }, vi.fn());
+    expect(consumed.current).toBe(0); expect(generation.current).toBe(7); expect(fit).not.toHaveBeenCalled();
+    // The rebuilt flowNodes arrive later. This update consumes the skip, not a metadata render.
+    expect(skipFitForPendingViewport(1, consumed, true)).toBe(true);
+    expect(consumed.current).toBe(1);
+    expect(applyPendingViewport({ x: 350, y: -90, zoom: 0.4 }, generation.current, 7, setViewport)).toBe(true);
+    expect(setViewport).toHaveBeenCalledWith({ x: 350, y: -90, zoom: 0.4 }, { duration: 0 });
+    expect(skipFitForPendingViewport(1, consumed, true)).toBe(false);
+  });
+});
+
+describe('a deferred graph rebuild reconciles an intentional drag before any later show fit', () => {
+  it('cancels pending rebuild fitting on drag stop and later frames the actual merged positions', () => {
+    const incoming = [flowNode('a', 0, 0, 'rebuilt'), flowNode('b', 100, 100, 'other')];
+    const dragged = [flowNode('a', 999, 888, 'old'), flowNode('b', 5, 5, 'old')];
+    const merged = mergeIncomingNodesPreservingDrag(incoming, dragged, new Set(['a']));
+    const measured = merged.map(node => ({ ...node, measured: { width: 220, height: 80 } }));
+    const generation = { current: 1 }; const frames: Array<() => void> = []; const fire = vi.fn();
+    scheduleFit(generation, fire, run => frames.push(run), vi.fn(), () => graphReadyForFit(incoming, [], measured, []));
+    frames.shift()!(); // incoming layout and the intentional drag differ; the fit is still waiting
+    generation.current++; // actual drag-stop handler cancels the pending rebuild fit
+    frames.shift()!(); expect(fire).not.toHaveBeenCalled(); expect(frames).toHaveLength(0);
+    // A later explicit view show uses the merged displayed layout, never the discarded Dagre position.
+    expect(graphReadyForFit(merged, [], measured, [])).toBe(true);
+    scheduleFit(generation, fire, run => frames.push(run), vi.fn(), () => graphReadyForFit(merged, [], measured, []));
+    frames.shift()!(); expect(fire).toHaveBeenCalledTimes(1);
   });
 });
