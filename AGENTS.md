@@ -51,6 +51,7 @@ docs/             product architecture, developer and testing documentation
 - Before changing SQL parsing, graph traversal, or runtime contracts, read `docs/ARCHITECTURE.md` and the relevant `docs/` contract.
 - For database connection behavior, read `docs/DEVELOPER_GUIDE.md` database sections and `.agents/skills/testing/SKILL.md`.
 - For a trace, state dump, NDJSON conversation, or Langfuse observation, read `.agents/skills/trace-debug/SKILL.md`.
+- For function column-lineage routing or follow-ups, read the column-provenance contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Preserve the caller SQL, qualified requested output and function definition across investigation, retry and restore; parameters are binding context, not invented graph columns. Keep ordinary view routing unchanged.
 - Before comparing prompt variants, read `.agents/skills/prompt-playground/SKILL.md`.
 - Before editing prompt text or AI output templates, read `.agents/skills/prompt-change/SKILL.md` and `docs/AI_PROMPTS.md`.
 - For test tiers and optional environment configuration, read `docs/testing/README.md` and `docs/EDH_TESTING.md`.
