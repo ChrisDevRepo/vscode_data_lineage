@@ -850,9 +850,14 @@ export class OpenAiCompatiblePort implements ModelPort {
           direction: 'response',
           url,
           status: received.status,
-          // A failure body is the one place a provider can echo the Authorization header back, so
-          // it is sanitized; a successful body cannot contain it and is captured verbatim (DD-7).
-          body: received.ok ? received.body : sanitizeProviderError(received.raw),
+          ...(received.contentType ? { contentType: received.contentType } : {}),
+          // Malformed successful responses need their full body for diagnosis, with credentials
+          // redacted. Parsed success bodies stay verbatim; HTTP error diagnostics stay sanitized.
+          body: received.ok
+            ? (received.body !== undefined
+                ? received.body
+                : received.raw.replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]'))
+            : sanitizeProviderError(received.raw),
         });
       }
       if (!received.ok) throw httpError(received.status, received.statusText, received.raw);
@@ -980,6 +985,8 @@ export class OpenAiCompatiblePort implements ModelPort {
     ok: boolean;
     status: number;
     statusText: string;
+    /** Response media type only; request and other response headers are never traced. */
+    contentType?: string;
     raw: string;
     /** The decoded body, or `undefined` when it was not JSON. */
     body: unknown;
@@ -1042,6 +1049,8 @@ export class OpenAiCompatiblePort implements ModelPort {
               ok: response!.ok,
               status: response!.status,
               statusText: response!.statusText,
+              ...(response!.headers?.get('content-type')
+                ? { contentType: response!.headers.get('content-type')! } : {}),
               raw,
               body,
             };

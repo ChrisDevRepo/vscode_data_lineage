@@ -109,6 +109,8 @@ export type WireEvent =
       readonly url: string;
       readonly method?: string;
       readonly status?: number;
+      /** Response media type, without exposing the response's other headers. */
+      readonly contentType?: string;
       readonly body: unknown;
     };
 
