@@ -212,7 +212,7 @@ export class ColumnTracer {
    * @param model - The underlying database model.
    * @param store - Optional column store for checking declared column lists.
    * @param log - Optional logger; a neighbour with zero declared columns cannot be verified, so
-   * the acceptance is logged at `debug` instead of passing silently.
+   * only procedure/external fallback is accepted and logged at `debug`; ordinary table/view references require declared columns.
    * @param removedSet - Node ids already pruned this run (PRUNE-BEFORE-DEMAND). Naming an
    * already-removed node as an `upstream_columns` supplier is rejected here, at declare time,
    * rather than staging a demand `enqueueHop` can never dispatch to.
@@ -305,6 +305,10 @@ export class ColumnTracer {
         continue;
       }
 
+      if (!entry.returns_to && validFocusCols.size === 0 && !allowsMissingColumnMetadata(focusNode)) {
+        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `Column metadata is unavailable for ${focusNode.type} "${focusId}"; output "${entry.out_col}" cannot be verified.` });
+        continue;
+      }
       if (!entry.returns_to && validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
           invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, available_columns: Array.from(validFocusCols).sort() });
         continue;
@@ -333,8 +337,12 @@ export class ColumnTracer {
         }
       }
       const toCol = resolvedTarget?.attributionCol ?? entry.out_col;
-      if (toNodeObj && toNodeObj.type !== 'procedure' && toNodeObj.type !== 'function') {
+      if (toNodeObj && !entry.returns_to) {
         const toCols = new Set<string>((getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
+        if (toCols.size === 0 && !allowsMissingColumnMetadata(toNodeObj)) {
+          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `Column metadata is unavailable for ${toNodeObj.type} "${toNodeObj.id}"; destination "${toCol}" cannot be verified.` });
+          continue;
+        }
         if (toCols.size > 0 && !toCols.has(normalizeColName(toCol))) {
           invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `to_col "${toCol}" does not exist on ${toNodeObj.id}`, available_columns: Array.from(toCols).sort() });
           continue;
@@ -381,6 +389,32 @@ export class ColumnTracer {
           continue;
         }
 
+        const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map(c => normalizeColName(c.name)));
+        if (validNeighborCols.size > 0 && !validNeighborCols.has(normalizeColName(cont.col))) {
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });
+          continue;
+        }
+        if (validNeighborCols.size === 0 && !allowsMissingColumnMetadata(neighbor)) {
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: neighbor.type === 'function'
+            ? 'This function declares no real columns; formal parameters and return_value are not upstream model columns. Its supplied scalar-return task records contributors at the real caller output.'
+            : `Column metadata is unavailable for ${neighbor.type} "${neighbor.id}"; upstream column "${cont.col}" cannot be verified.` });
+          continue;
+        }
+        if (validNeighborCols.size === 0 && neighbor.type === 'procedure' && !continuationNeighbors) {
+          const spInbound = model.neighborIndex[neighbor.id.toLowerCase()]?.in ?? [];
+          const inboundCols = new Set<string>();
+          for (const inId of spInbound) {
+            (getNodeColumns(inId, nodeMap, store ?? undefined) || []).forEach(c => inboundCols.add(normalizeColName(c.name)));
+          }
+          if (inboundCols.size > 0 && !inboundCols.has(normalizeColName(cont.col))) {
+            invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is not in any inbound source of procedure "${cont.node}"`, available_columns: Array.from(inboundCols).sort() });
+            continue;
+          }
+        }
+        if (validNeighborCols.size === 0) {
+          log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — ${neighbor.type} metadata fallback`);
+        }
+
         if (continuationNeighbors) {
           if (continuationNeighbors.size === 0) {
             log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded ${continuationSide === 'in' ? 'writers' : 'readers'}, accepting unverified`);
@@ -396,28 +430,6 @@ export class ColumnTracer {
               continue;
             }
             log?.('debug', `[CT] continuation edge "${cont.col}" on carrier "${focusId}" from "${cont.node}" — attributed on that node's own hop`);
-          }
-        } else if (neighbor.type === 'procedure') {
-          const spInbound = model.neighborIndex[neighbor.id.toLowerCase()]?.in ?? [];
-          const inboundCols = new Set<string>();
-          for (const inId of spInbound) {
-            (getNodeColumns(inId, nodeMap, store ?? undefined) || []).forEach((c) => inboundCols.add(normalizeColName(c.name)));
-          }
-          if (inboundCols.size > 0 && !inboundCols.has(normalizeColName(cont.col))) {
-            invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is not in any inbound source of procedure "${cont.node}"`, available_columns: Array.from(inboundCols).sort() });
-            continue;
-          }
-        } else {
-          const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
-          if (validNeighborCols.size === 0 && neighbor.type === 'function') {
-            invalidRoutes.push({ kind: 'bad_contributor_col', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: 'This function declares no real columns; formal parameters and return_value are not upstream model columns. Its supplied scalar-return task records contributors at the real caller output.' });
-            continue;
-          }
-          if (validNeighborCols.size === 0) {
-            log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — neighbour declares no columns, accepting unverified`);
-          } else if (!validNeighborCols.has(normalizeColName(cont.col))) {
-            invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });
-            continue;
           }
         }
 
@@ -582,4 +594,9 @@ export function resolveColumnFlowTarget(
     };
   }
   return { attributionTo: focusId, attributionCol: entry.out_col, writerEdge: null };
+}
+
+/** Missing catalogs do not prove columns on ordinary tables, views or functions. */
+function allowsMissingColumnMetadata(node: LineageNode): boolean {
+  return node.type === 'procedure' || node.type === 'external';
 }

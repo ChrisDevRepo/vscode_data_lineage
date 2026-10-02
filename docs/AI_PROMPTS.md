@@ -345,6 +345,18 @@ BB decisions; column evidence is not a separate reason to change that graph.
   columns, and links, but does not infer unique carriers or write mappings.
   Missing attribution is expressed as a source-qualified unresolved question
   naming the relevant object and column, not supplied by the backend.
+- Column identity follows the resolved object kind and authoritative metadata
+  ([architecture contract](ARCHITECTURE.md#verified-column-identity-by-object-kind)).
+  Table/view outputs must be real declared columns, including established view
+  aliases; metadata absence does not permit arbitrary names. External nodes
+  are actual `external` objects (`et`, `file`, `db`, or legacy subtype), and
+  any known columns still validate. Without available columns, their existing
+  contextual-attribution path remains allowed; catalog external tables normally
+  have declared columns, so actual metadata availability determines the check. Procedures carry source references and explicit write
+  destinations, not owned stored columns. Scalar parameters are binding
+  context for qualified caller outputs; table-valued function result columns
+  are distinct from their inputs. Missing evidence stays unresolved, without
+  inferred links or pruning.
 - On a procedure CT hop, every served `column_flow` entry requires `writes_to`:
   the explicit destination object and column, or `null` when there is no table
   write. The stored record contract remains optional and tolerant of older
@@ -366,6 +378,21 @@ BB decisions; column evidence is not a separate reason to change that graph.
   Object detail and active-hop context use shared object detail sections,
   including CTE evidence attached to the owning object's SQL; there is no
   CTE-specific storage subsystem.
+
+Generated continuations and AI subquestions have different inputs. The
+backend generates source-qualified continuations only from accepted authored
+`column_flow` edges and attaches them to the relevant queued focus; it does not
+populate them from every SQL reference or every metadata column. Generated
+prose groups output names for each source; qualified destination identities
+remain in actual edge records and caller context. The active
+`current_task` includes those questions alongside all nonblank AI/ledger
+questions and the current resolved columns. Actual rendering asks the model to
+address the continuations but gives neither question set a PRIMARY label.
+An AI neighbor subquestion must be self-contained and supplement the approved
+question; an origin output mentioned in that prose is not proof of a neighbor's
+column identity. Caller output targets and caller SQL are retained separately
+for function binding. Neither question route guarantees an exhaustive column
+inventory or repairs absent model-authored dependencies by inference.
 
 An accepted `end_branch`, or a resolved neighbor prune, cuts every unvisited node
 reachable from the origin only through it: the engine drops those nodes from

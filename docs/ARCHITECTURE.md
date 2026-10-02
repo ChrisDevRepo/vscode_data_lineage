@@ -545,6 +545,26 @@ chain starts or ends and what the available SQL establishes. Unresolved column
 work remains a source-qualified question, identifying the object and column
 whose mapping is unresolved, rather than an inferred link.
 
+### Verified column identity by object kind
+
+Column validation uses the resolved object's type and authoritative loaded
+metadata, never an object name, a special column name, or a generic placeholder
+classification. A known column set must validate the submitted name even for an
+external object. Missing metadata does not establish a column or a mapping.
+
+| Object kind | Column evidence and boundary |
+| --- | --- |
+| Table or view | Validate real declared columns. A view's projected SQL aliases are real output names when established by its declaration; referenced source columns are not automatically view outputs. Missing column metadata on an ordinary table or view leaves the reference unresolved and must not bypass validation. |
+| External (`external`, with `et`, `file`, or `db` subtype) | Validate any authoritative known columns. With no available column metadata, an actual external object may use contextual attribution, including `et`, `file`, `db`, or legacy subtype records. Catalog external tables normally declare a schema; available columns must validate. This type-based compatibility path does not prove arbitrary names or invent source links. |
+| Procedure | A procedure does not own stored table columns. Explicit `writes_to` identifies the real destination, whose columns must validate. The legacy ordinary procedure-contributor path validates known procedure metadata when supplied, or known inbound-source columns when procedure column metadata is absent; these are alternatives. A continuation through a validated carrier can name the writer's renamed output, whose attribution still needs SQL evidence. Neither compatibility path manufactures procedure-owned storage or a destination. |
+| Scalar function | Formal parameters are caller-binding context, not graph columns. A columnless scalar contribution needs the supplied, compiler-declared qualified caller output and `returns_to`; a same-named column or parameter is insufficient. |
+| Table-valued function | Declared result columns are outputs; parameters and referenced input columns are separate evidence. Validate known result columns rather than treating inputs as return columns. |
+
+An unmatched or unavailable ordinary table/view column remains unresolved. It
+is neither silently accepted as lineage nor a reason to prune its object.
+No column-name exception, including a particular temporal column name, replaces
+these object and metadata checks.
+
 Served procedure CT entries require a nullable `writes_to`: a declared
 object/column destination or `null` for no table write. Stored records retain
 an optional field for tolerant reads; an omitted destination is not inferred.
@@ -572,6 +592,21 @@ provides structural context; attribution comes from the SQL body that proves
 it, as interpreted by the model. Reader/writer relationships retain their SQL meaning and edge direction; the
 AI interprets their column semantics. Those relationships alone do not prove
 a column mapping. Missing evidence remains unresolved.
+
+Generated column continuations are derived from accepted, model-authored
+`column_flow` edges, not from an exhaustive scan of SQL or every metadata
+column. They name the upstream object and its own column, group output column names
+for that source, and are attached to the corresponding queued hop. Qualified
+destination identities remain in the edge records and caller context; the
+generated prose is not a complete inventory of those destinations. They do not
+invent a missing edge. The active task renders these continuations alongside
+AI-authored neighbor subquestions and the hop's resolved active columns.
+AI subquestions are supplemental checks and must be self-contained at their
+receiving focus; mentioning an origin output does not prove that a same-named
+column belongs to a neighbor. Qualified caller outputs and caller SQL remain
+separate binding evidence. The present renderer preserves both question sets
+but does not label either PRIMARY; documentation must not promise precedence
+or automatic completeness that is absent from the rendered instruction.
 
 Object detail and hop context use shared object detail sections, including
 CTE evidence. A CTE is local SQL evidence for its owning object; it has no
