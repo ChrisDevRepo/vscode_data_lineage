@@ -551,12 +551,6 @@ function encodeFocusNodeId(id: string): string {
 }
 
 /**
- * A ```sql fence at the start of the matched text: closed on its own opening line, or else on a
- * later line — where the closing marker may share a line with the last line of code.
- */
-const SQL_FENCE_AT_START = /^```sql(?:[^\n]*?```|[^\n]*\n[\s\S]*?```)/i;
-
-/**
  * Returns the ```sql fence opening at `openIndex`, tolerant of a one-line fence and of its closing
  * marker sharing a line with the last line of code rather than starting one of its own.
  *
@@ -565,7 +559,15 @@ const SQL_FENCE_AT_START = /^```sql(?:[^\n]*?```|[^\n]*\n[\s\S]*?```)/i;
  * @returns The fence, closed; `undefined` when no ```sql marker opens there or it never closes.
  */
 function sqlFenceAt(text: string, openIndex: number): string | undefined {
-  return SQL_FENCE_AT_START.exec(text.slice(openIndex))?.[0];
+  const rest = text.slice(openIndex);
+  if (!/^```sql/i.test(rest)) return undefined;
+  const close = rest.indexOf('```', '```sql'.length);
+  // A following language opener cannot close this SQL block or turn intervening prose into SQL.
+  if (close === -1) return undefined;
+  const suffix = rest.slice(close + 3);
+  const spacedOpener = /^[ \t]+[a-z][\w.+-]*(?:[ \t]+S\d+)?[ \t]*(?:\r?\n|$)/i.test(suffix);
+  if (/^[a-z]/i.test(suffix) || spacedOpener) return undefined;
+  return rest.slice(0, close + 3);
 }
 
 /** One fenced code block captured in a detail slot, addressable by a deterministic citation id. */
@@ -707,8 +709,9 @@ function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
  *
  * The caller runs this over every field {@link orderAndAssemble} renders verbatim — `title`,
  * `intro`, `closing` and each section's text — so an id cited outside a section expands or rejects
- * exactly like one inside a section, never a silently unresolved fence. It expands a rendering
- * copy only: the held repair draft keeps the unexpanded input, so a resent field still carries
+ * exactly like one inside a section, never a silently unresolved fence. Unclosed SQL blocks are
+ * returned in `malformedRefs` for structured repair; their text is never consumed as another block.
+ * It expands a rendering copy only: the held repair draft keeps the unexpanded input, so a resent field still carries
  * short references.
  *
  * @param text - One authored text field (a section body, or `title` / `intro` / `closing`).
@@ -717,8 +720,17 @@ function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
 export function expandEvidenceRefs(
   text: string,
   blocks: ReadonlyMap<string, EvidenceBlock>,
-): { text: string; unknownIds: string[]; normalized: string[] } {
+): { text: string; unknownIds: string[]; normalized: string[]; malformedRefs: string[] } {
   const fences = [...locateSqlFences(text)];
+  const byStart = new Map(fences.map(fence => [fence.start, fence]));
+  const malformedRefs: string[] = [];
+  let coveredUntil = 0;
+  for (const marker of text.matchAll(/```sql([^\n`]*)/gi)) {
+    if (marker.index < coveredUntil) continue;
+    const valid = byStart.get(marker.index);
+    if (valid) coveredUntil = valid.end;
+    else malformedRefs.push(EVIDENCE_ID_INFO.exec(marker[1])?.[1] ?? 'unlabelled SQL');
+  }
   const shown = new Set(fences.filter(fence => fence.lines.length > 0).map(fence => fenceBodyKey(fence.lines)));
   const unknownIds: string[] = [];
   const normalized: string[] = [];
@@ -751,7 +763,7 @@ export function expandEvidenceRefs(
       cursor = fence.end;
     }
   }
-  return { text: out + text.slice(cursor), unknownIds, normalized };
+  return { text: out + text.slice(cursor), unknownIds, normalized, malformedRefs };
 }
 
 /**

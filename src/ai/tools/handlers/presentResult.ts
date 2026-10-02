@@ -16,6 +16,7 @@ import {
   findBareNonPrunedNodes, findUnrenderedDetailSlotIds, requiredDetailSlotIds, buildColumnChainPreface,
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
+  holdRejectedPresentResult,
   findTextlessNewSectionLabels,
   findStartOrderIssues,
   presentResultRepairInstruction,
@@ -375,14 +376,23 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       const unknownEvidenceIds: string[] = [];
+      const malformedEvidence: PresentResultViolation[] = [];
       let renderInput: PresentResultInput = isVisualPreview && presentInput.sections
         ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
         : presentInput;
       if (!isVisualPreview && presentInput.sections?.length) {
         const { blocks: evidenceBlocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
-        const expand = (text: string, fieldLabel: string): string => {
+        const expand = (text: string, fieldLabel: string, fieldPath = fieldLabel): string => {
           const expanded = expandEvidenceRefs(text, evidenceBlocks);
           unknownEvidenceIds.push(...expanded.unknownIds);
+          if (expanded.malformedRefs.length > 0) {
+            malformedEvidence.push({
+              field: fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing',
+              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. Close each block with a bare triple-backtick marker; another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
+              repairFields: [fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing'],
+              paths: [fieldPath],
+            });
+          }
           for (const entry of expanded.normalized) {
             s.logger.debug(`presentResult normalization: evidence reference ${entry} — ${fieldLabel}`);
           }
@@ -395,8 +405,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           title: expandOptional(presentInput.title, 'title'),
           intro: expandOptional(presentInput.intro, 'intro'),
           closing: expandOptional(presentInput.closing, 'closing'),
-          sections: presentInput.sections.map(sec => {
-            const expanded = expand(sec.text, `section "${trunc(sec.label, 60)}"`);
+          sections: presentInput.sections.map((sec, index) => {
+            const expanded = expand(sec.text, `section "${trunc(sec.label, 60)}"`, `sections.${index}.text`);
             return expanded === sec.text ? sec : { ...sec, text: expanded };
           }),
         };
@@ -446,7 +456,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
       );
 
-      const externalViolations: PresentResultViolation[] = [];
+      const externalViolations: PresentResultViolation[] = [...malformedEvidence];
       const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds);
       if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
@@ -499,7 +509,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
+          const scopedHint = malformedEvidence.length > 0
+            ? holdRejectedPresentResult(sess.presentResultRepairDraft, presentInput, validation.rejection.issuePaths ?? [], presentResultStage)
+            : null;
+          if (scopedHint) validation.rejection.hint = scopedHint;
+          else sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
         }
         return reject(validation.rejection);
       }
