@@ -1308,7 +1308,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       const prunedMark = committedFinding.value.verdict === 'end_branch' ? '⛔ pruned — ' : '';
-      deps.sink.status('scoping', `_${prunedMark}${committedFinding.value.summary}_`);
+      // Committed findings remain visible after later native progress updates.
+      deps.sink.stream(`\n\n**Hop ${progress.current}/${progress.total} — ${focusLabel}**\n\n_${prunedMark}${committedFinding.value.summary}_\n\n`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {

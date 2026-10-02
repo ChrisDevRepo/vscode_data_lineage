@@ -1,4 +1,4 @@
-/** Committed hop status labels and model context retain complete summaries, including held drafts. */
+/** Completed hop summaries persist as text with their original identity; transient statuses and memory remain intact. */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
@@ -132,12 +132,13 @@ const statusLabels = (events: readonly TurnEvent[]): string[] =>
  * `LONG_SUMMARY` for the origin and `SHORT_SUMMARY` for the leaf; `leafCallSummary` is what the
  * model's leaf call itself carries.
  */
-async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSummary = SHORT_SUMMARY, leafVerdict: 'analyze' | 'end_branch' = 'analyze'): Promise<{ labels: string[]; archive: string; requests: string }> {
+async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSummary = SHORT_SUMMARY, leafVerdict: 'analyze' | 'end_branch' = 'analyze', cancelBeforeLeafCommit = false): Promise<{ labels: string[]; events: TurnEvent[]; archive: string; requests: string }> {
   const session = new AiSession();
   const leaves = seedFanOutLineage(session, 1);
   const epoch = session.beginTurn();
   seedProposal(session, epoch, leaves.length + 1);
 
+  const controller = new AbortController();
   const { registry } = scriptedRegistry([
     { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
     { name: 'lineage_start_exploration', result: GATE_RESULT },
@@ -146,6 +147,7 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
       result: (): string => {
         const engine = session.stateMachine as NavigationEngine;
         const isOrigin = engine.currentFocus === '[ai].[Origin]';
+        if (!isOrigin && cancelBeforeLeafCommit) { controller.abort(); return JSON.stringify({ error: 'cancelled' }); }
         const finding: HopSubmission = !isOrigin && leafVerdict === 'end_branch'
           ? { focus_node_id: engine.currentFocus!, verdict: 'end_branch', reason: leafCommittedSummary }
           : {
@@ -170,12 +172,13 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
   const model = new ScriptedModelPort(script);
   const turn = makeGateSink();
   const runtime = new AgentRuntime({
-    threadId: 'hop-summary-truncation',
+    threadId: 'hop-summary-visibility',
     getSession: () => session,
     model: model as unknown as ModelPort,
     registry,
     sink: turn.sink,
     turnEpoch: epoch,
+    signal: controller.signal,
     maxRounds: 10,
   });
 
@@ -183,26 +186,27 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
   const gate = await turn.nextGate();
   expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
   const outcome = await running;
-  expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe('ok');
+  expect(outcome, JSON.stringify(runtime.lastFailureDetail)).toBe(cancelBeforeLeafCommit ? 'cancelled' : 'ok');
 
   return {
-    labels: statusLabels(turn.events).filter(label => label.startsWith('_') && label.endsWith('_')),
+    labels: turn.events.filter((e): e is Extract<TurnEvent, { type: 'text' }> => e.type === 'text' && e.delta.startsWith('\n\n**Hop ')).map(e => e.delta),
+    events: turn.events,
     archive: JSON.stringify((session.stateMachine as NavigationEngine).toJSON().memory),
     requests: JSON.stringify(model.requests),
   };
 }
 
-describe('complete committed hop summary status', () => {
+describe('persistent complete committed hop summaries', () => {
   it('includes the pruned prefix and complete committed summary', async () => {
     const { labels, archive, requests } = await hopSummaryLabelsForTurn(LONG_SUMMARY, LONG_SUMMARY, 'end_branch');
-    const pruned = labels.find(label => label.startsWith('_⛔ pruned — '));
+    const pruned = labels.find(label => label.includes('_⛔ pruned — '));
     expect(pruned).toBeDefined();
-    expect(pruned).toBe(`_⛔ pruned — ${LONG_SUMMARY}_`);
+    expect(pruned).toBe(`\n\n**Hop 2/2 — Leaf0**\n\n_⛔ pruned — ${LONG_SUMMARY}_\n\n`);
     expect(archive).toContain(LONG_SUMMARY);
     expect(requests).toContain(LONG_SUMMARY);
   });
 
-  it('keeps complete long and short status labels unchanged', async () => {
+  it('preserves complete long and short text under their actual hop identities', async () => {
     expect(LONG_SUMMARY.length).toBeGreaterThan(400);
     const {labels: hopSummaryLabels, archive, requests} = await hopSummaryLabelsForTurn(SHORT_SUMMARY);
     expect(archive).toContain(LONG_SUMMARY);
@@ -210,13 +214,37 @@ describe('complete committed hop summary status', () => {
     expect(hopSummaryLabels).toHaveLength(2);
 
     const [completeLabel, untouchedLabel] = hopSummaryLabels;
-    expect(completeLabel).toBe(`_${LONG_SUMMARY}_`);
-    expect(untouchedLabel).toBe(`_${SHORT_SUMMARY}_`);
+    expect(completeLabel).toBe(`\n\n**Hop 1/2 — Origin**\n\n_${LONG_SUMMARY}_\n\n`);
+    expect(untouchedLabel).toBe(`\n\n**Hop 2/2 — Leaf0**\n\n_${SHORT_SUMMARY}_\n\n`);
   });
 
   it('shows the committed summary when the accepted call carried an empty one that a held draft supplied', async () => {
     const {labels: hopSummaryLabels} = await hopSummaryLabelsForTurn('');
     expect(hopSummaryLabels).toHaveLength(2);
-    expect(hopSummaryLabels[1]).toBe(`_${SHORT_SUMMARY}_`);
+    expect(hopSummaryLabels[1]).toBe(`\n\n**Hop 2/2 — Leaf0**\n\n_${SHORT_SUMMARY}_\n\n`);
   });
+});
+
+
+it('keeps native hop headers transient and orders each committed summary before the next hop', async () => {
+  const { events, labels } = await hopSummaryLabelsForTurn(SHORT_SUMMARY);
+  const statuses = statusLabels(events);
+  expect(statuses.some(label => label.startsWith('Hop 1/2 — analysing Origin'))).toBe(true);
+  expect(statuses.some(label => label.startsWith('Hop 2/2 — analysing Leaf0'))).toBe(true);
+  expect(statuses.some(label => label.includes(LONG_SUMMARY))).toBe(false);
+  const originHeader = events.findIndex(event => event.type === 'status' && event.label.startsWith('Hop 1/2'));
+  const originSummary = events.findIndex(event => event.type === 'text' && event.delta === labels[0]);
+  const leafHeader = events.findIndex(event => event.type === 'status' && event.label.startsWith('Hop 2/2'));
+  const leafSummary = events.findIndex(event => event.type === 'text' && event.delta === labels[1]);
+  expect(originHeader).toBeGreaterThanOrEqual(0); expect(originSummary).toBeGreaterThan(originHeader);
+  expect(leafHeader).toBeGreaterThan(originSummary); expect(leafSummary).toBeGreaterThan(leafHeader);
+});
+
+
+it('cancellation before a leaf finding commits exposes only the already accepted origin summary', async () => {
+  const { labels, archive } = await hopSummaryLabelsForTurn('Uncommitted leaf summary', SHORT_SUMMARY, 'analyze', true);
+  expect(labels).toEqual([`\n\n**Hop 1/2 — Origin**\n\n_${LONG_SUMMARY}_\n\n`]);
+  expect(archive).toContain(LONG_SUMMARY);
+  expect(labels.join('')).not.toContain('Uncommitted leaf summary');
+  expect(labels.join('')).not.toContain('Leaf0');
 });
