@@ -3,6 +3,7 @@
 ## [1.2.3] - 2026-10-01
 
 ### Fixed
+- DACPAC import preserves UDF parameters and return types when the function signature is stored inside its implementation, so analysis receives the complete function definition.
 - Column traces stage the writer→carrier relation of a writer procedure even when the hop omits `writes_to`, so the column-lineage view stays one chain connected to the traced origin instead of detaching the branches a writer feeds ([#59](https://github.com/ChrisDevRepo/vscode_data_lineage/issues/59)).
 
 ## [1.2.2] - 2026-10-01
