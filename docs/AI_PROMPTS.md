@@ -376,10 +376,11 @@ dispatches as one unit) and tie-breaks a ready set by tier, then distance from
 the origin, then id; a node is visited at most once.
 
 The locked answer classification determines which section angles are required.
-Validation requires the locked angles to be present: under a `both` lock a fresh
-submission serves `sections.business` and `sections.technical` in the JSON Schema
-`required` list (the `sections` object itself is optional; `end_branch` omits it, and an
-`end_branch` sending `{}` is still accepted), and a retry with a held draft serves them
+Validation requires the locked angles to be present on a fresh kept verdict.
+The served JSON Schema uses separate `anyOf` alternatives for kept findings and
+`end_branch`: kept findings require `summary`, `sections`, and every locked angle
+(both `business` and `technical` under a `both` lock). A cut can omit them or send
+empty sections. A retry with a held draft keeps the angle keys
 optional. Under a single-angle lock the off-angle key is rejected at the
 schema with a hint to fold its content into the kept angle, so a business-only
 answer cannot carry technical sections. Neighbor,

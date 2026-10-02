@@ -12,6 +12,18 @@ npm run gate                # configured deterministic checks
 
 Focused parser and graph checks are `npm run test:parser` and `npm run test:bfs`. TypeScript checks are `npm run typecheck` and `npm run typecheck:tests`. The repository has no lint script.
 
+Function caller-context and findings-schema regressions can be checked together:
+
+```sh
+npm test -- tests/unit/sm/function-caller-context.test.ts tests/unit/sm/fresh-kept-schema-parity.test.ts
+```
+
+These tests cover qualified scalar destinations, TVF argument context, directed
+contributors, stale SQL and checkpoint provenance, input identity, fresh kept
+requirements, legal cuts and held repairs. They create no model calls. Check
+model-authored argument bindings and omitted SQL contributors separately; a
+structurally valid delivered graph does not establish complete SQL lineage.
+
 ## Build And Install A VSIX
 
 Build the extension package from the repository root:
