@@ -16,6 +16,7 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    setupFiles: [fileURLToPath(new URL('./tests/stubs/regexWorker.ts', import.meta.url))],
     environment: 'node',
     testTimeout: 10_000,
     // The default is availableParallelism - 1 (17 workers on the development host). Parallel

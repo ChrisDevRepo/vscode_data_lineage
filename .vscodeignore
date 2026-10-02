@@ -12,6 +12,7 @@ out/*.js
 out/**/*.js
 !out/extension.js
 !out/extensionRuntime.js
+!out/regexSearch.worker.js
 out/*.d.ts
 out/**/*.d.ts
 

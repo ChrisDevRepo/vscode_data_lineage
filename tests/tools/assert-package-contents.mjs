@@ -37,6 +37,7 @@ const required = [
   'package.json',
   'out/extension.js',
   'out/extensionRuntime.js',
+  'out/regexSearch.worker.js',
   'dist/index.html',
   'dist/assets/index.js',
   'assets/defaultParseRules.yaml',

@@ -193,6 +193,12 @@ trace and forbidden otherwise. That semantic route never selects the stage:
 discovery budget guard open SM entry; every free-text turn, a `column_trace`
 verdict included, starts in discovery.
 
+Native-regexp object and DDL searches execute in a packaged Node worker, keeping
+untrusted matching off the extension host thread. Syntax normalization remains
+browser-safe; substring helpers stay synchronous. Cancellation or an execution
+deadline terminates the worker without serving partial results. A deadline names
+an unfinished search, not a diagnosed pattern structure.
+
 Discovery is the default chat state: it answers bounded catalog or lineage
 questions with snapshot tools and does not publish a `NavigationEngine`.
 Answers lead with the user's question, then organize supported facts by

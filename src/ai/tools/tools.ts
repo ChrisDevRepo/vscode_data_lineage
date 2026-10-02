@@ -19,7 +19,8 @@ import { normalizeName } from '../../engine/modelBuilder';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { applyIsolationFilter } from '../../engine/shared/modelFilters';
-import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, scanBodyMatches, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
+import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
+import { executeIsolatedRegexSearch, RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import {
@@ -276,7 +277,7 @@ function validateQuery(query: string): ToolRejection | null {
  * schema-qualified query (e.g. `dbo.FactSales`) into a schema hint and a bare name.
  * @returns A list of matches with metadata, the `by_type` breakdown of that list, and AI hints.
  */
-export function searchObjects(
+export async function searchObjects(
   model: DatabaseModel,
   query: string,
   types?: ObjectType[],
@@ -285,6 +286,7 @@ export function searchObjects(
   activeFilter?: SerializedFilterState | null,
   onDebug?: (msg: string) => void,
   cursor?: string,
+  signal?: AbortSignal,
 ) {
   const isRegex = mode === 'regex';
   const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
@@ -321,12 +323,32 @@ export function searchObjects(
   const schemaSet = appliedSchemaFilter ? new Set<string>(normalizedSchemas) : undefined;
   const schemaSetLower = appliedSchemaFilter ? new Set(appliedSchemaFilter.map(s => s.toLowerCase())) : undefined;
 
+  const isolatedCatalog = async (schemaFilter: Set<string> | undefined, limit: number): Promise<SearchableNode[] | ToolRejection> => {
+    try {
+      const reply = await executeIsolatedRegexSearch({
+        kind: 'catalog', pattern: effectiveQuery,
+        nodes: model.nodes.map(({ id, name, schema, type }) => ({ id, name, schema, type })),
+        types: typeSet ? [...typeSet] : undefined,
+        schemas: schemaFilter ? [...schemaFilter] : undefined, limit,
+      }, signal);
+      if (!reply.ok || reply.kind !== 'catalog') throw new Error('Search worker did not return a catalog result.');
+      const hits = new Set(reply.ids);
+      return model.nodes.filter(node => hits.has(node.id));
+    } catch (error: unknown) {
+      if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
+        return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: 'The isolated regex search did not finish before its execution deadline; no results were returned. Simplify the pattern or narrow the search filters.' });
+      }
+      throw error;
+    }
+  };
   const offset = cursorOffset(cursor);
+  const regexHits = isRegex && !listAllInSchemas && offset === 0 ? await isolatedCatalog(schemaSet, Number.MAX_SAFE_INTEGER) : null;
+  if (regexHits && !Array.isArray(regexHits)) return regexHits;
   const nameHits = offset > 0 ? [] : listAllInSchemas
     ? (model.nodes as SearchableNode[]).filter(n =>
         (!schemaSetLower || schemaSetLower.has(n.schema.toLowerCase())) &&
         (!typeSet || typeSet.has(n.type)))
-    : searchCatalog(
+    : regexHits ?? searchCatalog(
         model.nodes,
         effectiveQuery,
         typeSet,
@@ -407,14 +429,10 @@ export function searchObjects(
 
   if (taggedResults.length === 0) {
     if (appliedSchemaFilter) {
-      const crossHits = searchCatalog(
-        model.nodes,
-        effectiveQuery,
-        typeSet,
-        undefined,
-        10,
-        mode,
-      );
+      const crossHits = isRegex && !listAllInSchemas
+        ? await isolatedCatalog(undefined, 10)
+        : searchCatalog(model.nodes, effectiveQuery, typeSet, undefined, 10);
+      if (!Array.isArray(crossHits)) return crossHits;
       const foundSchemas = crossHits.length > 0
         ? [...new Set(crossHits.map(n => n.schema))]
         : [];
@@ -859,14 +877,15 @@ const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_
  * @returns Every matching line with its object metadata, plus the per-object `by_object` counts, or
  * the empty/invalid/over-budget fact.
  */
-export function searchDdl(
+export async function searchDdl(
   model: DatabaseModel,
   query: string,
   budget: TurnTokenBudget,
   types?: ('view' | 'procedure' | 'function')[],
   store?: import('../../engine/columnStore').ColumnStore,
   onDebug?: (msg: string) => void,
-): object {
+  signal?: AbortSignal,
+): Promise<object> {
   if (query.length > REGEX_MAX_LENGTH) {
     return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
   }
@@ -886,7 +905,25 @@ export function searchDdl(
     bodyScript: store?.getDdl(n.id) ?? n.bodyScript,
   }));
   const rowAdmission = (count: number) => checkScopeBudget(budget, 0, count * MIN_SEARCH_DDL_ROW_CHARS);
-  const scanned = scanBodyMatches(searchableNodes, compiled.regex, typeSet, count => rowAdmission(count) === null);
+  let scanned: import('../../utils/modelSearch').BodyScanResult;
+  try {
+    const reply = await executeIsolatedRegexSearch({
+      kind: 'ddl', pattern: query, nodes: searchableNodes, types: [...typeSet], budget,
+      rowChars: MIN_SEARCH_DDL_ROW_CHARS,
+    }, signal);
+    if (!reply.ok || reply.kind !== 'ddl') throw new Error('Search worker did not return a DDL result.');
+    const nodesById = new Map(searchableNodes.map(node => [node.id, node]));
+    scanned = {
+      ...reply.scan,
+      matches: reply.scan.matches.map(match => ({ ...match, node: nodesById.get(match.node.id)! })),
+      oversized: reply.scan.oversized.map(hit => ({ ...hit, node: nodesById.get(hit.node.id)! })),
+    };
+  } catch (error: unknown) {
+    if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: 'The isolated regex search did not finish before its execution deadline; no results were returned. Simplify the pattern or narrow the search filters.' });
+    }
+    throw error;
+  }
 
   const bodies = searchableNodes.filter(n => n.bodyScript && typeSet.has(n.type)).length;
   const cutLineCount = scanned.oversized.reduce((sum, t) => sum + t.lines.length, 0);

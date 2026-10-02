@@ -1,3 +1,4 @@
+import { executeIsolatedRegexSearch } from '../../../src/ai/support/isolatedRegexSearch';
 import { describe, expect, it, vi } from 'vitest';
 import {
   compileSearchRegex,
@@ -573,21 +574,19 @@ describe('compileSearchRegex — ReDoS guard', () => {
     }
   });
 
-  it('refuses exponential patterns without hanging on its own probe', () => {
+  it('refuses exponential patterns on actual input without hanging the host', async () => {
     for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {
       const start = performance.now();
-      const compiled = compileSearchRegex(pattern);
-      expect(compiled.ok, `${pattern} is refused`).toBe(false);
-      if (!compiled.ok) expect(compiled.reason).toBe('redos');
+      const unit = pattern.includes('d+') ? '1' : pattern.includes('s+') ? ' ' : 'a';
+      await expect(executeIsolatedRegexSearch({ kind: 'catalog', pattern, nodes: [{ id: 'x', name: unit.repeat(50_000), schema: 'dbo', type: 'table' }], limit: 20 })).rejects.toMatchObject({ reason: 'deadline' });
       expect(performance.now() - start, `${pattern} is refused promptly`).toBeLessThan(2_000);
     }
   });
 
-  it('refuses exponential patterns over comment-banner characters', () => {
+  it('refuses exponential patterns over comment-banner characters', async () => {
     for (const pattern of ['(-+)+x', '(=+)+x', '(\\*+)+x', '(_+)+x']) {
-      const compiled = compileSearchRegex(pattern);
-      expect(compiled.ok, `${pattern} is refused`).toBe(false);
-      if (!compiled.ok) expect(compiled.reason).toBe('redos');
+      const unit = pattern.includes('-') ? '-' : pattern.includes('=') ? '=' : pattern.includes('*') ? '*' : '_';
+      await expect(executeIsolatedRegexSearch({ kind: 'catalog', pattern, nodes: [{ id: 'x', name: unit.repeat(50_000), schema: 'dbo', type: 'table' }], limit: 20 })).rejects.toMatchObject({ reason: 'deadline' });
     }
   });
 
