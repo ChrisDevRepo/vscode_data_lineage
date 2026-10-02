@@ -1,5 +1,6 @@
 /** Completed hop summaries persist as text with their original identity; transient statuses and memory remain intact. */
 import { describe, expect, it } from 'vitest';
+import { marked } from 'marked';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
 import { TurnEventSink, type NativeGateEvent, type TurnEvent } from '../../../src/ai/runtime/turnEventSink';
@@ -247,4 +248,19 @@ it('cancellation before a leaf finding commits exposes only the already accepted
   expect(archive).toContain(LONG_SUMMARY);
   expect(labels.join('')).not.toContain('Uncommitted leaf summary');
   expect(labels.join('')).not.toContain('Leaf0');
+});
+
+
+it('renders multiplication and identifier punctuation literally without altering archive or model history', async () => {
+  const summary = 'TotalRevenue = Qty*UnitPrice; Discount = BaseAmt*DiscountPct. [Raw_Orders] <filter> & $Rate$.';
+  const { labels, archive, requests } = await hopSummaryLabelsForTurn(summary, summary);
+  const html = marked.parse(labels[1], { async: false });
+  expect(html).toContain('Qty*UnitPrice');
+  expect(html).toContain('BaseAmt*DiscountPct');
+  expect(html).toContain('[Raw_Orders]');
+  expect(html).toContain('&lt;filter&gt; &amp; $Rate$.');
+  expect(html).not.toContain('<em>UnitPrice');
+  expect(labels[1]).toContain('**Hop 2/2 — Leaf0**');
+  expect(archive).toContain(summary);
+  expect(requests).toContain(summary.replace(/</g, '\\\\u003c').replace(/>/g, '\\\\u003e'));
 });
