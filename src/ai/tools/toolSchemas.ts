@@ -130,14 +130,14 @@ export const StartExplorationInputSchema = z.object({
   depth: StartDepthSchema,
   excludeTypes: StartExcludeTypesSchema,
   /**
-   * Schemas to drop from the BFS scope (case-insensitive). Honored at scope-build time —
+   * Schemas to drop from the BFS scope under the source comparison policy. Honored at scope-build time —
    * any candidate node whose schema matches is excluded. REPLACE semantics: each call
    * wipes prior filter state on the engine; accumulate across refine rounds by re-sending
    * every prior exclusion plus the new one.
    */
   excludeSchemas: StartExcludeSchemasSchema,
   /**
-   * Specific node ids to drop from the BFS scope (case-insensitive). Cuts the node and
+   * Specific node ids to drop from the BFS scope under the source comparison policy. Cuts the node and
    * its subtree reachable only through it. Use only when the user explicitly says
    * remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}.
    * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
@@ -431,7 +431,7 @@ export const GetScopeBundleModelSchema = z.object({
  *
  * @remarks
  * Each fired `*_capture` YAML template produces ONE keyed entry (`business` and/or
- * `technical`). This base shape backs the permissive registered union
+ * `technical`). This base shape backs the permissive participant union
  * ({@link SubmitFindingsModelSchema}) and stays angle-open; the strict per-dispatch schema
  * (`submitFindingsSchemaForMode`) narrows the object to the locked classification's kept
  * angle key(s) before every active-hop dispatch, so an off-lock angle fails there as an
@@ -460,7 +460,7 @@ const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough; omit with e
 
 /**
  * Single source for the `prune_neighbors` field describe text, shared by the strict per-mode
- * schemas and the permissive registered union so the two cannot drift.
+ * schemas and the permissive participant union so the two cannot drift.
  */
 export const PRUNE_NEIGHBORS_DESCRIPTION =
   KEPT_VERDICT_ONLY + 'removes a neighbor that is neither visited nor queued, and whatever only it leads to, based on this node\'s SQL alone; '
@@ -474,7 +474,7 @@ const PruneNeighborSchema = z.object({
 
 /**
  * Single source for the `questions` field describe text, shared by the strict per-mode schemas and
- * the permissive registered union.
+ * the permissive participant union.
  */
 const QUESTIONS_DESCRIPTION =
   KEPT_VERDICT_ONLY + 'a specific check for one neighbor (a rule, filter or calculation to establish there). '
@@ -537,7 +537,7 @@ export const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
 
 /**
  * Single source for the `badge_label` describe text, shared by the strict per-mode
- * `submit_findings` schemas and the permissive registered union so the two never restate the
+ * `submit_findings` schemas and the permissive participant union so the two never restate the
  * same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere
  * else: `badge_label` is a per-hop tool field, not template-governed content.
  */
@@ -595,7 +595,7 @@ const ColumnFlowEntrySchema = z.object({
 
 
 /**
- * `verdict` field for `submit_findings`: one definition set for BB, CT and the registered union.
+ * `verdict` field for `submit_findings`: one definition set for BB, CT and the participant union.
  *
  * @remarks
  * CT is BB plus columns, so the verdict words mean the same in both modes. `end_branch` is the one
@@ -613,10 +613,10 @@ const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries;
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
-/** Single source for the `sections` describe text, shared by the per-mode schemas and the registered union. */
+/** Single source for the `sections` describe text, shared by the per-mode schemas and the participant union. */
 const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + 'Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
 
-/** Single source for the `summary` describe text, shared by the per-mode schemas and the registered union. */
+/** Single source for the `summary` describe text, shared by the per-mode schemas and the participant union. */
 const SUMMARY_DESCRIPTION =
   KEPT_VERDICT_REQUIRED + 'One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
 
@@ -1069,7 +1069,7 @@ export const SearchDdlInputSchema = z.object({
  *
  * @remarks
  * Mirrors the AI-authored `PresentResultInput` contract (`src/ai/tools/handlers/presentResult.ts`)
- * for the single registered tool. The runtime handler (`toolProvider.presentResult`)
+ * for the participant-internal tool. The runtime handler (`toolProvider.presentResult`)
  * still consumes the structural `PresentResultInput` TS type; this Zod object exists so
  * the model-facing JSON Schema has one generated source under the drift guard. `angle`
  * on a section is advisory capture metadata carried in the manifest.
@@ -1594,12 +1594,12 @@ const PresentResultRetainingSynthesisModelSchema = withRetainableSections(Presen
  * Model-facing `lineage_submit_findings` input schema (the permissive BB∪CT superset).
  *
  * @remarks
- * VS Code registers ONE `lineage_submit_findings` tool, so the model sees ONE schema —
- * the union of the BB and CT contracts (verdict `analyze | passthrough | end_branch`, `prune_neighbors`,
- * `questions` and `column_flow`). Instruction-plan compilation advertises the strict mode-and-classification-locked
+ * The participant tool catalog retains the union of the BB and CT contracts (verdict
+ * `analyze | passthrough | end_branch`, `prune_neighbors`, `questions` and `column_flow`).
+ * Instruction-plan compilation advertises the strict mode-and-classification-locked
  * schema (`submitFindingsSchemaForMode`) immediately before model dispatch, and the handler validates
- * the payload against that same contract, verdict shape included. This is the model-facing source the drift guard pins
- * against `package.json`; it is not a second hand-authored JSON Schema.
+ * the payload against that same contract, verdict shape included. This is the model-facing
+ * source used by `TOOL_DEFS`; the tool is dispatched internally and is not registered with VS Code.
  */
 export const SubmitFindingsModelSchema = z.object({
   focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),

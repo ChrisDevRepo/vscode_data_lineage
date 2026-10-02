@@ -11,6 +11,7 @@
  */
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
+import { schemaKey } from '../../../utils/sql';
 import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
   findBareNonPrunedNodes, findUnrenderedDetailSlotIds, requiredDetailSlotIds, buildColumnChainPreface,
@@ -47,10 +48,11 @@ function findUncoveredCtChainNodes(
   input: PresentResultInput,
   resolvedNodeIds: string[],
   slottedNodeIds: readonly string[],
+  identifierCaseSensitive = false,
 ): string[] {
   const edges = resultGraph?.columnAspect?.edges ?? [];
   if (edges.length === 0) return [];
-  const lc = (id: string): string => id.toLowerCase();
+  const lc = (id: string): string => schemaKey(id, identifierCaseSensitive);
   const exempt = new Set<string>(slottedNodeIds.map(lc));
   for (const st of resultGraph?.node_states ?? []) if (st.action === 'prune') exempt.add(lc(st.nodeId));
   const chain = new Set(edges.flatMap(e => [lc(e.from_node), lc(e.to_node), lc(e.hop_node)]));
@@ -127,11 +129,13 @@ function buildColumnAspectNodeVerdicts(
   nodeIds: readonly string[],
   columnAspect: NonNullable<ResultGraph['columnAspect']>,
   nodeStates: ResultGraph['node_states'],
+  identifierCaseSensitive = false,
 ) {
-  const referenced = new Set(nodeIds.map(id => id.toLowerCase()));
-  for (const e of columnAspect.edges) referenced.add(e.hop_node.toLowerCase());
+  const key = (id: string): string => schemaKey(id, identifierCaseSensitive);
+  const referenced = new Set(nodeIds.map(key));
+  for (const e of columnAspect.edges) referenced.add(key(e.hop_node));
   return (nodeStates ?? [])
-    .filter(ns => referenced.has(ns.nodeId.toLowerCase()))
+    .filter(ns => referenced.has(key(ns.nodeId)))
     .map(ns => ({ nodeId: ns.nodeId, verdict: ns.action }));
 }
 
@@ -271,7 +275,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const modelNodeMap = getModelNodeMap(model);
 
       const canonicalNodeId = (id: string, field: string): string => {
-        const resolved = resolveModelNodeId(id, modelNodeMap) ?? id;
+        const resolved = resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ?? id;
         if (resolved !== id) {
           s.logger.debug(
             `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(id)} to=${sanitizeForLog(resolved)}`,
@@ -303,7 +307,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
-        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap);
+        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (addResolution.unresolved.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
@@ -333,7 +337,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
-        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap);
+        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (pruneResolution.unresolved.length > 0) {
           return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
@@ -457,7 +461,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       );
 
       const externalViolations: PresentResultViolation[] = [...malformedEvidence];
-      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds);
+      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
       if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
           field: 'sections',
@@ -544,7 +548,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               ...(e.note ? { note: e.note } : {}),
             })),
           },
-          nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states),
+          nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states, model.identifierCaseSensitive),
         } : {}),
       };
       const checkpoint = captureCheckpoint(sess, s.logger);

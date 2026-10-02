@@ -121,6 +121,22 @@ function pressArrow(row: HTMLElement, key: string): void {
   });
 }
 
+describe('column row source identity', () => {
+  it.each([false, true])('keeps case twins separate on the active column thread (CS=%s)', cs => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness seed={new Set([columnRowKey('dbo.orders', 'Value', cs)])}>
+          <ColumnTraceNode id="dbo.orders" data={{ ...makeData(['Value', 'value']), identifierCaseSensitive: cs }} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const rendered = rows();
+    expect(rendered).toHaveLength(2);
+    expect(rendered[0].style.opacity).toBe('1');
+    expect(rendered[1].style.opacity).toBe(cs ? String(COLUMN_ROW_DIM_OPACITY) : '1');
+  });
+});
+
 describe('ColumnTraceNode', () => {
   it('renders one row per traced column, each naming its object as well as its column', () => {
     mountNode(['OrderId', 'CustomerId', 'Total']);

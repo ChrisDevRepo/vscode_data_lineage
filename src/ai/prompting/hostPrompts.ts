@@ -71,6 +71,7 @@ export function deriveStagePromptContext(
     totalSchemaCount: model.schemas.length,
     visibleNodes,
     totalNodes,
+    ...(model.identifierCaseSensitive && { identifierCaseSensitive: true }),
     ...(screen ? { screen } : {}),
   };
 }

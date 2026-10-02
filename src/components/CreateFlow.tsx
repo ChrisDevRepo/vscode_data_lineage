@@ -231,6 +231,7 @@ export const CreateFlow = memo(function CreateFlow({
               <>
                 <SchemaSelector
                   schemas={schemas}
+                  identifierCaseSensitive={schemaOrModel?.identifierCaseSensitive}
                   selectedSchemas={loader.selectedSchemas}
                   onToggle={loader.toggleSchema}
                   onSelectAll={loader.selectAllSchemas}

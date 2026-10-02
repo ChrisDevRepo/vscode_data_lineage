@@ -15,7 +15,7 @@ export interface ReconciledAiView {
 /** Canonicalizes every AI-preview node reference against the loaded render model. */
 export function reconcileAiView(nodeIds: string[], metadata: AIViewMetadata, model: DatabaseModel): ReconciledAiView {
   const nodeMap = new Map<string, unknown>(model.nodes.map(node => [node.id, node]));
-  const canonicalize = (id: string): string | null => resolveModelNodeId(id, nodeMap);
+  const canonicalize = (id: string): string | null => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive);
 
   const resolved: string[] = [];
   const unresolved: string[] = [];
@@ -40,6 +40,7 @@ export function reconcileAiView(nodeIds: string[], metadata: AIViewMetadata, mod
     ...metadata,
     highlightGroups: metadata.highlightGroups.map(group => ({ ...group, nodeIds: mapIds(group.nodeIds) })),
     badges: remapNodeText(metadata.badges),
+    ...(metadata.nodeVerdicts ? { nodeVerdicts: remapNodeText(metadata.nodeVerdicts) } : {}),
     ...(metadata.notes ? { notes: remapNodeText(metadata.notes) } : {}),
     ...(metadata.columnAspect ? {
       columnAspect: {

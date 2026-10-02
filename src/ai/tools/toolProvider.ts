@@ -278,22 +278,16 @@ class ToolHandler implements ToolServices {
       const { ids, filter, cursor } = parsed.data;
       if (ids || filter) {
         const nodeMap = getModelNodeMap(model);
-        const resolvedIds = ids?.map(id => {
-          const resolved = resolveModelNodeId(id, nodeMap);
-          if (resolved && resolved !== id) {
-            this.logger.debug(`[AI] get_screen_state id resolved raw=${sanitizeForLog(id)} resolved=${sanitizeForLog(resolved)}`);
-          }
-          return resolved ?? id;
-        });
         return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
           liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
           budget: this.budget,
-          ids: resolvedIds,
+          ids,
           filter,
           getDdl,
           isInModel: id => nodeMap.has(id),
+          onIdNormalized: (raw, canonical) => this.logger.debug(`[AI] get_screen_state id resolved raw=${sanitizeForLog(raw)} resolved=${sanitizeForLog(canonical)}`),
           hasPendingProposal: sess.pendingExploration !== null,
         }), input);
       }
@@ -435,7 +429,16 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_neighbor_columns', parsed.error, input);
 
-      const invalidIds = engine.validateNeighborIds(parsed.data.ids);
+      const model = this.requireModel();
+      const nodeMap = getModelNodeMap(model);
+      const ids = parsed.data.ids.map(raw => {
+        const canonical = resolveModelNodeId(raw, nodeMap, model.identifierCaseSensitive);
+        if (canonical && canonical !== raw) {
+          this.logger.debug(`[Normalize] tool=get_neighbor_columns from=${sanitizeForLog(raw)} to=${sanitizeForLog(canonical)}`);
+        }
+        return canonical ?? raw;
+      });
+      const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
           code: 'out_of_scope_or_not_neighbor',
@@ -444,7 +447,7 @@ class ToolHandler implements ToolServices {
         }), input);
       }
 
-      return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
+      return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(model, ids, sess.columnStore), input);
     } catch (err) { return this.toolError('get_neighbor_columns', err); }
   }
 

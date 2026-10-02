@@ -12,6 +12,8 @@ import type { PendingExplorationProposal } from '../session/session';
 import { CLASSIFICATION_LABEL, type ClassificationValue } from '../session/classification';
 import { pluralize } from '../support/text';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
+import { normalizeName } from '../../engine/shared/sqlIdentifier';
+import { quoteIdentifier, schemaKey } from '../../utils/sql';
 
 /** In-scope object types the card lists before folding the rest into one `…` line. */
 const CARD_OBJECT_TYPE_LIMIT = 3;
@@ -63,8 +65,8 @@ function oneParagraph(text: string): string {
  * @param requested - The proposal's requested `excludeSchemas`.
  * @param active - The schemas the proposal's active filter still excludes.
  */
-export function schemaFiltersRemovedByOrigin(requested: readonly string[], active: readonly string[]): string[] {
-  return requested.filter(schema => !active.some(kept => kept.toLowerCase() === schema.toLowerCase()));
+export function schemaFiltersRemovedByOrigin(requested: readonly string[], active: readonly string[], identifierCaseSensitive = false): string[] {
+  return requested.filter(schema => !active.some(kept => schemaKey(kept, identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive)));
 }
 
 /**
@@ -75,10 +77,10 @@ export function schemaFiltersRemovedByOrigin(requested: readonly string[], activ
  * @param origin - The proposal's origin id.
  * @param active - The object ids the proposal's active filter still excludes.
  */
-export function nodeFiltersRemovedByOrigin(requested: readonly string[], origin: string, active: readonly string[]): string[] {
+export function nodeFiltersRemovedByOrigin(requested: readonly string[], origin: string, active: readonly string[], identifierCaseSensitive = false): string[] {
   const originOnly = new Map([[origin, true]]);
-  if (active.some(kept => resolveModelNodeId(kept, originOnly) !== null)) return [];
-  return requested.filter(id => resolveModelNodeId(id, originOnly) !== null);
+  if (active.some(kept => resolveModelNodeId(kept, originOnly, identifierCaseSensitive) !== null)) return [];
+  return requested.filter(id => resolveModelNodeId(id, originOnly, identifierCaseSensitive) !== null);
 }
 
 /** Schemas in plan order: most hops first, then most nodes, then name. */
@@ -128,7 +130,7 @@ function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
       const group = groups.get(type) ?? { type, scope: 0, names: [], omitted: 0 };
       const ambiguous = summary.ambiguousObjectNames?.[type];
       const names = leaf.nodeNames.map(name =>
-        ambiguous?.includes(name.toLowerCase()) ? `${schema}.${name}` : name,
+        ambiguous?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? `${schema}.${name}` : name,
       );
       groups.set(type, {
         type,
@@ -239,7 +241,12 @@ export function renderScopeSummaryMd(
   if (classification) lines.push(`- **Analysis:** ${CLASSIFICATION_LABEL[classification]}`);
   lines.push('');
 
-  const passSet = new Set(summary.activeFilters.passNodeIds.map(nodeId => nodeId.toLowerCase()));
+  const sourceNodeId = (schema: string, name: string) => normalizeName(`${quoteIdentifier(schema)}.${quoteIdentifier(name)}`, summary.identifierCaseSensitive);
+  const sourceNodes = new Map(schemasInPlanOrder(summary).flatMap(([schema, entry]) =>
+    Object.values(entry.byType).flatMap(leaf => leaf.nodeNames.map(name =>
+      [sourceNodeId(schema, name), true] as const))));
+  const passNodes = new Set(summary.activeFilters.passNodeIds.map(nodeId =>
+    resolveModelNodeId(nodeId, sourceNodes, summary.identifierCaseSensitive)).filter(id => id !== null));
   for (const [schema, schemaEntry] of schemasInPlanOrder(summary)) {
     lines.push(`- **${schema}** — ${plural(schemaEntry.scope, 'node')}`);
     const types = Object.entries(schemaEntry.byType).sort((a, b) =>
@@ -247,8 +254,8 @@ export function renderScopeSummaryMd(
     );
     for (const [type, leaf] of types) {
       const names = leaf.nodeNames.map(name => {
-        const fq = `[${schema.toLowerCase()}].[${name.toLowerCase()}]`;
-        return passSet.has(fq) ? `${name} _(pass)_` : name;
+        const fq = sourceNodeId(schema, name);
+        return passNodes.has(fq) ? `${name} _(pass)_` : name;
       }).join(', ');
       const omitted = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
       lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}): ${names}${omitted}`);
@@ -320,11 +327,11 @@ export function renderScopeCardMd(
   ].filter(Boolean);
   if (excluded.length > 0) lines.push(`- **Excluded:** ${excluded.join('; ')}`);
   if (filters.passNodeIds.length > 0) lines.push(`- **Keep but skip:** ${filters.passNodeIds.map(code).join(', ')}`);
-  const removed = schemaFiltersRemovedByOrigin(proposal.init.excludeSchemas ?? [], filters.schemas);
+  const removed = schemaFiltersRemovedByOrigin(proposal.init.excludeSchemas ?? [], filters.schemas, summary.identifierCaseSensitive);
   if (removed.length > 0) {
     lines.push(`- **Filter removed:** schema ${removed.map(code).join(', ')} (asked: ${code(summary.originLabel ?? summary.origin)})`);
   }
-  const removedNodes = nodeFiltersRemovedByOrigin(proposal.init.excludeNodeIds ?? [], summary.origin, filters.nodeIds);
+  const removedNodes = nodeFiltersRemovedByOrigin(proposal.init.excludeNodeIds ?? [], summary.origin, filters.nodeIds, summary.identifierCaseSensitive);
   if (removedNodes.length > 0) {
     lines.push(`- **Filter removed:** object ${removedNodes.map(code).join(', ')} (asked: ${code(summary.originLabel ?? summary.origin)})`);
   }

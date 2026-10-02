@@ -89,8 +89,8 @@ type SearchRegexResult =
   /** The pattern is not valid JavaScript regex syntax; `error` is what V8 raised. */
   | { ok: false; reason: 'syntax'; error: SyntaxError };
 
-/** Syntax refusal or a separately established backtracking refusal accepted by repair hints. */
-type SearchRegexRejection = Extract<SearchRegexResult, { ok: false }> | { ok: false; reason: 'redos' };
+/** Syntax refusal accepted by repair hints; execution deadlines belong to the search worker. */
+type SearchRegexRejection = Extract<SearchRegexResult, { ok: false }>;
 
 /**
  * Longest body line, in characters, a search result serves as text.
@@ -178,48 +178,44 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
  * list, so the advice below is keyed on V8's own message.
  */
 export function regexRejectHint(pattern: string, rejection: SearchRegexRejection): string {
-  if (rejection.reason === 'syntax') {
-    const message = rejection.error.message;
-    if (/\(\?P</.test(pattern) && message.includes('Invalid group')) {
-      return 'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.';
-    }
-    if (/\(\?#/.test(pattern) && message.includes('Invalid group')) {
-      return 'Remove the "(?#...)" comment group — JavaScript regular expressions do not support inline comments.';
-    }
-    if (/\(\?[a-zA-Z-]+[):]/.test(pattern) && message.includes('Invalid group')) {
-      return 'Remove the inline flag group (e.g. "(?s)") — matching is already case-insensitive with ^ and $ per line, and JavaScript regular expressions do not support inline flags.';
-    }
-    if (message.includes('Invalid group')) {
-      return 'Remove or correct the unsupported "(?...)" group syntax — JavaScript does not recognize it.';
-    }
-    if (message.includes('Unterminated group')) {
-      return 'Add the missing closing ")" — a "(" (or "(?<name>") was opened but never closed.';
-    }
-    if (message.includes("Unmatched ')'")) {
-      return 'Remove the extra ")" or add the "(" it is meant to close.';
-    }
-    if (message.includes('Unterminated character class')) {
-      return 'Add the missing closing "]" to the character class.';
-    }
-    if (message.includes('Range out of order in character class')) {
-      return 'Reorder the character class range so the lower bound comes first (e.g. "[a-z]", not "[z-a]").';
-    }
-    if (message.includes('Duplicate capture group name')) {
-      return 'Rename one of the duplicate "(?<name>...)" groups — each group name must be unique.';
-    }
-    if (message.includes('numbers out of order in {} quantifier')) {
-      return 'Reorder the quantifier bounds so the minimum comes first (e.g. "{1,2}", not "{2,1}").';
-    }
-    if (message.includes('Nothing to repeat')) {
-      return 'Remove or reposition the quantifier (*, +, ?, or {}) — it has nothing before it to repeat.';
-    }
-    if (message.includes('at end of pattern')) {
-      return 'Remove the trailing "\\" or complete the escape sequence it starts.';
-    }
-    return `Fix the pattern: ${message.replace(/^Invalid regular expression: .*?: /, '')}.`;
+  const message = rejection.error.message;
+  if (/\(\?P</.test(pattern) && message.includes('Invalid group')) {
+    return 'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.';
   }
-
-  return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") and stacked or leading unbounded repeats (e.g. ".*.*x", ".*x") that backtrack heavily on a long line; use a literal anchor or a bounded repeat such as "{0,40}".';
+  if (/\(\?#/.test(pattern) && message.includes('Invalid group')) {
+    return 'Remove the "(?#...)" comment group — JavaScript regular expressions do not support inline comments.';
+  }
+  if (/\(\?[a-zA-Z-]+[):]/.test(pattern) && message.includes('Invalid group')) {
+    return 'Remove the inline flag group (e.g. "(?s)") — matching is already case-insensitive with ^ and $ per line, and JavaScript regular expressions do not support inline flags.';
+  }
+  if (message.includes('Invalid group')) {
+    return 'Remove or correct the unsupported "(?...)" group syntax — JavaScript does not recognize it.';
+  }
+  if (message.includes('Unterminated group')) {
+    return 'Add the missing closing ")" — a "(" (or "(?<name>") was opened but never closed.';
+  }
+  if (message.includes("Unmatched ')'")) {
+    return 'Remove the extra ")" or add the "(" it is meant to close.';
+  }
+  if (message.includes('Unterminated character class')) {
+    return 'Add the missing closing "]" to the character class.';
+  }
+  if (message.includes('Range out of order in character class')) {
+    return 'Reorder the character class range so the lower bound comes first (e.g. "[a-z]", not "[z-a]").';
+  }
+  if (message.includes('Duplicate capture group name')) {
+    return 'Rename one of the duplicate "(?<name>...)" groups — each group name must be unique.';
+  }
+  if (message.includes('numbers out of order in {} quantifier')) {
+    return 'Reorder the quantifier bounds so the minimum comes first (e.g. "{1,2}", not "{2,1}").';
+  }
+  if (message.includes('Nothing to repeat')) {
+    return 'Remove or reposition the quantifier (*, +, ?, or {}) — it has nothing before it to repeat.';
+  }
+  if (message.includes('at end of pattern')) {
+    return 'Remove the trailing "\\" or complete the escape sequence it starts.';
+  }
+  return `Fix the pattern: ${message.replace(/^Invalid regular expression: .*?: /, '')}.`;
 }
 
 /**

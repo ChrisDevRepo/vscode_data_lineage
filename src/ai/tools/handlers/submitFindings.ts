@@ -43,8 +43,9 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           ? input as SubmitFindingsInputObject
           : {};
 
-      const modelNodeMap = getModelNodeMap(s.requireModel());
-      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
+      const model = s.requireModel();
+      const modelNodeMap = getModelNodeMap(model);
+      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap, model.identifierCaseSensitive);
       const normalizedInput = normalized.input;
       for (const event of normalized.normalizations) {
         s.logger.debug(
@@ -115,6 +116,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           finalResult,
           sess.memory.getUserQuestion(),
           sess.stateMachine?.deferredQuestions ?? [],
+          model.identifierCaseSensitive,
         );
         return s.logAndReturn('lineage_submit_findings', envelope, normalizedInput);
       }

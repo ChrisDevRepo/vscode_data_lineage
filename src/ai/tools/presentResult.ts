@@ -105,8 +105,8 @@ const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
  */
 function presentNodeIdHint(stage: PresentResultStage): string {
   return stage === 'visual_preview'
-    ? 'Case and bracket differences are normalized automatically. Remove the named ids from node_ids.'
-    : 'Case and bracket differences are normalized automatically. Remove the named ids from node_ids, or state the fact in sections[].text.';
+    ? 'Use the accepted canonical ids with their exact catalog casing. Remove the named ids from node_ids.'
+    : 'Use the accepted canonical ids with their exact catalog casing. Remove the named ids from node_ids, or state the fact in sections[].text.';
 }
 
 /**

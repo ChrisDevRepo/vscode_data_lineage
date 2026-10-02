@@ -11,6 +11,7 @@ import { buildColumnAspectPrompt } from '../prompting/prompts';
 import { escapePromptText } from '../support/text';
 import { assignEvidenceIds, requiredDetailSlotIds } from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
+import { schemaKey } from '../../utils/sql';
 
 /**
  * Re-anchor suffix appended when a passthrough-inherited sub-question lands on a bodied focus.
@@ -324,8 +325,8 @@ interface NodeFlowFacts {
  *
  * @param edges - Node-level `[from, to, kind]` flow edges from {@link SmResult.edges}.
  */
-function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>): Map<string, NodeFlowFacts> {
-  const lc = (s: string): string => s.toLowerCase();
+function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, identifierCaseSensitive = false): Map<string, NodeFlowFacts> {
+  const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const addNeighbor = (m: Map<string, Set<string>>, key: string, value: string): void => {
     let set = m.get(key);
     if (!set) { set = new Set<string>(); m.set(key, set); }
@@ -373,12 +374,12 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
  * @returns A markdown bullet list of writer/reader facts, or an empty string when every kept node is slotted.
  */
-export function buildPassthroughFlowFacts(result: SmResult): string {
-  const lc = (s: string): string => s.toLowerCase();
+export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
+  const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const slottedIds = new Set(result.detail_slots.map(s => lc(s.nodeId)));
   const prunedIds = new Set(result.node_states.filter(s => s.action === 'prune').map(s => lc(s.nodeId)));
   const actionById = new Map(result.node_states.map(s => [lc(s.nodeId), s.action]));
-  const flowFacts = computeNodeFlowFacts(result.edges);
+  const flowFacts = computeNodeFlowFacts(result.edges, identifierCaseSensitive);
 
   const qualifying = result.fullNodes
     .map(n => ({ id: lc(n.id), type: n.t }))
@@ -443,14 +444,14 @@ const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
  * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
  * @returns A markdown checklist, or an empty string when no hop captured a formula.
  */
-function buildCapturedFormulaFacts(result: SmResult): string {
+function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = false): string {
   const seen = new Set<string>();
   const lines: string[] = [];
   const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
   const isEnumerable = (artifact: string): boolean =>
     (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
   for (const slot of result.detail_slots) {
-    const nodeId = slot.nodeId.toLowerCase();
+    const nodeId = schemaKey(slot.nodeId, identifierCaseSensitive);
     const push = (formula: string, rendered: string): void => {
       const key = `${nodeId}\u0000${formula}`;
       if (formula.length === 0 || seen.has(key)) return;
@@ -534,6 +535,7 @@ export function buildSmCompletionEnvelope(
   result: SmResult,
   userQuestion: string,
   deferred: ReadonlyArray<DeferredQuestion>,
+  identifierCaseSensitive = false,
 ): SmCompletionEnvelope {
   const presentedNodeIds = result.fullNodes.map(node => node.id);
   const presented = new Set(presentedNodeIds);
@@ -542,9 +544,9 @@ export function buildSmCompletionEnvelope(
     : result.edges.length > 0
       ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
       : '';
-  const passthroughFacts = buildPassthroughFlowFacts(result);
+  const passthroughFacts = buildPassthroughFlowFacts(result, identifierCaseSensitive);
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
-  const formulaFacts = buildCapturedFormulaFacts(result);
+  const formulaFacts = buildCapturedFormulaFacts(result, identifierCaseSensitive);
   const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
   const mustLink = requiredDetailSlotIds(result.detail_slots.map(slot => slot.nodeId), presented);
   const mustLinkBlock = mustLink.length > 0 ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}` : '';

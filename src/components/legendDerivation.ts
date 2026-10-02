@@ -80,21 +80,22 @@ export function deriveLegendSchemas(
  * resulting key set is a superset of {@link deriveLegendSchemas}'s output.
  *
  * @param nodes - Currently rendered nodes (`localNodes`).
+ * @param identifierCaseSensitive - Checked source policy for schema map identity.
  * @returns Map keyed by normalized schema name.
  */
-export function deriveLegendColorMap(nodes: readonly LegendNode[]): SchemaColorMap {
+export function deriveLegendColorMap(nodes: readonly LegendNode[], identifierCaseSensitive = false): SchemaColorMap {
   const colors: SchemaColorMap = new Map();
   for (const node of nodes) {
     if (node.type === 'schemaNode') {
       const data = node.data as SchemaNodeData;
       if (!data.isExternalOnly) {
-        colors.set(schemaKey(data.schemaName), data.color);
+        colors.set(schemaKey(data.schemaName, identifierCaseSensitive), data.color);
       }
       continue;
     }
     const data = node.data as CustomNodeData;
     if (data.objectType !== 'external') {
-      colors.set(schemaKey(data.schema), data.schemaColor ?? getSchemaColor(data.schema));
+      colors.set(schemaKey(data.schema, identifierCaseSensitive), data.schemaColor ?? getSchemaColor(data.schema, undefined, identifierCaseSensitive));
     }
   }
   return colors;

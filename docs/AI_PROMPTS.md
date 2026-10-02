@@ -27,6 +27,12 @@ the source of truth for exact wording and provider-visible shapes.
 YAML is a customization layer, not the whole prompt. Phase instructions and
 mechanical enforcement remain code-owned.
 
+The shared base prompt derives identifier comparison from checked model metadata.
+For CS catalogs it tells every authoring stage to retain the exact object IDs and
+column names returned by tools; case-only variants identify different endpoints.
+CI keeps its existing prompt and normalization. The hint supports model authoring;
+shared backend resolvers and route validation enforce identity independently of it.
+
 Templates own answer content and style; code owns phase routing, tool
 availability, and mechanical field contracts. An overlay changes instructions,
 not validation or scope rules.

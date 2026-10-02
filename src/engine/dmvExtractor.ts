@@ -57,7 +57,8 @@ const NO_USER_OBJECTS_WARNING = 'No user objects found in database. If the datab
  * @param result - Raw query result containing schema object aggregates.
  * @returns A structured summary of schemas and object counts.
  */
-export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
+export function buildSchemaPreview(result: SimpleExecuteResult, platformInfo?: SimpleExecuteResult): SchemaPreview {
+  const identifierCaseSensitive = checkedIdentifierCaseSensitivity(platformInfo);
   const colIdx = buildColumnIndex(result);
   const schemaMap = new Map<string, SchemaInfo>();
   let totalObjects = 0;
@@ -69,7 +70,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
     const objType = DMV_TYPE_MAP[typeCode];
     if (!objType) continue;
 
-    const key = schemaKey(schemaName);
+    const key = schemaKey(schemaName, identifierCaseSensitive);
     let info = schemaMap.get(key);
     if (!info) {
       info = createEmptySchemaInfo(schemaName);
@@ -85,7 +86,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult): SchemaPreview {
   if (totalObjects === 0) {
     warnings.push(NO_USER_OBJECTS_WARNING);
   }
-  return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
+  return { schemas, totalObjects, ...(identifierCaseSensitive && { identifierCaseSensitive }), warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 /**
@@ -105,9 +106,10 @@ export function buildModelFromDmv(
   externalRefsEnabled = true,
   onDebugLog?: (msg: string) => void,
 ): DatabaseModel {
-  const objects = extractObjects(results);
+  const identifierCaseSensitive = checkedIdentifierCaseSensitivity(results.platformInfo);
+  const objects = extractObjects(results, identifierCaseSensitive);
   const deps = extractDependencies(results);
-  const allObjects = results.allObjects ? extractAllObjects(results.allObjects) : undefined;
+  const allObjects = results.allObjects ? extractAllObjects(results.allObjects, identifierCaseSensitive) : undefined;
   if (onDebugLog) {
     const c = { table: 0, view: 0, procedure: 0, function: 0 } as Record<string, number>;
     for (const o of objects) if (o.type in c) c[o.type]++;
@@ -118,7 +120,7 @@ export function buildModelFromDmv(
     }).length ?? 0;
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
-  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog);
+  const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);
   const queryPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
   const dbPlatform = queryPlatform !== UNKNOWN_DB_PLATFORM
     ? queryPlatform
@@ -130,6 +132,17 @@ export function buildModelFromDmv(
   }
 
   return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform, source: 'database' };
+}
+
+/** Enables exact identifiers only for an actual catalog collation with a checked comparison style. */
+function checkedIdentifierCaseSensitivity(result?: SimpleExecuteResult): boolean {
+  if (result?.rows.length !== 1) return false;
+  const cols = buildColumnIndex(result);
+  const collation = cellValue(result.rows[0], cols, 'identifier_collation');
+  const style = cellValue(result.rows[0], cols, 'identifier_comparison_style');
+  const comparisonStyle = Number(style);
+  return !!collation.trim() && /^\d+$/.test(style) && Number.isSafeInteger(comparisonStyle)
+    && comparisonStyle <= 0x7fffffff && (comparisonStyle & 1) === 0;
 }
 
 /**
@@ -235,14 +248,14 @@ function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
 }
 
 /** Internal catalog lookup identity; dotted identifier segments remain separate. */
-function metadataObjectKey(schema: string, object: string): string {
-  return JSON.stringify([schema.toLowerCase(), object.toLowerCase()]);
+function metadataObjectKey(schema: string, object: string, identifierCaseSensitive: boolean): string {
+  return JSON.stringify([schemaKey(schema, identifierCaseSensitive), schemaKey(object, identifierCaseSensitive)]);
 }
 
 /**
  * Reconstructs UQ, CK, and FK constraints from a flattened result set.
  */
-function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
+function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ConstraintMaps {
   const colIdx = buildColumnIndex(result);
   const uqColMap = new Map<string, string>();
   const ckColMap = new Map<string, string>();
@@ -257,8 +270,8 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
     const cname      = cellValue(row, colIdx, 'constraint_name');
     const colName    = cellValue(row, colIdx, 'column_name');
 
-    const tableKey = metadataObjectKey(schemaName, tableName);
-    const colKey   = `${tableKey}.${colName}`.toLowerCase();
+    const tableKey = metadataObjectKey(schemaName, tableName, identifierCaseSensitive);
+    const colKey   = schemaKey(`${tableKey}.${colName}`, identifierCaseSensitive);
 
     if (ctype === 'UQ') {
       if (!uqColMap.has(colKey)) uqColMap.set(colKey, cname);
@@ -270,7 +283,7 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
       const refCol    = cellValue(row, colIdx, 'ref_column');
       const onDelete  = cellValue(row, colIdx, 'on_delete').replace(/_/g, ' ');
 
-      const fkKey = `${tableKey}.${cname}`.toLowerCase();
+      const fkKey = schemaKey(`${tableKey}.${cname}`, identifierCaseSensitive);
       let fk = fkPartial.get(fkKey);
       if (!fk) {
         fk = { name: cname, columns: [], refSchema, refTable, refColumns: [], onDelete };
@@ -294,12 +307,12 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
 /**
  * Extracts normalized objects and their columns from raw result sets.
  */
-function extractObjects(results: DmvResults): ExtractedObject[] {
+function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): ExtractedObject[] {
   const nodeColIdx = buildColumnIndex(results.nodes);
   const colColIdx = buildColumnIndex(results.columns);
 
   const constraintMaps = results.constraints
-    ? buildConstraintMaps(results.constraints)
+    ? buildConstraintMaps(results.constraints, identifierCaseSensitive)
     : null;
 
   const isTruthy = (v: string) => v === '1' || v.toLowerCase() === 'true';
@@ -311,7 +324,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
   for (const row of results.columns.rows) {
     const schema = cellValue(row, colColIdx, 'schema_name');
     const table = cellValue(row, colColIdx, 'table_name');
-    const key = metadataObjectKey(schema, table);
+    const key = metadataObjectKey(schema, table, identifierCaseSensitive);
 
     if (!objectColumns.has(key)) objectColumns.set(key, []);
 
@@ -373,19 +386,19 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
     if (!objType) continue;
 
     const fullName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(objectName)}`;
-    const id = normalizeName(fullName);
+    const id = normalizeName(fullName, identifierCaseSensitive);
     if (seen.has(id)) continue;
     seen.add(id);
 
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
-    const objectKey = metadataObjectKey(schemaName, objectName);
+    const objectKey = metadataObjectKey(schemaName, objectName, identifierCaseSensitive);
     const cols = objectColumns.get(objectKey);
 
     if (cols) {
       columns = cols;
       if (constraintMaps && (objType === 'table' || objType === 'external')) {
-        fks = enrichColumnsWithConstraints(columns, objectKey, constraintMaps);
+        fks = enrichColumnsWithConstraints(columns, objectKey, constraintMaps, identifierCaseSensitive);
       }
     }
 
@@ -434,7 +447,7 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
 /**
  * Extracts a lightweight catalog of all objects from the full catalog query.
  */
-function extractAllObjects(result: SimpleExecuteResult): ExtractedObject[] {
+function extractAllObjects(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ExtractedObject[] {
   const colIdx = buildColumnIndex(result);
   const seen = new Set<string>();
   const objects: ExtractedObject[] = [];
@@ -447,7 +460,7 @@ function extractAllObjects(result: SimpleExecuteResult): ExtractedObject[] {
     if (!objType) continue;
 
     const fullName = `${quoteIdentifier(schemaName)}.${quoteIdentifier(objectName)}`;
-    const id = normalizeName(fullName);
+    const id = normalizeName(fullName, identifierCaseSensitive);
     if (seen.has(id)) continue;
     seen.add(id);
 

@@ -1,3 +1,4 @@
+import { normalizeColName, schemaKey } from '../../utils/sql';
 import type { InvestigationTask, PendingLead, ScalarReturnTarget } from './smTypes';
 
 /**
@@ -35,8 +36,8 @@ function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function leadIdentity(input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId' | 'reason'>): string {
-  return JSON.stringify([input.taskId, input.nodeId.toLowerCase(), input.fromNodeId.toLowerCase(), input.reason]);
+function leadIdentity(input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId' | 'reason'>, caseSensitive = false): string {
+  return JSON.stringify([input.taskId, schemaKey(input.nodeId, caseSensitive), schemaKey(input.fromNodeId, caseSensitive), input.reason]);
 }
 
 function stableId(prefix: 'task' | 'lead', identity: string): string {
@@ -56,6 +57,12 @@ function stableId(prefix: 'task' | 'lead', identity: string): string {
  * two different questions about the same node distinct while making retries idempotent.
  */
 export class TaskLedger {
+  /** Follows the proven source identifier policy; existing callers default to case-insensitive. */
+  constructor(private readonly identifierCaseSensitive = false) {}
+
+  private identifierKey(value: string): string {
+    return schemaKey(value, this.identifierCaseSensitive);
+  }
   private readonly tasks = new Map<string, InvestigationTask>();
   private readonly taskIdsByIdentity = new Map<string, string>();
   private readonly leads = new Map<string, PendingLead>();
@@ -117,7 +124,7 @@ export class TaskLedger {
       throw new Error('activeColumns must be an array');
     }
     const canonicalColumns = (rawInput.activeColumns as string[] | undefined)?.map(column => column.trim()).filter(Boolean);
-    const identityColumns = canonicalColumns?.map(normalizeText);
+    const identityColumns = canonicalColumns?.map(column => normalizeColName(column, this.identifierCaseSensitive));
     if (input.kind === 'column_lineage' && (!canonicalColumns || canonicalColumns.length === 0)) {
       throw new Error('column_lineage tasks require at least one active column');
     }
@@ -128,11 +135,11 @@ export class TaskLedger {
       input.kind,
       input.source,
       normalizeText(input.question),
-      input.nodeId?.toLowerCase() ?? '',
+      input.nodeId === undefined ? '' : this.identifierKey(input.nodeId),
       input.parentTaskId ?? '',
       identityColumns ?? [],
       ...(input.kind === 'column_lineage' && input.returnTargets
-        ? [input.returnTargets.map(target => [target.node.toLowerCase(), target.col.toLowerCase()]).sort()]
+        ? [input.returnTargets.map(target => [this.identifierKey(target.node), this.identifierKey(target.col)]).sort()]
         : []),
       ...(input.callerContext ? [[input.callerContext.node, input.callerContext.col, input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
     ]);
@@ -184,7 +191,7 @@ export class TaskLedger {
    * @param input - Lead content without its derived ID.
    */
   public ensureLead(input: Omit<PendingLead, 'id' | 'status'> & { status?: PendingLead['status'] }): PendingLead {
-    const identity = leadIdentity(input);
+    const identity = leadIdentity(input, this.identifierCaseSensitive);
     return this.upsertByIdentity(
       this.leads,
       this.leadIdsByIdentity,
@@ -232,9 +239,9 @@ export class TaskLedger {
    * @param hop - Resolution hop.
    */
   public resolveNodeLeads(nodeId: string, hop: number): void {
-    const key = nodeId.toLowerCase();
+    const key = this.identifierKey(nodeId);
     for (const lead of this.leads.values()) {
-      if (lead.status !== 'scheduled' || lead.nodeId.toLowerCase() !== key) continue;
+      if (lead.status !== 'scheduled' || this.identifierKey(lead.nodeId) !== key) continue;
       lead.status = 'resolved';
       this.setTaskStatus(lead.taskId, 'resolved', hop);
     }
@@ -255,7 +262,7 @@ export class TaskLedger {
     }
     for (const lead of leads) {
       this.leads.set(lead.id, { ...lead });
-      this.leadIdsByIdentity.set(leadIdentity(lead), lead.id);
+      this.leadIdsByIdentity.set(leadIdentity(lead, this.identifierCaseSensitive), lead.id);
     }
   }
 }

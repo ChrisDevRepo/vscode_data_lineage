@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { SmState } from './smTypes';
 import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
+import { schemaKey } from '../../utils/sql';
 
 /** Stable restore failure raised only by the strict navigation-checkpoint boundary. */
 export class InvalidEngineCheckpointError extends Error {
@@ -274,6 +275,7 @@ const EngineInternalsSchema = z.object({
 /** Current fail-closed NavigationEngine persistence contract. */
 export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   snapshotVersion: z.union([z.literal(1), z.literal(2)]),
+  identifierCaseSensitive: z.boolean().optional(),
   columnAspect: ColumnAspectSchema.nullable(),
   status: z.enum(['created', 'initialized', 'exploring', 'awaiting_findings', 'complete', 'error']),
   hopCount: NonNegativeInt,
@@ -292,6 +294,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   ctDeclaredRouteIds: z.array(NonEmptyString).optional(),
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict().superRefine((snapshot, ctx) => {
+  const identifierKey = (value: string): string => schemaKey(value, snapshot.identifierCaseSensitive);
   const issue = (message: string, path: Array<string | number>) => ctx.addIssue({ code: 'custom', message, path });
   const unique = (values: ReadonlyArray<string>, path: Array<string | number>) => {
     if (new Set(values).size !== values.length) issue('values must be unique', path);
@@ -315,16 +318,16 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   for (const task of scalarTasks) {
     if (task.kind !== 'column_lineage') continue;
     const targets = task.returnTargets!;
-    unique(targets.map(target => JSON.stringify([target.node.toLowerCase(), target.col.toLowerCase()])), ['engineInternals', 'investigationTasks']);
+    unique(targets.map(target => JSON.stringify([identifierKey(target.node), identifierKey(target.col)])), ['engineInternals', 'investigationTasks']);
     if (targets.some(target => !snapshot.scopeNodeIds.includes(target.node))) issue('scalar caller output must belong to approved scope', ['engineInternals', 'investigationTasks']);
-    if (JSON.stringify([...new Set(targets.map(target => target.col.toLowerCase()))].sort()) !== JSON.stringify([...new Set(task.activeColumns.map(col => col.toLowerCase()))].sort())) issue('scalar target projection must equal active columns', ['engineInternals', 'investigationTasks']);
+    if (JSON.stringify([...new Set(targets.map(target => identifierKey(target.col)))].sort()) !== JSON.stringify([...new Set(task.activeColumns.map(col => identifierKey(col)))].sort())) issue('scalar target projection must equal active columns', ['engineInternals', 'investigationTasks']);
   }
   for (const entry of scalarEntries) {
     if (entry.columnCarry?.kind !== 'scalar_return') continue;
     const taskTargets = snapshot.engineInternals.investigationTasks.filter(task => entry.taskIds.includes(task.id) && task.kind === 'column_lineage').flatMap(task => task.kind === 'column_lineage' ? task.returnTargets ?? [] : []);
-    const identity = (targets: readonly {node:string;col:string}[]) => JSON.stringify([...new Set(targets.map(target => JSON.stringify([target.node.toLowerCase(), target.col.toLowerCase()])))].sort());
-    if (entry.columnCarry.outputs.length !== new Set(entry.columnCarry.outputs.map(target => JSON.stringify([target.node.toLowerCase(), target.col.toLowerCase()]))).size) issue('scalar agenda destinations must be unique', ['agenda']);
-    if (JSON.stringify([...new Set(entry.columnCarry.outputs.map(target => target.col.toLowerCase()))].sort()) !== JSON.stringify([...new Set((entry.activeColumns ?? []).map(col => col.toLowerCase()))].sort())) issue('scalar agenda projection must equal destinations', ['agenda']);
+    const identity = (targets: readonly {node:string;col:string}[]) => JSON.stringify([...new Set(targets.map(target => JSON.stringify([identifierKey(target.node), identifierKey(target.col)])))].sort());
+    if (entry.columnCarry.outputs.length !== new Set(entry.columnCarry.outputs.map(target => JSON.stringify([identifierKey(target.node), identifierKey(target.col)]))).size) issue('scalar agenda destinations must be unique', ['agenda']);
+    if (JSON.stringify([...new Set(entry.columnCarry.outputs.map(target => identifierKey(target.col)))].sort()) !== JSON.stringify([...new Set((entry.activeColumns ?? []).map(col => identifierKey(col)))].sort())) issue('scalar agenda projection must equal destinations', ['agenda']);
     if (identity(entry.columnCarry.outputs) !== identity(taskTargets)) issue('scalar agenda and task destinations must match', ['agenda']);
   }
 
@@ -428,12 +431,18 @@ type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
  * Parses one current-format checkpoint without repairing, migrating, or logging its content.
  *
  * @param input - Untrusted checkpoint payload to validate.
+ * @param identifierCaseSensitive - If supplied, requires the captured policy to match the loaded model. Legacy snapshots are CI.
  * @returns A strict current-format navigation snapshot.
  * @throws {@link InvalidEngineCheckpointError} when `input` fails schema validation.
  */
-export function parseNavigationSnapshot(input: unknown): NavigationSnapshot {
+export function parseNavigationSnapshot(input: unknown, identifierCaseSensitive?: boolean): NavigationSnapshot {
   const result = NavigationSnapshotSchema.safeParse(input);
-  if (result.success) return result.data;
+  if (result.success) {
+    if (identifierCaseSensitive !== undefined && (result.data.identifierCaseSensitive === true) !== identifierCaseSensitive) {
+      throw new InvalidEngineCheckpointError(['identifierCaseSensitive']);
+    }
+    return result.data;
+  }
   const paths = Array.from(new Set(result.error.issues.map(issue => issue.path.join('.') || '(root)'))).slice(0, 3);
   throw new InvalidEngineCheckpointError(paths, { cause: result.error });
 }

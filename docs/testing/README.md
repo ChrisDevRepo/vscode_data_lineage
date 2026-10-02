@@ -24,6 +24,24 @@ requirements, legal cuts and held repairs. They create no model calls. Check
 model-authored argument bindings and omitted SQL contributors separately; a
 structurally valid delivered graph does not establish complete SQL lineage.
 
+Identifier-policy regressions include synthetic CI/CS metadata, messy delimited SQL,
+case-only schema/object/function/column twins, CT route rejection and completeness,
+saved-run policy, metadata display names, and graph/export consumers:
+
+```sh
+npm test -- tests/unit/parser/identifier-case.test.ts tests/unit/sm/identifier-policy-checkpoint.test.ts tests/unit/ai-core/identifier-runtime-flow.test.ts tests/unit/engine/columnTraceView.test.ts
+```
+
+These cases exercise backend contracts without a live database or model inference.
+The complete deterministic gate also checks coverage floors, layering, build and packaging.
+Large-input regressions require complete extraction beyond the former 10,000-match
+cutoff and termination for zero-width custom rules, including Unicode text.
+The runtime fixture uses the real tool registry and approval, BB/CT hop, retry,
+synthesis and checkpoint paths with a fixed-response model port. It verifies the
+metadata-derived CS hint reaches the authoring stages; it does not measure whether
+an inference model follows that hint. Legacy CI escaped-bracket ID ambiguity and
+complex SQL without statement delimiters remain outside this case-policy guarantee.
+
 ## Build And Install A VSIX
 
 Build the extension package from the repository root:

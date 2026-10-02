@@ -25,10 +25,13 @@ import {
   createEmptySchemaInfo,
 } from './types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
-import { stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
+import { quoteIdentifier, stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
 import { trunc, sanitizeForLog } from '../utils/log';
 import { ColumnStore } from './columnStore';
 import { SYSTEM_SCHEMAS, XML_METHODS, CLR_TYPE_METHODS } from './shared/sqlMetadata';
+import { normalizeName } from './shared/sqlIdentifier';
+
+export { normalizeName };
 
 /** Number of scripted bodies to per-rule trace before falling back to aggregate stats only. */
 const PARSE_TRACE_BUDGET = 5;
@@ -67,6 +70,7 @@ function makeParseTraceCallback(
  * @param currentDatabase - Current database name for local-object resolution.
  * @param externalRefsEnabled - Whether external reference nodes should be emitted.
  * @param onDebugLog - Debug logger callback.
+ * @param identifierCaseSensitive - Checked catalog comparison policy; missing metadata stays CI.
  *
  * @returns A fully assembled DatabaseModel.
  */
@@ -77,20 +81,21 @@ export function buildModel(
   currentDatabase?: string,
   externalRefsEnabled = true,
   onDebugLog?: (msg: string) => void,
+  identifierCaseSensitive = false,
 ): DatabaseModel {
-  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);
 
   const schemaCanonical = new Map<string, string>();
   for (const node of nodes) {
-    const k = schemaKey(node.schema);
+    const k = schemaKey(node.schema, identifierCaseSensitive);
     if (!schemaCanonical.has(k)) schemaCanonical.set(k, node.schema);
   }
   for (const node of nodes) {
-    node.schema = schemaCanonical.get(schemaKey(node.schema))!;
+    node.schema = schemaCanonical.get(schemaKey(node.schema, identifierCaseSensitive))!;
   }
 
-  const schemas = computeSchemas(nodes);
-  const catalog = buildCatalog(allObjects ?? objects, schemaCanonical);
+  const schemas = computeSchemas(nodes, identifierCaseSensitive);
+  const catalog = buildCatalog(allObjects ?? objects, schemaCanonical, identifierCaseSensitive);
 
   const uniqueNodes: LineageNode[] = [];
   const seenIds = new Set<string>();
@@ -115,12 +120,10 @@ export function buildModel(
   } else if (uniqueNodes.length === 0) {
     warnings.push('No tables, views, or stored procedures found.');
   }
-  if (stats.cappedRules) {
-    warnings.push(`${stats.cappedRules.length} parse rule(s) stopped at the match limit; some dependencies may be missing.`);
-  }
 
   return {
     nodes: uniqueNodes, edges, schemas, catalog, neighborIndex,
+    ...(identifierCaseSensitive && { identifierCaseSensitive }),
     parseStats: stats,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
@@ -151,12 +154,13 @@ export function populateColumnStore(model: DatabaseModel, store: ColumnStore): v
 function buildCatalog(
   allObjects: ExtractedObject[],
   schemaCanonical: Map<string, string>,
+  identifierCaseSensitive: boolean,
 ): Record<string, CatalogEntry> {
   const catalog: Record<string, CatalogEntry> = {};
   for (const obj of allObjects) {
     const { schema, objectName } = parseName(obj.fullName);
-    const displaySchema = schemaCanonical.get(schemaKey(schema)) ?? schema;
-    catalog[normalizeName(obj.fullName)] = {
+    const displaySchema = schemaCanonical.get(schemaKey(schema, identifierCaseSensitive)) ?? schema;
+    catalog[normalizeName(obj.fullName, identifierCaseSensitive)] = {
       schema: displaySchema, name: objectName, type: obj.type,
       ...(obj.externalType && { externalType: obj.externalType }),
     };
@@ -209,27 +213,6 @@ export function parseName(fullName: string): { schema: string; objectName: strin
 }
 
 /**
- * Normalizes a SQL name to a lowercase `[schema].[object]` format for consistent comparison.
- *
- * @param name - Name to use.
- *
- * @returns Lowercase `[schema].[object]` key for case-insensitive comparison.
- */
-export function normalizeName(name: string): string {
-  const parts = splitSqlName(name).map(p => stripBrackets(p));
-  if (parts.length < 2) {
-    return `[${parts[0] ?? ''}]`.toLowerCase();
-  }
-  if (parts.length === 2) {
-    return `[${parts[0]}].[${parts[1]}]`.toLowerCase();
-  }
-  if (parts.length >= 4) {
-    return `[__external__].[${parts[parts.length - 1]}]`.toLowerCase();
-  }
-  return `[${parts[0]}].[${parts[1]}].[${parts[2]}]`.toLowerCase();
-}
-
-/**
  * Checks if a name contains a schema qualifier (e.g., 'dbo.Table' vs 'Table').
  *
  * @param name - The SQL identifier to check.
@@ -245,8 +228,9 @@ function isSchemaQualified(name: string): boolean {
  * @param name - The SQL identifier to check.
  * @returns `true` if it belongs to a system schema.
  */
-function isSystemRef(name: string): boolean {
-  const schema = stripBrackets(name).split('.')[0].toLowerCase();
+function isSystemRef(name: string, ctx?: EdgeContext): boolean {
+  if (ctx?.identifierCaseSensitive && (ctx.nodeIds.has(name) || ctx.allNodeIds.has(name))) return false;
+  const schema = stripBrackets(splitSqlName(name)[0] ?? '').toLowerCase();
   return SYSTEM_SCHEMAS.has(schema);
 }
 
@@ -262,14 +246,18 @@ function isSystemRef(name: string): boolean {
  * @param name - Object name.
  * @returns `'write'` when the SQL mutates the named object; otherwise `'read'`.
  */
-function inferBodyDirection(body: string, schema: string, name: string): 'write' | 'read' {
+function inferBodyDirection(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'read' {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(
     `\\b(?:UPDATE|INSERT(?:\\s+INTO)?|DELETE(?:\\s+FROM)?|MERGE(?:\\s+INTO)?|TRUNCATE\\s+TABLE)\\s+` +
-    `(?:TOP\\s*\\([^)]*\\)\\s*)?(?:\\[?${esc(schema)}\\]?\\.)?\\[?${esc(name)}\\]?`,
-    'i',
+    `(?:TOP\\s*\\([^)]*\\)\\s*)?(?:\\[?(${esc(schema)})\\]?\\.)?\\[?(${esc(name)})\\]?`,
+    'gi',
   );
-  return pattern.test(body) ? 'write' : 'read';
+  if (!identifierCaseSensitive) return pattern.test(body) ? 'write' : 'read';
+  for (const match of body.matchAll(pattern)) {
+    if ((match[1] === undefined || match[1] === schema) && match[2] === name) return 'write';
+  }
+  return 'read';
 }
 
 /**
@@ -301,11 +289,11 @@ function addEdge(
  * @param nodes - All discovered lineage nodes.
  * @returns An array of schema info objects, sorted by node count.
  */
-export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
+export function computeSchemas(nodes: LineageNode[], identifierCaseSensitive = false): SchemaInfo[] {
   const map = new Map<string, SchemaInfo>();
   for (const node of nodes) {
     if (node.externalType === 'file' || node.externalType === 'db') continue;
-    const key = schemaKey(node.schema);
+    const key = schemaKey(node.schema, identifierCaseSensitive);
     let info = map.get(key);
     if (!info) {
       info = createEmptySchemaInfo(node.schema);
@@ -323,13 +311,13 @@ export function computeSchemas(nodes: LineageNode[]): SchemaInfo[] {
  * @param objects - Metadata for objects discovered in the active scope.
  * @returns The assembled nodes and their unique IDs.
  */
-function buildNodeList(objects: ExtractedObject[]): { nodes: LineageNode[]; nodeIds: Set<string> } {
+function buildNodeList(objects: ExtractedObject[], identifierCaseSensitive: boolean): { nodes: LineageNode[]; nodeIds: Set<string> } {
   const nodes: LineageNode[] = [];
   const nodeIds = new Set<string>();
 
   for (const obj of objects) {
     const { schema, objectName } = parseName(obj.fullName);
-    const id = normalizeName(obj.fullName);
+    const id = normalizeName(obj.fullName, identifierCaseSensitive);
 
     if (nodeIds.has(id)) continue;
     nodeIds.add(id);
@@ -352,7 +340,7 @@ function buildNodeList(objects: ExtractedObject[]): { nodes: LineageNode[]; node
  * @param allObjects - The full database catalog (optional).
  * @returns Metadata for all objects available for neighbor resolution.
  */
-function buildFullCatalog(allObjects?: ExtractedObject[]): {
+function buildFullCatalog(allObjects: ExtractedObject[] | undefined, identifierCaseSensitive: boolean): {
   allNodeIds: Set<string>;
   allObjectMeta: Map<string, { schema: string; name: string; type: ObjectType }>;
 } {
@@ -360,7 +348,7 @@ function buildFullCatalog(allObjects?: ExtractedObject[]): {
   const allObjectMeta = new Map<string, { schema: string; name: string; type: ObjectType }>();
   if (allObjects) {
     for (const obj of allObjects) {
-      const id = normalizeName(obj.fullName);
+      const id = normalizeName(obj.fullName, identifierCaseSensitive);
       allNodeIds.add(id);
       const { schema, objectName } = parseName(obj.fullName);
       allObjectMeta.set(id, { schema, name: objectName, type: obj.type });
@@ -397,6 +385,7 @@ function groupDependencies(
   deps: ExtractedDependency[],
   nodeIds: Set<string>,
   allNodeIds: Set<string>,
+  identifierCaseSensitive: boolean,
 ): GroupedDeps {
   const depsPerSource = new Map<string, string[]>();
   const crossSchemaDepsForNode = new Map<string, string[]>();
@@ -407,7 +396,7 @@ function groupDependencies(
   for (const dep of deps) {
     const targetParts = splitSqlName(dep.targetName);
     if (targetParts.length >= 3) {
-      const sourceId = normalizeName(dep.sourceName);
+      const sourceId = normalizeName(dep.sourceName, identifierCaseSensitive);
       if (nodeIds.has(sourceId) || (allNodeIds.size > 0 && allNodeIds.has(sourceId))) {
         if (!crossDbMetaDeps.has(sourceId)) crossDbMetaDeps.set(sourceId, []);
         crossDbMetaDeps.get(sourceId)!.push(dep.targetName);
@@ -415,8 +404,8 @@ function groupDependencies(
       continue;
     }
 
-    const sourceId = normalizeName(dep.sourceName);
-    const targetId = normalizeName(dep.targetName);
+    const sourceId = normalizeName(dep.sourceName, identifierCaseSensitive);
+    const targetId = normalizeName(dep.targetName, identifierCaseSensitive);
 
     if (sourceId === targetId) continue;
 
@@ -448,6 +437,7 @@ function groupDependencies(
  * Shared context for processing dependency edges per-node.
  */
 interface EdgeContext {
+  identifierCaseSensitive: boolean;
   /** IDs of all nodes in the current filtered scope. */
   nodeIds: Set<string>;
   /** IDs of all nodes in the database catalog. */
@@ -487,7 +477,7 @@ interface ParseTraceCtx {
 /**
  * Resolves regex-parsed references into graph edges or neighbor index pairs.
  *
- * @param refs - Raw SQL names found in script body.
+ * @param refs - Canonical references emitted by the SQL-body parser.
  * @param sourceId - ID of the node being parsed.
  * @param spLabel - Human-readable name for logging.
  * @param direction - Edge directionality (inward vs outward).
@@ -510,8 +500,8 @@ function processRegexRefs(
   let count = 0;
   for (const dep of refs) {
     if (!isSchemaQualified(dep)) continue;
-    if (isSystemRef(dep)) continue;
-    const depId = normalizeName(dep);
+    if (isSystemRef(dep, ctx)) continue;
+    const depId = dep;
     ctx.stats.parsedRefs++;
     if (depId !== sourceId) {
       if (ctx.nodeIds.has(depId)) {
@@ -560,9 +550,8 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
 
   if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
     const onRuleFire = makeParseTraceCallback(node, ctx);
-    const parsed = parseSqlBody(node.bodyScript, onRuleFire);
+    const parsed = parseSqlBody(node.bodyScript, onRuleFire, ctx.identifierCaseSensitive);
     const spLabel = `${node.schema}.${node.name}`;
-    recordCappedRules(parsed.cappedRules, spLabel, ctx.stats);
     const spInRefs: string[] = [];
     const spUnrelated: string[] = [];
 
@@ -583,8 +572,8 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
 
     for (const dep of parsed.sources) {
       if (!isSchemaQualified(dep)) continue;
-      if (isSystemRef(dep)) continue;
-      const depId = normalizeName(dep);
+      if (isSystemRef(dep, ctx)) continue;
+      const depId = dep;
       if (depId === sourceId || xmlDepIds.has(depId)) continue;
       ctx.stats.parsedRefs++;
       if (ctx.nodeIds.has(depId)) {
@@ -618,12 +607,6 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 }
 
-/** Records each rule that stopped at the parser's match cap for `label`'s body. */
-function recordCappedRules(cappedRules: readonly string[], label: string, stats: ParseStats): void {
-  if (cappedRules.length === 0) return;
-  (stats.cappedRules ??= []).push(...cappedRules.map(rule => `${label}: ${rule}`));
-}
-
 /**
  * Orchestrates edge creation for stored procedures using regex-based script analysis.
  *
@@ -634,9 +617,8 @@ function recordCappedRules(cappedRules: readonly string[], label: string, stats:
 function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
   const onRuleFire = makeParseTraceCallback(node, ctx);
-  const parsed = parseSqlBody(node.bodyScript!, onRuleFire);
+  const parsed = parseSqlBody(node.bodyScript!, onRuleFire, ctx.identifierCaseSensitive);
   const spLabel = `${node.schema}.${node.name}`;
-  recordCappedRules(parsed.cappedRules, spLabel, ctx.stats);
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
   const spUnrelated: string[] = [];
@@ -647,10 +629,10 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
 
   const outboundIds = new Set<string>();
   for (const dep of parsed.targets) {
-    if (isSchemaQualified(dep) && !isSystemRef(dep)) outboundIds.add(normalizeName(dep));
+    if (isSchemaQualified(dep) && !isSystemRef(dep, ctx)) outboundIds.add(dep);
   }
   for (const dep of parsed.execCalls) {
-    if (isSchemaQualified(dep) && !isSystemRef(dep)) outboundIds.add(normalizeName(dep));
+    if (isSchemaQualified(dep) && !isSystemRef(dep, ctx)) outboundIds.add(dep);
   }
 
   for (const depId of xmlDeps) {
@@ -661,7 +643,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
       } else if (
         (depNode?.type === 'table' || depNode?.type === 'external') &&
         node.bodyScript &&
-        inferBodyDirection(node.bodyScript, depNode.schema, depNode.name) === 'write'
+        inferBodyDirection(node.bodyScript, depNode.schema, depNode.name, ctx.identifierCaseSensitive) === 'write'
       ) {
         addEdge(ctx.edges, ctx.edgeKeys, sourceId, depId, 'body');
       } else {
@@ -677,7 +659,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
       } else if (
         (meta?.type === 'table' || meta?.type === 'external') &&
         node.bodyScript &&
-        inferBodyDirection(node.bodyScript, meta.schema, meta.name) === 'write'
+        inferBodyDirection(node.bodyScript, meta.schema, meta.name, ctx.identifierCaseSensitive) === 'write'
       ) {
         ctx.neighborPairs.push({ source: sourceId, target: csDepId });
       } else {
@@ -726,10 +708,11 @@ function buildNodesAndEdges(
   currentDatabase?: string,
   externalRefsEnabled = true,
   onDebugLog?: (msg: string) => void,
+  identifierCaseSensitive: boolean = false,
 ): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
-  const { nodes, nodeIds } = buildNodeList(objects);
-  const { allNodeIds, allObjectMeta } = buildFullCatalog(allObjects);
-  const grouped = groupDependencies(deps, nodeIds, allNodeIds);
+  const { nodes, nodeIds } = buildNodeList(objects, identifierCaseSensitive);
+  const { allNodeIds, allObjectMeta } = buildFullCatalog(allObjects, identifierCaseSensitive);
+  const grouped = groupDependencies(deps, nodeIds, allNodeIds, identifierCaseSensitive);
 
   const edges: LineageEdge[] = [];
   const edgeKeys = new Set<string>();
@@ -743,7 +726,7 @@ function buildNodesAndEdges(
     : undefined;
   const traceStartBudget = parseTrace?.budget ?? 0;
 
-  const ctx: EdgeContext = { nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs, parseTrace };
+  const ctx: EdgeContext = { identifierCaseSensitive, nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs, parseTrace };
 
   if (onDebugLog) onDebugLog(`Starting processing of ${nodes.length} nodes...`);
   let scriptedCount = 0;
@@ -767,7 +750,7 @@ function buildNodesAndEdges(
   }
 
   if (externalRefsEnabled) {
-    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase);
+    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, identifierCaseSensitive);
   }
 
   const typeById = new Map(nodes.map(n => [n.id, n.type]));
@@ -835,6 +818,7 @@ function createVirtualNodes(
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>,
   crossDbMetaDeps: Map<string, string[]>,
   currentDatabase?: string,
+  identifierCaseSensitive = false,
 ): void {
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -864,10 +848,17 @@ function createVirtualNodes(
 
   const isLocalRef = (db: string, localId: string): boolean => {
     const normDb = stripBrackets(db).toLowerCase();
-    const normLocal = normalizeName(localId);
+    const normLocal = normalizeName(localId, identifierCaseSensitive);
     if (currentDatabase && normDb === stripBrackets(currentDatabase).toLowerCase()) return true;
     if (!currentDatabase && nodeIds.has(normLocal)) return true;
     return false;
+  };
+
+  const addLocalEdge = (sourceId: string, localId: string, isWrite: boolean): void => {
+    const resolved = normalizeName(localId, identifierCaseSensitive);
+    if (!nodeIds.has(resolved)) return;
+    if (isWrite) addEdge(edges, edgeKeys, sourceId, resolved, 'body');
+    else addEdge(edges, edgeKeys, resolved, sourceId, 'body');
   };
 
   const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string): void => {
@@ -882,12 +873,15 @@ function createVirtualNodes(
 
   for (const [nodeId, { sources, targets }] of crossDbRegexRefs) {
     for (const ref of sources) {
-      const parts = ref.split('.');
+      const parts = splitSqlName(ref).map(stripBrackets);
       if (parts.length !== 3) continue;
       const [db, schema, object] = parts;
-      const localId = `[${schema}].[${object}]`;
-      const crossDbId = normalizeName(`${db}.${schema}.${object}`);
-      if (isLocalRef(db, localId)) continue;
+      const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
+      const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
+      if (isLocalRef(db, localId)) {
+        addLocalEdge(nodeId, localId, false);
+        continue;
+      }
       ensureCrossDbNode(db, schema, object, crossDbId);
       addEdge(edges, edgeKeys, crossDbId, nodeId, 'body');
     }
@@ -895,12 +889,15 @@ function createVirtualNodes(
     const canWrite = node?.type === 'procedure';
     if (canWrite) {
       for (const ref of targets) {
-        const parts = ref.split('.');
+        const parts = splitSqlName(ref).map(stripBrackets);
         if (parts.length !== 3) continue;
         const [db, schema, object] = parts;
-        const localId = `[${schema}].[${object}]`;
-        const crossDbId = normalizeName(`${db}.${schema}.${object}`);
-        if (isLocalRef(db, localId)) continue;
+        const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
+        const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
+        if (isLocalRef(db, localId)) {
+          addLocalEdge(nodeId, localId, true);
+          continue;
+        }
         ensureCrossDbNode(db, schema, object, crossDbId);
         addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
       }
@@ -916,16 +913,12 @@ function createVirtualNodes(
       const pertinentParts = parts.length >= 4 ? parts.slice(-3) : parts;
       const [db, schema, object] = pertinentParts;
       if (CLR_TYPE_METHODS.has(object.toLowerCase())) continue;
-      const localId = `[${schema}].[${object}]`;
-      const crossDbId = normalizeName(`${db}.${schema}.${object}`);
+      const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
+      const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
       const isWrite = sourceNode?.type === 'procedure' && !!sourceNode.bodyScript
-        && inferBodyDirection(sourceNode.bodyScript, schema, object) === 'write';
+        && inferBodyDirection(sourceNode.bodyScript, schema, object, identifierCaseSensitive) === 'write';
       if (isLocalRef(db, localId)) {
-        const normLocal = normalizeName(localId);
-        if (nodeIds.has(normLocal)) {
-          if (isWrite) addEdge(edges, edgeKeys, sourceId, normLocal, 'body');
-          else         addEdge(edges, edgeKeys, normLocal, sourceId, 'body');
-        }
+        addLocalEdge(sourceId, localId, isWrite);
         continue;
       }
       ensureCrossDbNode(db, schema, object, crossDbId);

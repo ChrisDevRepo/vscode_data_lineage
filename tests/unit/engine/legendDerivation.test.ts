@@ -19,6 +19,21 @@ const listSubsetOfMap = (schemas: string[], map: Map<string, string>): boolean =
   schemas.every(s => map.has(schemaKey(s)));
 
 describe('Legend Derivation Guard', () => {
+  it.each([false, true])('preserves source identity for real schema twins (CS=%s)', cs => {
+    const nodes: LegendNode[] = [
+      { type: 'schemaNode', data: { schemaName: 'Sales', color: '#4E79A7' } },
+      { type: 'lineageNode', data: { schema: 'sales', objectType: 'view', schemaColor: '#59A14F' } },
+    ];
+    const map = deriveLegendColorMap(nodes, cs);
+    expect(map.size).toBe(cs ? 2 : 1);
+    if (cs) {
+      expect(map.get('Sales')).toBe('#4E79A7');
+      expect(map.get('sales')).toBe('#59A14F');
+    } else {
+      expect(map.get('sales')).toBe('#59A14F');
+    }
+  });
+
   it('overview + expanded external-only schema (the regression)', () => {
     const overviewWithExternal: LegendNode[] = [
       { type: 'schemaNode', data: { schemaName: 'Sales', color: '#4E79A7' } },

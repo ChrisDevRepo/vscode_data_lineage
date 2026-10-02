@@ -188,12 +188,14 @@ function buildLineageFlowNode(
 
 /**
  * Builds a directed graphology graph from a database model.
+ * Carries the model's identifier comparison policy as a graph attribute for derived schema views.
  *
  * @param model - The database model definitions.
  * @returns A populated graph instance.
  */
 export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
+  graph.setAttribute('identifierCaseSensitive', model.identifierCaseSensitive === true);
   for (const node of model.nodes) {
     if (!node.id) {
       logSink('warn', `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}`);
@@ -828,7 +830,7 @@ function schemaNamesFromGraph(graph: Graph): string[] {
  * Builds the working-set schema color map shared by every overview surface.
  */
 function buildOverviewColorMap(graph: Graph): SchemaColorMap {
-  return createSchemaColorMap(schemaNamesFromGraph(graph));
+  return createSchemaColorMap(schemaNamesFromGraph(graph), undefined, graph.getAttribute('identifierCaseSensitive') === true);
 }
 
 /**
@@ -884,7 +886,7 @@ export function buildSchemaGraph(
         schemaName: schema,
         objectCount: meta.objectCount,
         typeBreakdown: meta.typeBreakdown,
-        color: getSchemaDisplayColor(schema, schemaColorMap, meta.typeBreakdown),
+        color: getSchemaDisplayColor(schema, schemaColorMap, meta.typeBreakdown, graph.getAttribute('identifierCaseSensitive') === true),
         isExternalOnly: isExternalOnlyTypeBreakdown(meta.typeBreakdown),
       },
     };
@@ -1039,11 +1041,11 @@ function buildExpandedSchemaViewPositions(
   const layoutEdges = [...individualEdges, ...bridgeLayoutEdges, ...schemaClusterLayoutEdges];
   const connectedIds = collectConnectedIds(layoutEdges);
   const candidateIds = [...individualIds, ...clusterNodeIds];
-  const positions = dagreLayout({
+  const positions = new Map(dagreLayout({
     nodeIds: candidateIds.filter((id) => connectedIds.has(id)),
     edges: layoutEdges,
     config,
-  });
+  }));
 
   const isolatedIds = candidateIds.filter((id) => !connectedIds.has(id));
   if (isolatedIds.length === 0) return positions;
@@ -1098,7 +1100,7 @@ function buildExpandedSchemaViewFlowNodes(
       positions.get(id) ?? { x: 0, y: 0 },
       {
         highlighted: id === focusId,
-        schemaColor: source.objectType === 'external' ? getExternalNodeColor() : getSchemaColorFromMap(source.schema, colorMap),
+        schemaColor: source.objectType === 'external' ? getExternalNodeColor() : getSchemaColorFromMap(source.schema, colorMap, graph.getAttribute('identifierCaseSensitive') === true),
       },
     ));
   }
@@ -1115,7 +1117,7 @@ function buildExpandedSchemaViewFlowNodes(
         schemaName: schema,
         objectCount: meta.objectCount,
         typeBreakdown: meta.typeBreakdown,
-        color: getSchemaDisplayColor(schema, colorMap, meta.typeBreakdown),
+        color: getSchemaDisplayColor(schema, colorMap, meta.typeBreakdown, graph.getAttribute('identifierCaseSensitive') === true),
         isExternalOnly: isExternalOnlyTypeBreakdown(meta.typeBreakdown),
         isExpandedSchemaViewCluster: true,
       } satisfies SchemaNodeData,

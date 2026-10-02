@@ -29,11 +29,13 @@ import {
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { applyExclusionFilter } from './modelFilters';
-import { stripBrackets, schemaKey, normalizeColName, splitSqlName } from '../utils/sql';
+import { quoteIdentifier, stripBrackets, schemaKey, normalizeColName, splitSqlName } from '../utils/sql';
 import { trunc } from '../utils/log';
 
 interface DacpacExtractionOptions {
   externalRefsEnabled?: boolean;
+  /** Checked metadata returned by this extractor's schema preview; absent preserves CI. */
+  identifierCaseSensitive?: boolean;
 }
 
 /** Counts extracted objects by canonical type for summary logging. */
@@ -67,13 +69,13 @@ export async function extractDacpac(
   const xml = await extractModelXml(buffer);
   if (onDebugLog) onDebugLog(`Dacpac: ZIP loaded — model.xml=${xml.length} chars`);
 
-  const { elements, dspName } = parseElements(xml);
+  const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
   if (onDebugLog) onDebugLog(`Dacpac: model.xml parsed — ${elements.length} elements (dsp=${dspName || 'unspecified'})`);
 
   const dbPlatform = parseDspPlatform(dspName);
 
-  const objects = extractObjects(elements);
-  const allObjects = extractObjectsLightweight(elements);
+  const objects = extractObjects(elements, undefined, identifierCaseSensitive);
+  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
   const deps = extractDependencies(elements);
   const c = countObjectsByType(objects);
   if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
@@ -86,6 +88,7 @@ export async function extractDacpac(
     undefined,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
     onDebugLog,
+    identifierCaseSensitive,
   );
 
   const warnings: string[] = [];
@@ -115,11 +118,12 @@ export async function extractSchemaPreview(buffer: Uint8Array | ArrayBuffer): Pr
   preview: SchemaPreview;
   elements: XmlElement[];
   dspName: string;
+  identifierCaseSensitive: boolean;
 }> {
   const xml = await extractModelXml(buffer);
-  const { elements, dspName } = parseElements(xml);
-  const preview = computeSchemaPreviewFromElements(elements);
-  return { preview, elements, dspName };
+  const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
+  const preview = computeSchemaPreviewFromElements(elements, identifierCaseSensitive);
+  return { preview, elements, dspName, identifierCaseSensitive };
 }
 
 /**
@@ -144,19 +148,20 @@ export function extractDacpacFiltered(
   onInfoLog?: (msg: string) => void,
   options: DacpacExtractionOptions = {},
 ): DatabaseModel {
+  const identifierCaseSensitive = options.identifierCaseSensitive === true;
   if (onDebugLog) onDebugLog(`Dacpac: Filtering by schemas=[${trunc(Array.from(selectedSchemas), 20)}]`);
 
-  const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
+  const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, identifierCaseSensitive)));
   const filtered = elements.filter(el => {
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(el['@_Type'])) return false;
     const { schema } = parseName(name);
-    return lowerSchemas.has(schema.toLowerCase());
+    return lowerSchemas.has(schemaKey(schema, identifierCaseSensitive));
   });
   if (onDebugLog) onDebugLog(`Dacpac: Filter — ${elements.length} → ${filtered.length} tracked elements after schema filter`);
 
-  const allObjects = extractObjectsLightweight(elements);
-  const objects = extractObjects(filtered, elements);
+  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
+  const objects = extractObjects(filtered, elements, identifierCaseSensitive);
   const deps = extractDependencies(filtered);
   const c = countObjectsByType(objects);
   if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
@@ -169,6 +174,7 @@ export function extractDacpacFiltered(
     undefined,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
     onDebugLog,
+    identifierCaseSensitive,
   );
   const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
 
@@ -190,7 +196,7 @@ export function extractDacpacFiltered(
  * @param elements - The full array of parsed elements from model.xml.
  * @returns A summary object containing schema info and total object count.
  */
-function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview {
+function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCaseSensitive: boolean): SchemaPreview {
   const schemaMap = new Map<string, SchemaInfo>();
   const seen = new Set<string>();
   let totalObjects = 0;
@@ -200,14 +206,14 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
 
-    const id = normalizeName(name);
+    const id = normalizeName(name, identifierCaseSensitive);
     if (seen.has(id)) continue;
     seen.add(id);
 
     const { schema } = parseName(name);
     const objType = ELEMENT_TYPE_MAP[type];
 
-    const key = schemaKey(schema);
+    const key = schemaKey(schema, identifierCaseSensitive);
     let info = schemaMap.get(key);
     if (!info) {
       info = createEmptySchemaInfo(schema);
@@ -226,7 +232,7 @@ function computeSchemaPreviewFromElements(elements: XmlElement[]): SchemaPreview
     warnings.push('No tables, views, or stored procedures found in this file.');
   }
 
-  return { schemas, totalObjects, warnings: warnings.length > 0 ? warnings : undefined };
+  return { schemas, totalObjects, ...(identifierCaseSensitive && { identifierCaseSensitive }), warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 /**
@@ -244,8 +250,8 @@ export function filterBySchemas(
   model: DatabaseModel,
   selectedSchemas: Set<string>,
 ): DatabaseModel {
-  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => s.toLowerCase()));
-  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(n.schema.toLowerCase()));
+  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, model.identifierCaseSensitive)));
+  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(schemaKey(n.schema, model.identifierCaseSensitive)));
   const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
 
   const connectedVirtualIds = new Set<string>();
@@ -266,11 +272,12 @@ export function filterBySchemas(
   return {
     nodes: filtered,
     edges,
-    schemas: model.schemas.filter((s) => lowerSelected.has(s.name.toLowerCase())),
+    schemas: model.schemas.filter((s) => lowerSelected.has(schemaKey(s.name, model.identifierCaseSensitive))),
     catalog: model.catalog,
     neighborIndex: model.neighborIndex,
     parseStats: model.parseStats,
     warnings: model.warnings,
+    identifierCaseSensitive: model.identifierCaseSensitive,
   };
 }
 
@@ -280,14 +287,14 @@ export function filterBySchemas(
  * @param elements - The source XML elements.
  * @returns A collection of extracted objects without body or column detail.
  */
-function extractObjectsLightweight(elements: XmlElement[]): ExtractedObject[] {
+function extractObjectsLightweight(elements: XmlElement[], identifierCaseSensitive: boolean): ExtractedObject[] {
   const seen = new Set<string>();
   const objects: ExtractedObject[] = [];
   for (const el of elements) {
     const type = el['@_Type'];
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
-    const id = normalizeName(name);
+    const id = normalizeName(name, identifierCaseSensitive);
     if (seen.has(id)) continue;
     seen.add(id);
     objects.push({ fullName: name, type: ELEMENT_TYPE_MAP[type] });
@@ -329,7 +336,7 @@ async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string
  * @param xml - The XML string to parse.
  * @returns An object containing the elements array and the DSP name.
  */
-function parseElements(xml: string): { elements: XmlElement[]; dspName: string } {
+function parseElements(xml: string): { elements: XmlElement[]; dspName: string; identifierCaseSensitive: boolean } {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -350,7 +357,19 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string }
   const model = doc?.DataSchemaModel?.Model;
   if (!model) throw new Error('Invalid model.xml: missing DataSchemaModel/Model');
 
-  return { elements: asArray(model.Element), dspName: doc.DataSchemaModel?.['@_DspName'] ?? '' };
+  const elements: XmlElement[] = asArray(model.Element);
+  const dspName: string = doc.DataSchemaModel?.['@_DspName'] ?? '';
+  const optionElements = elements.filter(el => el['@_Type'] === 'SqlDatabaseOptions');
+  const databaseOptions = asArray(optionElements[0]?.Property);
+  const catalogs = databaseOptions.filter(prop => prop['@_Name'] === 'CatalogCollation');
+  const containments = databaseOptions.filter(prop => prop['@_Name'] === 'Containment');
+  const catalog = catalogs[0]?.['@_Value'];
+  // Azure's data collation may differ from its catalog. Only DATABASE_DEFAULT explicitly ties them.
+  const containment = containments[0]?.['@_Value'];
+  const checkedOptions = optionElements.length <= 1 && catalogs.length <= 1 && containments.length <= 1;
+  const catalogUsesModel = (!/SqlAzure|SqlHyperscale|SqlDbFabric/.test(dspName) && (containment === undefined || containment === '0')) || catalog === '0';
+  const identifierCaseSensitive = doc.DataSchemaModel?.['@_CollationCaseSensitive'] === 'True' && checkedOptions && catalogUsesModel && (catalog === undefined || catalog === '0');
+  return { elements, dspName, identifierCaseSensitive };
 }
 
 /**
@@ -388,17 +407,17 @@ export function parseDspPlatform(dsp: string): string {
  * @param constraintElements - Optional elements collection for cross-referencing constraints.
  * @returns The collection of detailed object metadata.
  */
-function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[]): ExtractedObject[] {
+function extractObjects(elements: XmlElement[], constraintElements: XmlElement[] | undefined, identifierCaseSensitive: boolean): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
   const seen = new Set<string>();
-  const constraintMaps = extractConstraintMaps(constraintElements ?? elements);
+  const constraintMaps = extractConstraintMaps(constraintElements ?? elements, identifierCaseSensitive);
   const computedSources = new Map<string, string>();
   const sourceElementTypes = new Map<string, string>();
   const pendingElements = [...(constraintElements ?? elements)];
   while (pendingElements.length > 0) {
     const element = pendingElements.pop()!;
     if (element['@_Name'] && element['@_ExternalSource'] === undefined) {
-      sourceElementTypes.set(expressionReferenceKey(element['@_Name']), element['@_Type']);
+      sourceElementTypes.set(expressionReferenceKey(element['@_Name'], identifierCaseSensitive), element['@_Type']);
     }
     pendingElements.push(...asArray(element.Element));
     for (const relationship of asArray(element.Relationship)) {
@@ -411,7 +430,7 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(type)) continue;
 
-    const id = normalizeName(name);
+    const id = normalizeName(name, identifierCaseSensitive);
     if (seen.has(id)) continue;
     seen.add(id);
 
@@ -426,9 +445,9 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
     if (COLUMN_BEARING_DACPAC_TYPES.has(type)) {
-      columns = extractColumnsFromXml(el, computedSources, sourceElementTypes);
+      columns = extractColumnsFromXml(el, computedSources, sourceElementTypes, identifierCaseSensitive);
       if (columns && (type === 'SqlTable' || type === 'SqlExternalTable')) {
-        fks = enrichColumnsWithConstraints(columns, normalizeName(name), constraintMaps);
+        fks = enrichColumnsWithConstraints(columns, normalizeName(name, identifierCaseSensitive), constraintMaps, identifierCaseSensitive);
       }
     }
 
@@ -442,7 +461,7 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
     });
   }
 
-  resolveComputedColumnTypes(objects, computedSources);
+  resolveComputedColumnTypes(objects, computedSources, identifierCaseSensitive);
   return objects;
 }
 
@@ -480,29 +499,29 @@ function bareColumnReference(script: string | undefined): string | null {
  * @param objects - Extracted objects, mutated in place.
  * @param computedSources - Computed column key → the column its bare-reference expression names.
  */
-function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources: Map<string, string>): void {
+function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources: Map<string, string>, identifierCaseSensitive: boolean): void {
   if (computedSources.size === 0) return;
   const declared = new Map<string, string>();
   for (const obj of objects) {
-    const objectId = normalizeName(obj.fullName);
-    for (const col of obj.columns ?? []) declared.set(`${objectId}::${normalizeColName(col.name)}`, col.type);
+    const objectId = normalizeName(obj.fullName, identifierCaseSensitive);
+    for (const col of obj.columns ?? []) declared.set(`${objectId}::${normalizeColName(col.name, identifierCaseSensitive)}`, col.type);
   }
 
   const keyOf = (reference: string): string | null => {
     const parts = splitSqlName(reference).map(stripBrackets);
     if (parts.length < 2) return null;
     const column = parts[parts.length - 1];
-    const owner = parts.slice(0, -1).map(part => `[${part}]`).join('.');
-    return `${normalizeName(owner)}::${normalizeColName(column)}`;
+    const owner = parts.slice(0, -1).map(quoteIdentifier).join('.');
+    return `${normalizeName(owner, identifierCaseSensitive)}::${normalizeColName(column, identifierCaseSensitive)}`;
   };
 
   for (;;) {
     let resolved = 0;
     for (const obj of objects) {
-      const objectId = normalizeName(obj.fullName);
+      const objectId = normalizeName(obj.fullName, identifierCaseSensitive);
       for (const col of obj.columns ?? []) {
         if (col.type !== UNRESOLVED_COLUMN_TYPE) continue;
-        const key = `${objectId}::${normalizeColName(col.name)}`;
+        const key = `${objectId}::${normalizeColName(col.name, identifierCaseSensitive)}`;
         const reference = computedSources.get(key);
         if (!reference) continue;
         const sourceKey = keyOf(reference);
@@ -541,8 +560,8 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
 }
 
 /** Keys references by every qualified SQL identifier part without changing their emitted identity. */
-function expressionReferenceKey(reference: string): string {
-  return JSON.stringify(splitSqlName(reference).map(part => stripBrackets(part).toLowerCase()));
+function expressionReferenceKey(reference: string, identifierCaseSensitive: boolean): string {
+  return JSON.stringify(splitSqlName(reference).map(part => schemaKey(stripBrackets(part), identifierCaseSensitive)));
 }
 
 /**
@@ -551,10 +570,10 @@ function expressionReferenceKey(reference: string): string {
  * @param el - The source element.
  * @returns An array of column definitions.
  */
-function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, string>, sourceElementTypes?: ReadonlyMap<string, string>): ColumnDef[] {
+function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, string> | undefined, sourceElementTypes: ReadonlyMap<string, string> | undefined, identifierCaseSensitive: boolean): ColumnDef[] {
   const cols: ColumnDef[] = [];
   const rels = asArray(el.Relationship);
-  const objectId = normalizeName(el['@_Name'] ?? '');
+  const objectId = normalizeName(el['@_Name'] ?? '', identifierCaseSensitive);
 
   for (const rel of rels) {
     if (rel['@_Name'] !== 'Columns') continue;
@@ -580,8 +599,8 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
             .flatMap(entry => asArray(entry.References))
             .map(ref => ref['@_Name'])
             .find((n): n is string => !!n
-              && normalizeColName(stripBrackets(splitSqlName(n).pop() ?? '')) === normalizeColName(bareName));
-          if (source) computedSources.set(`${objectId}::${normalizeColName(colName)}`, source);
+              && normalizeColName(stripBrackets(splitSqlName(n).pop() ?? ''), identifierCaseSensitive) === normalizeColName(bareName, identifierCaseSensitive));
+          if (source) computedSources.set(`${objectId}::${normalizeColName(colName, identifierCaseSensitive)}`, source);
         }
 
         if (!isComputed) {
@@ -616,7 +635,7 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
           .map(reference => {
             const externalSource = reference['@_ExternalSource'];
             const sourceElementType = externalSource === undefined
-              ? sourceElementTypes?.get(expressionReferenceKey(reference['@_Name'])) : undefined;
+              ? sourceElementTypes?.get(expressionReferenceKey(reference['@_Name'], identifierCaseSensitive)) : undefined;
             return {
               reference: reference['@_Name'],
               ...(sourceElementType !== undefined && { sourceElementType }),
@@ -658,7 +677,7 @@ const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NUL
  * @param elements - The source XML elements.
  * @returns Maps of unique, check, foreign key, and primary key constraints.
  */
-function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
+function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: boolean): ConstraintMaps {
   const uqColMap      = new Map<string, string>();
   const ckColMap      = new Map<string, string>();
   const fkMap         = new Map<string, ForeignKeyInfo[]>();
@@ -670,7 +689,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
     if (type === 'SqlUniqueConstraint') {
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
-      const tableKey = normalizeName(tableRef);
+      const tableKey = normalizeName(tableRef, identifierCaseSensitive);
       const ann = asArray(el.Annotation).find(a => a['@_Type'] === 'SqlInlineConstraintAnnotation');
       const constraintName = ann ? parseName(ann['@_Name'] ?? '').objectName : 'UQ';
       const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
@@ -679,26 +698,26 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
           const colName = lastNamePart(colRef);
-          uqColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
+          uqColMap.set(`${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`, constraintName);
         }
       }
 
     } else if (type === 'SqlCheckConstraint') {
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
-      const tableKey = normalizeName(tableRef);
+      const tableKey = normalizeName(tableRef, identifierCaseSensitive);
       const constraintName = parseName(el['@_Name'] ?? '').objectName;
       if (!constraintName) continue;
       const ckColRefs = getRelRefs(el, 'CheckExpressionDependencies');
       if (ckColRefs.length === 1) {
         const colName = lastNamePart(ckColRefs[0]);
-        if (colName) ckColMap.set(`${tableKey}.${colName.toLowerCase()}`, constraintName);
+        if (colName) ckColMap.set(`${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`, constraintName);
       }
 
     } else if (type === 'SqlForeignKeyConstraint') {
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
-      const tableKey = normalizeName(tableRef);
+      const tableKey = normalizeName(tableRef, identifierCaseSensitive);
       const constraintName = parseName(el['@_Name'] ?? '').objectName;
       if (!constraintName) continue;
       const foreignTableRef = getRelRefs(el, 'ForeignTable')[0];
@@ -716,7 +735,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
     } else if (type === 'SqlPrimaryKeyConstraint') {
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
-      const tableKey = normalizeName(tableRef);
+      const tableKey = normalizeName(tableRef, identifierCaseSensitive);
       const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
       let ordinal = 1;
       for (const entry of asArray(colSpecRel?.Entry)) {
@@ -724,7 +743,7 @@ function extractConstraintMaps(elements: XmlElement[]): ConstraintMaps {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
           const colName = lastNamePart(colRef);
-          if (colName) pkOrdinalMap.set(`${tableKey}.${colName.toLowerCase()}`, ordinal++);
+          if (colName) pkOrdinalMap.set(`${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`, ordinal++);
         }
       }
     }
@@ -821,7 +840,7 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
 
   const keyword = getSqlKeyword(type);
   if (keyword) {
-    return `CREATE ${keyword} [${schema}].[${objectName}]\nAS\n${bodyScript}`;
+    return `CREATE ${keyword} ${quoteIdentifier(schema)}.${quoteIdentifier(objectName)}\nAS\n${bodyScript}`;
   }
   return bodyScript;
 }
@@ -1004,9 +1023,9 @@ export function applyExclusionPatterns(model: DatabaseModel, patterns: string[],
     const allEdges = model.edges;
 
     const nameToIdMap = new Map<string, string>();
-    for (const n of nodes) nameToIdMap.set(`${n.schema}.${n.name}`.toLowerCase(), n.id);
+    for (const n of nodes) nameToIdMap.set(schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive), n.id);
     for (const n of excludedNodes) {
-      const key = `${n.schema}.${n.name}`.toLowerCase();
+      const key = schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive);
       if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
     }
 
@@ -1027,7 +1046,7 @@ export function applyExclusionPatterns(model: DatabaseModel, patterns: string[],
     parseStats = {
       ...parseStats,
       spDetails: parseStats.spDetails.map((sp) => {
-        const spId = nameToIdMap.get(sp.name.toLowerCase());
+        const spId = nameToIdMap.get(schemaKey(sp.name, model.identifierCaseSensitive));
         if (!spId) return sp;
         const neighbors = adjacency.get(spId);
         if (!neighbors) return sp;

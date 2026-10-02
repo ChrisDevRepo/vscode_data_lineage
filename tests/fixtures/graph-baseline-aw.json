@@ -2,7 +2,7 @@
   "model": "AdventureWorks2025_AI.dacpac",
   "stats": {
     "nodes": 148,
-    "edges": 169
+    "edges": 170
   },
   "analysis": {
     "cycles": {
@@ -11,7 +11,7 @@
     },
     "islands": {
       "groupCount": 6,
-      "totalNodes": 103
+      "totalNodes": 104
     },
     "hubs": {
       "topId": "hub-[person].[person]",

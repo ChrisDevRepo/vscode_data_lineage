@@ -1,6 +1,7 @@
 import Graph from 'graphology';
 import { stronglyConnectedComponents } from 'graphology-components';
 import type { ColumnCarry } from './smTypes';
+import { uniqueScalarReturnTargets } from './scalarReturnBinding';
 
 /**
  * Represents an entry in the navigation agenda.
@@ -45,10 +46,10 @@ export interface AgendaEntry {
 }
 
 /** Unions column demands; a row-only arrival cannot erase an existing demand. */
-function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): ColumnCarry | undefined {
+function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined, identifierCaseSensitive = false): ColumnCarry | undefined {
   if (existing?.kind === 'scalar_return' || incoming?.kind === 'scalar_return') {
     const outputs = [...(existing?.kind === 'scalar_return' ? existing.outputs : []), ...(incoming?.kind === 'scalar_return' ? incoming.outputs : [])];
-    return { kind: 'scalar_return', outputs: [...new Map(outputs.map(target => [JSON.stringify([target.node.toLowerCase(), target.col.toLowerCase()]), { ...target }])).values()] };
+    return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets(outputs, identifierCaseSensitive) };
   }
   if (existing?.kind === 'carry' || incoming?.kind === 'carry') {
     return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : []) };
@@ -150,6 +151,8 @@ export function readyNodeIds(queued: readonly string[], successors: (nodeId: str
  * questions remain independently addressable in the task ledger.
  */
 export class AgendaManager {
+  /** Uses the source policy when merging qualified column destinations. */
+  constructor(private readonly identifierCaseSensitive = false) {}
   private _entries: AgendaEntry[] = [];
   /** Id-keyed index onto `_entries`, kept in sync at every mutation site for O(1) lookups. */
   private _byId = new Map<string, AgendaEntry>();
@@ -182,7 +185,7 @@ export class AgendaManager {
       for (const taskId of entry.taskIds) {
         if (!existing.taskIds.includes(taskId)) existing.taskIds.push(taskId);
       }
-      const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry);
+      const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry, this.identifierCaseSensitive);
       if (carry) existing.columnCarry = carry;
       if (carry?.kind === 'row_role_only') {
         existing.activeColumns = [];

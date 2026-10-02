@@ -17,10 +17,12 @@ import { traceNodeWithLevels } from '../../../src/engine/graphBuilder';
 import {
   bfsDepthMap,
   bfsReachable,
+  directNeighborIds,
   findShortestPathOrdered,
   nodesCutByRemoval,
 } from '../../../src/engine/graphGuards';
 import { makeGraph } from '../helpers/testUtils';
+import { buildModel } from '../../../src/engine/modelBuilder';
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -46,6 +48,20 @@ const asymmetricDiamond = () =>
   );
 
 const emptyGraph = () => new Graph({ type: 'directed', multi: false });
+
+describe.each([false, true])('direct neighbors under source identifier policy (CS=%s)', cs => {
+  it.each(['in', 'out'] as const)('uses CI normalization or exact CS edge fallback for %s neighbors', side => {
+    const model = buildModel([], [], undefined, undefined, true, undefined, cs);
+    model.neighborIndex = { '[dbo].[report]': { in: ['LowerSource'], out: ['LowerTarget'] } };
+    model.edges = [
+      { source: 'UpperSource', target: '[dbo].[Report]', type: 'body' },
+      { source: '[dbo].[Report]', target: 'UpperTarget', type: 'body' },
+    ];
+    expect(directNeighborIds(model, '[dbo].[Report]', side)).toEqual([`${cs ? 'Upper' : 'Lower'}${side === 'in' ? 'Source' : 'Target'}`]);
+    expect(directNeighborIds(model, '[dbo].[report]', side)).toEqual([`Lower${side === 'in' ? 'Source' : 'Target'}`]);
+    expect(directNeighborIds(model, '[DBO].[REPORT]', side)).toEqual(cs ? [] : [`Lower${side === 'in' ? 'Source' : 'Target'}`]);
+  });
+});
 
 
 describe('traceNodeWithLevels — cycles', () => {

@@ -1,6 +1,6 @@
 /**
- * Pins the cost bound on `lineage_search_ddl` patterns: a backtracking-prone pattern is refused
- * at the contract with a rewrite hint, and a normal pattern still locates a match on a very long line.
+ * Pins the search worker deadline for backtracking-prone DDL patterns and verifies that a normal
+ * pattern still locates a match on a very long line.
  */
 import { executeIsolatedRegexSearch } from '../../../src/ai/support/isolatedRegexSearch';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
@@ -21,7 +21,7 @@ describe('search pattern cost on a long line', () => {
     bodyScript: `${'a'.repeat(50_000)} FROM dbo.Orders`,
   };
 
-  it.each(['(a+)+x', '(.*a){12}x', '.*.*x', 'a*a*x'])('refuses %s at the contract with a rewrite hint', async (pattern) => {
+  it.each(['(a+)+x', '(.*a){12}x', '.*.*x', 'a*a*x'])('terminates %s at the worker deadline', async (pattern) => {
     await expect(executeIsolatedRegexSearch({ kind: 'ddl', pattern, nodes: [longNode], budget: DEFAULT_TURN_TOKEN_BUDGET, rowChars: 60 })).rejects.toMatchObject({ reason: 'deadline' });
   }, 20_000);
 

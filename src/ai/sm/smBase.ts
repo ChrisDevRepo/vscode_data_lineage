@@ -10,13 +10,13 @@ import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
 import { ASYMMETRIC_DEPTH_BOTH_ZERO, bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
-import { buildEdgeTypeMap, buildHopFocusNode } from '../tools/tools';
+import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
 import { bfsDepthMap, bfsReachable, nodesCutByRemoval, type LogFn } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
-import { compileExclusionMatcher, normalizeColName, splitSqlName, stripBrackets } from '../../utils/sql';
+import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
@@ -330,9 +330,9 @@ export class NavigationEngine implements IHopStateMachine {
   /** Engine-owned lifecycle state for nodes; detail slots are content storage only. */
   protected nodeStates = new Map<string, SmNodeState>();
   /** List representing the current navigation agenda. */
-  protected _agenda = new AgendaManager();
+  protected _agenda: AgendaManager;
   /** Structured source of truth for questions and follow-up leads. */
-  private readonly taskLedger = new TaskLedger();
+  private readonly taskLedger: TaskLedger;
   /** Identifier of the node currently in focus. */
   protected currentFocusNodeId: string | null = null;
   /** Active task-ledger question captured at dequeue so it can label the detail slot. */
@@ -451,6 +451,18 @@ export class NavigationEngine implements IHopStateMachine {
   protected lastHopColumnFlowEntries = 0;
   /** CT lineage-continuation questions for the hop currently in flight, set at dispatch in {@link getHopContext} from that hop's own {@link AgendaEntry.lineageQuestions} — never a different node's. */
   protected _pendingLineageQuestions: string[] = [];
+  /** The source policy used by this active engine and its checkpoint consumers. */
+  get identifierCaseSensitive(): boolean { return this.model.identifierCaseSensitive === true; }
+
+  /** Uses the loaded source identifier policy for object and schema keys. */
+  protected columnKey(value: string): string {
+    return normalizeColName(value, this.model.identifierCaseSensitive);
+  }
+
+  protected identifierKey(value: string): string {
+    return schemaKey(value, this.model.identifierCaseSensitive);
+  }
+
   constructor(
     model: DatabaseModel,
     graph: Graph,
@@ -462,13 +474,15 @@ export class NavigationEngine implements IHopStateMachine {
     store?: ColumnStore | null,
   ) {
     this.model = model;
+    this._agenda = new AgendaManager(model.identifierCaseSensitive);
+    this.taskLedger = new TaskLedger(model.identifierCaseSensitive);
     this.graph = graph;
     this.log = log;
     this.store = store ?? null;
     this.nodeMap = buildNodeMap(model);
     this.edgeTypeMap = buildEdgeTypeMap(model);
     this.memory = config.memory ?? new AiMemoryManager();
-    const schemas = config.activeFilter?.schemas?.map(s => s.toLowerCase()) ?? [];
+    const schemas = config.activeFilter?.schemas?.map(s => this.identifierKey(s)) ?? [];
     this.userSchemas = new Set(schemas);
     this.sessionAllowedSchemas = new Set(schemas);
 
@@ -480,7 +494,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (schemas.length > 0) {
       const allSchemas = new Set<string>();
-      for (const n of this.nodeMap.values()) allSchemas.add(n.schema.toLowerCase());
+      for (const n of this.nodeMap.values()) allSchemas.add(this.identifierKey(n.schema));
       this.guiHiddenSchemas = new Set(Array.from(allSchemas).filter(s => !schemas.includes(s)));
     }
 
@@ -489,7 +503,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
     if (isGuiExcluded) {
       for (const n of this.nodeMap.values()) {
-        if (isGuiExcluded(n)) this.guiExcludedNodeIds.add(n.id.toLowerCase());
+        if (isGuiExcluded(n)) this.guiExcludedNodeIds.add(this.identifierKey(n.id));
       }
     }
   }
@@ -536,7 +550,7 @@ export class NavigationEngine implements IHopStateMachine {
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();
     if (!held) return null;
-    return resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase();
+    return resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id);
   }
 
   /**
@@ -556,9 +570,9 @@ export class NavigationEngine implements IHopStateMachine {
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
     if (incoming.verdict === 'end_branch') return incoming;
     const held = this.heldFindingDraft.get();
-    const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap) ?? incoming.focus_node_id.toLowerCase();
+    const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(incoming.focus_node_id);
     const heldForFocus = held
-      && (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) === inFocus
+      && (resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id)) === inFocus
       && inFocus === this.currentFocusNodeId
       ? held
       : null;
@@ -615,7 +629,7 @@ export class NavigationEngine implements IHopStateMachine {
     const raw = input as Record<string, unknown> & { focus_node_id?: unknown; verdict?: unknown };
     if (raw.verdict === 'end_branch') return null;
     if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
-    const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap) ?? raw.focus_node_id.toLowerCase();
+    const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id);
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
     const failed = new Set(failedPaths.map(path => path.split('.')[0]));
     const sections = failed.has('sections')
@@ -629,7 +643,7 @@ export class NavigationEngine implements IHopStateMachine {
       Object.assign(fields, { [field]: structuredClone(value) });
     }
     const prior = this.heldFindingDraft.get();
-    const held = prior !== null && (resolveModelNodeId(prior.focus_node_id, this.nodeMap) ?? prior.focus_node_id.toLowerCase()) === focus
+    const held = prior !== null && (resolveModelNodeId(prior.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(prior.focus_node_id)) === focus
       ? prior
       : null;
     const priorFailed = held ? this.heldFindingDraft.getAuthorization()?.failed ?? [] : [];
@@ -651,7 +665,7 @@ export class NavigationEngine implements IHopStateMachine {
   /** The parts a draft already held for the current focus still restores, unchanged; `null` when none is held. */
   private heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
     const held = this.heldFindingDraft.get();
-    if (held === null || (resolveModelNodeId(held.focus_node_id, this.nodeMap) ?? held.focus_node_id.toLowerCase()) !== this.currentFocusNodeId) return null;
+    if (held === null || (resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id)) !== this.currentFocusNodeId) return null;
     const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
     return {
       sections: held.sections.map(section => section.angle ?? ''),
@@ -809,7 +823,7 @@ export class NavigationEngine implements IHopStateMachine {
     reason: SmNodeStateReason,
     meta: { columns?: string[]; columnRole?: SmNodeColumnRole; viaNodeId?: string; atHop?: number } = {},
   ): void {
-    const id = resolveModelNodeId(nodeId, this.nodeMap) ?? nodeId.toLowerCase();
+    const id = resolveModelNodeId(nodeId, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(nodeId);
     if (!this.nodeMap.has(id)) return;
 
     const rank = (a: SmNodeAction): number => {
@@ -883,7 +897,7 @@ export class NavigationEngine implements IHopStateMachine {
       depth: this.depthFromOrigin.get(focusId) ?? 0,
       depthBudget: this.depthBudget,
       depthEnforcement: this.depthEnforcement,
-      inSchema: focus ? this.sessionAllowedSchemas.size === 0 || this.sessionAllowedSchemas.has(focus.schema.toLowerCase()) : true,
+      inSchema: focus ? this.sessionAllowedSchemas.size === 0 || this.sessionAllowedSchemas.has(this.identifierKey(focus.schema)) : true,
       verdict: this.lastHopVerdict,
       detailChars: this.lastHopDetailChars,
       summaryChars: this.lastHopSummaryChars,
@@ -974,7 +988,7 @@ export class NavigationEngine implements IHopStateMachine {
    * only matches schema-qualified two-part spellings, so bare/three-part column names never false-match.
    */
   private nodeRefColumnTargets(columns: readonly string[]): string[] {
-    return columns.filter((column) => resolveModelNodeId(column, this.nodeMap) !== null);
+    return columns.filter((column) => resolveModelNodeId(column, this.nodeMap, this.model.identifierCaseSensitive) !== null);
   }
 
   /**
@@ -1005,20 +1019,20 @@ export class NavigationEngine implements IHopStateMachine {
       const seen = new Set<string>();
       for (const requested of columns) {
         const name = stripBrackets(splitSqlName(requested).pop() ?? requested).trim();
-        const key = normalizeColName(name);
+        const key = this.columnKey(name);
         if (name.length === 0 || seen.has(key)) continue;
         seen.add(key);
         bare.push(name);
       }
       return { resolved: bare, unmatched: [] };
     }
-    const byNorm = new Map<string, string>(nodeColumns.map((c) => [normalizeColName(c.name), c.name]));
+    const byNorm = new Map<string, string>(nodeColumns.map((c) => [this.columnKey(c.name), c.name]));
     const resolved: string[] = [];
     const unmatched: string[] = [];
     for (const requested of columns) {
-      const exact = byNorm.get(normalizeColName(requested));
+      const exact = byNorm.get(this.columnKey(requested));
       const lastSegment = requested.split('.').pop() ?? requested;
-      const suffix = exact === undefined ? byNorm.get(normalizeColName(lastSegment)) : undefined;
+      const suffix = exact === undefined ? byNorm.get(this.columnKey(lastSegment)) : undefined;
       const match = exact ?? suffix;
       if (match !== undefined) {
         if (!resolved.includes(match)) resolved.push(match);
@@ -1045,10 +1059,10 @@ export class NavigationEngine implements IHopStateMachine {
     for (const raw of requested) {
       const parts = splitSqlName(raw).map((part) => stripBrackets(part).trim()).filter((part) => part.length > 0);
       if (parts.length < 2) continue;
-      const qualifier = normalizeColName(parts[parts.length - 2]);
-      const schemaQualifier = parts.length >= 3 ? normalizeColName(parts[parts.length - 3]) : null;
-      const names = (node: LineageNode): boolean => normalizeColName(node.name) === qualifier
-        && (schemaQualifier === null || normalizeColName(node.schema) === schemaQualifier);
+      const qualifier = this.columnKey(parts[parts.length - 2]);
+      const schemaQualifier = parts.length >= 3 ? this.columnKey(parts[parts.length - 3]) : null;
+      const names = (node: LineageNode): boolean => this.columnKey(node.name) === qualifier
+        && (schemaQualifier === null || this.columnKey(node.schema) === schemaQualifier);
       if (origin && names(origin)) continue;
       for (const [otherId, node] of this.nodeMap) {
         if (otherId === originNodeId) continue;
@@ -1094,18 +1108,18 @@ export class NavigationEngine implements IHopStateMachine {
     for (const task of this.getCurrentTasks()) {
       if (task.kind !== 'column_lineage') continue;
       if (task.returnTargets) {
-        for (const target of task.returnTargets) refs.set(`${target.node}|${normalizeColName(target.col)}`, { ...target });
+        for (const target of task.returnTargets) refs.set(`${target.node}|${this.columnKey(target.col)}`, { ...target });
         continue;
       }
       const columns = new Set([...this.tracer.activeColumns, ...task.activeColumns]);
       for (const col of columns) {
-        const normalized = normalizeColName(col);
+        const normalized = this.columnKey(col);
         let context: InvestigationTask | undefined = task;
         while (context) {
           const node = context.nodeId;
           if (node !== undefined) {
             const committed = this.tracer.edges.filter(edge =>
-              (edge.to_node === node || edge.hop_node === node) && normalizeColName(edge.to_col) === normalized);
+              (edge.to_node === node || edge.hop_node === node) && this.columnKey(edge.to_col) === normalized);
             if (committed.length > 0) {
               for (const edge of committed) {
                 refs.set(`${edge.to_node}|${normalized}`, { node: edge.to_node, col: edge.to_col });
@@ -1261,8 +1275,8 @@ export class NavigationEngine implements IHopStateMachine {
     const checkDirection = purpose === 'route' || purpose === 'contraction';
 
     if (this.excludedTypes.has(node.type.toLowerCase())) return { kind: 'excluded', axis: 'type' };
-    if (this.excludedNodeIds.has(nodeId.toLowerCase())) return { kind: 'excluded', axis: 'node_id' };
-    if (this.excludedSchemas.has(node.schema.toLowerCase())) return { kind: 'excluded', axis: 'schema' };
+    if (this.excludedNodeIds.has(this.identifierKey(nodeId))) return { kind: 'excluded', axis: 'node_id' };
+    if (this.excludedSchemas.has(this.identifierKey(node.schema))) return { kind: 'excluded', axis: 'schema' };
     if (checkDirection && !this.isReachableInApprovedDirection(nodeId)) return { kind: 'out_of_direction' };
     return { kind: 'in_border' };
   }
@@ -1274,7 +1288,7 @@ export class NavigationEngine implements IHopStateMachine {
    * deferral can tell the model the `confirm_sm_start` repair.
    */
   private isGuiHiddenSchemaBorder(border: BorderVerdict, node: LineageNode): boolean {
-    return border.kind === 'excluded' && border.axis === 'schema' && this.guiHiddenSchemas.has(node.schema.toLowerCase());
+    return border.kind === 'excluded' && border.axis === 'schema' && this.guiHiddenSchemas.has(this.identifierKey(node.schema));
   }
 
   /**
@@ -1393,14 +1407,14 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Qualified destinations carried by the active task ledger, without column-name collapse. */
   private currentReturnTargets(): ScalarReturnTarget[] {
-    return uniqueScalarReturnTargets(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' ? task.returnTargets ?? [] : []));
+    return uniqueScalarReturnTargets(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' ? task.returnTargets ?? [] : []), this.model.identifierCaseSensitive);
   }
 
   /** Context evidence for the declared scalar return task, supplied only at its function hop. */
   private scalarReturnContext(): Pick<HopContext, 'caller_output_targets' | 'caller_objects' | 'caller_requested_outputs'> {
     const targets = this.currentReturnTargets();
-    const declared = uniqueScalarReturnTargets(this.getCurrentTasks().flatMap(task => task.callerContext ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []));
-    const callers = uniqueScalarReturnTargets([...targets, ...declared]);
+    const declared = uniqueScalarReturnTargets(this.getCurrentTasks().flatMap(task => task.callerContext ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []), this.model.identifierCaseSensitive);
+    const callers = uniqueScalarReturnTargets([...targets, ...declared], this.model.identifierCaseSensitive);
     if (!callers.length) return {};
     return {
       ...(targets.length ? { caller_output_targets: targets } : {}),
@@ -1415,21 +1429,21 @@ export class NavigationEngine implements IHopStateMachine {
     const target = resolveFunctionCallerTarget(functionId, context, this.nodeMap, this.model, this.store);
     const ddl = getNodeDdl(context.node, this.nodeMap, this.store ?? undefined);
     return !!target && !!ddl && !!parent && parent.kind === 'column_lineage'
-      && parent.nodeId === target.node && parent.activeColumns.some(col => normalizeColName(col) === normalizeColName(target.col))
+      && parent.nodeId === target.node && parent.activeColumns.some(col => this.columnKey(col) === this.columnKey(target.col))
       && this.scopeNodeIds.has(target.node) && !this.removedSet.has(target.node)
       && functionCallerDdlHash(ddl) === context.ddlHash;
   }
 
   /** Compiler declarations and task-anchored model investigations remain separate sources of scalar authorization. */
   private resolveReturnTarget(functionId: string, target: ScalarReturnTarget, taskIds?: readonly string[]): ScalarReturnTarget | null {
-    const compiled = resolveScalarReturnTarget(functionId, target, this.nodeMap, this.store);
+    const compiled = resolveScalarReturnTarget(functionId, target, this.nodeMap, this.store, this.model.identifierCaseSensitive);
     if (compiled) return compiled;
     if (getNodeColumns(functionId, this.nodeMap, this.store ?? undefined)?.length) return null;
     const tasks = taskIds ? taskIds.flatMap(id => this.taskLedger.getTask(id) ?? []) : this.taskLedger.investigationTasks;
     const declared = tasks.some(task => task.nodeId === functionId && task.kind === 'column_lineage' && task.callerContext
       && task.parentTaskId === task.callerContext.callerTaskId
-      && task.returnTargets?.some(expected => expected.node === target.node && normalizeColName(expected.col) === normalizeColName(target.col))
-      && task.callerContext.node === target.node && normalizeColName(task.callerContext.col) === normalizeColName(target.col)
+      && task.returnTargets?.some(expected => expected.node === target.node && this.columnKey(expected.col) === this.columnKey(target.col))
+      && task.callerContext.node === target.node && this.columnKey(task.callerContext.col) === this.columnKey(target.col)
       && this.validFunctionCallerContext(functionId, task.callerContext));
     return declared ? resolveFunctionCallerTarget(functionId, target, this.nodeMap, this.model, this.store) : null;
   }
@@ -1498,9 +1512,9 @@ export class NavigationEngine implements IHopStateMachine {
     const schemasByTypeName = new Map<string, Set<string>>();
     for (const n of this.nodeMap.values()) {
       const type = n.type ?? 'external';
-      const key = `${type}\u0000${n.name.toLowerCase()}`;
+      const key = `${type}\u0000${this.identifierKey(n.name)}`;
       const schemas = schemasByTypeName.get(key) ?? new Set<string>();
-      schemas.add(n.schema.toLowerCase());
+      schemas.add(this.identifierKey(n.schema));
       schemasByTypeName.set(key, schemas);
     }
     const ambiguousObjectNames: Record<string, string[]> = {};
@@ -1514,18 +1528,19 @@ export class NavigationEngine implements IHopStateMachine {
     const originNode = this.originNodeId ? this.nodeMap.get(this.originNodeId) : undefined;
     const originLabel = originNode ? `${originNode.schema}.${originNode.name}` : (this.originNodeId ?? '');
     const canonicalNodeId = (id: string): string => {
-      const key = resolveModelNodeId(id, this.nodeMap) ?? id;
+      const key = resolveModelNodeId(id, this.nodeMap, this.model.identifierCaseSensitive) ?? id;
       const node = this.nodeMap.get(key);
-      return node ? `[${node.schema}].[${node.name}]` : key;
+      return node ? `${quoteIdentifier(node.schema)}.${quoteIdentifier(node.name)}` : key;
     };
     const schemaNames = new Map<string, string>();
     for (const n of this.nodeMap.values()) {
-      const key = n.schema.toLowerCase();
+      const key = this.identifierKey(n.schema);
       if (this.excludedSchemas.has(key) && !schemaNames.has(key)) schemaNames.set(key, n.schema);
     }
 
     return {
       hopCount,
+      identifierCaseSensitive: this.identifierCaseSensitive,
       scopeCount: this.scopeNodeIds.size,
       origin: this.originNodeId ?? '',
       originLabel,
@@ -1565,8 +1580,8 @@ export class NavigationEngine implements IHopStateMachine {
     const mustPass: string[] = [];
 
     for (const raw of nodeIds) {
-      const id = raw.toLowerCase();
-      if (!this.scopeNodeIds.has(id) || id === this.originNodeId.toLowerCase()) {
+      const id = this.identifierKey(raw);
+      if (!this.scopeNodeIds.has(id) || id === this.identifierKey(this.originNodeId)) {
         prunable.push(raw);
         continue;
       }
@@ -1596,7 +1611,7 @@ export class NavigationEngine implements IHopStateMachine {
     const focusId = this.currentFocusNodeId ?? '';
     const neighborIndex = this.model.neighborIndex[focusId] ?? { in: [], out: [] };
     const directNeighbors = new Set<string>([...neighborIndex.in, ...neighborIndex.out]);
-    return ids.filter(id => !this.scopeNodeIds.has(id.toLowerCase()) || !directNeighbors.has(id.toLowerCase()));
+    return ids.filter(id => !this.scopeNodeIds.has(this.identifierKey(id)) || !directNeighbors.has(this.identifierKey(id)));
   }
 
   /** Structured tasks assigned to the current focus node, rendered as the `<current_task>` block. */
@@ -1658,7 +1673,7 @@ export class NavigationEngine implements IHopStateMachine {
     const wasRefine = this.initSnapshot !== null;
     const prevScopeSize = this.scopeNodeIds.size;
 
-    const resolveId = (raw: string): string | null => resolveModelNodeId(raw, this.nodeMap);
+    const resolveId = (raw: string): string | null => resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
     const partition = (raws: string[]): { resolved: string[]; unresolved: string[] } => {
       const resolved: string[] = [];
       const unresolved: string[] = [];
@@ -1686,12 +1701,12 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}]`);
     }
 
-    const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap);
+    const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap, this.model.identifierCaseSensitive);
     const originNode = resolvedOriginId ? this.nodeMap.get(resolvedOriginId) : null;
     if (!originNode) {
       return makeRejection({
         code: 'origin_not_found',
-        hint: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns (case-insensitive match against the loaded graph).',
+        hint: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns.',
       });
     }
 
@@ -1745,14 +1760,14 @@ export class NavigationEngine implements IHopStateMachine {
 
     this.excludedTypes = new Set((params.excludeTypes ?? []).map(t => t.toLowerCase()));
 
-    const originSchema = originNode.schema.toLowerCase();
-    const originId = originNode.id.toLowerCase();
-    this.excludedSchemas = new Set((params.excludeSchemas ?? [...this.guiHiddenSchemas]).map(s => s.toLowerCase()).filter(s => s !== originSchema));
-    this.excludedNodeIds = new Set(excludeIds.resolved.map(s => s.toLowerCase()).filter(id => id !== originId));
-    if (excludeIds.resolved.some(id => id.toLowerCase() === originId)) {
+    const originSchema = this.identifierKey(originNode.schema);
+    const originId = this.identifierKey(originNode.id);
+    this.excludedSchemas = new Set((params.excludeSchemas ?? [...this.guiHiddenSchemas]).map(s => this.identifierKey(s)).filter(s => s !== originSchema));
+    this.excludedNodeIds = new Set(excludeIds.resolved.map(s => this.identifierKey(s)).filter(id => id !== originId));
+    if (excludeIds.resolved.some(id => this.identifierKey(id) === originId)) {
       this.log('debug', `[Border] origin ${originNode.id} named in excludeNodeIds — kept in scope as the origin`);
     }
-    this.passNodeIds = new Set(passIds.resolved.map(s => s.toLowerCase()));
+    this.passNodeIds = new Set(passIds.resolved.map(s => this.identifierKey(s)));
     if (this.userSchemas.size > 0) {
       const openedByProposal = params.excludeSchemas === undefined
         ? []
@@ -1787,7 +1802,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     let initialActiveColumns = effectiveTargetColumns;
     if (analysisMode === 'ct' && effectiveTargetColumns && effectiveTargetColumns.length > 0) {
-      this.tracer = new ColumnTracer(effectiveTargetColumns);
+      this.tracer = new ColumnTracer(effectiveTargetColumns, undefined, this.model.identifierCaseSensitive);
       initialActiveColumns = resolvedActiveColumns;
       this.tracer.setActiveColumns(initialActiveColumns);
       this.mode = { kind: 'ct' };
@@ -1922,7 +1937,7 @@ export class NavigationEngine implements IHopStateMachine {
     const skipped: SupplementSkip[] = [];
     const candidates: Array<{ raw: string; node: LineageNode }> = [];
     for (const raw of nodeIds) {
-      const id = resolveModelNodeId(raw, this.nodeMap);
+      const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
       const node = id ? this.nodeMap.get(id) : undefined;
       if (!node) continue;
       const border = this.checkBorder(node.id, node, 'supplement');
@@ -1981,23 +1996,23 @@ export class NavigationEngine implements IHopStateMachine {
     const maxDepth = chain.depth === 'all' ? Number.POSITIVE_INFINITY : chain.depth;
     const mode = chain.direction === 'upstream' ? 'inbound' : 'outbound';
     const result: string[] = [...nodeIds];
-    const seen = new Set(nodeIds.map(id => id.toLowerCase()));
+    const seen = new Set(nodeIds.map(id => this.identifierKey(id)));
     for (const raw of nodeIds) {
-      const start = resolveModelNodeId(raw, this.nodeMap);
+      const start = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
       if (!start || !this.graph.hasNode(start)) continue;
       bfsFromNode(this.graph, start, (key, _attr, depth) => {
         if (key === start) return false;
         const node = this.nodeMap.get(key);
         if (!node) return true;
         if (this.checkBorder(key, node, 'supplement').kind === 'excluded') {
-          if (!seen.has(key.toLowerCase())) {
-            seen.add(key.toLowerCase());
+          if (!seen.has(this.identifierKey(key))) {
+            seen.add(this.identifierKey(key));
             result.push(key);
           }
           return true;
         }
-        if (!seen.has(key.toLowerCase()) && !this.visited.has(key)) {
-          seen.add(key.toLowerCase());
+        if (!seen.has(this.identifierKey(key)) && !this.visited.has(key)) {
+          seen.add(this.identifierKey(key));
           result.push(key);
         }
         return depth >= maxDepth;
@@ -2015,8 +2030,7 @@ export class NavigationEngine implements IHopStateMachine {
       selectedTask?.kind === 'column_lineage' && selectedTask.returnTargets
         ? selectedTask.returnTargets
         : this.taskLedger.investigationTasks.flatMap(task =>
-          task.nodeId === nodeId && task.kind === 'column_lineage' ? task.returnTargets ?? [] : []),
-    );
+          task.nodeId === nodeId && task.kind === 'column_lineage' ? task.returnTargets ?? [] : []), this.model.identifierCaseSensitive);
     if (targets.length) {
       const outputs = targets.map(target => {
         const bound = this.resolveReturnTarget(nodeId, target);
@@ -2078,7 +2092,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
     const requested = [
       ...nodeIds.flatMap(nodeId => {
-        const id = resolveModelNodeId(nodeId, this.nodeMap);
+        const id = resolveModelNodeId(nodeId, this.nodeMap, this.model.identifierCaseSensitive);
         const contexts = this.taskLedger.investigationTasks.filter(task => task.nodeId === id && task.callerContext);
         return contexts.length ? contexts.map(task => ({ nodeId, question: task.question, taskId: task.id as string | undefined, leadId: undefined as string | undefined }))
           : [{ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined }];
@@ -2087,11 +2101,11 @@ export class NavigationEngine implements IHopStateMachine {
     ];
 
     const admission = this.admitSupplementTargets(requested.map(request => request.nodeId));
-    const unconnectedIds = new Set(admission.skipped.map(skip => skip.nodeId.toLowerCase()));
+    const unconnectedIds = new Set(admission.skipped.map(skip => this.identifierKey(skip.nodeId)));
     const admittedIds = new Set(admission.admitted);
     // Validate every recovered binding before any target is unpruned or queued.
     const prepared = requested.map(request => {
-      const id = resolveModelNodeId(request.nodeId, this.nodeMap);
+      const id = resolveModelNodeId(request.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
       const selectedTask = request.taskId ? this.taskLedger.getTask(request.taskId) : undefined;
       const carry: ColumnCarry = id && admittedIds.has(id)
         ? this.supplementCarryFor(id, selectedTask)
@@ -2111,14 +2125,14 @@ export class NavigationEngine implements IHopStateMachine {
     const skippedDetails: SupplementSkip[] = [...admission.skipped];
     for (const request of prepared) {
       const raw = request.nodeId;
-      const id = resolveModelNodeId(raw, this.nodeMap);
+      const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
       if (!id) {
         this.log('debug', `[Supplement] refuse hop=${this.hopCount} id=${raw} reason=unresolved`);
         skippedDetails.push({ nodeId: raw, reason: 'unresolved' });
         skipped++;
         continue;
       }
-      if (unconnectedIds.has(id.toLowerCase())) continue;
+      if (unconnectedIds.has(this.identifierKey(id))) continue;
       const supNode = this.nodeMap.get(id);
       const supBorder = supNode ? this.checkBorder(id, supNode, 'supplement') : null;
       if (supBorder && supBorder.kind !== 'in_border') {
@@ -2147,7 +2161,7 @@ export class NavigationEngine implements IHopStateMachine {
       const depth = typeof existingDepth === 'number' ? existingDepth : 0;
       if (request.leadId) this.taskLedger.scheduleLead(request.leadId);
       for (const lead of this.taskLedger.pendingLeads) {
-        if (lead.status === 'pending' && lead.nodeId.toLowerCase() === id.toLowerCase()) this.taskLedger.scheduleLead(lead.id);
+        if (lead.status === 'pending' && this.identifierKey(lead.nodeId) === this.identifierKey(id)) this.taskLedger.scheduleLead(lead.id);
       }
       this.enqueueHop(id, request.question, depth, 3, {
         carry: request.carry,
@@ -2188,7 +2202,7 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
-      if (this.passNodeIds.has(candidate.nodeId.toLowerCase())) {
+      if (this.passNodeIds.has(this.identifierKey(candidate.nodeId))) {
         this.visited.add(candidate.nodeId);
         this.markNodeState(candidate.nodeId, 'passthrough', 'user', 'user_pass_filter', {
           columns: candidate.activeColumns,
@@ -2261,8 +2275,8 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(entry.nodeId)!;
 
     const focusNode = buildHopFocusNode(
-      node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap,
+      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl',
+      this.model.neighborIndex, this.edgeTypeMap, this.identifierCaseSensitive,
     );
 
     if (this.depthBudget !== null) {
@@ -2293,7 +2307,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     workingMemory.approved_border = {
-      schemas: Array.from(this.sessionAllowedSchemas).filter(schema => !this.excludedSchemas.has(schema.toLowerCase())).sort(),
+      schemas: Array.from(this.sessionAllowedSchemas).filter(schema => !this.excludedSchemas.has(this.identifierKey(schema))).sort(),
       depth_cap: this.computeDepthCap(),
     };
     workingMemory.deferred_count = this.deferredQuestions.length;
@@ -2371,8 +2385,8 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(focusId);
     if (!node) return null;
     const focusNode = buildHopFocusNode(
-      node, this.nodeMap, new Map(), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap,
+      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl',
+      this.model.neighborIndex, this.edgeTypeMap, this.identifierCaseSensitive,
     );
     if (this.depthBudget !== null) {
       const d = this.depthFromOrigin.get(focusId);
@@ -2426,7 +2440,7 @@ export class NavigationEngine implements IHopStateMachine {
     const invalidRoutes: InvalidRoute[] = [];
     const routeOutcomes: RouteOutcome[] = [];
     const rawFocusId = params.focus_node_id;
-    const focusId = resolveModelNodeId(rawFocusId, this.nodeMap) ?? rawFocusId?.toLowerCase();
+    const focusId = resolveModelNodeId(rawFocusId, this.nodeMap, this.model.identifierCaseSensitive) ?? (rawFocusId === undefined ? undefined : this.identifierKey(rawFocusId));
     if (!focusId || !this.nodeMap.has(focusId)) {
       return makeRejection({
         code: REJECTION_CODES.invalidInput,
@@ -2503,7 +2517,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (traceDirection === 'upstream') {
         for (const entry of finding.column_flow) {
           for (const ref of entry.upstream_columns) {
-            const nid = resolveModelNodeId(ref.node, this.nodeMap) ?? ref.node.toLowerCase();
+            const nid = resolveModelNodeId(ref.node, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(ref.node);
             addCarry(nid, ref.col);
             if (!flowQuestionByNode.has(nid)) {
               flowQuestionByNode.set(nid, `Trace ${nid}.${ref.col} as upstream input for ${focusId}.${entry.out_col}.`);
@@ -2515,17 +2529,17 @@ export class NavigationEngine implements IHopStateMachine {
       // to its consumers whatever the trace direction — a bidirectional session traces columns
       // upstream while its origin still owes the declared column downstream.
       if (this.onDownstreamSide(focusId) && this.graph.hasNode(focusId)) {
-        const key = columnEndpointKeyFactory(this.nodeMap);
+        const key = columnEndpointKeyFactory(this.nodeMap, this.model.identifierCaseSensitive);
         const links = stagedColumnEdges.map(edge => ({ from: key(edge.from_node, edge.from_col), to: key(edge.to_node, edge.to_col) }));
         const reachable = reachableColumnEndpoints(new Set(incomingRefs.map(ref => key(ref.node, ref.col))), links, 'downstream');
         const outputs = new Map<string, { node: string; col: string }>();
         const terminalColumns = new Set<string>();
         for (const entry of finding.column_flow) {
           if (focusId !== this.originNodeId && entry.upstream_columns.length === 0) {
-            terminalColumns.add(normalizeColName(entry.out_col));
+            terminalColumns.add(this.columnKey(entry.out_col));
             continue;
           }
-          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
+          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.model.identifierCaseSensitive);
           if (!resolved) continue;
           const output = { node: resolved.attributionTo, col: resolved.attributionCol };
           const outputKey = key(output.node, output.col);
@@ -2534,7 +2548,7 @@ export class NavigationEngine implements IHopStateMachine {
         const mappedInputs = new Set(links.map(link => link.from));
         for (const ref of incomingRefs) {
           const endpoint = key(ref.node, ref.col);
-          if (!mappedInputs.has(endpoint) && !terminalColumns.has(normalizeColName(ref.col))) {
+          if (!mappedInputs.has(endpoint) && !terminalColumns.has(this.columnKey(ref.col))) {
             outputs.set(endpoint, ref);
           }
         }
@@ -2551,17 +2565,17 @@ export class NavigationEngine implements IHopStateMachine {
 
     const pruneTargets = (finding.prune_neighbors ?? []).map((prune, index) => ({
       raw: prune.id,
-      resolved: resolveModelNodeId(prune.id, this.nodeMap),
+      resolved: resolveModelNodeId(prune.id, this.nodeMap, this.model.identifierCaseSensitive),
       path: `prune_neighbors.${index}.id`,
     }));
-    const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? t.raw.toLowerCase()));
+    const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? this.identifierKey(t.raw)));
 
     const routeRequests: ValidatedHop['routeRequests'] = [];
     const requested = new Set<string>();
     const unresolvedQuestions: string[] = [];
     const focusNeighborIds = this.graph.hasNode(focusId) ? new Set(this.graph.neighbors(focusId)) : new Set<string>();
     (finding.questions ?? []).forEach((q, index) => {
-      const nid = resolveModelNodeId(q.nodeId, this.nodeMap);
+      const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
       if (!nid) {
         unresolvedQuestions.push(q.nodeId);
         return;
@@ -2584,7 +2598,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (q.caller_context) {
         const target = resolveFunctionCallerTarget(nid, q.caller_context, this.nodeMap, this.model, this.store);
         const callerTask = this.getCurrentTasks().find(task => task.kind === 'column_lineage' && task.nodeId === focusId
-          && task.activeColumns.some(col => normalizeColName(col) === normalizeColName(q.caller_context!.col)));
+          && task.activeColumns.some(col => this.columnKey(col) === this.columnKey(q.caller_context!.col)));
         const ddl = getNodeDdl(focusId, this.nodeMap, this.store ?? undefined);
         if (!target || target.node !== focusId || !callerTask || !ddl || !this.scopeNodeIds.has(focusId)) {
           invalidRoutes.push({ kind: 'bad_return_target', id: nid, path: `questions.${index}.caller_context`, reason: 'caller_context must name an active real output of the current caller, which reads this loaded function.' });
@@ -2709,7 +2723,7 @@ export class NavigationEngine implements IHopStateMachine {
 
       if (this.tracer && finding.column_flow) {
         for (const entry of finding.column_flow) {
-          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
+          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.model.identifierCaseSensitive);
           const targets: Array<readonly [string, string]> = resolved
             ? [[resolved.attributionTo, resolved.attributionCol]]
             : [];
@@ -2726,7 +2740,7 @@ export class NavigationEngine implements IHopStateMachine {
             }
           }
           for (const ref of entry.upstream_columns) {
-            const fromNode = resolveModelNodeId(ref.node, this.nodeMap);
+            const fromNode = resolveModelNodeId(ref.node, this.nodeMap, this.model.identifierCaseSensitive);
             if (!fromNode) continue;
             const fromNodeObj = this.nodeMap.get(fromNode);
             if (fromNodeObj && !SCRIPT_TYPES.has(fromNodeObj.type)) {
@@ -3620,9 +3634,9 @@ export class NavigationEngine implements IHopStateMachine {
     ];
     const outputs = uniqueScalarReturnTargets(endpoints.flatMap(target => {
       if (!this.scopeNodeIds.has(target.node)) return [];
-      const bound = resolveScalarReturnTarget(nodeId, target, this.nodeMap, this.store);
+      const bound = resolveScalarReturnTarget(nodeId, target, this.nodeMap, this.store, this.model.identifierCaseSensitive);
       return bound ? [bound] : [];
-    }));
+    }), this.model.identifierCaseSensitive);
     if (outputs.length) return { kind: 'scalar_return', outputs };
     const cols = carryByNode.get(nodeId);
     const mentioned = this.activeColumnsNamedIn(question);
@@ -4000,6 +4014,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public toJSON(): SmState {
     const snapshot: SmState = {
+      identifierCaseSensitive: this.identifierCaseSensitive,
       snapshotVersion: this.taskLedger.investigationTasks.some(task => task.kind === 'column_lineage' && task.returnTargets) || this._agenda.entries.some(entry => entry.columnCarry?.kind === 'scalar_return') ? 2 : 1,
       columnAspect: this.tracer?.state ?? null,
       status: this._status,
@@ -4022,7 +4037,7 @@ export class NavigationEngine implements IHopStateMachine {
       } : {}),
     };
     try {
-      return parseNavigationSnapshot(snapshot);
+      return parseNavigationSnapshot(snapshot, this.identifierCaseSensitive);
     } catch (err) {
       if (err instanceof InvalidEngineCheckpointError) {
         this.log('error', `[Checkpoint] serialize rejected — paths=${trunc(err.diagnostic, LOG_TRUNC_CONTENT)}`, err);
@@ -4106,7 +4121,7 @@ export class NavigationEngine implements IHopStateMachine {
     config: { activeFilter?: SerializedFilterState | null } = {},
     store?: ColumnStore | null,
   ): NavigationEngine {
-    const snapshot = parseNavigationSnapshot(rawSnapshot);
+    const snapshot = parseNavigationSnapshot(rawSnapshot, model.identifierCaseSensitive === true);
     const internals = snapshot.engineInternals;
 
     const engine = new NavigationEngine(
@@ -4119,7 +4134,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     engine._status = snapshot.status;
     if (snapshot.columnAspect) {
-      engine.tracer = new ColumnTracer(snapshot.columnAspect.target_columns, snapshot.columnAspect);
+      engine.tracer = new ColumnTracer(snapshot.columnAspect.target_columns, snapshot.columnAspect, model.identifierCaseSensitive);
       engine.mode = { kind: 'ct' };
     }
     try {
@@ -4157,7 +4172,7 @@ export class NavigationEngine implements IHopStateMachine {
     engine._totalNodes = internals.totalNodes;
     engine.userSchemas = new Set(internals.userSchemas);
     engine.guiHiddenSchemas = engine.userSchemas.size > 0
-      ? new Set([...engine.nodeMap.values()].map(n => n.schema.toLowerCase()).filter(schema => !engine.userSchemas.has(schema)))
+      ? new Set([...engine.nodeMap.values()].map(n => engine.identifierKey(n.schema)).filter(schema => !engine.userSchemas.has(schema)))
       : new Set();
     engine.sessionAllowedSchemas = new Set(internals.sessionAllowedSchemas);
     engine.excludedTypes = new Set(internals.excludedTypes);

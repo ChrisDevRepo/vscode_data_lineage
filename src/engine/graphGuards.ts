@@ -40,8 +40,8 @@ export interface OrderedShortestPath {
  * connected in either direction (or an endpoint is absent).
  *
  * @param graph - Graphology directed dependency graph.
- * @param sourceId - First endpoint (canonical, lowercase).
- * @param targetId - Second endpoint (canonical, lowercase).
+ * @param sourceId - First canonical endpoint.
+ * @param targetId - Second canonical endpoint.
  * @returns The ordered path and the direction it was found in, or `null` when disconnected.
  */
 export function findShortestPathOrdered(
@@ -149,7 +149,7 @@ export function nodesCutByRemoval(
  *
  * @remarks
  * The single add-guard primitive: an add must target a node directly adjacent to
- * the current scope. Reads the precomputed `neighborIndex` (case-insensitive),
+ * the current scope. Reads the precomputed `neighborIndex` under the source comparison policy,
  * falling back to an edge scan. Shared by the AI neighbor-column validator and
  * the webview trace add-neighbor control.
  *
@@ -163,7 +163,8 @@ export function directNeighborIds(
   nodeId: string,
   side: NeighborSide,
 ): string[] {
-  const indexed = model.neighborIndex?.[nodeId] ?? model.neighborIndex?.[nodeId.toLowerCase()];
+  const indexed = model.neighborIndex?.[nodeId]
+    ?? (model.identifierCaseSensitive ? undefined : model.neighborIndex?.[nodeId.toLowerCase()]);
   const fromIndex = indexed?.[side];
   if (fromIndex) return Array.from(new Set(fromIndex));
 

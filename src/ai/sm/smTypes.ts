@@ -576,6 +576,8 @@ export interface ScopeSummaryLeaf {
  * mark pass-through nodes distinctly from analyzed nodes.
  */
 export interface ScopeSummary {
+  /** Source comparison policy for rendering object and schema identities; absent retains CI. */
+  identifierCaseSensitive?: boolean;
   /** Total bodied-node count across the scope — drives the "N hops" header in the gate. */
   hopCount: number;
   /** Total node count across the scope (bodied + non-bodied) — drives the "N nodes" header. */
@@ -940,6 +942,8 @@ export interface EngineInternalsSnapshot {
 export interface SmState {
   /** Current fail-closed persistence contract version. */
   snapshotVersion: 1 | 2;
+  /** Source identifier policy at capture; an absent field denotes a legacy CI checkpoint. */
+  identifierCaseSensitive?: boolean;
   /** The current aspect mode (e.g. column tracing). */
   columnAspect: ColumnAspect | null;
   /** The current lifecycle status. */

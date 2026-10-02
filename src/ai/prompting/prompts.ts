@@ -53,6 +53,8 @@ export interface GeneralPromptContext {
   readonly visibleNodes: number;
   /** Total number of nodes in the loaded model. */
   readonly totalNodes: number;
+  /** Checked source catalog policy; absent retains the legacy CI prompt. */
+  readonly identifierCaseSensitive?: boolean;
   /** One phrase naming the trace, analysis, or bookmark applied on screen; absent when nothing is applied. */
   readonly screen?: string;
 }
@@ -93,6 +95,7 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
+    ...(ctx.identifierCaseSensitive ? ['- Identifiers are case-sensitive. Use the exact object IDs and column names supplied by tools; case-only variants identify different objects or columns.'] : []),
     schemasLine,
     `- Visible objects: ${visibleNodes} of ${totalNodes}`,
     ...(screen ? buildScreenStateSlot(screen) : []),

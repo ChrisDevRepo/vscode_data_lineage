@@ -15,7 +15,8 @@ import {
   type AnalysisType,
   type NeighborIndex,
 } from '../../engine/types';
-import { normalizeName } from '../../engine/modelBuilder';
+import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
+import { schemaKey } from '../../utils/sql';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { applyIsolationFilter } from '../../engine/shared/modelFilters';
@@ -69,7 +70,7 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
 
 
 /**
- * Builds a map of lowercase "Schema.Name" to lists of unresolved (unrelated) references.
+ * Builds a source-aware map of "Schema.Name" to lists of unresolved (unrelated) references.
  *
  * @remarks
  * Unresolved references are identifiers found in the DDL during parsing that do not
@@ -79,12 +80,12 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
  * @param model - The full database model.
  * @returns A map of object names to their unresolved reference strings.
  */
-function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
+export function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
   const m = new Map<string, string[]>();
   if (!model.parseStats?.spDetails) return m;
   for (const d of model.parseStats.spDetails) {
     if (d.unrelated?.length) {
-      m.set(d.name.toLowerCase(), d.unrelated.map(r => r.replace(/ \(exec\)$/, '')));
+      m.set(schemaKey(d.name, model.identifierCaseSensitive), d.unrelated.map(r => r.replace(/ \(exec\)$/, '')));
     }
   }
   return m;
@@ -107,6 +108,7 @@ function buildUnrelatedMap(model: DatabaseModel): Map<string, string[]> {
  * @param ddlKey - The key to use for the DDL property (defaults to 'ddl').
  * @param neighborIndex - Optional pre-computed neighbor index to attach in/out edge metadata.
  * @param edgeTypeMap - Optional map of edge types.
+ * @param identifierCaseSensitive - Checked source policy shared with the unresolved-reference map.
  * @returns A record containing the focus node's metadata.
  */
 export function buildHopFocusNode(
@@ -117,6 +119,7 @@ export function buildHopFocusNode(
   ddlKey = 'ddl',
   neighborIndex?: NeighborIndex,
   edgeTypeMap?: Map<string, string>,
+  identifierCaseSensitive = false,
 ): Record<string, unknown> {
   const focusNode: Record<string, unknown> = {
     id: node.id, s: node.schema, n: node.name, t: node.type,
@@ -131,7 +134,7 @@ export function buildHopFocusNode(
   if (node.fks?.length) {
     focusNode.fks = node.fks.map(fk => presentFkCompact(fk));
   }
-  const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
+  const unrelKey = schemaKey(`${node.schema}.${node.name}`, identifierCaseSensitive);
   const unrel = unrelatedMap.get(unrelKey);
   if (unrel?.length) focusNode.unresolved_refs = unrel;
 
@@ -147,10 +150,10 @@ export function buildHopFocusNode(
 }
 
 
-/** Objects the user's filter shows — schema (case-insensitive) and type, then Hide Isolated. */
+/** Objects shown by the source-aware schema/type filter, then Hide Isolated. */
 function countVisibleNodes(model: DatabaseModel, activeFilter: SerializedFilterState): number {
   const scoped = model.nodes.filter(n => {
-    const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => s.toLowerCase() === n.schema.toLowerCase());
+    const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => schemaKey(s, model.identifierCaseSensitive) === schemaKey(n.schema, model.identifierCaseSensitive));
     const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type);
     return schemaOk && typeOk;
   });
@@ -190,6 +193,7 @@ export function getContext(
     project_name:  projectName,
     source_type:   model.source ?? 'dacpac',
     db_platform:   model.dbPlatform ?? null,
+    ...(model.identifierCaseSensitive && { identifierCaseSensitive: true }),
     model_stats:   { nodes: model.nodes.length, edges: model.edges.length },
     schemas:       model.schemas.map(s => presentSchema(s)),
     visible_nodes: visibleNodes,
@@ -320,14 +324,15 @@ export async function searchObjects(
   }
 
   const typeSet   = types?.length ? new Set<ObjectType>(types) : undefined;
-  const schemaSet = appliedSchemaFilter ? new Set<string>(normalizedSchemas) : undefined;
-  const schemaSetLower = appliedSchemaFilter ? new Set(appliedSchemaFilter.map(s => s.toLowerCase())) : undefined;
+  const requestedSchemaKeys = appliedSchemaFilter ? new Set(appliedSchemaFilter.map(s => schemaKey(s, model.identifierCaseSensitive))) : undefined;
+  const schemaSet = requestedSchemaKeys ? new Set(model.nodes.map(n => n.schema).filter(s => requestedSchemaKeys.has(schemaKey(s, model.identifierCaseSensitive)))) : undefined;
+  const catalogNodes = schemaSet ? model.nodes.filter(n => schemaSet.has(n.schema)) : model.nodes;
 
   const isolatedCatalog = async (schemaFilter: Set<string> | undefined, limit: number): Promise<SearchableNode[] | ToolRejection> => {
     try {
       const reply = await executeIsolatedRegexSearch({
         kind: 'catalog', pattern: effectiveQuery,
-        nodes: model.nodes.map(({ id, name, schema, type }) => ({ id, name, schema, type })),
+        nodes: (schemaFilter ? model.nodes.filter(n => schemaFilter.has(n.schema)) : model.nodes).map(({ id, name, schema, type }) => ({ id, name, schema, type })),
         types: typeSet ? [...typeSet] : undefined,
         schemas: schemaFilter ? [...schemaFilter] : undefined, limit,
       }, signal);
@@ -345,20 +350,18 @@ export async function searchObjects(
   const regexHits = isRegex && !listAllInSchemas && offset === 0 ? await isolatedCatalog(schemaSet, Number.MAX_SAFE_INTEGER) : null;
   if (regexHits && !Array.isArray(regexHits)) return regexHits;
   const nameHits = offset > 0 ? [] : listAllInSchemas
-    ? (model.nodes as SearchableNode[]).filter(n =>
-        (!schemaSetLower || schemaSetLower.has(n.schema.toLowerCase())) &&
-        (!typeSet || typeSet.has(n.type)))
+    ? (catalogNodes as SearchableNode[]).filter(n => !typeSet || typeSet.has(n.type))
     : regexHits ?? searchCatalog(
-        model.nodes,
+        catalogNodes,
         effectiveQuery,
         typeSet,
-        schemaSet,
+        undefined,
         Number.MAX_SAFE_INTEGER,
         mode,
       );
 
   let columnNodes = model.nodes as SearchableNode[];
-  if (schemaSet && schemaSet.size > 0) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
+  if (schemaSet) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
   if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
   const allColumnHits = !isRegex && !listAllInSchemas
     ? searchColumns(columnNodes, effectiveQuery, Number.MAX_SAFE_INTEGER)
@@ -383,7 +386,7 @@ export async function searchObjects(
   ];
 
   const filterSchemaSet = activeFilter?.schemas?.length
-    ? new Set(activeFilter.schemas.map(s => s.toLowerCase()))
+    ? new Set(activeFilter.schemas.map(s => schemaKey(s, model.identifierCaseSensitive)))
     : null;
   const typeCounts = new Map<string, number>();
   const taggedResults = results.map(r => {
@@ -392,7 +395,7 @@ export async function searchObjects(
     typeCounts.set(type, (typeCounts.get(type) ?? 0) + 1);
     return {
       ...r,
-      in_user_filter: filterSchemaSet ? filterSchemaSet.has(((row.s as string) ?? '').toLowerCase()) : true,
+      in_user_filter: filterSchemaSet ? filterSchemaSet.has(schemaKey((row.s as string) ?? '', model.identifierCaseSensitive)) : true,
     };
   });
   const byType = Object.fromEntries(
@@ -401,7 +404,7 @@ export async function searchObjects(
 
   const exactNameRows = isRegex || listAllInSchemas
     ? []
-    : taggedResults.filter(r => r.match === 'name' && String((r as Record<string, unknown>).n).toLowerCase() === effectiveQuery.toLowerCase());
+    : taggedResults.filter(r => r.match === 'name' && schemaKey(String((r as Record<string, unknown>).n), model.identifierCaseSensitive) === schemaKey(effectiveQuery, model.identifierCaseSensitive));
   const inScopeRows = exactNameRows.filter(r => r.in_user_filter);
   const resolvedIds = (inScopeRows.length > 0 ? inScopeRows : exactNameRows).map(r => String((r as Record<string, unknown>).id));
 
@@ -478,8 +481,8 @@ export function getObjectDetail(
   store?: import('../../engine/columnStore').ColumnStore,
   cursor?: string,
 ): object {
-  const normalizedId = normalizeName(id);
-  const nodeMap   = buildNodeMap(model);
+  const nodeMap = buildNodeMap(model);
+  const normalizedId = resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? '';
   const node      = nodeMap.get(normalizedId);
   if (!node) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { id } });
@@ -531,7 +534,7 @@ export function getObjectDetail(
   const ddl = getNodeDdl(node.id, nodeMap, store) ?? null;
 
   const unrelMap = buildUnrelatedMap(model);
-  const unrelKey = `${node.schema}.${node.name}`.toLowerCase();
+  const unrelKey = schemaKey(`${node.schema}.${node.name}`, model.identifierCaseSensitive);
   const unresolved_refs = unrelMap.get(unrelKey) ?? undefined;
 
   return { ...base, ddl, unresolved_refs };
@@ -561,7 +564,7 @@ export function getScopeBundle(
   store?: import('../../engine/columnStore').ColumnStore,
 ): object {
   const nodeMap = buildNodeMap(model);
-  const origin = normalizeName(input.origin);
+  const origin = resolveModelNodeId(input.origin, nodeMap, model.identifierCaseSensitive) ?? '';
   const originNode = nodeMap.get(origin);
   if (!originNode) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: 'Call lineage_search_objects to resolve the canonical origin ID.', detail: { origin: input.origin } });
@@ -594,7 +597,7 @@ export function getScopeBundle(
     if (maxDepth <= 0) return;
     bfsFromNode(graph, origin, (key, _attr, depth) => {
       if (nodeBudgetExceeded || depth > maxDepth) return true;
-      const id = String(key).toLowerCase();
+      const id = String(key);
       scopeIds.add(id);
       distance?.set(id, depth);
       if (checkScopeBudget(budget, scopeIds.size, 0)) nodeBudgetExceeded = true;

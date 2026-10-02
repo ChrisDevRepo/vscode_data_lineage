@@ -81,7 +81,7 @@ import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHo
 import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, traceReachableFromOrigin, unionConnectingPaths, type TracePruneCheck } from '../engine/traceScope';
 import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
-import { normalizeColName } from '../utils/sql';
+import { normalizeColName, schemaKey } from '../utils/sql';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 
 /**
@@ -902,28 +902,33 @@ export function GraphCanvas({
     const relations = activeAiMetadata?.columnAspect?.edges;
     if (!relations?.length) return null;
     try {
+      const identifierKey = (id: string): string => schemaKey(id, model?.identifierCaseSensitive);
       const columnTypesByNode = new Map<string, ReadonlyMap<string, string>>();
+      const columnNamesByNode = new Map<string, ReadonlyMap<string, string>>();
       for (const node of model?.nodes ?? []) {
         if (node.columns?.length) {
-          columnTypesByNode.set(node.id.toLowerCase(), new Map(node.columns.map(c => [normalizeColName(c.name), c.type])));
+          columnTypesByNode.set(identifierKey(node.id), new Map(node.columns.map(c => [normalizeColName(c.name, model?.identifierCaseSensitive), c.type])));
+          columnNamesByNode.set(identifierKey(node.id), new Map(node.columns.map(c => [normalizeColName(c.name, model?.identifierCaseSensitive), c.name])));
         }
       }
       const objects = new Map<string, ColumnTraceViewObject>();
       for (const node of flowNodes) {
         if (node.type === 'schemaNode') continue;
         const data = node.data as CustomNodeData;
-        objects.set(node.id.toLowerCase(), {
+        objects.set(identifierKey(node.id), {
           id: node.id,
           label: data.label,
           schema: data.schema,
           objectType: data.objectType,
-          columnTypes: columnTypesByNode.get(node.id.toLowerCase()),
+          columnTypes: columnTypesByNode.get(identifierKey(node.id)),
+          columnNames: columnNamesByNode.get(identifierKey(node.id)),
         });
       }
       const verdicts = activeAiMetadata?.nodeVerdicts?.length
-        ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
+        ? new Map(activeAiMetadata.nodeVerdicts.map(v => [identifierKey(v.nodeId), v.verdict]))
         : undefined;
       return buildColumnTraceView({
+        identifierCaseSensitive: model?.identifierCaseSensitive,
         relations,
         objects,
         verdicts,
@@ -1117,12 +1122,12 @@ export function GraphCanvas({
       }
       if (node.type === 'columnTraceNode') {
         const view = (node.data as ColumnTraceNodeData).view;
-        return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema);
+        return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema, undefined, model?.identifierCaseSensitive);
       }
       const d = node.data as CustomNodeData;
-      return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema)));
+      return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema), undefined, model?.identifierCaseSensitive));
     },
-    [isExpandedSchemaViewActive]
+    [isExpandedSchemaViewActive, model?.identifierCaseSensitive]
   );
 
   const minimapNodeStrokeColor = useCallback(
@@ -1292,15 +1297,15 @@ export function GraphCanvas({
     import('../export/drawioExporter').then(({ exportToDrawio, exportSchemaOverviewToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
       const xml = (exportObjectNodes.length === 0 && clusterNodes.length > 0)
-        ? exportSchemaOverviewToDrawio(clusterNodes, exportEdges, schemas)
-        : exportToDrawio(exportObjectNodes, exportEdges, schemas, clusterNodes);
+        ? exportSchemaOverviewToDrawio(clusterNodes, exportEdges, schemas, model?.identifierCaseSensitive)
+        : exportToDrawio(exportObjectNodes, exportEdges, schemas, clusterNodes, model?.identifierCaseSensitive);
       if (!xml) return;
       const base = (sourceName?.replace(/\.dacpac$/i, '') || 'lineage').trim().replace(/[\\/:*?"<>|]/g, '_');
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi, model?.identifierCaseSensitive]);
 
   /**
    * The one auto-fit: frames every node on the next frame, at the padding and duration every
@@ -1536,9 +1541,9 @@ export function GraphCanvas({
 
   const modelNodeMapLower = useMemo(() => {
     const map = new Map<string, DatabaseModel['nodes'][number]>();
-    for (const n of modelNodeMap.values()) map.set(n.id.toLowerCase(), n);
+    if (!model?.identifierCaseSensitive) for (const n of modelNodeMap.values()) map.set(n.id.toLowerCase(), n);
     return map;
-  }, [modelNodeMap]);
+  }, [modelNodeMap, model?.identifierCaseSensitive]);
 
 
   const level1Neighbors = useMemo(() => {
@@ -1603,8 +1608,8 @@ export function GraphCanvas({
   const hoveredColumnPath = useMemo((): Set<string> | null => {
     const active = pinnedColumn ?? hoveredColumn;
     if (!active || !columnThreadIndex) return null;
-    return columnThread(columnThreadIndex, columnRowKey(active.nodeId, active.column));
-  }, [pinnedColumn, hoveredColumn, columnThreadIndex]);
+    return columnThread(columnThreadIndex, columnRowKey(active.nodeId, active.column, model?.identifierCaseSensitive));
+  }, [pinnedColumn, hoveredColumn, columnThreadIndex, model?.identifierCaseSensitive]);
 
   const traceControlsByNode = useMemo((): Map<string, TraceNodeControls> => {
     const controls = new Map<string, TraceNodeControls>();
@@ -1648,8 +1653,8 @@ export function GraphCanvas({
     hoveredPath: hoveredColumnPath,
     onColumnHover: handleColumnHover,
     onColumnSelect: handleColumnSelect,
-    pinnedRow: pinnedColumn ? columnRowKey(pinnedColumn.nodeId, pinnedColumn.column) : null,
-  }), [hoveredColumnPath, handleColumnHover, handleColumnSelect, pinnedColumn]);
+    pinnedRow: pinnedColumn ? columnRowKey(pinnedColumn.nodeId, pinnedColumn.column, model?.identifierCaseSensitive) : null,
+  }), [hoveredColumnPath, handleColumnHover, handleColumnSelect, pinnedColumn, model?.identifierCaseSensitive]);
 
   const handleToggleColumnView = useCallback((next: boolean) => {
     setColumnView(next);
@@ -1714,7 +1719,7 @@ export function GraphCanvas({
   const columnNodeData = useMemo((): Map<string, ColumnTraceNodeData> => {
     const byNode = new Map<string, ColumnTraceNodeData>();
     if (!columnTraceView) return byNode;
-    const statesByRow = resolveRowLineStates(columnTraceView.edges);
+    const statesByRow = resolveRowLineStates(columnTraceView.edges, columnTraceView.identifierCaseSensitive);
     const decorationInputs = {
       highlightedNodeId,
       level1Neighbors,
@@ -1732,11 +1737,12 @@ export function GraphCanvas({
     for (const view of columnTraceView.nodes) {
       const rowLineStates: Record<string, ColumnLineState> = {};
       for (const row of view.rows) {
-        const state = statesByRow.get(columnRowKey(view.id, row.name));
+        const state = statesByRow.get(columnRowKey(view.id, row.name, model?.identifierCaseSensitive));
         if (state) rowLineStates[row.name] = state;
       }
       const d = computeNodeDecoration(view.id, undefined, decorationInputs);
       byNode.set(view.id, {
+        identifierCaseSensitive: model?.identifierCaseSensitive,
         view,
         rowLineStates,
         highlighted: d.highlighted,
@@ -1750,7 +1756,7 @@ export function GraphCanvas({
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode, model?.identifierCaseSensitive]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
@@ -1780,8 +1786,8 @@ export function GraphCanvas({
     if (columnViewActive && columnTraceView) {
       const litByHover = (edge: { source: string; sourceColumn: string; target: string; targetColumn: string }) =>
         !!hoveredColumnPath
-        && hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn))
-        && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn));
+        && hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn, model?.identifierCaseSensitive))
+        && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn, model?.identifierCaseSensitive));
       const litBySelection = (edge: { source: string; target: string }) =>
         !highlightedNodeId || edge.source === highlightedNodeId || edge.target === highlightedNodeId;
 
@@ -1818,7 +1824,7 @@ export function GraphCanvas({
     const litAnimated = shouldAnimateEdges(localEdges.length, configAllowsAnimation);
     const routeEdgeIds = activeRoute?.edgeIds ?? (isFocusPaths ? trace.tracedEdgeIds : undefined);
     return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current, routeEdgeIds);
-  }, [localEdges, highlightedNodeId, activeRoute, isFocusPaths, trace.tracedEdgeIds, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
+  }, [localEdges, highlightedNodeId, activeRoute, isFocusPaths, trace.tracedEdgeIds, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath, model?.identifierCaseSensitive]);
   displayedGraphRef.current = { nodes: displayNodes, edges: displayEdges, sourceNodes: syncedGraph.nodes, sourceEdges: syncedGraph.edges };
 
   const allNodes = useMemo(
@@ -1891,8 +1897,8 @@ export function GraphCanvas({
   );
 
   const legendColorMap = useMemo(
-    () => deriveLegendColorMap(localNodes),
-    [localNodes],
+    () => deriveLegendColorMap(localNodes, model?.identifierCaseSensitive),
+    [localNodes, model?.identifierCaseSensitive],
   );
 
   useEffect(() => {
@@ -2242,6 +2248,7 @@ export function GraphCanvas({
         <Legend
           schemas={legendSchemas}
           schemaColorMap={legendColorMap}
+          identifierCaseSensitive={model?.identifierCaseSensitive}
           isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
           expandedSchemas={expandedSchemas}
           inset={isDetailSearchOpen || analysisMode ? 'sidebar' : isTraceNavigatorOpen ? 'navigator' : showTraceNavigator && isTraceTreeCollapsed ? 'rail' : undefined}
@@ -2295,6 +2302,7 @@ export function GraphCanvas({
 
       {infoBarNodeId && model && (
         <NodeInfoBar
+          identifierCaseSensitive={model?.identifierCaseSensitive}
           nodeId={infoBarNodeId}
           catalog={model.catalog}
           neighborIndex={model.neighborIndex}

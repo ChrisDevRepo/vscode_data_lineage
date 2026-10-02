@@ -560,7 +560,7 @@ describe('model search — enclosing predicate', () => {
   });
 });
 
-describe('compileSearchRegex — ReDoS guard', () => {
+describe('search regex compilation and worker deadline', () => {
   it('does not charge scheduler delay to a benign pattern', () => {
     const wallClock = vi.spyOn(performance, 'now')
       .mockReturnValueOnce(0)
@@ -574,16 +574,16 @@ describe('compileSearchRegex — ReDoS guard', () => {
     }
   });
 
-  it('refuses exponential patterns on actual input without hanging the host', async () => {
+  it('terminates exponential patterns on actual input without hanging the host', async () => {
     for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {
       const start = performance.now();
       const unit = pattern.includes('d+') ? '1' : pattern.includes('s+') ? ' ' : 'a';
       await expect(executeIsolatedRegexSearch({ kind: 'catalog', pattern, nodes: [{ id: 'x', name: unit.repeat(50_000), schema: 'dbo', type: 'table' }], limit: 20 })).rejects.toMatchObject({ reason: 'deadline' });
-      expect(performance.now() - start, `${pattern} is refused promptly`).toBeLessThan(2_000);
+      expect(performance.now() - start, `${pattern} is terminated promptly`).toBeLessThan(2_000);
     }
   });
 
-  it('refuses exponential patterns over comment-banner characters', async () => {
+  it('terminates exponential patterns over comment-banner characters', async () => {
     for (const pattern of ['(-+)+x', '(=+)+x', '(\\*+)+x', '(_+)+x']) {
       const unit = pattern.includes('-') ? '-' : pattern.includes('=') ? '=' : pattern.includes('*') ? '*' : '_';
       await expect(executeIsolatedRegexSearch({ kind: 'catalog', pattern, nodes: [{ id: 'x', name: unit.repeat(50_000), schema: 'dbo', type: 'table' }], limit: 20 })).rejects.toMatchObject({ reason: 'deadline' });
@@ -708,7 +708,4 @@ describe('regexRejectHint', () => {
     expect(hintFor('foo\\')).toContain('trailing "\\"');
   });
 
-  it('names catastrophic backtracking for a pattern refused by the ReDoS guard', () => {
-    expect(regexRejectHint('(a+)+$', { ok: false, reason: 'redos' })).toContain('nested quantifiers');
-  });
 });

@@ -1225,13 +1225,12 @@ describe('CTAS carries its distribution clause', () => {
   ]);
 });
 
-describe('per-rule match cap', () => {
-  it('names a rule that stopped at the cap and leaves an ordinary body uncapped', () => {
+describe('complete dependency extraction', () => {
+  it('collects every reference in a body with more than ten thousand matches', () => {
     const selects = Array.from({ length: 10_001 }, (_, i) => `SELECT * FROM [dbo].[T${i}]`).join('\n');
-    const capped = parseSqlBody(selects);
-    expect(capped.cappedRules.length).toBeGreaterThan(0);
-    expect(capped.sources.length).toBeLessThan(10_001);
-
-    expect(parseSqlBody('SELECT * FROM [dbo].[T1]').cappedRules).toEqual([]);
+    const parsed = parseSqlBody(selects);
+    expect(parsed.sources).toHaveLength(10_001);
+    expect(parsed.sources.at(-1)).toBe('[dbo].[t10000]');
+    expect(parsed.targets).toEqual([]);
   });
 });

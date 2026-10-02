@@ -85,7 +85,7 @@ export function evaluateGateExpectation(expr: string, session: AiSession): boole
 /** Everything one headless turn needs; nothing here is VS Code specific. */
 export interface HarnessTurnOptions {
   readonly session: AiSession;
-  /** The lane's model port — scripted today, an HTTP port later. */
+  /** The lane's model port, supplied by its scripted or HTTP transport. */
   readonly model: ModelPort;
   readonly prompt: string;
   /** Directory the post-run artifacts are written to; created if absent. */
