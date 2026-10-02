@@ -234,6 +234,11 @@ function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   return map;
 }
 
+/** Internal catalog lookup identity; dotted identifier segments remain separate. */
+function metadataObjectKey(schema: string, object: string): string {
+  return JSON.stringify([schema.toLowerCase(), object.toLowerCase()]);
+}
+
 /**
  * Reconstructs UQ, CK, and FK constraints from a flattened result set.
  */
@@ -252,7 +257,7 @@ function buildConstraintMaps(result: SimpleExecuteResult): ConstraintMaps {
     const cname      = cellValue(row, colIdx, 'constraint_name');
     const colName    = cellValue(row, colIdx, 'column_name');
 
-    const tableKey = `${schemaName}.${tableName}`.toLowerCase();
+    const tableKey = metadataObjectKey(schemaName, tableName);
     const colKey   = `${tableKey}.${colName}`.toLowerCase();
 
     if (ctype === 'UQ') {
@@ -306,7 +311,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
   for (const row of results.columns.rows) {
     const schema = cellValue(row, colColIdx, 'schema_name');
     const table = cellValue(row, colColIdx, 'table_name');
-    const key = `${schema}.${table}`.toLowerCase();
+    const key = metadataObjectKey(schema, table);
 
     if (!objectColumns.has(key)) objectColumns.set(key, []);
 
@@ -374,7 +379,7 @@ function extractObjects(results: DmvResults): ExtractedObject[] {
 
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
-    const objectKey = `${schemaName}.${objectName}`.toLowerCase();
+    const objectKey = metadataObjectKey(schemaName, objectName);
     const cols = objectColumns.get(objectKey);
 
     if (cols) {
