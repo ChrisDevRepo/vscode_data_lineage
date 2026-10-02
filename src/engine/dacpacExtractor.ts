@@ -762,23 +762,27 @@ function collectDeps(el: XmlElement, deps: string[]): void {
  * @returns The full SQL body or `undefined`.
  */
 function getBodyScript(el: XmlElement, type: string, schema: string, objectName: string): string | undefined {
-  const annotations = asArray(el.Annotation);
-  for (const ann of annotations) {
-    if (ann['@_Type'] === 'SysCommentsObjectAnnotation') {
-      const annProps = asArray(ann.Property);
-      for (const prop of annProps) {
-        if (prop['@_Name'] === 'HeaderContents') {
-          const header = extractPropertyValue(prop);
-          const bodyScript = getDirectBodyScript(el, type);
-          if (header && bodyScript) {
-            return `${header}\n${bodyScript}`;
-          }
+  const bodyScript = getDirectBodyScript(el, type);
+  if (bodyScript) {
+    const header = getScriptHeader(el);
+    if (header) return `${header}\n${bodyScript}`;
+  }
+
+  // DACPAC scalar-function signatures belong to the implementation, not the
+  // function element. Read its own header and body together, without rebuilding SQL.
+  if (type.includes('Function')) {
+    for (const rel of asArray(el.Relationship)) {
+      if (rel['@_Name'] !== 'FunctionBody') continue;
+      for (const entry of asArray(rel.Entry)) {
+        for (const implementation of asArray(entry.Element)) {
+          const header = getScriptHeader(implementation);
+          const implementationBody = getDirectBodyScript(implementation, 'SqlScriptFunctionImplementation');
+          if (header && implementationBody) return `${header}\n${implementationBody}`;
         }
       }
     }
   }
 
-  const bodyScript = getDirectBodyScript(el, type);
   if (!bodyScript) return undefined;
 
   const keyword = getSqlKeyword(type);
@@ -786,6 +790,19 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
     return `CREATE ${keyword} [${schema}].[${objectName}]\nAS\n${bodyScript}`;
   }
   return bodyScript;
+}
+
+/** Header annotation on the element that owns a SQL script. */
+function getScriptHeader(el: XmlElement): string | undefined {
+  for (const annotation of asArray(el.Annotation)) {
+    if (annotation['@_Type'] !== 'SysCommentsObjectAnnotation') continue;
+    for (const prop of asArray(annotation.Property)) {
+      if (prop['@_Name'] !== 'HeaderContents') continue;
+      const header = extractPropertyValue(prop);
+      if (header) return header;
+    }
+  }
+  return undefined;
 }
 
 /**
