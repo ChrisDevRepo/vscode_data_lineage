@@ -383,8 +383,24 @@ function transportRetryDelayMs(attempt: number, retryAfterMs: number | undefined
   return Math.min(exponential + jitter, TRANSPORT_RETRY_MAX_DELAY_MS);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(cancelledError());
+      return;
+    }
+    const finish = (): void => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    };
+    const abort = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      reject(cancelledError());
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 type PortGenerationPart =
@@ -993,6 +1009,7 @@ export class OpenAiCompatiblePort implements ModelPort {
   }> {
     const timeoutMs = this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     for (let attempt = 1; ; attempt += 1) {
+      if (signal?.aborted) throw cancelledError();
       const controller = new AbortController();
       const forwardAbort = (): void => { controller.abort(); };
       signal?.addEventListener('abort', forwardAbort, { once: true });
@@ -1057,6 +1074,7 @@ export class OpenAiCompatiblePort implements ModelPort {
           }
         }
       } catch (error) {
+        if (signal?.aborted) throw cancelledError();
         if (timedOut) {
           // A provider that never answered within this attempt's deadline produced no model output,
           // so it is the same transport failure as a reset connection and is retried like one.
@@ -1074,7 +1092,6 @@ export class OpenAiCompatiblePort implements ModelPort {
             );
           }
         } else {
-          if (signal?.aborted) throw cancelledError();
           if (error instanceof ModelPortError) throw error;
           throw new ModelPortError(
             'provider_error',
@@ -1087,7 +1104,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         clearTimeout(timer);
         signal?.removeEventListener('abort', forwardAbort);
       }
-      await sleep(retryDelayMs);
+      await sleep(retryDelayMs, signal);
     }
   }
 

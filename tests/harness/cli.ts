@@ -177,15 +177,16 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
           ? { 'content-type': 'application/json', 'api-key': process.env.AI_TEST_API_KEY! }
           : init.headers,
       });
-      const port = new OpenAiCompatiblePort({
-        baseUrl: process.env.AI_TEST_ENDPOINT!, apiKey: process.env.AI_TEST_API_KEY!,
-        model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.timeoutMs,
-      }, { budget, fetchImpl, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
       result.provider = provider!.provider;
       result.model = provider!.model;
       const turns: Array<{ outcome: string; modelCalls: number }> = [];
       for (const [index, prompt] of [options.prompt, ...options.followups].entries()) {
-        const turn = await runHarnessTurn({ session, model: port, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter });
+        const requestId = randomUUID();
+        const port = new OpenAiCompatiblePort({
+          baseUrl: process.env.AI_TEST_ENDPOINT!, apiKey: process.env.AI_TEST_API_KEY!,
+          model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.timeoutMs,
+        }, { requestId, budget, fetchImpl, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
+        const turn = await runHarnessTurn({ session, model: port, requestId, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter });
         turns.push({ outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls });
         if (turn.outcome.outcome !== 'ok') break;
       }

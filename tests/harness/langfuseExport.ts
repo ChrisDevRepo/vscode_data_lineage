@@ -154,7 +154,8 @@ export async function exportRunToLangfuse(
 
   const { rejected, message } = parsePartialSuccess(parsedBody);
   const exported = Math.max(0, spans.length - rejected);
-  const errors = message ? [redactSecret(message, config.secretKey)] : [];
+  const diagnostic = message ?? (rejected > 0 ? `partialSuccess rejectedSpans=${rejected}: server rejected spans without an error message` : undefined);
+  const errors = diagnostic ? [redactSecret(diagnostic, config.secretKey)] : [];
   return { exported, errors, traceIds };
 }
 

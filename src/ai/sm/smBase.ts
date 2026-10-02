@@ -1078,7 +1078,7 @@ export class NavigationEngine implements IHopStateMachine {
    * the committed column record — never from a column name that merely exists on a node.
    *
    * @remarks
-   * For each active column of the current column tasks, the ancestry chain is walked from the
+   * For each recovered hop column and active task column, the ancestry chain is walked from the
    * task's own node upward. An ancestor resolves only through the committed record: every edge
    * landing on it whose `to_col` matches, plus every output it explicitly staged (its
    * `writes_to`/attribution targets) — all of them, with no first-match collapse. An unresolved
@@ -1091,7 +1091,8 @@ export class NavigationEngine implements IHopStateMachine {
     const refs = new Map<string, { node: string; col: string }>();
     for (const task of this.getCurrentTasks()) {
       if (task.kind !== 'column_lineage') continue;
-      for (const col of task.activeColumns) {
+      const columns = new Set([...this.tracer.activeColumns, ...task.activeColumns]);
+      for (const col of columns) {
         const normalized = normalizeColName(col);
         let context: InvestigationTask | undefined = task;
         while (context) {
@@ -1105,7 +1106,7 @@ export class NavigationEngine implements IHopStateMachine {
               }
               break;
             }
-            if (!context.parentTaskId && this.matchColumnsToNode(node, [col]).resolved.length > 0) {
+            if (!context.parentTaskId && node === this.originNodeId && this.matchColumnsToNode(node, [col]).resolved.length > 0) {
               refs.set(`${node}|${normalized}`, { node, col });
               break;
             }

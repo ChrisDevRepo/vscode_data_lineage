@@ -190,14 +190,17 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
 
   const runtime = new LineageRuntime({
     getSession: () => options.session,
-    createRegistry: (lease) => buildAiToolRegistry(
+    createRegistry: (lease, model) => buildAiToolRegistry(
       () => options.session,
       options.logger as unknown as import('vscode').LogOutputChannel,
       () => undefined,
       lease,
-      storedRun
-        ? { getStoredRun: (id) => (id === bookmarkId ? storedRun : undefined) }
-        : undefined,
+      {
+        model,
+        budget: model.budget,
+        signal: lease.signal,
+        ...(storedRun ? { getStoredRun: (id: string) => (id === bookmarkId ? storedRun : undefined) } : {}),
+      },
     ),
     // Without this the graph's `deps.logger` is undefined, so every debugLog in
     // toolAttempt.ts is optional-chained away and four rejection codes

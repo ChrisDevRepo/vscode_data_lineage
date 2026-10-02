@@ -34,6 +34,41 @@ function writerWorld() {
 }
 
 describe('downstream column provenance', () => {
+  it.each([false, true])('recovers renamed endpoints on a completed follow-up without revisiting neighbors (restore=%s)', restore => {
+    const nodes = [node('origin', 'view', ['A']), node('mid', 'view', ['B', 'Other']), node('leaf', 'view', ['C', 'Other'])];
+    const pairs: Array<[string, string]> = [['origin', 'mid'], ['mid', 'leaf']];
+    const model = makeModel(nodes, pairs, ['dbo']);
+    const graph = makeGraph(nodes, pairs);
+    let engine = new NavigationEngine(model, graph, () => {}, {});
+    expect(engine.init({ origin: 'origin', question: 'Trace A downstream', direction: 'downstream',
+      analysisMode: 'ct', targetColumns: ['A'],
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
+    })).toMatchObject({ ok: true });
+    const flows: Record<string, ColumnFlowEntry[]> = {
+      origin: [{ out_col: 'A', upstream_columns: [] }],
+      mid: [{ out_col: 'B', upstream_columns: [{ node: 'origin', col: 'A' }] }],
+      leaf: [{ out_col: 'C', upstream_columns: [{ node: 'mid', col: 'B' }, { node: 'mid', col: 'Other' }] }],
+    };
+    for (const focus of ['origin', 'mid', 'leaf']) {
+      engine.getHopContext();
+      expect(engine.currentFocus).toBe(focus);
+      expect(engine.submitFindings(finding(focus, flows[focus]))).toMatchObject({ ok: true });
+    }
+    expect(engine.getHopContext()).toMatchObject({ done: true });
+    if (restore) engine = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
+    expect(engine.supplementAgenda(['leaf', 'leaf'])).toMatchObject({ ok: true, agendaed: 1 });
+    engine.getHopContext();
+    expect(engine.currentFocus).toBe('leaf');
+    expect(engine.columnAspect?.active_columns).toContain('C');
+    const before = engine.toJSON();
+    expect(engine.submitFindings(finding('leaf', [{ out_col: 'Other', upstream_columns: [{ node: 'mid', col: 'Other' }] }])))
+      .toMatchObject({ code: 'out_col_not_tracked' });
+    expect(engine.toJSON().columnAspect?.edges).toEqual(before.columnAspect?.edges);
+    expect(engine.submitFindings(finding('leaf', flows.leaf))).toMatchObject({ ok: true });
+    expect(engine.getHopContext()).toMatchObject({ done: true });
+    expect(engine.toJSON().hopCount).toBe(4);
+  });
+
   it.each([false, true])('retains upstream rename connectivity seeded at the destination (reverse order=%s)', reverse => {
     const links = [
       { from: 'source.X', to: 'carrier.Y' },
