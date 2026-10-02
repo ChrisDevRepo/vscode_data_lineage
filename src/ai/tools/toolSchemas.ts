@@ -817,8 +817,25 @@ function finalizeSubmitFindingsSchema(
   fresh: boolean,
   classification?: ClassificationValue,
 ): z.ZodType<FlatSubmitFindings> {
-  return schema
+  const validated = schema
     .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode, fresh, classification))) as z.ZodType<FlatSubmitFindings>;
+  if (!fresh) return validated;
+  const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
+  // Requiredness belongs to a kept verdict; cuts and held patches retain their existing shape.
+  return validated.meta({
+    anyOf: [
+      { properties: { verdict: { enum: ['end_branch'] } }, required: ['verdict'] },
+      {
+        properties: {
+          verdict: { enum: ['analyze', 'passthrough'] },
+          sections: keptAngles ? { required: [...keptAngles] } : {
+            anyOf: CLASSIFICATION_KEPT_ANGLES.both.map(angle => ({ required: [angle] })),
+          },
+        },
+        required: ['verdict', 'summary', 'sections'],
+      },
+    ],
+  });
 }
 
 /**
@@ -855,8 +872,8 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  * `end_branch` sections are inert, so the key is never refused there. The fold guidance also lives on the kept key's
  * description, where the model reads it before authoring.
  * `both` keeps both angles, each key optional so `{}` stays valid with `end_branch`; a fresh
- * submission additionally serves both keys in the JSON Schema `required` list (the validator stays
- * lenient, so an `end_branch` sending `{}` is never refused), and a retry with a held draft names
+ * kept submission serves both keys through {@link finalizeSubmitFindingsSchema}'s conditional
+ * requiredness, so an `end_branch` sending `{}` stays legal, and a retry with a held draft names
  * only the angle it changes. {@link refineSubmitFindingsShape} refuses `{}` on a
  * kept verdict of a fresh submission, and {@link validateSectionsAgainstClassification} requires
  * both angles of a kept verdict at the handler, after held and archived angles are counted;
@@ -867,20 +884,15 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  * {@link toHopFinding} drops it.
  *
  * @param classification - The locked classification this dispatch's schema narrows to.
- * @param freshSubmission - No held draft and no archived angle: the `both` keys carry no held-body wording.
  * @returns The sections object for that classification. A one-angle lock carries only that key;
  * `both` carries both keys, optional.
  */
 function capturedSectionSchemaForClassification(
   classification: ClassificationValue,
-  freshSubmission: boolean,
 ): z.ZodType<CapturedSectionsWire> {
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
   if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
     const plainBody = z.string().optional();
-    if (freshSubmission) {
-      return z.strictObject({ business: plainBody, technical: plainBody }).meta({ required: [...CLASSIFICATION_KEPT_ANGLES.both] });
-    }
     return z.strictObject({ business: plainBody, technical: plainBody });
   }
   const [onlyAngle] = kept;
@@ -983,7 +995,7 @@ export function submitFindingsSchemaForMode(
     const sectionsDescribe = kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
       ? KEPT_VERDICT_REQUIRED + 'Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
       : `${KEPT_VERDICT_REQUIRED}Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`;
-    const narrowedSections = capturedSectionSchemaForClassification(classification, freshSubmission)
+    const narrowedSections = capturedSectionSchemaForClassification(classification)
       .optional()
       .describe(sectionsDescribe);
     narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
