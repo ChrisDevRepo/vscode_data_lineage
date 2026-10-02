@@ -318,12 +318,24 @@ export interface ColumnDef {
   nullable: string;
   /** Additional flags like 'IDENTITY' or 'COMPUTED'. */
   extra: string;
+  /** Compiler-declared expression references; their presence does not establish value contribution. */
+  expressionDependencies?: ColumnExpressionDependency[];
   /** Name of the unique constraint if the column participates in one. */
   unique?: string;
   /** Name of the check constraint if the column has one. */
   check?: string;
   /** Primary key ordinal (1-based) if the column is part of the PK. */
   pkOrdinal?: number;
+}
+
+/** Exact source metadata for a column expression reference, without inferred SQL semantics. */
+export interface ColumnExpressionDependency {
+  /** Verbatim nonempty DACPAC References.Name, including any column qualification. */
+  reference: string;
+  /** Exact XML Type of the element resolved within the same DACPAC, when available. */
+  sourceElementType?: string;
+  /** Verbatim external source identity; such a reference is not resolved against local elements. */
+  externalSource?: string;
 }
 
 /** Foreign key constraint metadata — attached to table ExtractedObject (dacpac + DMV paths). */

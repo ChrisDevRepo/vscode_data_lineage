@@ -106,6 +106,11 @@ const ColumnDefSchema = z.object({
   type: z.string(),
   nullable: z.string(),
   extra: z.string(),
+  expressionDependencies: z.array(z.object({
+    reference: z.string().refine(value => value.trim().length > 0),
+    sourceElementType: z.string().optional(),
+    externalSource: z.string().optional(),
+  })).optional(),
   unique: z.string().optional(),
   check: z.string().optional(),
   pkOrdinal: z.number().optional(),

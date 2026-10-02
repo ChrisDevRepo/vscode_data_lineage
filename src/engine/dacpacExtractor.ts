@@ -393,6 +393,18 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
   const seen = new Set<string>();
   const constraintMaps = extractConstraintMaps(constraintElements ?? elements);
   const computedSources = new Map<string, string>();
+  const sourceElementTypes = new Map<string, string>();
+  const pendingElements = [...(constraintElements ?? elements)];
+  while (pendingElements.length > 0) {
+    const element = pendingElements.pop()!;
+    if (element['@_Name'] && element['@_ExternalSource'] === undefined) {
+      sourceElementTypes.set(expressionReferenceKey(element['@_Name']), element['@_Type']);
+    }
+    pendingElements.push(...asArray(element.Element));
+    for (const relationship of asArray(element.Relationship)) {
+      for (const entry of asArray(relationship.Entry)) pendingElements.push(...asArray(entry.Element));
+    }
+  }
 
   for (const el of elements) {
     const type = el['@_Type'];
@@ -414,7 +426,7 @@ function extractObjects(elements: XmlElement[], constraintElements?: XmlElement[
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
     if (COLUMN_BEARING_DACPAC_TYPES.has(type)) {
-      columns = extractColumnsFromXml(el, computedSources);
+      columns = extractColumnsFromXml(el, computedSources, sourceElementTypes);
       if (columns && (type === 'SqlTable' || type === 'SqlExternalTable')) {
         fks = enrichColumnsWithConstraints(columns, normalizeName(name), constraintMaps);
       }
@@ -528,13 +540,18 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   return deps;
 }
 
+/** Keys references by every qualified SQL identifier part without changing their emitted identity. */
+function expressionReferenceKey(reference: string): string {
+  return JSON.stringify(splitSqlName(reference).map(part => stripBrackets(part).toLowerCase()));
+}
+
 /**
  * Extracts column definitions for tables, views, and functions from the XML model.
  *
  * @param el - The source element.
  * @returns An array of column definitions.
  */
-function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, string>): ColumnDef[] {
+function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, string>, sourceElementTypes?: ReadonlyMap<string, string>): ColumnDef[] {
   const cols: ColumnDef[] = [];
   const rels = asArray(el.Relationship);
   const objectId = normalizeName(el['@_Name'] ?? '');
@@ -590,7 +607,24 @@ function extractColumnsFromXml(el: XmlElement, computedSources?: Map<string, str
           }
         }
 
-        cols.push(buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true));
+        const column = buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true);
+        const expressionDependencies = asArray(colEl.Relationship)
+          .filter(relationship => relationship['@_Name'] === 'ExpressionDependencies')
+          .flatMap(relationship => asArray(relationship.Entry))
+          .flatMap(entry => asArray(entry.References))
+          .filter(reference => typeof reference['@_Name'] === 'string' && reference['@_Name'].trim().length > 0)
+          .map(reference => {
+            const externalSource = reference['@_ExternalSource'];
+            const sourceElementType = externalSource === undefined
+              ? sourceElementTypes?.get(expressionReferenceKey(reference['@_Name'])) : undefined;
+            return {
+              reference: reference['@_Name'],
+              ...(sourceElementType !== undefined && { sourceElementType }),
+              ...(externalSource !== undefined && { externalSource }),
+            };
+          });
+        if (expressionDependencies.length > 0) column.expressionDependencies = expressionDependencies;
+        cols.push(column);
       }
     }
   }
