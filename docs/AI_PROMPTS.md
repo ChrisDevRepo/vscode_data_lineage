@@ -97,6 +97,16 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   hop's tool payloads. The canonical question is resolved at `start_exploration` from
   user-authored text (verbatim discovery prompt, then the current turn's
   prompt) before the model-supplied paraphrase.
+- Function investigations with explicit `questions[].caller_context` re-supply the relevant caller SQL
+  with each function investigation, tied to validated qualified caller targets.
+  A reseeded hop cannot rely on the earlier caller's DDL remaining in the thread.
+  The model reads invocation arguments and distinguishes value production from
+  row selection in that SQL; object dependency alone does not establish a column
+  contribution. `caller_requested_outputs` carries requested qualified outputs;
+  `caller_objects` carries re-derived SQL. These requests remain separate from
+  established scalar `caller_output_targets`; the declaration itself creates no
+  edge. Identity validation and retention of submitted edges do not establish
+  that the model identified every SQL contributor or row-selection dependency.
 - Per-hop memory is tiered so repeated hops stay flat in size: recent hop
   summaries ride in a fixed-size sliding window, the full findings archive
   accumulates engine-side and is replayed once at synthesis rather than per

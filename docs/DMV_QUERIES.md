@@ -221,6 +221,15 @@ which projected view output invokes a function. This adapter leaves such output 
 Column dependency availability also differs for schema-bound and non-schema-bound objects; see
 [Microsoft's catalog contract](https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
 
+The [column-tracing contract](ARCHITECTURE.md) supports an explicit function
+investigation request carrying caller SQL and real loaded output columns when
+catalog projection metadata is absent.
+It does not change this adapter's dependency meaning or populate
+`expressionDependencies` from object-level rows. Live-DB and DACPAC callers can
+therefore supply different declaration coverage without authorizing guessed
+column edges. Supplied contributor mappings still require SQL-grounded review;
+metadata and routing validation do not establish their completeness.
+
 ## What you can customise
 
 - **WHERE filters** — restrict to specific schemas, object types, or naming patterns.

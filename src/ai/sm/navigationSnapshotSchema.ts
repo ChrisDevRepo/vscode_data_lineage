@@ -154,6 +154,7 @@ const BbTaskSchema = z.object({
   status: z.enum(['pending', 'active', 'resolved', 'deferred']),
   createdHop: NonNegativeInt,
   resolvedHop: NonNegativeInt.optional(),
+  callerContext: z.object({ node: NonEmptyString, col: NonEmptyString, callerTaskId: NonEmptyString, ddlHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
 
 const ScalarReturnTargetSchema = z.object({ node: NonEmptyString, col: NonEmptyString }).strict();
@@ -171,6 +172,7 @@ const CtTaskSchema = z.object({
   status: z.enum(['pending', 'active', 'resolved', 'deferred']),
   createdHop: NonNegativeInt,
   resolvedHop: NonNegativeInt.optional(),
+  callerContext: z.object({ node: NonEmptyString, col: NonEmptyString, callerTaskId: NonEmptyString, ddlHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
 
 const InvestigationTaskSchema = z.discriminatedUnion('kind', [BbTaskSchema, CtTaskSchema]);

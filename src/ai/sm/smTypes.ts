@@ -256,6 +256,8 @@ export interface HopContext {
   caller_output_targets?: ScalarReturnTarget[];
   /** Loaded caller SQL supplied beside formal parameters for semantic argument binding. */
   caller_objects?: Array<{ node: string; ddl: string }>;
+  /** Explicit requested caller outputs; TVF investigations retain their own real output columns. */
+  caller_requested_outputs?: ScalarReturnTarget[];
   /** List of immediate neighbors available for further exploration. */
   neighbors?: HopNeighbor[];
   /** The specific sub-goal guiding this hop. */
@@ -283,6 +285,8 @@ export interface NeighborQuestion {
   nodeId: string;
   /** The rule, filter or calculation to establish at that neighbor. */
   question: string;
+  /** Real current caller output whose function contribution this investigation establishes. */
+  caller_context?: ScalarReturnTarget;
 }
 
 /**
@@ -343,6 +347,12 @@ export type HopSubmission = HopFinding;
 export interface ScalarReturnTarget {
   readonly node: string;
   readonly col: string;
+}
+
+/** Engine-validated provenance of a caller-authored function investigation. */
+export interface FunctionCallerContext extends ScalarReturnTarget {
+  readonly callerTaskId: string;
+  readonly ddlHash: string;
 }
 
 /**
@@ -717,6 +727,8 @@ interface InvestigationTaskBase {
   createdHop: number;
   /** Hop at which the task was resolved. */
   resolvedHop?: number;
+  /** Explicit caller declaration anchored to its originating task and SQL snapshot. */
+  callerContext?: FunctionCallerContext;
 }
 
 /** Engine-owned unit of investigation. Questions remain structured state rather than agenda prose. */

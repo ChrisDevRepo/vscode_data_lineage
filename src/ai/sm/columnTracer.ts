@@ -1,4 +1,4 @@
-import { resolveScalarReturnTarget } from './scalarReturnBinding';
+import { resolveScalarReturnTarget, resolveFunctionCallerTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { resolveModelNodeId } from '../support/inputNormalization';
@@ -237,6 +237,7 @@ export class ColumnTracer {
     traceDirection: 'upstream' | 'downstream',
     incomingRefs?: readonly { node: string; col: string }[],
     returnTargets: readonly { node: string; col: string }[] = [],
+    callerTargets: readonly { node: string; col: string }[] = [],
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
@@ -286,10 +287,12 @@ export class ColumnTracer {
       }
       if (returnTargets.length || entry.returns_to) {
         const target = entry.returns_to;
-        const bound = target ? resolveScalarReturnTarget(focusId, target, nodeMap, store) : null;
+        const declared = target && callerTargets.some(expected => expected.node === target.node && normalizeColName(expected.col) === normalizeColName(target.col));
+        const bound = target ? resolveScalarReturnTarget(focusId, target, nodeMap, store)
+          ?? (declared && validFocusCols.size === 0 ? resolveFunctionCallerTarget(focusId, target, nodeMap, model, store) : null) : null;
         if (!bound || entry.writes_to !== undefined || normalizeColName(entry.out_col) !== normalizeColName(bound.col)
           || !returnTargets.some(expected => expected.node === bound.node && normalizeColName(expected.col) === normalizeColName(bound.col))) {
-          invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.returns_to`, reason: 'returns_to must identify one supplied compiler-declared scalar caller output, match out_col, and exclude writes_to.' });
+          invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.returns_to`, reason: 'returns_to must identify one supplied qualified scalar caller output, match out_col, and exclude writes_to.' });
           continue;
         }
       }
@@ -345,6 +348,15 @@ export class ColumnTracer {
         const neighbor = neighborId ? nodeMap.get(neighborId) : null;
         if (!neighbor) {
           invalidRoutes.push({ kind: 'absent_contributor', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" is absent from the loaded model.` });
+          continue;
+        }
+
+        if (callerTargets.length && !model.edges.some(edge => edge.source === neighbor.id
+          && (edge.target === focusId || (entry.returns_to
+            ? edge.target === toNodeForEdge
+            : callerTargets.some(target => edge.target === target.node)))
+          && edgeApiType(edge.type, neighbor.type) === 'read')) {
+          invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: 'A caller-context investigation accepts real read contributors of the function or its declared callers, not unrelated loaded objects.' });
           continue;
         }
 

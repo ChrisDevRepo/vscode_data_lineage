@@ -621,6 +621,43 @@ revalidated before the follow-up changes engine state. A columnless function wit
 no established return binding receives a BB visit with the unavailable-binding
 diagnostic; a follow-up never guesses new caller obligations.
 
+When a function investigation lacks compiler-declared caller-output bindings,
+an explicit caller request can carry the available caller SQL and real loaded
+caller columns into column analysis. Missing catalog metadata is not evidence that the
+function contributes to every caller output. The model must identify the actual
+function invocation, its qualified caller output, and argument bindings from SQL;
+the backend validates recorded identities and preserves the approved scope.
+Object-level dependencies provide candidate context, not automatic column edges.
+The declaration is `questions[].caller_context = { node, col }`, with
+`caller_requested_outputs` exposing validated requests separately from established
+scalar `caller_output_targets`. Persisted provenance ties the request to its
+caller task and the exact caller SQL digest; it does not itself establish a
+value edge or replace compiler-declared bindings.
+The hop supplies `caller_objects = [{ node, ddl }]` from the loaded caller, not
+from prior conversation text. Internal `callerContext` records `callerTaskId`
+and `ddlHash` alongside `node` and `col`; validation checks the original active
+caller output, directed read relationship, and exact SQL digest before routing
+or restoring the request. Without this declaration, the existing unavailable-
+binding fallback remains in effect.
+Caller context must distinguish value contribution from row selection: a predicate
+invocation does not imply a scalar value reaches the output. Table-valued
+functions keep their real output columns and ordinary column-routing contract.
+An unavailable or ambiguous SQL binding remains unresolved, including remote,
+opaque, or unloaded function bodies. This repair must preserve existing declared
+bindings and the scalar rule against synthetic return or parameter columns.
+Validation establishes caller identity and routing, not completeness of the
+model's SQL analysis. A delivered graph can retain every submitted contributor
+while still omitting a value input or row-selection dependency from the SQL.
+
+The frozen Fireworks comparison produced a SQL-correct caller declaration in
+the candidate; the control fabricated a function endpoint. The local comparison
+remained incomplete, and the OpenRouter comparison changed provider routing,
+so it cannot establish instruction causality. Offline replay with the recorded
+inputs retained every submitted edge through delivery, reusing an existing
+native function response rather than producing a new live completion. That
+response omitted the latest-rate `ValidFrom` selector, so this evidence does
+not establish complete SQL lineage.
+
 Checkpoints with scalar return carry or qualified task targets use
 `snapshotVersion: 2`; ordinary records remain version 1. The current decoder
 reads both, rejects qualified fields in version 1 and inconsistent projections,

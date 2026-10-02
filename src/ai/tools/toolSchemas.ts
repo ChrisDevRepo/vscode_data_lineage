@@ -485,6 +485,7 @@ const QUESTIONS_DESCRIPTION =
 const NeighborQuestionSchema = z.object({
   nodeId: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
   question: z.string().min(1).describe('The check, self-contained: name the neighbor and what to establish there.'),
+  caller_context: z.object({ node: z.string().min(1), col: z.string().min(1) }).strict().optional().describe('For a column-trace function investigation, declare the real current caller output whose contribution its supplied SQL must establish. The caller SQL is supplied at the function hop to bind actual arguments; this declaration creates no column edge or function column.'),
 }).strict();
 
 /**

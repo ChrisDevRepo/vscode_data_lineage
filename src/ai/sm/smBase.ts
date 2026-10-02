@@ -22,12 +22,12 @@ import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingEndBranch, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnEndpointKeyFactory, reachableColumnEndpoints, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
-import { resolveScalarReturnTarget, uniqueScalarReturnTargets } from './scalarReturnBinding';
+import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
@@ -237,7 +237,7 @@ interface ValidatedHop {
   focusId: string;
   finding: HopFindingKept;
   /** Neighbours this hop enqueues, resolved: model questions, column_flow-named nodes, then every open neighbour not pruned. */
-  routeRequests: Array<{ nodeId: string; question: string }>;
+  routeRequests: Array<{ nodeId: string; question: string; callerContext?: FunctionCallerContext }>;
   routeOutcomes: RouteOutcome[];
   acceptedNids: Set<string>;
   scopeAddNids: Set<string>;
@@ -1397,13 +1397,41 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** Context evidence for the declared scalar return task, supplied only at its function hop. */
-  private scalarReturnContext(): Pick<HopContext, 'caller_output_targets' | 'caller_objects'> {
+  private scalarReturnContext(): Pick<HopContext, 'caller_output_targets' | 'caller_objects' | 'caller_requested_outputs'> {
     const targets = this.currentReturnTargets();
-    if (!targets.length) return {};
+    const declared = uniqueScalarReturnTargets(this.getCurrentTasks().flatMap(task => task.callerContext ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []));
+    const callers = uniqueScalarReturnTargets([...targets, ...declared]);
+    if (!callers.length) return {};
     return {
-      caller_output_targets: targets,
-      caller_objects: [...new Set(targets.map(target => target.node))].map(node => ({ node, ddl: getNodeDdl(node, this.nodeMap, this.store ?? undefined) ?? '' })),
+      ...(targets.length ? { caller_output_targets: targets } : {}),
+      ...(declared.length ? { caller_requested_outputs: declared } : {}),
+      caller_objects: [...new Set(callers.map(target => target.node))].map(node => ({ node, ddl: getNodeDdl(node, this.nodeMap, this.store ?? undefined) ?? '' })),
     };
+  }
+
+  /** Checks an authored caller context against its original task, directed route and exact SQL snapshot. */
+  private validFunctionCallerContext(functionId: string, context: FunctionCallerContext): boolean {
+    const parent = this.taskLedger.getTask(context.callerTaskId);
+    const target = resolveFunctionCallerTarget(functionId, context, this.nodeMap, this.model, this.store);
+    const ddl = getNodeDdl(context.node, this.nodeMap, this.store ?? undefined);
+    return !!target && !!ddl && !!parent && parent.kind === 'column_lineage'
+      && parent.nodeId === target.node && parent.activeColumns.some(col => normalizeColName(col) === normalizeColName(target.col))
+      && this.scopeNodeIds.has(target.node) && !this.removedSet.has(target.node)
+      && functionCallerDdlHash(ddl) === context.ddlHash;
+  }
+
+  /** Compiler declarations and task-anchored model investigations remain separate sources of scalar authorization. */
+  private resolveReturnTarget(functionId: string, target: ScalarReturnTarget, taskIds?: readonly string[]): ScalarReturnTarget | null {
+    const compiled = resolveScalarReturnTarget(functionId, target, this.nodeMap, this.store);
+    if (compiled) return compiled;
+    if (getNodeColumns(functionId, this.nodeMap, this.store ?? undefined)?.length) return null;
+    const tasks = taskIds ? taskIds.flatMap(id => this.taskLedger.getTask(id) ?? []) : this.taskLedger.investigationTasks;
+    const declared = tasks.some(task => task.nodeId === functionId && task.kind === 'column_lineage' && task.callerContext
+      && task.parentTaskId === task.callerContext.callerTaskId
+      && task.returnTargets?.some(expected => expected.node === target.node && normalizeColName(expected.col) === normalizeColName(target.col))
+      && task.callerContext.node === target.node && normalizeColName(task.callerContext.col) === normalizeColName(target.col)
+      && this.validFunctionCallerContext(functionId, task.callerContext));
+    return declared ? resolveFunctionCallerTarget(functionId, target, this.nodeMap, this.model, this.store) : null;
   }
 
   /** Explicit analysis mode captured at {@link init}. */
@@ -1981,7 +2009,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Recovers established scalar obligations for a follow-up without inferring new callers. */
   private supplementCarryFor(nodeId: string, selectedTask?: InvestigationTask): ColumnCarry {
-    const ordinary: ColumnCarry = { kind: 'carry', columns: this.tracer?.targetColumns ?? [] };
+    const ordinary: ColumnCarry = { kind: 'carry', columns: selectedTask?.callerContext && selectedTask.kind === 'column_lineage' ? [...selectedTask.activeColumns] : this.tracer?.targetColumns ?? [] };
     if (!this.tracer || this.nodeMap.get(nodeId)?.type !== 'function') return ordinary;
     const targets = uniqueScalarReturnTargets(
       selectedTask?.kind === 'column_lineage' && selectedTask.returnTargets
@@ -1991,7 +2019,7 @@ export class NavigationEngine implements IHopStateMachine {
     );
     if (targets.length) {
       const outputs = targets.map(target => {
-        const bound = resolveScalarReturnTarget(nodeId, target, this.nodeMap, this.store);
+        const bound = this.resolveReturnTarget(nodeId, target);
         if (!bound || !this.scopeNodeIds.has(bound.node)) {
           throw new InvalidEngineCheckpointError(['engineInternals.investigationTasks.returnTargets']);
         }
@@ -2049,7 +2077,12 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
     const requested = [
-      ...nodeIds.map(nodeId => ({ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined })),
+      ...nodeIds.flatMap(nodeId => {
+        const id = resolveModelNodeId(nodeId, this.nodeMap);
+        const contexts = this.taskLedger.investigationTasks.filter(task => task.nodeId === id && task.callerContext);
+        return contexts.length ? contexts.map(task => ({ nodeId, question: task.question, taskId: task.id as string | undefined, leadId: undefined as string | undefined }))
+          : [{ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined }];
+      }),
       ...leadEntries.map(entry => ({ nodeId: entry!.lead.nodeId, question: entry!.task.question, taskId: entry!.task.id, leadId: entry!.lead.id })),
     ];
 
@@ -2168,9 +2201,15 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
+      for (const taskId of candidate.taskIds) {
+        const task = this.taskLedger.getTask(taskId);
+        if (task?.callerContext && (task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(candidate.nodeId, task.callerContext))) {
+          throw new InvalidEngineCheckpointError(['engineInternals.investigationTasks.callerContext']);
+        }
+      }
       if (candidate.columnCarry?.kind === 'scalar_return') {
         for (const target of candidate.columnCarry.outputs) {
-          if (!this.scopeNodeIds.has(target.node) || !resolveScalarReturnTarget(candidate.nodeId, target, this.nodeMap, this.store)) {
+          if (!this.scopeNodeIds.has(target.node) || !this.resolveReturnTarget(candidate.nodeId, target, candidate.taskIds)) {
             throw new InvalidEngineCheckpointError(['agenda.columnCarry.outputs']);
           }
         }
@@ -2380,6 +2419,9 @@ export class NavigationEngine implements IHopStateMachine {
       return makeRejection({ code: REJECTION_CODES.invalidStatus, hint, detail: { current_status: this._status } });
     }
 
+    if (this.getCurrentTasks().some(task => task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(task.nodeId, task.callerContext)))) {
+      return makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' });
+    }
     try {
     const invalidRoutes: InvalidRoute[] = [];
     const routeOutcomes: RouteOutcome[] = [];
@@ -2452,7 +2494,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
     const incomingRefs = this.incomingColumnRefs();
     if (this.tracer && (finding.column_flow || this.currentReturnTargets().length)) {
-      const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, incomingRefs, this.currentReturnTargets());
+      const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, incomingRefs, this.currentReturnTargets(), this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext) ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []));
       invalidRoutes.push(...validated.invalidRoutes);
       for (const edge of validated.stagedEdges) edge.hop = this.hopCount;
       stagedColumnEdges.push(...validated.stagedEdges);
@@ -2538,8 +2580,20 @@ export class NavigationEngine implements IHopStateMachine {
         deferredRoutes.push({ nodeId: nid, schema: this.nodeMap.get(nid)!.schema, question: q.question, reason: 'pruned', depth: undefined });
         return;
       }
+      let callerContext: FunctionCallerContext | undefined;
+      if (q.caller_context) {
+        const target = resolveFunctionCallerTarget(nid, q.caller_context, this.nodeMap, this.model, this.store);
+        const callerTask = this.getCurrentTasks().find(task => task.kind === 'column_lineage' && task.nodeId === focusId
+          && task.activeColumns.some(col => normalizeColName(col) === normalizeColName(q.caller_context!.col)));
+        const ddl = getNodeDdl(focusId, this.nodeMap, this.store ?? undefined);
+        if (!target || target.node !== focusId || !callerTask || !ddl || !this.scopeNodeIds.has(focusId)) {
+          invalidRoutes.push({ kind: 'bad_return_target', id: nid, path: `questions.${index}.caller_context`, reason: 'caller_context must name an active real output of the current caller, which reads this loaded function.' });
+          return;
+        }
+        callerContext = { ...target, callerTaskId: callerTask.id, ddlHash: functionCallerDdlHash(ddl) };
+      }
       requested.add(nid);
-      routeRequests.push({ nodeId: nid, question: q.question });
+      routeRequests.push({ nodeId: nid, question: q.question, ...(callerContext ? { callerContext } : {}) });
     });
     for (const [nid, question] of flowQuestionByNode) {
       if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid)) continue;
@@ -2929,7 +2983,8 @@ export class NavigationEngine implements IHopStateMachine {
       const dispositions = new Map<string, RouteSkipDisposition>();
       this.enqueueHop(nid, req.question, 0, 2, {
         dispositions,
-        carry: this.neighborCarryFor(nid, carryByNode, req.question),
+        carry: this.neighborCarryFor(nid, carryByNode, req.question, req.callerContext),
+        ...(req.callerContext ? { callerContext: req.callerContext, parentTaskId: req.callerContext.callerTaskId } : {}),
         lineageQuestions: columnQuestions,
         freshScopeExpansion: isFreshExpansion,
         admitContractedBodiedTarget: !targetIsBodied,
@@ -3361,6 +3416,7 @@ export class NavigationEngine implements IHopStateMachine {
        */
       readonly reactivated?: boolean;
       /** Existing task to attach instead of creating a new task. */
+      readonly callerContext?: FunctionCallerContext;
       readonly existingTaskId?: string;
       /** Parent task assigned when a new task is created. */
       readonly parentTaskId?: string;
@@ -3386,6 +3442,7 @@ export class NavigationEngine implements IHopStateMachine {
       freshScopeExpansion = !this.scopeNodeIds.has(targetId),
       reactivated = false,
       existingTaskId,
+      callerContext,
       parentTaskId,
       admitContractedBodiedTarget = false,
       dispositions,
@@ -3443,7 +3500,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (this.tracer && node.type === 'function' && carry.kind === 'row_role_only' && !getNodeColumns(node.id, this.nodeMap, this.store ?? undefined)?.length) {
         question = `${question}${question ? '\n' : ''}No declared scalar caller output binding is available for this function. This visit does not resolve a caller's column contribution; do not invent function columns or return destinations.`;
       }
-      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined);
+      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined, callerContext);
       const alreadyQueued = this._agenda.has(targetId);
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       if (!alreadyQueued && (freshScopeExpansion || reactivated)) {
@@ -3455,7 +3512,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     if (priority === 3) {
-      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined);
+      const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined, callerContext);
       const alreadyQueued = this._agenda.has(targetId);
       this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry, activeColumns), ...(this.carryToRecord(carry)), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
       if (!alreadyQueued && !SCRIPT_TYPES.has(node.type)) {
@@ -3552,8 +3609,11 @@ export class NavigationEngine implements IHopStateMachine {
    * @param question - The question this hop attached to the neighbour; empty for engine opens.
    * @returns The carry decision to enqueue with.
    */
-  private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>, question: string): ColumnCarry {
+  private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>, question: string, callerContext?: FunctionCallerContext): ColumnCarry {
     if (!this.tracer) return { kind: 'carry', columns: [] };
+    if (callerContext && !getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length && this.validFunctionCallerContext(nodeId, callerContext)) {
+      return { kind: 'scalar_return', outputs: [{ node: callerContext.node, col: callerContext.col }] };
+    }
     const endpoints = [
       ...this.incomingColumnRefs(),
       ...(this.currentFocusNodeId ? this.tracer.activeColumns.map(col => ({ node: this.currentFocusNodeId!, col })) : []),
@@ -3651,6 +3711,7 @@ export class NavigationEngine implements IHopStateMachine {
     existingTaskId?: string,
     parentTaskId: string | undefined = this.currentFocusTaskIds[0],
     returnTargets?: readonly ScalarReturnTarget[],
+    callerContext?: FunctionCallerContext,
   ): InvestigationTask {
     const existing = existingTaskId ? this.taskLedger.getTask(existingTaskId) : undefined;
     if (existing) return existing;
@@ -3660,6 +3721,7 @@ export class NavigationEngine implements IHopStateMachine {
       nodeId,
       parentTaskId,
       createdHop: this.hopCount,
+      ...(callerContext ? { callerContext } : {}),
     }, 'analytical', activeColumns, returnTargets));
   }
 
@@ -4054,7 +4116,11 @@ export class NavigationEngine implements IHopStateMachine {
       engine.tracer = new ColumnTracer(snapshot.columnAspect.target_columns, snapshot.columnAspect);
       engine.mode = { kind: 'ct' };
     }
-    engine.taskLedger.restore(internals.investigationTasks, internals.pendingLeads);
+    try {
+      engine.taskLedger.restore(internals.investigationTasks, internals.pendingLeads);
+    } catch {
+      throw new InvalidEngineCheckpointError(['engineInternals.investigationTasks']);
+    }
     engine.hopCount = snapshot.hopCount;
     engine.scopeNodeIds = new Set(snapshot.scopeNodeIds);
     engine.visited = new Set(snapshot.visited);
@@ -4110,8 +4176,11 @@ export class NavigationEngine implements IHopStateMachine {
     engine.ctPrunedFocusIds = new Set(snapshot.ctPrunedNodeIds ?? []);
     engine.renderDroppedIds = new Set(snapshot.renderDroppedNodeIds ?? []);
     for (const task of engine.taskLedger.investigationTasks) {
+      if (task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !engine.validFunctionCallerContext(task.nodeId, task.callerContext))) {
+        throw new InvalidEngineCheckpointError(['engineInternals.investigationTasks.callerContext']);
+      }
       if (task.kind !== 'column_lineage' || !task.returnTargets) continue;
-      if (!task.nodeId || task.returnTargets.some(target => !engine.scopeNodeIds.has(target.node) || !resolveScalarReturnTarget(task.nodeId!, target, engine.nodeMap, engine.store))) {
+      if (!task.nodeId || task.returnTargets.some(target => !engine.scopeNodeIds.has(target.node) || !engine.resolveReturnTarget(task.nodeId!, target, [task.id]))) {
         throw new InvalidEngineCheckpointError(['engineInternals.investigationTasks.returnTargets']);
       }
     }

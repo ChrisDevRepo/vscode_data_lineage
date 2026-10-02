@@ -22,6 +22,7 @@ export type InvestigationTaskInput = {
   createdHop: number;
   /** Hop at which the task was closed, when it is opened already resolved. */
   resolvedHop?: number;
+  callerContext?: InvestigationTask['callerContext'];
 } & (
   /** Root or analytical task: no traced column rides along. */
   | { kind: 'root' | 'analytical'; activeColumns?: never }
@@ -63,8 +64,8 @@ export class TaskLedger {
   /** Returns immutable copies in insertion order. */
   public get investigationTasks(): ReadonlyArray<InvestigationTask> {
     return Array.from(this.tasks.values(), task => task.kind === 'column_lineage'
-      ? { ...task, activeColumns: [...task.activeColumns] as [string, ...string[]], ...(task.returnTargets ? { returnTargets: task.returnTargets.map(target => ({ ...target })) } : {}) }
-      : { ...task });
+      ? { ...task, ...(task.callerContext ? { callerContext: { ...task.callerContext } } : {}), activeColumns: [...task.activeColumns] as [string, ...string[]], ...(task.returnTargets ? { returnTargets: task.returnTargets.map(target => ({ ...target })) } : {}) }
+      : { ...task, ...(task.callerContext ? { callerContext: { ...task.callerContext } } : {}) });
   }
 
   /** Returns immutable copies in insertion order. */
@@ -133,6 +134,7 @@ export class TaskLedger {
       ...(input.kind === 'column_lineage' && input.returnTargets
         ? [input.returnTargets.map(target => [target.node.toLowerCase(), target.col.toLowerCase()]).sort()]
         : []),
+      ...(input.callerContext ? [[input.callerContext.node, input.callerContext.col, input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
     ]);
     return this.upsertByIdentity(
       this.tasks,
@@ -143,6 +145,7 @@ export class TaskLedger {
       existing => existing,
       id => ({
         ...input,
+        ...(input.callerContext ? { callerContext: { ...input.callerContext } } : {}),
         ...(input.kind === 'column_lineage' && input.returnTargets ? { returnTargets: input.returnTargets.map(target => ({ ...target })) } : {}),
         id,
         status: input.status ?? 'pending',
