@@ -26,7 +26,9 @@ All changes must pass the applicable maintained checks locally before push.
 GitHub does not run the test suite; its workflow is limited to repository
 security checks. `npm run gate` is the complete client-side pre-push gate.
 Full command set and scope: the `package.json` scripts and
-[`docs/EDH_TESTING.md`](docs/EDH_TESTING.md).
+[`docs/testing/README.md`](docs/testing/README.md). Optional Electron, Playwright,
+database, headless AI and Langfuse checks are tools you invoke when relevant;
+they do not run automatically.
 
 ### Parser rule verification
 

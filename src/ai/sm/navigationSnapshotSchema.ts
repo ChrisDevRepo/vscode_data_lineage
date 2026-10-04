@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { SmState } from './smTypes';
 import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
+import { schemaKey } from '../../utils/sql';
+import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
 
 /** Stable restore failure raised only by the strict navigation-checkpoint boundary. */
 export class InvalidEngineCheckpointError extends Error {
@@ -151,10 +153,15 @@ const BbTaskSchema = z.object({
   question: z.string(),
   nodeId: NonEmptyString.optional(),
   parentTaskId: NonEmptyString.optional(),
+  traversalSide: z.enum(['upstream', 'downstream']).optional(),
   status: z.enum(['pending', 'active', 'resolved', 'deferred']),
   createdHop: NonNegativeInt,
   resolvedHop: NonNegativeInt.optional(),
+  callerContext: z.object({ node: NonEmptyString, col: NonEmptyString, callerTaskId: NonEmptyString, ddlHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
+
+const ScalarReturnTargetSchema = z.object({ node: NonEmptyString, col: NonEmptyString }).strict();
+const ScalarReturnTargetsSchema = z.array(ScalarReturnTargetSchema).min(1);
 
 const CtTaskSchema = z.object({
   id: NonEmptyString,
@@ -163,10 +170,14 @@ const CtTaskSchema = z.object({
   question: z.string(),
   nodeId: NonEmptyString.optional(),
   parentTaskId: NonEmptyString.optional(),
+  traversalSide: z.enum(['upstream', 'downstream']).optional(),
   activeColumns: NonEmptyStringTuple,
+  sourceRefs: z.array(ScalarReturnTargetSchema).min(1).optional(),
+  returnTargets: ScalarReturnTargetsSchema.optional(),
   status: z.enum(['pending', 'active', 'resolved', 'deferred']),
   createdHop: NonNegativeInt,
   resolvedHop: NonNegativeInt.optional(),
+  callerContext: z.object({ node: NonEmptyString, col: NonEmptyString, callerTaskId: NonEmptyString, ddlHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
 
 const InvestigationTaskSchema = z.discriminatedUnion('kind', [BbTaskSchema, CtTaskSchema]);
@@ -207,6 +218,7 @@ const InitSnapshotSchema = z.discriminatedUnion('analysisMode', [
 const ColumnCarrySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('carry'), columns: z.array(NonEmptyString) }).strict(),
   z.object({ kind: z.literal('row_role_only') }).strict(),
+  z.object({ kind: z.literal('scalar_return'), outputs: ScalarReturnTargetsSchema }).strict(),
 ]);
 
 const AgendaEntrySchema = z.object({
@@ -257,6 +269,15 @@ const EngineInternalsSchema = z.object({
   investigationTasks: z.array(InvestigationTaskSchema),
   pendingLeads: z.array(PendingLeadSchema),
   initSnapshot: InitSnapshotSchema.nullable(),
+  continuationVersion: z.literal(1).optional(),
+  supplementNodeIds: z.array(NonEmptyString).optional(),
+  pruneBallots: z.array(z.object({ nodeId: NonEmptyString,
+    votes: z.array(z.object({ senderId: NonEmptyString, vote: z.enum(['prune', 'keep']) }).strict()).min(1),
+  }).strict()).optional(),
+  heldFinding: z.discriminatedUnion('mode', [
+    z.object({ mode: z.literal('bb'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: heldHopFindingSchemaForMode('bb') }).strict(),
+    z.object({ mode: z.literal('ct'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: heldHopFindingSchemaForMode('ct') }).strict(),
+  ]).nullable().optional(),
 }).strict().transform(({
   qualityGuards: _legacyQualityGuards,
   extendedDepthCap: _legacyExtendedDepthCap,
@@ -266,7 +287,8 @@ const EngineInternalsSchema = z.object({
 
 /** Current fail-closed NavigationEngine persistence contract. */
 export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
-  snapshotVersion: z.literal(1),
+  snapshotVersion: z.union([z.literal(1), z.literal(2)]),
+  identifierCaseSensitive: z.boolean().optional(),
   columnAspect: ColumnAspectSchema.nullable(),
   status: z.enum(['created', 'initialized', 'exploring', 'awaiting_findings', 'complete', 'error']),
   hopCount: NonNegativeInt,
@@ -285,10 +307,35 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   ctDeclaredRouteIds: z.array(NonEmptyString).optional(),
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict().superRefine((snapshot, ctx) => {
+  const identifierKey = (value: string): string => schemaKey(value, snapshot.identifierCaseSensitive);
   const issue = (message: string, path: Array<string | number>) => ctx.addIssue({ code: 'custom', message, path });
   const unique = (values: ReadonlyArray<string>, path: Array<string | number>) => {
     if (new Set(values).size !== values.length) issue('values must be unique', path);
   };
+  const internals = snapshot.engineInternals;
+  unique(internals.supplementNodeIds ?? [], ['engineInternals', 'supplementNodeIds']);
+  if (internals.supplementNodeIds?.some(id => !snapshot.scopeNodeIds.includes(id))) {
+    issue('Supplement targets must belong to the admitted scope.', ['engineInternals', 'supplementNodeIds']);
+  }
+  if (snapshot.status !== 'complete' && (internals.continuationVersion !== 1
+    || internals.pruneBallots === undefined || internals.heldFinding === undefined)) {
+    issue('Unfinished exploration is missing continuation state; start a new analysis.', ['engineInternals', 'continuationVersion']);
+  }
+  unique((internals.pruneBallots ?? []).map(ballot => ballot.nodeId), ['engineInternals', 'pruneBallots']);
+  for (const [index, ballot] of (internals.pruneBallots ?? []).entries()) {
+    const path = ['engineInternals', 'pruneBallots', index];
+    unique(ballot.votes.map(vote => vote.senderId), [...path, 'votes']);
+    if (!snapshot.scopeNodeIds.includes(ballot.nodeId) || snapshot.visited.includes(ballot.nodeId) || snapshot.removedSet.includes(ballot.nodeId)) issue('Prune ballot target must be open and in scope.', path);
+    if (ballot.votes.some(vote => !snapshot.visited.includes(vote.senderId))) issue('Prune votes require a dispatched sender.', [...path, 'votes']);
+  }
+  if (internals.heldFinding) {
+    const held = internals.heldFinding;
+    if (snapshot.status !== 'awaiting_findings' || held.focusId !== snapshot.currentFocusNodeId
+      || identifierKey(held.finding.focus_node_id) !== identifierKey(held.focusId) || held.hop !== snapshot.hopCount
+      || held.mode !== (internals.investigationTasks.some(task => internals.currentFocusTaskIds.includes(task.id) && task.kind === 'column_lineage') ? 'ct' : 'bb')) {
+      issue('Held finding must match the active focus, hop and contract.', ['engineInternals', 'heldFinding']);
+    }
+  }
 
   if (snapshot.scopeSize !== snapshot.scopeNodeIds.length) issue('scopeSize must equal scopeNodeIds.length', ['scopeSize']);
   if (snapshot.agendaSize !== snapshot.agenda.length) issue('agendaSize must equal agenda.length', ['agendaSize']);
@@ -302,14 +349,37 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   unique(snapshot.engineInternals.investigationTasks.map(task => task.id), ['engineInternals', 'investigationTasks']);
   unique(snapshot.engineInternals.pendingLeads.map(lead => lead.id), ['engineInternals', 'pendingLeads']);
 
+  const scalarTasks = snapshot.engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.returnTargets !== undefined);
+  const scalarEntries = snapshot.agenda.filter(entry => entry.columnCarry?.kind === 'scalar_return');
+  if (snapshot.snapshotVersion === 1 && (scalarTasks.length || scalarEntries.length)) issue('scalar return state requires snapshot version 2', ['snapshotVersion']);
+  for (const task of scalarTasks) {
+    if (task.kind !== 'column_lineage') continue;
+    const targets = task.returnTargets!;
+    unique(targets.map(target => JSON.stringify([identifierKey(target.node), identifierKey(target.col)])), ['engineInternals', 'investigationTasks']);
+    if (targets.some(target => !snapshot.scopeNodeIds.includes(target.node))) issue('scalar caller output must belong to approved scope', ['engineInternals', 'investigationTasks']);
+    if (JSON.stringify([...new Set(targets.map(target => identifierKey(target.col)))].sort()) !== JSON.stringify([...new Set(task.activeColumns.map(col => identifierKey(col)))].sort())) issue('scalar target projection must equal active columns', ['engineInternals', 'investigationTasks']);
+  }
+  for (const entry of scalarEntries) {
+    if (entry.columnCarry?.kind !== 'scalar_return') continue;
+    const taskTargets = snapshot.engineInternals.investigationTasks.filter(task => entry.taskIds.includes(task.id) && task.kind === 'column_lineage').flatMap(task => task.kind === 'column_lineage' ? task.returnTargets ?? [] : []);
+    const identity = (targets: readonly {node:string;col:string}[]) => JSON.stringify([...new Set(targets.map(target => JSON.stringify([identifierKey(target.node), identifierKey(target.col)])))].sort());
+    if (entry.columnCarry.outputs.length !== new Set(entry.columnCarry.outputs.map(target => JSON.stringify([identifierKey(target.node), identifierKey(target.col)]))).size) issue('scalar agenda destinations must be unique', ['agenda']);
+    if (JSON.stringify([...new Set(entry.columnCarry.outputs.map(target => identifierKey(target.col)))].sort()) !== JSON.stringify([...new Set((entry.activeColumns ?? []).map(col => identifierKey(col)))].sort())) issue('scalar agenda projection must equal destinations', ['agenda']);
+    if (identity(entry.columnCarry.outputs) !== identity(taskTargets)) issue('scalar agenda and task destinations must match', ['agenda']);
+  }
+
   const removed = new Set(snapshot.removedSet);
-  const scope = new Set(snapshot.scopeNodeIds);
+  const scope = new Set(snapshot.scopeNodeIds.map(identifierKey));
   const tasks = new Map(snapshot.engineInternals.investigationTasks.map(task => [task.id, task]));
   for (let i = 0; i < snapshot.agenda.length; i++) {
     const entry = snapshot.agenda[i];
-    if (!scope.has(entry.nodeId)) issue('agenda node must belong to scope', ['agenda', i, 'nodeId']);
+    if (!scope.has(identifierKey(entry.nodeId))) issue('agenda node must belong to scope', ['agenda', i, 'nodeId']);
     if (removed.has(entry.nodeId)) issue('agenda node must not be removed', ['agenda', i, 'nodeId']);
+    if (snapshot.snapshotVersion >= 2 && snapshot.visited.includes(entry.nodeId)) issue('agenda node must not be visited', ['agenda', i, 'nodeId']);
     unique(entry.taskIds, ['agenda', i, 'taskIds']);
+    if (snapshot.columnAspect && entry.taskIds.some(id => tasks.get(id)?.kind === 'column_lineage') !== ((entry.activeColumns?.length ?? 0) > 0)) issue('Agenda carry must match its task demand.', ['agenda', i, 'activeColumns']);
+    if (entry.columnCarry?.kind === 'row_role_only' && entry.taskIds.some(id => tasks.get(id)?.kind === 'column_lineage')) issue('Row-only agenda cannot retain a CT task.', ['agenda', i, 'columnCarry']);
+    if (entry.taskIds.some(id => tasks.get(id)?.kind === 'column_lineage' && (tasks.get(id) as { returnTargets?: unknown }).returnTargets !== undefined) && entry.columnCarry?.kind !== 'scalar_return') issue('scalar task agenda must preserve scalar return carry', ['agenda', i, 'columnCarry']);
     entry.taskIds.forEach((taskId, taskIndex) => {
       const task = tasks.get(taskId);
       if (!task) issue('agenda task reference does not exist', ['agenda', i, 'taskIds', taskIndex]);
@@ -318,6 +388,11 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   }
 
   const currentIds = snapshot.engineInternals.currentFocusTaskIds;
+  if (snapshot.status === 'awaiting_findings' && snapshot.currentFocusNodeId && snapshot.columnAspect) {
+    const hasColumnTask = currentIds.some(id => tasks.get(id)?.kind === 'column_lineage');
+    if (hasColumnTask !== (snapshot.columnAspect.active_columns.length > 0)) issue('Active hop mode must match its task demand.', ['columnAspect', 'active_columns']);
+  }
+
   if (snapshot.currentFocusNodeId === null) {
     if (currentIds.length > 0) issue('currentFocusTaskIds must be empty without a current focus', ['engineInternals', 'currentFocusTaskIds']);
     if (snapshot.engineInternals.currentFocusQuestion !== null) issue('currentFocusQuestion must be null without a current focus', ['engineInternals', 'currentFocusQuestion']);
@@ -378,8 +453,13 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   } else {
     if (init?.analysisMode !== 'ct') issue('CT snapshot requires CT init mode', ['engineInternals', 'initSnapshot', 'analysisMode']);
     if (init?.analysisMode === 'ct' && JSON.stringify(init.targetColumns) !== JSON.stringify(snapshot.columnAspect.target_columns)) issue('CT init targets must equal columnAspect targets', ['engineInternals', 'initSnapshot', 'targetColumns']);
+    // CT is BB plus the column aspect: a session may dispatch columnless branches as analytical
+    // tasks, but it always holds at least one column task and never a BB root — the mission root
+    // of a CT session is created as its first column task. Every record written by an older
+    // build (all tasks column_lineage) satisfies this unchanged.
+    if (![...tasks.values()].some(task => task.kind === 'column_lineage')) issue('CT snapshot requires at least one column-lineage task', ['engineInternals', 'investigationTasks']);
     snapshot.engineInternals.investigationTasks.forEach((task, i) => {
-      if (task.kind !== 'column_lineage') issue('CT snapshot requires column-lineage tasks', ['engineInternals', 'investigationTasks', i, 'kind']);
+      if (task.kind === 'root') issue('CT snapshot cannot carry a BB root task', ['engineInternals', 'investigationTasks', i, 'kind']);
     });
     snapshot.agenda.forEach((entry, i) => {
       if (entry.activeColumns === undefined) issue('CT agenda requires activeColumns projection', ['agenda', i, 'activeColumns']);
@@ -396,12 +476,27 @@ type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
  * Parses one current-format checkpoint without repairing, migrating, or logging its content.
  *
  * @param input - Untrusted checkpoint payload to validate.
+ * @param identifierCaseSensitive - If supplied, requires the captured policy to match the loaded model. Legacy snapshots are CI.
  * @returns A strict current-format navigation snapshot.
  * @throws {@link InvalidEngineCheckpointError} when `input` fails schema validation.
  */
-export function parseNavigationSnapshot(input: unknown): NavigationSnapshot {
+export function parseNavigationSnapshot(input: unknown, identifierCaseSensitive?: boolean, log?: (level: 'debug', message: string) => void): NavigationSnapshot {
   const result = NavigationSnapshotSchema.safeParse(input);
-  if (result.success) return result.data;
+  if (result.success) {
+    if (result.data.snapshotVersion === 1) {
+       const visited = new Set(result.data.visited);
+       result.data.agenda = result.data.agenda.filter(a => {
+         const drop = visited.has(a.nodeId);
+         if (drop && log) log('debug', `[Restore] Dropping visited agenda node ${a.nodeId} (v1 backward compatibility).`);
+         return !drop;
+       });
+       result.data.agendaSize = result.data.agenda.length;
+    }
+    if (identifierCaseSensitive !== undefined && (result.data.identifierCaseSensitive === true) !== identifierCaseSensitive) {
+      throw new InvalidEngineCheckpointError(['identifierCaseSensitive']);
+    }
+    return result.data;
+  }
   const paths = Array.from(new Set(result.error.issues.map(issue => issue.path.join('.') || '(root)'))).slice(0, 3);
   throw new InvalidEngineCheckpointError(paths, { cause: result.error });
 }

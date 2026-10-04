@@ -124,7 +124,7 @@ const SCHEMA_COLORS_DARK_EXT = [
 ];
 
 /**
- * Resolved schema-color assignments keyed by schema name.
+ * Resolved schema-color assignments keyed by schema name under the source comparison policy.
  */
 export type SchemaColorMap = Map<string, string>;
 
@@ -157,11 +157,12 @@ function mix32(hash: number): number {
  *
  * @param schema - The schema name.
  * @param forceLight - If true, ignores the current theme and returns the light variant.
+ * @param identifierCaseSensitive - Checked source policy; true preserves schema casing in the hash.
  * @returns A CSS hex color string.
  */
-export function getSchemaColor(schema: string, forceLight?: boolean): string {
+export function getSchemaColor(schema: string, forceLight?: boolean, identifierCaseSensitive = false): string {
   const palette = getSchemaPalette(forceLight);
-  return palette[getSchemaColorIndex(schema, palette.length)];
+  return palette[getSchemaColorIndex(schema, palette.length, identifierCaseSensitive)];
 }
 
 /**
@@ -173,8 +174,8 @@ export function getSchemaColor(schema: string, forceLight?: boolean): string {
  *
  * @returns Palette slot index in `[0, paletteSize)`, stable for a given schema name.
  */
-function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_EXT.length): number {
-  return hashString(schemaKey(requireSchemaName(schema))) % paletteSize;
+function getSchemaColorIndex(schema: string, paletteSize: number, identifierCaseSensitive: boolean): number {
+  return hashString(schemaKey(requireSchemaName(schema), identifierCaseSensitive)) % paletteSize;
 }
 
 /**
@@ -183,12 +184,13 @@ function getSchemaColorIndex(schema: string, paletteSize = SCHEMA_COLORS_LIGHT_E
  *
  * @param schemas - Schema names to map.
  * @param forceLight - Whether to force the light palette.
+ * @param identifierCaseSensitive - Checked source policy; true keeps case-distinct schemas separate.
  *
  * @returns A deterministic loaded-set color map keyed by normalized schema name.
  */
-export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean): SchemaColorMap {
+export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean, identifierCaseSensitive = false): SchemaColorMap {
   const palette = getSchemaPalette(forceLight);
-  const schemaKeys = Array.from(new Set(schemas.map(s => schemaKey(requireSchemaName(s))))).sort();
+  const schemaKeys = Array.from(new Set(schemas.map(s => schemaKey(requireSchemaName(s), identifierCaseSensitive)))).sort();
   const slotCount = schemaKeys.length <= SCHEMA_COLORS_LIGHT.length ? SCHEMA_COLORS_LIGHT.length : palette.length;
   const slotUse = new Array<number>(slotCount).fill(0);
   const map: SchemaColorMap = new Map();
@@ -222,11 +224,12 @@ export function createSchemaColorMap(schemas: readonly string[], forceLight?: bo
  *
  * @param schema - Schema name to query.
  * @param colorMap - Precomputed schema-color lookup.
+ * @param identifierCaseSensitive - Must match the comparison policy used to create the map.
  *
- * @returns The assigned color pair; throws when the schema has no map entry.
+ * @returns The assigned color; throws when the schema has no map entry.
  */
-export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap): string {
-  const key = schemaKey(requireSchemaName(schema));
+export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap, identifierCaseSensitive = false): string {
+  const key = schemaKey(requireSchemaName(schema), identifierCaseSensitive);
   const color = colorMap.get(key);
   if (!color) {
     throw new Error(`No schema color assigned for "${schema}"`);
@@ -254,15 +257,17 @@ export function isExternalOnlyTypeBreakdown(typeBreakdown: Partial<Record<Object
  *
  * Real schemas use the deterministic schema palette. External-only aggregates
  * use the fixed external color from the main object-node contract.
+ * The comparison policy must match the color map's creation policy.
  */
 export function getSchemaDisplayColor(
   schema: string,
   colorMap: SchemaColorMap,
   typeBreakdown?: Partial<Record<ObjectType, number>>,
+  identifierCaseSensitive = false,
 ): string {
   return isExternalOnlyTypeBreakdown(typeBreakdown)
     ? getExternalNodeColor()
-    : getSchemaColorFromMap(schema, colorMap);
+    : getSchemaColorFromMap(schema, colorMap, identifierCaseSensitive);
 }
 
 function relativeLuminance(hex: string): number {

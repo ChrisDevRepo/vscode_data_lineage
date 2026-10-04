@@ -185,8 +185,14 @@ export function driveEngine(
 
     const label = tag ? `${tag}: ${id}` : id;
     if (prune?.has(id)) {
-      // An end_branch carries only its reason — the submit boundary refuses sections on it.
-      engine.submitFindings({ focus_node_id: id, verdict: 'end_branch', reason: `${label} is off the answer` });
+      const allNeighbors = (ctx.neighbors ?? []).map(n => ({ id: n.id, reason: 'pruned' }));
+      engine.submitFindings({
+        focus_node_id: id,
+        verdict: 'analyze',
+        summary: `${label} is off the answer`,
+        sections: [{ angle: 'business', text: `analysis for ${label}` }],
+        prune_neighbors: allNeighbors,
+      });
       continue;
     }
     const verdict = passthrough?.has(id) ? 'passthrough' : 'analyze';

@@ -16,15 +16,14 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    setupFiles: [fileURLToPath(new URL('./tests/stubs/regexWorker.ts', import.meta.url))],
     environment: 'node',
-    // Worker processes default to Node's ~1 MB stack. Dagre's recursive coordinate assignment
-    // overflows it at ~1500 nodes (largeGraph.test.ts) even though the real webview runtime
-    // (Chromium, ~1 MB but different growth) and a plain Node process both succeed. Give the
-    // layout engine the headroom the product runtime effectively has.
-    execArgv: ['--stack-size=8000'],
-    // Hang backstop only: no test asserts wall-clock time. The 1500-node dagre layout in
-    // largeGraph.test.ts takes minutes on a loaded machine, so the 5 s default would fail on load.
-    testTimeout: 300_000,
+    testTimeout: 10_000,
+    // The default is availableParallelism - 1 (17 workers on the development host). Parallel
+    // jsdom/React imports at that width starve their own fake-timer `act` transactions when a local
+    // model uses the same machine. Four workers keep the deterministic gate bounded under that
+    // supported concurrent workload without weakening assertions or extending timeouts.
+    maxWorkers: 4,
     // `.tsx` alongside `.ts` for the component tests that mount a webview leaf; the unit tsconfig
     // already includes `**/*.tsx` and inherits `jsx: react-jsx`. Same lane, not a new one.
     include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],

@@ -7,23 +7,16 @@
  * therefore states its tier itself, in its own output, rather than leaving it to a doc a reader of
  * the log may never open.
  *
- * Four tiers exist in this repository. Only the last is the product's real path, and it has no
- * automated coverage:
- * - `none` — no provider registered in the host at all.
- * - `scripted` — the fixture extension registers a `vscode.LanguageModelChatProvider` that replays
- *   fixed text and tool calls. Genuine `vscode.lm` wiring, zero inference, zero network.
- * - live provider (measured internally, never an EDH lane) — real inference over the
- *   network, but headless: the harness supplies its own model port and a `vscode` shim, so
- *   `vscode.lm` is bypassed entirely.
- * - the product path — real VS Code, the user's own Copilot model. UAT only.
+ * `none` means no model provider is installed; `fixture` means a test provider returns fixed
+ * responses through the public VS Code language-model API. Neither tier performs inference.
  */
 
-/** Model involvement of one lane. An EDH lane can only ever be one of these two. */
-export type ModelTier = 'none' | 'scripted';
+/** Model involvement of one deterministic EDH lane. */
+export type ModelTier = 'none' | 'fixture';
 
 const TIER_LINE: Record<ModelTier, string> = {
   none: 'MODEL: none — no provider is registered in this host. Nothing here infers.',
-  scripted: 'MODEL: scripted — fixture provider replaying fixed output. No inference, no network, not Copilot.',
+  fixture: 'MODEL: fixture — fixed responses through the VS Code API. No inference or provider network call.',
 };
 
 /**
@@ -38,8 +31,6 @@ export function announceLaneTier(laneLabel: string, tier: ModelTier, proves: str
     `\n  ── LANE ${laneLabel} ──\n`
     + `    ${TIER_LINE[tier]}\n`
     + `    Proves: ${proves}\n`
-    + '    NOT evidence about prompt quality, model behaviour, or answer correctness. Inference is\n'
-    + '    measured internally, headless, never by this repository\'s tracked suite, and the\n'
-    + '    product path itself — real VS Code with your own Copilot model — only by UAT.\n',
+    + '    NOT evidence about prompt quality, model behaviour, or answer correctness.\n',
   );
 }

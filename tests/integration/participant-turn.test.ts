@@ -5,27 +5,19 @@ import { announceLaneTier } from './laneTier';
 /**
  * Drives a real `@lineage` participant turn through public API and observes what it streams.
  *
- * @remarks
- * Needs no production change and no internal API: `activate()` returns the participant
- * ({@link file://./../../src/extensionRuntime.ts} `:278`) and `handleChatRequest` is public
- * ({@link file://./../../src/ai/participant/lineageParticipant.ts} `:213`).
- *
- * Known limit, stated rather than hidden: the recording stream below is a double, so this asserts
- * that the participant *called* `stream.markdown` / `progress` / `button`, not that VS Code
- * rendered them. That Copilot is genuinely absent, and that the fixture model resolves from the
- * public API, is asserted directly; rendering fidelity is out of scope for this suite.
+ * The recording stream is a test double, so this asserts emitted responses, not rendered UI.
  */
 suite('Participant turn — public API, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
   suiteSetup(() => { announceLaneTier(
     'participant-turn',
-    'scripted',
+    'fixture',
     'a real handleChatRequest turn streams progress and settles with a terminal ChatResult',
   ); });
   const FIXTURE_ID = 'data-lineage-test.data-lineage-test-model-provider';
   const TEST_VENDOR = 'lineage-test';
-  const TEST_MODEL_ID = 'lineage-deterministic-v1';
+  const TEST_MODEL_ID = 'lineage-smoke-model';
 
   /** Stands in for VS Code's chat renderer and records everything the participant emits. */
   function recordingStream() {
@@ -62,7 +54,7 @@ suite('Participant turn — public API, no CDP', () => {
       if (models.length > 0) return models[0];
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    return assert.fail('scripted language model was not available from the public VS Code API');
+    return assert.fail('fixture language model was not available from the public VS Code API');
   }
 
   async function waitForDemoModel(): Promise<void> {
@@ -85,26 +77,11 @@ suite('Participant turn — public API, no CDP', () => {
 
   suiteSetup(async () => {
     const fixture = vscode.extensions.getExtension(FIXTURE_ID);
-    assert.ok(fixture, 'scripted provider fixture must be installed in this lane');
+    assert.ok(fixture, 'language-model fixture must be installed in this lane');
     await fixture.activate();
   });
 
-  // Preserved from the deleted chat-automation lane (its S2) — a positive control proving the
-  // lane can tell absence from presence, so "works without Copilot" is not vacuous.
-  test('Copilot really is absent, and the probe can tell absence from presence', async () => {
-    assert.ok(
-      (await vscode.lm.selectChatModels({ vendor: TEST_VENDOR })).length > 0,
-      'the fixture vendor must resolve, or this test cannot distinguish absence from a broken query',
-    );
-    assert.strictEqual(
-      (await vscode.lm.selectChatModels({ vendor: 'copilot' })).length,
-      0,
-      'no copilot-vendor model may be available in this lane',
-    );
-  });
-
-  // Preserved from the deleted chat-automation lane (its S4).
-  test('the fixture BYOK model resolves from the public API with the expected identity', async () => {
+  test('the fixture model resolves from the public API with the expected identity', async () => {
     const model = await fixtureModel();
     assert.strictEqual(model.vendor, TEST_VENDOR);
     assert.strictEqual(model.id, TEST_MODEL_ID);
@@ -153,7 +130,7 @@ suite('Participant turn — public API, no CDP', () => {
         | { requestId?: string; status?: string; modelCalls?: number }
         | undefined;
       assert.ok(metadata?.requestId, 'the turn must return a correlated requestId');
-      assert.strictEqual(metadata?.status, 'ok', 'the scripted turn must settle ok');
+      assert.strictEqual(metadata?.status, 'ok', 'the fixture-backed turn must settle ok');
       assert.ok((metadata?.modelCalls ?? 0) > 0, 'the turn must have reached the model');
     } finally {
       source.dispose();

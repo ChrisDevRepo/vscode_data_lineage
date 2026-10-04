@@ -3,6 +3,7 @@
  * Zero VS Code imports — pure schema definitions.
  */
 import { z } from 'zod';
+import { droppedScalarReturnFieldError, resolveModelNodeId } from '../support/inputNormalization';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -13,7 +14,8 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
-import type { HopFinding, HopFindingKept } from '../sm/smTypes';
+import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
+import { keyedResendRule } from '../support/repairDraftStore';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -35,11 +37,13 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
     + "each in the user's terms; echoed at the approval gate and carried to every hop.",
   );
 
-const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
+/** Canonical answer-lens values and primary-intent instruction shared by entry and tool schemas. */
+export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
-    'Answer angle the user asked for: "business" only when the user asks for the business view (meaning, '
-    + 'impact, business rules); "technical" only when the user asks for a technical lens (performance, indexes, '
-    + 'execution plan, query shape, load pattern); otherwise "both" — a question in neither terms, or in both. Required for a fresh proposal.',
+    'Choose the answer lens from the primary user intent: "business" for meaning, purpose, impact or business rules, '
+    + 'and for unspecified or ambiguous intent. Incidental SQL, table or schema mentions, or a small technical subquestion, '
+    + 'do not change a primary business lens; answer those details with supported evidence. "technical" only for clear overall technical intent '
+    + '(performance, indexes, execution plan, query shape, load pattern); "both" only when the user explicitly asks for both perspectives. Required for a fresh proposal.',
   );
 
 const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(MAX_ID_LIST_LENGTH).describe(
@@ -129,14 +133,14 @@ export const StartExplorationInputSchema = z.object({
   depth: StartDepthSchema,
   excludeTypes: StartExcludeTypesSchema,
   /**
-   * Schemas to drop from the BFS scope (case-insensitive). Honored at scope-build time —
+   * Schemas to drop from the BFS scope under the source comparison policy. Honored at scope-build time —
    * any candidate node whose schema matches is excluded. REPLACE semantics: each call
    * wipes prior filter state on the engine; accumulate across refine rounds by re-sending
    * every prior exclusion plus the new one.
    */
   excludeSchemas: StartExcludeSchemasSchema,
   /**
-   * Specific node ids to drop from the BFS scope (case-insensitive). Cuts the node and
+   * Specific node ids to drop from the BFS scope under the source comparison policy. Cuts the node and
    * its subtree reachable only through it. Use only when the user explicitly says
    * remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}.
    * Every id must already be resolved via `lineage_search_objects` — unknown ids cause
@@ -430,7 +434,7 @@ export const GetScopeBundleModelSchema = z.object({
  *
  * @remarks
  * Each fired `*_capture` YAML template produces ONE keyed entry (`business` and/or
- * `technical`). This base shape backs the permissive registered union
+ * `technical`). This base shape backs the permissive participant union
  * ({@link SubmitFindingsModelSchema}) and stays angle-open; the strict per-dispatch schema
  * (`submitFindingsSchemaForMode`) narrows the object to the locked classification's kept
  * angle key(s) before every active-hop dispatch, so an off-lock angle fails there as an
@@ -450,20 +454,20 @@ type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 
 /**
  * Applicability prefix for the fields only a kept verdict carries (`sections`, `badge_label`,
- * `prune_neighbors`), so each field states in its own describe that an `end_branch` submit omits it.
+ * `prune_neighbors`), so each field states in its own describe its requirements.
  */
 const KEPT_VERDICT_ONLY = 'Only with analyze or passthrough: ';
 
 /** Requirement prefix for `summary` and `sections`, which a kept verdict must carry. */
-const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough; omit with end_branch. ';
+const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough. ';
 
 /**
  * Single source for the `prune_neighbors` field describe text, shared by the strict per-mode
- * schemas and the permissive registered union so the two cannot drift.
+ * schemas and the permissive participant union so the two cannot drift.
  */
 export const PRUNE_NEIGHBORS_DESCRIPTION =
-  KEPT_VERDICT_ONLY + 'removes a neighbor that is neither visited nor queued, and whatever only it leads to, based on this node\'s SQL alone; '
-  + 'use it for writes this node makes that nothing reads.';
+  'Name each open neighbor this node\'s SQL shows is off the path; that neighbor and whatever only it leads to are removed. '
+  + 'An unnamed open neighbor is visited. The focus stays on the graph, including when every neighbor is named (a dead end).';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
@@ -473,12 +477,12 @@ const PruneNeighborSchema = z.object({
 
 /**
  * Single source for the `questions` field describe text, shared by the strict per-mode schemas and
- * the permissive registered union.
+ * the permissive participant union.
  */
 const QUESTIONS_DESCRIPTION =
-  KEPT_VERDICT_ONLY + 'a specific check for one neighbor (a rule, filter or calculation to establish there). '
-  + 'Every open neighbor you do not prune is visited next. '
-  + 'A question on a neighbor you prune is not checked in this run; it is offered to the user as a follow-up.';
+  KEPT_VERDICT_ONLY + 'Provide a self-contained subquestion for each eligible in-scope neighbor kept for analysis or passthrough, tied to the user question. '
+  + 'For an eligible out-of-scope neighbor, optionally propose a relevant follow-up; it is deferred until scope approval. '
+  + 'No questions to visited or pruned neighbors, or neighbors named in prune_neighbors.';
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
@@ -486,19 +490,13 @@ const NeighborQuestionSchema = z.object({
   question: z.string().min(1).describe('The check, self-contained: name the neighbor and what to establish there.'),
 }).strict();
 
-/**
- * Single source for the end_branch row-decision condition — reused by both the `reason` describe
- * text and {@link HopVerdictSchema}'s `end_branch` clause, so the "row decision" definition is
- * stated once, not restated per site.
- */
-const END_BRANCH_ROW_DECISION_CONDITION =
-  'no tracked column and no row decision reaches the start object through this node; '
-  + 'a statement that filters, inserts, updates or deletes rows of a table on the path is a row decision.';
+const CtNeighborQuestionSchema = NeighborQuestionSchema.extend({
+  caller_context: z.object({ node: z.string().min(1), col: z.string().min(1) }).strict().optional().describe('For a column-trace function investigation, declare the real current caller output whose contribution its supplied SQL must establish. The caller SQL is supplied at the function hop to bind actual arguments; this declaration creates no column edge or function column.'),
+}).strict();
 
-/** Single source for the `reason` describe text of an `end_branch` submit, in BB and CT. */
-const END_BRANCH_REASON_DESCRIPTION =
-  'Required with end_branch; omit with a kept verdict. Why '
-  + END_BRANCH_ROW_DECISION_CONDITION;
+/** Single source for the `reason` describe text. The served verdicts do not use it. */
+const IGNORED_REASON_DESCRIPTION =
+  'Ignored on analyze and passthrough. Omit it.';
 
 /**
  * States a content cap in the JSON schema the model reads (`maxLength` / `maxItems`) without
@@ -535,7 +533,7 @@ export const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
 
 /**
  * Single source for the `badge_label` describe text, shared by the strict per-mode
- * `submit_findings` schemas and the permissive registered union so the two never restate the
+ * `submit_findings` schemas and the permissive participant union so the two never restate the
  * same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere
  * else: `badge_label` is a per-hop tool field, not template-governed content.
  */
@@ -554,14 +552,11 @@ const ColumnRefSchema = z.object({
   node: z.string(),
   col: z.string(),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
-    'How THIS upstream column\'s value reaches out_col, judged end to end: ignore intermediate copies into ' +
-    'temp tables or variables, and list every class this column\'s own role proves — usually one. Omit the ' +
-    'field entirely when the DDL does not determine it; never guess. pass_through: out_col is this column\'s ' +
-    'value unchanged (rename, SELECT *, synonym, straight copy). compute: out_col is an expression over this ' +
-    'column (formula, CASE, COALESCE, cast, concat, string/date function). aggregate: this column is ' +
-    'summarised into out_col (SUM/COUNT/MIN/MAX, GROUP BY, window function, PIVOT). combine: this column is ' +
-    'itself a join key, or is merged by UNION/EXCEPT/INTERSECT, APPLY, UNPIVOT. filter: this column itself ' +
-    'appears in a WHERE, HAVING, join ON predicate, TOP or DISTINCT.',
+    'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
+    'pass_through: unchanged value. compute: expression input. aggregate: value summarised by an aggregate. ' +
+    'combine: join/set-combination input or grouping/partition key. filter: predicate or ordering key ' +
+    'selecting contributing rows. Grouping and selection keys are not aggregate value inputs; ' +
+    'display-only sorting contributes no role.',
   ),
   note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(
     'The deciding expression, at most ~12 words.',
@@ -571,49 +566,48 @@ const ColumnRefSchema = z.object({
 const ColumnFlowWritesToObject = z.object({
   node: z.string(),
   col: z.string(),
-}).meta({ additionalProperties: false });
+}).strict();
 
 /**
- * One `column_flow` entry. Served closed (`additionalProperties: false`); a surplus key the model
- * still sends is stripped by Zod's default object parse and logged by the model port.
+ * One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys.
  */
-const OUT_COL_DESCRIPTION = 'A column from the `<column_trace>` Active columns list, as named on this node; for a procedure, the column it writes.';
+const OUT_COL_DESCRIPTION = 'Output column resolved from this hop\'s column task; for a procedure, the column it writes to writes_to.';
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
-  writes_to: ColumnFlowWritesToObject.nullish().describe('Procedure focus: the written target as an object {"node": table id, "col": column name}; null when none.'),
+  writes_to: ColumnFlowWritesToObject.nullish().describe('Actual destination object and column for this procedure\'s output, as declared by its SQL; null when it writes no table.'),
+  returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
-    'Two states by focus: at a bodied focus, the real upstream columns the node READS that contribute to out_col ' +
-    '(never columns it computes or writes out); at a focus with no body of its own, continuation — name the neighbours ' +
-    'on this focus\'s carrier side (the nodes that write it on an upstream trace, the nodes that read it on a downstream ' +
-    'trace), carrying the tracked column unchanged; use [] only when out_col terminates here.',
+    'At a bodied focus, real source columns determining out_col’s value or contributing rows/groups, ' +
+    'including caller-bound inputs and grouping, partition and row-selection keys; exclude display-only ' +
+    'sorting and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
+    'At a bodyless focus, follow carrier-side neighbours (writers upstream, readers downstream) with the ' +
+    'tracked column unchanged; [] only when out_col terminates here.',
   ),
-}).meta({ additionalProperties: false });
+}).strict();
 
 
 /**
- * `verdict` field for `submit_findings`: one definition set for BB, CT and the registered union.
+ * `verdict` field for `submit_findings`: one definition set for BB, CT and the participant union.
  *
  * @remarks
- * CT is BB plus columns, so the verdict words mean the same in both modes. `end_branch` is the one
- * home of the cut's contract; its payload shape (reason only) is enforced by
- * {@link refineSubmitFindingsShape}.
+ * CT is BB plus columns, so the verdict words mean the same in both modes. The focus is never
+ * removed: a neighbor off the path is named in `prune_neighbors`.
  */
-const HopVerdictSchema = z.enum(['analyze', 'passthrough', 'end_branch']).describe(
+const HopVerdictSchema = z.enum(['analyze', 'passthrough']).describe(
   'analyze: transforms data on the answer path (a calculation, condition, filter, join or status change). '
   + 'passthrough: on the path, handing values on unchanged (a stored table, SELECT *, a synonym). '
-  + 'end_branch: Removes this node and every node reachable only through it from the result, for the rest of this run; '
-  + 'use only when ' + END_BRANCH_ROW_DECISION_CONDITION + ' Never the start object.',
+  + 'The focus stays. Name off-path neighbors in prune_neighbors; naming every neighbor leaves this node visible as a dead end.',
 );
 
-const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none, and always [] with verdict end_branch. `upstream_columns` names what each neighbor carries.';
+const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries.';
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
-/** Single source for the `sections` describe text, shared by the per-mode schemas and the registered union. */
+/** Single source for the `sections` describe text, shared by the per-mode schemas and the participant union. */
 const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + 'Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
 
-/** Single source for the `summary` describe text, shared by the per-mode schemas and the registered union. */
+/** Single source for the `summary` describe text, shared by the per-mode schemas and the participant union. */
 const SUMMARY_DESCRIPTION =
   KEPT_VERDICT_REQUIRED + 'One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
 
@@ -622,7 +616,7 @@ const SUMMARY_DESCRIPTION =
  *
  * @remarks
  * Flat by design: a top-level `anyOf` defeats constrained decoding, so the verdict-dependent shape
- * (a kept verdict carries sections and summary and ignores `reason`, `end_branch` requires `reason` and ignores summary, sections and badge_label) is stated in
+ * (it carries sections and summary) is stated in
  * the describes and enforced by {@link refineSubmitFindingsShape} at parse.
  */
 const HopFindingBaseSchema = z.object({
@@ -635,7 +629,7 @@ const HopFindingBaseSchema = z.object({
     .describe(BADGE_LABEL_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
-  reason: z.string().optional().describe(END_BRANCH_REASON_DESCRIPTION),
+  reason: z.string().optional().describe(IGNORED_REASON_DESCRIPTION),
   /**
    * One string per fired `*_capture` template, keyed by angle. One key (`business` /
    * `technical` classification) or two (`both`) — required with a kept verdict. Declared last:
@@ -645,7 +639,7 @@ const HopFindingBaseSchema = z.object({
   sections: CapturedSectionsSchema.optional().describe(SECTIONS_DESCRIPTION),
 }).strict();
 
-const { sections, summary, badge_label, prune_neighbors, questions, reason } = HopFindingBaseSchema.shape;
+const { sections, summary, badge_label, prune_neighbors, reason } = HopFindingBaseSchema.shape;
 
 /**
  * CT form: the BB form plus `column_flow` (served-required — always in the served `required` list,
@@ -661,7 +655,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
     summary,
     badge_label,
     prune_neighbors,
-    questions,
+    questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
     reason,
     sections,
   })
@@ -675,57 +669,20 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
  */
 export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema> };
 
-/** Fields that act on a kept verdict and are therefore refused with `end_branch` — `column_flow` has its own check, since CT serves it always-present. */
-const END_BRANCH_EXCLUDED_FIELDS = ['prune_neighbors', 'questions'] as const;
-
 /**
- * Enforces the verdict-dependent shape of one flat `submit_findings` payload.
+ * Enforces the fresh kept shape of one flat `submit_findings` payload.
  *
  * @remarks
- * `end_branch` requires `reason` and refuses the fields that act on a kept verdict; `summary`,
- * `sections` and `badge_label` are accepted and dropped by {@link toHopFinding}. A kept verdict carries `sections`
- * and `summary` (and, in CT, `column_flow`); a `reason` sent with it is accepted and dropped by
- * {@link toHopFinding}, as `summary` and `sections` are on `end_branch`. `summary` may be empty only when a held draft
- * exists (`fresh` unset), and the engine keeps the held summary. A fresh kept verdict under a `both`
- * lock that sends a non-empty `sections` names each missing angle in the same parse as any shape
- * fault; `end_branch` sections are inert and never checked. An invalid or missing `verdict` is
- * reported once by its own enum issue and skips every verdict-dependent check. Each fault is one
- * issue on its own path, so the rejection names the exact field to drop or add. `column_flow` is
- * served-required in CT (always in the served `required` list, never omissible at the schema level)
- * so its own content check runs for every verdict rather than joining
- * {@link END_BRANCH_EXCLUDED_FIELDS}'s omission-only check.
+ * A kept verdict carries `sections` and `summary` (and, in CT, `column_flow`). A `reason` sent
+ * with it is accepted and dropped by {@link toHopFinding}. `summary` may be empty only when a held
+ * draft exists (`fresh` unset), and the engine keeps the held summary. A fresh kept verdict under
+ * a `both` lock that sends a non-empty `sections` names each missing angle in the same parse as any
+ * shape fault. An invalid or missing `verdict` is reported once by its own enum issue and skips
+ * every verdict-dependent check. Each fault is one issue on its own path, so the rejection names
+ * the exact field to drop or add.
  */
-function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, mode: 'bb' | 'ct', fresh: boolean, classification?: ClassificationValue): void {
+function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, fresh: boolean, classification?: ClassificationValue): void {
   if (typeof value !== 'object' || value === null || !HopVerdictSchema.safeParse(value.verdict).success) return;
-  const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
-  if (value.verdict === 'end_branch') {
-    for (const field of END_BRANCH_EXCLUDED_FIELDS) {
-      if (value[field] == null) continue;
-      ctx.addIssue({
-        code: 'custom',
-        path: [field],
-        message: 'not accepted with verdict end_branch; verdict analyze or passthrough keeps the node.',
-        params: { hint: `Omit ${field}.` },
-      });
-    }
-    if (mode === 'ct' && (Array.isArray(value.column_flow) ? value.column_flow.length : 0) > 0) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['column_flow'],
-        message: 'not accepted with verdict end_branch; verdict analyze or passthrough keeps the node.',
-        params: { hint: 'Send column_flow: [].' },
-      });
-    }
-    if (!reason) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['reason'],
-        message: 'required with verdict end_branch.',
-        params: { hint: 'Send reason: one sentence on why nothing on the answer path runs through this node.' },
-      });
-    }
-    return;
-  }
   const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
   const bothAnglesRequired = fresh && keptAngles?.length === CLASSIFICATION_KEPT_ANGLES.both.length;
   if (keptAngles?.length === 1 && typeof value.sections === 'object' && value.sections !== null) {
@@ -774,18 +731,15 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
  * consumes.
  *
  * @remarks
- * Called exactly once, by `executeSubmitFindings`, on the payload the tool-attempt boundary already
- * parsed against the served {@link submitFindingsSchemaForMode} schema — never inside the schema
+ * Called exactly once, by `executeSubmitFindings`, on the payload the handler has admitted
+ * against the served {@link submitFindingsSchemaForMode} schema — never inside the schema
  * itself, so the schema's output type stays equal to its input type. The boundary decides
  * `valid`/`invalid`; only the handler converts.
  *
  * @param value - A payload {@link refineSubmitFindingsShape} accepted.
- * @returns The `end_branch` or kept variant, carrying exactly that variant's fields.
+ * @returns The kept finding, carrying exactly the kept fields.
  */
-export function toHopFinding(value: FlatSubmitFindings): HopFinding {
-  if (value.verdict === 'end_branch') {
-    return { focus_node_id: value.focus_node_id, verdict: 'end_branch', reason: value.reason ?? '' };
-  }
+export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
   const kept: HopFindingKept = {
     focus_node_id: value.focus_node_id,
     verdict: value.verdict,
@@ -810,24 +764,37 @@ export function toHopFinding(value: FlatSubmitFindings): HopFinding {
  */
 function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
-  mode: 'bb' | 'ct',
   fresh: boolean,
   classification?: ClassificationValue,
 ): z.ZodType<FlatSubmitFindings> {
-  return schema
-    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, mode, fresh, classification))) as z.ZodType<FlatSubmitFindings>;
+  const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
+  const source = fresh
+    ? schema.extend({
+      sections: schema.shape.sections.unwrap().meta(keptAngles
+        ? { required: [...keptAngles] }
+        : { anyOf: CLASSIFICATION_KEPT_ANGLES.both.map(angle => ({ required: [angle] })) })
+        .optional().describe(schema.shape.sections.description ?? ''),
+    }).strict()
+    : schema;
+  const validated = source
+    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification))) as z.ZodType<FlatSubmitFindings>;
+  if (!fresh) return validated;
+  const required = Object.entries(schema.shape)
+    .filter(([, field]) => !field.isOptional())
+    .map(([key]) => key);
+  return validated.meta({ required: [...required, 'summary', 'sections'] });
 }
 
 /**
  * BB-mode submit_findings input.
  *
  * @remarks
- * The node's self-status is `analyze` (carries lineage), `passthrough` (kept, not a key transform),
- * or `end_branch` (cut: the node and every open node reachable only through it leave the result).
- * A kept verdict enqueues every open neighbour not named in `prune_neighbors`; `questions` attach a
- * check to one of them. BB does not carry CT-only `column_flow`.
+ * The node's self-status is `analyze` (carries lineage) or `passthrough` (kept, not a key transform).
+ * The focus stays. Every open neighbour not named in `prune_neighbors` is enqueued; `questions`
+ * attach a check to one of them. Naming every neighbor leaves the focus visible as a dead end.
+ * BB does not carry CT-only `column_flow`.
  */
-export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindingBaseSchema, 'bb', true);
+export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindingBaseSchema, true);
 
 /**
  * CT-mode submit_findings input.
@@ -837,7 +804,7 @@ export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindi
  * contract is documented on {@link ColumnFlowSchema}, and its `upstream_columns` are the carry each
  * enqueued neighbour receives.
  */
-export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindingCtBaseSchema, 'ct', true);
+export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindingCtBaseSchema, true);
 
 /** Memoized per (mode, classification) narrowed `submit_findings` schemas built by {@link submitFindingsSchemaForMode}. */
 const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>();
@@ -851,33 +818,28 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  * {@link refineSubmitFindingsShape} whose hint says to fold that key's content into the kept angle;
  * `end_branch` sections are inert, so the key is never refused there. The fold guidance also lives on the kept key's
  * description, where the model reads it before authoring.
- * `both` keeps both angles, each key optional so `{}` stays valid with `end_branch`; a fresh
- * submission additionally serves both keys in the JSON Schema `required` list (the validator stays
- * lenient, so an `end_branch` sending `{}` is never refused), and a retry with a held draft names
+ * `both` keeps both angles, each key optional; a fresh
+ * kept submission serves both keys through {@link finalizeSubmitFindingsSchema}'s conditional
+ * requiredness, so a retry with a held draft names
  * only the angle it changes. {@link refineSubmitFindingsShape} refuses `{}` on a
  * kept verdict of a fresh submission, and {@link validateSectionsAgainstClassification} requires
  * both angles of a kept verdict at the handler, after held and archived angles are counted;
  * {@link refineSubmitFindingsShape} names a missing angle of a fresh kept verdict in the same parse
- * as a shape fault and never checks `end_branch` sections. The parent
+ * as a shape fault . The parent
  * field is served optional and non-nullable: {@link refineSubmitFindingsShape} accepts an `end_branch`
  * whether `sections` is omitted, `{}` or present, and requires it on a fresh kept verdict;
  * {@link toHopFinding} drops it.
  *
  * @param classification - The locked classification this dispatch's schema narrows to.
- * @param freshSubmission - No held draft and no archived angle: the `both` keys carry no held-body wording.
  * @returns The sections object for that classification. A one-angle lock carries only that key;
  * `both` carries both keys, optional.
  */
 function capturedSectionSchemaForClassification(
   classification: ClassificationValue,
-  freshSubmission: boolean,
 ): z.ZodType<CapturedSectionsWire> {
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
   if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
     const plainBody = z.string().optional();
-    if (freshSubmission) {
-      return z.strictObject({ business: plainBody, technical: plainBody }).meta({ required: [...CLASSIFICATION_KEPT_ANGLES.both] });
-    }
     return z.strictObject({ business: plainBody, technical: plainBody });
   }
   const [onlyAngle] = kept;
@@ -885,8 +847,7 @@ function capturedSectionSchemaForClassification(
   const body = z.string().optional().describe(
     `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
   );
-  return z.looseObject({ [onlyAngle]: body })
-    .meta({ additionalProperties: false }) as unknown as z.ZodType<CapturedSectionsWire>;
+  return z.strictObject({ [onlyAngle]: body }) as unknown as z.ZodType<CapturedSectionsWire>;
 }
 
 /**
@@ -894,12 +855,35 @@ function capturedSectionSchemaForClassification(
  *
  * @remarks
  * `outCols` is the hop's active tracked columns when the validator accepts nothing else as
- * `out_col` (an upstream trace), `null` when it accepts any focus column. `writesTo` is true only
+ * `out_col` (an upstream trace), `[]` when no tracked local output is eligible, and `null` when it accepts any focus column. `writesTo` is true only
  * for a procedure focus, the one node that writes a column elsewhere.
  */
 export interface SubmitFindingsHopColumns {
   readonly outCols: readonly string[] | null;
   readonly writesTo: boolean;
+  readonly returnTargets?: readonly { readonly node: string; readonly col: string }[];
+  /** Neighboring functions eligible for an explicit current-caller output investigation. */
+  readonly callerContextNodeIds?: readonly string[];
+  /**
+   * Sorted ids the loaded store metadata admits as `upstream_columns` sources: focus neighbors
+   * (and read suppliers of its declared scalar callers) that carry stored columns or hold the
+   * procedure/external missing-metadata fallback. Columnless scalar functions are absent; they
+   * stay eligible in `questions` via {@link SubmitFindingsHopColumns.callerContextNodeIds}.
+   */
+  readonly columnSourceNodeIds?: readonly string[];
+}
+
+/**
+ * Advertises the hop's metadata-eligible contributor ids as the served `node` enum while
+ * admitting the equivalent spellings ({@link resolveModelNodeId}) the engine itself resolves,
+ * so normalized object references keep passing the boundary a columnless function cannot.
+ */
+function columnSourceNodeSchema(sources: readonly string[]) {
+  const resolvable = new Map(sources.map(id => [id, id] as const));
+  return z.string().refine(
+    value => resolveModelNodeId(value, resolvable) !== null,
+    { message: 'upstream_columns[].node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
+  ).meta({ enum: [...sources] });
 }
 
 /** Projects {@link ColumnFlowSchema} onto one hop: `out_col` as the hop's tracked-column enum, `writes_to` only for a procedure focus. */
@@ -908,12 +892,29 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const outCol = first === undefined
     ? ColumnFlowEntrySchema.shape.out_col
     : z.enum([first, ...rest]).describe(OUT_COL_DESCRIPTION);
-  const shape = { ...ColumnFlowEntrySchema.shape, out_col: outCol };
+  const upstreamColumns = hop.columnSourceNodeIds
+    ? z.array(ColumnRefSchema.extend({ node: columnSourceNodeSchema(hop.columnSourceNodeIds) }).strict()).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
+    : ColumnFlowEntrySchema.shape.upstream_columns;
+  const shape = {
+    out_col: outCol,
+    upstream_columns: upstreamColumns,
+    writes_to: ColumnFlowEntrySchema.shape.writes_to.unwrap().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
+  };
+  if (hop.returnTargets?.length) {
+    const destinations = hop.returnTargets.map(target => z.object({
+      out_col: z.literal(target.col),
+      returns_to: z.object({ node: z.literal(target.node), col: z.literal(target.col) }).strict(),
+      upstream_columns: shape.upstream_columns,
+    }).strict());
+    const entry = destinations.length === 1 ? destinations[0]! : z.union(destinations as [typeof destinations[number], typeof destinations[number], ...Array<typeof destinations[number]>]);
+    return z.array(entry).describe('One entry per qualified caller_output_target; returns_to is required. Read the supplied caller SQL and function body to identify real contributors; [] upstream only when the target terminates locally.');
+  }
   const entry = (hop.writesTo
     ? z.object(shape)
     : z.object({ out_col: shape.out_col, upstream_columns: shape.upstream_columns })
-  ).meta({ additionalProperties: false });
-  return z.array(entry).describe(COLUMN_FLOW_DESCRIPTION);
+  ).strict();
+  const flow = z.array(entry).describe(COLUMN_FLOW_DESCRIPTION);
+  return hop.outCols?.length === 0 ? flow.max(0) : flow;
 }
 
 /**
@@ -940,8 +941,9 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  * @param classification - Locked output classification; omitted callers get the mode-only schema.
  * @param freshSubmission - Refuse `{}` sections and an empty `summary` on a kept verdict; unset
  * so a held draft or an archived angle still validates.
- * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col` and offers
- * `writes_to` for a procedure focus alone.
+ * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col`, offers
+ * `writes_to` for a procedure focus alone, and — when column-source metadata is supplied —
+ * restricts `upstream_columns[].node` to the hop's column-carrying sources.
  * @returns The strict provider schema for that mode and classification. A pure validator — its
  * output is the same flat, angle-keyed shape it accepts; {@link toHopFinding} is the caller's own
  * separate step onto the {@link HopFinding} union.
@@ -952,7 +954,7 @@ export function submitFindingsSchemaForMode(
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
 ): z.ZodType<FlatSubmitFindings> {
-  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}` : '';
+  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}` : '';
   if (!classification && !hopKey) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
@@ -961,19 +963,97 @@ export function submitFindingsSchemaForMode(
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
   if (hopKey && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
+  if (mode === 'ct' && hop?.callerContextNodeIds) {
+    const [first, ...rest] = hop.callerContextNodeIds;
+    const question = first === undefined ? NeighborQuestionSchema : z.union([
+      NeighborQuestionSchema,
+      CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NeighborQuestionSchema.shape.nodeId.description ?? '') }),
+    ]);
+    narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
+  }
   if (classification) {
     const kept = CLASSIFICATION_KEPT_ANGLES[classification];
     const sectionsDescribe = kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
       ? KEPT_VERDICT_REQUIRED + 'Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
       : `${KEPT_VERDICT_REQUIRED}Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`;
-    const narrowedSections = capturedSectionSchemaForClassification(classification, freshSubmission)
+    const narrowedSections = capturedSectionSchemaForClassification(classification)
       .optional()
       .describe(sectionsDescribe);
     narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
   }
-  const schema = finalizeSubmitFindingsSchema(narrowed, mode, freshSubmission, classification);
+  const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification);
   submitFindingsSchemaCache.set(cacheKey, schema);
   return schema;
+}
+
+/**
+ * Validates the engine's internal finding representation against the current hop contract.
+ * Shares field schemas and verdict requirements with wire admission while retaining section arrays.
+ * No normalization, held-content merge or engine mutation occurs here.
+ */
+function internalKeptFindingSchema(
+  mode: 'bb' | 'ct',
+  classification?: ClassificationValue,
+  freshSubmission = false,
+  hop?: SubmitFindingsHopColumns,
+  requireColumnFlow = true,
+) {
+  const base = mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema;
+  const angles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : CLASSIFICATION_KEPT_ANGLES.both;
+  const section = z.object({ angle: z.enum(angles), text: z.string() }).strict();
+  const flow = hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
+  return base.omit({ reason: true }).extend({
+    verdict: z.enum(['analyze', 'passthrough']),
+    summary: HopFindingBaseSchema.shape.summary.unwrap(),
+    sections: z.array(section),
+    ...(mode === 'ct' ? { column_flow: requireColumnFlow ? flow : flow.optional() } : {}),
+  }).strict().superRefine((value, ctx) => {
+    const seen = new Set<string>();
+    value.sections.forEach((entry, index) => {
+      if (seen.has(entry.angle)) ctx.addIssue({ code: 'custom', path: ['sections', index, 'angle'], message: 'Each capture angle occurs once.' });
+      seen.add(entry.angle);
+    });
+    refineSubmitFindingsShape({ ...value, sections: Object.fromEntries(value.sections.map(entry => [entry.angle, entry.text])) } as FlatSubmitFindings, ctx, freshSubmission, classification);
+  });
+}
+
+/** Validates restorable held findings using the same fields as commit, without requiring resent CT flow. */
+export function heldHopFindingSchemaForMode(mode: 'bb' | 'ct'): z.ZodType<HopFindingKept> {
+  return internalKeptFindingSchema(mode, undefined, false, undefined, false) as z.ZodType<HopFindingKept>;
+}
+
+/** Validates a typed finding before held merge or mutation, sharing wire fields and verdict checks. */
+export function validateHopSubmissionShape(
+  input: unknown,
+  mode: 'bb' | 'ct',
+  classification?: ClassificationValue,
+  freshSubmission = false,
+  hop?: SubmitFindingsHopColumns,
+): { readonly ok: true; readonly data: HopSubmission } | { readonly ok: false; readonly error: ToolRejection } {
+  const kept = internalKeptFindingSchema(mode, classification, freshSubmission, hop);
+  const schema = kept;
+  const parsed = schema.safeParse(input);
+  return parsed.success
+    ? { ok: true, data: parsed.data as HopSubmission }
+    : { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
+}
+
+/** Required call envelope retained by every held findings repair. */
+export const HELD_FINDING_CALL_ORDER =
+  'Resend the full call: always focus_node_id, verdict and every other required field; the failed field(s) corrected';
+
+/** The shared resend rule for a finding rejection whose schema-valid content remains held. */
+export function heldSubmissionRepairHint(held: HeldSubmissionParts): string {
+  const labels = [
+    ...(held.sections.length > 0 ? [`sections (${held.sections.join(', ')})`] : []),
+    ...(held.summary ? ['summary'] : []),
+    ...held.fields,
+  ].join(', ');
+  const omittable = [...(held.summary ? ['summary'] : []), ...held.fields];
+  return `Held: ${labels}. ${HELD_FINDING_CALL_ORDER}`
+    + (omittable.length > 0 ? `; omit ${omittable.join(', ')} to keep the held ${omittable.length > 1 ? 'values' : 'value'}` : '')
+    + '.'
+    + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '');
 }
 
 /**
@@ -1040,7 +1120,7 @@ export const SearchDdlInputSchema = z.object({
  *
  * @remarks
  * Mirrors the AI-authored `PresentResultInput` contract (`src/ai/tools/handlers/presentResult.ts`)
- * for the single registered tool. The runtime handler (`toolProvider.presentResult`)
+ * for the participant-internal tool. The runtime handler (`toolProvider.presentResult`)
  * still consumes the structural `PresentResultInput` TS type; this Zod object exists so
  * the model-facing JSON Schema has one generated source under the drift guard. `angle`
  * on a section is advisory capture metadata carried in the manifest.
@@ -1054,12 +1134,11 @@ export const PRESENT_RESULT_TITLE_MAX = 120;
  * which states its role and deliberately no character target.
  */
 export const PRESENT_RESULT_SECTION_LABEL_MAX = 90;
-/** Hard cap on a `highlight_groups[].label`; its soft target is the `highlights` output template. */
+/**
+ * Hard boundary that keeps graph legend labels readable in the GUI. The softer authoring target is
+ * owned by the `highlights` output template.
+ */
 export const PRESENT_RESULT_HIGHLIGHT_LABEL_MAX = 60;
-/** Max color groups on one rendered result — a small cap keeps the graph legend scannable. */
-export const PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX = 5;
-const HIGHLIGHT_GROUPS_OVER_MAX = `highlight_groups exceeds maximum of ${PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX}`;
-
 /**
  * Identity of a section label: whitespace collapsed, trimmed, case-folded. Two labels with the same
  * key name the same section, in a submission, a repair patch and a committed report alike.
@@ -1101,6 +1180,7 @@ function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>
         code: 'custom',
         path: [index, 'label'],
         message: `Duplicate section label "${label}" — each final label must map to exactly one section text`,
+        params: { hint: 'Send one entry per section label. To correct a held section, resend its label with corrected content and omit remove; use remove: true only to delete that section.' },
       });
     } else {
       seen.add(key);
@@ -1172,7 +1252,7 @@ const NotesModelSchema = z.array(NoteSchema)
  * Schema for a visual highlight group, grouping nodes by a shared role or status.
  */
 const HighlightGroupSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX, overLength(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX)).trim().min(1, 'Group label is required').describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
+  label: z.string().trim().min(1, 'Group label is required').max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX, overLength(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX)).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
   color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
@@ -1182,7 +1262,7 @@ const HighlightGroupSchema = z.object({
  * nodes it explains, and its detail body.
  */
 const PresentResultSectionSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX, overLength(PRESENT_RESULT_SECTION_LABEL_MAX)).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('Short heading naming the section\'s role, unique in the report; also the badge on every linked node.'),
+  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX, overLength(PRESENT_RESULT_SECTION_LABEL_MAX)).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
   node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
   text: z.string().trim().min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
 }, {
@@ -1196,11 +1276,17 @@ const PresentResultSectionSchema = z.object({
  * value under that label, so a repair that adds one node id never retypes a body the model cannot
  * see (the held-draft view shows labels and node ids only).
  */
-const PresentResultSectionPatchSchema = PresentResultSectionSchema.extend({
-  node_ids: PresentResultSectionSchema.shape.node_ids.optional(),
-  text: PresentResultSectionSchema.shape.text.optional().describe('Detail body for this section label.'),
-  remove: z.literal(true).optional().describe('true drops the held section under this label.'),
-});
+const PresentResultSectionDeletionSchema = z.object({
+  label: PresentResultSectionSchema.shape.label,
+  remove: z.literal(true).describe('true drops the held section under this label; omit replacement content.'),
+}).strict();
+const PresentResultSectionPatchSchema = z.union([
+  PresentResultSectionSchema.extend({
+    node_ids: PresentResultSectionSchema.shape.node_ids.optional(),
+    text: PresentResultSectionSchema.shape.text.optional().describe('Detail body for this section label.'),
+  }),
+  PresentResultSectionDeletionSchema,
+]);
 
 /** Memoized per block count: a fresh schema per request is a new identity, which defeats `toModelJsonSchema`'s cache. */
 const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas>>();
@@ -1225,11 +1311,10 @@ function buildPreviewSchemas(blockCount: number) {
       ? 'A section holds only label, node_ids and start. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
       : undefined,
   }).strict();
-  const patch = section.extend({
-    node_ids: PresentResultSectionSchema.shape.node_ids.optional(),
-    start: start.optional(),
-    remove: z.literal(true).optional().describe('true drops the held section under this label.'),
-  });
+  const patch = z.union([
+    section.extend({ node_ids: PresentResultSectionSchema.shape.node_ids.optional(), start: start.optional() }),
+    PresentResultSectionDeletionSchema,
+  ]);
   const model = PresentResultModelSchema.omit({
     summary: true,
     title: true,
@@ -1268,8 +1353,8 @@ export const PresentResultModelSchema = z.object({
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
-  highlight_groups: z.array(HighlightGroupSchema).min(1).max(PRESENT_RESULT_HIGHLIGHT_GROUPS_MAX, HIGHLIGHT_GROUPS_OVER_MAX).describe(
-    'REQUIRED, 1-5 groups. For zero-trace or single-node results, use color "target" on the origin/result node.'
+  highlight_groups: z.array(HighlightGroupSchema).min(1).describe(
+    'REQUIRED, at least 1 group. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
   sections: sectionList(PresentResultSectionSchema).describe(
     'Required final report sections, at least one. Every node analysed and captured this turn '
@@ -1326,6 +1411,8 @@ function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T)
  * @param retainable - Whether a committed report from this run exists to amend.
  * @param previewBlockCount - Served `answer_blocks` count; the preview stage's block ids are
  *   exactly `B1`..`B<count>`.
+ * @param highlightLabelIndexes - Held highlight entries whose labels alone may be replaced.
+ * @param sectionTextLeaves - Held section indexes and text leaves that alone may be replaced.
  * @returns The schema this stage offers the model.
  */
 export function presentResultSchemaForPhase(
@@ -1333,8 +1420,10 @@ export function presentResultSchemaForPhase(
   repairFields: readonly PresentResultRepairField[] | null = null,
   retainable = false,
   previewBlockCount = 0,
+  highlightLabelIndexes?: readonly number[],
+  sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount);
+  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionTextLeaves);
   if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
   const synthesis = phase === 'synthesis';
   const schema = retainable
@@ -1431,26 +1520,83 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * missing property. Several fields `superRefine` one rule: a patch naming none of them (only
  * `is_update`, or nothing) rejects at the Zod boundary with one issue per authorized field, so
  * `issuePaths` names the whole set instead of an empty patch re-running the held-draft validation.
- * Both ports `safeParse` against this exact schema object before dispatch.
+ * The receiving presentation handler admits raw arguments against this exact live schema; ports only decode transport arguments.
+ *
+ * @param fields - Held presentation fields authorized by the rejection.
+ * @param phase - Stage serving the repair schema.
+ * @param previewBlockCount - Number of engine-served preview blocks.
+ * @param highlightLabelIndexes - Highlight entries restricted to `{index, label}` leaf repair.
+ * @param sectionTextLeaves - Section entries restricted to indexed `label`/`text` leaf repair.
+ * @returns A strict schema for exactly the authorized repair transaction.
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
   phase?: string,
   previewBlockCount = 0,
+  highlightLabelIndexes?: readonly number[],
+  sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
 ): z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>> {
   const keys = [...new Set<PresentResultRepairField>(fields)].sort();
   const preview = phase === 'visual_preview';
-  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${keys.join(',')}`;
+  const labelIndexes = highlightLabelIndexes ? [...new Set(highlightLabelIndexes)].sort((left, right) => left - right) : undefined;
+  const sectionLeaves = sectionTextLeaves?.map(leaf => ({ index: leaf.index, fields: [...new Set(leaf.fields)].sort() }))
+    .sort((left, right) => left.index - right.index);
+  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
   const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
   const picked = PresentResultAuthorizableRepairSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultAuthorizableRepairSchema.shape, true>>,
   );
-  const staged = preview && keys.includes('sections')
+  let staged = (preview && keys.includes('sections')
     ? picked.extend({ sections: previewSchemas(previewBlockCount).patchSections })
-    : picked;
-  const declared = keys.length === 1
+    : picked) as z.ZodObject<z.ZodRawShape>;
+  if (labelIndexes) {
+    const entrySchemas = labelIndexes.map(index => z.object({
+      index: z.literal(index).describe('Zero-based index of the held highlight group named by the rejection.'),
+      label: HighlightGroupSchema.shape.label.describe('Replacement containing only this held group\'s short shared role or status, ending before any dash, colon, example or member list.'),
+    }).strict());
+    const entrySchema = entrySchemas.length === 1
+      ? entrySchemas[0]!
+      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
+    staged = staged.extend({
+      highlight_groups: z.array(entrySchema).length(labelIndexes.length).superRefine((entries, ctx) => {
+        const seen = new Set<number>();
+        for (const [entryIndex, entry] of entries.entries()) {
+          if (seen.has(entry.index)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Highlight label index ${entry.index} is duplicated.` });
+          }
+          seen.add(entry.index);
+        }
+      }).describe(`Correct only the held overlong highlight labels at zero-based indexes ${labelIndexes.join(', ')}. Send one {index, label} entry per listed index; colors, node_ids, other labels and group order remain held.`),
+    });
+  }
+  if (sectionLeaves) {
+    const entrySchemas = sectionLeaves.map(leaf => z.object({
+      index: z.literal(leaf.index).describe('Zero-based index of the held section named by the rejection.'),
+      ...(leaf.fields.includes('label') ? {
+        label: PresentResultSectionSchema.shape.label.describe('Corrected held section label; unique after trimming, whitespace collapse and lowercasing.'),
+      } : {}),
+      ...(leaf.fields.includes('text') ? {
+        text: PresentResultSectionSchema.shape.text.describe('Corrected held section body.'),
+      } : {}),
+    }).strict());
+    const entrySchema = entrySchemas.length === 1
+      ? entrySchemas[0]!
+      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
+    staged = staged.extend({
+      sections: z.array(entrySchema).length(sectionLeaves.length).superRefine((entries, ctx) => {
+        const seen = new Set<number>();
+        for (const [entryIndex, entry] of entries.entries()) {
+          if (seen.has(entry.index)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Section text index ${entry.index} is duplicated.` });
+          seen.add(entry.index);
+        }
+      }).describe(`Correct only rejected text leaves on held sections: ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Node links, other text and order remain held.`),
+    });
+  }
+  const declared = labelIndexes || sectionLeaves
+    ? staged.required(Object.fromEntries(keys.map(key => [key, true])) as Record<string, true>)
+    : keys.length === 1
     ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
     : staged;
   const strict = declared.strict().superRefine((data, ctx) => {
@@ -1505,25 +1651,25 @@ const PresentResultRetainingSynthesisModelSchema = withRetainableSections(Presen
  * Model-facing `lineage_submit_findings` input schema (the permissive BB∪CT superset).
  *
  * @remarks
- * VS Code registers ONE `lineage_submit_findings` tool, so the model sees ONE schema —
- * the union of the BB and CT contracts (verdict `analyze | passthrough | end_branch`, `prune_neighbors`,
- * `questions` and `column_flow`). Instruction-plan compilation advertises the strict mode-and-classification-locked
+ * The participant tool catalog retains the union of the BB and CT contracts (verdict
+ * `analyze | passthrough`, `prune_neighbors`, `questions` and `column_flow`).
+ * Instruction-plan compilation advertises the strict mode-and-classification-locked
  * schema (`submitFindingsSchemaForMode`) immediately before model dispatch, and the handler validates
- * the payload against that same contract, verdict shape included. This is the model-facing source the drift guard pins
- * against `package.json`; it is not a second hand-authored JSON Schema.
+ * the payload against that same contract, verdict shape included. This is the model-facing
+ * source used by `TOOL_DEFS`; the tool is dispatched internally and is not registered with VS Code.
  */
 export const SubmitFindingsModelSchema = z.object({
   focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
   verdict: HopVerdictSchema,
   summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
-  questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
+  questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
   badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
-  reason: z.string().optional().describe(END_BRANCH_REASON_DESCRIPTION),
+  reason: z.string().optional().describe(IGNORED_REASON_DESCRIPTION),
   sections: CapturedSectionsSchema.optional().describe(SECTIONS_DESCRIPTION),
 }).strict();
 
@@ -1546,6 +1692,10 @@ export function parseToolInput<T extends z.ZodType>(
   | { readonly ok: true; readonly data: z.output<T> }
   | { readonly ok: false; readonly error: ToolRejection } {
   const parsed = schema.safeParse(input);
-  if (parsed.success) return { ok: true, data: parsed.data };
+  if (parsed.success) {
+    const returnFieldError = droppedScalarReturnFieldError(input, parsed.data);
+    if (returnFieldError) return { ok: false, error: rejectionFromZodError(returnFieldError, { code: REJECTION_CODES.invalidInput, input, schema }) };
+    return { ok: true, data: parsed.data };
+  }
   return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
 }

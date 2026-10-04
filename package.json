@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse databases",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -908,9 +908,15 @@
     "test:bare-environment": "vscode-test --label bare-environment",
     "test:tools": "vscode-test --label tools",
     "test:participant-turn": "vscode-test --label participant-turn",
+    "test:ai:smoke": "npm run pretest:integration && vscode-test --config .vscode-test.ai.mjs",
+    "test:gui:host": "node tests/tools/gui-test-host.mjs",
+    "test:gui:smoke": "node tests/tools/playwright-smoke.mjs",
     "package": "vsce package --no-dependencies",
     "gate": "node tests/tools/gate.mjs",
-    "postinstall": "node scripts/repair-langsmith-stub.mjs"
+    "postinstall": "node scripts/repair-langsmith-stub.mjs",
+    "test:scale": "node tests/tools/run-vitest.mjs run --config tests/scale/vitest.config.ts",
+    "test:ai:headless": "node tests/tools/run-headless.mjs ai",
+    "test:db:smoke": "node tests/tools/run-headless.mjs db"
   },
   "dependencies": {
     "@dagrejs/dagre": "3.1.1",

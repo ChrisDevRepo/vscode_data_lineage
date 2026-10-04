@@ -11,6 +11,9 @@
  * The baseline carries no write edge `[ai].[spImportOrders] → [ai].[ActiveRegions]`: the procedure
  * only reads that table, inside `IN (SELECT …)` and `NOT EXISTS (SELECT …)` subqueries, so the two
  * objects form no cycle.
+ * The local three-part read in `dbo.fnExternal` contributes
+ * `[ext].[externalsales] → [dbo].[fnexternal]`: its `COUNT(*)` reads the loaded table
+ * through `[AdventureWorks2025].[ext].[ExternalSales]`, adding one edge and one island member.
  *
  * @remarks
  * One test per baseline dimension, deliberately. These assertions are not independent
@@ -102,6 +105,13 @@ describe('AdventureWorks baseline — analysis', () => {
 });
 
 describe('AdventureWorks baseline — named edges', () => {
+  it('keeps the local three-part COUNT(*) read of ExternalSales by fnExternal', () => {
+    const fn = model.nodes.find(node => node.id === '[dbo].[fnexternal]');
+    expect(fn?.bodyScript).toContain('FROM [AdventureWorks2025].[ext].[ExternalSales]');
+    expect(graph.hasEdge('[ext].[externalsales]', '[dbo].[fnexternal]')).toBe(true);
+    expect(graph.hasEdge('[dbo].[fnexternal]', '[ext].[externalsales]')).toBe(false);
+  });
+
   it('does not write [ai].[activeregions] from [ai].[spimportorders]', () => {
     expect(graph.hasEdge('[ai].[spimportorders]', '[ai].[activeregions]')).toBe(false);
   });

@@ -55,7 +55,7 @@ export function buildWorkerHopMessage(hop: HopContext | null, focusId: string): 
 function focusIsNonBodied(sess: AiSession, engine: NavigationEngine): boolean {
   const focusId = engine.currentFocus;
   if (!focusId) return false;
-  const node = sess.model?.nodes.find(n => n.id.toLowerCase() === focusId.toLowerCase());
+  const node = sess.model?.nodes.find(n => n.id === focusId);
   return node ? !SCRIPT_TYPES.has(node.type) : false;
 }
 

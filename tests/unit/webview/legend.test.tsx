@@ -27,6 +27,20 @@ function legendLeft(inset?: 'sidebar' | 'navigator' | 'rail'): string {
 }
 
 describe('Legend inset', () => {
+  it.each([false, true])('uses source casing to distinguish expanded schema twins (CS=%s)', cs => {
+    act(() => root.render(<Legend
+      schemas={['Sales', 'sales']}
+      identifierCaseSensitive={cs}
+      isExpandedSchemaViewActive
+      expandedSchemas={new Set(['Sales'])}
+    />));
+    const labels = [...host.querySelectorAll<HTMLElement>('[data-schema-state]')];
+    expect(labels.map(label => label.textContent)).toEqual(['Sales', 'sales']);
+    expect(labels.map(label => label.dataset.schemaState)).toEqual(['expanded', cs ? 'collapsed' : 'expanded']);
+    const colors = [...host.querySelectorAll<HTMLElement>('.w-4.h-4')].map(swatch => swatch.style.backgroundColor);
+    expect(colors[0] === colors[1]).toBe(!cs);
+  });
+
   it('clears the reopen rail so it never covers the collapsed navigator button', () => {
     expect(legendLeft('rail')).toBe('52px');
   });

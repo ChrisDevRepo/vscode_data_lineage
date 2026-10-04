@@ -79,6 +79,16 @@ describe('schemaColors', () => {
     expect(getSchemaColorFromMap('Sales', caseMap)).toBe(getSchemaColorFromMap('sales', caseMap));
   });
 
+  it.each([false, true])('uses the same source policy for palette creation and lookup (CS=%s)', cs => {
+    const schemas = ['Sales', 'sales'];
+    const map = createSchemaColorMap(schemas, true, cs);
+    expect(map.size).toBe(cs ? 2 : 1);
+    expect(getSchemaColorFromMap('Sales', map, cs) === getSchemaColorFromMap('sales', map, cs)).toBe(!cs);
+    expect([...createSchemaColorMap([...schemas].reverse(), true, cs)]).toEqual([...map]);
+    if (cs) expect(() => getSchemaColorFromMap('SALES', map, cs)).toThrow(/No schema color/);
+    else expect(getSchemaColorFromMap('SALES', map, cs)).toBe(getSchemaColorFromMap('Sales', map, cs));
+  });
+
   it('reuses palette colors in balance after exhaustion', () => {
     const fortyFive = [...THIRTY_SCHEMAS, ...Array.from({ length: 15 }, (_, i) => `extra_${i}`)];
     const colorCounts = new Map<string, number>();

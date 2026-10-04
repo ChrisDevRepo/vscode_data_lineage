@@ -1,9 +1,5 @@
 // @vitest-environment jsdom
-/**
- * Pins that an Object View over the render limit stays in Object View: nothing is drawn, the
- * render-limit notice offers "Open Schema View" as the user's choice, and choosing it shows Schema
- * View; with Schema View disabled in settings the notice offers no switch.
- */
+/** Object View render-limit guidance is a note; the user keeps control through filters/settings. */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -75,7 +71,7 @@ const openSchemaViewButton = () =>
   Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Open Schema View');
 
 describe('render limit in Object View', () => {
-  it('stays in Object View with nothing drawn and offers Schema View in the notice', async () => {
+  it('stays in Object View with nothing drawn and only filter/settings guidance', async () => {
     const { App } = await import('../../../src/components/App');
     act(() => {
       root.render(
@@ -93,10 +89,15 @@ describe('render limit in Object View', () => {
     expect(canvasProps?.flowNodes).toEqual([]);
     expect(canvasProps?.graphMode).toBe('full');
     expect(host.textContent).toContain('Render limit reached');
-    expect(openSchemaViewButton()).toBeDefined();
+    expect(openSchemaViewButton()).toBeUndefined();
+    expect(host.textContent).toContain('Reduce filter scope or adjust VS Code settings.');
+    expect(host.textContent).not.toContain('Reduce depth');
+    expect(host.textContent).not.toContain('Exit trace');
+    const title = Array.from(host.querySelectorAll('div')).find(el => el.textContent === 'Render limit reached');
+    expect(title!.parentElement!.querySelectorAll('button')).toHaveLength(0);
   }, 15000);
 
-  it('shows Schema View only when the user chooses it from the notice', async () => {
+  it('restores Object View after the user raises the render limit', async () => {
     const { App } = await import('../../../src/components/App');
     act(() => {
       root.render(
@@ -110,11 +111,12 @@ describe('render limit in Object View', () => {
     post({ type: 'rebuild-config', config: { ...aboveThreshold, renderLimit: 35 } });
     await settle();
 
-    act(() => openSchemaViewButton()!.click());
+    post({ type: 'rebuild-config', config: { ...aboveThreshold, renderLimit: 100 } });
     await settle();
-    expect(canvasProps!.graphMode).toBe('overview');
+    expect(canvasProps!.graphMode).toBe('full');
     expect(canvasProps!.flowNodes.length).toBeGreaterThan(0);
-    expect(canvasProps!.flowNodes.every((n) => n.type === 'schemaNode')).toBe(true);
+    expect(canvasProps!.flowNodes.every((n) => n.type !== 'schemaNode')).toBe(true);
+    expect(host.textContent).not.toContain('Render limit reached');
     expect(openSchemaViewButton()).toBeUndefined();
   }, 30000);
 

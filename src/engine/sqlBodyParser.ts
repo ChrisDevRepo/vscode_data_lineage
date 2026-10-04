@@ -14,9 +14,9 @@
  * @packageDocumentation
  */
 
-import { splitSqlName, stripBrackets } from '../utils/sql';
+import { normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../utils/sql';
 import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
-import { SQL_BLOCK_COMMENT, sqlCommentMask } from './shared/sqlSpans';
+import { SQL_BLOCK_COMMENT, SQL_CODE, sqlCommentMask } from './shared/sqlSpans';
 import {
   QUALIFIED_NAME, ANY_IDENT, KEYWORDS_RE,
   PASS1_CLEANSE_RE, TABLE_REF_WITH_ALIAS, FROM_TERMINATOR_RE
@@ -56,8 +56,6 @@ interface ParsedDependencies {
    * Tracked for cross-DB lineage analysis.
    */
   crossDbTargets: string[];
-  /** Extraction rules that stopped at {@link MAX_MATCHES_PER_RULE}; references past the cap are missing. */
-  cappedRules: string[];
 }
 
 /**
@@ -229,7 +227,7 @@ export function loadRules(config: RawParseRulesConfig): LoadRulesResult {
 
     const check = validateRule(raw, i);
     if (check.valid) {
-      validRules.push(raw as ParseRule);
+      validRules.push({ ...(raw as ParseRule) });
     } else {
       result.skipped.push(check.name);
       result.errors.push(check.error);
@@ -285,10 +283,10 @@ function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
 
   const body = sql.slice(bodyStart, bodyEnd);
 
-  const qual = body.match(new RegExp(`\\bFROM\\s+(${QUALIFIED_NAME.source})(?![\\w\\.])`, 'i'));
+  const qual = body.match(new RegExp(`\\bFROM\\s+(${QUALIFIED_NAME.source})(?![\\w\\.])`, 'iu'));
   if (qual) return qual[1];
 
-  const unqual = body.match(new RegExp(`\\bFROM\\s+(${ANY_IDENT.source})(?!\\s*\\.)(?!\\s*\\()`, 'i'));
+  const unqual = body.match(new RegExp(`\\bFROM\\s+(${ANY_IDENT.source})(?!\\s*\\.)(?!\\s*\\()`, 'iu'));
   if (unqual && !KEYWORDS_RE.test(unqual[1])) return unqual[1];
 
   return null;
@@ -305,9 +303,10 @@ function resolveCteFromTarget(sql: string, bodyStart: number): string | null {
  * @param sql - Cleaned SQL text.
  * @returns SQL text with CTE aliases substituted for base tables in UPDATE contexts.
  */
-function substituteCteUpdateAliases(sql: string): string {
-  const cteMap = new Map<string, string>(); // cteName (lowercase) → base table or CTE ref
-  const ctePattern = new RegExp(`(?:\\bWITH\\b|,)\\s*(${ANY_IDENT.source})\\s+AS\\s*\\(`, 'gi');
+function substituteCteUpdateAliases(sql: string, identifierCaseSensitive: boolean): string {
+  const aliasKey = (alias: string): string => normalizeColName(alias, identifierCaseSensitive);
+  const cteMap = new Map<string, string>(); // Catalog-policy CTE key → base table or CTE ref
+  const ctePattern = new RegExp(`(?:\\bWITH\\b|,)\\s*(${ANY_IDENT.source})\\s+AS\\s*\\(`, 'giu');
 
   let m: RegExpExecArray | null;
   while ((m = ctePattern.exec(sql)) !== null) {
@@ -315,14 +314,14 @@ function substituteCteUpdateAliases(sql: string): string {
     if (KEYWORDS_RE.test(cteName)) continue;
     const bodyStart = m.index + m[0].length;
     const ref = resolveCteFromTarget(sql, bodyStart);
-    if (ref) cteMap.set(cteName.toLowerCase(), ref);
+    if (ref) cteMap.set(aliasKey(cteName), ref);
   }
 
   for (let pass = 0; pass < 10; pass++) {
     let changed = false;
     for (const [name, target] of cteMap) {
-      if (!target.includes('.') && cteMap.has(target.toLowerCase())) {
-        const resolved = cteMap.get(target.toLowerCase())!;
+      if (!target.includes('.') && cteMap.has(aliasKey(target))) {
+        const resolved = cteMap.get(aliasKey(target))!;
         if (resolved !== target) { cteMap.set(name, resolved); changed = true; }
       }
     }
@@ -334,14 +333,15 @@ function substituteCteUpdateAliases(sql: string): string {
 
   if (cteMap.size === 0) return sql;
 
-  let result = sql.replace(new RegExp(`\\bUPDATE\\s+(${ANY_IDENT.source})\\s+SET\\b`, 'gi'), (match, alias) => {
-    const baseTable = cteMap.get(alias.toLowerCase());
+  let result = sql.replace(new RegExp(`\\bUPDATE\\s+(${ANY_IDENT.source})\\s+SET\\b`, 'giu'), (match, alias) => {
+    const baseTable = cteMap.get(aliasKey(alias));
     return baseTable ? `UPDATE ${baseTable} SET` : match;
   });
 
-  for (const [cteName, baseTable] of cteMap) {
-    result = result.replace(new RegExp(`\\bFROM\\s+${cteName}\\b`, 'gi'), `FROM ${baseTable}`);
-  }
+  result = result.replace(new RegExp(`\\bFROM\\s+(${ANY_IDENT.source})(?![\\w.]|\\s*\\.)`, 'giu'), (match, alias: string) => {
+    const baseTable = cteMap.get(aliasKey(alias));
+    return baseTable ? `FROM ${baseTable}` : match;
+  });
 
   return result;
 }
@@ -362,7 +362,7 @@ function normalizeAnsiCommaJoins(sql: string): string {
     new RegExp(
       `\\bFROM\\s+((?:${TABLE_REF_WITH_ALIAS.source}\\s*,\\s*)+${TABLE_REF_WITH_ALIAS.source})` +
       `(?=${FROM_TERMINATOR_RE.source})`,
-      'gi'
+      'giu'
     ),
     (_, tables: string) => 'FROM ' + tables.replace(/\s*,\s*/g, ' JOIN ')
   );
@@ -400,24 +400,26 @@ function removeBlockComments(sql: string): string {
  *
  * @param sql - The raw SQL statement or script body to parse.
  * @param onRuleFire - Optional per-rule firing callback. Invoked with `(ruleName, category, addedCount)` for every extraction rule that contributed at least one new ref. Used for sample-mode parser diagnostics.
+ * @param identifierCaseSensitive - Checked source catalog policy; absent retains CI normalization.
  * @returns A categorization of all discovered dependencies.
  */
 export function parseSqlBody(
   sql: string,
   onRuleFire?: (ruleName: string, category: string, added: number) => void,
+  identifierCaseSensitive = false,
 ): ParsedDependencies {
   let clean = removeBlockComments(sql);
 
   clean = clean.replace(PASS1_CLEANSE_RE, (match) => {
     if (match.startsWith('[')) return match;                         // preserve [bracket identifiers]
-    if (match.startsWith('"')) return `[${match.slice(1, -1)}]`;   // "double-quote" → [bracket]
+    if (match.startsWith('"')) return quoteIdentifier(stripBrackets(match));
     if (match.startsWith("'")) return "''";                         // neutralize 'string literals'
     return ' ';                                                       // remove -- line comments
   });
 
   clean = normalizeAnsiCommaJoins(clean);
 
-  clean = substituteCteUpdateAliases(clean);
+  clean = substituteCteUpdateAliases(clean, identifierCaseSensitive);
 
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing' && rule.name !== 'clean_sql' && rule.replacement !== undefined) {
@@ -430,9 +432,10 @@ export function parseSqlBody(
   const execCalls = new Set<string>();
   const crossDbSources = new Set<string>();
   const crossDbTargets = new Set<string>();
-  const cappedRules = new Set<string>();
 
   const udfSources = new Set<string>();
+  const crossDbUdfSources = new Set<string>();
+  let aliasCodeMask: Uint8Array | undefined;
 
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing') continue;
@@ -446,19 +449,31 @@ export function parseSqlBody(
       execCalls;
 
     const before = dest.size;
-    if (collectMatches(clean, regex, dest)) cappedRules.add(rule.name);
+    const capture = (raw: string, match: RegExpExecArray): string | null => rule.name === 'extract_update_alias_target'
+      ? resolveUpdateAliasTarget(clean, aliasCodeMask ??= sqlCommentMask(clean, { markLiterals: true }), match, identifierCaseSensitive) : raw;
+    collectMatchesWith(clean, regex, dest, (raw, match) => {
+      const reference = capture(raw, match);
+      return reference === null ? null : normalizeCaptured(reference, identifierCaseSensitive);
+    });
     const added = dest.size - before;
 
-    const crossDbDest = rule.category === 'source' || rule.name === 'extract_udf_calls' ? crossDbSources
+    const crossDbDest = rule.name === 'extract_udf_calls' ? crossDbUdfSources
+      : rule.category === 'source' ? crossDbSources
       : rule.category === 'target' ? crossDbTargets
       : null;
-    if (crossDbDest && collectCrossDbMatches(clean, new RegExp(rule.pattern, rule.flags), crossDbDest)) cappedRules.add(rule.name);
+    if (crossDbDest) collectMatchesWith(clean, new RegExp(rule.pattern, rule.flags), crossDbDest, (raw, match) => {
+      const reference = capture(raw, match);
+      return reference === null ? null : normalizeCrossDb(reference, identifierCaseSensitive);
+    });
 
     if (onRuleFire && added > 0) onRuleFire(rule.name, rule.category, added);
   }
 
   for (const u of udfSources) {
     if (!targets.has(u)) sources.add(u);
+  }
+  for (const u of crossDbUdfSources) {
+    if (!crossDbTargets.has(u)) crossDbSources.add(u);
   }
 
   return {
@@ -467,12 +482,8 @@ export function parseSqlBody(
     execCalls: Array.from(execCalls),
     crossDbSources: Array.from(crossDbSources),
     crossDbTargets: Array.from(crossDbTargets),
-    cappedRules: Array.from(cappedRules),
   };
 }
-
-/** Maximum matches evaluated per rule. */
-const MAX_MATCHES_PER_RULE = 10_000;
 
 /**
  * Collects all matches for a regex and adds them to the provided set.
@@ -481,31 +492,72 @@ const MAX_MATCHES_PER_RULE = 10_000;
  * @param regex - Regular expression to execute.
  * @param out - Set to store the normalized matches.
  * @param normalize - Function to normalize the raw string.
- * @returns `true` when {@link MAX_MATCHES_PER_RULE} stopped the scan before the last match.
  */
 function collectMatchesWith(
   sql: string,
   regex: RegExp,
   out: Set<string>,
-  normalize: (raw: string) => string | null,
-): boolean {
+  normalize: (raw: string, match: RegExpExecArray) => string | null,
+): void {
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
-  let iterations = 0;
+  const unicode = regex.unicode || regex.flags.includes('v');
 
   while ((match = regex.exec(sql)) !== null) {
-    if (match[0].length === 0) { regex.lastIndex++; continue; }
-    if (++iterations > MAX_MATCHES_PER_RULE) return true;
+    if (match[0].length === 0) {
+      const next = sql.codePointAt(regex.lastIndex);
+      regex.lastIndex += unicode && next !== undefined ? String.fromCodePoint(next).length : 1;
+      continue;
+    }
     const raw = match[1];
     if (!raw) continue;
-    const normalized = normalize(raw);
+    const normalized = normalize(raw, match);
     if (normalized !== null) out.add(normalized);
   }
-  return false;
 }
 
-function collectMatches(sql: string, regex: RegExp, out: Set<string>): boolean {
-  return collectMatchesWith(sql, regex, out, normalizeCaptured);
+/** Resolves an UPDATE's alias against the FROM/JOIN bindings in its own statement. */
+function resolveUpdateAliasTarget(sql: string, codeMask: Uint8Array, match: RegExpExecArray, identifierCaseSensitive: boolean): string | null {
+  const alias = match[0].match(new RegExp(`\\bUPDATE\\s+(${ANY_IDENT.source})\\s+SET\\b`, 'iu'))?.[1];
+  if (!alias) return null;
+  const aliasKey = normalizeColName(alias, identifierCaseSensitive);
+  let end = match.index + 'UPDATE'.length;
+  let depth = 0;
+  const nextStatement = /(?<![\p{L}\p{Nd}_@$#.])(?:UPDATE|INSERT|DELETE|MERGE|SELECT|EXEC(?:UTE)?|TRUNCATE|CREATE|ALTER|DROP|DECLARE)(?![\p{L}\p{Nd}_@$#])/iyu;
+  const depth0Spans: Array<[number, number]> = [];
+  let spanStart = match.index;
+  while (end < sql.length) {
+    if (codeMask[end] !== SQL_CODE) { end++; continue; }
+    const character = sql[end];
+    if (character === '(') {
+      if (depth === 0) depth0Spans.push([spanStart, end]);
+      depth++;
+    } else if (character === ')') {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0) spanStart = end + 1;
+      }
+    } else if (depth === 0) {
+      if (character === ';') break;
+      nextStatement.lastIndex = end;
+      if (nextStatement.test(sql)) break;
+    }
+    end++;
+  }
+  if (depth === 0) depth0Spans.push([spanStart, end]);
+  const bindings = new RegExp(`\\b(?:FROM|JOIN)\\s+(${QUALIFIED_NAME.source})(?:\\s+(?:AS\\s+)?(${ANY_IDENT.source}))?`, 'giu');
+  const targets = new Set<string>();
+  for (const [from, to] of depth0Spans) {
+    if (from >= to) continue;
+    collectMatchesWith(sql.slice(from, to), bindings, targets, (reference, binding) => {
+      const hasAlias = binding[2] && !KEYWORDS_RE.test(binding[2]);
+      if (binding[2] && !hasAlias) bindings.lastIndex -= binding[2].length;
+      const tableAlias = hasAlias
+        ? binding[2] : splitSqlName(binding[1]).at(-1)!;
+      return normalizeColName(tableAlias, identifierCaseSensitive) === aliasKey ? reference : null;
+    });
+  }
+  return targets.size === 1 ? targets.values().next().value! : null;
 }
 
 /**
@@ -518,7 +570,7 @@ function collectMatches(sql: string, regex: RegExp, out: Set<string>): boolean {
  * @param raw - The raw string captured by a regex.
  * @returns A normalized `[schema].[object]` string or `null` if invalid.
  */
-function normalizeCaptured(raw: string): string | null {
+function normalizeCaptured(raw: string, identifierCaseSensitive: boolean): string | null {
   const parts = splitSqlName(raw).map(p => stripBrackets(p));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
@@ -527,7 +579,8 @@ function normalizeCaptured(raw: string): string | null {
   const schema = parts[0];
   const obj = parts[1];
   if (!schema || !obj) return null;
-  return `[${schema}].[${obj}]`.toLowerCase();
+  const canonical = identifierCaseSensitive ? `${quoteIdentifier(schema)}.${quoteIdentifier(obj)}` : `[${schema}].[${obj}]`;
+  return schemaKey(canonical, identifierCaseSensitive);
 }
 
 /**
@@ -540,7 +593,7 @@ function normalizeCaptured(raw: string): string | null {
  * @param raw - The raw string captured by a regex.
  * @returns A normalized `db.schema.object` string or `null` if invalid.
  */
-function normalizeCrossDb(raw: string): string | null {
+function normalizeCrossDb(raw: string, identifierCaseSensitive: boolean): string | null {
   const parts = splitSqlName(raw).map(p => stripBrackets(p));
   const first = parts[0] ?? '';
   if (first.startsWith('@') || first.startsWith('#')) return null;
@@ -548,18 +601,10 @@ function normalizeCrossDb(raw: string): string | null {
   const pertinent = parts.length >= 4 ? parts.slice(-3) : parts;
   const object = pertinent[pertinent.length - 1];
   if (CLR_TYPE_METHODS.has(object.toLowerCase())) return null;
-  return pertinent.map(p => p.toLowerCase()).join('.');
-}
-
-/**
- * Runs extraction rules specifically to collect 3+ part names (cross-DB references).
- *
- * @param sql - Cleaned SQL text.
- * @param regex - Regular expression to execute.
- * @param out - Set to store the normalized cross-DB matches.
- */
-function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>): boolean {
-  return collectMatchesWith(sql, regex, out, normalizeCrossDb);
+  return pertinent.map(p => {
+    const name = schemaKey(p, identifierCaseSensitive);
+    return /[.\[\]"]/.test(name) ? quoteIdentifier(name) : name;
+  }).join('.');
 }
 
 /**
@@ -570,8 +615,8 @@ function collectCrossDbMatches(sql: string, regex: RegExp, out: Set<string>): bo
  * literals, as external references (like BULK INSERT paths) are often
  * contained within single quotes.
  *
- * Scanning goes through {@link collectMatchesWith} so the zero-length guard and the
- * {@link MAX_MATCHES_PER_RULE} cap live in exactly one place; the capture is taken verbatim
+ * Scanning goes through {@link collectMatchesWith} so every rule shares forward progress over
+ * zero-length matches; the capture is taken verbatim
  * because a path or URL is the reference, with no catalog identifier to normalize.
  *
  * @param rawSql - The raw SQL text before any preprocessing or cleansing.

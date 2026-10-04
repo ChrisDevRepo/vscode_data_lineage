@@ -385,7 +385,10 @@ async function connectBuiltIn(env: DbConnectEnv, stored: StoredConnectionInfo | 
   let connection: BuiltInConnection | undefined;
   if (stored) {
     connection = findBuiltInMatch(connections, stored);
-    if (!connection) logger.warn(`Direct reconnect: no saved built-in connection matches ${stored.server} — falling back to picker`);
+    if (!connection) {
+      logger.warn('Direct reconnect: no matching saved built-in connection — falling back to picker');
+      logger.debug(`Unmatched reconnect server: ${stored.server}`);
+    }
   }
   connection ??= await pickBuiltInConnection(env, connections, stored);
   if (!connection) {

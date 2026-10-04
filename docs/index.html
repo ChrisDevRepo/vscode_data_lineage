@@ -109,7 +109,7 @@
       </div>
       <div class="showcase-item">
         <span class="caption">AI-Powered Lineage Analysis</span>
-        <span class="caption-detail">Ask <strong>@lineage</strong> in GitHub Copilot Chat how sales are calculated &mdash; get a visual lineage graph with step-by-step column mappings, join paths, and formula breakdowns, all from your own data model.</span>
+        <span class="caption-detail">Ask <strong>@lineage</strong> in VS Code Chat how sales are calculated. Explore SQL logic and request a graph preview; AI column mappings are best-effort findings.</span>
         <img src="images/viz-ai-screenshot.png" alt="AI lineage view showing sales calculation lineage with annotated steps">
       </div>
     </div>
@@ -118,11 +118,11 @@
   <section style="background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 60%,#312e81 100%);padding:4rem 1.5rem;text-align:center;">
     <div style="max-width:720px;margin:0 auto;">
       <div style="display:inline-flex;align-items:center;gap:.5rem;background:rgba(99,102,241,.25);border:1px solid rgba(165,180,252,.4);border-radius:9999px;padding:.3rem .9rem;margin-bottom:1.5rem;">
-        <span style="font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#a5b4fc;text-transform:uppercase;">Latest</span>
+        <span style="font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#a5b4fc;text-transform:uppercase;">AI analysis</span>
         <span style="font-size:.9rem;">&#10024;</span>
       </div>
       <h2 style="font-size:2rem;font-weight:800;color:#fff;margin-bottom:.75rem;line-height:1.2;">
-        Ask <span style="color:#a5b4fc;">@lineage</span> in GitHub Copilot Chat
+        Ask <span style="color:#a5b4fc;">@lineage</span> in VS Code Chat
       </h2>
       <p style="font-size:1rem;color:#94a3b8;max-width:560px;margin:0 auto 2rem;">
         Trace how your database objects connect — from source tables to reporting views. The AI assistant works from your <em style="color:#c7d2fe;">own data model</em> and can go further, analyzing column mappings and SQL logic from the available metadata.
@@ -151,7 +151,7 @@
           <span style="color:#22c55e;">&#10003;</span> Traces your actual data model
         </div>
         <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
-          <span style="color:#22c55e;">&#10003;</span> Creates bookmarked graph views for further exploration
+          <span style="color:#22c55e;">&#10003;</span> Save graph previews as bookmarks
         </div>
         <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
           <span style="color:#22c55e;">&#10003;</span> AI assistant analyzes column mappings and SQL logic
@@ -168,13 +168,13 @@
   <section class="features">
     <div class="feature">
       <div class="icon">&#10024;</div>
-      <h3>Copilot Chat (@lineage)</h3>
+      <h3>VS Code Chat (@lineage)</h3>
       <p>Trace dependencies and create bookmarked graph views from your actual data model. The AI assistant can go further — analyzing column mappings and SQL logic from the available metadata.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128193;</div>
       <h3>Data Sources</h3>
-      <p>Open a .dacpac or import from a database connection. A few clicks to your full dependency graph — no extra tooling needed.</p>
+      <p>Open a .dacpac or import from a database connection. Choose schemas to load their object dependencies.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128269;</div>
@@ -189,17 +189,17 @@
     <div class="feature">
       <div class="icon">&#128202;</div>
       <h3>Detect Graph Patterns</h3>
-      <p>Spot islands, orphans, hubs, and cycles at a glance. Know your blast radius before changing anything.</p>
+      <p>Spot islands, orphans, hubs, and cycles at a glance. Explore the loaded dependency structure before making changes.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128196;</div>
       <h3>DDL &amp; SQL Search</h3>
-      <p>Click any node to read its SQL with full syntax highlighting. Full-text search across all stored procedures and views.</p>
+      <p>Double-click an object to inspect available columns and SQL. Search SQL bodies across procedures, views, and functions.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128200;</div>
       <h3>Schema View</h3>
-      <p>Large graphs start in schema-level cluster nodes, then the toolbar view toggle keeps the chosen surface stable. Expanded Schema View shows selected schemas as object nodes without changing the active schema filter.</p>
+      <p>Group large graphs by schema, then expand selected schemas to inspect their objects.</p>
     </div>
     <div class="feature">
       <div class="icon">&#128230;</div>

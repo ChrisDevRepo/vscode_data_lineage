@@ -49,6 +49,18 @@ export function escapePromptText(value: string): string {
 }
 
 /**
+ * Escape untrusted catalog text (object/schema names, hop labels) for inline Markdown display.
+ *
+ * @param value - Untrusted text rendered inside chat Markdown.
+ * @returns The text with `&`, `<`, `>` entity-escaped and Markdown control characters
+ * (`` \ ` * _ # [ ] $ ``) backslash-escaped, so it renders literally and cannot open emphasis,
+ * links, code spans, math or HTML.
+ */
+export function escapeMarkdownText(value: string): string {
+  return escapePromptText(value).replace(/[\\`*_#[\]$]/g, '\\$&');
+}
+
+/**
  * Truncate `text` to `max` characters with a trailing ellipsis.
  *
  * @param text - The string to shorten (status labels, log previews).
@@ -60,27 +72,27 @@ export function trunc(text: string, max = 60): string {
 }
 
 /**
- * Truncate `text` to at most `max` characters, folding at the nearest earlier whitespace boundary
- * instead of {@link trunc}'s mid-word hard cut, with a trailing ellipsis.
+ * Shorten a visible status preview at its last sentence or clause boundary, then a word boundary.
  *
  * @remarks
- * `trunc` is correct for a single-line log preview, where a mid-word cut is unobjectionable. A
- * multi-line surface (a chat status label) reads as broken prose when the cut lands inside a word,
- * so this folds back to the last space before the budget. Falls back to `trunc`'s hard cut when no
- * whitespace exists before `max` (one long unbroken token), so the result is never empty and never
- * exceeds `max`.
+ * Adds `...` only when the text exceeds the inclusive display budget. An unbroken token that cannot fit is omitted rather than split. This helper does not alter stored
+ * findings or model history.
  *
  * @param text - The string to shorten.
- * @param max - Inclusive character budget, the trailing `…` included.
+ * @param max - Inclusive character budget, the trailing `...` included.
  * @returns `text` unchanged when within budget, else the text folded at the nearest earlier word
- * boundary plus `…`.
+ * boundary plus `...`.
  */
 export function truncAtWordBoundary(text: string, max: number): string {
   if (text.length <= max) return text;
-  const cut = text.slice(0, max - 1);
-  const boundary = cut.lastIndexOf(' ');
-  const folded = boundary > 0 ? cut.slice(0, boundary).trimEnd() : cut.trimEnd();
-  return `${folded}…`;
+  if (max <= 3) return '.'.repeat(Math.max(0, max));
+  let cut = text.slice(0, max - 3);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  const clause = cut.match(/^.*[.!?;,:](?=\s|$)/s)?.[0];
+  const word = cut.match(/^.*\s/s)?.[0];
+  const folded = (clause ?? word ?? '').replace(/[.!?;,:\s]+$/, '')
+    .replace(/(?:^|\s)(?:and|but|or)$/i, '').trimEnd();
+  return `${folded}...`;
 }
 
 /**

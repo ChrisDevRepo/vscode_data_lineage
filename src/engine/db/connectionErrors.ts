@@ -263,7 +263,7 @@ export async function confirmTrustServerCertificate(connection: Pick<BuiltInConn
  * Logs a connection error once, shows it with its actions, and runs the action the user picks.
  *
  * @remarks
- * The raw driver error goes to the log at info level; the toast carries the described message, never
+ * Redacted driver detail goes to the log at debug level; the toast carries the described message, never
  * the raw error alone. The returned `message` is for callers that also show the text inline.
  *
  * @returns The described message, and a promise that settles once the toast is answered or dismissed.
@@ -271,12 +271,13 @@ export async function confirmTrustServerCertificate(connection: Pick<BuiltInConn
 export function reportConnectionError(
   err: unknown,
   target: ConnectionErrorTarget,
-  logger: Pick<Logger, 'info' | 'warn'>,
+  logger: Pick<Logger, 'info' | 'warn' | 'debug'>,
   hooks: ConnectionErrorHooks = {},
   present: (message: string, ...labels: string[]) => Thenable<string | undefined> = vscode.window.showErrorMessage,
 ): { message: string; actions: ConnectionErrorAction[]; answered: Promise<void> } {
   const { message, actions } = describeConnectionError(err, target, hooks);
-  logger.info(`Connection error on ${target.name} — code=${errorCode(err) ?? '-'} number=${errorNumber(err) ?? '-'} raw="${redactSecrets(errorMessage(err))}"`);
+  logger.info('Database connection failed');
+  logger.debug(`Connection error on ${target.name} — code=${errorCode(err) ?? '-'} number=${errorNumber(err) ?? '-'} raw="${redactSecrets(errorMessage(err))}"`);
   const answered = (async () => {
     const choice = await present(message, ...actions.map((a) => a.label));
     const chosen = actions.find((a) => a.label === choice);
@@ -284,7 +285,8 @@ export function reportConnectionError(
     try {
       await chosen.run();
     } catch (actionErr) {
-      logger.warn(`Action "${chosen.label}" failed: ${redactSecrets(errorMessage(actionErr))}`);
+      logger.warn(`Action "${chosen.label}" failed`);
+      logger.debug(`Connection action error: ${redactSecrets(errorMessage(actionErr))}`);
     }
   })();
   return { message, actions, answered };

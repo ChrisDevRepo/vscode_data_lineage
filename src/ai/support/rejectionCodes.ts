@@ -53,10 +53,6 @@ export const REJECTION_CODES = {
   noActiveSession: 'no_active_session',
   /** A tool ran with no model/graph loaded — the panel closed mid-turn, or no project was ever opened. */
   noProjectLoaded: 'no_project_loaded',
-  /** A `prune_neighbors` entry, or an `end_branch` focus, carries a tracked column an accepted `column_flow` already named (`smRouteValidation.ts`, `smBase.ts`). */
-  pruneCarriesTrackedColumn: 'prune_carries_tracked_column',
-  /** An `end_branch` verdict names the immutable exploration origin. */
-  pruneOriginForbidden: 'prune_origin_forbidden',
   /** `proposalRevision` no longer matches the pending approval gate under refine. */
   staleProposalRevision: 'stale_proposal_revision',
   /** Prune/column/question structural fault whose kind carries no specific code, or ≥2 distinct kinds in one submission (`ROUTE_REJECTION_CODE` fallback, `smRouteValidation.ts`). */

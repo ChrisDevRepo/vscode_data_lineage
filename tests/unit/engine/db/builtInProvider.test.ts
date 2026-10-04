@@ -81,7 +81,8 @@ const { MicrosoftSignInError } = await import('../../../../src/engine/db/dbSessi
 const { encodeSavedPassword } = await import('../../../../src/engine/db/connectionSettings');
 const { CancellationTokenSource } = await import('vscode');
 
-const outputChannel = { debug() {}, info() {}, warn() {}, error() {}, trace() {} } as never;
+const logCalls = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
+const outputChannel = logCalls as never;
 
 /** Secret store seeded with passwords saved for `bound` (default: the `sqlLogin` connection). */
 function makeEnv(passwords: Record<string, string> = {}, bound: { id: string; server: string; port?: number; user?: string } = sqlLogin) {
@@ -116,6 +117,7 @@ function script(columns: ReturnType<typeof col>[], rows: unknown[][]) {
 }
 
 beforeEach(() => {
+  for (const log of Object.values(logCalls)) log.mockClear();
   fake.connections.length = 0;
   fake.connectError = undefined;
   fake.connectHangs = false;
@@ -176,6 +178,16 @@ describe('cell rendering', () => {
 });
 
 describe('openBuiltInSession — results', () => {
+  it('keeps server and database identities out of normal connection logs', async () => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'secret-value' });
+    const session = await openBuiltInSession(sqlLogin, env);
+    await session?.dispose();
+    const normal = JSON.stringify([logCalls.info.mock.calls, logCalls.warn.mock.calls, logCalls.error.mock.calls]);
+    expect(normal).not.toContain(sqlLogin.server);
+    expect(normal).not.toContain(sqlLogin.database);
+    expect(JSON.stringify(logCalls.debug.mock.calls)).toContain(sqlLogin.server);
+    expect(JSON.stringify(logCalls.debug.mock.calls)).not.toContain('secret-value');
+  });
   it('returns column names and display values the DMV consumers read by name', async () => {
     const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
     const session = (await openBuiltInSession(sqlLogin, env))!;

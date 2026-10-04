@@ -53,6 +53,8 @@ export interface GeneralPromptContext {
   readonly visibleNodes: number;
   /** Total number of nodes in the loaded model. */
   readonly totalNodes: number;
+  /** Checked source catalog policy; absent retains the legacy CI prompt. */
+  readonly identifierCaseSensitive?: boolean;
   /** One phrase naming the trace, analysis, or bookmark applied on screen; absent when nothing is applied. */
   readonly screen?: string;
 }
@@ -90,9 +92,11 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '',
     "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects (tables, views, procedures, functions) into a dependency graph the user sees as a diagram; each object's SQL opens in the editor.",
     'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose. You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.',
+    'When calling tools, emit strictly valid raw JSON: use standard double quotes, escape internal backslashes and control newlines, omit trailing commas, and match the served schema types precisely to preserve full SQL and math text.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
+    ...(ctx.identifierCaseSensitive ? ['- Identifiers are case-sensitive. Use the exact object IDs and column names supplied by tools; case-only variants identify different objects or columns.'] : []),
     schemasLine,
     `- Visible objects: ${visibleNodes} of ${totalNodes}`,
     ...(screen ? buildScreenStateSlot(screen) : []),
@@ -197,13 +201,14 @@ function buildActivePhasePrompt(): string {
   return [
     '# Active hop',
     'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
+    'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
     'Deliver one `lineage_submit_findings` call:',
     '1. `verdict` for the focus node, judged from the focus itself.',
     '2. With `analyze` or `passthrough`: `sections` and a one-sentence `summary`.',
     '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     '',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; `prune_protected` ones are not pruned; a neighbor served `in_approved_scope: false` (which subsumes `out_of_direction`) needs no decision either.',
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; `prune_protected` ones are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.',
   ].join('\n');
 }
 
@@ -247,7 +252,10 @@ export function buildPresentationDetailContract(
         headingRule,
       ]
       : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth, with the short SQL that grounds them; every captured callout, formula and predicate appears exactly once — stated in words or as its SQL fence, never both. Never drop part of a linked node\'s captured detail.',
+        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. A short SQL witness may accompany its explanation.',
+        '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
+        '- Describe declared SQL behavior; do not infer runtime execution counts or execution order without matching runtime evidence.',
+        '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
         headingRule,
       ];
   return [
@@ -309,14 +317,18 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     evidence,
     '',
     '- `sections[]`: the answer, grouped by what best answers the question (`suggested_sections` is a starting point) — regroup freely, but carry every id from every starting-point section along; none may go missing in the reshaping. Link the nodes each section documents, raw source and target tables included.',
-    '- `highlight_groups[]`, `notes[]`, `summary`, `title`, `intro`, `closing`: per the templates below.',
+    '- `highlight_groups[]`, `notes[]`, `summary`, `title`, `intro`, `closing`: follow their named output-template instructions.',
     '- Every node with a `detail_slots[]` entry appears in a section (`sections[].node_ids`); a highlight group or a note does not cover it.',
     ...(isCt
-      ? ['- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section, a highlight group or a note.']
-      : []),
+      ? [
+        '- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section, a highlight group or a note.',
+        '- The backend inserts the Column Chain from validated column-flow edges after the intro and owns column-lineage tables and inventories. Do not add a Column mapping table, exhaustive lineage list or separate trace block; explain bindings, calculations, predicates and relevant conversions in detailed Steps instead.',
+      ]
+      : ['- Keep the explanation concise while preserving important formulas, rules and supported warnings.']),
     '- Id fields take only ids from `result.scope.node_ids`; name any other object in section text.',
     '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
-    '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences.',
+    '- DDL and DML establish definitions and SQL behavior, not observed statistics, row counts, elapsed time or performance. Explain a calculation only from its supplied defining expression; do not turn its formula or captured prose into a measured result without matching data or runtime evidence.',
+    '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences. Preserve substantive calculations even when a SQL witness is also present; the witness does not replace the formula. Embed formulas in the rule or transformation they explain: introduce block formulas on their own lines and explain their terms and result, or use a table with inline formulas and short descriptions of their meaning. Keep the final formula contextual too. Do not create a separate Formulas subsection or repeat simple mappings as equations and tables.',
     '- Each captured SQL fence in `detail_slots[]` shows an id on its opening line (```sql S7). To reuse that SQL unchanged, write only the opening line with its id and close the fence with no body; the engine inserts the captured SQL at that spot. Writing SQL out yourself is always allowed.',
     '- Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
     '',
@@ -365,7 +377,7 @@ function buildFollowUpPrompt(): string {
     '  label, re-deriving what you cannot quote exactly; change only the `node_ids` you were asked to.',
     '- Change graph color/role labels such as `source`, `transform`, or `target`: update `highlight_groups[]`',
     `  and call \`lineage_present_result\`. \`add_node_ids\` ${ADD_NODE_IDS_REVEALS};`,
-    '  an object it has not analysed joins through the supplement below.',
+    '  an object it has not analysed joins through `lineage_start_exploration` with `supplement`.',
     '- Change description text shown with the graph: update `title`, `intro`,',
     '  `sections[].text`, and/or `closing` in `lineage_present_result`.',
     '- Change note text below the graph: update `notes[]` (`node_id`, `caption`) in',
@@ -385,7 +397,7 @@ function buildFollowUpPrompt(): string {
     '',
     'Answer a question beyond the report — another object, a wider neighbourhood — in chat by walking',
     'the loaded graph with the read tools (`lineage_get_scope_bundle` for sources, consumers and',
-    'neighbours); the rendered graph changes only through the edits and supplements above.',
+    'neighbours); the rendered graph changes only through `lineage_present_result` edits or an approved `lineage_start_exploration` supplement.',
     '',
     '## Chat response format',
     '',
@@ -408,14 +420,14 @@ export const RUN_TRACE_TRIGGER = 'Run trace';
 export const SHOW_GRAPH_PREVIEW_TRIGGER = 'Show graph preview';
 
 /**
- * Prompt the approval card's **Approve & Proceed** or **Cancel** button submits for the plan revision
- * that card shows.
+ * Internal routing prompt for a validated **Approve & Proceed** or **Cancel** button action.
  *
  * @remarks
  * The gate turn ends when the card renders so VS Code frees the chat input; a button therefore
- * re-enters as a fresh chat turn carrying this text, which `detectEntryNode` resolves against the
- * held proposal from session state (see {@link parseGateTrigger}) without a model call. The
- * revision ties the click to the plan the user saw, so a stale card never acts on a newer plan.
+ * re-enters as a fresh chat turn displaying only the action label. The host projects its
+ * request-owned action into this internal prompt, which `detectEntryNode` resolves against the
+ * held proposal (see {@link parseGateTrigger}) without a model call. The revision ties the click
+ * to the plan the user saw, so a stale card never acts on a newer plan.
  */
 export function gateTriggerPrompt(action: 'approve' | 'cancel', revision: number): string {
   return `${action === 'approve' ? 'Approve' : 'Cancel'} exploration plan revision ${revision}`;
@@ -447,8 +459,9 @@ export function buildGateReplySystemPrompt(): string {
     'Classify what the reply asks of the proposal:',
     '- approve — the reply accepts the plan as shown (agreement, confirmation, "go ahead").',
     '- change — the reply asks for a change to the plan (add, remove, narrow, redirect, re-column, a new depth), whether or not the plan already matches it.',
-    '- cancel — the reply abandons the exploration.',
+    '- cancel — the reply declines approval or abandons the exploration (including a bare "no", "stop", or "cancel").',
     '- other — the reply is not about this proposal (a separate question or request).',
+    'A change must name what to change; a bare refusal is cancellation, not a change. A question asking for an explanation without starting analysis is other, not cancellation.',
     'Answer with exactly one action; never quote or restate the plan.',
   ].join('\n');
 }
@@ -561,7 +574,7 @@ function buildRunTraceTriggerPrompt(
     '',
     '## Inputs to lineage_start_exploration',
     '',
-    '- Every field, including **origin** and **mission_brief**: derive from <original_question> and the discovery answer below, as each field\'s description says.',
+    '- Every field, including **origin** and **mission_brief**: derive from <original_question> and <discovery_answer>, as each field\'s description says.',
     '',
     '## Discovery context',
     '',
@@ -688,7 +701,7 @@ export function buildOriginalQuestionBlock(question: string | null): string {
 export function buildColumnAspectPrompt(targetColumns: string[]): string {
   return [
     '# Column Trace: active',
-    `Target columns: [${targetColumns.join(', ')}]`,
+    `Target columns: [${targetColumns.map(escapePromptText).join(', ')}]`,
   ].join('\n');
 }
 
@@ -776,12 +789,12 @@ export function buildCurrentTaskBlock(
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
       `  <column_trace>`,
-      `    Active columns: [${columnTraceColumns.join(', ')}]`,
-      `    This list is the whole tracked set for this hop, and it outranks the sub-question above: a column the sub-question names but this list omits is not tracked here — \`column_flow\` may not name it, and what the node does with it belongs in \`sections\`.`,
+      `    Active columns: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
+      `    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`,
       `  </column_trace>`,
     );
   }
-  if (columnLineageQuestions && columnLineageQuestions.length > 0) {
+  if (columnTraceColumns?.length && columnLineageQuestions?.length) {
     lines.push(
       `  <lineage_questions>`,
       `    Column-chain continuations opened on an earlier hop for this focus. Address them:`,

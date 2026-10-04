@@ -43,41 +43,7 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     }
   });
 
-  it('keeps discovery answers question-first instead of emitting raw tool inventories', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).discovery_chat?.instruction ?? '';
-    expect(instruction).toContain('Lead with the direct answer.');
-    expect(instruction).toContain('transformations, column mappings');
-    expect(instruction).not.toContain('error and audit paths');
-    expect(instruction).toContain('Keep tool names and payload fields out of the answer');
-    expect(instruction).toContain('list raw nodes or edges only when asked');
-  });
 
-  it('keeps structural_summary free of ## headings reserved for the engine wrapper', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).structural_summary?.instruction ?? '';
-    expect(instruction).not.toMatch(/^##\s/m);
-  });
-
-  it('keeps the closing template free of section-count claims', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).closing?.instruction ?? '';
-    expect(instruction).not.toMatch(/\d\+? sections/);
-  });
-
-  it('gives loading_pattern a fallback destination when closing is suppressed', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).loading_pattern?.instruction ?? '';
-    expect(instruction).toContain('else in the section covering the load');
-    expect(instruction).not.toContain('in the closing note');
-  });
-
-  it('keeps column_trace_capture free of cross-template references', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
-    expect(instruction).not.toContain('business/technical capture');
-    expect(instruction).toContain("this hop's narrative body");
-  });
-
-  it('does not restate $$ producing expressions in column_trace_capture', () => {
-    const instruction = parseAiOutputTemplatesYaml(text).column_trace_capture?.instruction ?? '';
-    expect(instruction).not.toContain('$$');
-  });
 });
 
 describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {

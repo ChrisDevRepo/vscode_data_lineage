@@ -77,91 +77,20 @@ const SIDEBAR_LINE_CAP = 50;
  */
 const DEAD_LINE_PREFIX = '--';
 
-/** Heuristic ReDoS guard budget, in milliseconds, applied by {@link compileSearchRegex}. */
-const REDOS_BUDGET_MS = 5;
-
 /**
- * Repeating units the ReDoS guard builds its probe inputs from.
+ * Outcome of syntax compilation without executing the expression.
  *
  * @remarks
- * Catastrophic backtracking is triggered by the character class the nested quantifier consumes, so
- * a single letter run passes patterns such as `(\s+)+$` that blow up on whitespace-heavy SQL. Each
- * unit covers one class dense in DDL bodies: letters, whitespace, brackets, separators, digits,
- * and the `-`, `=`, `*`, `_` runs of comment banners.
- */
-const REDOS_SAMPLE_UNITS: readonly string[] = ['a', ' \t', '[', 'a,', 'a]', '1', '-', '=', '*', '_'];
-
-/** Longest probe input, in characters, the ReDoS guard runs a pattern against. */
-const REDOS_SAMPLE_MAX_CHARS = 200;
-
-/**
- * Growth step, in characters, between two probe inputs of the same unit.
- *
- * @remarks
- * An exponential pattern roughly doubles its cost per added character, so a single 200-character
- * probe never returns and hangs the extension host instead of measuring anything.
- */
-const REDOS_SAMPLE_STEP_CHARS = 4;
-
-/**
- * Longest probe input, in characters, of the scale sweep that follows the growth sweep.
- *
- * @remarks
- * A polynomial pattern (`.*.*x`, `a*a*x`) stays cheap on a 200-character probe yet costs minutes on
- * a minified DDL line, and a line is matched whole. The sweep doubles the input from
- * {@link REDOS_SAMPLE_MAX_CHARS} to this size and refuses the pattern at the first over-budget run,
- * so the cost of the probe is bounded by the last size that still fit the budget.
- */
-const REDOS_SCALE_MAX_CHARS = 6400;
-
-/** Whether one probe run of `regex` over `sample` exceeds the ReDoS guard budget. */
-function probeExceedsBudget(regex: RegExp, sample: string): boolean {
-  const start = performance.now();
-  regex.test(sample);
-  return performance.now() - start > REDOS_BUDGET_MS;
-}
-
-/** Whether `regex` exceeds the ReDoS guard budget on `sample` twice in a row, so one garbage-collection pause cannot refuse a benign pattern. */
-function confirmedOverBudget(regex: RegExp, sample: string): boolean {
-  return probeExceedsBudget(regex, sample) && probeExceedsBudget(regex, sample);
-}
-
-/**
- * Runs `regex` against growing probe inputs and reports whether any run exceeded the ReDoS guard
- * budget.
- *
- * @remarks
- * Uses `performance.now()` (sub-ms precision) instead of `Date.now()` (1ms / 15ms on Windows). An
- * over-budget run is confirmed by {@link confirmedOverBudget} before the pattern is refused.
- */
-function exceedsRedosBudget(regex: RegExp): boolean {
-  for (const unit of REDOS_SAMPLE_UNITS) {
-    for (let chars = REDOS_SAMPLE_STEP_CHARS; chars <= REDOS_SAMPLE_MAX_CHARS; chars += REDOS_SAMPLE_STEP_CHARS) {
-      const sample = unit.repeat(Math.ceil(chars / unit.length));
-      if (confirmedOverBudget(regex, sample)) return true;
-    }
-    for (let chars = REDOS_SAMPLE_MAX_CHARS * 2; chars <= REDOS_SCALE_MAX_CHARS; chars *= 2) {
-      const sample = unit.repeat(Math.ceil(chars / unit.length));
-      if (confirmedOverBudget(regex, sample)) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Outcome of compiling a search pattern: the regex, or the reason it was refused.
- *
- * @remarks
- * The reason travels with the rejection so the hint is derived from the measurement that actually
- * happened. A `redos` verdict is a wall-clock heuristic, and re-running it can disagree with itself.
+ * Untrusted expression execution belongs in the isolated AI search worker.
  */
 type SearchRegexResult =
-  /** The pattern compiled and stayed inside the ReDoS budget. */
+  /** The pattern compiled; execution must be isolated for untrusted input. */
   | { ok: true; regex: RegExp }
   /** The pattern is not valid JavaScript regex syntax; `error` is what V8 raised. */
-  | { ok: false; reason: 'syntax'; error: SyntaxError }
-  /** The pattern compiled but exceeded the ReDoS budget on the bounded sample. */
-  | { ok: false; reason: 'redos' };
+  | { ok: false; reason: 'syntax'; error: SyntaxError };
+
+/** Syntax refusal accepted by repair hints; execution deadlines belong to the search worker. */
+type SearchRegexRejection = Extract<SearchRegexResult, { ok: false }>;
 
 /**
  * Longest body line, in characters, a search result serves as text.
@@ -209,14 +138,14 @@ function stripRedundantInlineFlags(pattern: string): string | null {
 }
 
 /**
- * Compiles a search pattern into a safe regular expression with grep's flags ({@link SEARCH_REGEX_FLAGS}).
+ * Compiles the syntax of a search pattern into a regular expression with grep's flags ({@link SEARCH_REGEX_FLAGS}).
  *
  * @param pattern - The raw regex string to compile.
  * @param onNormalize - Optional sink for a debug line when a redundant flag group is stripped.
  * @returns The compiled regex, or the rejection reason {@link regexRejectHint} turns into advice.
  *
  * @remarks
- * Rejects patterns that fail to execute against a bounded sample within the guard budget. A
+ * Does not execute the pattern or classify its runtime cost. A
  * redundant leading `(?i)`/`(?m)`/`(?im)` is normalized away before compiling rather than rejected —
  * see {@link stripRedundantInlineFlags} for what qualifies and why.
  */
@@ -232,7 +161,6 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
   } catch (err) {
     return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
   }
-  if (exceedsRedosBudget(regex)) return { ok: false, reason: 'redos' };
   return { ok: true, regex };
 }
 
@@ -249,49 +177,45 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
  * syntax it does not recognize at all — which forms those are is the engine's answer, not a fixed
  * list, so the advice below is keyed on V8's own message.
  */
-export function regexRejectHint(pattern: string, rejection: Extract<SearchRegexResult, { ok: false }>): string {
-  if (rejection.reason === 'syntax') {
-    const message = rejection.error.message;
-    if (/\(\?P</.test(pattern) && message.includes('Invalid group')) {
-      return 'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.';
-    }
-    if (/\(\?#/.test(pattern) && message.includes('Invalid group')) {
-      return 'Remove the "(?#...)" comment group — JavaScript regular expressions do not support inline comments.';
-    }
-    if (/\(\?[a-zA-Z-]+[):]/.test(pattern) && message.includes('Invalid group')) {
-      return 'Remove the inline flag group (e.g. "(?s)") — matching is already case-insensitive with ^ and $ per line, and JavaScript regular expressions do not support inline flags.';
-    }
-    if (message.includes('Invalid group')) {
-      return 'Remove or correct the unsupported "(?...)" group syntax — JavaScript does not recognize it.';
-    }
-    if (message.includes('Unterminated group')) {
-      return 'Add the missing closing ")" — a "(" (or "(?<name>") was opened but never closed.';
-    }
-    if (message.includes("Unmatched ')'")) {
-      return 'Remove the extra ")" or add the "(" it is meant to close.';
-    }
-    if (message.includes('Unterminated character class')) {
-      return 'Add the missing closing "]" to the character class.';
-    }
-    if (message.includes('Range out of order in character class')) {
-      return 'Reorder the character class range so the lower bound comes first (e.g. "[a-z]", not "[z-a]").';
-    }
-    if (message.includes('Duplicate capture group name')) {
-      return 'Rename one of the duplicate "(?<name>...)" groups — each group name must be unique.';
-    }
-    if (message.includes('numbers out of order in {} quantifier')) {
-      return 'Reorder the quantifier bounds so the minimum comes first (e.g. "{1,2}", not "{2,1}").';
-    }
-    if (message.includes('Nothing to repeat')) {
-      return 'Remove or reposition the quantifier (*, +, ?, or {}) — it has nothing before it to repeat.';
-    }
-    if (message.includes('at end of pattern')) {
-      return 'Remove the trailing "\\" or complete the escape sequence it starts.';
-    }
-    return `Fix the pattern: ${message.replace(/^Invalid regular expression: .*?: /, '')}.`;
+export function regexRejectHint(pattern: string, rejection: SearchRegexRejection): string {
+  const message = rejection.error.message;
+  if (/\(\?P</.test(pattern) && message.includes('Invalid group')) {
+    return 'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.';
   }
-
-  return 'Simplify the pattern — avoid nested quantifiers (e.g. "(a+)+") and stacked or leading unbounded repeats (e.g. ".*.*x", ".*x") that backtrack heavily on a long line; use a literal anchor or a bounded repeat such as "{0,40}".';
+  if (/\(\?#/.test(pattern) && message.includes('Invalid group')) {
+    return 'Remove the "(?#...)" comment group — JavaScript regular expressions do not support inline comments.';
+  }
+  if (/\(\?[a-zA-Z-]+[):]/.test(pattern) && message.includes('Invalid group')) {
+    return 'Remove the inline flag group (e.g. "(?s)") — matching is already case-insensitive with ^ and $ per line, and JavaScript regular expressions do not support inline flags.';
+  }
+  if (message.includes('Invalid group')) {
+    return 'Remove or correct the unsupported "(?...)" group syntax — JavaScript does not recognize it.';
+  }
+  if (message.includes('Unterminated group')) {
+    return 'Add the missing closing ")" — a "(" (or "(?<name>") was opened but never closed.';
+  }
+  if (message.includes("Unmatched ')'")) {
+    return 'Remove the extra ")" or add the "(" it is meant to close.';
+  }
+  if (message.includes('Unterminated character class')) {
+    return 'Add the missing closing "]" to the character class.';
+  }
+  if (message.includes('Range out of order in character class')) {
+    return 'Reorder the character class range so the lower bound comes first (e.g. "[a-z]", not "[z-a]").';
+  }
+  if (message.includes('Duplicate capture group name')) {
+    return 'Rename one of the duplicate "(?<name>...)" groups — each group name must be unique.';
+  }
+  if (message.includes('numbers out of order in {} quantifier')) {
+    return 'Reorder the quantifier bounds so the minimum comes first (e.g. "{1,2}", not "{2,1}").';
+  }
+  if (message.includes('Nothing to repeat')) {
+    return 'Remove or reposition the quantifier (*, +, ?, or {}) — it has nothing before it to repeat.';
+  }
+  if (message.includes('at end of pattern')) {
+    return 'Remove the trailing "\\" or complete the escape sequence it starts.';
+  }
+  return `Fix the pattern: ${message.replace(/^Invalid regular expression: .*?: /, '')}.`;
 }
 
 /**
@@ -410,6 +334,14 @@ export function searchBodyScripts(
   return matches;
 }
 
+/** Complete DDL search result, including whole-line locators and admission counts. */
+export interface BodyScanResult {
+  matches: BodyMatch[];
+  total: number;
+  objects: number;
+  oversized: { node: SearchableNode; lines: OversizedLineHit[] }[];
+}
+
 /**
  * Sweeps a compiled pattern over every body once, building match rows only while their count
  * stays admissible and counting the rest.
@@ -435,7 +367,7 @@ export function scanBodyMatches(
   regex: RegExp,
   types: Set<ObjectType> | undefined,
   admits: (count: number) => boolean,
-): { matches: BodyMatch[]; total: number; objects: number; oversized: { node: SearchableNode; lines: OversizedLineHit[] }[] } {
+): BodyScanResult {
   const scanner = globalScanner(regex);
   const matches: BodyMatch[] = [];
   const oversized: { node: SearchableNode; lines: OversizedLineHit[] }[] = [];

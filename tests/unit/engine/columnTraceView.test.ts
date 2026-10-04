@@ -26,6 +26,7 @@ import {
   COLUMN_AI_ANNOTATION_BAND,
 } from '../../../src/engine/columnTraceView';
 import { DEFAULT_CONFIG, type ExtensionConfig } from '../../../src/engine/types';
+import { normalizeColName, quoteIdentifier } from '../../../src/utils/sql';
 
 function mkObj(id: string, objectType = 'table', label?: string): ColumnTraceViewObject {
   return { id, label: label ?? id, schema: 'dbo', objectType };
@@ -51,6 +52,57 @@ function findRow(view: ReturnType<typeof buildColumnTraceView>, nodeId: string, 
 }
 
 describe('columnTraceView', () => {
+  it.each([
+    [false, 'value'], [false, '[VALUE]'], [false, '"VaLuE"'],
+    [true, 'Value'], [true, '[Value]'], [true, '"Value"'],
+  ] as const)('displays extracted metadata names rather than relation spellings (CS=%s, column=%s)', (cs, spelling) => {
+    const objects = mkObjects(...['dbo.s', 'dbo.t'].map(id => ({
+      ...mkObj(id, 'table', id === 'dbo.s' ? 'SourceObject' : 'TargetObject'),
+      columnNames: new Map([[normalizeColName('Value', cs), 'Value']]),
+      columnTypes: new Map([[normalizeColName('Value', cs), 'decimal(18,2)']]),
+    })));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: spelling, toNode: 'dbo.t', toCol: spelling },
+    ];
+    const original = structuredClone(relations);
+    const view = buildColumnTraceView({ relations, objects, identifierCaseSensitive: cs, config: DEFAULT_CONFIG });
+    expect(view.nodes.map(node => node.label)).toEqual(['SourceObject', 'TargetObject']);
+    expect(view.nodes.map(node => node.rows.map(row => [row.name, row.dataType])))
+      .toEqual([[['Value', 'decimal(18,2)']], [['Value', 'decimal(18,2)']]]);
+    expect(view.edges.map(edge => [edge.sourceColumn, edge.targetColumn])).toEqual([['Value', 'Value']]);
+    expect(relations).toEqual(original);
+  });
+
+  it('keeps exact metadata display names and types for checked CS column twins', () => {
+    const objects = mkObjects(...['dbo.s', 'dbo.t'].map(id => ({
+      ...mkObj(id), columnNames: new Map([['Value', 'Value'], ['value', 'value']]),
+      columnTypes: new Map([['Value', 'int'], ['value', 'money']]),
+    })));
+    const relations: ColumnTraceRelation[] = ['[Value]', '"value"'].map(column => ({
+      hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: column, toNode: 'dbo.t', toCol: column,
+    }));
+    const view = buildColumnTraceView({ relations, objects, identifierCaseSensitive: true, config: DEFAULT_CONFIG });
+    expect(view.nodes.map(node => node.rows.map(row => [row.name, row.dataType])))
+      .toEqual([[['Value', 'int'], ['value', 'money']], [['Value', 'int'], ['value', 'money']]]);
+    expect(view.edges.map(edge => [edge.sourceColumn, edge.targetColumn])).toEqual([['Value', 'Value'], ['value', 'value']]);
+    expect(new Set(view.edges.map(edge => edge.sourceHandle)).size).toBe(2);
+  });
+
+  it('retains recorded names on opaque procedure ports while endpoint rows use metadata', () => {
+    const objects = mkObjects(
+      { ...mkObj('dbo.s'), columnNames: new Map([['quantity', 'Quantity']]) },
+      mkObj('dbo.p', 'procedure'),
+      { ...mkObj('dbo.t'), columnNames: new Map([['total', 'Total']]) },
+    );
+    const view = buildColumnTraceView({
+      relations: [{ hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'quantity', toNode: 'dbo.t', toCol: '[TOTAL]' }],
+      objects, config: DEFAULT_CONFIG,
+    });
+    expect(findNode(view, 'dbo.p').rows.map(row => row.name)).toEqual(['quantity', '[TOTAL]']);
+    expect(view.edges.map(edge => [edge.sourceColumn, edge.targetColumn])).toEqual([['Quantity', 'quantity'], ['[TOTAL]', 'Total']]);
+    expect(view.portBridges).toEqual([{ nodeId: 'dbo.p', fromColumn: 'quantity', toColumn: '[TOTAL]' }]);
+  });
+
   it('normalises the viaNode shape and the endpoint shape to the same rendering', () => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.t'));
 
@@ -587,6 +639,42 @@ describe('columnTraceView AI annotation band', () => {
  * from and what is derived from it — never a sibling input that merely shares an output with it.
  */
 describe('columnThread — directed trace cone', () => {
+  it.each([['->', false], ['->', true], ['::', false], ['::', true]] as const)('preserves separate relations containing literal %s separators (CS=%s)', (separator, cs) => {
+    const [a, b, c, hop] = ['a', 'b', 'c', 'h'].map(name => `[dbo].[${name}]`);
+    const from = quoteIdentifier(`x->${b}${separator}y`);
+    const to = quoteIdentifier(`y->${c}${separator}z`);
+    const relations = [
+      { hopNode: hop, fromNode: a, fromCol: 'x', toNode: b, toCol: to },
+      { hopNode: hop, fromNode: a, fromCol: from, toNode: c, toCol: 'z' },
+    ];
+    const view = buildColumnTraceView({ relations, objects: mkObjects(...[a, b, c].map(id => mkObj(id))), identifierCaseSensitive: cs, config: DEFAULT_CONFIG });
+    expect(view.edges.map(edge => [edge.sourceColumn, edge.targetColumn])).toEqual([['x', to], [from, 'z']]);
+    const index = buildColumnThreadIndex(view);
+    expect(columnThread(index, columnRowKey(a, 'x', cs))).toEqual(new Set([columnRowKey(a, 'x', cs), columnRowKey(b, to, cs)]));
+    expect(columnThread(index, columnRowKey(a, from, cs))).toEqual(new Set([columnRowKey(a, from, cs), columnRowKey(c, 'z', cs)]));
+  });
+
+  it.each([false, true])('separates local dotted-column identity from a qualified remote node (CS=%s)', cs => {
+    const local = '[dbo].[a]';
+    const remote = '[dbo].[a].[b]';
+    const sink = '[dbo].[sink]';
+    const dottedColumn = '[[b]].c]';
+    const view = buildColumnTraceView({
+      identifierCaseSensitive: cs, config: DEFAULT_CONFIG,
+      objects: mkObjects(mkObj(local), mkObj(remote, 'external'), mkObj(sink)),
+      relations: [
+        { hopNode: sink, fromNode: local, fromCol: dottedColumn, toNode: sink, toCol: 'Left' },
+        { hopNode: sink, fromNode: remote, fromCol: 'c', toNode: sink, toCol: 'Right' },
+      ],
+    });
+    const localKey = columnRowKey(local, dottedColumn, cs);
+    const remoteKey = columnRowKey(remote, 'c', cs);
+    expect(localKey).not.toBe(remoteKey);
+    const threads = buildColumnThreadIndex(view);
+    expect(columnThread(threads, localKey)).toEqual(new Set([localKey, columnRowKey(sink, 'Left', cs)]));
+    expect(columnThread(threads, remoteKey)).toEqual(new Set([remoteKey, columnRowKey(sink, 'Right', cs)]));
+  });
+
   const objects = mkObjects(
     mkObj('ai.SalesStaging'), mkObj('ai.vwConsolidatedSales', 'view'), mkObj('ai.PriceMaster'),
     mkObj('ai.vwPriceList', 'view'), mkObj('ai.spBuildSalesReport', 'procedure'), mkObj('ai.FactSalesReport'),
@@ -625,4 +713,22 @@ describe('columnThread — directed trace cone', () => {
     });
     expect(columnThread(cyclic, columnRowKey('a', 'x')).size).toBe(2);
   });
+});
+
+it('keeps checked CS object and column twins distinct through rows, handles, verdicts and thread indexes', () => {
+  const upper = '[dbo].[CaseTab]'; const lower = '[dbo].[casetab]'; const sink = '[dbo].[Sink]';
+  const objects = new Map([upper, lower, sink].map(id => [id, mkObj(id)]));
+  const view = buildColumnTraceView({identifierCaseSensitive:true,objects,config:DEFAULT_CONFIG,verdicts:new Map([[upper,'analyze'],[lower,'passthrough']]),relations:[
+    {hopNode:upper,fromNode:upper,fromCol:'Value',toNode:sink,toCol:'Upper'},
+    {hopNode:lower,fromNode:lower,fromCol:'Value',toNode:sink,toCol:'lower'},
+    {hopNode:upper,fromNode:upper,fromCol:'value',toNode:sink,toCol:'Other'},
+  ]});
+  expect(view.nodes.map(n=>n.id)).toEqual([upper,sink,lower]);expect(view.edges).toHaveLength(3);
+  expect(findNode(view,upper).rows.map(row=>row.name)).toEqual(['Value','value']);
+  expect(view.edges[0].state).toBe('transformation');expect(view.edges[1].state).toBe('passthrough');
+  expect(view.edges[0].sourceHandle).not.toBe(view.edges[2].sourceHandle);
+  const index=buildColumnThreadIndex(view);
+  expect(index.down.get(columnRowKey(upper,'Value',true))).toEqual([columnRowKey(sink,'Upper',true)]);
+  expect(index.down.get(columnRowKey(lower,'Value',true))).toEqual([columnRowKey(sink,'lower',true)]);
+  expect(columnRowKey(upper,'Value',true)).not.toBe(columnRowKey(upper,'value',true));
 });

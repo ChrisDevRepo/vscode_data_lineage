@@ -1,23 +1,6 @@
-/**
- * Internal configuration flag for case-sensitivity mode across the engine.
- *
- * - 'CI': Case-Insensitive (SQL Server default). Schema keys are lowercased for comparison.
- * - 'CS': Case-Sensitive. Exact casing is used for all object and schema identification.
- *
- * This is an internal normalization policy, not a user-facing setting.
- */
-const CASE_MODE: 'CI' | 'CS' = 'CI';
-
-/**
- * Computes a canonical comparison key for a SQL schema or object name.
- *
- * When `CASE_MODE` is 'CI', the name is lowercased to ensure that 'dbo', 'DBO',
- * and '[dbo]' (after bracket stripping) are treated as identical.
- *
- * @returns The normalized key for use in Maps and sets.
- */
-export function schemaKey(name: string): string {
-  return CASE_MODE === 'CI' ? name.toLowerCase() : name;
+/** Returns a schema comparison key; exact casing requires checked source identifier metadata. */
+export function schemaKey(name: string, identifierCaseSensitive = false): string {
+  return identifierCaseSensitive ? name : name.toLowerCase();
 }
 
 
@@ -63,10 +46,13 @@ export function quoteIdentifier(name: string): string {
  * and would treat a dotted column as a qualified object.
  *
  * @param name - A column identifier, possibly bracketed/quoted or mixed-case.
- * @returns The delimiter-free, lower-cased form for equality checks.
+ * @param identifierCaseSensitive - Checked catalog policy; absent/false retains CI equality.
+ * @returns Delimiter-free comparison key, preserving casing only for a checked CS catalog.
  */
-export function normalizeColName(name: string): string {
-  return stripBrackets(name).trim().toLowerCase();
+export function normalizeColName(name: string, identifierCaseSensitive = false): string {
+  const input = name.trim();
+  const normalized = /^(?:\[(?:[^\]]|\]\])*\]|"(?:""|[^"])*")$/.test(input) ? stripBrackets(input) : input;
+  return schemaKey(normalized, identifierCaseSensitive);
 }
 
 /**

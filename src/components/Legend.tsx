@@ -8,6 +8,8 @@ interface LegendProps {
   schemas: string[];
   /** Color assignments from the current loaded schema set. */
   schemaColorMap?: SchemaColorMap;
+  /** Checked source catalog comparison policy; absent/false retains CI schema identity. */
+  identifierCaseSensitive?: boolean;
   /** True when object nodes and collapsed schema clusters are shown together. */
   isExpandedSchemaViewActive?: boolean;
   /** Schemas currently expanded into object nodes in Expanded Schema View. */
@@ -33,6 +35,7 @@ const SCHEMA_DISPLAY_LIMIT = 10;
 export const Legend = memo(function Legend({
   schemas,
   schemaColorMap,
+  identifierCaseSensitive = false,
   isExpandedSchemaViewActive = false,
   expandedSchemas,
   inset,
@@ -52,8 +55,8 @@ export const Legend = memo(function Legend({
     return () => observer.disconnect();
   }, []);
 
-  const colors = schemaColorMap ?? createSchemaColorMap(schemas);
-  const expandedSchemaKeys = new Set(Array.from(expandedSchemas ?? [], schemaKey));
+  const colors = schemaColorMap ?? createSchemaColorMap(schemas, undefined, identifierCaseSensitive);
+  const expandedSchemaKeys = new Set(Array.from(expandedSchemas ?? [], name => schemaKey(name, identifierCaseSensitive)));
 
   return (
     <div
@@ -77,8 +80,8 @@ export const Legend = memo(function Legend({
               {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT))
                 .filter(s => !!s && s.trim().length > 0)
                 .map((schema) => {
-                  const color = getSchemaColorFromMap(schema, colors);
-                  const isCollapsedSchemaCluster = isExpandedSchemaViewActive && !expandedSchemaKeys.has(schemaKey(schema));
+                  const color = getSchemaColorFromMap(schema, colors, identifierCaseSensitive);
+                  const isCollapsedSchemaCluster = isExpandedSchemaViewActive && !expandedSchemaKeys.has(schemaKey(schema, identifierCaseSensitive));
                   const schemaStateLabel = isCollapsedSchemaCluster ? 'Collapsed schema cluster' : 'Expanded schema';
                   return (
                     <div key={schema} className="flex items-center gap-2">

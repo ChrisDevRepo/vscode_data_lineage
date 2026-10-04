@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ExplorationDepthSelectionSchema } from './explorationDepthContract';
-import { OBJECT_TYPES, type ExtensionConfig, type TraceAffordanceSnapshot } from '../types';
+import { OBJECT_TYPES, type ExtensionConfig, type SchemaPreview, type TraceAffordanceSnapshot } from '../types';
 
 /**
  * ─── Bridge Contract ────────────────────────────────────────────────────────
@@ -106,6 +106,11 @@ const ColumnDefSchema = z.object({
   type: z.string(),
   nullable: z.string(),
   extra: z.string(),
+  expressionDependencies: z.array(z.object({
+    reference: z.string().refine(value => value.trim().length > 0),
+    sourceElementType: z.string().optional(),
+    externalSource: z.string().optional(),
+  })).optional(),
   unique: z.string().optional(),
   check: z.string().optional(),
   pkOrdinal: z.number().optional(),
@@ -158,6 +163,14 @@ const SchemaInfoSchema = z.object({
   types: z.record(ObjectTypeSchema, z.number()),
 });
 
+/** Validated phase-one metadata; checked catalog policy survives the host/webview boundary. */
+const SchemaPreviewSchema: z.ZodType<SchemaPreview> = z.object({
+  identifierCaseSensitive: z.boolean().optional(),
+  schemas: z.array(SchemaInfoSchema),
+  totalObjects: z.number(),
+  warnings: z.array(z.string()).optional(),
+}).passthrough();
+
 /** Zod schema for a catalog entry mapping an object namespace to its physical representation. */
 const CatalogEntrySchema = z.object({
   schema: z.string(),
@@ -168,6 +181,7 @@ const CatalogEntrySchema = z.object({
 
 /** Strict IPC boundary schema for DatabaseModel payloads crossing between the host and webview. */
 const DatabaseModelSchema = z.object({
+  identifierCaseSensitive: z.boolean().optional(),
   nodes: z.array(LineageNodeSchema),
   edges: z.array(LineageEdgeSchema),
   schemas: z.array(SchemaInfoSchema),
@@ -721,8 +735,8 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
   z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
   z.object({ type: z.literal('detail-closed') }),
-  z.object({ type: z.literal('dacpac-schema-preview'), preview: z.any(), config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional() }),
-  z.object({ type: z.literal('db-schema-preview'), preview: z.any(), config: ExtensionConfigSchema, sourceName: z.string() }),
+  z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional() }),
+  z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
   z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string() }),
   z.object({ type: z.literal('db-cancelled') }),
   z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string() }),

@@ -365,7 +365,7 @@ export async function openBuiltInSession(
 
   const authentication = await resolveAuthentication(connection, env, options.password, logger);
   if (!authentication) {
-    logger.info(`Password prompt cancelled for ${label}`);
+    logger.info('Password prompt cancelled');
     return undefined;
   }
   if (options.token?.isCancellationRequested) return undefined;
@@ -406,7 +406,8 @@ export async function openBuiltInSession(
   });
   const session = new BuiltInSession(raw, lib, connectionInfo, label, logger, env.loadQueries);
 
-  logger.info(`Connecting to ${label}${database ? ` / ${database}` : ''} (${connection.authenticationType})`);
+  logger.info(`Connecting (${connection.authenticationType})`);
+  logger.debug(`Connection target: ${label}${database ? ` / ${database}` : ''}`);
   const started = Date.now();
   let cancelled: boolean;
   try {
@@ -424,7 +425,7 @@ export async function openBuiltInSession(
   }
   if (cancelled) {
     await session.dispose();
-    logger.info(`Connect to ${label} cancelled`);
+    logger.info('Connection cancelled');
     return undefined;
   }
   logger.info(`Connected (${Date.now() - started}ms)`);

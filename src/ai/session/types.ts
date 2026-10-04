@@ -72,8 +72,8 @@ export interface ResultGraph {
   sections?: Array<{ label: string; node_ids?: string[]; text?: string }>;
   /** The `explorationRunId` that authored {@link sections} — distinguishes sections a later render may retain from ones left over from a previous run. */
   sectionsRunId?: string;
-  /** Column lineage chain from a CT session; `ctPrunedNodeIds` are visited nodes with no flow edges. */
-  columnAspect?: { edges: ColumnEdge[]; ctPrunedNodeIds: string[] };
+  /** Column lineage chain from a CT session. */
+  columnAspect?: { edges: ColumnEdge[] };
 }
 
 /**

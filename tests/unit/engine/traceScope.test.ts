@@ -10,7 +10,7 @@ import {
 import {
   bfsReachable,
   findShortestPathOrdered,
-  nodesCutByRemoval,
+  analyzeRemoval,
 } from '../../../src/engine/graphGuards';
 import type { TraceState } from '../../../src/engine/types';
 import type { DatabaseModel, LineageEdge, LineageNode } from '../../../src/engine/types';
@@ -113,31 +113,31 @@ describe("Trace Scope Safety Tests", () => {
   expect(reach.size, 'missing start → empty set').toBe(0);
 });
 
-  it("nodesCutByRemoval: bridge removal cuts its subtree", () => {
+  it("analyzeRemoval: bridge removal cuts its subtree", () => {
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const cut = nodesCutByRemoval(g, 'A', new Set(), new Set(['B']));
-  expect(cut, 'nodesCutByRemoval: C cut, B excluded as removedAfter').toEqual(['C']);
+  const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds;
+  expect(cut, 'analyzeRemoval: C cut, B excluded as removedAfter').toEqual(['C']);
 });
 
-  it("nodesCutByRemoval: diamond keeps C reachable through the other branch", () => {
+  it("analyzeRemoval: diamond keeps C reachable through the other branch", () => {
   const g = makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
     [['A', 'B'], ['A', 'D'], ['B', 'C'], ['D', 'C']]
   );
-  const cut = nodesCutByRemoval(g, 'A', new Set(), new Set(['B']));
-  expect(cut, 'nodesCutByRemoval: C survives through D').toEqual([]);
+  const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds;
+  expect(cut, 'analyzeRemoval: C survives through D').toEqual([]);
 });
 
-  it("nodesCutByRemoval: keep set excludes an already-visited node from the cut", () => {
+  it("analyzeRemoval: keep set excludes an already-visited node from the cut", () => {
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const cut = nodesCutByRemoval(g, 'A', new Set(), new Set(['B']), undefined, new Set(['C']));
-  expect(cut, 'nodesCutByRemoval: C kept even though it would otherwise be cut').toEqual([]);
+  const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(['C']),sides:['downstream','upstream']}).cutIds;
+  expect(cut, 'analyzeRemoval: C kept even though it would otherwise be cut').toEqual([]);
 });
 
   it("canPruneTraceNode", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'B' }], [['O', 'A'], ['A', 'B']]);
   const visible = new Set(['O', 'A', 'B']);
-  const check = canPruneTraceNode(g, 'O', visible, 'O');
+  const check = canPruneTraceNode(g, 'O', visible, 'O', ['downstream', 'upstream']);
   expect(!check.safe, 'origin prune: not safe').toBe(true);
   expect(check.reason, "origin prune: reason='origin'").toBe('origin');
 });
@@ -145,14 +145,14 @@ describe("Trace Scope Safety Tests", () => {
   it("not-visible prune: not safe", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
   const visible = new Set(['O', 'A']);
-  const check = canPruneTraceNode(g, 'O', visible, 'HIDDEN');
+  const check = canPruneTraceNode(g, 'O', visible, 'HIDDEN', ['downstream', 'upstream']);
   expect(!check.safe, 'not-visible prune: not safe').toBe(true);
   expect(check.reason, "not-visible prune: reason='not-visible'").toBe('not-visible');
 });
 
   it("null origin: not safe", () => {
   const g = makeGraph([{ id: 'A' }], []);
-  const check = canPruneTraceNode(g, null, new Set(['A']), 'A');
+  const check = canPruneTraceNode(g, null, new Set(['A']), 'A', ['downstream', 'upstream']);
   expect(!check.safe, 'null origin: not safe').toBe(true);
   expect(check.reason, "null origin: reason='origin'").toBe('origin');
 });
@@ -163,7 +163,7 @@ describe("Trace Scope Safety Tests", () => {
     [['O', 'B'], ['B', 'C']]
   );
   const visible = new Set(['O', 'B', 'C']);
-  const check = canPruneTraceNode(g, 'O', visible, 'B');
+  const check = canPruneTraceNode(g, 'O', visible, 'B', ['downstream', 'upstream']);
   expect(check.safe, 'bridge prune: self-prune is safe, never refused').toBe(true);
   expect(check.reason === undefined, 'bridge prune: no reason').toBe(true);
   expect(check.cutNodeIds, 'bridge prune: C leaves with B (its subtree)').toEqual(['C']);
@@ -175,7 +175,7 @@ describe("Trace Scope Safety Tests", () => {
     [['O', 'A'], ['O', 'B']]
   );
   const visible = new Set(['O', 'A', 'B']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A');
+  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
   expect(check.safe, 'safe leaf prune: safe=true').toBe(true);
   expect(check.reason === undefined, 'safe leaf prune: no reason').toBe(true);
   expect(check.cutNodeIds, 'safe leaf prune: no subtree').toEqual([]);
@@ -187,7 +187,7 @@ describe("Trace Scope Safety Tests", () => {
     [['O', 'A'], ['O', 'B'], ['A', 'C'], ['B', 'C']]
   );
   const visible = new Set(['O', 'A', 'B', 'C']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A');
+  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
   expect(check.safe, 'diamond prune A: safe — C reachable via B').toBe(true);
   expect(check.cutNodeIds, 'diamond prune A: C survives, nothing cut').toEqual([]);
 });
@@ -198,7 +198,7 @@ describe("Trace Scope Safety Tests", () => {
     [['O', 'A'], ['A', 'C'], ['O', 'D'], ['D', 'C']]
   );
   const visible = new Set(['O', 'A', 'D', 'C']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A');
+  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
   expect(check.safe, 'diamond (second shape): safe').toBe(true);
   expect(check.cutNodeIds, 'diamond (second shape): C survives through D, nothing cut').toEqual([]);
 });
@@ -209,7 +209,7 @@ describe("Trace Scope Safety Tests", () => {
     [['O', 'A'], ['A', 'B'], ['B', 'C'], ['O', 'D']]
   );
   const visible = new Set(['O', 'A', 'B', 'C', 'D']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A');
+  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
   expect(check.safe, 'chain prune A: safe').toBe(true);
   expect(new Set(check.cutNodeIds), 'chain prune A: cuts [B, C]').toEqual(new Set(['B', 'C']));
   expect(check.cutNodeIds?.length, 'chain prune A: exactly 2 cut').toBe(2);
@@ -226,7 +226,7 @@ describe("Trace Scope Safety Tests", () => {
   it("origin not in visible: not safe", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
   const visible = new Set(['A']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A');
+  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
   expect(!check.safe, 'origin not in visible: not safe').toBe(true);
   expect(check.reason, "origin not in visible: reason='origin'").toBe('origin');
 });

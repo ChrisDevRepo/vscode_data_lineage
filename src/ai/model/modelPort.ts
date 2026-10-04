@@ -240,7 +240,7 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
-/** A provider tool call that passed registry and input-schema validation. */
+/** A registered native tool call ready for argument validation at its execution boundary. */
 export interface ValidGeneratedToolCall {
   /** Literal `true` discriminator for the valid arm. */
   readonly valid: true;
@@ -248,7 +248,7 @@ export interface ValidGeneratedToolCall {
   readonly callId: string;
   /** Registry tool name to dispatch. */
   readonly toolName: string;
-  /** Zod's accepted, parsed and transformed value — dispatch uses this, never the raw wire shape. */
+  /** Transport-decoded arguments, preserved for the receiving tool's schema admission. */
   readonly input: unknown;
 }
 

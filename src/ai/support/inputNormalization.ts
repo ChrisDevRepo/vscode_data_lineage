@@ -5,6 +5,7 @@
  * Keeps boundary normalization deterministic and reusable across tool handlers,
  * state-machine init, and prompt rendering.
  */
+import { z } from 'zod';
 import { parsePartialJson } from '@langchain/core/output_parsers';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
@@ -47,6 +48,13 @@ export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): strin
     key in parsed ? droppedKeyPaths(value, (parsed as Record<string, unknown>)[key], at(key)) : [at(key)]);
 }
 
+/** Rejects a scalar destination that an ordinary hop schema would strip, preserving unrelated legacy strips. */
+export function droppedScalarReturnFieldError(raw: unknown, parsed: unknown): z.ZodError | undefined {
+  const paths = droppedKeyPaths(raw, parsed).filter(path => /^column_flow\.\d+\.returns_to$/.test(path));
+  if (!paths.length) return undefined;
+  return new z.ZodError(paths.map(path => ({ code: 'unrecognized_keys', path: path.split('.').slice(0, -1).map(part => /^\d+$/.test(part) ? Number(part) : part), keys: ['returns_to'], message: 'returns_to is unavailable on this ordinary hop.' })));
+}
+
 /** One field-level ID canonicalization applied to a cloned `submit_findings` payload. */
 export interface SubmitFindingsIdNormalization {
   /** Dot-path of the normalized field in the cloned input. */
@@ -70,17 +78,19 @@ export interface SubmitFindingsNormalizationResult {
  *
  * @param raws - An array of raw node id strings.
  * @param nodeMap - The map of canonical nodes to check against.
+ * @param identifierCaseSensitive - Proven source policy; missing/false retains legacy case-insensitive lookup.
  * @returns An object containing resolved and unresolved node id arrays.
  */
 export function resolveModelNodeIds(
   raws: string[],
   nodeMap: Map<string, unknown>,
+  identifierCaseSensitive = false,
 ): { resolved: string[]; unresolved: string[] } {
   const resolved: string[] = [];
   const unresolved: string[] = [];
   const seenResolved = new Set<string>();
   for (const raw of raws) {
-    const id = resolveModelNodeId(raw, nodeMap);
+    const id = resolveModelNodeId(raw, nodeMap, identifierCaseSensitive);
     if (!id) {
       unresolved.push(raw);
       continue;
@@ -98,6 +108,7 @@ export function resolveModelNodeIds(
  * @remarks
  * This is intentionally narrow: it canonicalizes bracket/case/name encodings only
  * and never removes unknown fields or changes the raw object supplied by the model.
+ * Source case sensitivity preserves spelling and never substitutes a distinct object.
  * The caller must still run the cloned output through the strict BB/CT Zod schema.
  *
  * @param rawInput - Raw model input object.
@@ -107,6 +118,7 @@ export function resolveModelNodeIds(
 export function normalizeSubmitFindingsInputIds(
   rawInput: SubmitFindingsInputObject,
   nodeMap: Map<string, unknown>,
+  identifierCaseSensitive = false,
 ): SubmitFindingsNormalizationResult {
   const input: SubmitFindingsInputObject = { ...rawInput };
   const normalizations: SubmitFindingsIdNormalization[] = [];
@@ -115,7 +127,7 @@ export function normalizeSubmitFindingsInputIds(
   };
 
   if (typeof rawInput.focus_node_id === 'string') {
-    const resolved = resolveModelNodeId(rawInput.focus_node_id, nodeMap);
+    const resolved = resolveModelNodeId(rawInput.focus_node_id, nodeMap, identifierCaseSensitive);
     if (resolved) {
       input.focus_node_id = resolved;
       note('focus_node_id', rawInput.focus_node_id, resolved);
@@ -126,7 +138,7 @@ export function normalizeSubmitFindingsInputIds(
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
     const value = (entry as Record<string, unknown>)[key];
     if (typeof value !== 'string') return entry;
-    const resolved = resolveModelNodeId(value, nodeMap) ?? value;
+    const resolved = resolveModelNodeId(value, nodeMap, identifierCaseSensitive) ?? value;
     note(`${listName}.${index}.${key}`, value, resolved);
     return { ...(entry as Record<string, unknown>), [key]: resolved };
   });

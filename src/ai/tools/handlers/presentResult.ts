@@ -4,18 +4,19 @@
  * @remarks
  * Provider-neutral validation and assembly helpers remain in the sibling
  * `presentResult.ts`; this handler owns session persistence and the validated
- * webview effect. The input arrives already parsed against the schema the stage served
- * (the tool-attempt boundary owns that parse), so only engine-state rules are checked here, each
- * refused as one rejection envelope. Turn-lease validation and effect serialization remain in the
- * registry wrapper.
+ * webview effect. Raw arguments are admitted once against the same live stage/repair schema the
+ * provider sees, before normalization or held-content merge. Turn-lease validation and effect
+ * serialization remain in the registry wrapper.
  */
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
+import { schemaKey } from '../../../utils/sql';
 import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
   findBareNonPrunedNodes, findUnrenderedDetailSlotIds, requiredDetailSlotIds, buildColumnChainPreface,
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
+  holdRejectedPresentResult,
   findTextlessNewSectionLabels,
   findStartOrderIssues,
   presentResultRepairInstruction,
@@ -29,11 +30,11 @@ import {
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel } from '../../tools/toolSchemas';
+import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
-import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
@@ -46,10 +47,11 @@ function findUncoveredCtChainNodes(
   input: PresentResultInput,
   resolvedNodeIds: string[],
   slottedNodeIds: readonly string[],
+  identifierCaseSensitive = false,
 ): string[] {
   const edges = resultGraph?.columnAspect?.edges ?? [];
   if (edges.length === 0) return [];
-  const lc = (id: string): string => id.toLowerCase();
+  const lc = (id: string): string => schemaKey(id, identifierCaseSensitive);
   const exempt = new Set<string>(slottedNodeIds.map(lc));
   for (const st of resultGraph?.node_states ?? []) if (st.action === 'prune') exempt.add(lc(st.nodeId));
   const chain = new Set(edges.flatMap(e => [lc(e.from_node), lc(e.to_node), lc(e.hop_node)]));
@@ -126,11 +128,13 @@ function buildColumnAspectNodeVerdicts(
   nodeIds: readonly string[],
   columnAspect: NonNullable<ResultGraph['columnAspect']>,
   nodeStates: ResultGraph['node_states'],
+  identifierCaseSensitive = false,
 ) {
-  const referenced = new Set(nodeIds.map(id => id.toLowerCase()));
-  for (const e of columnAspect.edges) referenced.add(e.hop_node.toLowerCase());
+  const key = (id: string): string => schemaKey(id, identifierCaseSensitive);
+  const referenced = new Set(nodeIds.map(key));
+  for (const e of columnAspect.edges) referenced.add(key(e.hop_node));
   return (nodeStates ?? [])
-    .filter(ns => referenced.has(ns.nodeId.toLowerCase()))
+    .filter(ns => referenced.has(key(ns.nodeId)))
     .map(ns => ({ nodeId: ns.nodeId, verdict: ns.action }));
 }
 
@@ -171,12 +175,43 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         return s.logAndReturn('lineage_present_result', rejection, rawInput);
       };
 
+      const presentResultStage: PresentResultStage = isVisualPreview
+        ? 'visual_preview'
+        : sess.phase.kind === 'completed'
+        ? 'completed'
+        : 'synthesis';
+      const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
+      const schema = presentResultSchemaForPhase(
+        presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
+        previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
+        sess.presentResultRepairSectionTextLeaves ?? undefined,
+      );
+      const parsed = schema.safeParse(input);
+      if (!parsed.success) {
+        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        const repair = isVisualPreview ? null : holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], presentResultStage);
+        const authorization = sess.presentResultRepairDraft.getAuthorization();
+        const held = sess.presentResultRepairDraft.get();
+        if (held && authorization) rejection.hint = [
+          zodFieldRepairHint(parsed.error, input, schema),
+          repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionTextLeaves),
+        ].filter(Boolean).join(' ');
+        return reject(rejection);
+      }
+      input = parsed.data;
+
       const held = sess.presentResultRepairDraft.get();
       const authorization = sess.presentResultRepairDraft.getAuthorization();
       let presentInput: PresentResultInput;
       if (held && authorization) {
         const patch = input as PresentResultRepairPatch;
-        const textlessNewLabels = findTextlessNewSectionLabels(held.sections, patch.sections ?? []);
+        const textlessNewLabels = authorization.sectionTextLeaves
+          ? []
+          : findTextlessNewSectionLabels(
+            held.sections,
+            (patch.sections ?? []) as Parameters<typeof findTextlessNewSectionLabels>[1],
+          );
         if (textlessNewLabels.length > 0) {
           const body = isVisualPreview ? 'start' : 'text';
           return reject(makeRejection({
@@ -191,14 +226,14 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (!merged.success) {
           const owed = new Set<string>(['sections', ...authorization.fields.filter(field => presentInput[field] === undefined)]);
           const fields = PRESENT_RESULT_REPAIR_FIELDS.filter(field => owed.has(field));
-          sess.presentResultRepairDraft.hold(presentInput, { fields });
-          const sectionsHeld = (held.sections?.length ?? 0) > 0;
-          const instruction = presentResultRepairInstruction(fields, isVisualPreview ? 'visual_preview' : 'synthesis', sectionsHeld);
+          const sectionsHeld = (presentInput.sections?.length ?? 0) > 0;
+          const sectionTextLeaves = sectionsHeld
+            ? sectionTextLeavesFromIssues(merged.error.issues)
+            : undefined;
+          sess.presentResultRepairDraft.hold(presentInput, { fields, ...(sectionTextLeaves ? { sectionTextLeaves } : {}) });
           return reject(rejectionFromZodError(merged.error, {
             code: REJECTION_CODES.validation,
-            hint: sectionsHeld
-              ? `${instruction} The merge left the report with no section to keep; a section stays unless it is dropped.`
-              : instruction,
+            hint: presentResultRepairInstruction(fields, isVisualPreview ? 'visual_preview' : 'synthesis', sectionsHeld, undefined, sectionTextLeaves),
           }));
         }
       } else if (isVisualPreview) {
@@ -215,14 +250,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       } else {
         presentInput = input as PresentResultInput;
       }
-
-      const presentResultStage: PresentResultStage = isVisualPreview
-        ? 'visual_preview'
-        : sess.phase.kind === 'completed'
-        ? 'completed'
-        : 'synthesis';
-
-      const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
 
       const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
         if (!held) return reject(rejection);
@@ -265,7 +292,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const modelNodeMap = getModelNodeMap(model);
 
       const canonicalNodeId = (id: string, field: string): string => {
-        const resolved = resolveModelNodeId(id, modelNodeMap) ?? id;
+        const resolved = resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ?? id;
         if (resolved !== id) {
           s.logger.debug(
             `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(id)} to=${sanitizeForLog(resolved)}`,
@@ -297,7 +324,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
-        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap);
+        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (addResolution.unresolved.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
@@ -327,7 +354,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
-        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap);
+        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (pruneResolution.unresolved.length > 0) {
           return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
@@ -342,6 +369,14 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       if (resultGraph.originNodeId) {
+        if (!resolvedNodeIds.includes(resultGraph.originNodeId)) {
+          return reject(makeRejection({
+            code: REJECTION_CODES.validation,
+            reason: `Closed-graph invariant failed: origin \`${resultGraph.originNodeId}\` is missing from the result view.`,
+            hint: 'Keep the starting node in the view; remove it from prune_node_ids.',
+            issuePaths: ['prune_node_ids'],
+          }));
+        }
         const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
         if (disconnected.length > 0) {
           return reject(makeRejection({
@@ -370,14 +405,23 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       const unknownEvidenceIds: string[] = [];
+      const malformedEvidence: PresentResultViolation[] = [];
       let renderInput: PresentResultInput = isVisualPreview && presentInput.sections
         ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
         : presentInput;
       if (!isVisualPreview && presentInput.sections?.length) {
         const { blocks: evidenceBlocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
-        const expand = (text: string, fieldLabel: string): string => {
+        const expand = (text: string, fieldLabel: string, fieldPath = fieldLabel): string => {
           const expanded = expandEvidenceRefs(text, evidenceBlocks);
           unknownEvidenceIds.push(...expanded.unknownIds);
+          if (expanded.malformedRefs.length > 0) {
+            malformedEvidence.push({
+              field: fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing',
+              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. Close each block with a bare triple-backtick marker; another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
+              repairFields: [fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing'],
+              paths: [fieldPath],
+            });
+          }
           for (const entry of expanded.normalized) {
             s.logger.debug(`presentResult normalization: evidence reference ${entry} — ${fieldLabel}`);
           }
@@ -390,8 +434,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           title: expandOptional(presentInput.title, 'title'),
           intro: expandOptional(presentInput.intro, 'intro'),
           closing: expandOptional(presentInput.closing, 'closing'),
-          sections: presentInput.sections.map(sec => {
-            const expanded = expand(sec.text, `section "${trunc(sec.label, 60)}"`);
+          sections: presentInput.sections.map((sec, index) => {
+            const expanded = expand(sec.text, `section "${trunc(sec.label, 60)}"`, `sections.${index}.text`);
             return expanded === sec.text ? sec : { ...sec, text: expanded };
           }),
         };
@@ -441,8 +485,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
       );
 
-      const externalViolations: PresentResultViolation[] = [];
-      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds);
+      const externalViolations: PresentResultViolation[] = [...malformedEvidence];
+      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
       if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
           field: 'sections',
@@ -494,7 +538,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
+          const scopedHint = malformedEvidence.length > 0
+            ? holdRejectedPresentResult(sess.presentResultRepairDraft, presentInput, validation.rejection.issuePaths ?? [], presentResultStage)
+            : null;
+          if (scopedHint) validation.rejection.hint = scopedHint;
+          else sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
         }
         return reject(validation.rejection);
       }
@@ -525,7 +573,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               ...(e.note ? { note: e.note } : {}),
             })),
           },
-          nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states),
+          nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states, model.identifierCaseSensitive),
         } : {}),
       };
       const checkpoint = captureCheckpoint(sess, s.logger);
@@ -578,4 +626,30 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       s.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('lineage_present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
     } catch (err) { return s.toolError('present_result', err); }
+}
+
+/**
+ * Maps merged-sections validation issues to the indexed `label`/`text` leaves a repair may replace.
+ *
+ * @remarks
+ * Only issues under `sections[<number>]` qualify; the leaf is `text` when the issue path names it,
+ * otherwise `label` (the only other leaf the merged schema validates). Leaves are deduped per index.
+ *
+ * @returns The leaves, or `undefined` when no issue addresses an indexed section, so the caller
+ * holds a fields-only repair instead of an indexless/NaN leaf.
+ */
+export function sectionTextLeavesFromIssues(
+  issues: readonly { readonly path: readonly PropertyKey[] }[],
+): Array<{ index: number; fields: Array<'label' | 'text'> }> | undefined {
+  const byIndex = new Map<number, Set<'label' | 'text'>>();
+  for (const { path } of issues) {
+    const index = path[1];
+    if (path[0] !== 'sections' || typeof index !== 'number' || !Number.isInteger(index) || index < 0) continue;
+    const field = path[2] === 'text' ? 'text' : 'label';
+    const fields = byIndex.get(index) ?? new Set();
+    fields.add(field);
+    byIndex.set(index, fields);
+  }
+  if (byIndex.size === 0) return undefined;
+  return [...byIndex].sort(([a], [b]) => a - b).map(([index, fields]) => ({ index, fields: [...fields].sort() }));
 }

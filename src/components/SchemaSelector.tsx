@@ -5,6 +5,8 @@ import { createSchemaColorMap, getSchemaDisplayColor, isExternalOnlyTypeBreakdow
 interface SchemaSelectorProps {
   /** Array of schema information objects to display in the list. */
   schemas: SchemaInfo[];
+  /** Checked source catalog comparison policy for palette identity. */
+  identifierCaseSensitive?: boolean;
   /** A set of currently selected schema names. */
   selectedSchemas: Set<string>;
   /** Callback function to toggle the selection of a specific schema. */
@@ -20,6 +22,7 @@ interface SchemaSelectorProps {
  */
 export const SchemaSelector = memo(function SchemaSelector({
   schemas,
+  identifierCaseSensitive = false,
   selectedSchemas,
   onToggle,
   onSelectAll,
@@ -34,8 +37,8 @@ export const SchemaSelector = memo(function SchemaSelector({
     ? schemas.filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
     : schemas;
   const schemaColorMap = useMemo(
-    () => createSchemaColorMap(schemas.filter(s => !isExternalOnlyTypeBreakdown(s.types)).map(s => s.name)),
-    [schemas]
+    () => createSchemaColorMap(schemas.filter(s => !isExternalOnlyTypeBreakdown(s.types)).map(s => s.name), undefined, identifierCaseSensitive),
+    [schemas, identifierCaseSensitive]
   );
 
   return (
@@ -69,7 +72,7 @@ export const SchemaSelector = memo(function SchemaSelector({
       )}
       <div className="space-y-0.5 h-52 overflow-y-auto p-1.5 rounded-sm ln-schema-list">
         {filteredSchemas.map((schema) => {
-          const color = getSchemaDisplayColor(schema.name, schemaColorMap, schema.types);
+          const color = getSchemaDisplayColor(schema.name, schemaColorMap, schema.types, identifierCaseSensitive);
           return (
             <label
               key={schema.name}

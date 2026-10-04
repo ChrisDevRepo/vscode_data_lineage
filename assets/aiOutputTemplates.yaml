@@ -119,14 +119,13 @@ business_capture:
   instruction: |
     What the node does to the meaning of the data.
     1. Purpose: the domain role and the decision it serves.
-    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active.
-    3. Grain: "one row per …", with the predicates and join keys the rows arrive under.
-    4. Formulas: each assigned expression and its default as `$$ target = expression $$`, term for term, with what its terms mean.
-    5. Column mapping: `| From | To | Business meaning |`.
-    6. Lifecycle: status transitions as numbered steps.
-    7. Loading: whether target rows are replaced, extended or removed.
-    8. Error handling: what a failure leaves in the rows.
-    9. Gaps.
+    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active. Explain calculations within the rule they implement, with their formula, business meaning, terms and consequences.
+    3. Grain: distinguish input rows from surviving rows at each cardinality-changing step. For conditional eligibility, evaluate the complete predicate with the declared defaults and with each override separately, and qualify survival claims by that condition. A warning-only check does not override a later row-eligibility filter. For grouping or ranked-row removal, derive the survivors per grouping or partition key from the retained count or rank; ordering selects a survivor, not a new partition grain. Equality keys used to delete existing matches are deletion criteria, not automatically the output grain. Quote the deciding SQL with the explanation.
+    4. Column mapping: `| From | To | Business meaning |`.
+    5. Steps: explain the logical data transformations and status transitions in order. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This business section stands alone even when a technical section is also requested.
+    6. Loading: whether target rows are replaced, extended or removed.
+    7. Error handling: what a failure leaves in the rows.
+    8. Gaps.
 
     <scope_relevance>
     A sink that records the run itself — which procedure ran, when, with
@@ -142,13 +141,12 @@ technical_capture:
   instruction: |
     The mechanics, and which rows survive them.
     1. Purpose: the execution role.
-    2. Rules and branches: each switch value and the statement it runs.
-    3. Join shape and grain: JOIN and WHERE predicates, join hints, "one row per …".
-    4. Formulas: `$$ … $$` beside the snippet, one line per branch that assigns the column.
-    5. Steps as a numbered walk.
-    6. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
-    7. Error handling: TRY/CATCH, retry, locking.
-    8. Antipatterns: a ⚠️ line per non-sargable or converting predicate, per-row UDF or correlated subquery, unguarded UPDATE or DELETE, or read-before-write order.
+    2. Rules and branches: each switch value and the statement it runs. Explain calculations within the rule they implement, with their formula, deciding SQL, branch behavior and consequences.
+    3. Join shape and grain: JOIN and WHERE predicates and join hints; distinguish input rows from surviving rows at each cardinality-changing step. For grouping or ranked-row removal, derive the survivors per grouping or partition key from the retained count or rank; ordering selects a survivor, not a new partition grain. Equality keys used to delete existing matches are deletion criteria, not automatically the output grain. Quote the deciding SQL with the explanation.
+    4. Steps as a numbered walk of SQL statements and logical data changes. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This technical section stands alone even when a business section is also requested. Do not invent physical access or execution steps from SQL syntax: describe a join hint as a requested strategy, not an observed operator; without a plan, do not label a step scan, seek, hash build or probe.
+    5. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
+    6. Error handling: TRY/CATCH, retry, locking.
+    7. Evidence boundary, not an output item: do not add an evidence-review section or ⚠️ line merely because this recipe lists this rule. Put filters, literals, defaults, time functions, predicate shapes and assignments under Rules or Steps as factual behavior. Describe explicit SQL join hints, grouping and row grain as SQL facts. A literal or default is not a defect without supplied schema or business evidence for a requirement it violates. Use ⚠️ only when the supplied SQL alone proves a specific row or value consequence, or supplied evidence proves a violated requirement; quote the deciding expression and that evidence. Claims about index presence or use, actual seeks or scans, statistics, estimated or observed row counts, execution plans, chosen physical join strategies or runtime costs require matching catalog, plan or runtime evidence; SQL hints alone do not establish what the engine executed or its performance. If the user requested an unavailable dimension, state once in factual prose that its evidence was not supplied.
   example: ""
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────
@@ -159,7 +157,7 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    In either angle, one ⚠️ line per statement that silently loses, duplicates, overwrites or defaults rows — including a multi-statement write with no wrapping transaction, where a failure between the statements leaves rows lost or doubled: quote it and say its effect on the rows.
+    A ⚠️ is optional: use it only when the supplied SQL proves specific row or value loss, duplication or overwrite, or supplied schema or business evidence proves a violated requirement. Quote the deciding expression and any evidence of the requirement. For a no-transaction failure window, require at least two ordered writes to persistent data: the first changes persistent state and a later persistent write is needed to complete the same operation. Temporary objects, variables, reads, calculations, and steps before a single persistent write do not create that failure window. State filters, literals, defaults, join hints, grouping and row grain as SQL facts unless supplied evidence proves an adverse effect. Claims about index presence or use, actual seeks or scans, statistics, estimated or observed row counts, execution plans, chosen physical join strategies or runtime costs require matching catalog, plan or runtime evidence; SQL hints alone do not establish what the engine executed or its performance. Do not create a callout merely because evidence for a requested dimension is unavailable; state its absence once in factual prose.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
@@ -175,30 +173,12 @@ structural_summary:
 # Fires additively alongside business_capture / technical_capture when the
 # session has targetColumns set. Instructs the AI to fill out the column_flow
 # JSON per hop. CT-mode-gated in templateRenderer.ts → CT_MODE_GATED.
-# sections (semantic channel) should cover business/technical logic only —
-# NOT re-state column flow; that belongs exclusively in column_flow.
+# The shared captures handle SQL semantics; this adds column-flow evidence.
 
 column_trace_capture:
   stages: [active]
   instruction: |
-    <purpose>
-    Account for EVERY active tracked column — each gets one explicit decision:
-      → Continue it:  a column_flow entry mapping it to its upstream source column(s).
-      → It ends here: a column_flow entry with upstream_columns: [] (terminal — produced here, no upstream real column).
-    </purpose>
-
-    ## Before submitting — verify
-    □ A column that sits on the same source but feeds a different output is off-trace for this `out_col`: omit it. Trace only the columns that derive the tracked target and its sub-questions.
-    □ `sections` — this hop's narrative body — explains the context of the flow, including HOW the value is computed (formula / CASE / COALESCE / rename); that narrative never goes into column_flow fields.
-
-    ## Verdict — the `verdict` field decides it; column_flow follows
-    On `analyze`, column_flow carries each active column — upstream_columns: []
-    where the value originates here (stored base column, hardcoded literal, system
-    function such as GETDATE() or NEWID()). On `passthrough`, column_flow names the
-    upstream column; its writer is visited next, where full attribution
-    resolves.
-    Off-trace (no tracked column here): column_flow: [] — the node stays for what it
-    does to the rows, stated in `sections`.
+    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. An empty upstream list states that the value originates here; unresolved mappings remain questions.
 
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompting/prompts.ts. No separate per-angle templates
@@ -215,7 +195,9 @@ general:
   stages: [synthesis]
   instruction: |
     Render what the captured bodies contain, business meaning first; nothing is invented to fill a bullet:
-    - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation.
+    - **Section structure**: use only these bold labels, in this order when applicable: **Purpose**, **Rules and branches**, **Grain**, **Column mapping**, **Steps**, **Loading**, **Error handling**, **Gaps**. Embed formulas in the relevant rule or step, on their own lines with explanation or in a table with short descriptions. Never make a Formulas subsection or isolated inventory. Put lifecycle transitions under Steps and normal defaults under Rules and branches. Business explains meaning and consequences, technical explains execution, and both states shared facts once. Omit empty or inapplicable labels, including None/not applicable boilerplate and lists of absent mechanisms. Gaps contains only material unresolved questions. Preserve substantive facts without repeated wording.
+    - **Steps**: a real markdown numbered list, one step per line. Put tables and SQL fences on separate lines with blank lines around them; keep SQL to the deciding expression, using captured witness references when available.
+    - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation only when the backend does not supply that inventory; backend-ownership instructions take precedence over Column mapping labels and tables.
     - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.
     - **Status lifecycles**: numbered transitions.
     - **Callouts**: each captured ⚠️ sits once, in its section, as its own markdown list item (`- ⚠️ …`), never merged onto the same line as another callout; impact before mechanism in a business mission.

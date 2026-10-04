@@ -37,3 +37,10 @@ describe('assert-no-output-truncation', () => {
     expect(compare([], known).stale).toEqual(known);
   });
 });
+
+ it('allows only the approved committed-hop display call, retaining other graph prohibitions', () => {
+   const display = "const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\\s+/g, ' ').trim(), 135);";
+   expect(findSites('src/ai/agent/graph.ts', display)).toEqual([]);
+   expect(findSites('src/ai/agent/graph.ts', 'const memory = truncAtWordBoundary(summary, 135);')).toHaveLength(1);
+   expect(findSites('src/ai/agent/graph.ts', display.replace('135', '100'))).toHaveLength(1);
+ });

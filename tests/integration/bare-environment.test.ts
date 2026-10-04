@@ -6,27 +6,18 @@ import { announceLaneTier } from './laneTier';
  * Proves the extension survives a host with NO optional integrations present.
  *
  * @remarks
- * Owner rule — "the extension must never crash": the core
- * product is `.dacpac` → lineage graph and must keep working with no GitHub Copilot, no chat/LM
- * provider, and no `ms-mssql.mssql`. Crashing is worse than any missing feature, and a throw
- * escaping `activate()` loses every command, view and provider the extension would have
- * registered — so a user who never touches AI would lose the graph because of a feature they do
- * not use.
+ * The demo DACPAC → graph flow must keep working when optional chat and database integrations are
+ * unavailable. An activation failure would also prevent core commands and views from registering.
  *
- * That rule carries a proof obligation: the absent case must be *demonstrated*, not argued. This
- * lane is that demonstration. It launches with `--disable-extensions` and — unlike the `tools`
- * and `participant-turn` lanes — deliberately supplies **no** `--extensionDevelopmentPath` for the
- * language-model provider fixture, so the host genuinely has no chat model, no Copilot and no
- * mssql. The first two assertions verify that emptiness rather than assuming it, because an
- * assertion that the extension works "without Copilot" is worthless if Copilot was quietly present.
- * The lane label's own comment in `.vscode-test.mjs` records why no fixture may be added here.
+ * This lane launches with extensions disabled and supplies no language-model fixture. Its
+ * assertions verify the absent integrations instead of assuming they are absent.
  *
  * What this can and cannot cover: it proves activation completes and the core surface is live in a
  * bare host. It does not simulate `vscode.chat` being absent outright (a VS Code fork, or chat
  * disabled by enterprise policy) — that is not reachable from inside a real VS Code host, and the
  * containment for it is the `try/catch` around the AI block in `src/extension.ts`.
  */
-suite('Bare environment — no Copilot, no chat model, no mssql', () => {
+suite('Bare environment — no chat model or database extension', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
   suiteSetup(() => { announceLaneTier(
@@ -41,13 +32,6 @@ suite('Bare environment — no Copilot, no chat model, no mssql', () => {
       undefined,
       'this lane must run without the mssql extension, or it proves nothing about its absence',
     );
-    for (const id of ['github.copilot', 'github.copilot-chat']) {
-      assert.strictEqual(
-        vscode.extensions.getExtension(id),
-        undefined,
-        `this lane must run without ${id}, or it proves nothing about its absence`,
-      );
-    }
   });
 
   test('no chat model is available, and asking for one does not throw', async () => {

@@ -3,7 +3,7 @@ import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel, type CustomNodeData } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
-import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, unionConnectingPaths } from '../engine/traceScope';
+import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, traceRemovalSides, unionConnectingPaths } from '../engine/traceScope';
 import { directNeighborIds } from '../engine/graphGuards';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
@@ -357,7 +357,7 @@ export function useInteractiveTrace(
     if (!model || !fullGraph) return;
     setTrace(prev => {
       if (!isEditableTraceMode(prev.mode) || nodeId === prev.selectedNodeId) return prev;
-      const check = canPruneTraceNode(fullGraph, prev.selectedNodeId, prev.tracedNodeIds, nodeId);
+      const check = canPruneTraceNode(fullGraph, prev.selectedNodeId, prev.tracedNodeIds, nodeId, traceRemovalSides(prev.upstreamLevels, prev.downstreamLevels));
       if (!check.safe) return prev;
       const manualAddedNodeIds = new Set(prev.manualAddedNodeIds);
       const manualPrunedNodeIds = new Set(prev.manualPrunedNodeIds);

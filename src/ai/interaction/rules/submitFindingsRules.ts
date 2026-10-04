@@ -1,7 +1,6 @@
 import type { ClassificationValue } from '../../session/classification';
 import { CLASSIFICATION_KEPT_ANGLES } from '../../session/classification';
 import type { CapturedSection } from '../../session/memoryManager';
-import type { Verdict } from '../../sm/smTypes';
 
 /**
  * Required section angles by locked classification, read from the same
@@ -33,9 +32,6 @@ const SECTION_RULES: Record<ClassificationValue, {
  * locked classification.
  *
  * @remarks
- * An `end_branch` verdict carries no analysis into the lineage answer — its sections are discarded
- * either way — so it is exempt from both the angle requirement and the non-empty requirement.
- *
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
  * (`AiMemoryManager.getArchivedAngles`). A follow-up (`supplementAgenda`) revisits a node whose earlier sections
  * `storeDetail` already appended into the archive (never replaced), so an angle present there
@@ -44,10 +40,8 @@ const SECTION_RULES: Record<ClassificationValue, {
 export function validateSectionsAgainstClassification(
   sections: CapturedSection[] | undefined,
   classification: ClassificationValue | undefined,
-  verdict: Verdict | undefined,
   archivedAngles?: ReadonlySet<'business' | 'technical'>,
 ): string | null {
-  if (verdict === 'end_branch') return null;
   const list = sections ?? [];
   if (!classification) {
     return list.length === 0 ? 'sections must contain at least one of sections.business or sections.technical when verdict is analyze or passthrough.' : null;

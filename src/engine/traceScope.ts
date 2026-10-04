@@ -10,7 +10,7 @@ import type Graph from 'graphology';
 import type { DatabaseModel, LineageEdge, TraceState } from './types';
 import { bfsFromNode } from 'graphology-traversal';
 import { buildGraphologyGraph } from './graphBuilder';
-import { bfsReachable, nodesCutByRemoval } from './graphGuards';
+import { analyzeRemoval, type RemovalSide } from './graphGuards';
 
 /**
  * Whether a trace mode permits manual add/prune edits.
@@ -204,50 +204,45 @@ function reachable(graph: Graph, startId: string, mode: 'inbound' | 'outbound', 
 }
 
 /**
- * Checks whether one visible trace node can be pruned, and what leaves with it.
+ * Gets the fixed pruning legs from the trace's effective open levels.
+ * @returns Enabled upstream and downstream legs; zero-depth sides remain closed.
+ */
+export function traceRemovalSides(upstreamLevels: number, downstreamLevels: number): RemovalSide[] {
+  const sides: RemovalSide[] = [];
+  if (upstreamLevels > 0) sides.push('upstream');
+  if (downstreamLevels > 0) sides.push('downstream');
+  return sides;
+}
+
+/**
+ * Previews the shared directed self-prune policy for one visible trace node.
  *
- * @remarks
- * A self-prune like the AI backend's `end_branch`: the candidate leaves together with its
- * subtree — every node reachable from the origin only through it — computed by
- * {@link nodesCutByRemoval}, the same cut the NavigationEngine applies at a hop resolution. The
- * walk is scoped to the visible trace nodes and undirected: relevance in a trace runs both ways.
- * The result never leaves an island, and the origin is never removable.
+ * The clicked node is the current self-prune candidate. Other visible nodes have no committed
+ * AI analysis, so the trace supplies no visited anchors. Surviving directed joins stop the open
+ * cut. Both preview and application must supply the same effective trace levels through
+ * {@link traceRemovalSides}; the origin is always protected.
  *
- * @param graph - Graphology graph spanning the trace nodes and their edges.
- * @param originNodeId - Origin node ID (anchor, never prunable).
- * @param visibleNodeIds - Currently visible node IDs.
- * @param candidateNodeId - Node ID being tested.
- * @param reachableFromOrigin - Optional {@link traceReachableFromOrigin} result, shared across many candidates.
- *
- * @returns Prune verdict; `cutNodeIds` lists the subtree leaving alongside the candidate when safe.
+ * @param graph - Full directed model graph; traversal is restricted to the visible scope.
+ * @param originNodeId - Protected trace origin.
+ * @param visibleNodeIds - Current scope, including manually added nodes.
+ * @param candidateNodeId - Clicked node to remove.
+ * @param sides - Explicit open direction legs from the trace levels.
+ * @returns Prune verdict and exclusive open nodes that leave with the clicked node.
  */
 export function canPruneTraceNode(
   graph: Graph,
   originNodeId: string | null,
   visibleNodeIds: ReadonlySet<string>,
   candidateNodeId: string,
-  reachableFromOrigin?: ReadonlySet<string>,
+  sides: ReadonlyArray<RemovalSide>,
 ): TracePruneCheck {
   if (!originNodeId || candidateNodeId === originNodeId) return { safe: false, reason: 'origin' };
-  if (!visibleNodeIds.has(candidateNodeId)) return { safe: false, reason: 'not-visible' };
-  if (!visibleNodeIds.has(originNodeId)) return { safe: false, reason: 'origin' };
-
-  const cutNodeIds = nodesCutByRemoval(
-    graph,
-    originNodeId,
-    new Set<string>(),
-    new Set<string>([candidateNodeId]),
-    visibleNodeIds,
-    undefined,
-    reachableFromOrigin,
-  );
-  return { safe: true, cutNodeIds };
-}
-
-/**
- * Nodes the origin reaches inside the visible scope with nothing removed — the "before" state
- * every {@link canPruneTraceNode} probe compares against, computed once per scope.
- */
-export function traceReachableFromOrigin(graph: Graph, originNodeId: string, visibleNodeIds: ReadonlySet<string>): ReadonlySet<string> {
-  return bfsReachable(graph, originNodeId, new Set<string>(), undefined, visibleNodeIds);
+  if (!visibleNodeIds.has(candidateNodeId) || !graph.hasNode(candidateNodeId)) return { safe: false, reason: 'not-visible' };
+  if (!visibleNodeIds.has(originNodeId) || !graph.hasNode(originNodeId)) return { safe: false, reason: 'origin' };
+  const analysis = analyzeRemoval(graph, {
+    originId: originNodeId, scope: visibleNodeIds, removedBefore: new Set(),
+    removedAfter: new Set([candidateNodeId]), currentNodeId: candidateNodeId, visited: new Set(), sides,
+  });
+  if (analysis.rejection) return { safe: false, reason: analysis.rejection === 'origin' ? 'origin' : 'not-visible' };
+  return { safe: true, cutNodeIds: analysis.cutIds };
 }

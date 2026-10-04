@@ -14,9 +14,7 @@ and [`PARSE_RULES.md`](PARSE_RULES.md). Coding standards:
 | VS Code | `^1.101.0` | `engines.vscode` in [`package.json`](../package.json) |
 
 Install with `npm ci` after cloning and after any pull that touches
-`package.json` or `package-lock.json`. A `node_modules` tree carried over from
-another machine or lockfile resolves stale packages — delete it and run
-`npm ci` again.
+`package.json` or `package-lock.json`. Use `npm ci` to replace a stale or copied `node_modules` tree.
 
 The repo replaces LangChain's transitive `langsmith` dependency with an inert
 local stub via npm `overrides`. Some npm 10.x releases leave
@@ -25,12 +23,9 @@ local stub via npm `overrides`. Some npm 10.x releases leave
 copies the stub into place. Run it by hand if `node_modules` was copied
 instead of installed, or if the bundle fails with `Could not resolve "langsmith"`.
 
-`@langchain/core` is pinned to an exact version and stays pinned. The npm
-override cannot reach code vendored inside `@langchain/core`, so the runtime
-tracing guard in `src/ai/host/agentRuntime.ts` refuses to run when the
-`LANGSMITH_TRACING*` or `LANGCHAIN_TRACING*` flags are set, and the bundle gate
-`assert-no-langsmith` fails on any LangSmith client signature. An
-outdated-dependency report is not a reason to unpin.
+LangChain's core dependency is pinned. Runtime tracing guards reject enabled
+LangSmith/LangChain tracing, and the bundle gate checks that the real LangSmith
+client is absent. See [`ARCHITECTURE.md`](ARCHITECTURE.md#history-privacy-and-no-egress-boundary).
 
 ## Repository layout
 
@@ -101,8 +96,9 @@ flowchart LR
     style LIVE stroke:#ef6c00,stroke-width:2px
 ```
 
-*`SQL Server` covers SQL Server, Azure SQL, Fabric, and Synapse — same DMVs,
-same catalog shape.
+*The live lane supports SQL Server, Azure SQL, Fabric Data Warehouse, and
+Synapse. Platform-specific query availability is covered in
+[`DMV_QUERIES.md`](DMV_QUERIES.md).
 
 The parser has no awareness of the source. Both lanes use the same
 preprocessing, YAML extraction rules, normalization, and edge-direction logic.
@@ -114,10 +110,9 @@ proxy, because a DACPAC derives a platform label from its DSP exactly as a
 live import derives one from the server.
 
 - **DACPAC** — [`src/engine/dacpacExtractor.ts`](../src/engine/dacpacExtractor.ts).
-  Streams `model.xml` from the unzipped `.dacpac`, derives `dbPlatform` from
+  Reads `model.xml` from the `.dacpac` ZIP archive, derives `dbPlatform` from
   its DSP, and retains the full lightweight `allObjects` catalog. Known DSPs
-  map to platform labels; unrecognized DSP text is preserved raw. Test
-  fixtures must be AdventureWorks only.
+  map to platform labels; unrecognized DSP text is preserved raw.
 - **DMV** — [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts) +
   [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
   After schema selection, platform detection completes before the
@@ -241,44 +236,22 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 ## Testing
 
-SQL parsing and graph traversal remain protected Core subsets and must not
-shrink. GitHub does not run this test framework.
+See [`testing/README.md`](testing/README.md) for test tiers and optional
+configuration, and [`EDH_TESTING.md`](EDH_TESTING.md) for VS Code host lanes.
 
-| Tier | Command | Scope |
-|------|---------|-------|
-| **Full local gate** | `npm run gate` | Type-checking, tool-manifest drift, output-template schema version, prompt golden sync, honest test labels, core case completeness, unit-project coverage, layer-direction, output-truncation baseline, core coverage floors, agent-runtime tests, builds, and package checks. Run before push. |
-| **Unit suite** | `npm test` | Every maintained unit test. |
-| **Protected core** | `npm run test:core` | Parser, engine, and webview unit projects. |
-| **Core coverage floors** | `npm run coverage:core` | Per-file thresholds on `sqlBodyParser.ts`, `graphAnalysis.ts`, `graphBuilder.ts`, `shared/sqlRegex.ts`, `shared/nodeIdResolution.ts`. |
-| **Agent runtime** | `npm run test:runtime` | Deterministic agent-runtime and state-machine logic with a stubbed VS Code API. Zero model calls. |
-| **Core subsets** | `npm run test:parser`, `npm run test:bfs` | Focused parser or graph traversal/analysis. |
-| **Test type-checking** | `npm run typecheck:tests` | Type-checks `tests/unit/**` against production source. |
-| **Optional Electron lanes** | `npm run test:edh` | Four smoke labels in a real VS Code host. See [`EDH_TESTING.md`](EDH_TESTING.md). |
+| Command | Scope |
+|---------|-------|
+| `npm run gate` | Deterministic checks, coverage floors, builds, and package checks. Run before push. |
+| `npm test` | Maintained unit suite. |
+| `npm run test:core` | Parser, engine, and webview tests. |
+| `npm run coverage:core` | Protected core coverage floors. |
+| `npm run test:runtime` | Agent-runtime and state-machine tests with a stubbed VS Code API. |
+| `npm run typecheck:tests` | Unit-test TypeScript checking. |
+| `npm run test:edh` | Smoke lanes in a real VS Code host. |
 
-After an intended edit to a prompt surface (`assets/aiOutputTemplates.yaml`,
-`src/ai/prompting/`, `src/ai/agent/stagePrompts.ts`), refresh the golden-sync
-manifest with `node tests/tools/assert-golden-sync.mjs --update`. A new
-guarantee about the model-port boundary (`VscodeModelPort`) belongs in a
-port-level unit test; the Electron lanes stay scripted-only.
-
-Assert with vitest `expect`, and give each case its own `it` (or an `it.each`
-table).
-
-What earns a test outside the protected core (`sm/`, `ai-core/`):
-one decisive assertion per behaviour, placed in the file that owns the module,
-not a new file per fix. These do not earn one: a duplicate of a path another
-test already asserts, a value-only variant (use `it.each`), a pin on prompt,
-hint or log wording (internal suite only), a regex over `src/` text (unless it
-guards a security or layering boundary), a legacy or removed path, and an
-assertion that only exercises a test double. A trim keeps each red→green
-proof's decisive assertion and must lose no `src/**` statement or branch
-coverage, measured before and after. A new SQL parser case is cheapest as an `-- EXPECT` fixture under
-`tests/fixtures/sql/targeted/` rather than as TypeScript.
-
-Layout tests with ≥1500 nodes need the enlarged stack in
-[`vitest.config.ts`](../vitest.config.ts)
-(`test.execArgv: ['--stack-size=8000']`). Keep that entry top-level: Vitest 4
-ignores `poolOptions.*.execArgv`.
+For AI changes, review answers against the loaded SQL and graph as well as
+running the deterministic checks. See [Testing](testing/README.md) for the
+optional real-model smoke lane.
 
 ## Diagnostics
 

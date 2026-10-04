@@ -24,6 +24,7 @@ import type { SerializedFilterState } from '../../engine/projectStore';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { describeScreen } from '../tools/screenStatePresenter';
 import { escapePromptText } from '../support/text';
+import { ClassificationValueSchema } from '../tools/toolSchemas';
 
 /**
  * The grounding context surfaced in the system prompt's `## Context` block.
@@ -71,6 +72,7 @@ export function deriveStagePromptContext(
     totalSchemaCount: model.schemas.length,
     visibleNodes,
     totalNodes,
+    ...(model.identifierCaseSensitive && { identifierCaseSensitive: true }),
     ...(screen ? { screen } : {}),
   };
 }
@@ -145,11 +147,12 @@ export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string 
 export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?: string[]): string {
   const base = buildGeneralSystemPrompt(ctx);
   const ctLine = targetColumns?.length
-    ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${c}"`).join(', ')}].`
+    ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${escapePromptText(c)}"`).join(', ')}].`
     : '';
   const directive = [
     '## Task: open the exploration',
     "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named. Set every other field from the user's own words, as its description says: `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
+    ClassificationValueSchema.description,
     ctLine,
     'The user then reviews your proposal at an approval gate.',
   ].filter(Boolean).join('\n');
@@ -186,7 +189,7 @@ export function buildGateRefinePrompt(
     `Requested change: "${escapePromptText(refine.instruction ?? '')}"`,
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
-    'Preserve unchanged origin, question, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint in the instruction that no field above expresses goes in `scopeNotes`.',
+    'Preserve unchanged origin, question, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint that no other `lineage_start_exploration` field expresses goes in `scopeNotes`.',
   ].filter(Boolean).join('\n');
 }
 

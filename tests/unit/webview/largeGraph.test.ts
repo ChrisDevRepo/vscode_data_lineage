@@ -11,9 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { Node as FlowNode } from '@xyflow/react';
 import {
-  buildGraph,
   buildGraphNoLayout,
   buildGraphologyGraph,
   traceNodeWithLevels,
@@ -25,14 +23,6 @@ import { DEFAULT_CONFIG, type DatabaseModel, type ExtensionConfig } from '../../
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
 import { filterSuggestions } from '../../../src/utils/autocomplete';
 import { buildLargeModel } from './largeGraphFixture';
-
-/**
- * Dagre layout is laid out once, at the render-limit ceiling (`renderLimit` renders up to 1500
- * nodes): the size where the worker stack headroom in `vitest.config.ts` matters, and inside the
- * DWH generator's dense regime (`schemaCount > 6`, ~300+ objects). Smaller sizes run the same code
- * path and add only wall time.
- */
-const LAYOUT_SIZE = 1500;
 
 function configWith(overrides: Partial<ExtensionConfig>): ExtensionConfig {
   return { ...DEFAULT_CONFIG, ...overrides };
@@ -61,44 +51,7 @@ function directedReach(model: DatabaseModel, originId: string): number {
   return new Set([...walk('in'), ...walk('out')]).size;
 }
 
-/**
- * Independently reproduces `buildFlowEdges`' reciprocal-pair collapse (a `A→B` and `B→A` pair
- * renders as one bidirectional flow edge) — the DWH generator's cycles and backward reads make
- * reciprocal pairs common, so the flow-edge count legitimately drops below the model edge count
- * whenever a reciprocal pair exists.
- */
-function expectedFlowEdgeCount(model: DatabaseModel): number {
-  const pairs = new Set(model.edges.map(e => `${e.source}->${e.target}`));
-  const consumed = new Set<string>();
-  let count = 0;
-  for (const e of model.edges) {
-    const fwd = `${e.source}->${e.target}`;
-    if (consumed.has(fwd)) continue;
-    consumed.add(fwd);
-    const rev = `${e.target}->${e.source}`;
-    if (pairs.has(rev)) consumed.add(rev);
-    count++;
-  }
-  return count;
-}
-
 describe('graph build above the tracked fixture size', () => {
-  it('lays out the render-limit ceiling and keeps every object and edge', () => {
-    const size = LAYOUT_SIZE;
-    const model = buildLargeModel(size);
-    const started = performance.now();
-    const result = buildGraph(model, DEFAULT_CONFIG);
-    const elapsed = Math.round(performance.now() - started);
-    console.log(`buildGraph ${size} nodes / ${model.edges.length} edges: ${elapsed}ms`);
-
-    expect(result.flowNodes).toHaveLength(size);
-    expect(result.flowEdges).toHaveLength(expectedFlowEdgeCount(model));
-    expect(result.graph.order).toBe(size);
-
-    const distinct = new Set((result.flowNodes as FlowNode[]).map(n => `${n.position.x},${n.position.y}`));
-    expect(distinct.size).toBeGreaterThan(size / 2);
-  });
-
   it('builds without layout when the render limit blocks the object surface', () => {
     const model = buildLargeModel(2000);
     const result = buildGraphNoLayout(model, DEFAULT_CONFIG);

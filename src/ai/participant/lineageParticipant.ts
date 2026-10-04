@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { Logger } from '../../utils/log';
 import { Logger as OutputLogger } from '../../utils/log';
+import { expandNextQuestionSuggestions } from '../prompting/followupSuggestions';
 import { notifyWarning } from '../../utils/notifications';
 import { VscodeModelPort } from '../model/vscodeModelPort';
 import type { AiTraceWriter } from '../observability/aiTraceWriter';
@@ -19,12 +20,13 @@ import {
   SHOW_FULL_DESCRIPTION_TRIGGER,
   SHOW_FULL_PLAN_TRIGGER,
   SHOW_GRAPH_PREVIEW_TRIGGER,
+  STALE_GATE_TRIGGER_REPLY,
   expandRunTracePrompt,
   expandShowGraphPreviewPrompt,
 } from '../prompting/prompts';
 import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
-import type { AiSession, PendingExplorationProposal } from '../session/session';
-import { nodeFiltersRemovedByOrigin, renderScopeCardMd, renderScopeSummaryMd, schemaFiltersRemovedByOrigin, GATE_CARD_HEADER, HOLD_GATE_NOTICE } from '../prompting/scopeSummaryRenderer';
+import type { AiSession } from '../session/session';
+import { renderFullPlanMd, renderScopeCardMd, GATE_CARD_HEADER, HOLD_GATE_NOTICE } from '../prompting/scopeSummaryRenderer';
 import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
 import {
   createTurnTokenBudget,
@@ -65,20 +67,28 @@ const FULL_PLAN_SHOWN = 'fullPlanShown';
 /** Action a native approval-card button asks the runtime to take. */
 type NativeGateAction = 'approve' | 'change' | 'cancel';
 
+interface GateButtonRequest {
+  readonly pending: PendingNativeGate;
+  readonly action: 'approve' | 'cancel';
+  readonly label: string;
+}
+
 /**
  * Participant mention every chat turn the approval card opens starts with: Change scope prefills
- * it unsent (`isPartialQuery`) for the user to type the change; Approve and Cancel submit it with
- * their trigger prompt. The mention is required for the turn to reach `@lineage`.
+ * it unsent (`isPartialQuery`) for the user to type the change; Approve and Cancel submit only
+ * their visible action label. The mention is required for the turn to reach `@lineage`.
  */
 const PARTICIPANT_MENTION = '@lineage ';
 
-/** Most open leads named in the single follow-up-questions badge's prompt, taken in lead order. */
-const MAX_DEFERRED_FOLLOWUPS = 2;
+/** Natural user request submitted by the combined follow-up badge. */
+const NEXT_QUESTIONS_TRIGGER = 'What could I explore next?';
 
 /** Projects the shared lineage runtime onto VS Code's native chat participant API. */
 export class LineageParticipant {
   private readonly logger: Logger;
   private pendingGate: PendingNativeGate | null = null;
+  private buttonRequest: GateButtonRequest | null = null;
+  private gateCommandBusy = false;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
@@ -114,15 +124,24 @@ export class LineageParticipant {
         async (
           gateId: string,
           action: NativeGateAction,
-          classes: string[] = [],
         ) => {
+          if (!['approve', 'change', 'cancel'].includes(action) || this.gateCommandBusy) return;
           const pending = this.requirePendingGate(gateId, action);
           if (!pending) return;
-          const outcome = await this.submitGateDecision(pending, gateId, action, classes);
-          if (outcome === 'failed' || (outcome === 'resolved' && action !== 'change')) return;
-          await vscode.commands.executeCommand('workbench.action.chat.open', action === 'change'
-            ? { query: PARTICIPANT_MENTION, isPartialQuery: true }
-            : { query: `${PARTICIPANT_MENTION}${gateTriggerPrompt(action, pending.revision)}` });
+          const submitted: GateButtonRequest | null = action === 'change' ? null
+            : { pending, action, label: action === 'approve' ? 'Approve & Proceed' : 'Cancel' };
+          this.buttonRequest = submitted;
+          this.gateCommandBusy = true;
+          try {
+            const outcome = await this.submitGateDecision(pending, gateId, action, [...pending.classes]);
+            if (outcome === 'failed' || (outcome === 'resolved' && action !== 'change')) return;
+            await vscode.commands.executeCommand('workbench.action.chat.open', action === 'change'
+              ? { query: PARTICIPANT_MENTION, isPartialQuery: true }
+              : { query: `${PARTICIPANT_MENTION}${submitted!.label}`, blockOnResponse: true });
+          } finally {
+            if (this.buttonRequest === submitted) this.buttonRequest = null;
+            this.gateCommandBusy = false;
+          }
         },
       ),
     );
@@ -143,7 +162,8 @@ export class LineageParticipant {
     action: NativeGateAction,
   ): PendingNativeGate | null {
     const pending = this.pendingGate;
-    if (pending?.gateId === gateId && this.sessionHoldsGateProposal()) return pending;
+    if (pending?.gateId === gateId && this.sessionHoldsGateProposal()
+      && this.getSession().pendingExploration?.revision === pending.revision) return pending;
 
     this.traceGateResolution(pending, gateId, action, 'refused',
       pending !== null && pending.gateId !== gateId ? 'gate_id_mismatch' : 'no_pending_gate');
@@ -247,7 +267,10 @@ export class LineageParticipant {
       return {};
     }
 
-    if (applyNativeChatBoundary(
+    const suggestionFollowup = session.phase.kind === 'completed'
+      && normalizeFollowupTrigger(request.prompt) === normalizeFollowupTrigger(NEXT_QUESTIONS_TRIGGER);
+
+    if (!suggestionFollowup && applyNativeChatBoundary(
       chatContext.history,
       session,
       this.pendingGate,
@@ -257,6 +280,20 @@ export class LineageParticipant {
       this.logger.info(
         `[${session.id}] New chat session detected — prior exploration state cleared`,
       );
+    }
+
+    // The visible label carries no routing data. Only its request-owned button action can
+    // bypass AI classification; a user typing the same words takes the normal typed-reply path.
+    const submitted = this.buttonRequest;
+    let buttonPrompt: string | null = null;
+    if (submitted && request.prompt.trim() === submitted.label) {
+      this.buttonRequest = null;
+      if (submitted.pending !== this.pendingGate || !this.sessionHoldsGateProposal()
+        || session.pendingExploration?.revision !== submitted.pending.revision) {
+        this.write(stream, token, out => out.markdown(STALE_GATE_TRIGGER_REPLY));
+        return {};
+      }
+      buttonPrompt = gateTriggerPrompt(submitted.action, submitted.pending.revision);
     }
 
     if (request.prompt.trim().length === 0 && this.sessionHoldsGateProposal()) {
@@ -277,7 +314,7 @@ export class LineageParticipant {
           out.markdown('_No exploration plan is waiting for approval._');
           return;
         }
-        out.markdown(`${this.fullPlanReplyMd(proposal)}\n\n`);
+        out.markdown(`${renderFullPlanMd(proposal)}\n\n`);
         if (pending) this.writeGateButtons(out, pending.gateId, pending.classes);
       });
       return { metadata: { [FULL_PLAN_SHOWN]: true } };
@@ -327,18 +364,24 @@ export class LineageParticipant {
       ?? (session.phase.kind === 'idle' ? continuedSlashCommand(chatContext.history) : undefined);
     const prompt = command
       ? `/${command} ${request.prompt}`.trimEnd()
-      : expandRunTracePrompt(expandShowGraphPreviewPrompt(request.prompt, session), session);
+      : buttonPrompt ?? (suggestionFollowup
+        ? expandNextQuestionSuggestions(session)
+        : expandRunTracePrompt(expandShowGraphPreviewPrompt(request.prompt, session), session));
     const sink = new TurnEventSink(
-      (event) => this.write(stream, token, (out) => this.writeEvent(event, out, request.prompt, requestId)),
+      (event) => {
+        if (suggestionFollowup && event.type === 'terminal') return;
+        this.write(stream, token, (out) => this.writeEvent(event, out, request.prompt, requestId));
+      },
     );
     this.logger.info(
       `[${session.id}] native turn start model=${request.model.id} command=${command ?? 'none'} history=${chatContext.history.length}`,
     );
-    const priorMessages = chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) => this.logger.debug(msg));
+    const priorMessages = suggestionFollowup ? [] : chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) => this.logger.debug(msg));
 
     this.statusBarStart('working…');
     try {
-      const result = await this.runtime.run({
+      const run = suggestionFollowup ? this.runtime.runSuggestions.bind(this.runtime) : this.runtime.run.bind(this.runtime);
+      const result = await run({
         model,
         request: { id: requestId, prompt, priorMessages },
         sink,
@@ -460,6 +503,11 @@ export class LineageParticipant {
       }
       case 'terminal': {
         const session = this.getSession();
+        // Native chat may collapse older responses. Keep a held plan actionable on this answer.
+        if (event.status === 'ok' && this.sessionHoldsGateProposal() && this.pendingGate
+          && this.pendingGate.requestId !== requestId) {
+          this.writeGateButtons(stream, this.pendingGate.gateId, this.pendingGate.classes);
+        }
         if (
           event.status === 'ok'
           && session.presentResultCalledThisTurn
@@ -484,30 +532,6 @@ export class LineageParticipant {
         return;
       }
     }
-  }
-
-  /**
-   * Renders the **Show full plan** reply: the discovery summary (when the proposal has one) ahead
-   * of the plan, every in-scope object the stored proposal carries.
-   *
-   * @remarks
-   * Built directly from the held proposal rather than reused from the gate's stored `detail` —
-   * that string is the model-facing tool-response copy (discovery summary trailing, not leading)
-   * and stays exactly as the backend built it. This is a separate, user-facing rendering of the
-   * same underlying scope data.
-   */
-  private fullPlanReplyMd(proposal: PendingExplorationProposal): string {
-    const removedSchemaFilters = schemaFiltersRemovedByOrigin(
-      proposal.init.excludeSchemas ?? [],
-      proposal.summary.activeFilters.schemas,
-    );
-    const removedNodeFilters = nodeFiltersRemovedByOrigin(
-      proposal.init.excludeNodeIds ?? [],
-      proposal.summary.origin,
-      proposal.summary.activeFilters.nodeIds,
-    );
-    const plan = renderScopeSummaryMd(proposal.summary, proposal.revision, proposal.classification, removedSchemaFilters, removedNodeFilters);
-    return proposal.discoverySummary ? `${proposal.discoverySummary}\n\n${plan}` : plan;
   }
 
   /** The approval card's three buttons, bound to the gate they resolve. */
@@ -539,22 +563,9 @@ export class LineageParticipant {
     const followups: vscode.ChatFollowup[] = [];
     if (session.phase.kind === 'completed') {
       followups.push({
-        prompt: 'What related objects should I investigate next?',
-        label: vscode.l10n.t('Explore related objects…'),
+        prompt: NEXT_QUESTIONS_TRIGGER,
+        label: vscode.l10n.t('Next questions and related objects'),
       });
-      const reachable = (session.stateMachine?.deferredQuestions ?? []).filter(deferred => deferred.reason !== 'excluded');
-      const leads = reachable.slice(0, MAX_DEFERRED_FOLLOWUPS);
-      if (leads.length > 0) {
-        const openLeads = leads
-          .map(deferred =>
-            deferred.question ? `At ${deferred.nodeId}: ${deferred.question}` : `Continue the trace at ${deferred.nodeId}.`,
-          )
-          .join('; ');
-        followups.push({
-          prompt: `Follow up the open questions: ${openLeads}`,
-          label: vscode.l10n.t('Follow-up questions'),
-        });
-      }
     }
     if (session.lastPresentResultDescription) {
       followups.push({

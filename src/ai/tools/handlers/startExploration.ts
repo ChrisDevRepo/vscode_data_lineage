@@ -10,6 +10,7 @@ import { sameExplorationProposal } from '../../session/session';
 import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent } from '../../sm/smTypes';
 import { depthSidesDiffer, directionFromDepth } from '../../../engine/shared/explorationDepthContract';
 import { sanitizeForLog, trunc } from '../../../utils/log';
+import { schemaKey } from '../../../utils/sql';
 import { StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
 import { nodeFiltersRemovedByOrigin, renderScopeSummaryMd, schemaFiltersRemovedByOrigin } from '../../prompting/scopeSummaryRenderer';
@@ -36,6 +37,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const loggedInput = redactMissionBriefForLog(input);
       const sess = s.getSession();
       const m = s.requireModel();
+      const identifierKey = (value: string): string => schemaKey(value, m.identifierCaseSensitive);
       const g = s.requireGraph();
 
       const preCheckPrior = sess.stateMachine as NavigationEngine | null;
@@ -108,7 +110,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           const unresolvedIds = res.skippedDetails.filter(skip => skip.reason === 'unresolved').map(skip => skip.nodeId);
           const borderSkips = res.skippedDetails.filter(skip => skip.reason !== 'unresolved');
           const hint = [
-            'No id in this supplement was admitted into this trace (each is listed above with its refusal), so there is nothing to explore. Do not resend this supplement.',
+            'No id in this supplement was admitted into this trace (the rejection reason lists each id with its refusal), so there is nothing to explore. Do not resend this supplement.',
             ...(unresolvedIds.length > 0
               ? [`${unresolvedIds.join(', ')} ${unresolvedIds.length === 1 ? 'does' : 'do'} not resolve to an object in the loaded graph: call lineage_search_objects with each named identifier to resolve the canonical schema-qualified id before proposing it.`]
               : []),
@@ -123,7 +125,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           }), loggedInput);
         }
         const admittedIds = supplementIds.filter(
-          id => !res.skippedDetails.some(skip => skip.nodeId.toLowerCase() === id.toLowerCase()),
+          id => !res.skippedDetails.some(skip => identifierKey(skip.nodeId) === identifierKey(id)),
         );
         applyFollowUpContext();
         sess.enterExploring(s.turnEpoch(sess));
@@ -215,7 +217,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         s.logger.debug(`[AI] [StartExploration] refine to BB drops proposal targetColumns cols=[${trunc(pendingInit.targetColumns.join(','), 120)}] origin=${sanitizeForLog(refineOrigin)}`);
       }
       const sameStringSet = (a?: string[], b?: string[]): boolean => {
-        const norm = (v?: string[]): string => [...(v ?? [])].map(s2 => s2.toLowerCase()).sort().join('\u0000');
+        const norm = (v?: string[]): string => [...(v ?? [])].map(identifierKey).sort().join('\u0000');
         return norm(a) === norm(b);
       };
       const depthIntent = data.depth ?? pendingInit?.depthIntent;
@@ -229,7 +231,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const sameDepthIntent = (a?: DepthIntent, b?: DepthIntent): boolean =>
         !!a && !!b && !depthSidesDiffer(a.upstream, b.upstream) && !depthSidesDiffer(a.downstream, b.downstream);
       const refineScopeChanged = isRefining && (
-        refineOrigin.toLowerCase() !== (pendingInit?.origin ?? '').toLowerCase()
+        identifierKey(refineOrigin) !== identifierKey(pendingInit?.origin ?? '')
         || refineAnalysisMode !== pendingInit?.analysisMode
         || !sameStringSet(refineTargetColumns, pendingInit?.targetColumns)
         || !sameDepthIntent(depthIntent, pendingInit?.depthIntent)
@@ -306,9 +308,9 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed' || isRefining) {
         const classes = ['sliding_memory'];
-        const removedSchemaFilters = schemaFiltersRemovedByOrigin(excludeSchemas, summary.activeFilters.schemas);
+        const removedSchemaFilters = schemaFiltersRemovedByOrigin(excludeSchemas, summary.activeFilters.schemas, m.identifierCaseSensitive);
 
-        const removedNodeFilters = nodeFiltersRemovedByOrigin(excludeNodeIds, summary.origin, summary.activeFilters.nodeIds);
+        const removedNodeFilters = nodeFiltersRemovedByOrigin(excludeNodeIds, summary.origin, summary.activeFilters.nodeIds, m.identifierCaseSensitive);
 
         const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification, removedSchemaFilters, removedNodeFilters);
         let discoverySummary: string | undefined;

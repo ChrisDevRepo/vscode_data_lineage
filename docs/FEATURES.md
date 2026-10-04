@@ -18,12 +18,12 @@ loading and settings actions.
 
 A live database is read through the provider set in `dataLineageViz.database.connectionProvider`:
 
-- **`mssqlExtension`** (default) — a connection profile saved in the MSSQL extension. Microsoft is retiring that connection API; the wizard shows a notice with **Use Built-in Connection**.
-- **`builtIn`** — a connection saved by Data Lineage (**Add / Edit / Remove Database Connection**, **Update Database Password**), SQL login or Microsoft Entra ID, opened with a bundled driver. Windows authentication is not supported. Passwords stay in VS Code secret storage; Entra sign-in uses the Microsoft account in VS Code (browser sign-in, MFA supported) through Microsoft's `@microsoft/vscode-azext-azureauth`, as the mssql extension does. The account is chosen in VS Code's own account picker, which also offers signing in to another account; the directory (tenant) follows: the account's only one, otherwise a pick that starts with the home directory. Both are saved with the connection (`accountId`, `tenantId`). Azure SQL and Microsoft Fabric SQL endpoints use the same sign-in. The database name is typed — a login that exists only inside one database cannot list the server's databases — and the connection test reports a database that cannot be opened. Saved projects that still use the mssql extension show a "! Old connection" badge in the Saved Projects list, with the migration advice on hover.
+- **`mssqlExtension`** (default) — uses a profile saved in the MSSQL extension. The wizard warns about its retiring connection API and offers **Use Built-in Connection**.
+- **`builtIn`** — uses connections saved by Data Lineage, with SQL login or Microsoft Entra ID. Passwords stay in VS Code secret storage. Entra sign-in uses VS Code's Microsoft account picker and supports MFA; the selected account and tenant are saved with the connection. Windows authentication is not supported.
 
-> **Hint:** manage built-in connections and their passwords with the Command Palette commands **Add / Edit / Remove Database Connection** and **Update Database Password**. The Settings page shows VS Code's standard **Edit in settings.json** link for list settings; editing the JSON by hand is not needed.
+Manage built-in connections through **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password** in the Command Palette. Enter the database name directly; a database-scoped login may not be able to list databases. Saved projects using the MSSQL extension show an **! Old connection** badge with migration advice.
 
-Both providers run only the queries in [`DMV_QUERIES.md`](DMV_QUERIES.md) and table profiling. Errors show the driver message unchanged, with actions that fit it — see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
+Import queries are documented in [`DMV_QUERIES.md`](DMV_QUERIES.md). For connection errors, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
 
 ---
 
@@ -89,7 +89,7 @@ The extension separates the **webview working graph** (`maxNodes`) from **React 
 | `dataLineageViz.renderLimit` | React Flow nodes the GUI will lay out and render |
 | `dataLineageViz.overview.threshold` | Whether a new load starts in Schema View or Object View; a threshold above `renderLimit` is treated as `renderLimit` |
 
-A selection whose object count exceeds `maxNodes` is refused outright — nothing is loaded or rendered, the prior view stays, and an error names the count, the limit, and the setting. It is never silently truncated. When a selection within `maxNodes` would still render more than `renderLimit` React Flow nodes, the graph shows a *Render limit reached* notice instead of drawing it. On the base graph the notice offers **Open Schema View** where available. A trace, path, analysis or AI preview is counted by its own size; for a trace the notice offers **Reduce depth to ↑n ↓n** (the deepest depth per side that fits) and **Exit trace**. Schema View and Expanded Schema View count each collapsed schema as one node. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
+A selection whose object count exceeds `maxNodes` is refused outright — nothing is loaded or rendered, the prior view stays, and an error names the count, the limit, and the setting. It is never silently truncated. When a selection within `maxNodes` would still render more than `renderLimit` React Flow nodes, the graph shows a *Render limit reached* notice instead of drawing it. The notice says to reduce filter scope or adjust VS Code settings, and it has no button. A trace, path, analysis, or AI preview is counted by its own size and shows the same notice. Schema View and Expanded Schema View count each collapsed schema as one node. The full lineage model, DDL, and AI chat remain functional — only the visual surface is gated.
 
 Lines scale with the graph: up to about 100 rendered edges they keep full color and width; above that they fade and thin gradually, reaching their floor at 2,000 edges, so a dense graph reads as density rather than solid ink. The fade is stronger in dark themes, where the same line color stands out more, and off in high-contrast themes. Highlighted and route lines keep full emphasis.
 
@@ -150,7 +150,7 @@ Patterns are case-insensitive JavaScript regular expressions matched against bot
 |---------|---------|
 | `%tmp%` | Any name containing "tmp" |
 | `dbo.%` | All objects in the dbo schema |
-| `%_stg` | Any name ending in "_stg" |
+| `%_stg$` | Any name ending in "_stg" |
 | `^dbo\.tmp_` | Regex: starts with `dbo.tmp_` |
 
 Because the input remains a regular expression, escape characters such as `.` when you need a literal match and use `^` / `$` to anchor an exact name. Exclusion rules are saved per bookmark.
@@ -285,7 +285,7 @@ The default state. The AI uses snapshot catalog tools to inspect loaded scope, D
 - Best for direct questions like *"what does spProcA do?"* or *"what reads from the Employee table?"*.
 - `/search` pins this path deterministically, skipping the entry-detection model call. `/trace` pins the deep-analysis path below.
 - Discovery scope is bounded by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget` (further capped at one eighth of the selected model's input window); over-budget requests are redirected to the approval-gated deep-analysis path.
-- A deep-analysis proposal is admitted once, before the approval card: each object the analysis reads takes one round — every procedure, view or function in the scope, and a table only where the analysis reads it itself (a starting table or one named in a follow-up) — and the rounds must fit `dataLineageViz.ai.maxRounds`, and a column trace may select at most `dataLineageViz.ai.maxTraceColumns` starting columns (default 10; columns the trace picks up along the way are not counted). Over a limit, no card opens and the chat names the limit and the setting; narrow the scope, trace fewer columns or raise the setting and ask again. The same check runs on a scope change; a follow-up is checked against the rounds only, counting the rounds already taken. The setting is read on every request.
+- Before approval, deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`. If it exceeds either limit, chat names the setting and asks you to narrow the scope or raise the limit. See the [settings reference](#settings-reference) for how rounds and columns are counted.
 - An explicit graph/render request is answered by discovery like any other question; the picture itself is the separate bounded preview below, reached by follow-up, not deep analysis.
 
 #### Bounded graph preview
@@ -298,29 +298,14 @@ current AI-authored view in the graph panel.
 
 #### Detail view in an AI preview
 
-When the run recorded column findings, the preview banner offers an **Objects / Detail** switch.
-Objects is the default. Detail redraws the same scope with one row per traced column — not every
-declared column, only the ones the trace actually recorded — threads running column to column,
-procedures and scalar functions drawn as a compact hub (circle and gear, ports on the arc) rather
-than as a column card, and a chip on a line carrying a hover explanation of the transform where the
-value changed between its two endpoints; a line with no chip passed the value through unchanged.
-Hovering a row lights that whole thread and dims the rest; the rows collapse to a summary line when
-you zoom out.
+When a run records column findings, the preview offers an **Objects / Detail** switch.
+Detail shows traced columns and their connections, with procedures and scalar
+functions as transformation hubs. Hover a column to highlight its thread; hover
+a transform chip to read its explanation. AI badges and notes carry over from
+Objects view, and layout uses the same direction and spacing settings.
 
-A procedure or function that transformed a value sits in the chain between the columns it reads and
-the columns it writes, with a port on the hub for each name the value carries — two ports when it
-renames one. The thread therefore runs source → transform → target rather than past the transform. Structure
-labels stay on the endpoints: a target column fed by two sources still reads `incoming (2)`, one
-column feeding several still reads `outgoing (2)`, whichever object combined or split it. Selecting a
-node highlights and dims exactly as it does in Objects view, and any AI badge or note attached to a
-node carries over unchanged. Detail view lays out with the same graph-layout settings — direction and
-spacing — as the object view, then fits the result to the window; switching back returns to the
-object view where you left it. If Detail view hits a rendering error, switching back to Objects
-clears it rather than leaving the graph stuck on the crash.
-
-This is a rendering of the AI-generated column analysis — the same best-effort finding described
-under **Tips** below, shown on the graph instead of only in the write-up. Verify it against the
-database for compliance-critical claims.
+These mappings are best-effort AI findings. Verify them against the database for
+compliance-critical claims.
 
 #### Deep analysis
 
@@ -328,13 +313,9 @@ Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
 analysis** follow-up, or a discovery request that exceeds the configured
 budget. It begins only after the user approves the consent gate.
 
-- The proposal card is a summarized view, fact lines only: depth per side, estimated hop and node counts, schemas (in the shortest wording that states the full selection), in-scope objects grouped by type (capped at three lines), tracing mode and columns, analysis angle and every exclusion — all rendered in full. The goal, discovery summary and noted constraints show only in the full plan. The **Show full plan** follow-up prints the whole plan, every in-scope object included.
-- The proposal card offers **Approve & Proceed**, **Change scope**, and **Cancel**. **Change scope** hands the chat input back with `@lineage` prefilled; type the change in plain language and send it to get a revised proposal. You can also just reply in chat: approve, ask for a change, or cancel in your own words; an unrelated question is answered and the proposal stays pending.
-- The extension walks the approved graph scope one object at a time and validates every requested route against the loaded catalog before visiting it.
-- Recent summaries provide short-term continuity while full hop details are retained for final synthesis.
-- Below the `Hop X/Y` counter, the chat echoes each completed hop's one-line finding as it lands — a
-  transient progress trail, not part of the saved transcript, so it never reaches the model again on
-  a later turn.
+- The proposal summarizes depth, scope, tracing mode, columns, and exclusions. **Show full plan** lists the complete plan and every in-scope object.
+- Choose **Approve & Proceed**, **Change scope**, or **Cancel**, or reply in plain language. **Change scope** returns you to chat to revise the proposal.
+- The extension walks the approved scope one object at a time and validates routes against the loaded catalog. Chat shows a hop counter and a short finding as each hop completes.
 
 ### Mission types
 
@@ -342,38 +323,15 @@ When you ask `@lineage` a question, the assistant labels the mission as `busines
 
 ### Depth handling
 
-The proposed scope shown at the approval gate preserves the user's depth
-intent:
+The approval gate shows upstream and downstream depths separately; zero disables
+that direction. An explicit level count is a hard boundary. If you leave depth
+unstated, the assistant chooses a starting depth and may explore further within
+the approved schema and exclusion boundaries. “All” starts with the full reachable
+scope. GUI `trace.default*Levels` settings do not control AI depth.
 
-- an explicit hop count bounds the trace to exactly that many levels;
-- “all” seeds the full reachable frontier;
-- bidirectional questions can use different upstream and downstream depths,
-  including zero to disable one side;
-- the assistant always states a starting depth for both directions — there is
-  no backend-supplied default, and the `trace.default*Levels` settings apply
-  only to the GUI trace, never the assistant's.
-
-**A level count you state is a hard border; a depth the assistant chose is a
-starting point.** When your question names a number of levels, the trace stops
-there — the assistant may not extend past it, and each side of a bidirectional
-ask is bounded independently. When you do not name one — including a phrase
-like "back to its original sources" or "where does X come from", which name no
-count — the assistant seeds a reasonable default and may follow the lineage
-further if the question needs it; a number the assistant picks on its own to
-fill that starting point never becomes a hard border, only a fresh count you
-state, or "all", does. The approval gate labels which of the two applies
-before you approve, and that label is fixed for the whole trace: the
-assistant cannot loosen or tighten it mid-trace, only through a new **Change
-scope** request you send before approving, or a follow-up you ask after the
-answer.
-
-Objects just past a stated border are not discarded: they are reported after
-synthesis as follow-up leads, alongside mission-relevant routes outside the
-schema border, and can be revisited through the related-objects follow-up.
-Naming an object in a follow-up brings in that object, not the rest of its
-schema; a sibling in the same schema surfaces as its own separate lead.
-Direction, exclusions, and the approved schema border remain mechanically
-enforced throughout.
+Review these boundaries before approving and use **Change scope** to revise them.
+Objects beyond a stated depth or schema boundary can appear as follow-up leads.
+A follow-up naming one object brings in that object, rather than its entire schema.
 
 ### Tips
 

@@ -87,3 +87,20 @@ describe('bridge contract for the provider switch', () => {
     expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'use-builtin-connection' }).success).toBe(true);
   });
 });
+
+
+describe('CreateFlow project-name accessibility', () => {
+  it('associates each visible Project name label with its own editable field', () => {
+    const loader = makeLoader({ schemaPreview: { schemas: [], totalObjects: 0 }, fileName: 'AdventureWorks2022' });
+    mount(<><CreateFlow loader={loader} maxNodes={2000} onBack={() => {}} onVisualize={() => {}} /><CreateFlow loader={loader} maxNodes={2000} onBack={() => {}} onVisualize={() => {}} /></>);
+    const labels = [...host.querySelectorAll('label')].filter(label => label.textContent === 'Project name');
+    expect(labels).toHaveLength(2);
+    const controls = labels.map(label => label.control);
+    for (const control of controls) {
+      expect(control).toBeInstanceOf(HTMLInputElement);
+      expect((control as HTMLInputElement).type).toBe('text');
+      expect((control as HTMLInputElement).disabled).toBe(false);
+    }
+    expect(controls[0]).not.toBe(controls[1]);
+  });
+});

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Logger } from '../../utils/log';
 import type { AgentFailureDetail } from '../host/agentRuntime';
+import { modelUserMessage } from '../model/modelPort';
 import { AgentRuntime } from '../host/agentRuntime';
 import type {
   ModelMessage,
@@ -77,6 +78,19 @@ export class LineageRuntime {
   }>();
 
   public constructor(private readonly deps: LineageRuntimeDeps) {}
+
+  /** Generates suggestions from compact facts without tools, history replay or session mutation. */
+  public async runSuggestions(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
+    const result = await input.model.generateToolTurn({
+      messages: [modelUserMessage(input.request.prompt)], tools: [], toolChoice: 'none',
+      phase: 'suggestions', signal: input.signal,
+      onTextDelta: text => input.sink.stream(text),
+    });
+    const outcome = result.status === 'completed' ? 'ok' : result.status;
+    input.sink.result(outcome);
+    return { outcome, modelCalls: 1, ...(result.status === 'error'
+      ? { failure: { message: result.error } } : {}) };
+  }
 
   /**
    * Executes one request against a captured session epoch and request-selected model.

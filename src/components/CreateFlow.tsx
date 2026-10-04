@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useMemo } from 'react';
+import { memo, useState, useCallback, useMemo, useId } from 'react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
@@ -46,6 +46,7 @@ export const CreateFlow = memo(function CreateFlow({
   onVisualize,
 }: CreateFlowProps) {
   const [projectName, setProjectName] = useState('');
+  const projectNameInputId = useId();
 
   const schemaOrModel = loader.schemaPreview ?? loader.model;
   const hasSource = !!schemaOrModel;
@@ -208,8 +209,9 @@ export const CreateFlow = memo(function CreateFlow({
       {hasSource && !isPhase1Loading && (
         <>
           <div className="space-y-1">
-            <label className="text-xs font-medium ln-text">Project name</label>
+            <label htmlFor={projectNameInputId} className="text-xs font-medium ln-text">Project name</label>
             <input
+              id={projectNameInputId}
               type="text"
               value={displayName}
               onChange={(e) => setProjectName(e.target.value)}
@@ -231,6 +233,7 @@ export const CreateFlow = memo(function CreateFlow({
               <>
                 <SchemaSelector
                   schemas={schemas}
+                  identifierCaseSensitive={schemaOrModel?.identifierCaseSensitive}
                   selectedSchemas={loader.selectedSchemas}
                   onToggle={loader.toggleSchema}
                   onSelectAll={loader.selectAllSchemas}

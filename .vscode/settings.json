@@ -6,9 +6,6 @@
     "**/node_modules",
     "**/bower_components",
     "**/.vscode-test",
-    "internal-tests",
-    ".glm-skills",
-    ".claude",
     "test-results"
   ]
 }

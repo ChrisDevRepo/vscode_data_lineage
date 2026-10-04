@@ -15,6 +15,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGraph,
   buildGraphNoLayout,
+  buildGraphologyGraph,
+  buildSchemaGraph,
+  buildExpandedSchemaViewGraph,
   computeShortestPath,
   dagreLayout,
   getGraphMetrics,
@@ -28,8 +31,11 @@ import {
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
 import { buildWebviewCsp } from '../../../src/utils/cspBuilder';
-import { DEFAULT_CONFIG } from '../../../src/engine/types';
-import { loadAdventureWorksModel, makeGraph } from '../helpers/testUtils';
+import { buildModel } from '../../../src/engine/modelBuilder';
+import { buildColumnTraceView, columnRowKey, type ColumnTraceRelation } from '../../../src/engine/columnTraceView';
+import { normalizeColName, schemaKey } from '../../../src/utils/sql';
+import { DEFAULT_CONFIG, type DatabaseModel, type ExtractedObject } from '../../../src/engine/types';
+import { loadAdventureWorksModel, loadParseRules, makeGraph } from '../helpers/testUtils';
 
 /** `A → B → C`, plus `D` joining at `C`, and an unreachable `Z`. */
 function chain() {
@@ -38,6 +44,76 @@ function chain() {
     [['A', 'B'], ['B', 'C'], ['D', 'C']],
   );
 }
+
+describe('schema palette source identity', () => {
+  it.each([false, true])('carries dirty SQL and metadata identity from parsing through object and column views (CS=%s)', cs => {
+    loadParseRules();
+    const columns = (cs ? ['Value', 'value'] : ['Value']).map((name, index) => ({
+      name, type: index === 0 ? 'int' : 'money', nullable: 'No', extra: '',
+    }));
+    const objects: ExtractedObject[] = [
+      { fullName: '[Sales].[Source]', type: 'table', columns },
+      { fullName: '[sales].[Source]', type: 'table', columns },
+      { fullName: '[Sales].[Report]', type: 'view', columns,
+        bodyScript: 'cReAtE ViEw Sales.Report AS SELECT * FROM "Sales"."Source" /* source */ UNION ALL SELECT * FROM [sales].[Source];' },
+      { fullName: '[Sales].[report]', type: 'view', columns,
+        bodyScript: 'CREATE VIEW Sales.report AS SELECT * FROM Sales.Source;' },
+      { fullName: '[Sales].[WrongCase]', type: 'view', columns,
+        bodyScript: 'CREATE VIEW Sales.WrongCase AS SELECT * FROM [SALES].[SOURCE];' },
+    ];
+    const model = buildModel(objects, [], objects, undefined, true, undefined, cs);
+    const { graph, flowNodes } = buildGraphNoLayout(model);
+    expect(model.nodes).toHaveLength(cs ? 5 : 3);
+    expect(buildSchemaGraph(graph).nodes).toHaveLength(cs ? 2 : 1);
+    expect(graph.size).toBe(cs ? 3 : 2);
+    expect(flowNodes.map(node => node.data.label)).toEqual(cs
+      ? ['Source', 'Source', 'Report', 'report', 'WrongCase'] : ['Source', 'Report', 'WrongCase']);
+    const source = model.nodes.find(node => node.schema === 'Sales' && node.name === 'Source')!;
+    const target = model.nodes.find(node => node.name === 'Report')!;
+    const relations: ColumnTraceRelation[] = (cs ? ['[Value]', '"value"'] : ['[VALUE]']).map(column => ({
+      hopNode: target.id, fromNode: source.id, fromCol: column, toNode: target.id, toCol: column,
+    }));
+    if (cs) {
+      const twinSource = model.nodes.find(node => node.schema === 'sales')!;
+      relations.push({ hopNode: target.id, fromNode: twinSource.id, fromCol: 'Value', toNode: target.id, toCol: 'Value' });
+    }
+    const view = buildColumnTraceView({
+      identifierCaseSensitive: model.identifierCaseSensitive, relations, config: DEFAULT_CONFIG,
+      objects: new Map(model.nodes.map(node => [schemaKey(node.id, cs), {
+        id: node.id, label: node.name, schema: node.schema, objectType: node.type,
+        columnNames: new Map(node.columns!.map(column => [normalizeColName(column.name, cs), column.name])),
+        columnTypes: new Map(node.columns!.map(column => [normalizeColName(column.name, cs), column.type])),
+      }])),
+    });
+    expect(view.nodes.find(node => node.id === source.id)?.rows.map(row => [row.name, row.dataType]))
+      .toEqual(cs ? [['Value', 'int'], ['value', 'money']] : [['Value', 'int']]);
+    expect(view.edges.map(edge => [edge.sourceColumn, edge.targetColumn]))
+      .toEqual(cs ? [['Value', 'Value'], ['value', 'value'], ['Value', 'Value']] : [['Value', 'Value']]);
+    expect(new Set(view.nodes.flatMap(node => node.rows.map(row => columnRowKey(node.id, row.name, cs)))).size)
+      .toBe(cs ? 5 : 2);
+  });
+
+  it.each([false, true])('preserves the model comparison policy across schema views (CS=%s)', cs => {
+    const model: DatabaseModel = {
+      identifierCaseSensitive: cs,
+      nodes: ['Sales', 'sales'].map(schema => ({
+        id: `[${schema}].[Orders]`, schema, name: 'Orders', type: 'table', fullName: `${schema}.Orders`,
+      })),
+      edges: [], schemas: [], catalog: {}, neighborIndex: {},
+    };
+    const graph = buildGraphologyGraph(model);
+    expect(graph.getAttribute('identifierCaseSensitive')).toBe(cs);
+    const overview = buildSchemaGraph(graph);
+    const colors = overview.nodes.map(node => node.data.color);
+    expect(colors[0] === colors[1]).toBe(!cs);
+    const expanded = buildExpandedSchemaViewGraph(graph, new Set(['Sales']), null);
+    const object = expanded.flowNodes.find(node => node.type !== 'schemaNode')!;
+    const cluster = expanded.flowNodes.find(node => node.type === 'schemaNode')!;
+    expect(object.data.schemaColor).toBe(overview.nodes.find(node => node.data.schemaName === 'Sales')?.data.color);
+    expect(cluster.data.color).toBe(overview.nodes.find(node => node.data.schemaName === 'sales')?.data.color);
+    expect(dagreLayout({ nodeIds: [], edges: [], config: DEFAULT_CONFIG }).size).toBe(0);
+  });
+});
 
 
 describe('computeShortestPath', () => {
