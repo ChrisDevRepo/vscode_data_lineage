@@ -51,6 +51,9 @@ jobs:
 
           for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
             matches=$(git ls-files "$pattern" 2>/dev/null || true)
+            # This tracked template contains blank values and documents
+            # optional local configuration; real .env files remain forbidden.
+            matches=$(printf '%s\n' "$matches" | grep -vxF '.env.example' || true)
             if [ -n "$matches" ]; then
               FOUND_FILES="$FOUND_FILES$matches"$'\n'
             fi
