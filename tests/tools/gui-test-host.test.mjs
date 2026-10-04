@@ -1,6 +1,9 @@
 // Covers isolated GUI host arguments and CDP port validation without launching VS Code.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   assertLoopbackPortAvailable,
@@ -11,6 +14,7 @@ import {
   buildLaunchArgs,
   isIsolatedWorkbenchPage,
   parseCdpPort,
+  requireDbFixtureExtensionPath,
   validateGuiSession,
 } from './gui-test-host.mjs';
 
@@ -71,6 +75,21 @@ test('assertDbCredentialKeys checks presence without returning credential values
   const complete = 'DLV_SQL_USER=reader\nDLV_SQL_API=secret\nDLV_SQL_SA_USER=sa\nDLV_SQL_SA_API=admin-secret\n';
   assert.equal(assertDbCredentialKeys(complete), undefined);
   assert.throws(() => assertDbCredentialKeys('DLV_SQL_USER=reader\n'), /DLV_SQL_API, DLV_SQL_SA_USER, DLV_SQL_SA_API/);
+});
+
+test('requireDbFixtureExtensionPath resolves an existing directory without exposing internal paths', () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'dlv-gui-fixture-'));
+  try {
+    assert.equal(requireDbFixtureExtensionPath(fixtureDir), fixtureDir);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('requireDbFixtureExtensionPath rejects missing, absent and non-directory values', () => {
+  assert.throws(() => requireDbFixtureExtensionPath(''), /DLV_GUI_DB_FIXTURE_EXT/);
+  assert.throws(() => requireDbFixtureExtensionPath(undefined), /DLV_GUI_DB_FIXTURE_EXT/);
+  assert.throws(() => requireDbFixtureExtensionPath(join(tmpdir(), 'dlv-gui-fixture-absent')), /existing directory/);
 });
 
 test('assertMochaCompletion rejects zero, pending and incomplete runs', () => {

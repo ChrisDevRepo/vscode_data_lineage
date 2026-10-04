@@ -1,7 +1,7 @@
 // Starts an isolated VS Code test host for the opt-in Playwright workbench smoke.
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -57,6 +57,18 @@ export function assertDbCredentialKeys(text) {
   const required = ['DLV_SQL_USER', 'DLV_SQL_API', 'DLV_SQL_SA_USER', 'DLV_SQL_SA_API'];
   const missing = required.filter((key) => !values.get(key));
   if (missing.length) throw new Error(`DB GUI prerequisite missing: ${missing.join(', ')}`);
+}
+
+/** Resolves the DB-mode companion fixture extension from DLV_GUI_DB_FIXTURE_EXT without exposing the value. */
+export function requireDbFixtureExtensionPath(raw = process.env.DLV_GUI_DB_FIXTURE_EXT) {
+  if (!raw) {
+    throw new Error('DB GUI prerequisite missing: DLV_GUI_DB_FIXTURE_EXT must point to the companion fixture extension directory.');
+  }
+  const candidate = resolve(raw);
+  if (!existsSync(candidate) || !statSync(candidate).isDirectory()) {
+    throw new Error('DLV_GUI_DB_FIXTURE_EXT must be an existing directory containing the companion fixture extension.');
+  }
+  return candidate;
 }
 
 /** Fails fast when the isolated host cannot reach the local SQL fixture listener. */
@@ -189,7 +201,7 @@ function clearStaleSession(sessionFile) {
 async function run() {
   const extensionPath = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
   const dbMode = process.env.DLV_GUI_MODE === 'db';
-  const fixtureExtensionPath = resolve(extensionPath, 'internal-tests/gui-electron/fixture-extension');
+  const fixtureExtensionPath = dbMode ? requireDbFixtureExtensionPath() : undefined;
   const cdpPort = parseCdpPort(process.env.PLAYWRIGHT_CDP_PORT);
   const sessionId = randomUUID();
   const workspaceName = `dlv-gui-${sessionId}`;
