@@ -52,7 +52,7 @@ import {
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { keyedResendRule } from '../support/repairDraftStore';
+import { heldSubmissionRepairHint } from '../tools/toolSchemas';
 import {
   contextBlockBytes,
   estimateTokens,
@@ -272,24 +272,6 @@ export type HoldRejectedPresentResult = (input: unknown, issuePaths: readonly st
 const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
 
 /**
- * The one resend rule of a schema rejection of `lineage_submit_findings` whose valid parts are held: the
- * held labels (never their content), the fields every resend carries, and the value that keeps each
- * held part in the full resend.
- */
-function heldSubmissionRule(held: HeldSubmissionParts): string {
-  const labels = [
-    ...(held.sections.length > 0 ? [`sections (${held.sections.join(', ')})`] : []),
-    ...(held.summary ? ['summary'] : []),
-    ...held.fields,
-  ].join(', ');
-  const omittable = [...(held.summary ? ['summary'] : []), ...held.fields];
-  return `Held: ${labels}. Resend the full call: always focus_node_id, verdict and every other required field; the failed field(s) corrected`
-    + (omittable.length > 0 ? `; omit ${omittable.join(', ')} to keep the held ${omittable.length > 1 ? 'values' : 'value'}` : '')
-    + '.'
-    + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '');
-}
-
-/**
  * The held `lineage_present_result` repair draft as the model sees it on a present_result
  * rejection: the labels a resend keys on, each with its first block for a preview section.
  */
@@ -314,6 +296,7 @@ interface ToolGenerationAttemptInput {
   /** Derived instruction provenance attached to model-call evidence. */
   readonly instructionContext?: InstructionContext;
   readonly priorObservations?: readonly ToolAttemptObservation[];
+  readonly priorState?: ToolPhaseAttemptState;
   /** Recognizes a successful registry result that opens consent. */
   readonly detectGate?: (toolName: string, resultText: string) => unknown | null;
   /** Recognizes a successful registry result that changes graph route. */
@@ -681,16 +664,21 @@ interface RecordedToolOutcome {
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
- * reason states the facts the model repairs from, so nothing the model needs rides only on
- * `detail`. The code, issue paths and detail stay on the paired `ToolMessage.artifact`.
+ * reason states the identity fault; verified object-column inventories are disclosed only on
+ * the final budgeted rejection. The code, issue paths and detail stay on the paired `ToolMessage.artifact`.
  */
-function rejectionText(rejection: ToolRejection): string {
+function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
+  const finalRejection = (priorState?.noProgressCalls ?? 0) >= MAX_TOOL_PROVIDER_CALLS - 1;
+  const inventories = finalRejection && Array.isArray(rejection.detail)
+    ? rejection.detail.flatMap((fault: { id?: string; actual_columns?: string[] }) => fault.actual_columns
+      ? [`Actual columns of ${fault.id}: ${fault.actual_columns.join(', ') || '(none)'}.`] : []) : [];
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,
+    ...inventories,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
   ].join('\n');
@@ -703,6 +691,7 @@ function recordToolOutcome(
   observations: ToolAttemptObservation[],
   rejections: ToolAttemptRejection[],
   trace?: (rejection: { toolName: string; code: string }) => void,
+  priorState?: ToolPhaseAttemptState,
 ): RecordedToolOutcome {
   const outcome = { callId: call.callId, toolName: call.toolName, ...data } as ToolOutcome;
   if (outcome.status === 'executed') {
@@ -736,7 +725,7 @@ function recordToolOutcome(
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
     rejections.push(rejection);
     trace?.({ toolName: outcome.toolName, code: outcome.code });
-    return { resultText: rejectionText(rejection), status: 'error', rejection, artifact: rejection };
+    return { resultText: rejectionText(rejection, priorState), status: 'error', rejection, artifact: rejection };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
   trace?.({ toolName: outcome.toolName, code: outcome.rejection.code });
@@ -836,6 +825,7 @@ export async function executeToolAttempt(
     holdRejectedSubmission: options.holdRejectedSubmission,
     holdRejectedPresentResult: options.holdRejectedPresentResult,
     priorObservations: priorState?.observations,
+    priorState,
   });
 }
 
@@ -1003,7 +993,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       let resend: string | undefined = schemaRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
       if (schemaRejected && call.toolName === SUBMIT_FINDINGS_TOOL && input.holdRejectedSubmission) {
         const held = input.holdRejectedSubmission(call.input, call.issuePaths ?? []);
-        if (held) resend = heldSubmissionRule(held);
+        if (held) resend = heldSubmissionRepairHint(held);
       } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
         const repair = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []);
         if (repair) resend = repair;
@@ -1078,7 +1068,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
 
     if (resultRejection) {
       const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
-      const outcome = recordToolOutcome(call, data, calls, observations, rejections);
+      const outcome = recordToolOutcome(call, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
     } else {
       const observe = !controlSuccess && !terminalSuccess;

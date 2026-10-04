@@ -54,6 +54,8 @@ import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
 import type { ModelPort } from '../model/modelPort';
+import { tokenToAbortSignal } from '../providers/cancellation';
+import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /**
@@ -89,9 +91,7 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.columnSelfLoop]: 'column_mapping',
   [REJECTION_CODES.writesToNamesReader]: 'column_mapping',
   [REJECTION_CODES.prunedContributor]: 'column_mapping',
-  [REJECTION_CODES.pruneCarriesTrackedColumn]: 'source_selection',
   [REJECTION_CODES.routeValidationFailed]: 'source_selection',
-  [REJECTION_CODES.pruneOriginForbidden]: 'source_selection',
   [REJECTION_CODES.validation]: 'answer_format',
   [REJECTION_CODES.invalidInput]: 'answer_format',
   [REJECTION_CODES.ctFieldForbiddenInBb]: 'answer_format',
@@ -158,6 +158,7 @@ class ToolHandler implements ToolServices {
 
   public logAndReturn(toolName: ToolName, data: object, input?: unknown): string {
     const sess = this.getSession();
+    if (this.turnLease) assertActiveTurnLease(this.turnLease, sess.turnEpoch);
     const json = JSON.stringify(data);
     const chars = json.length;
     const preview = trunc(sanitizeForLog(json), LOG_TRUNC_JSON);
@@ -276,22 +277,16 @@ class ToolHandler implements ToolServices {
       const { ids, filter, cursor } = parsed.data;
       if (ids || filter) {
         const nodeMap = getModelNodeMap(model);
-        const resolvedIds = ids?.map(id => {
-          const resolved = resolveModelNodeId(id, nodeMap);
-          if (resolved && resolved !== id) {
-            this.logger.debug(`[AI] get_screen_state id resolved raw=${sanitizeForLog(id)} resolved=${sanitizeForLog(resolved)}`);
-          }
-          return resolved ?? id;
-        });
         return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
           liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
           budget: this.budget,
-          ids: resolvedIds,
+          ids,
           filter,
           getDdl,
           isInModel: id => nodeMap.has(id),
+          onIdNormalized: (raw, canonical) => this.logger.debug(`[AI] get_screen_state id resolved raw=${sanitizeForLog(raw)} resolved=${sanitizeForLog(canonical)}`),
           hasPendingProposal: sess.pendingExploration !== null,
         }), input);
       }
@@ -309,13 +304,17 @@ class ToolHandler implements ToolServices {
     } catch (err) { return this.toolError('get_screen_state', err); }
   }
 
-  public searchObjects(input: unknown) {
+  public async searchObjects(input: unknown) {
     try {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
       const { query, types, schemas, mode, cursor } = parsed.data;
-      return this.logAndReturn('lineage_search_objects', searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor), input);
-    } catch (err) { return this.toolError('search_objects', err); }
+      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor, this.signal), input);
+    } catch (err) {
+      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
+      if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
+      return this.toolError('search_objects', err);
+    }
   }
 
   public getScopeBundle(input: unknown) {
@@ -392,13 +391,17 @@ class ToolHandler implements ToolServices {
     } catch (err) { return this.toolError('detect_graph_patterns', err); }
   }
 
-  public searchDdl(input: unknown) {
+  public async searchDdl(input: unknown) {
     try {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('lineage_search_ddl', searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg)), input);
-    } catch (err) { return this.toolError('search_ddl', err); }
+      return this.logAndReturn('lineage_search_ddl', await searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg), this.signal), input);
+    } catch (err) {
+      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
+      if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
+      return this.toolError('search_ddl', err);
+    }
   }
 
   /**
@@ -425,7 +428,16 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_neighbor_columns', parsed.error, input);
 
-      const invalidIds = engine.validateNeighborIds(parsed.data.ids);
+      const model = this.requireModel();
+      const nodeMap = getModelNodeMap(model);
+      const ids = parsed.data.ids.map(raw => {
+        const canonical = resolveModelNodeId(raw, nodeMap, model.identifierCaseSensitive);
+        if (canonical && canonical !== raw) {
+          this.logger.debug(`[Normalize] tool=get_neighbor_columns from=${sanitizeForLog(raw)} to=${sanitizeForLog(canonical)}`);
+        }
+        return canonical ?? raw;
+      });
+      const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
           code: 'out_of_scope_or_not_neighbor',
@@ -434,7 +446,7 @@ class ToolHandler implements ToolServices {
         }), input);
       }
 
-      return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(this.requireModel(), parsed.data.ids, sess.columnStore), input);
+      return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(model, ids, sess.columnStore), input);
     } catch (err) { return this.toolError('get_neighbor_columns', err); }
   }
 
@@ -474,7 +486,7 @@ export function buildAiToolRegistry(
   turnLease?: TurnLease,
   host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget?: TurnTokenBudget },
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal, host?.budget);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal ?? turnLease?.signal, host?.budget);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
@@ -567,9 +579,15 @@ export function registerAiTools(
   return external.getTools().map((tool) =>
     vscode.lm.registerTool(tool.name, {
       prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel(tool.name, options.input) }; },
-      async invoke(options, _token) {
-        const text = await external.invoke(tool.name, options.input);
-        return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
+      async invoke(options, token) {
+        const abort = tokenToAbortSignal(token);
+        try {
+          const requestRegistry = buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, { ...host, signal: abort.signal });
+          const text = await requestRegistry.invoke(tool.name, options.input);
+          return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
+        } finally {
+          abort.dispose();
+        }
       },
     }),
   );

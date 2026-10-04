@@ -9,7 +9,8 @@
  * | `discover`                | get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl, get_object_detail, detect_graph_patterns |
  * | `visual_preview`          | present_result (restructures the cached discovery answer)                                  |
  * | `sm_entry`                | get_screen_state, search_objects, get_object_detail (resolve all columns for a CT start), start_exploration (resolve origin + open the consent gate) |
- * | `active` (sm_bb / sm_ct)  | submit_findings, get_neighbor_columns                                                            |
+ * | `active` (sm_bb)          | submit_findings                                                                                 |
+ * | `active` (sm_ct)          | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | present_result                                                                                    |
  * | `completed`               | present_result, start_exploration (a supplement on the completed engine, or a fresh proposal), and every discovery read tool |
  *
@@ -111,7 +112,9 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
     case 'completed':
       return new Set(COMPLETED_TOOLS);
     case 'active': {
-      return new Set(['lineage_submit_findings', 'lineage_get_neighbor_columns']);
+      return new Set(stage.mode === 'sm_ct'
+        ? ['lineage_submit_findings', 'lineage_get_neighbor_columns']
+        : ['lineage_submit_findings']);
     }
     default:
       return assertNever(stage);

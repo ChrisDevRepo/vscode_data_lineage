@@ -91,13 +91,15 @@ describe('acquireSqlToken', () => {
     const token = await acquireSqlToken({}, logger);
     expect(token).toBe('token for https://database.windows.net/.default VSCODE_TENANT:azure-dir');
     expect(host.getSession.mock.calls[1][2]).toEqual({ createIfNone: true, account });
-    expect(logger.info.mock.calls[0][0]).toMatch(/tenant=azure-dir/);
+    expect(logger.debug).toHaveBeenCalledWith(expect.stringMatching(/tenant=azure-dir/));
   });
 
-  it('logs the account at debug level only', async () => {
+  it('logs the account and directory at debug level only', async () => {
     await acquireSqlToken({ tenantId: 'saved-dir' }, logger);
     expect(JSON.stringify(logger.info.mock.calls)).not.toContain('user@example.com');
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain('saved-dir');
     expect(JSON.stringify(logger.debug.mock.calls)).toContain('user@example.com');
+    expect(JSON.stringify(logger.debug.mock.calls)).toContain('saved-dir');
   });
 
   it('keeps the account default directory when none is listed', async () => {

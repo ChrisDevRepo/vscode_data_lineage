@@ -11,11 +11,14 @@ import {
 } from '@floating-ui/react';
 import type { CatalogEntry, NeighborIndex, ParseStats } from '../engine/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
+import { schemaKey } from '../utils/sql';
 import { Tooltip } from './ui/Tooltip';
 
 interface NodeInfoBarProps {
   /** ID of the node currently under inspection. */
   nodeId: string;
+  /** Source metadata controls exact identifier matching for parse diagnostics. */
+  identifierCaseSensitive?: boolean;
   /** Full catalog of all objects in the model. */
   catalog: Record<string, CatalogEntry>;
   /** Index of all input/output edges in the graph. */
@@ -180,7 +183,7 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
  * Displays identity, connectivity, and parse diagnostics for the selected node.
  */
 export const NodeInfoBar = memo(function NodeInfoBar({
-  nodeId, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,
+  nodeId, identifierCaseSensitive, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,
 }: NodeInfoBarProps) {
   const entry = catalog[nodeId];
   const neighbors = neighborIndex[nodeId] ?? { in: [], out: [] };
@@ -189,9 +192,9 @@ export const NodeInfoBar = memo(function NodeInfoBar({
     if (!entry || !parseStats) return null;
     const spLabel = `${entry.schema}.${entry.name}`;
     return parseStats.spDetails.find(
-      sp => sp.name.toLowerCase() === spLabel.toLowerCase()
+      sp => schemaKey(sp.name, identifierCaseSensitive) === schemaKey(spLabel, identifierCaseSensitive)
     ) ?? null;
-  }, [entry, parseStats]);
+  }, [entry, parseStats, identifierCaseSensitive]);
 
   const unresolvedItems = spDetail?.unrelated ?? [];
   const excludedItems = spDetail?.excluded ?? [];

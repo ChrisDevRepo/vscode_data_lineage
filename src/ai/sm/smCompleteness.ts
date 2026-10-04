@@ -14,13 +14,13 @@
 import { normalizeColName } from '../../utils/sql';
 
 /**
- * Items in `required` not present in `accounted`, compared case-insensitively and ignoring SQL brackets, order preserved.
+ * Items in `required` not present in `accounted`, ignoring SQL delimiters under the source case policy, order preserved.
  *
  * @remarks
  * Returns the original `required` casing so the caller can surface the offending values verbatim.
  */
-export function computeUnaccounted(required: readonly string[], accounted: Iterable<string>): string[] {
+export function computeUnaccounted(required: readonly string[], accounted: Iterable<string>, identifierCaseSensitive = false): string[] {
   const acc = new Set<string>();
-  for (const a of accounted) acc.add(normalizeColName(a));
-  return required.filter(r => !acc.has(normalizeColName(r)));
+  for (const a of accounted) acc.add(normalizeColName(a, identifierCaseSensitive));
+  return required.filter(r => !acc.has(normalizeColName(r, identifierCaseSensitive)));
 }

@@ -53,6 +53,28 @@ describe('renderAiMarkdown — delimiter rules', () => {
 });
 
 describe('renderAiMarkdown — structure', () => {
+  it('keeps a rule explanation, displayed formula, consequence and SQL witness in reading order', () => {
+    const host=render('**Rules and branches.** Negative quantities are corrected before the validated rows are inserted.\n\n$$ RawQty = 0 $$\n\nRawQty is the imported quantity; this correction removes the negative sign from the stored value.\n\n```sql\nUPDATE #RawBatch SET RawQty = 0 WHERE RawQty < 0;\n```');
+    const math=host.querySelector('.katex-display')!;
+    const block=math.closest('p')??math;
+    expect(block.previousElementSibling?.textContent).toContain('Negative quantities are corrected');
+    expect(block.nextElementSibling?.textContent).toContain('removes the negative sign');
+    expect(block.nextElementSibling?.nextElementSibling?.tagName).toBe('PRE');
+    expect(host.querySelector('code')?.textContent).toContain('WHERE RawQty < 0');
+    expect(host.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull();
+  });
+
+  it('keeps an inline formula and its short description together in a transformation table', () => {
+    const host=render('**Rules and branches.** The correction applies only to negative quantities.\n\n| Formula | Meaning |\n| --- | --- |\n| $RawQty = 0$ | Replace a negative imported quantity with zero. |\n\nThe amount remains unchanged by this quantity correction.');
+    const row=host.querySelector('tbody tr')!;
+    expect(row.querySelectorAll('td')).toHaveLength(2);
+    expect(row.querySelector('td .katex')).not.toBeNull();
+    expect(row.querySelectorAll('td')[1].textContent).toBe('Replace a negative imported quantity with zero.');
+    expect(host.querySelectorAll('.katex-display')).toHaveLength(0);
+    expect(host.querySelector('table')?.previousElementSibling?.textContent).toContain('only to negative quantities');
+    expect(host.querySelector('table')?.nextElementSibling?.textContent).toContain('amount remains unchanged');
+  });
+
   it('gives numbered section headings a stable id for chip navigation', () => {
     const host = render(fixture);
     const ids = Array.from(host.querySelectorAll<HTMLHeadingElement>('h2[id]')).map(h => h.id);

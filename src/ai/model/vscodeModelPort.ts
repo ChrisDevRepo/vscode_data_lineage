@@ -28,8 +28,7 @@ import {
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
-import { rejectionFromZodError, zodFieldRepairHint, zodUnrecognizedKeys } from '../support/toolErrorEnvelope';
-import { coerceStringifiedArguments, droppedKeyPaths } from '../support/inputNormalization';
+import { coerceStringifiedArguments } from '../support/inputNormalization';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
@@ -192,39 +191,7 @@ export class VscodeModelPort implements ModelPort {
           };
         } else {
           const decodedArgs = this.decodeStringifiedArguments(toolName, args, toModelJsonSchema(definition.inputSchema));
-          const parsed = definition.inputSchema.safeParse(decodedArgs);
-          const dropped = parsed.success ? droppedKeyPaths(decodedArgs, parsed.data) : [];
-          if (dropped.length > 0) {
-            this.options.debugLog?.(
-              `[AI] tool-input-keys-dropped tool=${toolName} paths=${trunc(sanitizeForLog(dropped.join(',')), 200)}`,
-            );
-          }
-          if (parsed.success) {
-            call = {
-              valid: true,
-              callId,
-              toolName,
-              input: parsed.data,
-            };
-          } else {
-            const rejection = rejectionFromZodError(
-              parsed.error,
-              { code: REJECTION_CODES.invalidToolInput, input: decodedArgs, schema: definition.inputSchema },
-            );
-            const fieldHint = zodFieldRepairHint(parsed.error, decodedArgs, definition.inputSchema);
-            const unrecognizedKeys = zodUnrecognizedKeys(parsed.error);
-            call = {
-              valid: false,
-              callId,
-              toolName,
-              input: decodedArgs,
-              code: REJECTION_CODES.invalidToolInput,
-              reason: rejection.reason,
-              ...(fieldHint !== undefined ? { hint: fieldHint } : {}),
-              ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
-              ...(unrecognizedKeys.length > 0 ? { unrecognizedKeys } : {}),
-            };
-          }
+          call = { valid: true, callId, toolName, input: decodedArgs };
         }
         toolCalls.push(call);
         content.push({ type: 'tool-call', call });

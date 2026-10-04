@@ -78,10 +78,10 @@ import {
 
 import { createEdgeDecorationCache, decorateFlowEdges, edgeDensity } from '../engine/edgeDecoration';
 import { ColumnHoverProvider, type ColumnHoverState } from '../contexts/ColumnHoverContext';
-import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, traceReachableFromOrigin, unionConnectingPaths, type TracePruneCheck } from '../engine/traceScope';
-import { directNeighborIds, type NeighborSide } from '../engine/graphGuards';
+import { canPruneTraceNode, isEditableTraceMode, isManualTraceScopeEdit, traceRemovalSides, unionConnectingPaths, type TracePruneCheck } from '../engine/traceScope';
+import { directNeighborIds, type NeighborSide, type RemovalSide } from '../engine/graphGuards';
 import { notifyUser } from '../utils/notify';
-import { normalizeColName } from '../utils/sql';
+import { normalizeColName, schemaKey } from '../utils/sql';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 
 /**
@@ -144,19 +144,115 @@ const AI_PANEL_REFIT_DELAY = 80;
  * generation when `schedule` fires — a later user gesture or fit bumps it past that point and this
  * one becomes a no-op instead of running.
  *
- * @returns A cancel that clears the scheduled callback directly (effect cleanup / unmount).
+ * @param ready - Whether the intended graph has arrived and is measured; false defers another frame.
+ * @param maxDeferredFrames - Frame budget for `ready()`. Once spent, the fit stops without calling
+ * `fire`, so an unmeasured graph is not framed.
+ * @returns A cancel that clears the latest scheduled callback (effect cleanup / unmount).
  */
 export function scheduleFit(
   generationRef: { current: number },
   fire: () => void,
   schedule: (run: () => void) => number = (run) => requestAnimationFrame(run),
   clear: (id: number) => void = (id) => cancelAnimationFrame(id),
+  ready: () => boolean = () => true,
+  maxDeferredFrames = 60,
 ): () => void {
   const generation = ++generationRef.current;
-  const id = schedule(() => {
-    if (generationRef.current === generation) fire();
+  let cancelled = false;
+  let deferred = 0;
+  let id: number;
+  const run = () => {
+    if (cancelled || generationRef.current !== generation) return;
+    if (!ready()) {
+      if (deferred >= maxDeferredFrames) return;
+      deferred++;
+      id = schedule(run);
+      return;
+    }
+    fire();
+  };
+  id = schedule(run);
+  return () => { cancelled = true; clear(id); };
+}
+
+/**
+ * Resumes a graph fit blocked by rebuilding only while its generation still owns the camera.
+ * @returns A fit scheduler whose cleanup also cancels a resumed fit.
+ */
+export function useRebuildResumableFit(
+  isRebuilding: boolean,
+  generationRef: { current: number },
+  armFit: () => () => void,
+): () => () => void {
+  const rebuildingRef = useRef(isRebuilding);
+  rebuildingRef.current = isRebuilding;
+  const pendingRef = useRef<{ resume: () => void } | null>(null);
+
+  useEffect(() => {
+    if (isRebuilding) return;
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    pending?.resume();
+  }, [isRebuilding]);
+
+  return useCallback(() => {
+    let cancel = armFit();
+    const generation = generationRef.current;
+    const request = {
+      resume: () => {
+        if (generationRef.current !== generation) return;
+        cancel();
+        cancel = armFit();
+      },
+    };
+    pendingRef.current = rebuildingRef.current ? request : null;
+    return () => {
+      if (pendingRef.current === request) pendingRef.current = null;
+      cancel();
+    };
+  }, [armFit, generationRef]);
+}
+
+/** Reframes pane size changes unless a saved camera restore owns the view; user gestures still win. */
+export function useCanvasResizeFit(width: number, height: number, fitGraph: () => () => void, restoringViewport = false): void {
+  const previousSize = useRef({ width, height });
+  useEffect(() => {
+    const previous = previousSize.current;
+    previousSize.current = { width, height };
+    if (restoringViewport || width <= 0 || height <= 0 || previous.width <= 0 || previous.height <= 0
+      || (previous.width === width && previous.height === height)) return;
+    return fitGraph();
+  }, [width, height, fitGraph, restoringViewport]);
+}
+
+/** Whether React Flow has received and measured the graph a pending fit will frame. */
+export function graphReadyForFit(
+  expectedNodes: readonly FlowNode[], expectedEdges: readonly FlowEdge[],
+  renderedNodes: readonly FlowNode[], renderedEdges: readonly FlowEdge[],
+): boolean {
+  const expectedVisible = expectedNodes.filter(node => !node.hidden);
+  const renderedVisible = renderedNodes.filter(node => !node.hidden);
+  if (expectedVisible.length !== renderedVisible.length || expectedEdges.length !== renderedEdges.length) return false;
+  const renderedById = new Map(renderedVisible.map(node => [node.id, node]));
+  if (!expectedVisible.every(node => {
+    const rendered = renderedById.get(node.id);
+    return rendered && rendered.position.x === node.position.x && rendered.position.y === node.position.y
+      && (rendered.measured?.width ?? 0) > 0 && (rendered.measured?.height ?? 0) > 0;
+  })) return false;
+  const renderedEdgeById = new Map(renderedEdges.map(edge => [edge.id, edge]));
+  return expectedEdges.every(edge => {
+    const rendered = renderedEdgeById.get(edge.id);
+    return rendered?.source === edge.source && rendered.target === edge.target;
   });
-  return () => clear(id);
+}
+
+/** Skip fits until the graph-data update paired with a saved viewport arrives. */
+export function skipFitForPendingViewport(
+  preserveVersion: number, consumedVersion: { current: number }, nodeDataChanged: boolean,
+): boolean {
+  if (preserveVersion === consumedVersion.current) return false;
+  if (nodeDataChanged) consumedVersion.current = preserveVersion;
+  return true;
 }
 
 /** Largest zoom the canvas allows. */
@@ -347,7 +443,7 @@ function buildTraceSideControls(
   originNodeId: string,
   modelNodeMap: ReadonlyMap<string, ModelNode>,
   modelNodeMapLower: ReadonlyMap<string, ModelNode>,
-  reachableFromOrigin: ReadonlySet<string>,
+  sides: ReadonlyArray<RemovalSide>,
 ): TraceNodeControls['in'] {
   const neighborOptions = buildTraceNeighborOptions(
     directNeighborIds(model, nodeId, side),
@@ -358,7 +454,7 @@ function buildTraceSideControls(
   const visibleNeighbors = neighborOptions.filter(option => visibleIds.has(option.id));
   const pruneChecks = visibleNeighbors.map(option => ({
     option,
-    check: canPruneTraceNode(graph, originNodeId, visibleIds, option.id, reachableFromOrigin),
+    check: canPruneTraceNode(graph, originNodeId, visibleIds, option.id, sides),
   }));
   const prune = pruneChecks
     .filter(p => p.check.safe)
@@ -760,10 +856,16 @@ export function GraphCanvas({
 }: GraphCanvasProps) {
   const { fitView, getNode, setCenter, getNodes, getEdges, setViewport } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
+  const graphRebuildingRef = useRef(isRebuilding);
+  graphRebuildingRef.current = isRebuilding;
+  const nodesInitializedRef = useRef(nodesInitialized);
+  nodesInitializedRef.current = nodesInitialized;
+  const displayedGraphRef = useRef({ nodes: flowNodes, edges: flowEdges, sourceNodes: flowNodes, sourceEdges: flowEdges });
   const vscodeApi = useVsCode();
 
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
+  const [syncedGraph, setSyncedGraph] = useState({ nodes: flowNodes, edges: flowEdges });
   const [columnView, setColumnView] = useState(false);
 
   const activeAiMetadata = activeAdvancedProfile?.aiMetadata ?? aiPreview?.aiMetadata;
@@ -859,28 +961,33 @@ export function GraphCanvas({
     const relations = activeAiMetadata?.columnAspect?.edges;
     if (!relations?.length) return null;
     try {
+      const identifierKey = (id: string): string => schemaKey(id, model?.identifierCaseSensitive);
       const columnTypesByNode = new Map<string, ReadonlyMap<string, string>>();
+      const columnNamesByNode = new Map<string, ReadonlyMap<string, string>>();
       for (const node of model?.nodes ?? []) {
         if (node.columns?.length) {
-          columnTypesByNode.set(node.id.toLowerCase(), new Map(node.columns.map(c => [normalizeColName(c.name), c.type])));
+          columnTypesByNode.set(identifierKey(node.id), new Map(node.columns.map(c => [normalizeColName(c.name, model?.identifierCaseSensitive), c.type])));
+          columnNamesByNode.set(identifierKey(node.id), new Map(node.columns.map(c => [normalizeColName(c.name, model?.identifierCaseSensitive), c.name])));
         }
       }
       const objects = new Map<string, ColumnTraceViewObject>();
       for (const node of flowNodes) {
         if (node.type === 'schemaNode') continue;
         const data = node.data as CustomNodeData;
-        objects.set(node.id.toLowerCase(), {
+        objects.set(identifierKey(node.id), {
           id: node.id,
           label: data.label,
           schema: data.schema,
           objectType: data.objectType,
-          columnTypes: columnTypesByNode.get(node.id.toLowerCase()),
+          columnTypes: columnTypesByNode.get(identifierKey(node.id)),
+          columnNames: columnNamesByNode.get(identifierKey(node.id)),
         });
       }
       const verdicts = activeAiMetadata?.nodeVerdicts?.length
-        ? new Map(activeAiMetadata.nodeVerdicts.map(v => [v.nodeId.toLowerCase(), v.verdict]))
+        ? new Map(activeAiMetadata.nodeVerdicts.map(v => [identifierKey(v.nodeId), v.verdict]))
         : undefined;
       return buildColumnTraceView({
+        identifierCaseSensitive: model?.identifierCaseSensitive,
         relations,
         objects,
         verdicts,
@@ -1074,12 +1181,12 @@ export function GraphCanvas({
       }
       if (node.type === 'columnTraceNode') {
         const view = (node.data as ColumnTraceNodeData).view;
-        return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema);
+        return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema, undefined, model?.identifierCaseSensitive);
       }
       const d = node.data as CustomNodeData;
-      return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema)));
+      return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema), undefined, model?.identifierCaseSensitive));
     },
-    [isExpandedSchemaViewActive]
+    [isExpandedSchemaViewActive, model?.identifierCaseSensitive]
   );
 
   const minimapNodeStrokeColor = useCallback(
@@ -1249,39 +1356,52 @@ export function GraphCanvas({
     import('../export/drawioExporter').then(({ exportToDrawio, exportSchemaOverviewToDrawio }) => {
       const schemas = (availableSchemas || []).filter(s => filter.schemas.has(s));
       const xml = (exportObjectNodes.length === 0 && clusterNodes.length > 0)
-        ? exportSchemaOverviewToDrawio(clusterNodes, exportEdges, schemas)
-        : exportToDrawio(exportObjectNodes, exportEdges, schemas, clusterNodes);
+        ? exportSchemaOverviewToDrawio(clusterNodes, exportEdges, schemas, model?.identifierCaseSensitive)
+        : exportToDrawio(exportObjectNodes, exportEdges, schemas, clusterNodes, model?.identifierCaseSensitive);
       if (!xml) return;
       const base = (sourceName?.replace(/\.dacpac$/i, '') || 'lineage').trim().replace(/[\\/:*?"<>|]/g, '_');
       vscodeApi.postMessage({ type: 'export-file', data: xml, defaultName: `${base}_lineage.drawio` });
     }).catch((err) => {
       vscodeApi.postMessage({ type: 'error', error: `Draw.io export failed: ${err instanceof Error ? err.message : err}` });
     });
-  }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi]);
+  }, [objectNodes, columnViewActive, localEdges, getEdges, availableSchemas, filter.schemas, sourceName, vscodeApi, model?.identifierCaseSensitive]);
 
   /**
-   * The one auto-fit: frames every node on the next frame, at the padding and duration every
+   * The one auto-fit: frames every node once the displayed graph is ready, at the padding and duration every
    * caller shares; a later user pan/zoom bumps {@link fitGenerationRef} so it no-ops instead of
    * running.
    *
    * @remarks
-   * Deferred a frame because each caller runs while the nodes it means to frame are still being
-   * measured, and `fitView` on an unmeasured node frames the wrong box.
+   * Waits until React Flow has the requested node positions, measured bounds and edges. A view
+   * arriving before measurement must not frame stale bounds from the previous graph.
    *
    * @returns A cancel to return directly as an effect's cleanup.
    */
-  const fitGraph = useCallback((): (() => void) => scheduleFit(
+  const armGraphFit = useCallback((): (() => void) => scheduleFit(
     fitGenerationRef,
     () => { void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION }); },
-  ), [fitView]);
+    undefined, undefined,
+    () => {
+      const displayed = displayedGraphRef.current;
+      return displayed.sourceNodes === flowNodes && displayed.sourceEdges === flowEdges
+        && !graphRebuildingRef.current && (nodesInitializedRef.current || displayed.nodes.every(node => node.hidden))
+        && graphReadyForFit(displayed.nodes, displayed.edges, getNodes(), getEdges());
+    },
+  ), [fitView, flowNodes, flowEdges, getNodes, getEdges, columnViewActive]);
+  const fitGraph = useRebuildResumableFit(isRebuilding, fitGenerationRef, armGraphFit);
+
+  const nodesAtLastFitEffectRef = useRef(flowNodes);
+  const shownTraceMode = ['applied', 'filtered', 'path-applied', 'analysis'].includes(trace.mode) ? trace.mode : null;
 
   /**
-   * The sole owner of fit-on-graph-change: every `flowNodes` update — including a trace ending and
-   * the graph reverting to its pre-trace shape — reframes here, once. A manual add/prune trace-scope
+   * Fits graph changes and newly shown AI, trace and analytics views, including repeated shows
+   * whose node membership is unchanged. A stored viewport restoration still takes precedence. A manual add/prune trace-scope
    * edit is the one graph change this owner does not reframe for, since the edited node is already
    * on screen and a fit there would move the view out from under the click that caused it.
    */
   useEffect(() => {
+    const nodeDataChanged = nodesAtLastFitEffectRef.current !== flowNodes;
+    nodesAtLastFitEffectRef.current = flowNodes;
     const previousTrace = traceAtLastGraphChangeRef.current;
     const currentTrace = currentTraceRef.current;
     traceAtLastGraphChangeRef.current = currentTrace;
@@ -1312,14 +1432,11 @@ export function GraphCanvas({
         return;
       }
     }
-    const preserveVersion = viewportPreserveVersionRef.current;
-    if (preserveVersion !== consumedViewportPreserveVersionRef.current) {
-      consumedViewportPreserveVersionRef.current = preserveVersion;
-      return;
-    }
+    if (skipFitForPendingViewport(viewportPreserveVersionRef.current, consumedViewportPreserveVersionRef, nodeDataChanged)) return;
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     return fitGraph();
-  }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+  }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode, aiPreview, analysisMode,
+    shownTraceMode, trace.tracedNodeIds]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
 
   const [notesVisible, setNotesVisible] = useState(true);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
@@ -1365,10 +1482,12 @@ export function GraphCanvas({
     } else {
       setLocalNodes(flowNodes);
     }
+    setSyncedGraph(current => ({ ...current, nodes: flowNodes }));
   }, [flowNodes]);
 
   useEffect(() => {
     setLocalEdges(flowEdges.map(withEdgeBaseWidthVar));
+    setSyncedGraph(current => ({ ...current, edges: flowEdges }));
   }, [flowEdges]);
 
   const pendingViewportRef = useRef(pendingViewport);
@@ -1409,6 +1528,7 @@ export function GraphCanvas({
    * than deriving drag state from `applyNodeChanges` position events (which arrive one frame late).
    */
   const handleNodeDragStart: OnNodeDrag = useCallback((_event, node, nodes) => {
+    fitGenerationRef.current++;
     draggingNodeIdsRef.current = new Set((nodes.length ? nodes : [node]).map(n => n.id));
   }, []);
 
@@ -1418,12 +1538,14 @@ export function GraphCanvas({
    * shape. See {@link mergeIncomingNodesPreservingDrag}.
    */
   const handleNodeDragStop: OnNodeDrag = useCallback((_event, node, nodes) => {
+    fitGenerationRef.current++;
     const draggingIds = draggingNodeIdsRef.current ?? new Set((nodes.length ? nodes : [node]).map(n => n.id));
     draggingNodeIdsRef.current = null;
     const deferred = deferredFlowNodesRef.current;
     if (!deferred) return;
     deferredFlowNodesRef.current = null;
     setLocalNodes(current => mergeIncomingNodesPreservingDrag(deferred, current, draggingIds));
+    setSyncedGraph(current => ({ ...current, nodes: deferred }));
   }, []);
 
   /**
@@ -1479,9 +1601,9 @@ export function GraphCanvas({
 
   const modelNodeMapLower = useMemo(() => {
     const map = new Map<string, DatabaseModel['nodes'][number]>();
-    for (const n of modelNodeMap.values()) map.set(n.id.toLowerCase(), n);
+    if (!model?.identifierCaseSensitive) for (const n of modelNodeMap.values()) map.set(n.id.toLowerCase(), n);
     return map;
-  }, [modelNodeMap]);
+  }, [modelNodeMap, model?.identifierCaseSensitive]);
 
 
   const level1Neighbors = useMemo(() => {
@@ -1546,8 +1668,8 @@ export function GraphCanvas({
   const hoveredColumnPath = useMemo((): Set<string> | null => {
     const active = pinnedColumn ?? hoveredColumn;
     if (!active || !columnThreadIndex) return null;
-    return columnThread(columnThreadIndex, columnRowKey(active.nodeId, active.column));
-  }, [pinnedColumn, hoveredColumn, columnThreadIndex]);
+    return columnThread(columnThreadIndex, columnRowKey(active.nodeId, active.column, model?.identifierCaseSensitive));
+  }, [pinnedColumn, hoveredColumn, columnThreadIndex, model?.identifierCaseSensitive]);
 
   const traceControlsByNode = useMemo((): Map<string, TraceNodeControls> => {
     const controls = new Map<string, TraceNodeControls>();
@@ -1560,17 +1682,17 @@ export function GraphCanvas({
       : undefined;
     if (!targetNode) return controls;
 
-    const visibleIds = new Set(localNodes.filter(n => n.type === 'lineageNode').map(n => n.id));
-    const reachableFromOrigin = traceReachableFromOrigin(modelGraph, trace.selectedNodeId, visibleIds);
+    const visibleIds = trace.tracedNodeIds;
+    const sides = traceRemovalSides(trace.upstreamLevels, trace.downstreamLevels);
 
     controls.set(targetNode.id, {
-      in: buildTraceSideControls(model, modelGraph, targetNode.id, 'in', visibleIds, trace.selectedNodeId, modelNodeMap, modelNodeMapLower, reachableFromOrigin),
-      out: buildTraceSideControls(model, modelGraph, targetNode.id, 'out', visibleIds, trace.selectedNodeId, modelNodeMap, modelNodeMapLower, reachableFromOrigin),
+      in: buildTraceSideControls(model, modelGraph, targetNode.id, 'in', visibleIds, trace.selectedNodeId, modelNodeMap, modelNodeMapLower, sides),
+      out: buildTraceSideControls(model, modelGraph, targetNode.id, 'out', visibleIds, trace.selectedNodeId, modelNodeMap, modelNodeMapLower, sides),
       onAdd: onTraceAddNeighbor,
       onPrune: onTracePruneNode,
     });
     return controls;
-  }, [localNodes, model, modelGraph, modelNodeMap, modelNodeMapLower, onTraceAddNeighbor, onTracePruneNode, trace.mode, trace.selectedNodeId, highlightedNodeId, canEditTraceScope]);
+  }, [localNodes, model, modelGraph, modelNodeMap, modelNodeMapLower, onTraceAddNeighbor, onTracePruneNode, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.tracedNodeIds, highlightedNodeId, canEditTraceScope]);
 
   const handleColumnHover = useCallback((nodeId: string, column: string | null) => {
     setHoveredColumn(column === null ? null : { nodeId, column });
@@ -1591,8 +1713,8 @@ export function GraphCanvas({
     hoveredPath: hoveredColumnPath,
     onColumnHover: handleColumnHover,
     onColumnSelect: handleColumnSelect,
-    pinnedRow: pinnedColumn ? columnRowKey(pinnedColumn.nodeId, pinnedColumn.column) : null,
-  }), [hoveredColumnPath, handleColumnHover, handleColumnSelect, pinnedColumn]);
+    pinnedRow: pinnedColumn ? columnRowKey(pinnedColumn.nodeId, pinnedColumn.column, model?.identifierCaseSensitive) : null,
+  }), [hoveredColumnPath, handleColumnHover, handleColumnSelect, pinnedColumn, model?.identifierCaseSensitive]);
 
   const handleToggleColumnView = useCallback((next: boolean) => {
     setColumnView(next);
@@ -1657,7 +1779,7 @@ export function GraphCanvas({
   const columnNodeData = useMemo((): Map<string, ColumnTraceNodeData> => {
     const byNode = new Map<string, ColumnTraceNodeData>();
     if (!columnTraceView) return byNode;
-    const statesByRow = resolveRowLineStates(columnTraceView.edges);
+    const statesByRow = resolveRowLineStates(columnTraceView.edges, columnTraceView.identifierCaseSensitive);
     const decorationInputs = {
       highlightedNodeId,
       level1Neighbors,
@@ -1675,11 +1797,12 @@ export function GraphCanvas({
     for (const view of columnTraceView.nodes) {
       const rowLineStates: Record<string, ColumnLineState> = {};
       for (const row of view.rows) {
-        const state = statesByRow.get(columnRowKey(view.id, row.name));
+        const state = statesByRow.get(columnRowKey(view.id, row.name, model?.identifierCaseSensitive));
         if (state) rowLineStates[row.name] = state;
       }
       const d = computeNodeDecoration(view.id, undefined, decorationInputs);
       byNode.set(view.id, {
+        identifierCaseSensitive: model?.identifierCaseSensitive,
         view,
         rowLineStates,
         highlighted: d.highlighted,
@@ -1693,7 +1816,7 @@ export function GraphCanvas({
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode, model?.identifierCaseSensitive]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
@@ -1723,8 +1846,8 @@ export function GraphCanvas({
     if (columnViewActive && columnTraceView) {
       const litByHover = (edge: { source: string; sourceColumn: string; target: string; targetColumn: string }) =>
         !!hoveredColumnPath
-        && hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn))
-        && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn));
+        && hoveredColumnPath.has(columnRowKey(edge.source, edge.sourceColumn, model?.identifierCaseSensitive))
+        && hoveredColumnPath.has(columnRowKey(edge.target, edge.targetColumn, model?.identifierCaseSensitive));
       const litBySelection = (edge: { source: string; target: string }) =>
         !highlightedNodeId || edge.source === highlightedNodeId || edge.target === highlightedNodeId;
 
@@ -1761,7 +1884,8 @@ export function GraphCanvas({
     const litAnimated = shouldAnimateEdges(localEdges.length, configAllowsAnimation);
     const routeEdgeIds = activeRoute?.edgeIds ?? (isFocusPaths ? trace.tracedEdgeIds : undefined);
     return decorateFlowEdges(localEdges, highlightedNodeId, litAnimated, edgeDecorationCache.current, routeEdgeIds);
-  }, [localEdges, highlightedNodeId, activeRoute, isFocusPaths, trace.tracedEdgeIds, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath]);
+  }, [localEdges, highlightedNodeId, activeRoute, isFocusPaths, trace.tracedEdgeIds, config.layout.edgeAnimation, config.layout.highlightAnimation, trace.mode, columnViewActive, columnTraceView, hoveredColumnPath, model?.identifierCaseSensitive]);
+  displayedGraphRef.current = { nodes: displayNodes, edges: displayEdges, sourceNodes: syncedGraph.nodes, sourceEdges: syncedGraph.edges };
 
   const allNodes = useMemo(
     () => (model?.nodes ?? []).map(n => ({ id: n.id, name: n.name, schema: n.schema, type: n.type })),
@@ -1793,6 +1917,7 @@ export function GraphCanvas({
   fitPaddingRef.current = fitPadding;
   const paneWidth = useStore((s) => s.width);
   const paneHeight = useStore((s) => s.height);
+  useCanvasResizeFit(paneWidth, paneHeight, fitGraph, !!pendingViewport);
   const minZoom = useMemo(
     () => canvasMinZoom(displayNodes, paneWidth, paneHeight, fitPadding),
     [displayNodes, paneWidth, paneHeight, fitPadding],
@@ -1833,8 +1958,8 @@ export function GraphCanvas({
   );
 
   const legendColorMap = useMemo(
-    () => deriveLegendColorMap(localNodes),
-    [localNodes],
+    () => deriveLegendColorMap(localNodes, model?.identifierCaseSensitive),
+    [localNodes, model?.identifierCaseSensitive],
   );
 
   useEffect(() => {
@@ -2184,6 +2309,7 @@ export function GraphCanvas({
         <Legend
           schemas={legendSchemas}
           schemaColorMap={legendColorMap}
+          identifierCaseSensitive={model?.identifierCaseSensitive}
           isExpandedSchemaViewActive={!!isExpandedSchemaViewActive}
           expandedSchemas={expandedSchemas}
           inset={isDetailSearchOpen || analysisMode ? 'sidebar' : isTraceNavigatorOpen ? 'navigator' : showTraceNavigator && isTraceTreeCollapsed ? 'rail' : undefined}
@@ -2237,6 +2363,7 @@ export function GraphCanvas({
 
       {infoBarNodeId && model && (
         <NodeInfoBar
+          identifierCaseSensitive={model?.identifierCaseSensitive}
           nodeId={infoBarNodeId}
           catalog={model.catalog}
           neighborIndex={model.neighborIndex}

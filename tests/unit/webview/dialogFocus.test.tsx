@@ -22,8 +22,8 @@ beforeEach(() => {
   root = createRoot(host);
 });
 
-afterEach(() => {
-  act(() => root.unmount());
+afterEach(async () => {
+  await act(async () => { root.unmount(); });
   host.remove();
 });
 
@@ -60,7 +60,7 @@ describe('Help panel focus', () => {
 describe('Help panel Escape', () => {
   it('closes on the first Escape pressed where focus lands on open', async () => {
     const onClose = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <VsCodeProvider api={{ postMessage: () => {} } as never}>
           <HelpModal isOpen onClose={onClose} />
@@ -71,27 +71,27 @@ describe('Help panel Escape', () => {
       const dialog = document.querySelector('[role="dialog"][aria-label="Data Lineage help"]');
       expect(dialog?.contains(document.activeElement)).toBe(true);
     });
-    act(() => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+    await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('exclusion rules popup focus', () => {
   it('focuses the pattern input on open and returns focus to the trigger on Escape', async () => {
-    act(() => {
+    await act(async () => {
       root.render(<ExclusionDropdown exclusionPatterns={[]} onAddPattern={() => {}} onRemovePattern={() => {}} />);
     });
     const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Exclusion rules"]')!;
     expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
-    trigger.focus();
-    act(() => trigger.click());
+    await act(async () => { trigger.focus(); });
+    await act(async () => { trigger.click(); });
     await focusSettled(() => {
       const dialog = document.querySelector('[role="dialog"][aria-label="Exclusion rules"]');
       expect(document.activeElement?.tagName).toBe('INPUT');
       expect(dialog?.contains(document.activeElement)).toBe(true);
     });
 
-    act(() => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+    await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
     await focusSettled(() => {
       expect(document.querySelector('[role="dialog"][aria-label="Exclusion rules"]')).toBeNull();
       expect(document.activeElement).toBe(trigger);

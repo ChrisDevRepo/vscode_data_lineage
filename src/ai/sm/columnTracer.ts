@@ -1,3 +1,4 @@
+import { resolveScalarReturnTarget, resolveFunctionCallerTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { resolveModelNodeId } from '../support/inputNormalization';
@@ -5,7 +6,9 @@ import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
-import { normalizeColName } from '../../utils/sql';
+import { normalizeColName, schemaKey } from '../../utils/sql';
+import { DirectedGraph } from 'graphology';
+import { bfsFromNode } from 'graphology-traversal';
 
 /**
  * Debug/info/warn/error sink shape shared by every optional logger this module accepts — a local
@@ -29,13 +32,15 @@ export class ColumnTracer {
    * `JSON.stringify(init.targetColumns) === JSON.stringify(columnAspect.target_columns)`, so a
    * shared array would let an in-place edit silently rewrite the frozen target set and break `toJSON()`.
    */
-  constructor(targetColumns: string[], initialAspect?: ColumnAspect) {
+  constructor(targetColumns: string[], initialAspect?: ColumnAspect, private readonly identifierCaseSensitive = false) {
     this.aspect = initialAspect ?? {
       target_columns: [...targetColumns],
       active_columns: [...targetColumns],
       edges: [],
     };
   }
+
+  private columnKey = (value: string): string => normalizeColName(value, this.identifierCaseSensitive);
 
   /** Current column-trace state. */
   get state(): ColumnAspect {
@@ -104,7 +109,7 @@ export class ColumnTracer {
     const accounted = traceDirection === 'downstream'
       ? columnFlow.flatMap(e => [e.out_col, ...e.upstream_columns.map(r => r.col)])
       : columnFlow.map(e => e.out_col);
-    return computeUnaccounted(this.aspect.active_columns, accounted);
+    return computeUnaccounted(this.aspect.active_columns, accounted, this.identifierCaseSensitive);
   }
 
   /**
@@ -138,14 +143,14 @@ export class ColumnTracer {
       const nodeKey = traceDirection === 'downstream' ? e.to_node : e.from_node;
       const colVal = traceDirection === 'downstream' ? e.to_col : e.from_col;
       if (!colVal || (nodeKey !== candidateNodeId && !writtenCarrierIds.has(nodeKey))) continue;
-      const key = normalizeColName(colVal);
+      const key = this.columnKey(colVal);
       if (!spineByNorm.has(key)) spineByNorm.set(key, colVal);
     }
     if (spineByNorm.size === 0) return entryColumns;
     const spine = [...spineByNorm.values()];
     if (log && entryColumns.length > 0) {
       const spineNorms = new Set(spineByNorm.keys());
-      const dropped = entryColumns.filter((c) => !spineNorms.has(normalizeColName(c)));
+      const dropped = entryColumns.filter((c) => !spineNorms.has(this.columnKey(c)));
       if (dropped.length > 0) {
         log('debug', `[Normalize] entry columns bound to spine id=${candidateNodeId} from=[${entryColumns.join(', ')}] to=[${spine.join(', ')}] — off-spine entry column(s) dropped: [${dropped.join(', ')}]`);
       }
@@ -161,7 +166,9 @@ export class ColumnTracer {
    * @remarks
    * Terminal/current-node production (`upstream_columns: []`) stages no edge and spawns no
    * question. Each question is labelled by `edge.from_col`, not `edge.to_col`, so the wording
-   * matches that hop's own `<column_trace>` active-column label.
+   * matches that hop's own `<column_trace>` active-column label. Writer edges
+   * (`from_node === hop_node`) never spawn one: they attribute the focus's own write, they do not
+   * continue the chain into the focus again.
    *
    * @param focusId - The id of the focus node.
    * @param hopCount - The hop count matching the edges to query.
@@ -169,7 +176,7 @@ export class ColumnTracer {
    */
   getColumnLineageQuestionsByNode(focusId: string, hopCount: number): Map<string, string[]> {
     const hopEdges = this.aspect.edges.filter(
-      e => e.hop_node === focusId && e.hop === hopCount,
+      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node,
     );
     const byNode = new Map<string, string[]>();
     if (hopEdges.length === 0) return byNode;
@@ -179,7 +186,7 @@ export class ColumnTracer {
       const key = `${edge.from_node}.${edge.from_col}`;
       const group = fedByKey.get(key);
       if (!group) fedByKey.set(key, { edge, toCols: [edge.to_col] });
-      else if (!group.toCols.some(c => normalizeColName(c) === normalizeColName(edge.to_col))) group.toCols.push(edge.to_col);
+      else if (!group.toCols.some(c => this.columnKey(c) === this.columnKey(edge.to_col))) group.toCols.push(edge.to_col);
     }
 
     for (const { edge, toCols } of fedByKey.values()) {
@@ -207,14 +214,22 @@ export class ColumnTracer {
    * @param model - The underlying database model.
    * @param store - Optional column store for checking declared column lists.
    * @param log - Optional logger; a neighbour with zero declared columns cannot be verified, so
-   * the acceptance is logged at `debug` instead of passing silently.
+   * only procedure/external fallback is accepted and logged at `debug`; ordinary table/view references require declared columns.
    * @param removedSet - Node ids already pruned this run (PRUNE-BEFORE-DEMAND). Naming an
    * already-removed node as an `upstream_columns` supplier is rejected here, at declare time,
    * rather than staging a demand `enqueueHop` can never dispatch to.
    * @param traceDirection - Trace direction of the owning exploration; resolves which neighbour
    * side a continuation may name at a body-less focus (producers for upstream, consumers for
    * downstream).
-   * @returns Validation result containing any error, invalid routes, or successfully staged edges.
+   * @param incomingRefs - Transient qualified endpoints supplied by the task context.
+   * Explicit links must be continuous with these exact identities through either endpoint;
+   * task traversal side controls continuation routing, not relationship relevance. When omitted,
+   * committed endpoints anchor validation, or the initial
+   * focus columns when no edges are committed. Submitted renames may continue an anchored chain.
+   * @param incomingDownstreamRefs - Separate explicitly arriving downstream obligations at a mixed-side hop.
+   *   The two anchor sets remain separate to preserve their recorded continuation legs.
+   * @returns Validation result containing any error, invalid routes, successfully staged edges, and
+   *   the accepted entry sides when separate downstream obligations were supplied.
    */
   validateColumnFlow(
     focusId: string,
@@ -225,11 +240,22 @@ export class ColumnTracer {
     log: TracerLogFn | undefined,
     removedSet: ReadonlySet<string> | undefined,
     traceDirection: 'upstream' | 'downstream',
-  ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
+    incomingRefs?: readonly { node: string; col: string }[],
+    returnTargets: readonly { node: string; col: string }[] = [],
+    callerTargets: readonly { node: string; col: string }[] = [],
+    incomingDownstreamRefs: readonly { node: string; col: string }[] = [],
+  ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[]; entrySides?: Array<{ index: number; upstream: boolean; downstream: boolean }> } {
+    const identifierKey = (id: string): string => schemaKey(id, model.identifierCaseSensitive);
     const invalidRoutes: InvalidRoute[] = [];
     const stagedEdges: ColumnEdge[] = [];
 
-    const columnFlow = finding.verdict === 'end_branch' ? [] : finding.column_flow ?? [];
+    const columnFlow = finding.column_flow ?? [];
+    if (returnTargets.length) {
+      for (const target of returnTargets) {
+        const entries = columnFlow.filter(entry => entry.returns_to && resolveModelNodeId(entry.returns_to.node, nodeMap, model.identifierCaseSensitive) === target.node && this.columnKey(entry.returns_to.col) === this.columnKey(target.col));
+        if (entries.length !== 1) invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: 'column_flow', reason: `Scalar caller destination ${target.node}.${target.col} requires exactly one authored returns_to entry.` });
+      }
+    }
     if (columnFlow.length === 0) {
       return { invalidRoutes, stagedEdges };
     }
@@ -240,52 +266,73 @@ export class ColumnTracer {
     const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
     const continuationSide = traceDirection === 'downstream' ? 'out' : 'in';
     const continuationNeighbors = focusIsCarrier
-      ? new Set((model.neighborIndex[focusId.toLowerCase()]?.[continuationSide] ?? []).map((id) => id.toLowerCase()))
+      ? new Set((model.neighborIndex[identifierKey(focusId)]?.[continuationSide] ?? []).map((id) => identifierKey(id)))
       : null;
 
-    const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
-    const activeNorm = this.aspect.active_columns.map(normalizeColName);
+    const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
+    const activeNorm = this.aspect.active_columns.map(this.columnKey);
+    const entryEdges = new Map<number, ColumnEdge[]>();
+    const endpointKey = columnEndpointKeyFactory(nodeMap, model.identifierCaseSensitive);
+    const committedRefs = this.aspect.edges.flatMap(edge => [
+      { node: edge.from_node, col: edge.from_col },
+      { node: edge.to_node, col: edge.to_col },
+    ]);
+    const anchors = new Map((incomingRefs ?? committedRefs)
+      .map(ref => [endpointKey(ref.node, ref.col), `${resolveModelNodeId(ref.node, nodeMap, model.identifierCaseSensitive) ?? ref.node}.${ref.col}`]));
+    if (incomingRefs === undefined && this.aspect.edges.length === 0) {
+      for (const col of this.aspect.active_columns) anchors.set(endpointKey(focusId, col), `${focusId}.${col}`);
+    }
 
     for (let entryIndex = 0; entryIndex < columnFlow.length; entryIndex++) {
       const entry = columnFlow[entryIndex];
-      const outNorm = normalizeColName(entry.out_col);
-      if (traceDirection === 'upstream' && !activeNorm.includes(outNorm)) {
+      const outNorm = this.columnKey(entry.out_col);
+      if (focusNode.type === 'function' && validFocusCols.size === 0 && !entry.returns_to) {
+        invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: 'This function declares no real output columns. Only a supplied scalar caller destination can receive its authored contribution.' });
+        continue;
+      }
+      if (returnTargets.length || entry.returns_to) {
+        const target = entry.returns_to;
+        const declared = target && callerTargets.some(expected => expected.node === target.node && this.columnKey(expected.col) === this.columnKey(target.col));
+        const bound = target ? resolveScalarReturnTarget(focusId, target, nodeMap, store, model.identifierCaseSensitive)
+          ?? (declared && validFocusCols.size === 0 ? resolveFunctionCallerTarget(focusId, target, nodeMap, model, store) : null) : null;
+        if (!bound || entry.writes_to !== undefined || this.columnKey(entry.out_col) !== this.columnKey(bound.col)
+          || !returnTargets.some(expected => expected.node === bound.node && this.columnKey(expected.col) === this.columnKey(bound.col))) {
+          invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.returns_to`, reason: 'returns_to must identify one supplied qualified scalar caller output, match out_col, and exclude writes_to.' });
+          continue;
+        }
+      }
+
+      if (traceDirection === 'upstream' && incomingDownstreamRefs.length === 0 && !activeNorm.includes(outNorm)) {
         const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
         invalidRoutes.push(existsOnNode
           ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, available_columns: [...this.aspect.active_columns] }
-          : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns] });
+          : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns], ...(validFocusCols.size > 0 && focusNode.type !== 'procedure' ? { actual_columns: (getNodeColumns(focusNode.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
         continue;
       }
 
-      if (validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
-          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, available_columns: Array.from(validFocusCols).sort() });
+      if (!entry.returns_to && validFocusCols.size === 0 && !allowsMissingColumnMetadata(focusNode)) {
+        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `Column metadata is unavailable for ${focusNode.type} "${focusId}"; output "${entry.out_col}" cannot be verified.` });
+        continue;
+      }
+      if (!entry.returns_to && validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
+          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, available_columns: Array.from(validFocusCols).sort(), ...(focusNode.type !== 'procedure' ? { actual_columns: (getNodeColumns(focusNode.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
         continue;
       }
 
-      if (traceDirection === 'downstream' && entry.upstream_columns.length > 0
-        && !entry.upstream_columns.some((ref) => activeNorm.includes(normalizeColName(ref.col)))) {
-        invalidRoutes.push({
-          kind: 'untracked_out_col',
-          id: focusId,
-          path: `column_flow.${entryIndex}.upstream_columns`,
-          reason: `column_flow.${entryIndex} continues the trace (upstream_columns is non-empty) into out_col "${entry.out_col}", but none of its upstream_columns[].col names an active tracked column — one contributor must carry the column this hop received before deriving "${entry.out_col}", or upstream_columns: [] if it originates here`,
-          available_columns: [...this.aspect.active_columns],
-        });
-        continue;
-      }
-
-      const toNodeId = entry.writes_to?.node ? resolveModelNodeId(entry.writes_to.node, nodeMap) : focusId;
+      const stagedBeforeEntry = stagedEdges.length;
+      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap, model.identifierCaseSensitive);
+      const toNodeId = resolvedTarget?.attributionTo ?? null;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
       if (entry.writes_to && !toNodeObj) {
         invalidRoutes.push({ kind: 'absent_contributor', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to target "${entry.writes_to.node}" is absent from the loaded model.` });
         continue;
       }
-      if (entry.writes_to && toNodeObj && toNodeId && toNodeId.toLowerCase() !== focusId.toLowerCase()) {
-        const focusLower = focusId.toLowerCase();
-        const toLower = toNodeId.toLowerCase();
+      if (entry.writes_to && toNodeObj && toNodeId && identifierKey(toNodeId) !== identifierKey(focusId)) {
+        const focusLower = identifierKey(focusId);
+        const toLower = identifierKey(toNodeId);
         const verbs = new Set<string>();
         for (const e of model.edges) {
-          if (e.source.toLowerCase() === focusLower && e.target.toLowerCase() === toLower) {
+          if (identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower) {
             verbs.add(edgeApiType(e.type, focusNode.type));
           }
         }
@@ -294,11 +341,15 @@ export class ColumnTracer {
           continue;
         }
       }
-      const toCol = entry.writes_to?.col ?? entry.out_col;
-      if (toNodeObj && toNodeObj.type !== 'procedure' && toNodeObj.type !== 'function') {
-        const toCols = new Set<string>((getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
-        if (toCols.size > 0 && !toCols.has(normalizeColName(toCol))) {
-          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `to_col "${toCol}" does not exist on ${toNodeObj.id}`, available_columns: Array.from(toCols).sort() });
+      const toCol = resolvedTarget?.attributionCol ?? entry.out_col;
+      if (toNodeObj && !entry.returns_to) {
+        const toCols = new Set<string>((getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
+        if (toCols.size === 0 && !allowsMissingColumnMetadata(toNodeObj)) {
+          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `Column metadata is unavailable for ${toNodeObj.type} "${toNodeObj.id}"; destination "${toCol}" cannot be verified.` });
+          continue;
+        }
+        if (toCols.size > 0 && !toCols.has(this.columnKey(toCol))) {
+          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `to_col "${toCol}" does not exist on ${toNodeObj.id}`, available_columns: Array.from(toCols).sort(), ...(toNodeObj.type !== 'procedure' ? { actual_columns: (getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
           continue;
         }
       }
@@ -306,10 +357,23 @@ export class ColumnTracer {
 
       for (let refIndex = 0; refIndex < entry.upstream_columns.length; refIndex++) {
         const cont = entry.upstream_columns[refIndex];
-        const neighborId = resolveModelNodeId(cont.node, nodeMap);
+        if (cont.col.trim().length === 0) {
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: 'An upstream column reference must name a non-empty column; procedure metadata fallback does not supply a column identity.' });
+          continue;
+        }
+        const neighborId = resolveModelNodeId(cont.node, nodeMap, model.identifierCaseSensitive);
         const neighbor = neighborId ? nodeMap.get(neighborId) : null;
         if (!neighbor) {
           invalidRoutes.push({ kind: 'absent_contributor', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" is absent from the loaded model.` });
+          continue;
+        }
+
+        if (callerTargets.length && !model.edges.some(edge => edge.source === neighbor.id
+          && (edge.target === focusId || (entry.returns_to
+            ? edge.target === toNodeForEdge
+            : callerTargets.some(target => edge.target === target.node)))
+          && edgeApiType(edge.type, neighbor.type) === 'read')) {
+          invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: 'A caller-context investigation accepts real read contributors of the function or its declared callers, not unrelated loaded objects.' });
           continue;
         }
 
@@ -318,8 +382,8 @@ export class ColumnTracer {
           continue;
         }
 
-        const fromNode = resolveModelNodeId(cont.node, nodeMap) ?? cont.node.toLowerCase();
-        if (fromNode === toNodeForEdge && normalizeColName(cont.col) === normalizeColName(toCol)) {
+        const fromNode = resolveModelNodeId(cont.node, nodeMap, model.identifierCaseSensitive) ?? identifierKey(cont.node);
+        if (fromNode === toNodeForEdge && this.columnKey(cont.col) === this.columnKey(toCol)) {
           invalidRoutes.push({
             kind: 'self_loop_column',
             id: fromNode,
@@ -334,11 +398,37 @@ export class ColumnTracer {
           continue;
         }
 
+        const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map(c => this.columnKey(c.name)));
+        if (validNeighborCols.size > 0 && !validNeighborCols.has(this.columnKey(cont.col))) {
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort(), ...(neighbor.type !== 'procedure' ? { actual_columns: (getNodeColumns(neighbor.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
+          continue;
+        }
+        if (validNeighborCols.size === 0 && !allowsMissingColumnMetadata(neighbor)) {
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: neighbor.type === 'function'
+            ? 'This function declares no real columns; formal parameters and return_value are not upstream model columns. Its supplied scalar-return task records contributors at the real caller output.'
+            : `Column metadata is unavailable for ${neighbor.type} "${neighbor.id}"; upstream column "${cont.col}" cannot be verified.` });
+          continue;
+        }
+        if (validNeighborCols.size === 0 && neighbor.type === 'procedure' && !continuationNeighbors) {
+          const spInbound = model.neighborIndex[identifierKey(neighbor.id)]?.in ?? [];
+          const inboundCols = new Set<string>();
+          for (const inId of spInbound) {
+            (getNodeColumns(inId, nodeMap, store ?? undefined) || []).forEach(c => inboundCols.add(this.columnKey(c.name)));
+          }
+          if (inboundCols.size > 0 && !inboundCols.has(this.columnKey(cont.col))) {
+            invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is not in any inbound source of procedure "${cont.node}"`, available_columns: Array.from(inboundCols).sort() });
+            continue;
+          }
+        }
+        if (validNeighborCols.size === 0) {
+          log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — ${neighbor.type} metadata fallback`);
+        }
+
         if (continuationNeighbors) {
           if (continuationNeighbors.size === 0) {
             log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded ${continuationSide === 'in' ? 'writers' : 'readers'}, accepting unverified`);
           } else {
-            if (!continuationNeighbors.has(neighbor.id.toLowerCase())) {
+            if (!continuationNeighbors.has(identifierKey(neighbor.id))) {
               invalidRoutes.push({
                 kind: 'non_writer_continuation',
                 id: cont.node,
@@ -349,24 +439,6 @@ export class ColumnTracer {
               continue;
             }
             log?.('debug', `[CT] continuation edge "${cont.col}" on carrier "${focusId}" from "${cont.node}" — attributed on that node's own hop`);
-          }
-        } else if (neighbor.type === 'procedure') {
-          const spInbound = model.neighborIndex[neighbor.id.toLowerCase()]?.in ?? [];
-          const inboundCols = new Set<string>();
-          for (const inId of spInbound) {
-            (getNodeColumns(inId, nodeMap, store ?? undefined) || []).forEach((c) => inboundCols.add(normalizeColName(c.name)));
-          }
-          if (inboundCols.size > 0 && !inboundCols.has(normalizeColName(cont.col))) {
-            invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is not in any inbound source of procedure "${cont.node}"`, available_columns: Array.from(inboundCols).sort() });
-            continue;
-          }
-        } else {
-          const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map((c) => normalizeColName(c.name)));
-          if (validNeighborCols.size === 0) {
-            log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — neighbour declares no columns, accepting unverified`);
-          } else if (!validNeighborCols.has(normalizeColName(cont.col))) {
-            invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort() });
-            continue;
           }
         }
 
@@ -381,8 +453,187 @@ export class ColumnTracer {
           ...(cont.note ? { note: cont.note } : {}),
         });
       }
+
+      const writerEdge = resolvedTarget?.writerEdge ?? null;
+      const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
+      if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
+        && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry)) {
+        stagedEdges.push({
+          hop: 0, // Assigned by caller
+          hop_node: focusId,
+          from_node: focusId,
+          from_col: entry.out_col,
+          to_node: writerEdge.toNode,
+          to_col: writerEdge.toCol,
+        });
+      }
+      entryEdges.set(entryIndex, stagedEdges.slice(stagedBeforeEntry));
+    }
+
+    if (!focusIsCarrier) {
+      const reachable = reachableColumnEndpoints(
+        new Set(anchors.keys()),
+        stagedEdges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) })),
+        traceDirection,
+      );
+      const downstreamReachable = incomingDownstreamRefs.length > 0
+        ? reachableColumnEndpoints(new Set(incomingDownstreamRefs.map(ref => endpointKey(ref.node, ref.col))),
+          stagedEdges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) })), 'downstream')
+        : undefined;
+      const entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> = [];
+      const rejectedEdges = new Set<ColumnEdge>();
+      for (const [entryIndex, edges] of entryEdges) {
+        const entry = columnFlow[entryIndex];
+        if (entry.upstream_columns.length === 0) {
+          const target = resolveColumnFlowTarget(entry, focusId, nodeMap, model.identifierCaseSensitive);
+          const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
+            || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
+          const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
+          if (incomingDownstreamRefs.length === 0 || upstream || downstream) {
+            entrySides.push({ index: entryIndex, upstream, downstream });
+            continue;
+          }
+        }
+        if (edges.length === 0 && entry.upstream_columns.length > 0) continue;
+        const connectedUpstream = anchors.has(endpointKey(focusId, entry.out_col)) || edges.some(edge => {
+          const source = endpointKey(edge.from_node, edge.from_col);
+          const target = endpointKey(edge.to_node, edge.to_col);
+          return reachable.has(target) || reachable.has(source);
+        });
+        const connectedDownstream = downstreamReachable !== undefined && edges.some(edge =>
+          downstreamReachable.has(endpointKey(edge.from_node, edge.from_col))
+          || downstreamReachable.has(endpointKey(edge.to_node, edge.to_col)));
+        const upstream = connectedUpstream && activeNorm.includes(this.columnKey(entry.out_col));
+        if (incomingDownstreamRefs.length > 0 ? upstream || connectedDownstream : connectedUpstream) {
+          entrySides.push({ index: entryIndex, upstream, downstream: connectedDownstream });
+          continue;
+        }
+        invalidRoutes.push({
+          kind: 'untracked_out_col',
+          id: focusId,
+          path: `column_flow.${entryIndex}.upstream_columns`,
+          reason: `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${[...anchors.values()].join(', ')}]. Name the actual source and explicit write destination where applicable. Keep unrelated analysis in sections; do not invent a write or replace a real contributor with upstream_columns: [].`,
+          available_columns: [...this.aspect.active_columns],
+        });
+        for (const edge of edges) rejectedEdges.add(edge);
+      }
+      return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)),
+        ...(incomingDownstreamRefs.length > 0 ? { entrySides } : {}) };
     }
 
     return { invalidRoutes, stagedEdges };
   }
+}
+
+/** One directed endpoint pair of a staged or submitted column edge, as keyed by {@link columnEndpointKeyFactory}. */
+export interface ColumnEndpointLink {
+  /** Canonical source endpoint of the recorded data flow. */
+  readonly from: string;
+  /** Canonical destination endpoint of the recorded data flow. */
+  readonly to: string;
+}
+
+/**
+ * Builds the canonical identity key of one (node, column) endpoint for column-chain
+ * reachability.
+ *
+ * @remarks
+ * The node id is resolved against the loaded model and lower-cased when unresolvable; the
+ * column name is normalized. One key formula shared by the validator and the downstream carry
+ * selection, so an identity the validator accepts is the identity the next hop receives.
+ *
+ * @param nodeMap - Map of all available lineage nodes, for id resolution.
+ */
+export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, identifierCaseSensitive = false): (node: string, col: string) => string {
+  return (node, col) => JSON.stringify([resolveModelNodeId(node, nodeMap, identifierCaseSensitive) ?? schemaKey(node, identifierCaseSensitive), normalizeColName(col, identifierCaseSensitive)]);
+}
+
+/**
+ * Finds endpoints connected to upstream trace seeds, or downstream of received source endpoints.
+ *
+ * @remarks
+ * Upstream closure follows inbound links; admission also accepts a submitted link from a
+ * reached source endpoint. Downstream propagation
+ * follows data-flow direction: another input to a tracked output cannot promote that input's
+ * unrelated outputs. Seeds remain reachable even when they have no recorded links.
+ *
+ * @param seeds - Endpoint keys the chain is already known to hold.
+ * @param links - Staged or submitted endpoint pairs to close over.
+ * @param direction - Whether to validate upstream connectivity or propagate downstream values.
+ */
+export function reachableColumnEndpoints(
+  seeds: ReadonlySet<string>,
+  links: ReadonlyArray<ColumnEndpointLink>,
+  direction: 'upstream' | 'downstream' = 'upstream',
+): Set<string> {
+  const graph = new DirectedGraph();
+  for (const link of links) {
+    graph.mergeNode(link.from);
+    graph.mergeNode(link.to);
+    graph.mergeEdge(link.from, link.to);
+  }
+  const reachable = new Set(seeds);
+  const visited = new Set<string>();
+  for (const seed of seeds) {
+    if (!graph.hasNode(seed) || visited.has(seed)) continue;
+    bfsFromNode(graph, seed, endpoint => { visited.add(endpoint); }, {
+      mode: direction === 'downstream' ? 'outbound' : 'inbound',
+    });
+  }
+  for (const endpoint of visited) reachable.add(endpoint);
+  return reachable;
+}
+
+/** Where one `column_flow` entry's recorded columns land, and the writer edge it stages. */
+export interface ColumnFlowTargetResolution {
+  /** Node the attribution edges land on: `writes_to.node` when named, else the focus. */
+  attributionTo: string;
+  /** Column the attribution edges land on: `writes_to.col` when named, else `out_col`. */
+  attributionCol: string;
+  /** The explicitly named focus→carrier writer edge; absent when no destination is declared. */
+  writerEdge: { toNode: string; toCol: string } | null;
+}
+
+/**
+ * Resolves where one `column_flow` entry's recorded columns land.
+ *
+ * @remarks
+ * Attribution edges (one per upstream real column) land on `writes_to.node` when the entry names
+ * it, else on the focus. The {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier
+ * relation that keeps the column chain connected to the traced origin: a named `writes_to` states
+ * it directly. Explicit `null` declares no table write, and omission defaults attribution to
+ * the focus without inferring a write target from topology or matching column names.
+ *
+ * @param entry - The submitted column-flow entry.
+ * @param focusId - Canonical id of the focus node.
+ * @param nodeMap - Map of all available lineage nodes.
+ * @returns The attribution target and writer edge to stage, or `null` when `writes_to` names a
+ * node absent from the loaded model.
+ */
+export function resolveColumnFlowTarget(
+  entry: ColumnFlowEntry,
+  focusId: string,
+  nodeMap: Map<string, LineageNode>,
+  identifierCaseSensitive = false,
+): ColumnFlowTargetResolution | null {
+  if (entry.returns_to) {
+    const toNode = resolveModelNodeId(entry.returns_to.node, nodeMap, identifierCaseSensitive);
+    if (!toNode) return null;
+    return { attributionTo: toNode, attributionCol: entry.returns_to.col, writerEdge: null };
+  }
+  if (entry.writes_to?.node) {
+    const toNode = resolveModelNodeId(entry.writes_to.node, nodeMap, identifierCaseSensitive);
+    if (!toNode) return null;
+    return {
+      attributionTo: toNode,
+      attributionCol: entry.writes_to.col,
+      writerEdge: { toNode, toCol: entry.writes_to.col },
+    };
+  }
+  return { attributionTo: focusId, attributionCol: entry.out_col, writerEdge: null };
+}
+
+/** Missing catalogs do not prove columns on ordinary tables, views or functions. */
+function allowsMissingColumnMetadata(node: LineageNode): boolean {
+  return node.type === 'procedure' || node.type === 'external';
 }

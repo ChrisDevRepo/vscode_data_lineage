@@ -87,6 +87,7 @@ function portHandleStyle(view: ColumnTraceNodeData['view'], index: number, side:
 }
 
 function ColumnTraceRowLine({
+  identifierCaseSensitive,
   row,
   nodeId,
   nodeTitle,
@@ -98,6 +99,7 @@ function ColumnTraceRowLine({
   onFocusStart,
   onFocusEnd,
 }: {
+  identifierCaseSensitive?: boolean;
   row: ColumnTraceRow;
   nodeId: string;
   nodeTitle: string;
@@ -110,7 +112,7 @@ function ColumnTraceRowLine({
   onFocusEnd: () => void;
 }) {
   const { hoveredPath, onColumnHover, onColumnSelect, pinnedRow } = useColumnHover();
-  const rowKey = columnRowKey(nodeId, row.name);
+  const rowKey = columnRowKey(nodeId, row.name, identifierCaseSensitive);
   const isHoveredRow = !!hoveredPath?.has(rowKey);
   const isDeemphasised = !!hoveredPath && !isHoveredRow;
   const isPinnedRow = pinnedRow === rowKey;
@@ -206,18 +208,19 @@ function GearGlyph() {
  * colour; it keeps its id, click/context-menu wiring and invisible port handles so neighbours, SQL
  * and the column thread behave exactly as on a column card. The name strip sits under the circle.
  */
-function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow }: {
+function TransformNodeBody({ view, nodeTitle, strokeColor, boxShadow, schemaColor }: {
   view: ColumnTraceNodeData['view'];
   nodeTitle: string;
   /** Circle stroke — the schema colour, or the highlight colour while the node is selected. */
   strokeColor: string;
   /** Selection glow, drawn on the circle; no card box surrounds it. */
   boxShadow: string | undefined;
+  /** Source-policy-aware color already computed by the owning node. */
+  schemaColor: string;
 }) {
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
   const height = view.height || COLUMN_TRANSFORM_NODE_HEIGHT;
   const { cx, cy, radius } = transformPortGeometry(view.rows.length, width, height);
-  const schemaColor = getSchemaColor(view.schema);
 
   return (
     <>
@@ -299,13 +302,13 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   const icon = TYPE_COLORS[view.objectType as ObjectType]?.icon ?? '▪';
   const typeLabel = SHORT_TYPE_LABELS[view.objectType as ObjectType] ?? view.objectType;
-  const schemaColor = getSchemaColor(view.schema);
+  const schemaColor = getSchemaColor(view.schema, undefined, data.identifierCaseSensitive);
   const nodeTitle = `${view.schema}.${view.label}`;
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
-  const offThread = !!threadPath && !view.rows.some(r => threadPath.has(columnRowKey(id, r.name)));
-  const ownsPin = !!pinnedRow && view.rows.some(r => columnRowKey(id, r.name) === pinnedRow);
+  const offThread = !!threadPath && !view.rows.some(r => threadPath.has(columnRowKey(id, r.name, data.identifierCaseSensitive)));
+  const ownsPin = !!pinnedRow && view.rows.some(r => columnRowKey(id, r.name, data.identifierCaseSensitive) === pinnedRow);
   const onPinnedThread = !!pinnedRow && !!threadPath && !offThread;
   const { isHighlighted: highlighted, highlightColor, boxShadow, opacity, zIndex } =
     resolveNodeHighlightStyle(ownsPin ? 'yellow' : onPinnedThread || data.highlighted, data.aiHighlight, data.dimmed || offThread);
@@ -356,6 +359,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
           nodeTitle={nodeTitle}
           strokeColor={highlighted ? highlightColor : schemaColor}
           boxShadow={boxShadow}
+          schemaColor={schemaColor}
         />
       ) : (
         <>
@@ -385,6 +389,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
                 row={row}
                 nodeId={id}
                 nodeTitle={nodeTitle}
+                identifierCaseSensitive={data.identifierCaseSensitive}
                 lineState={data.rowLineStates?.[row.name]}
                 focused={focusedRow === row.name}
                 isTabStop={row.name === tabStopRow}
@@ -403,7 +408,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
           key={`t-${row.name}`}
           type="target"
           position={Position.Left}
-          id={columnHandleId(row.name, 'target')}
+          id={columnHandleId(row.name, 'target', data.identifierCaseSensitive)}
           className="w-2! h-2! ln-handle"
           style={portHandleStyle(view, i, 'target')}
         />
@@ -413,7 +418,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
           key={`s-${row.name}`}
           type="source"
           position={Position.Right}
-          id={columnHandleId(row.name, 'source')}
+          id={columnHandleId(row.name, 'source', data.identifierCaseSensitive)}
           className="w-2! h-2! ln-handle"
           style={portHandleStyle(view, i, 'source')}
         />

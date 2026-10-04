@@ -17,10 +17,12 @@ import { traceNodeWithLevels } from '../../../src/engine/graphBuilder';
 import {
   bfsDepthMap,
   bfsReachable,
+  directNeighborIds,
   findShortestPathOrdered,
-  nodesCutByRemoval,
+  analyzeRemoval,
 } from '../../../src/engine/graphGuards';
 import { makeGraph } from '../helpers/testUtils';
+import { buildModel } from '../../../src/engine/modelBuilder';
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -46,6 +48,20 @@ const asymmetricDiamond = () =>
   );
 
 const emptyGraph = () => new Graph({ type: 'directed', multi: false });
+
+describe.each([false, true])('direct neighbors under source identifier policy (CS=%s)', cs => {
+  it.each(['in', 'out'] as const)('uses CI normalization or exact CS edge fallback for %s neighbors', side => {
+    const model = buildModel([], [], undefined, undefined, true, undefined, cs);
+    model.neighborIndex = { '[dbo].[report]': { in: ['LowerSource'], out: ['LowerTarget'] } };
+    model.edges = [
+      { source: 'UpperSource', target: '[dbo].[Report]', type: 'body' },
+      { source: '[dbo].[Report]', target: 'UpperTarget', type: 'body' },
+    ];
+    expect(directNeighborIds(model, '[dbo].[Report]', side)).toEqual([`${cs ? 'Upper' : 'Lower'}${side === 'in' ? 'Source' : 'Target'}`]);
+    expect(directNeighborIds(model, '[dbo].[report]', side)).toEqual([`Lower${side === 'in' ? 'Source' : 'Target'}`]);
+    expect(directNeighborIds(model, '[DBO].[REPORT]', side)).toEqual(cs ? [] : [`Lower${side === 'in' ? 'Source' : 'Target'}`]);
+  });
+});
 
 
 describe('traceNodeWithLevels — cycles', () => {
@@ -223,12 +239,12 @@ describe('bfsDepthMap', () => {
   });
 });
 
-describe('nodesCutByRemoval — cycles', () => {
+describe('analyzeRemoval — cycles', () => {
   it('cuts nothing when the removed node sits on a cycle that still reaches the origin', () => {
-    expect(nodesCutByRemoval(threeCycle(), 'A', NONE, new Set(['B']))).toEqual([]);
+    expect( analyzeRemoval(threeCycle(), {originId:'A',scope:new Set(threeCycle().nodes()),removedBefore:NONE,removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds).toEqual([]);
   });
 
   it('terminates on a two-node cycle and cuts nothing beyond the removed node', () => {
-    expect(nodesCutByRemoval(twoCycle(), 'A', NONE, new Set(['B']))).toEqual([]);
+    expect( analyzeRemoval(twoCycle(), {originId:'A',scope:new Set(twoCycle().nodes()),removedBefore:NONE,removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds).toEqual([]);
   });
 });

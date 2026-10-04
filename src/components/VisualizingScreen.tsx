@@ -138,7 +138,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
     <div className="flex items-center gap-4 w-full">
       <Button variant="secondary" onClick={onBack}>← Back to Start</Button>
       {countdown !== null && countdown > 0 && (
-        <span className="text-xs" style={{ color: 'var(--ln-fg-dim)' }}>
+        <span className="text-xs" style={{ color: 'var(--ln-wizard-fg-muted)' }}>
           Auto-returning in {countdown}s
         </span>
       )}
@@ -188,14 +188,14 @@ export const VisualizingScreen = memo(function VisualizingScreen({
                         color: isError
                           ? 'var(--vscode-editorError-foreground, #f14c4c)'
                           : status === 'pending'
-                          ? 'var(--ln-fg-dim)'
+                          ? 'var(--ln-wizard-fg-muted)'
                           : 'inherit',
                       }}
                     >
                       {label}
                     </span>
                     {isDone && key === 'parse' && stats && (
-                      <span className="text-xs ml-1" style={{ color: 'var(--ln-fg-dim)' }}>
+                      <span className="text-xs ml-1" style={{ color: 'var(--ln-wizard-fg-muted)' }}>
                         {stats}
                       </span>
                     )}
@@ -206,14 +206,14 @@ export const VisualizingScreen = memo(function VisualizingScreen({
                       style={{
                         color: isError
                           ? 'var(--vscode-editorError-foreground, #f14c4c)'
-                          : 'var(--ln-fg-dim)',
+                          : 'var(--ln-wizard-fg-muted)',
                       }}
                     >
                       {subText}
                     </div>
                   )}
                   {isActive && key === 'load' && !progressText && (
-                    <div className="text-xs mt-1 ml-7" style={{ color: 'var(--ln-fg-dim)' }}>
+                    <div className="text-xs mt-1 ml-7" style={{ color: 'var(--ln-wizard-fg-muted)' }}>
                       Reading file…{elapsed > 2 ? ` (${elapsed}s)` : ''}
                     </div>
                   )}

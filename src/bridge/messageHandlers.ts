@@ -310,6 +310,7 @@ export function createMessageHandlers(
 
   let cachedElements: XmlElement[] | null = null;
   let cachedDspName = '';
+  let cachedIdentifierCaseSensitive = false;
   let lastConnectionInfo: StoredConnectionInfo | undefined;
   const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: () => loadDmvQueries(outputChannel, context.extensionUri) };
   let detailPanel: vscode.WebviewPanel | undefined;
@@ -524,8 +525,8 @@ export function createMessageHandlers(
           host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
           return;
         }
-        const { preview, elements, dspName } = extracted;
-        cachedElements = elements; cachedDspName = dspName;
+        const { preview, elements, dspName, identifierCaseSensitive } = extracted;
+        cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
         host.postMessage({
           type: 'dacpac-schema-preview',
           preview,
@@ -568,10 +569,11 @@ export function createMessageHandlers(
 
           if (schemas && schemas.length > 0) {
             host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
-            const { elements, dspName } = await extractSchemaPreview(data);
+            const { elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
             const logger = Logger.create(outputChannel, 'Parse');
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
               externalRefsEnabled: config.externalRefs.enabled,
+              identifierCaseSensitive,
             });
             if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
             logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
@@ -580,8 +582,8 @@ export function createMessageHandlers(
             host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
           } else {
             host.log('debug', 'Bridge', 'No schemas in project, showing preview');
-            const { preview, elements, dspName } = await extractSchemaPreview(data);
-            cachedElements = elements; cachedDspName = dspName;
+            const { preview, elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
+            cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
             host.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
             host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
           }
@@ -659,6 +661,7 @@ export function createMessageHandlers(
       try {
         model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
           externalRefsEnabled: config.externalRefs.enabled,
+          identifierCaseSensitive: cachedIdentifierCaseSensitive,
         });
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
@@ -1025,7 +1028,8 @@ async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChann
   const resultMap = await executeDmvQueries(session, [previewQuery], outputChannel, undefined, timeoutMs);
   const result = resultMap.get('schema-preview');
   if (!result) throw new Error('No schema preview result');
-  const preview = buildSchemaPreview(result);
+  const platform = await loadDatabasePlatform(session, queries, outputChannel, timeoutMs);
+  const preview = buildSchemaPreview(result, platform.platformInfo);
   const config = await readExtensionConfig(host);
   host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${session.connectionInfo.server} / ${session.connectionInfo.database}` });
   host.log('info', 'DB', `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
@@ -1332,9 +1336,6 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
     logger.info(`Phase 2 Result: Parsing Complete — ${spCount} objects scripted, ${stats.parsedRefs} refs found, ${stats.resolvedEdges} refs resolved`);
     if (stats.droppedRefs.length > 0) {
       logger.info(`Phase 2 Result: Dropped — ${stats.droppedRefs.length} refs unrelated (aliases/built-ins)`);
-    }
-    if (stats.cappedRules) {
-      logger.warn(`Phase 2 Result: Match limit hit — ${stats.cappedRules.length} rule(s), dependencies past the limit are missing: ${trunc(stats.cappedRules, LOG_TRUNC_LIST)}`);
     }
   }
 

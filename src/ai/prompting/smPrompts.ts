@@ -11,6 +11,7 @@ import { buildColumnAspectPrompt } from '../prompting/prompts';
 import { escapePromptText } from '../support/text';
 import { assignEvidenceIds, requiredDetailSlotIds } from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
+import { schemaKey } from '../../utils/sql';
 
 /**
  * Re-anchor suffix appended when a passthrough-inherited sub-question lands on a bodied focus.
@@ -38,21 +39,6 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 }
 
 /**
- * The column aspect of the hop decision, rendered by {@link buildSmProtocol} on a CT hop on top of
- * the neighbor decisions in the active phase prompt.
- *
- * @remarks
- * `column_flow[].upstream_columns` stays the sole structural channel for column precision: it
- * records the value path the engine continues and opens no route; the analytical answer belongs
- * in the capture narration, never in this field.
- */
-const COLUMN_DECISION_ADDENDUM = [
-  'CT is column-first on top of those same decisions — these add the column aspect:',
-  '- `column_flow[].upstream_columns` holds real upstream node+column refs only — the value path the engine carries to the next hop, derived from the DDL. Resolve hidden column names with `lineage_get_neighbor_columns`.',
-  '- `<lineage_questions>` already carries the column A→B continuation; the analytical answer goes in `sections`.',
-] as const;
-
-/**
  * Builds the static active-phase SM protocol block: the column aspect of the hop, rendered only
  * when the hop carries tracked columns.
  *
@@ -66,7 +52,7 @@ const COLUMN_DECISION_ADDENDUM = [
  */
 export function buildSmProtocol({ targetColumns }: { targetColumns?: string[] }): string {
   if (!targetColumns || targetColumns.length === 0) return '';
-  return [...COLUMN_DECISION_ADDENDUM, '', buildColumnAspectPrompt(targetColumns)].join('\n');
+  return buildColumnAspectPrompt(targetColumns);
 }
 
 
@@ -186,7 +172,7 @@ function buildDirectionLines(
   direction: ReturnType<typeof computeDirectionGroups>,
 ): string[] {
   return [
-    `Edge direction relative to ${originNodeId} (engine-computed; any list above is in hop order, not flow order):`,
+    `Edge direction relative to ${originNodeId} (engine-computed; the analyzed-node list is in hop order, not flow order):`,
     `- upstream (data flows INTO the origin): ${direction.upstream.join(', ') || '(none)'}`,
     `- downstream (data flows OUT of the origin): ${direction.downstream.join(', ') || '(none)'}`,
     `- side branches (read a traced node, on no path to or from the origin): ${direction.sideBranch.join(', ') || '(none)'}`,
@@ -262,13 +248,11 @@ export function buildBbSynthesisBlock(
  * @remarks
  * Appended to the synthesis reminder when CT was active and edges were recorded. Presents the
  * directed graph in a flat edge list so the AI can structure `present_result` around the actual
- * traced path rather than free-form prose. Focus nodes pruned via `verdict=end_branch` (recorded
- * in `ctPrunedNodeIds`) are listed as excluded branches; off-trace nodes excluded by the scope
+ * traced path rather than free-form prose. Off-trace nodes excluded by the scope
  * filter are not listed here.
  *
  * @param originNodeId - The queried origin node that should be treated as the answer target.
  * @param edges - Validated column-flow edges accumulated by the engine.
- * @param ctPrunedNodeIds - CT focus nodes that were explicitly pruned as off-trace.
  * @param nodeEdges - Node-level flow edges used to distinguish written intermediates from base feeds.
  * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates;
  *   omitted by a caller that holds no render set, which then bounds nothing. The recorded edge list
@@ -279,7 +263,6 @@ export function buildBbSynthesisBlock(
 export function buildCtSynthesisBlock(
   originNodeId: string,
   edges: ColumnEdge[],
-  ctPrunedNodeIds?: string[],
   nodeEdges: ReadonlyArray<[string, string, string]> = [],
   presentedNodeIds: ReadonlySet<string> | null = null,
 ): string {
@@ -290,7 +273,11 @@ export function buildCtSynthesisBlock(
     return lines.join('\n');
   }
   for (const e of edges) {
-    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})`);
+    const metadata = [
+      ...(e.transforms?.length ? [`transforms: ${e.transforms.join(', ')}`] : []),
+      ...(e.note ? [`expression: ${escapePromptText(e.note)}`] : []),
+    ];
+    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})${metadata.length ? ` — ${metadata.join('; ')}` : ''}`);
   }
   lines.push('');
   const directionEdges = nodeEdges.length > 0
@@ -298,10 +285,6 @@ export function buildCtSynthesisBlock(
     : edges.map(e => ({ from: e.from_node, to: e.to_node }));
   const direction = computeDirectionGroups(originNodeId, directionEdges);
   lines.push(...buildDirectionLines(originNodeId, direction));
-  if (ctPrunedNodeIds && ctPrunedNodeIds.length > 0) {
-    lines.push('');
-    lines.push(`Excluded branches (no column edges): ${ctPrunedNodeIds.join(', ')}`);
-  }
   const groups = computeFlowRoleGroups(originNodeId, directionEdges,
     nodeEdges.length > 0 ? undefined : new Set(edges.map(e => e.hop_node)));
   lines.push('');
@@ -335,8 +318,8 @@ interface NodeFlowFacts {
  *
  * @param edges - Node-level `[from, to, kind]` flow edges from {@link SmResult.edges}.
  */
-function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>): Map<string, NodeFlowFacts> {
-  const lc = (s: string): string => s.toLowerCase();
+function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, identifierCaseSensitive = false): Map<string, NodeFlowFacts> {
+  const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const addNeighbor = (m: Map<string, Set<string>>, key: string, value: string): void => {
     let set = m.get(key);
     if (!set) { set = new Set<string>(); m.set(key, set); }
@@ -384,12 +367,12 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
  * @returns A markdown bullet list of writer/reader facts, or an empty string when every kept node is slotted.
  */
-export function buildPassthroughFlowFacts(result: SmResult): string {
-  const lc = (s: string): string => s.toLowerCase();
+export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
+  const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const slottedIds = new Set(result.detail_slots.map(s => lc(s.nodeId)));
   const prunedIds = new Set(result.node_states.filter(s => s.action === 'prune').map(s => lc(s.nodeId)));
   const actionById = new Map(result.node_states.map(s => [lc(s.nodeId), s.action]));
-  const flowFacts = computeNodeFlowFacts(result.edges);
+  const flowFacts = computeNodeFlowFacts(result.edges, identifierCaseSensitive);
 
   const qualifying = result.fullNodes
     .map(n => ({ id: lc(n.id), type: n.t }))
@@ -454,14 +437,14 @@ const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
  * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
  * @returns A markdown checklist, or an empty string when no hop captured a formula.
  */
-function buildCapturedFormulaFacts(result: SmResult): string {
+function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = false): string {
   const seen = new Set<string>();
   const lines: string[] = [];
   const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
   const isEnumerable = (artifact: string): boolean =>
     (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
   for (const slot of result.detail_slots) {
-    const nodeId = slot.nodeId.toLowerCase();
+    const nodeId = schemaKey(slot.nodeId, identifierCaseSensitive);
     const push = (formula: string, rendered: string): void => {
       const key = `${nodeId}\u0000${formula}`;
       if (formula.length === 0 || seen.has(key)) return;
@@ -545,17 +528,18 @@ export function buildSmCompletionEnvelope(
   result: SmResult,
   userQuestion: string,
   deferred: ReadonlyArray<DeferredQuestion>,
+  identifierCaseSensitive = false,
 ): SmCompletionEnvelope {
   const presentedNodeIds = result.fullNodes.map(node => node.id);
   const presented = new Set(presentedNodeIds);
   const flowBlock = result.columnAspect && result.columnAspect.edges.length > 0
-    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.ctPrunedNodeIds, result.edges, presented)
+    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.edges, presented)
     : result.edges.length > 0
       ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
       : '';
-  const passthroughFacts = buildPassthroughFlowFacts(result);
+  const passthroughFacts = buildPassthroughFlowFacts(result, identifierCaseSensitive);
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
-  const formulaFacts = buildCapturedFormulaFacts(result);
+  const formulaFacts = buildCapturedFormulaFacts(result, identifierCaseSensitive);
   const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
   const mustLink = requiredDetailSlotIds(result.detail_slots.map(slot => slot.nodeId), presented);
   const mustLinkBlock = mustLink.length > 0 ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}` : '';

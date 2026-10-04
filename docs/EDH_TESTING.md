@@ -1,108 +1,10 @@
-# Local Testing
+# VS Code Extension Host Tests
 
-Tests run on the developer workstation. GitHub runs repository security checks
-only; it does not run this test framework.
+Extension Development Host (EDH) tests run the extension inside the VS Code Electron host. They cover host activation and public VS Code API contracts that unit tests cannot exercise.
 
-## What the public suite proves
+## Run
 
-| Tier | Model | Runs through | Suites | A green run proves |
-|---|---|---|---|---|
-| **none** | no provider | stubbed `vscode`, or a real host with no provider | `test:core`, `test:runtime`, EDH `bare-environment`, `tools` | Deterministic logic and extension wiring |
-| **scripted** | fixture replaying fixed output | real Electron host, real `vscode.lm` | EDH `participant-turn` | One `@lineage` turn completes through the real runtime and the real `vscode.lm` path |
-
-Nothing in this repository calls a real language model. A green run is not
-evidence of answer quality.
-
-Unit suites cannot answer EDH questions: activation, command registration, and
-`vscode.lm` behaviour do not exist outside a real host. EDH lanes cannot answer
-model-behaviour questions — the scripted fixture never performs inference.
-
-The deterministic core is SQL parsing and BFS graph traversal — dependency
-extraction from DDL, graph construction, and the traversal and analysis built
-on it.
-
-### Live database import is not a suite
-
-No runner connects to a database. Live-database ingestion — connecting through
-`ms-mssql.mssql`, executing the DMV queries, `{{SCHEMAS}}` expansion against a
-real catalog, result shapes, platform detection, and loading a custom
-`dmvQueriesFile` — is verified by hand against a real server.
-
-What the suite does cover is everything downstream of the wire that needs no
-server: `tests/unit/parser/dmvExtractor.test.ts` drives `buildModelFromDmv`,
-`validateQueryResult`, `mapServerInfoPlatform`, and `isPhase2Query` over
-synthetic result sets.
-
-A custom `dmvQueriesFile` that fails its `version` check falls back to the
-built-in queries, so the import still succeeds. Confirm the file was applied
-by reading the **Data Lineage Viz** output channel — a green import alone does
-not prove it.
-
-## Pre-push gate
-
-```bash
-npm run gate
-```
-
-Steps live in [`tests/tools/gate.mjs`](../tests/tools/gate.mjs): production and
-test type-checking, tool-manifest drift check, output-template schema-version
-check, prompt-golden-sync check, honest-test-label check, core-case-completeness check, unit-project
-coverage check, layer-direction guard (`src/engine/**` must not import
-`src/components/**`), output-truncation baseline check, core unit project under v8 coverage floors, agent-runtime
-unit project, both bundles plus the integration-test compile, package-content
-safety, and the no-LangSmith boundary. The gate reports every configured step
-instead of stopping after the first failure. It does not launch VS Code
-Electron or contact a model provider.
-
-## Unit tests
-
-`npm test` runs every `tests/unit/**/*.test.ts` and `tests/unit/**/*.test.tsx`
-file. Focused subsets:
-
-```bash
-npm run test:core
-npm run test:runtime
-npm run test:parser
-npm run test:bfs
-```
-
-`test:core` runs parser, non-AI engine, and webview tests
-(`tests/unit/parser`, `tests/unit/engine`, `tests/unit/webview`).
-`test:runtime` runs the lean agent-runtime smoke and contract tier
-(`tests/unit/ai-core`, `tests/unit/sm`) — tool registration, security
-boundaries, session lifecycle and architecture rule gates; stubbed `vscode`, zero
-model calls. State-machine depth, BB/CT node-set parity, prompt composition and
-repair behaviour are tested internally.
-
-`test:parser` covers SQL parsing and dependency extraction. `test:bfs` runs
-all of `tests/unit/engine` — graph construction, traversal, and analysis plus
-schema, search, and model-building coverage. `NavigationEngine` coverage
-lives in `test:runtime`.
-
-```bash
-node tests/tools/run-vitest.mjs run tests/unit/path/file.test.ts
-node tests/tools/run-vitest.mjs run -t "test name"
-```
-
-## Extension Development Host lanes
-
-These are the only checks that run inside a real VS Code host. Each launches
-the VS Code version declared in [`.vscode-test.mjs`](../.vscode-test.mjs).
-None needs credentials or a real provider. They are an optional smoke tier:
-the extension activates, its commands and tools register, and one AI turn
-completes.
-
-"Scripted" means a local test extension registers a
-`vscode.LanguageModelChatProvider` inside the Extension Development Host and
-returns fixed text and tool calls. This exercises the real public `vscode.lm`
-path without performing inference or making a network request.
-
-`npm run test:edh` runs every configured label. It automatically builds the
-extension host and webview bundles and compiles `tests/integration/**` into
-`out/test/` first. Run `npm run pretest:integration` once yourself only when
-invoking a label directly.
-
-```bash
+```sh
 npm run pretest:integration
 npm run test:bare-environment
 npm run test:tools
@@ -110,51 +12,52 @@ npm run test:participant-turn
 npx vscode-test --label kill-switch
 ```
 
-| Label | Fixture model | Proves | If it goes red |
-|---|---|---|---|
-| `bare-environment` | none | Activation completes and the core command surface registers with no Copilot, no chat model and no `ms-mssql.mssql`. | The extension may fail to start for a user who has none of the optional integrations. A throw escaping `activate()` unregisters *everything*. |
-| `tools` | none | Every contributed lineage tool is registered with `vscode.lm` and answers through `vscode.lm.invokeTool`, while the mutating tools stay unregistered. | Either an outside caller gets broken results, or a tool that should not be externally reachable now is. |
-| `participant-turn` | scripted | A real `@lineage` turn through `handleChatRequest`: the no-data notice, and a full turn that streams progress and settles with a terminal `ChatResult`. | A chat turn throws, hangs, or never reaches a terminal result. |
-| `kill-switch` | none, seeded `--user-data-dir` | With `dataLineageViz.ai.enabled: false` on disk before activation, the core product still registers while the AI surface does not. No npm alias: run `npx vscode-test --label kill-switch`. | Disabling the AI setting no longer removes the AI surface, or breaks the core product. |
+`npm run test:edh` builds the extension and webview, compiles the integration tests, and runs all configured lanes. Run one lane at a time because lanes share the build output and VS Code test profile.
 
-The three fixture-less lanes assert the host's emptiness before asserting
-anything else.
+| Lane | What it verifies |
+|---|---|
+| `bare-environment` | The extension activates when optional host integrations are absent. |
+| `tools` | Contributed read-only language-model tools register and respond through the VS Code API. |
+| `participant-turn` | The `@lineage` participant handles an empty-data case and completes a turn through the public chat API. A fixture provider supplies fixed responses to exercise API wiring and turn lifecycle. |
+| `kill-switch` | Disabling the AI feature before activation leaves the non-AI extension surface available. |
 
-### One host at a time
+The fixture provider does not perform inference and does not test answer correctness, prompt quality, or provider behavior. Use an explicitly configured real-model smoke check for those purposes; the public demo DACPAC is the appropriate data source.
 
-Run the lanes through `npm run test:edh`, or one label at a time. Never run
-two labels concurrently.
+## Electron And UI Automation
 
-Every label except `kill-switch` shares one Electron profile and the single
-`out/` build. Two hosts at once contend for both.
+EDH tests already launch the extension in VS Code Electron. For UI automation, start one EDH instance with remote debugging enabled and connect Playwright to its CDP endpoint. Keep UI assertions based on visible roles, labels and outcomes. See [Testing](testing/README.md) for optional test configuration and the boundary between smoke and performance checks.
 
-Do not add a per-label `--user-data-dir` with a relative path — Electron
-resolves it against the downloaded VS Code install and dies with `EPERM`. Do
-not rebuild while a host is live: `npm run pretest:integration` overwrites
-the `out/` tree the running host has already loaded.
+Hosts sharing a profile or CDP port must run sequentially. Independent chat UI hosts may run in parallel with isolated profiles and distinct CDP ports after one shared build. Do not rebuild `out/` while a host is running; the active host may have loaded files from that directory.
 
-### Host log noise on Windows
+## Test Safety
 
-Every host boot may print two lines that look like failures and are not.
-Neither comes from this extension:
+The default EDH lanes require no database or model-provider credentials. Data-bearing lanes use the bundled public demo fixture. The optional `test:ai:smoke` lane requires an explicitly configured provider. Keep credentials in the ignored `.env` file. Do not commit credentials, customer SQL, database archives, raw conversations, traces, or generated test output.
 
+## Native chat and generated report acceptance (Playwright)
+
+`tests/integration/chat-ui.test.ts` runs against an isolated VS Code 1.140 Electron profile with CDP on loopback (fixture port 9377, live port 9376 by default). Build and compile once, then repeat the same command after each test-only adjustment:
+
+```sh
+npm run pretest:integration
+npx vscode-test --config .vscode-test.chat-ui.mjs
+npx vscode-test --config .vscode-test.chat-ui.mjs --label live
+npx vscode-test --config .vscode-test.chat-ui.mjs --label badge
 ```
-[main …] Error: Error mutex already exists
-Warning: 'cached-data' is not in the list of known options, but still passed to Electron/Chromium.
-```
 
-The mutex line appears when another VS Code of the same build is already
-running. The `cached-data` line is Electron reporting `--no-cached-data`,
-which `@vscode/test-electron` passes to every host. Judge a lane by its Mocha
-summary and exit code.
+Both lanes check Approve & Proceed, Change scope and Cancel, typed `approve`, typed scope changes and typed `no`, `stop` and `no stop`. Cancel must discard the plan without a hop; stale approval must be ignored. A scope change must produce a reviewable revision without starting analysis. The fixture lane also checks that an unrelated typed question receives an answer while preserving the proposal. Buttons may show their short action labels; internal routing instructions and confirmation status prose must not appear in chat.
 
-## Package and evidence safety
+Typed intent is classified by the selected model, not by keyword or regex guesses. A bare refusal declines approval. After an ordinary question, the latest answer repeats the native plan buttons while the proposal remains pending, because VS Code can collapse older responses. The live test must exercise those latest controls rather than relying on an expanded history card.
 
-The package-content allow/deny contract lives in
-[`tests/tools/assert-package-contents.mjs`](../tests/tools/assert-package-contents.mjs).
-It verifies publishable runtime artifacts and rejects development-only or
-sensitive content.
+The default fixture lane checks the real native chat input and plan lifecycle with scripted responses. It does not prove generated answer quality. The live lane uses the existing provider profile (`AI_TEST_PROVIDER`, default Fireworks) from ignored `.env` or process variables and `tests/fixtures/AdventureWorks2025_AI.dacpac`. It repeats `Trace all dependencies upstream from  [ai].[spImportOrders]  all level up and one level down`. It explicitly sends `reasoning_effort: low` and `temperature: 0.1` through the test model-provider adapter; neither knob changes the user's Copilot BYOK configuration. Its model/provider identity is printed without credentials. Missing configuration fails the run rather than skipping it.
 
-Runtime diagnostics can contain database identifiers. Keep them local, review
-them before sharing, and never commit credentials, customer SQL, proprietary
-database archives, raw model conversations, or tool payloads.
+The live report scenario selects the contributed model in the actual picker, submits the original question, clicks preview and Run trace, and verifies no hop before consent. If the proposed classification is not already both business and technical, Change scope requests that classification while preserving the original depth. Assertions check all upstream levels, one downstream level, both classifications and the eight-node scope before Approve & Proceed starts analysis. The separate action matrix covers typed approval, scope changes and cancellation.
+
+The live lane clicks the actual next-question badge and checks short question bullets, no heading, the invitation to choose a question, one tool-free model call, and unchanged completed analysis. The faster `--label badge` lane replays a previously successful public AdventureWorks AI analysis for setup, then clicks the real badge and makes one live suggestion call. It proves badge submission and the newly generated suggestion, not fresh exploration or synthesis. Missing successful replay evidence fails setup.
+
+Formula verification runs separately through headless production AI with the same public DACPAC, model and original question. Inspect the generated Markdown and fresh NDJSON for contextual prose around substantive formula groups, or short explanatory descriptions alongside formulas in tables, and the absence of formula-only headings or subsections. This establishes generated-content behavior; it does not establish rendered webview layout. These are dataset-specific acceptance observations; one run is not a universal latency or model-quality guarantee.
+
+Check capture memory before synthesis and assess factual correctness separately from layout. A contextual formula still fails acceptance if its deciding SQL is missing or its explanation contradicts the SQL. For window-based duplicate removal, distinguish partition keys from ordering columns and describe the surviving grain after removal; a formatted equation alone cannot establish that grain. Preserve failed captures in ignored local artifacts and do not report a model-quality pass from deterministic renderer tests.
+
+The input helper pastes through VS Code's public clipboard API into the real editor and presses Enter. It asserts the exact input before submission. This avoids CDP's incomplete support for Chromium EditContext whitespace; it does not invoke a participant handler or a hidden submit API. Production keeps the platform's normal editor settings.
+
+Screenshots, rendered report/follow-up text and provider requests are written only to ignored `tmp/chat-ui/{fixture,live}/`. They contain public-demo content, not keys. Keep the profile and model fixed for comparisons; use distinct `PLAYWRIGHT_CDP_PORT` values for simultaneous hosts. Never attach a test to the user's normal VS Code window. Fixed-response host tests and the deterministic gate remain separate from this live inference check.

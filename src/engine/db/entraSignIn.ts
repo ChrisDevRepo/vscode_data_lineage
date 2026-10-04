@@ -123,7 +123,7 @@ export function defaultTenantId(account: vscode.AuthenticationSessionAccountInfo
  * when nothing is listed the account's default directory is used.
  *
  * @param connection - Account id and directory saved with the connection.
- * @param logger - Receives the directory used at info level and the account at debug level, never the token.
+ * @param logger - Receives a sign-in milestone at info level and directory/account diagnostics at debug level, never the token.
  * @throws {@link MicrosoftSignInError} when the user cancels, the sign-in fails or the saved account
  *   is no longer signed in to VS Code.
  */
@@ -139,7 +139,8 @@ export async function acquireSqlToken(
     used = defaultTenantId(session.account, await listTenants(session.account));
     if (used) session = await signInForSql(used, { createIfNone: true, account: session.account });
   }
-  logger.info(`Entra sign-in: tenant=${used ?? 'account default'}`);
+  logger.info('Entra sign-in completed');
+  logger.debug(`Entra sign-in: tenant=${used ?? 'account default'}`);
   logger.debug(`Entra sign-in: account=${session.account.label}`);
   return session.accessToken;
 }

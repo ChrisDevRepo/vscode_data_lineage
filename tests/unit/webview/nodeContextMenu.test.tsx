@@ -53,6 +53,19 @@ const BASE_PROPS = {
 };
 
 describe('NodeContextMenu — Remove item always present, dispatches per RemoveAction', () => {
+  it('copies SQL-quoted metadata names containing delimiters', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      mount(<NodeContextMenu {...BASE_PROPS} schema="Sa]les" nodeName="Order.Items]" removeAction={{ kind: 'exclude' }} />);
+      const copy = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('Copy Qualified Name'))!;
+      await act(async () => copy.click());
+      expect(writeText).toHaveBeenCalledWith('[Sa]]les].[Order.Items]]]');
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
   it('exclude action: enabled, labeled "Exclude from view", calls onExcludeNode', () => {
     const onExcludeNode = vi.fn();
     mount(<NodeContextMenu {...BASE_PROPS} removeAction={{ kind: 'exclude' }} onExcludeNode={onExcludeNode} />);

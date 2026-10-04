@@ -14,8 +14,7 @@
  *
  * @remarks
  * This is the cheapest place to add a parser case — one .sql file, no TypeScript — and each
- * fixture reports as its own named test. `assert-core-cases-complete.mjs` requires every rule
- * in assets/defaultParseRules.yaml to be matched by this corpus or by a parser test.
+ * fixture reports as its own named test with expected dependency edges.
  */
 
 import { existsSync, readFileSync, readdirSync } from 'fs';

@@ -2,23 +2,20 @@
  * Executes active-hop submissions for the `lineage_submit_findings` tool.
  *
  * @remarks
- * The input arrives already parsed against the mode-and-classification schema the hop served (the
- * tool-attempt boundary owns that parse); engine-state rules and state-machine submission stay
- * local to this handler. Turn-lease validation and effect serialization remain in the registry
- * wrapper.
+ * Raw arguments are parsed once against the current hop's served contract, before id resolution
+ * and internal conversion. Turn-lease validation and effect serialization remain in the registry.
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
-import { toHopFinding, type FlatSubmitFindings } from '../../tools/toolSchemas';
+import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import { assignEvidenceIds } from '../../tools/presentResult';
-import { makeRejection } from '../../support/toolErrorEnvelope';
+import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-import { validateSectionsAgainstClassification } from '../../interaction/rules/submitFindingsRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
 /**
@@ -38,38 +35,33 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         detail: { next_action: 'start_exploration' },
       }), input);
 
-      const rawInput: SubmitFindingsInputObject =
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as SubmitFindingsInputObject
-          : {};
+      const focus = engine.currentFocus;
+      const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
+      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns);
+      const parsed = schema.safeParse(input);
+      if (!parsed.success) {
+        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        // Unknown fields are outside this hop contract and cannot seed a repair draft.
+        const held = parsed.error.issues.some(issue => issue.code === 'unrecognized_keys')
+          ? null
+          : engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
+        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        return s.logAndReturn('lineage_submit_findings', rejection, input);
+      }
+      const rawInput: SubmitFindingsInputObject = parsed.data;
 
-      const modelNodeMap = getModelNodeMap(s.requireModel());
-      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap);
+      const model = s.requireModel();
+      const modelNodeMap = getModelNodeMap(model);
+      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap, model.identifierCaseSensitive);
       const normalizedInput = normalized.input;
       for (const event of normalized.normalizations) {
         s.logger.debug(
           `[Normalize] tool=submit_findings field=${event.field} from=${sanitizeForLog(event.from)} to=${sanitizeForLog(event.to)}`,
         );
       }
-      const flat = normalizedInput as FlatSubmitFindings;
+      const flat = normalizedInput as typeof parsed.data;
 
-      const dropped = flat.verdict === 'end_branch'
-        ? [(flat.summary ?? '') !== '' ? 'summary' : '', Object.keys(flat.sections ?? {}).length > 0 ? 'sections' : '', flat.badge_label != null ? 'badge_label' : '']
-        : [(flat.reason ?? '').trim() !== '' ? 'reason' : ''];
-      if (dropped.some(Boolean)) {
-        s.logger.debug(`[Normalize] tool=submit_findings verdict=${flat.verdict} dropped=${dropped.filter(Boolean).join(',')}`);
-      }
-      const finding = engine.applyHeldContent(toHopFinding(flat));
-      if ('code' in finding) return s.logAndReturn('lineage_submit_findings', finding, normalizedInput);
-
-      const archivedAngles = sess.memory.getArchivedAngles(finding.focus_node_id);
-      const violation = validateSectionsAgainstClassification(finding.verdict === 'end_branch' ? [] : finding.sections, sess.classification, finding.verdict, archivedAngles);
-      if (violation) {
-        return s.logAndReturn('lineage_submit_findings', makeRejection({
-          code: REJECTION_CODES.classificationLockViolation,
-          hint: violation,
-        }), normalizedInput);
-      }
+      const finding = toHopFinding(flat);
 
       const result = engine.submitFindings(finding);
       if ('code' in result) {
@@ -115,6 +107,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           finalResult,
           sess.memory.getUserQuestion(),
           sess.stateMachine?.deferredQuestions ?? [],
+          model.identifierCaseSensitive,
         );
         return s.logAndReturn('lineage_submit_findings', envelope, normalizedInput);
       }

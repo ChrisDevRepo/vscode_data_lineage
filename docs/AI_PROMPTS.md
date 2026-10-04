@@ -27,34 +27,22 @@ the source of truth for exact wording and provider-visible shapes.
 YAML is a customization layer, not the whole prompt. Phase instructions and
 mechanical enforcement remain code-owned.
 
-The split is by question, not by file size. The YAML answers **what** an answer
-contains and **when** a block applies (which evidence to capture, what the
-closing covers, that the closing exists only for larger results) — the part a
-user may override. Code-owned prompt text (`src/ai/prompting/`,
-`stagePrompts.ts`, tool `.describe()` strings) answers **how** the model
-operates the mechanism: which tool carries which template, which phase allows
-which call, which field a template lands in. A content rule or threshold never
-moves from the YAML into a prompt builder or a schema description to bypass the
-overlay; a description may point at the template entry, not restate it.
+The shared base prompt derives identifier comparison from checked model metadata.
+For CS catalogs it tells every authoring stage to retain the exact object IDs and
+column names returned by tools; case-only variants identify different endpoints.
+CI keeps its existing prompt and normalization. The hint supports model authoring;
+shared backend resolvers and route validation enforce identity independently of it.
 
-A field's length has three separate homes and no duplicates. The **soft target**
-— the length the answer aims for — is stated once: in the template entry that
-governs the field where one exists (`title`, `summary`, `notes`, `highlights`),
-otherwise in the field's own `.describe()` (`name`, and the per-hop tool fields
-`badge_label` and `column_flow[].upstream_columns[].note`, which are not
-template content). The **hard cap** is a named constant in
-[`toolSchemas.ts`](../src/ai/tools/toolSchemas.ts), stated to the model as a
-typed JSON-Schema constraint (`maxLength` / `maxItems`) and nowhere else in
-prose. Its **enforcement** is the same Zod declaration for a `present_result`
-field — a real `.max()` the tool-attempt boundary parses once — and
-`NavigationEngine` for the `submit_findings` fields (`advertisedMax`), whose
-overrun is a repairable single-field rejection against a held draft. The same
-split covers a count cap (`highlight_groups`), while structural constraints — a
-required field, a floor, an enum — are parse-time checks on both. `sections[].label` carries a hard cap and deliberately no
-character target: a tool-parameter description outranks the system prompt, so a
-number there became the operative ceiling; its shape is owned by
-`buildPresentationDetailContract`. Prose fields (`summary`, `intro`, `closing`)
-have no cap at all — length is never a rejection axis for them.
+Templates own answer content and style; code owns phase routing, tool
+availability, and mechanical field contracts. An overlay changes instructions,
+not validation or scope rules.
+
+Soft length targets live in the applicable template or field description.
+Hard caps are declared in [`toolSchemas.ts`](../src/ai/tools/toolSchemas.ts)
+and exposed as JSON Schema constraints. `present_result` enforces them at
+schema parsing; `submit_findings` content caps are enforced by
+`NavigationEngine` against a repairable held draft. Prose fields such as
+`summary`, `intro`, and `closing` have no hard length cap.
 
 ## Tool catalog
 
@@ -77,16 +65,10 @@ Active exploration exposes `lineage_submit_findings` and
 opaque focus DDL (`SELECT *`, dynamic SQL, ambiguous joins), not a second
 catalog search.
 
-Tool-choice follows the VS Code Chat participant contract, not OpenAI
-`tool_choice: required` with many tools. `LanguageModelChatToolMode.Required`
-means the model must call one of the supplied tools, and some models only
-support a single tool in that mode. The official Copilot sample sends Required
-only after narrowing to one tool; otherwise Auto. `compileInstructionPlan`
-keeps `required` when the phase exposes only its terminal tool (synthesis /
-preview), and demotes to Auto on the two-tool active hop. The graph still
-names `requiredTerminalTool` and retries a tool-less generation; a tool
-payload written as text stays text. Do not send Required with
-two tools on the participant path.
+`compileInstructionPlan` uses Required tool mode when only the terminal tool
+is exposed (synthesis and preview), and Auto for the two-tool active hop.
+The graph independently enforces `requiredTerminalTool` and retries a
+text-only generation when a tool call is required.
 
 ## Assembly and memory contract
 
@@ -121,6 +103,27 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   hop's tool payloads. The canonical question is resolved at `start_exploration` from
   user-authored text (verbatim discovery prompt, then the current turn's
   prompt) before the model-supplied paraphrase.
+- The active hop's carried tasks select its BB or CT contract. A BB hop receives
+  BB tools, BB findings fields and BB active instructions, including on a branch
+  of a CT session or after checkpoint restore. Pending column-chain instructions
+  are absent on BB; the original question, ordinary analytical questions and
+  factual earlier-hop memory remain. CT adds its column tools and capture rider
+  to the shared BB process. Historical CT evidence alone does not reactivate it.
+- CT admission uses qualified arriving task endpoints and their recorded traversal sides.
+  Either end of an explicit model-authored column link may connect to an arriving endpoint;
+  traversal controls routing, not semantic relevance or whether a chain must stop. The model
+  authors relationships and any empty flow; the backend validates identity, attributes and
+  explicit continuity without inventing a stop, relevance decision or cardinality claim.
+- Function investigations with explicit `questions[].caller_context` re-supply the relevant caller SQL
+  with each function investigation, tied to validated qualified caller targets.
+  A reseeded hop cannot rely on the earlier caller's DDL remaining in the thread.
+  The model reads invocation arguments and distinguishes value production from
+  row selection in that SQL; object dependency alone does not establish a column
+  contribution. `caller_requested_outputs` carries requested qualified outputs;
+  `caller_objects` carries re-derived SQL. These requests remain separate from
+  established scalar `caller_output_targets`; the declaration itself creates no
+  edge. Identity validation and retention of submitted edges do not establish
+  that the model identified every SQL contributor or row-selection dependency.
 - Per-hop memory is tiered so repeated hops stay flat in size: recent hop
   summaries ride in a fixed-size sliding window, the full findings archive
   accumulates engine-side and is replayed once at synthesis rather than per
@@ -144,7 +147,7 @@ pruning, closure, and termination. Persisted node actions are `analyze`,
 ## Template customization contract
 
 `templateRenderer.ts` routes template keys mechanically by stage, answer
-classification, column-trace mode, focus type, and result size. An overlay may
+classification, column-aspect presence, focus type, and result size. An overlay may
 replace instruction text but cannot change those gates.
 
 The shipped template file groups the public customization surface into:
@@ -156,8 +159,11 @@ The shipped template file groups the public customization surface into:
   highlights, notes, and technical loading patterns;
 - a shared `general` style layer.
 
-Business and technical capture follow the locked classification. Column-trace
-capture is available only in CT mode. Structural capture replaces business and
+Business and technical capture follow the locked classification. Each hop
+receives BB guidance,
+with CT capture added only when the column aspect is present. A CT
+exploration can therefore contain BB-only hops. Structural capture replaces
+business and
 technical capture on non-bodied focus nodes and renders on its own, with no
 header. On a bodied focus the capture recipe opens with an engine-owned header
 that an overlay cannot replace: a `sections` object keyed by angle, SQL quoted
@@ -166,7 +172,10 @@ available SQL` wording. The business, technical and structural-callout keys
 carry only their numbered items and the ⚠️ rule, never a copy of that header.
 The closing instruction may be
 omitted for small results. Empty template values are skipped. Templates are
-self-contained: no template references another template or a slot that its
+self-contained: instructions do not depend on positional references such as
+"above" or "below". A reference names its contract or context block explicitly,
+and that context must be guaranteed in every rendering combination that uses
+the instruction. No template references another template or a slot that its
 own rendering combination can suppress (the ETL loading-pattern statement
 carries its own fallback destination when no closing is requested).
 
@@ -227,7 +236,7 @@ own tool:
 
 - **What is on screen** — what is on the screen right now: the applied trace, the
   active graph analysis, the applied bookmark, and the view level.
-  `lineage_get_screen_state` answers this and nothing else. It is the tool for
+  `lineage_get_screen_state` answers screen and stored-run questions. It is the tool for
   "this trace", "the analysis I ran", "this view / bookmark", and "what am I
   looking at", and it is referenceable in a prompt as `#lineageView`. For an
   AI-authored bookmark it also reports the run behind the view — the original
@@ -263,7 +272,8 @@ warning; an absent buffer omits its section rather than failing the call.
 `lineage_get_screen_state` takes two optional, mutually exclusive fields, plus a
 `cursor` that pages a long screen card. Called
 with neither field, it returns the screen card described above. Called with either, it
-answers from the run record persisted with the applied bookmark:
+answers from the applied AI bookmark's stored run, falling back to the
+session's completed run:
 
 | Field | Value | Answers |
 | --- | --- | --- |
@@ -283,9 +293,8 @@ the discovery token budget is hard-rejected with the standard
 `over_discovery_budget` envelope and a hint naming how far to narrow `ids`. Only
 `lineage_get_scope_bundle` reroutes on that shared envelope; this recall path
 stays inline, so the model narrows and re-reads rather than leaving discovery.
-When
-no bookmark is applied, the applied bookmark is not AI-authored, or no run was
-stored for it, the call answers `no_run_memory` with the repair.
+When neither an applied bookmark run nor a completed session run is available,
+the call answers `no_run_memory` with a recovery hint.
 
 ## Exploration tool contracts
 
@@ -297,7 +306,7 @@ schemas when any sit in them, served as `unique` or `ambiguous` ids. The model
 asks in text only on `ambiguous`.
 
 A fresh `lineage_start_exploration` proposal requires an origin, an explicit
-analysis mode, and an answer classification. BB traces whole objects and does
+analysis mode, and an answer classification. Classify the primary intent: unspecified or ambiguous intent selects business. Incidental SQL/table/schema mentions or small technical subquestions do not change a primary business lens; answer those details from supported evidence. Clear overall technical intent selects technical, and explicit requests for both perspectives select both. BB traces whole objects and does
 not accept named target columns. CT requires user-named `targetColumns`.
 `discovery` is the entry detector's default whenever the route is unclear;
 naming a column already discussed earlier in the conversation is not, by
@@ -306,8 +315,9 @@ new request to trace or walk a named column. Under-choosing a column trace
 costs nothing: the approval gate still lets the user switch `analysisMode`
 before anything runs.
 Pending-gate refinements are strict patch requests tied to the gate revision.
-Omitted origin, question, mission brief, depth (direction is derived from it), filters, mode,
-classification, and columns are inherited mechanically. The refine stage may
+Omitted origin, question, depth (direction is derived from it), filters, mode,
+classification, and columns keep their reviewed values. The mission brief is
+retained only when origin, mode, target columns, and depth are unchanged. The refine stage may
 search objects to resolve a typo, pattern, ambiguity, or newly named object, but
 does not re-resolve the unchanged origin or rerun discovery;
 completed-session supplements carry explicit node IDs and reuse the existing
@@ -324,40 +334,61 @@ preview is a separate discovery path and does not grant SM mutation authority.
 ### Submit findings
 
 `lineage_submit_findings` uses a mode-specific strict schema. Every hop states a
-per-hop verdict: `analyze` (transforms data on the answer path), `passthrough`
-(on the path, handing values on unchanged), or `end_branch` (removes this node,
-and every open node reachable only through it, from the result for the rest of
-the run). A kept verdict (`analyze` or `passthrough`) requires `sections` and
-`summary`, and may add `badge_label`; `end_branch` requires `reason`, refuses
-`prune_neighbors` and `questions`, and takes `summary` and `sections` omitted
-or ignores them, and `badge_label`, when sent. `summary`, `sections` and
-`reason` are served optional at the schema; the verdict-dependent requirement
-(a kept verdict still needs `sections` and `summary`) is enforced at parse.
-A kept verdict ignores any `reason` sent with it (logged, never rejected).
-`end_branch` is refused on the start object (`prune_origin_forbidden`) and on a
-node a committed `column_flow` has already named for a tracked column
-(`prune_carries_tracked_column`; the hint asks for `analyze` or `passthrough` with
-`upstream_columns: []` where a column ends there). A neighbour prune on such a node
-carries the same code and the one repair "remove it from `prune_neighbors`".
+per-hop verdict: `analyze` (transforms data on the answer path) or `passthrough`
+(on the path, handing values on unchanged). The focus stays. Both verdicts require
+`sections` and `summary`, and may add `badge_label`. `summary` and `sections` are
+served optional at the schema; the requirement is enforced at parse. A kept verdict
+ignores any `reason` sent with it (logged, never rejected). Each open neighbor is
+named in `prune_neighbors` or left unnamed and visited. Naming every neighbor
+leaves the focus visible as a dead end. In column trace, object retention follows
+the shared BB decisions; column evidence is not a separate reason to change that graph.
 
-- BB accepts the focus verdict, classified sections, and two optional
+- BB accepts the focus verdict, classified sections, and two schema-optional
   neighbor-decision arrays: `prune_neighbors` (`[{id, reason}]`, based on this
   node's SQL alone) and `questions` (`[{nodeId, question}]`, a specific check
-  attached to that neighbor's queued hop). There is no separate routing field —
+  attached to that neighbor's queued hop). Naming the same resolved neighbor
+  in both arrays rejects the complete submission before commit; the model must
+  choose pruning or investigation. There is no separate routing field —
   every remaining open in-scope neighbor not named in `prune_neighbors` is
   enqueued and visited once, automatically, through the standard border
-  checks. A prune removes any open neighbor and every
-  node reachable only through it; naming a neighbor already visited, analyzed,
+  checks. A neighbor prune is a sender vote; removal waits for live senders
+  and requires all recorded votes to favor pruning. Once resolved, it cuts
+  unvisited nodes reachable only through that neighbor; naming a neighbor already visited, analyzed,
   queued or removed is a no-op (`prune_noop_visited`, `prune_noop_analyzed`,
   `prune_noop_queued`, `prune_noop_removed`) and changes nothing.
-- CT accepts the same focus verdicts and neighbor-decision arrays, plus a
-  `column_flow` served-required on every verdict (`[]` with `end_branch`). Each active tracked column must be
-  continued or marked terminal; an empty flow is valid only when the focus
-  carries no active tracked-column interaction. CT is BB plus column tracking:
-  the engine verifies every declared column against the loaded model and
-  returns the repair with any rejection, so an unsupported reference is
-  corrected on the next attempt instead of reaching the answer. `column_flow`
-  records provenance and never narrows what the answer retains.
+  Instructions require a self-contained subquestion for each eligible in-scope
+  neighbor kept for analysis or passthrough, tied to the approved user question.
+  For an eligible neighbor outside scope, a relevant follow-up is optional and
+  deferred until fresh approval. `can_question` discloses both possibilities;
+  it does not authorize a visit or widen schema, exclusion, direction or depth.
+  Visited and pruned neighbors cannot receive questions, including neighbors
+  named in the same submission’s `prune_neighbors`. Automatic traversal and
+  existing column/depth continuation leads remain unchanged; the backend does
+  not add a missing-question rejection or infer semantic relevance.
+- A hop with valid carried column work accepts the same BB decisions plus model-authored
+  `column_flow`. A hop without that carry is pure BB, even in a CT session. Column records add provenance and never narrow the graph;
+  there is no CT write-sink exception. The backend validates declared objects,
+  columns, and links, but does not infer unique carriers or write mappings.
+  Missing attribution is expressed as a source-qualified unresolved question
+  naming the relevant object and column, not supplied by the backend.
+- Column identity follows the resolved object kind and authoritative metadata
+  ([architecture contract](ARCHITECTURE.md#verified-column-identity-by-object-kind)).
+  Table/view outputs must be real declared columns, including established view
+  aliases; metadata absence does not permit arbitrary names. External nodes
+  are actual `external` objects (`et`, `file`, `db`, or legacy subtype), and
+  any known columns still validate. Without available columns, their existing
+  contextual-attribution path remains allowed; catalog external tables normally
+  have declared columns, so actual metadata availability determines the check. Procedures carry source references and explicit write
+  destinations, not owned stored columns. Scalar parameters are binding
+  context for qualified caller outputs; table-valued function result columns
+  are distinct from their inputs. Missing evidence stays unresolved, without
+  inferred links or pruning.
+- On a procedure CT hop, every served `column_flow` entry requires `writes_to`:
+  the explicit destination object and column, or `null` when there is no table
+  write. The stored record contract remains optional and tolerant of older
+  records that omit it; omission does not infer a write. Downstream `out_col`
+  names the resolved output, including a rename, rather than being restricted
+  to the incoming column name.
 - Each upstream column reference in `column_flow` may carry `transforms`: how
   that upstream column reaches the output column, as one or more of
   `pass_through`, `compute`, `aggregate`, `combine` and `filter`. Multi-select,
@@ -367,28 +398,51 @@ carries the same code and the one repair "remove it from `prune_neighbors`".
   unclassified. The value set and its DIRECT / INDIRECT split have one home,
   `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`, shared by
   the tool schema, the wire contract and the webview.
-- A neighbor decision carries no columns. What a kept neighbor carries in CT is
-  derived from the same submit's `column_flow` — the columns `upstream_columns`
-  names on it, and, downstream, the `out_col` a writer focus attributes to its
-  readers via `writes_to` — and a kept neighbor named in no entry is explored as
-  a whole object (`row_role_only`), not asked about columns it does not supply.
-  There is no default reading that reapplies the session's original target
-  columns to a node several hops from where they were resolved; a column edge
-  committed at an earlier hop is recovered at dispatch rather than dropped.
+- Column context comes from recorded model-authored links. A retained neighbor
+  without a column aspect receives the shared BB instructions. Neither a matching
+  column name nor a single possible carrier establishes a write mapping.
+  Object detail and active-hop context use shared object detail sections,
+  including CTE evidence attached to the owning object's SQL; there is no
+  CTE-specific storage subsystem.
 
-An accepted `end_branch`, or a pruned neighbor, cuts every unvisited node
-reachable from the origin only through it: the engine drops those nodes from
-the open set, logs the cut, and records it as node state — the model is never
-told which nodes a cut removed. The scheduler dispatches the remaining open
+Generated continuations and AI subquestions have different inputs. The
+backend generates source-qualified continuations only from accepted authored
+`column_flow` edges and attaches them to the relevant queued focus; it does not
+populate them from every SQL reference or every metadata column. Generated
+prose groups output names for each source; qualified destination identities
+remain in actual edge records and caller context. The active
+`current_task` includes those questions alongside all nonblank AI/ledger
+questions and the current resolved columns. Actual rendering asks the model to
+address the continuations but gives neither question set a PRIMARY label.
+An AI neighbor subquestion must be self-contained and supplement the approved
+question; an origin output mentioned in that prose is not proof of a neighbor's
+column identity. Caller output targets and caller SQL are retained separately
+for function binding. Neither question route guarantees an exhaustive column
+inventory or repairs absent model-authored dependencies by inference.
+
+An accepted `end_branch`, or a resolved neighbor prune, uses the same directed
+pruning policy as Trace View removal (`analyzeRemoval` in the engine graph
+guards). The origin and previously visited nodes are protected; only the current
+node has a self-prune exception, and disconnecting another committed visited
+node is refused atomically. An open cut stops before visited nodes and surviving
+shared joins, following each approved direction leg without changing direction.
+It records and logs removed open nodes. Removing the last surviving diamond arm
+can then cut the shared join and its exclusive continuation. See the pruning
+contract in `ARCHITECTURE.md` for examples and Trace View level handling.
+The scheduler dispatches the remaining open
 nodes by Kahn readiness (a strongly connected component, found by Tarjan,
-dispatches as one unit) and tie-breaks a ready set by tier, then distance from
-the origin, then id; a node is visited at most once.
+dispatches as one unit), prefers CT among ready work, and then tie-breaks by tier,
+distance from the origin and id; a node is visited at most once. CT priority cannot
+bypass an unfinished BB sender into a shared receiver. Thus a mixed diamond
+collects both senders' questions before that receiver's hop. On an ordinary
+non-origin hop, an empty whole accepted `column_flow: []` ends ordinary incoming column continuation;
+it does not prune retained object work. The initial source and explicitly bound
+scalar caller outputs preserve their qualified context.
 
 The locked answer classification determines which section angles are required.
-Validation requires the locked angles to be present: under a `both` lock a fresh
-submission serves `sections.business` and `sections.technical` in the JSON Schema
-`required` list (the `sections` object itself is optional; `end_branch` omits it, and an
-`end_branch` sending `{}` is still accepted), and a retry with a held draft serves them
+Validation requires the locked angles to be present on a fresh kept verdict.
+The served JSON Schema `anyOf` requires `summary`, `sections`, and every locked angle
+(both `business` and `technical` under a `both` lock) on a fresh finding. A retry with a held draft keeps the angle keys
 optional. Under a single-angle lock the off-angle key is rejected at the
 schema with a hint to fold its content into the kept angle, so a business-only
 answer cannot carry technical sections. Neighbor,
@@ -416,23 +470,28 @@ evidence surfaces for synthesis, the answer-block reference contract for preview
 depth and heading rules that license only the text-authoring stages — lives with
 its stage. A stage that reaches the tool without that contract is a stage judged
 by rules it was never given. The contract also states the enforced mechanical
-checks upfront — unique section labels, highlight legend labels, the 1-5
-highlight-group cap, and the held-draft repair convention — so a model learns
+checks upfront — unique section labels, trimmed nonempty highlight legend labels
+with a 60-character readability limit (soft target: about 40 characters), at
+least one highlight group without an upper count limit, and the held-draft repair
+convention — so a model learns
 each rule before its first call rather than from a rejection. The CT terminal-source mandate
 (terminal sources must appear in a section's node ids or a source highlight
 group) is stated in the synthesis prompt; no validator rejects its absence —
 the engine-owned Column Trace Chain block carries the terminal-source facts the
 prompt reasons from.
 
-Validation is field-scoped and runs before commit, and it is structural only.
-Markdown and math formatting never reject a call: an expression the renderer
-cannot parse degrades to its original source text on screen. A `submit_findings`
-held retry resends the full call; a `present_result` held repair sends only the
-corrected fields. A rejection carries one resend directive (the generic
-minimal-edit rule, or the held rule naming the held parts); only the rejected fields
-are repaired, each list merged by key (`sections` by label,
-`submit_findings` sections by angle) with a held entry left unnamed kept as authored; graph membership, node associations,
-and highlights remain unchanged.
+Validation is structural and field-scoped, and completes before commit.
+Markdown and math formatting do not reject a call: unparseable math renders
+as source text. A held `submit_findings` retry resends the full call, retaining
+unchanged section angles. A held `present_result` repair resends authorized
+corrected fields: sections merge by label, unnamed sections stay, and
+`{label, remove: true}` removes one. Structural repairs replace notes and
+highlights as whole lists. A rejection confined to highlight labels permits
+indexed `highlight_groups` label replacements; one confined to section labels
+or text permits indexed `sections` replacements for only the named fields.
+The held report keeps every other field and array position, and the assembled
+report is validated before commit. Each rejection states which fields may be
+repaired.
 
 One submission produces one complete rejection. Checks that need context the
 validator does not hold — the cached discovery answer, the result graph — report
@@ -442,11 +501,19 @@ the offending entry paths, not only the rule, so a repair does not have to
 locate the defect by elimination. Both matter to the attempt budget: each defect
 class disclosed on its own round is one more reply without progress.
 
+For column-identity failures, the first and second rejected attempts receive the
+same factual correction hint without a column inventory. The third, final
+rejection also lists verified catalog columns for the offending object when
+available. This uses the existing phase no-progress budget, including mixed
+failure classes; it does not grant another attempt. Tracked-column subsets and
+procedure input unions are not object-column inventories. Feedback does not
+change analysis mode, author relationships, store memory or create follow-ups.
+
 For a new render, sections and highlights are required. A node can belong to at
 most one final section; highlighted nodes must be explained by a section or
 note. Nodes may remain visible without a badge or highlight. In CT mode,
-terminal source nodes reached by the validated column chain must appear in the
-final source presentation surface.
+the synthesis prompt requires terminal source nodes reached by the validated
+column chain in the final source presentation; this is not a validator rejection.
 
 There is no AI-writeable assembled `description` field. The engine builds the
 rendered document from title and numbered section bodies. For preview, the host
@@ -477,6 +544,14 @@ SM entry, active submission, synthesis, and completed follow-ups each receive
 only their phase-valid tools; completed follow-ups keep every discovery read
 tool so they can walk the graph beyond the report. Production dispatch is direct through the local
 registry and does not call `vscode.lm.invokeTool`.
+
+The next-question badge uses one tool-free generation from the original question, short captured summaries and deferred leads, without replaying historical reports. It requests short question bullets followed by an invitation to choose one for deeper analysis.
+
+Business, technical and both classifications share a coherent narrative structure; classification changes emphasis, not the report's structure. Capture places the SQL-supported rule or transformation, substantive formula, meaning of its terms and consequences together in detail memory before synthesis. Formula blocks belong on separate lines within that explanation; short formulas may sit inline in explanatory sentences or in a table with a short contextual description. Never create a formula-only heading or subsection. Simple mappings do not need duplicate equations. Final synthesis organizes and merges this grounded material without inventing missing facts or context.
+
+DDL and DML support explanations of declared calculations and SQL behavior. They do not supply observed statistics, row counts, elapsed time or performance. Capture and synthesis must preserve that distinction: explain a formula only from its supplied definition, and require matching data or runtime evidence before asserting a measured result.
+
+Historical mechanisms explain why detached inventories were possible. Commit `59790b99b` (2026-09-23) introduced an assembler fallback that appended missing equations under **Captured formulas**, without contextual prose; `854ccc8c7` removed it on 2026-09-30. Commit `25d893e33` (2026-10-03) introduced a mandatory **Formulas** synthesis subsection, strengthened by `949ac3011` later that day; the current contract removes that subsection. These source changes are confirmed. Attribution of a particular older response remains an inference without a matched historical trace using the same question, model and scope. Current acceptance results must be recorded separately from this history.
 
 After a preview is accepted by the active graph webview, chat emits only a short
 confirmation and does not add a redundant **Show in Graph** action. If automatic
@@ -514,19 +589,22 @@ directly according to the phase policy.
   disabling the delimiter. An expression KaTeX cannot parse renders as its
   original source text — preserving source takes priority over cosmetic rewriting,
   and no formatting flaw can reject a call or end a turn.
-- Host prompt precedence: through `vscode.lm` the request also carries Copilot
-  Chat's own `system` message (keep answers short, Markdown, KaTeX `$`/`$$`,
-  mermaid code blocks) while the extension's instruction rides in the first
-  user turn. The extension therefore states its depth contract and its "the extension
-  draws the graph; describe lineage in tables, lists and prose" rule explicitly
-  instead of assuming a clean system prompt; KaTeX delimiters agree with the
-  host and need no override.
 - Heading ownership: the engine owns the document title, numbered section
   headings, and object link headers (H1-H3). AI-authored section bodies must
   not emit `#`, `##`, or `###` headings; use bold labels inside a body. The
   shared presentation contract states this rule to the text-authoring stages
   (synthesis and completed follow-ups); preview is exempt because its bodies
   are blocks of the cached answer.
+- The shared synthesis template orders applicable bold labels consistently and
+  uses real Markdown lists for steps. Empty or inapplicable labels are omitted.
+  A short SQL witness may accompany a factual explanation without creating a
+  second statement of the same fact. Synthesis preserves captured supported
+  warnings and resolves local gaps against the complete archive.
+- CT chain ownership is a TypeScript synthesis instruction, not a customizable
+  template rule. The backend inserts the Column Chain after the intro, grouping
+  validated source rows by output column and preserving each capture hop and recorded contributor role. The
+  model explains SQL semantics in the shared sections instead of reconstructing
+  that chain or adding a mapping inventory; detailed Steps explain bindings and transformations. BB remains concise while retaining important formulas, rules and supported warnings. A capture hop is evidence provenance, not an extra storage step.
 
 ## SQL witness contract
 
@@ -550,10 +628,7 @@ need catalog or runtime evidence.
    hop diagnostics, and structured rejection envelopes.
 6. Verify the final chat answer, graph badges/highlights, and notes together.
 
-`npm run test:runtime` runs the public agent-runtime smoke and contract tests: tool
-registration, security boundaries, session and turn-lease lifecycle, and architecture rule
-gates. Prompt composition, state-machine depth and repair behaviour are covered by the
-internal suite, not the public repository.
-
-Prompt changes must update matching tests or fixtures. Generated trace snapshots
-are diagnostic evidence, not a source of truth.
+`npm run test:runtime` checks agent-runtime and state-machine contracts,
+including depth/gate and column-trace regressions. Template changes also need
+manual review of the answer and graph; deterministic tests do not establish
+AI answer quality.

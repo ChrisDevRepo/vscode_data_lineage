@@ -161,53 +161,10 @@ export interface MemoryStateSnapshot {
 
 
 /**
- * Appends texts that no existing section already carries verbatim.
- *
- * @remarks
- * `submit_findings` may put a grounded clause on `column_flow[].upstream_columns[].note` while
- * synthesis lifts only `detail_slots[].sections[].text`; the commit site merges those notes into
- * the sections it stores here. Identity is trimmed exact equality — a substring match is new
- * evidence and is kept. A dropped exact duplicate, and an accepted merge, are both
- * NORMALIZE-WITH-LOG when `debugLog` is supplied — a note joining an existing section's text is a
- * content change of that section, so it is logged the same as the drop it stands next to.
- *
- * @param nodeId - Node id, for the log line when a duplicate is dropped or a note is merged.
- * @param debugLog - Optional debug sink the commit site already holds.
- */
-export function appendUniqueSectionText(
-  sections: CapturedSection[],
-  extras: readonly string[],
-  nodeId?: string,
-  debugLog?: (message: string) => void,
-): CapturedSection[] {
-  if (sections.length === 0) return sections;
-  const seenTexts = new Set(sections.map(s => s.text.trim()));
-  const unique: string[] = [];
-  let droppedCount = 0;
-  for (const raw of extras) {
-    const text = raw.trim();
-    if (!text) continue;
-    if (seenTexts.has(text) || unique.includes(text)) {
-      droppedCount++;
-      continue;
-    }
-    unique.push(text);
-  }
-  if (droppedCount > 0) {
-    debugLog?.(`[Memory] duplicate column_flow note(s) dropped — node=${nodeId ?? '(unknown)'} count=${droppedCount}`);
-  }
-  if (unique.length === 0) return sections;
-  const last = sections[sections.length - 1]!;
-  debugLog?.(`[Memory] column_flow note(s) merged — node=${nodeId ?? '(unknown)'} section=${last.angle} count=${unique.length}`);
-  return [...sections.slice(0, -1), { ...last, text: `${last.text}\n${unique.join('\n')}` }];
-}
-
-
-/**
  * Appends `incoming` sections that the archived `earlier` ones do not already carry verbatim.
  *
  * @remarks
- * Same identity rule as {@link appendUniqueSectionText}: trimmed body text, matched by exact
+ * Identity is trimmed body text, matched by exact
  * equality against an earlier section's own trimmed text, angle ignored. First occurrence wins.
  * A first write (no `earlier`) is passed through untouched. A section that merely contains, or
  * is contained by, an earlier one is distinct evidence and is kept. A dropped exact duplicate
@@ -353,9 +310,7 @@ export class AiMemoryManager {
    * @remarks
    * Sections are stored verbatim. A revisit (a post-delivery `supplementAgenda` follow-up re-enqueues a visited node)
    * appends its sections after the earlier visit's — summary and metadata take the latest visit,
-   * and {@link appendUniqueSections} drops any re-emitted text as no new evidence. The caller
-   * merges `column_flow` notes into `sections` via {@link appendUniqueSectionText} before this
-   * write, so a single-accept hop does not lose clauses that sat only on the flow.
+   * and {@link appendUniqueSections} drops any re-emitted text as no new evidence. Column-flow notes remain on their structural records.
    *
    * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG lines: the one
    * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat, and

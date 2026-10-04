@@ -10,7 +10,7 @@
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';
 import { describe, it, expect, afterAll } from 'vitest';
-import { loadRules, extractExternalRefs, type RawParseRulesConfig } from '../../../src/engine/sqlBodyParser';
+import { loadRules, extractExternalRefs, parseSqlBody, type RawParseRulesConfig } from '../../../src/engine/sqlBodyParser';
 import { loadParseRules, rootPath } from '../helpers/testUtils';
 
 /** Restores the shipped rule set — `loadRules` replaces a module-global. */
@@ -57,6 +57,23 @@ describe('parse rule regex flags', () => {
     expect(result.loaded).toBe(1);
     expect(result.skipped).toEqual([]);
     expect(result.errors).toEqual([]);
+  });
+
+  it.each(['g', 'gu', 'gv'])('advances zero-width matches through Unicode SQL under flags=%s', (flags) => {
+    const result = loadRules({ rules: [{
+      name: 'conditional_zero_width', priority: 1, category: 'source',
+      pattern: '\\bFROM\\s+(\\w+\\.\\w+)|(?=.)|(?<=X)$', flags,
+      description: 'Captures a reference alongside conditional zero-width branches.',
+    }] });
+    expect(result.loaded).toBe(1);
+    expect(parseSqlBody('🚀 SELECT * FROM dbo.Match;X').sources).toEqual(['[dbo].[match]']);
+  });
+
+  it('retains the validated global rule when the caller reuses its configuration object', () => {
+    const rule = { name: 'snapshot_source', priority: 1, category: 'source', pattern: '\\bFROM\\s+(\\w+\\.\\w+)', flags: 'g', description: 'Source references.' };
+    expect(loadRules({ rules: [rule] }).loaded).toBe(1);
+    rule.flags = 'i';
+    expect(parseSqlBody('SELECT * FROM dbo.First; SELECT * FROM dbo.Last;').sources).toEqual(['[dbo].[first]', '[dbo].[last]']);
   });
 
   const valid = externalRefRule('gi').rules![0] as unknown as Record<string, unknown>;

@@ -27,15 +27,14 @@ export type HopProgress = { current: number; open: number; total: number; pruned
 export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 
 /**
- * The focus node's self-status submitted each hop. Three states:
+ * The focus node's self-status submitted each hop. Two states:
  * `analyze` = the node applies business logic on the data path (sections stored, featured in the answer);
  * `passthrough` = the node is on the data path but applies no logic (a raw source / bridge / target
  *   table, a SELECT * or synonym) — it is KEPT in the lineage and linked by flow role, and the trace
- *   continues *through* it;
- * `end_branch` = the node is not part of this lineage answer — it leaves the result together with
- *   every open node reachable from the origin only through it (recorded as node action `prune`).
+ *   continues *through* it, or it carries nothing further (a dead end).
+ * Off-path neighbors leave through `prune_neighbors` (recorded as node action `prune`).
  */
-export type Verdict = 'analyze' | 'passthrough' | 'end_branch';
+export type Verdict = 'analyze' | 'passthrough';
 
 /** Engine-owned lifecycle action for a node in an SM result. Mirrors {@link Verdict}. */
 export type SmNodeAction = 'analyze' | 'passthrough' | 'prune';
@@ -106,10 +105,15 @@ export interface ColumnFlowEntry {
   /** Column name on the focus node, or procedure parameter prefixed with @. */
   out_col: string;
   /**
-   * For writer procedures: the table column this node writes to.
-   * When present, the lineage edge is `focus_node.out_col → writes_to.node.writes_to.col`.
+   * Explicit destination column written by this focus. A named destination stages
+   * `focus_node.out_col → writes_to.node.writes_to.col`, including terminal writes with no
+   * upstream contributors. Contributor attribution lands on the named destination.
+   * Explicit null records no table write; omission attributes to the focus without inferring
+   * a destination from topology or matching column names.
    */
   writes_to?: { node: string; col: string } | null;
+  /** Declared real caller output supplied by a scalar-return task; never a table write. */
+  returns_to?: ScalarReturnTarget;
   /**
    * Real upstream columns that continue this trace. Empty means the active column is
    * produced/terminates here and there is no upstream real column to route.
@@ -140,7 +144,8 @@ interface ColumnRef {
 
 /**
  * One directed edge in the accumulated column lineage chain.
- * Built from validated `column_flow` submissions, one edge per upstream real column.
+ * Built from validated `column_flow` submissions: one edge per upstream real column, plus the
+ * focus→carrier writer edge each entry with a resolved write target stages.
  */
 export interface ColumnEdge {
   /** Focus node where this edge was analyzed. */
@@ -246,6 +251,12 @@ export interface HopContext {
   agenda_remaining?: number;
   /** The node currently being analyzed. */
   focus_node?: HopFocusNode;
+  /** Exact compiler-declared real destinations for the active scalar return task. */
+  caller_output_targets?: ScalarReturnTarget[];
+  /** Loaded caller SQL supplied beside formal parameters for semantic argument binding. */
+  caller_objects?: Array<{ node: string; ddl: string }>;
+  /** Explicit requested caller outputs; TVF investigations retain their own real output columns. */
+  caller_requested_outputs?: ScalarReturnTarget[];
   /** List of immediate neighbors available for further exploration. */
   neighbors?: HopNeighbor[];
   /** The specific sub-goal guiding this hop. */
@@ -273,6 +284,8 @@ export interface NeighborQuestion {
   nodeId: string;
   /** The rule, filter or calculation to establish at that neighbor. */
   question: string;
+  /** Real current caller output whose function contribution this investigation establishes. */
+  caller_context?: ScalarReturnTarget;
 }
 
 /**
@@ -308,43 +321,34 @@ export interface HopFindingKept {
   column_flow?: ColumnFlowEntry[];
 }
 
-/**
- * An `end_branch` finding: the focus and every open node reachable from the origin only through
- * it leave the result. Carries no findings — only the stated reason.
- */
-export interface HopFindingEndBranch {
-  /** ID of the node that was analyzed. */
-  focus_node_id: string;
-  /** Discriminator. */
-  verdict: 'end_branch';
-  /** Why this node is off the answer. */
-  reason: string;
-}
-
-/** A single finding for a focus node: a kept finding, or an `end_branch` cut. */
-export type HopFinding = HopFindingKept | HopFindingEndBranch;
+/** A single finding for a focus node. Off-path neighbors leave through `prune_neighbors`. */
+export type HopFinding = HopFindingKept;
 
 /**
  * Data structure used by the AI to submit its findings after analyzing a hop.
  */
 export type HopSubmission = HopFinding;
 
+/** A qualified real caller column whose expression declares the scalar function. */
+export interface ScalarReturnTarget {
+  readonly node: string;
+  readonly col: string;
+}
+
+/** Engine-validated provenance of a caller-authored function investigation. */
+export interface FunctionCallerContext extends ScalarReturnTarget {
+  readonly callerTaskId: string;
+  readonly ddlHash: string;
+}
+
 /**
- * The per-neighbor column decision travelling with one queued hop.
- *
- * @remarks
- * Two states, discriminated so no reader infers meaning from an empty array:
- * `carry` — exactly these columns travel to the neighbor (an empty list is the engine's own
- * resolution "none of the traced columns bind on this node", which the tracer may still recover
- * at dispatch);
- * `row_role_only` — no committed `column_flow` names the neighbor for a traced column, so it is
- * dispatched as a plain whole-object neighbor and no target set is padded back onto it.
- * The engine derives one of the two from the committing hop's `column_flow`; nothing constructs
- * a "no opinion" carry.
+ * Explicit per-neighbor column demand: ordinary columns, row-only investigation, or compiler-declared
+ * scalar caller outputs. Qualified outputs stay separate when callers share a column name.
  */
 export type ColumnCarry =
   | { readonly kind: 'carry'; readonly columns: readonly string[] }
-  | { readonly kind: 'row_role_only' };
+  | { readonly kind: 'row_role_only' }
+  | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
 
 /**
  * How a node served the traced columns at the hop that dispatched it.
@@ -363,8 +367,8 @@ export type SmNodeColumnRole = 'carrier' | 'row_role_only';
  * Engine-side record only: the `lineage_submit_findings` tool returns the ack and the next focus,
  * never this array, so the model does not see it. The engine writes one debug host-log line per
  * non-accepted outcome where the hop's outcomes are finalized. Every deferred route is also recorded as a
- * {@link DeferredQuestion}, which reaches the synthesis completion envelope and, unless its reason
- * is `excluded`, the post-synthesis follow-up offers.
+ * {@link DeferredQuestion}, which reaches the synthesis completion envelope and post-synthesis
+ * follow-up offers. An excluded target requires a new scope proposal before analysis.
  */
 export interface RouteOutcome {
   /** Node id of the route request (verbatim from submission, not lowercased). */
@@ -376,7 +380,8 @@ export interface RouteOutcome {
   /**
    * Reason for deferral:
    * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
-   * - `depth_contracted_beyond_budget` — a non-bodied (table) target's bipartite contraction reached bodied neighbours outside the active BFS scope, so no hop was enqueued.
+   * - `depth_contracted_beyond_budget` — legacy outcome for a non-bodied route without an enqueued hop.
+   * - `non_bodied_passthrough` — the in-scope non-bodied neighbor is retained without a separate analysis hop; no follow-up is created for it.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer.
    * - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer.
@@ -385,22 +390,15 @@ export interface RouteOutcome {
    *   that can be granted through a new proposal.
    * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was already analyzed on an earlier hop; visit-once, no new hop.
    * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
-   * - `carries_no_tracked_column` — an engine-auto-opened non-bodied target the committing
-   *   focus purely writes carries no tracked column on any committed column edge, so the
-   *   post-commit walk ends the branch recorded not-kept instead of contracting through it;
-   *   terminal, never deferred. An explicitly routed carrier is never dropped this way.
+   * - `carries_no_tracked_column` — legacy checkpoint reason; no longer emitted.
    */
-  reason?: 'depth' | 'depth_contracted_beyond_budget' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
+  reason?: 'depth' | 'depth_contracted_beyond_budget' | 'non_bodied_passthrough' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
 }
 
-/**
- * Why a routed node got no hop: visit-once for the first two (an earlier hop settled them),
- * and the column-gated contraction drop for the third (a write-only carrier no tracked column
- * crosses — terminal, recorded through the rejection envelope, never deferred).
- */
+/** Settled route reasons. `carries_no_tracked_column` is retained only for historical checkpoints. */
 export type SettledRouteReason = 'already_visited' | 'already_pruned' | 'carries_no_tracked_column';
 
-/** Per-node enqueue disposition recorded while committing one route: settled by an earlier hop, not enqueued for a scope/depth reason, or dropped by the column-gated contraction. */
+/** Per-node enqueue disposition: settled by an earlier hop or not enqueued for a scope/depth reason. */
 export type RouteSkipDisposition = SettledRouteReason | 'not_enqueued';
 
 /**
@@ -565,6 +563,8 @@ export interface ScopeSummaryLeaf {
  * mark pass-through nodes distinctly from analyzed nodes.
  */
 export interface ScopeSummary {
+  /** Source comparison policy for rendering object and schema identities; absent retains CI. */
+  identifierCaseSensitive?: boolean;
   /** Total bodied-node count across the scope — drives the "N hops" header in the gate. */
   hopCount: number;
   /** Total node count across the scope (bodied + non-bodied) — drives the "N nodes" header. */
@@ -655,13 +655,6 @@ export interface SmResult {
   node_states: SmNodeState[];
   /** Column lineage chain. Present when CT was active for this session; null otherwise. */
   columnAspect: ColumnAspect | null;
-  /**
-   * Node IDs visited during CT exploration that contributed no column_flow edges.
-   * Present only when `columnAspect` is non-null. Nodes that were analyzed or passed
-   * but produced no edges (validation-failed or zero column_flow entries). Synthesis
-   * should exclude these from the column chain narrative.
-   */
-  ctPrunedNodeIds?: string[];
 }
 
 
@@ -686,9 +679,9 @@ export interface DeferredQuestion {
   question: string;
   /**
    * Discriminator for why the route was deferred. `'budget'` — in-border but over the active
-   * scope budget. `'pruned'` — the target was named in `prune_neighbors` and `questions` in the
-   * same submission: the prune stands and the question survives as a follow-up instead of being
-   * dropped. `'contracted'` — retained in approved scope but not given separate hop analysis;
+   * scope budget. `'pruned'` — a legacy checkpoint lead from a prune/question combination;
+   * new submissions reject that combination. `'contracted'` — retained in approved scope but
+   * not given separate hop analysis;
    * still a real, answerable continuation.
    */
   reason: 'schema' | 'depth' | 'budget' | 'direction' | 'excluded' | 'pruned' | 'contracted';
@@ -710,12 +703,16 @@ interface InvestigationTaskBase {
   nodeId?: string;
   /** Parent task for a routed or contracted continuation. */
   parentTaskId?: string;
+  /** Directed routing leg retained through table and user-pass contraction. */
+  traversalSide?: 'upstream' | 'downstream';
   /** Lifecycle controlled by the navigation engine. */
   status: 'pending' | 'active' | 'resolved' | 'deferred';
   /** Hop at which the task was created. */
   createdHop: number;
   /** Hop at which the task was resolved. */
   resolvedHop?: number;
+  /** Explicit caller declaration anchored to its originating task and SQL snapshot. */
+  callerContext?: FunctionCallerContext;
 }
 
 /** Engine-owned unit of investigation. Questions remain structured state rather than agenda prose. */
@@ -731,6 +728,10 @@ export type InvestigationTask = InvestigationTaskBase & (
       kind: 'column_lineage';
       /** Non-empty canonical column context for this CT task. */
       activeColumns: [string, ...string[]];
+      /** Qualified incoming column context; a task does not itself create a column edge. */
+      sourceRefs?: Array<{ node: string; col: string }>;
+      /** Qualified compiler-declared caller outputs; absent on ordinary column tasks. */
+      returnTargets?: ScalarReturnTarget[];
     }
 );
 
@@ -914,6 +915,14 @@ export interface EngineInternalsSnapshot {
   pendingLeads: PendingLead[];
   /** The `init` params snapshot kept for the refine re-run. */
   initSnapshot: EngineInitSnapshot | null;
+  /** Explicit post-completion follow-up targets; absent in older checkpoints. */
+  supplementNodeIds?: string[];
+  /** Accepted prune/keep votes not yet resolved because another sender remains live. */
+  pruneBallots?: Array<{ nodeId: string; votes: Array<{ senderId: string; vote: 'prune' | 'keep' }> }>;
+  /** Held finding and its authorization must resume together or restart explicitly. */
+  heldFinding?: { focusId: string; hop: number; mode: 'bb' | 'ct'; failed: string[]; finding: HopFindingKept } | null;
+  /** Complete continuation-state format; unfinished older checkpoints require a fresh run. */
+  continuationVersion?: 1;
 }
 
 /**
@@ -924,7 +933,9 @@ export interface EngineInternalsSnapshot {
  */
 export interface SmState {
   /** Current fail-closed persistence contract version. */
-  snapshotVersion: 1;
+  snapshotVersion: 1 | 2;
+  /** Source identifier policy at capture; an absent field denotes a legacy CI checkpoint. */
+  identifierCaseSensitive?: boolean;
   /** The current aspect mode (e.g. column tracing). */
   columnAspect: ColumnAspect | null;
   /** The current lifecycle status. */
@@ -978,16 +989,11 @@ export interface SmState {
    * for diagnosing CT tracking failures.
    */
   lineageQuestionsLastHop?: string[];
-  /**
-   * Focus node IDs the AI cut via `verdict=end_branch` while the column aspect was active
-   * (`ctPrunedFocusIds` on the live engine). Present only when `columnAspect` is non-null.
-   */
+  /** Legacy key from checkpoints written before focus cuts were removed; accepted and ignored on restore. */
   ctPrunedNodeIds?: string[];
   /**
-   * Nodes a committed CT `column_flow` entry named for a traced column (`declaredRouteIds` on the
-   * live engine), under a `ct`-prefixed key kept for compatibility with stored runs; a checkpoint
-   * written before the neighbor-decision contract may also hold ids a removed route list declared.
-   * Absent on a checkpoint written before the field was persisted; restore treats that as empty.
+   * Recorded column-edge endpoint IDs. The historical checkpoint key remains readable;
+   * object retention is independent of this projection.
    */
   ctDeclaredRouteIds?: string[];
   /**
@@ -1027,6 +1033,8 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'non_writer_continuation'
       | 'self_loop_column'
       | 'bad_writes_to_target'
+      | 'bad_return_target'
+      | 'bad_caller_context'
       | 'pruned_contributor'
       | 'prune_absent'
       | 'prune_noop_removed'
@@ -1034,9 +1042,9 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_analyzed'
       | 'prune_noop_queued'
       | 'prune_noop_out_of_scope'
-      | 'prune_carries_tracked_column'
-      | 'end_branch_carries_tracked_column'
-      | 'question_not_neighbor';
+      | 'prune_question_conflict'
+      | 'question_not_neighbor'
+      | 'question_closed';
 
 /**
  * Represents an invalid route returned during validation.
@@ -1052,6 +1060,8 @@ export interface InvalidRoute {
     path?: string;
     /** Valid column set for a column-content failure, or the tracked columns a refused prune carries; emitted in `detail`. */
     available_columns?: string[];
+    /** Complete catalog column names of this object, never tracked subsets or procedure input unions. */
+    actual_columns?: string[];
     /** Carrier-side neighbours a body-less focus may name (`non_writer_continuation`); emitted in `detail`. */
     available_routes?: string[];
 }

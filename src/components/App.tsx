@@ -16,8 +16,6 @@ import {
   userFilterForHost,
   aiPreviewDisplayFilter,
   filterAfterAiPreviewDiscard,
-  largestFittingTraceDepth,
-  traceReduceDepthLevels,
   collapseLastExpandedSchema,
   retainExistingSchemas,
   serializeExpandedSchemas,
@@ -81,8 +79,6 @@ const MIN_SPINNER_MS = 1200;
  * in a rebuilding state with no way out.
  */
 const REBUILD_TIMEOUT_MS = 15_000;
-/** Deepest symmetric trace depth probed when reducing a trace to fit the render limit. */
-const TRACE_REDUCE_MAX_PROBE_DEPTH = 10;
 
 /**
  * Computes the set of schemas that are immediate neighbors of a target schema.
@@ -848,26 +844,22 @@ export function App() {
   /** Toggles the visibility of a specific object type (table, view, etc.). */
   const handleToggleType = useCallback(
     (type: ObjectType) => {
-      setFilter((prev) => {
-        const types = new Set(prev.types);
-        if (types.has(type)) types.delete(type);
-        else types.add(type);
-        const next = { ...prev, types };
-        if (model) rebuild(model, next, config);
-        return next;
-      });
+      const types = new Set(filter.types);
+      if (types.has(type)) types.delete(type);
+      else types.add(type);
+      const next = { ...filter, types };
+      setFilter(() => next);
+      if (model) rebuild(model, next, config);
     },
-    [model, config, rebuild]
+    [filter, model, config, rebuild]
   );
 
   /** Toggles whether isolated (no-edge) nodes should be hidden. */
   const handleToggleIsolated = useCallback(() => {
-    setFilter((prev) => {
-      const next = { ...prev, hideIsolated: !prev.hideIsolated };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+    const next = { ...filter, hideIsolated: !filter.hideIsolated };
+    setFilter(() => next);
+    if (model) rebuild(model, next, config);
+  }, [filter, model, config, rebuild]);
 
   /**
    * Refuses a candidate schema selection that would exceed `dataLineageViz.maxNodes`, surfacing
@@ -971,24 +963,20 @@ export function App() {
 
   /** Toggles whether external references (file sources, cross-DB) are visible. */
   const handleToggleExternalRefs = useCallback(() => {
-    setFilter((prev) => {
-      const next = { ...prev, showExternalRefs: !prev.showExternalRefs };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+    const next = { ...filter, showExternalRefs: !filter.showExternalRefs };
+    setFilter(() => next);
+    if (model) rebuild(model, next, config);
+  }, [filter, model, config, rebuild]);
 
   /** Toggles visibility of a specific sub-type of external reference. */
   const handleToggleExternalRefType = useCallback((subType: 'file' | 'db') => {
-    setFilter((prev) => {
-      const externalRefTypes = new Set(prev.externalRefTypes);
-      if (externalRefTypes.has(subType)) externalRefTypes.delete(subType);
-      else externalRefTypes.add(subType);
-      const next = { ...prev, externalRefTypes };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+    const externalRefTypes = new Set(filter.externalRefTypes);
+    if (externalRefTypes.has(subType)) externalRefTypes.delete(subType);
+    else externalRefTypes.add(subType);
+    const next = { ...filter, externalRefTypes };
+    setFilter(() => next);
+    if (model) rebuild(model, next, config);
+  }, [filter, model, config, rebuild]);
 
   /** Adds a global exclusion regex pattern to filter out specific objects. */
   const handleAddExclusionPattern = useCallback((pattern: string) => {
@@ -1003,48 +991,44 @@ export function App() {
 
   /** Removes a previously added exclusion pattern. */
   const handleRemoveExclusionPattern = useCallback((pattern: string) => {
-    setFilter((prev) => {
-      const exclusionPatterns = prev.exclusionPatterns.filter(p => p !== pattern);
-      const next = { ...prev, exclusionPatterns };
-      if (model) rebuild(model, next, config);
-      return next;
-    });
-  }, [model, config, rebuild]);
+    const next = { ...filter, exclusionPatterns: filter.exclusionPatterns.filter(p => p !== pattern) };
+    setFilter(() => next);
+    if (model) rebuild(model, next, config);
+  }, [filter, model, config, rebuild]);
 
-  /** Shared tail for a schema-selection edit: guards against emptying the visible set, rebuilds, and returns the next filter (or `prev` unedited when the guard refuses). */
+  /** Returns the next schema filter, or the same `prev` when the maxNodes guard refuses. */
   const commitSchemaSelection = useCallback((prev: FilterState, nextSchemas: Set<string>): FilterState => {
-    if (!model) return { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
-    if (!guardSchemaSelection(model, nextSchemas)) return prev;
-    const next = { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
-    rebuild(model, next, config);
-    return next;
-  }, [model, config, rebuild, guardSchemaSelection]);
+    if (model && !guardSchemaSelection(model, nextSchemas)) return prev;
+    return { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
+  }, [model, guardSchemaSelection]);
 
   /** Toggles visibility of a specific schema. */
   const handleToggleSchema = useCallback((schema: string) => {
-    setFilter((prev) => {
-      const schemas = new Set(prev.schemas);
-      if (schemas.has(schema)) {
-        schemas.delete(schema);
-      } else {
-        schemas.add(schema);
-      }
-      return commitSchemaSelection(prev, schemas);
-    });
+    const prev = filterRef.current;
+    const schemas = new Set(prev.schemas);
+    if (schemas.has(schema)) schemas.delete(schema);
+    else schemas.add(schema);
+    const next = commitSchemaSelection(prev, schemas);
+    if (next !== prev) setFilter(next);
+    if (next !== prev && modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
   }, [commitSchemaSelection]);
 
   /** Selects multiple schemas at once. */
   const handleSelectAllSchemas = useCallback((schemas: string[]) => {
-    setFilter((prev) => commitSchemaSelection(prev, new Set([...prev.schemas, ...schemas])));
+    const prev = filterRef.current;
+    const next = commitSchemaSelection(prev, new Set([...prev.schemas, ...schemas]));
+    if (next !== prev) setFilter(next);
+    if (next !== prev && modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
   }, [commitSchemaSelection]);
 
   /** Deselects multiple schemas at once. */
   const handleSelectNoneSchemas = useCallback((schemas: string[]) => {
-    setFilter((prev) => {
-      const nextSchemas = new Set(prev.schemas);
-      for (const s of schemas) nextSchemas.delete(s);
-      return commitSchemaSelection(prev, nextSchemas);
-    });
+    const prev = filterRef.current;
+    const nextSchemas = new Set(prev.schemas);
+    for (const s of schemas) nextSchemas.delete(s);
+    const next = commitSchemaSelection(prev, nextSchemas);
+    if (next !== prev) setFilter(next);
+    if (next !== prev && modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
   }, [commitSchemaSelection]);
 
   /** Initiates a structural analysis mode. */
@@ -1572,7 +1556,7 @@ export function App() {
 
 
 
-  const { mode: displayMode, renderedCount } = deriveGraphDisplayMode({
+  const { mode: displayMode } = deriveGraphDisplayMode({
     graphMode,
     filteredCount,
     config,
@@ -1584,28 +1568,8 @@ export function App() {
     scopedRenderedCount: isTraceActive ? trace.tracedNodeIds.size : tracedNodes.length,
   });
 
-  const renderLimitFallback = displayMode === 'renderLimit'
-    ? deriveRenderLimitFallback({
-        isScoped: isTraceActive || !!aiPreview,
-        renderedCount,
-        renderLimit: config.renderLimit,
-        canOpenSchemaView: config.overview.enabled && !schemaViewSoftDisabled && graphMode === 'full' && schemaNodes.length > 0,
-      })
-    : null;
+  const renderLimitFallback = displayMode === 'renderLimit' ? deriveRenderLimitFallback() : null;
   const showRenderLimitNotice = !!renderLimitFallback;
-  const traceReduceSelectedNodeId = showRenderLimitNotice && isTraceActive ? trace.selectedNodeId : null;
-  const traceReduceCandidate = useMemo(
-    () => traceReduceSelectedNodeId
-      ? largestFittingTraceDepth(
-          traceReduceDepthLevels(trace.upstreamLevels, trace.downstreamLevels, TRACE_REDUCE_MAX_PROBE_DEPTH).map(depth => ({
-            ...depth,
-            count: estimateTraceSize(depth.upstream, depth.downstream),
-          })),
-          config.renderLimit,
-        )
-      : null,
-    [traceReduceSelectedNodeId, trace.upstreamLevels, trace.downstreamLevels, config.renderLimit, estimateTraceSize],
-  );
 
   const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
     vscodeApi.postMessage({ type: 'save-wizard-view', view: v });
@@ -1698,33 +1662,7 @@ export function App() {
     <div className="absolute inset-0 z-40 flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--ln-bg) 70%, transparent)' }}>
       <div className="text-center p-8 max-w-md rounded-lg" style={{ ...RENDER_LIMIT_SURFACE_STYLE, color: 'var(--ln-fg)' }}>
         <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Render limit reached</div>
-        <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)', marginBottom: 16 }}>{renderLimitFallback.message}</div>
-        <div className="flex items-center justify-center gap-2">
-          {traceReduceCandidate && (
-            <button
-              onClick={() => applyTrace(traceReduceCandidate.upstream, traceReduceCandidate.downstream)}
-              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-primary"
-            >
-              Reduce depth to ↑{traceReduceCandidate.upstream} ↓{traceReduceCandidate.downstream}
-            </button>
-          )}
-          {renderLimitFallback.offerSchemaView && (
-            <button
-              onClick={() => handleGraphModeChange('overview')}
-              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-primary"
-            >
-              Open Schema View
-            </button>
-          )}
-          {(isTraceActive || aiPreview) && (
-            <button
-              onClick={() => (isTraceActive ? endTrace() : handleDiscardAiPreview())}
-              className="h-9 px-4 rounded-sm text-sm font-medium ln-btn-secondary"
-            >
-              {isTraceActive ? 'Exit trace' : 'Discard preview'}
-            </button>
-          )}
-        </div>
+        <div style={{ fontSize: 13, color: 'var(--ln-fg-muted)' }}>{renderLimitFallback.message}</div>
       </div>
     </div>
   ) : null;

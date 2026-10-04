@@ -271,9 +271,9 @@ describe('action handlers', () => {
 });
 
 describe('reportConnectionError', () => {
-  const logger = () => ({ info: vi.fn(), warn: vi.fn() });
+  const logger = () => ({ info: vi.fn(), warn: vi.fn(), debug: vi.fn() });
 
-  it('logs the raw error once at info level and shows the described message with the action labels', async () => {
+  it('keeps identifying driver detail at debug level and preserves the actionable dialog', async () => {
     const log = logger();
     const present = vi.fn(async () => undefined);
     const err = driver("Login failed for user 'dlv_reader'.", { code: 'ELOGIN', number: 18456 });
@@ -282,8 +282,12 @@ describe('reportConnectionError', () => {
     await answered;
 
     expect(log.info).toHaveBeenCalledTimes(1);
-    expect(String(log.info.mock.calls[0][0])).toContain("Login failed for user 'dlv_reader'.");
-    expect(String(log.info.mock.calls[0][0])).toContain('number=18456');
+    expect(log.info).toHaveBeenCalledWith('Database connection failed');
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain(NAME);
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain('dlv_reader');
+    expect(log.debug).toHaveBeenCalledTimes(1);
+    expect(String(log.debug.mock.calls[0][0])).toContain("Login failed for user 'dlv_reader'.");
+    expect(String(log.debug.mock.calls[0][0])).toContain('number=18456');
     expect(present).toHaveBeenCalledWith(message, 'Update Password', 'Choose Database', 'Edit Connection');
     expect(message).toBe(`${NAME}: Login failed for user 'dlv_reader'.`);
   });
@@ -303,13 +307,16 @@ describe('reportConnectionError', () => {
     retry.mockRejectedValue(new Error('retry blew up'));
     const err = driver('x', { code: 'ETIMEOUT' });
     await reportConnectionError(err, builtIn, log as never, hooks, async () => 'Retry').answered;
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('retry blew up'));
+    expect(log.warn).toHaveBeenCalledWith('Action "Retry" failed');
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('retry blew up');
+    expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('retry blew up'));
   });
 
   it('never logs a secret from the raw error', () => {
     const log = logger();
     reportConnectionError(driver('bad Password=hunter2;'), builtIn, log as never, hooks, async () => undefined);
     expect(JSON.stringify(log.info.mock.calls)).not.toContain('hunter2');
+    expect(JSON.stringify(log.debug.mock.calls)).not.toContain('hunter2');
   });
 });
 

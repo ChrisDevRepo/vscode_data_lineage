@@ -54,11 +54,13 @@ Tables above the configured threshold use a platform-specific sampling clause:
 The target sample size is converted into the clause required by the detected
 platform. Row-count headers show the catalog row count. On a `TABLESAMPLE` run the
 query also returns the number of rows it read, and NULL %, completeness and
-uniqueness are computed against that sample size, so they describe the sample.
+uniqueness are computed against that sample size, so they describe the sample when at least one row is read. An empty sample
+currently falls back to the catalog row count as the denominator.
 
 Current limitation: Fabric's generated `TOP` aggregate query limits result rows
 rather than the aggregate input. Treat those metrics as full-scan aggregates
-until the query is rewritten around a sampled subquery.
+despite the sampling indicator. After a `TABLESAMPLE` retry, the indicator
+also retains the original sampling status even though the retry scans the full table.
 
 ## Settings
 
@@ -82,14 +84,6 @@ Open **View -> Output -> Data Lineage Viz** and set the channel log level to
 **Debug**. `[Stats]` entries describe profiling lifecycle and `[DB]` entries
 show bounded query previews. Review logs before sharing because object and
 column identifiers may be present.
-
-## Verification
-
-Behavior changes belong with focused tests under
-`tests/unit/engine/profilingEngine.test.ts` and the relevant UI tests. Verify
-SQL generation for each supported platform, full-scan and sampled paths,
-failure/retry behavior, excluded types, column budgets, and displayed metric
-semantics.
 
 ## Reference
 

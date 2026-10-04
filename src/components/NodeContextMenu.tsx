@@ -13,7 +13,7 @@ import {
 import type { ObjectType } from '../engine/types';
 import type { RemoveAction } from '../engine/modeCapabilities';
 import { disabledControl } from './ui/disabledControl';
-import { escapeRegexLiteral } from '../utils/sql';
+import { escapeRegexLiteral, quoteIdentifier } from '../utils/sql';
 
 /**
  * Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas: the menu takes
@@ -271,8 +271,8 @@ export const NodeContextMenu = memo(function NodeContextMenu({
 
         <MenuButton onClick={() => {
             const copyText = externalType === 'file' ? (externalUrl ?? nodeName)
-              : externalType === 'db' ? (fullName ?? `[${schema}].[${nodeName}]`)
-              : `[${schema}].[${nodeName}]`;
+              : externalType === 'db' ? (fullName ?? `${quoteIdentifier(schema)}.${quoteIdentifier(nodeName)}`)
+              : `${quoteIdentifier(schema)}.${quoteIdentifier(nodeName)}`;
             (navigator.clipboard?.writeText(copyText) ?? Promise.reject(new Error('Clipboard unavailable')))
               .then(() => onClose())
               .catch((_err) => { setCopyFailed(true); setTimeout(() => setCopyFailed(false), 2000); });

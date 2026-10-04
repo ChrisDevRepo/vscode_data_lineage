@@ -18,6 +18,8 @@ import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } fro
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
+import { schemaKey } from '../../utils/sql';
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
 export interface ScreenStateInput {
@@ -57,6 +59,8 @@ export interface RunRecallInput {
   readonly getDdl?: (id: string) => string | undefined;
   /** Predicate telling whether an id still exists in the loaded model. */
   readonly isInModel?: (id: string) => boolean;
+  /** Debug sink for identifier normalization under the selected historical run's policy. */
+  readonly onIdNormalized?: (raw: string, canonical: string) => void;
   /** Whether the session holds an exploration proposal awaiting approval or refinement. */
   readonly hasPendingProposal?: boolean;
 }
@@ -348,10 +352,14 @@ function presentAnalyzedSet(run: StoredAiRun, page?: ListPage): Record<string, u
 
 function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unknown>[] {
   const states = new Map(nodeStatesOf(run).map(state => [asString(state.nodeId) as string, state]));
-  const slots = asRecord(asRecord(asRecord(run.snapshot)?.memory)?.detailSlots) ?? {};
+  const snapshot = asRecord(run.snapshot);
+  const slots = asRecord(asRecord(snapshot?.memory)?.detailSlots) ?? {};
   const hashes = storedHashes(run);
+  const historicalIds = new Map([...states.keys(), ...Object.keys(slots), ...Object.keys(hashes)].map(id => [id, undefined]));
   const stale = new Set(staleIds(run, input.getDdl));
-  return (input.ids ?? []).map(id => {
+  return (input.ids ?? []).map(raw => {
+    const id = resolveModelNodeId(raw, historicalIds, snapshot?.identifierCaseSensitive === true) ?? raw;
+    if (id !== raw) input.onIdNormalized?.(raw, id);
     const state = states.get(id);
     const slot = asRecord(slots[id]);
     if (!state && !slot && hashes[id] === undefined) return { id, decision: 'not_in_run' };
@@ -397,8 +405,9 @@ function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
   const snapshot = asRecord(run.snapshot);
   const internals = asRecord(snapshot?.engineInternals);
   const leads = Array.isArray(internals?.pendingLeads) ? internals.pendingLeads : [];
+  const identifierKey = (id: string): string => schemaKey(id, snapshot?.identifierCaseSensitive === true);
   const idSet = (value: unknown): Set<string> =>
-    new Set((Array.isArray(value) ? value : []).flatMap(item => typeof item === 'string' ? [item.toLowerCase()] : []));
+    new Set((Array.isArray(value) ? value : []).flatMap(item => typeof item === 'string' ? [identifierKey(item)] : []));
   const scope = idSet(snapshot?.scopeNodeIds);
   const offGraph = new Set([...idSet(snapshot?.removedSet), ...idSet(snapshot?.renderDroppedNodeIds)]);
   return leads.flatMap(raw => {
@@ -406,7 +415,7 @@ function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
     const id = asString(lead?.nodeId);
     const status = optionalString(lead?.status);
     if (id === null || (status !== undefined && status !== 'pending')) return [];
-    const key = id.toLowerCase();
+    const key = identifierKey(id);
     return [definedOnly({
       id,
       on_graph: scope.has(key) && !offGraph.has(key),

@@ -45,7 +45,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapePromptText, formatProviderErrorDiagnostic, isTransportProviderError, truncAtWordBoundary, type ProviderErrorDiagnostic } from '../support/text';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -136,18 +136,6 @@ const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
  * synthesis-breaker path and the preview-dispatch path.
  */
 const SYNTHESIS_RENDER_FAILED_NOTICE = '_The AI preview could not be rendered; details are in the debug log._';
-
-/**
- * Display budget, in characters, for a chat status label carrying model-written prose (the
- * committed or pruned hop summary) — about three lines of the chat pane at its default side-bar
- * width, where a line holds roughly 45 characters.
- *
- * @remarks
- * Distinct from `LOG_TRUNC_CONTENT` (`src/utils/log.ts`): that cap sizes a single-line debug log
- * preview, not this multi-line chat surface, and reusing it here left the hop summary with no
- * display budget of its own.
- */
-const HOP_SUMMARY_CHAT_MAX_CHARS = 135;
 
 /**
  * Chat-facing text for each {@link RejectionChatGroup}, derived once from
@@ -896,6 +884,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'visual_preview', {
       stage: { kind: 'visual_preview' },
       presentResultRepairFields: () => sess.presentResultRepairFields,
+      presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
+      presentResultRepairSectionTextLeaves: () => sess.presentResultRepairSectionTextLeaves,
       presentResultPreviewBlockCount: narrative.blocks.length,
       facts: { memorySections: ['discovery_answer', 'discovery_scope'] },
       messages,
@@ -1232,9 +1222,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         if (toolName === 'lineage_submit_findings' && !isError) {
           submitted = true;
           const finding = input as z.infer<typeof SubmitFindingsModelSchema>;
-          const summary = finding.verdict === 'end_branch'
-            ? finding.reason
-            : sess.memory.getResult().detail_slots.find(slot => slot.nodeId === focusId)?.summary;
+          const summary = sess.memory.getResult().detail_slots.find(slot => slot.nodeId === focusId)?.summary;
           committedFinding.value = { summary: summary ?? '', verdict: finding.verdict };
         }
       },
@@ -1317,8 +1305,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }));
     deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=${wipeTrigger} messagesBefore=${state.messages.length}`);
     if (committedFinding.value && committedFinding.value.summary.trim()) {
-      const prunedMark = committedFinding.value.verdict === 'end_branch' ? '⛔ pruned — ' : '';
-      deps.sink.status('scoping', `_${prunedMark}${truncAtWordBoundary(committedFinding.value.summary, HOP_SUMMARY_CHAT_MAX_CHARS)}_`);
+      // Escape only the display copy: formulas and identifiers are literal summary text.
+      const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\s+/g, ' ').trim(), 135);
+      const summary = escapeMarkdownText(display);
+      deps.sink.stream(`\n\n**Hop ${progress.current}/${progress.total} — ${focusLabel}**\n\n_${summary}_\n\n`);
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {
@@ -1379,6 +1369,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       result,
       sess.memory.getUserQuestion(),
       engine.deferredQuestions,
+      engine.identifierCaseSensitive,
     );
     const envelopeJson = JSON.stringify(envelope);
     deps.logger?.info(
@@ -1392,6 +1383,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'synthesis', {
       stage: { kind: 'synthesis' },
       presentResultRepairFields: () => sess.presentResultRepairFields,
+      presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
+      presentResultRepairSectionTextLeaves: () => sess.presentResultRepairSectionTextLeaves,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: explorationFacts(engine.currentAnalysisMode, engine.currentTargetColumns ?? undefined, {
         classification,
@@ -1447,6 +1440,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       stage: { kind: 'completed' },
       toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationCompletedProviderInputSchema]]),
       presentResultRepairFields: () => sess.presentResultRepairFields,
+      presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
+      presentResultRepairSectionTextLeaves: () => sess.presentResultRepairSectionTextLeaves,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: { memorySections: ['conversation_history'] },
       messages,
@@ -1615,7 +1610,7 @@ function logClassificationGating(
 ): void {
   if (gatedKeys.length === 0) return;
   deps.logger?.debug(
-    `[AI] [Prompt] classification gated capture key(s) — stage=${stage} classification=${sanitizeForLog(classification)} keys=${sanitizeForLog(gatedKeys.join(', '))}`,
+    `[AI] [Prompt] capture keys excluded by classification — stage=${stage} classification=${sanitizeForLog(classification)} keys=${sanitizeForLog([...new Set(gatedKeys)].join(', '))}`,
   );
 }
 

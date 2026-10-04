@@ -7,7 +7,6 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
-import { notifyInfo } from '../../utils/notifications';
 import { openBuiltInSession, type BuiltInEnv } from './builtInProvider';
 import { CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
 import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
@@ -170,7 +169,7 @@ function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable
  * Runs the add (or, with `existing`, edit) wizard and saves the result.
  *
  * @remarks
- * Six steps — server, authentication, user, password or Microsoft sign-in, optional database, display name —
+ * Six steps — server, authentication, user, password or Microsoft sign-in, database, display name —
  * each with a Back button after the first. The database name is typed, as a login that exists only
  * inside one database cannot list the server's databases. The connection is test-connected before
  * it is written, which reports a database that cannot be opened. Microsoft sign-in opens VS Code's
@@ -287,10 +286,10 @@ export async function runAddConnectionFlow(
       run: async (n) => {
         const typed = await askInput({
           step: n, canGoBack: true, value: state.database ?? '',
-          prompt: 'Database name — leave empty to choose when connecting',
-          validate: (v) => tooLong(v, MAX_SYSNAME_LENGTH, 'database name'),
+          prompt: 'Database name — required',
+          validate: (v) => v.trim() ? tooLong(v, MAX_SYSNAME_LENGTH, 'database name') : 'A database name is required.',
         });
-        if (typeof typed === 'string') state.database = typed.trim() || undefined;
+        if (typeof typed === 'string') state.database = typed.trim();
         return outcome(typed);
       },
     },
@@ -343,7 +342,9 @@ export async function runAddConnectionFlow(
       }
       await upsertBuiltInConnection(connection);
       await reconcilePassword(env.secrets, existing, connection, state.password);
-      notifyInfo(logger, 'Save database connection', `Saved connection "${connection.name}".`, { connectionId: id });
+      logger.info('Saved database connection');
+      logger.debug(`Saved database connection ${id} (${describeConnection(connection)})`);
+      void vscode.window.showInformationMessage(`Saved connection "${connection.name}".`);
       return connection;
     }
     if (at < 0) return undefined;
@@ -417,7 +418,8 @@ export function registerConnectionCommands(
       }
       await upsertBuiltInConnection(connection);
       await reconcilePassword(context.secrets, previous, connection, parsed.data.password);
-      logger.info(`Saved database connection ${connection.id} (${describeConnection(connection)})`);
+      logger.info('Saved database connection');
+      logger.debug(`Saved database connection ${connection.id} (${describeConnection(connection)})`);
       return connection.id;
     }),
 
@@ -436,7 +438,8 @@ export function registerConnectionCommands(
       if (choice !== 'Remove') return;
       await deleteBuiltInConnection(target.id);
       await context.secrets.delete(passwordSecretKey(target.id));
-      logger.info(`Removed database connection ${target.id}`);
+      logger.info('Removed database connection');
+      logger.debug(`Removed database connection ${target.id}`);
     }),
 
     vscode.commands.registerCommand('dataLineageViz.updateDatabasePassword', async (arg?: unknown): Promise<boolean> => {
@@ -451,7 +454,8 @@ export function registerConnectionCommands(
       });
       if (password === undefined) return false;
       await savePassword(context.secrets, target, password);
-      logger.info(`Updated saved password for database connection ${target.id}`);
+      logger.info('Updated saved database password');
+      logger.debug(`Updated saved password for database connection ${target.id}`);
       return true;
     }),
   ];

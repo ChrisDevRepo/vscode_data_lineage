@@ -18,15 +18,15 @@
  */
 const BRACKET_IDENT = /\[(?:[^\]]|\]\])+\]/;
 
-/** Matches a plain word identifier (no brackets), consisting only of word characters. */
-const WORD_IDENT = /\w+/;
+/** Matches a regular SQL identifier: Unicode letters, then letters/digits or _/@/#/$. */
+const WORD_IDENT = /[\p{L}_@#][\p{L}\p{Nd}_@$#]*/u;
 
 /** Matches either a bracketed or plain identifier. */
-export const ANY_IDENT = new RegExp(`(?:${BRACKET_IDENT.source}|${WORD_IDENT.source})`);
+export const ANY_IDENT = new RegExp(`(?:${BRACKET_IDENT.source}|${WORD_IDENT.source})`, 'u');
 
 /** Matches a schema-qualified name like `[s].[t]`, `s.t`, `[s].t`, or `s.[t]`. */
 export const QUALIFIED_NAME = new RegExp(
-  `(?:${ANY_IDENT.source}\\.)+${ANY_IDENT.source}`
+  `(?:${ANY_IDENT.source}\\.)+${ANY_IDENT.source}`, 'u'
 );
 
 /** SQL keywords that should never be mistaken for identifiers in certain contexts. */
@@ -65,7 +65,7 @@ export const PASS1_CLEANSE_RE = new RegExp(
  * Used during the normalization of comma-joins into explicit `JOIN` syntax.
  */
 export const TABLE_REF_WITH_ALIAS = new RegExp(
-  `${ANY_IDENT.source}\\.${ANY_IDENT.source}(?:\\s+(?:AS\\s+)?${WORD_IDENT.source})?`
+  `${ANY_IDENT.source}\\.${ANY_IDENT.source}(?:\\s+(?:AS\\s+)?${WORD_IDENT.source})?`, 'u'
 );
 
 /** Keywords that terminate a `FROM` clause in SQL statements, used to build {@link FROM_TERMINATOR_RE}. */

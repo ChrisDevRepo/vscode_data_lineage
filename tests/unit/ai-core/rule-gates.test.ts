@@ -203,7 +203,6 @@ const GRANDFATHERED_ENGINE_IMPORTS: readonly string[] = [
   'tools/toolProvider.ts -> engine/types',
   'tools/tools.ts -> engine/columnStore',
   'tools/tools.ts -> engine/graphAnalysis',
-  'tools/tools.ts -> engine/modelBuilder',
   'tools/tools.ts -> engine/projectStore',
   'tools/tools.ts -> engine/types',
 ];

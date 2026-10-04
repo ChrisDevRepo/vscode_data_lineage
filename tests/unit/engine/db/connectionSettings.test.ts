@@ -482,18 +482,19 @@ describe('saved password follows the server it was entered for', () => {
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
-  it('the database is optional: an empty name saves the connection without one', async () => {
+  it('edit wizard rejects blank database names before saving a required name', async () => {
     host.stored = [valid];
-    const { run } = editWith([
+    const { wizard, run } = editWith([
       { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: [''] }, { values: ['Any database'] },
+      { values: ['', ' \t ', 'AdventureWorks'] }, { values: ['Required database'] },
     ]);
 
     await run();
 
     const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
-    expect(saved.name).toBe('Any database');
-    expect(saved.database).toBeUndefined();
+    expect(wizard.rejected).toEqual(['A database name is required.', 'A database name is required.']);
+    expect(saved.name).toBe('Required database');
+    expect(saved.database).toBe('AdventureWorks');
   });
 
   it('the database name is typed and the only connection opened is the final test with that database', async () => {

@@ -126,7 +126,8 @@ export async function promptForMssqlConnection(
     return undefined;
   }
 
-  logger.info(`Connecting to ${connectionInfo.server}/${connectionInfo.database}`);
+  logger.info('Connecting');
+  logger.debug(`Connection target: ${connectionInfo.server}/${connectionInfo.database}`);
   const connectStart = Date.now();
   const connectionUri = await api.connect(connectionInfo, false);
   logger.info(`Connected (${Date.now() - connectStart}ms)`);
@@ -166,7 +167,8 @@ export async function reconnectMssqlConnection(
     if (!hasLegacyConnectApi(api)) {
       const saved = readSavedProfiles().find((p) => profileMatches(p, connectionInfo));
       if (!saved) {
-        logger.warn(`Direct reconnect: no saved mssql profile matches ${connectionInfo.server} — falling back to picker`);
+        logger.warn('Direct reconnect: no matching saved mssql profile — falling back to picker');
+        logger.debug(`Unmatched reconnect server: ${connectionInfo.server}`);
         return undefined;
       }
       const result = await connectSavedProfile(api, saved, connectionInfo.database);
@@ -177,7 +179,8 @@ export async function reconnectMssqlConnection(
     logger.info(`Reconnected (${Date.now() - reconnectStart}ms)`);
     return { connectionUri, connectionInfo: profile };
   } catch (err) {
-    logger.warn(`Direct reconnect failed: ${redactSecrets(err instanceof Error ? err.message : String(err))} — falling back to picker`);
+    logger.warn('Direct reconnect failed — falling back to picker');
+    logger.debug(`Direct reconnect error: ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
     return undefined;
   }
 }
@@ -311,7 +314,8 @@ async function promptForSavedProfile(
     }
   }
 
-  logger.info(`Connecting to ${picked.profile.server}/${database}`);
+  logger.info('Connecting');
+  logger.debug(`Connection target: ${picked.profile.server}/${database}`);
   const connectStart = Date.now();
   const result = await connectSavedProfile(api, picked.profile, database);
   logger.info(`Connected (${Date.now() - connectStart}ms)`);

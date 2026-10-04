@@ -253,48 +253,24 @@ export function serializeExpandedSchemas(expandedSchemas: ReadonlySet<string> | 
   return expandedSchemas ? Array.from(expandedSchemas).sort() : [];
 }
 
-/** What a render-limited screen tells the user and which next step it offers. */
+/** What the render-limit screen tells the user. The notice has no actions. */
 export interface RenderLimitFallback {
-  /** Whether the notice offers switching to Schema View; the view never switches on its own. */
-  offerSchemaView: boolean;
-  /** One-line explanation shown in the render-limit notice. */
+  /** The one instruction under "Render limit reached". */
   message: string;
 }
 
-interface RenderLimitFallbackInput {
-  /** Whether the render-limited surface is a trace/path/analysis/AI scope rather than the base graph. */
-  isScoped: boolean;
-  /** The projected node count that exceeded the limit. */
-  renderedCount: number;
-  /** The configured render ceiling. */
-  renderLimit: number;
-  /** Whether the user can switch to Schema View from the current surface. */
-  canOpenSchemaView: boolean;
-}
+/** Instruction on every render-limit screen. The notice offers no button. */
+export const RENDER_LIMIT_NOTICE = 'Reduce filter scope or adjust VS Code settings.';
 
 /**
- * Derives the render-limit notice: the current view stays selected, nothing is drawn, and the notice
- * names the next steps the user can take.
+ * The render-limit notice. The current view stays selected and nothing is drawn.
  *
  * @remarks
- * A scope (trace/path/analysis/AI) is shrunk by its own actions (reduce depth, exit). The base graph
- * offers Schema View as a choice when it is available; the switch is never made for the user.
+ * The same sentence covers the base graph and a trace, path, analysis, or AI scope. The user
+ * changes filters or `dataLineageViz.renderLimit`. The notice does not switch views or shrink a trace.
  */
-export function deriveRenderLimitFallback(input: RenderLimitFallbackInput): RenderLimitFallback {
-  const count = input.renderedCount.toLocaleString();
-  const limit = input.renderLimit.toLocaleString();
-  if (input.isScoped) {
-    return {
-      offerSchemaView: false,
-      message: `This view selects ${count} nodes (limit ${limit}). Reduce the trace depth, narrow the path, or adjust the render limit in settings.`,
-    };
-  }
-  return {
-    offerSchemaView: input.canOpenSchemaView,
-    message: input.canOpenSchemaView
-      ? `The current filter selects ${count} nodes (limit ${limit}). Open Schema View, select schema or type filters to reduce scope, or adjust the render limit in settings.`
-      : `The current filter selects ${count} nodes (limit ${limit}). Select schema or type filters to reduce scope, or adjust the render limit in settings.`,
-  };
+export function deriveRenderLimitFallback(): RenderLimitFallback {
+  return { message: RENDER_LIMIT_NOTICE };
 }
 
 /** One candidate trace depth and the node count it would produce. */

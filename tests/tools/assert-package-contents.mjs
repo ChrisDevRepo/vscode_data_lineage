@@ -37,6 +37,7 @@ const required = [
   'package.json',
   'out/extension.js',
   'out/extensionRuntime.js',
+  'out/regexSearch.worker.js',
   'dist/index.html',
   'dist/assets/index.js',
   'assets/defaultParseRules.yaml',
@@ -48,6 +49,7 @@ const required = [
 const forbidden = [
   { pattern: /^(?:src|test|tests|test-results|tmp|tooling|scripts|ai)\//u, label: 'source/test/tmp/tooling directory' },
   { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
+  { pattern: /^\.vscode-test[^/]*\.mjs$/u, label: 'VS Code test runner configuration' },
   { pattern: /^stubs\//u, label: 'dependency stub directory' },
   { pattern: /^(?:\.agents|\.muse|\.codex|\.claude|\.gemini|\.cursor|\.continue|\.glm-skills)\//u, label: 'internal agent directory' },
   { pattern: /^(?:\.env(?:\..*)?|\.?CLAUDE[^/]*|\.?GEMINI[^/]*|\.?GLM[^/]*|\.?AGENTS[^/]*|\.?CODEX[^/]*|\.cursorrules|\.aider[^/]*)$/iu, label: 'environment/agent-instruction file' },

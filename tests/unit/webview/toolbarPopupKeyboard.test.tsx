@@ -25,8 +25,8 @@ beforeEach(() => {
   root = createRoot(host);
 });
 
-afterEach(() => {
-  act(() => root.unmount());
+afterEach(async () => {
+  await act(async () => { root.unmount(); });
   host.remove();
 });
 
@@ -36,20 +36,20 @@ afterEach(() => {
 // with a fixed-duration sleep.
 const focusSettled = (assertion: () => void) => act(() => vi.waitFor(assertion, { timeout: 2000, interval: 10 }));
 
-function key(target: Element, k: string): void {
-  act(() => { target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); });
+async function key(target: Element, k: string): Promise<void> {
+  await act(async () => { target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); });
 }
 
 describe('filter panel', () => {
   it('toggles a type from its row text, takes focus on open and returns it to the trigger on Escape', async () => {
     const onToggleType = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(<TypeFilterDropdown types={new Set(['table', 'view', 'procedure', 'function', 'external'])} onToggleType={onToggleType} isNarrowed={false} />);
     });
     const trigger = document.querySelector('button[aria-label="Filter object types"]') as HTMLButtonElement;
     expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
-    trigger.focus();
-    act(() => trigger.click());
+    await act(async () => { trigger.focus(); });
+    await act(async () => { trigger.click(); });
 
     let panel!: HTMLElement;
     await focusSettled(() => {
@@ -62,7 +62,7 @@ describe('filter panel', () => {
     act(() => viewText.click());
     expect(onToggleType).toHaveBeenCalledWith('view');
 
-    key(document.activeElement as Element, 'Escape');
+    await key(document.activeElement as Element, 'Escape');
     await focusSettled(() => {
       expect(document.querySelector('[aria-label="Filter object types"][role="dialog"]')).toBeNull();
       expect(document.activeElement).toBe(trigger);
@@ -92,7 +92,7 @@ function toolbarProps(extra: Record<string, unknown>): ComponentProps<typeof Too
 describe('Graph Analysis menu', () => {
   it('opens with ArrowDown on its trigger and moves between items with the arrow keys', async () => {
     const onOpenAnalysis = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <VsCodeProvider api={{ postMessage: () => {} } as never}>
         <Toolbar {...toolbarProps({ onOpenAnalysis })} />
@@ -101,8 +101,8 @@ describe('Graph Analysis menu', () => {
     });
     const trigger = document.querySelector('button[aria-label="Graph Analysis"]') as HTMLButtonElement;
     expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
-    trigger.focus();
-    key(trigger, 'ArrowDown');
+    await act(async () => { trigger.focus(); });
+    await key(trigger, 'ArrowDown');
 
     let items: HTMLElement[] = [];
     await focusSettled(() => {
@@ -111,10 +111,10 @@ describe('Graph Analysis menu', () => {
       expect(document.activeElement).toBe(items[0]);
     });
 
-    key(items[0], 'ArrowDown');
+    await key(items[0], 'ArrowDown');
     await focusSettled(() => { expect(document.activeElement).toBe(items[1]); });
 
-    act(() => (document.activeElement as HTMLElement).click());
+    await act(async () => { (document.activeElement as HTMLElement).click(); });
     expect(onOpenAnalysis).toHaveBeenCalledWith('hubs');
   });
 });
@@ -127,7 +127,7 @@ describe('Graph Analysis menu while an analysis is active', () => {
 
   it('opens on click with focus in the menu, and one Escape closes the menu without exiting the mode', async () => {
     const onExit = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <VsCodeProvider api={{ postMessage: () => {} } as never}>
         <ModeExit onExit={onExit} />
@@ -136,12 +136,12 @@ describe('Graph Analysis menu while an analysis is active', () => {
       );
     });
     const trigger = document.querySelector('button[aria-label="Graph Analysis"]') as HTMLButtonElement;
-    trigger.focus();
-    act(() => trigger.click());
+    await act(async () => { trigger.focus(); });
+    await act(async () => { trigger.click(); });
     const menu = () => document.querySelector('[role="menu"][aria-label="Graph analysis tools"]');
     await focusSettled(() => { expect(menu()?.contains(document.activeElement)).toBe(true); });
 
-    key(document.activeElement as Element, 'Escape');
+    await key(document.activeElement as Element, 'Escape');
     await focusSettled(() => { expect(menu()).toBeNull(); });
     expect(onExit).not.toHaveBeenCalled();
   });
@@ -165,7 +165,7 @@ describe('schema clusters toggle', () => {
 
 describe('leave confirmation', () => {
   it('focuses Cancel when Load New Project asks to leave a modified view', async () => {
-    act(() => {
+    await act(async () => {
       root.render(
         <VsCodeProvider api={{ postMessage: () => {} } as never}>
           <Toolbar {...toolbarProps({ isFilterDirty: true })} />

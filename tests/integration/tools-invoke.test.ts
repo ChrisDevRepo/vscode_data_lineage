@@ -3,8 +3,8 @@ import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
 /**
- * Drives every externally contributed read-only lineage tool through `vscode.lm.invokeTool` in a host with no chat
- * model, no Copilot, no fixture extension and no CDP.
+ * Drives every externally contributed read-only lineage tool through `vscode.lm.invokeTool` in a host with no model
+ * provider fixture.
  *
  * @remarks
  * This is the tier that makes the AI surface automatically testable rather than UAT-only. It is

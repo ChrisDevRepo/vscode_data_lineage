@@ -132,27 +132,12 @@ describe('deriveViewSnapshotTransition', () => {
 });
 
 describe('deriveRenderLimitFallback', () => {
-  it('a scoped (trace/path/analysis/AI) overflow offers no view switch — actions shrink the scope', () => {
-    const result = deriveRenderLimitFallback({ isScoped: true, renderedCount: 3000, renderLimit: 2000, canOpenSchemaView: true });
-    expect(result.offerSchemaView).toBe(false);
-    expect(result.message).toContain('3,000');
-    expect(result.message).toContain('2,000');
-    expect(result.message.toLowerCase()).toContain('reduce');
-  });
-
-  it('an unscoped overflow stays in the current view and offers Schema View as the user\'s choice', () => {
-    const result = deriveRenderLimitFallback({ isScoped: false, renderedCount: 3000, renderLimit: 2000, canOpenSchemaView: true });
-    expect(result).not.toHaveProperty('fallbackMode');
-    expect(result.offerSchemaView).toBe(true);
-    expect(result.message).not.toContain('instead');
-    expect(result.message).toContain('Schema View');
-  });
-
-  it('an unscoped overflow without Schema View to open returns a message and no switch', () => {
-    const result = deriveRenderLimitFallback({ isScoped: false, renderedCount: 3000, renderLimit: 2000, canOpenSchemaView: false });
-    expect(result.offerSchemaView).toBe(false);
-    expect(result.message).toContain('3,000');
+  it('names filter scope and VS Code settings and offers no action', () => {
+    const result = deriveRenderLimitFallback();
+    expect(result).toEqual({ message: 'Reduce filter scope or adjust VS Code settings.' });
+    expect(result).not.toHaveProperty('offerSchemaView');
     expect(result.message).not.toContain('Schema View');
+    expect(result.message).not.toContain('Reduce depth');
   });
 });
 

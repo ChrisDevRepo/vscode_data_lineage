@@ -1,5 +1,6 @@
 
 import type { ColumnLineState, ColumnTraceViewNode } from './columnTraceView';
+import { schemaKey } from '../utils/sql';
 
 /**
  * Canonical list of supported lineage object kinds. Single source of truth — the
@@ -118,8 +119,6 @@ export interface ParseStats {
   droppedRefs: string[];
   /** Detailed breakdown for each analyzed script. */
   spDetails: SpParseDetail[];
-  /** `schema.name: rule` for every body whose rule stopped at the parser's per-rule match cap; absent when none did. */
-  cappedRules?: string[];
 }
 
 /**
@@ -149,6 +148,8 @@ export type NeighborIndex = Record<string, { in: string[]; out: string[] }>;
  * The unified database model representing all nodes, edges, and metadata.
  */
 export interface DatabaseModel {
+  /** Checked source catalog metadata enables exact identifier comparison; absent/false retains legacy CI identity. */
+  identifierCaseSensitive?: boolean;
   /** All objects (nodes) included in the model. */
   nodes: LineageNode[];
   /** All discovered dependencies (edges). */
@@ -199,6 +200,8 @@ export const UNKNOWN_DB_PLATFORM = 'Unknown database platform';
  * Metadata for a schema-level preview used in the project wizard.
  */
 export interface SchemaPreview {
+  /** Checked source catalog policy; absent preserves legacy case-insensitive identity. */
+  identifierCaseSensitive?: boolean;
   /** Summary of all schemas available in the source. */
   schemas: SchemaInfo[];
   /** Total count of objects found across all schemas. */
@@ -318,12 +321,24 @@ export interface ColumnDef {
   nullable: string;
   /** Additional flags like 'IDENTITY' or 'COMPUTED'. */
   extra: string;
+  /** Compiler-declared expression references; their presence does not establish value contribution. */
+  expressionDependencies?: ColumnExpressionDependency[];
   /** Name of the unique constraint if the column participates in one. */
   unique?: string;
   /** Name of the check constraint if the column has one. */
   check?: string;
   /** Primary key ordinal (1-based) if the column is part of the PK. */
   pkOrdinal?: number;
+}
+
+/** Exact source metadata for a column expression reference, without inferred SQL semantics. */
+export interface ColumnExpressionDependency {
+  /** Source reference identity, including column qualification; DACPAC References.Name remains verbatim. */
+  reference: string;
+  /** Exact local source type: DACPAC XML Type or DMV sys.objects.type, when resolved. */
+  sourceElementType?: string;
+  /** External source identity; such a reference is not resolved against local elements. */
+  externalSource?: string;
 }
 
 /** Foreign key constraint metadata — attached to table ExtractedObject (dacpac + DMV paths). */
@@ -436,13 +451,13 @@ export function buildColumnDef(
  * Constraint lookups keyed by normalized table and column identifiers.
  */
 export interface ConstraintMaps {
-  /** Key: "schema.table.column" (lowercase) → UQ constraint name */
+  /** Source-policy owner/column key → UQ constraint name. */
   uqColMap: Map<string, string>;
-  /** Key: "schema.table.column" (lowercase) → CK constraint name */
+  /** Source-policy owner/column key → CK constraint name. */
   ckColMap: Map<string, string>;
-  /** Key: "schema.table" (lowercase) → FK list */
+  /** Source-policy owner key → FK list. */
   fkMap: Map<string, ForeignKeyInfo[]>;
-  /** Key: "schema.table.column" (lowercase) → PK ordinal (1-based) */
+  /** Source-policy owner/column key → PK ordinal (1-based). */
   pkOrdinalMap: Map<string, number>;
 }
 
@@ -452,14 +467,15 @@ export interface ConstraintMaps {
  * @param columns - Columns to enrich.
  * @param tableKey - Normalized table key.
  * @param maps - Constraint lookup tables.
+ * @param identifierCaseSensitive - Checked source catalog policy for owner and column names.
  *
  * @returns Foreign-key metadata discovered for the table.
  */
 export function enrichColumnsWithConstraints(
-  columns: ColumnDef[], tableKey: string, maps: ConstraintMaps
+  columns: ColumnDef[], tableKey: string, maps: ConstraintMaps, identifierCaseSensitive = false
 ): ForeignKeyInfo[] {
   for (const col of columns) {
-    const colKey = `${tableKey}.${col.name}`.toLowerCase();
+    const colKey = schemaKey(`${tableKey}.${col.name}`, identifierCaseSensitive);
     col.unique    = maps.uqColMap.get(colKey) ?? '';
     col.check     = maps.ckColMap.get(colKey) ?? '';
     const pk      = maps.pkOrdinalMap.get(colKey);
@@ -802,6 +818,8 @@ export type AiBadge = {
  * The business data associated with a single column-trace node in the React Flow canvas.
  */
 export type ColumnTraceNodeData = {
+  /** Checked source catalog comparison policy for row/object identity. */
+  identifierCaseSensitive?: boolean;
   /** Positioned view node computed by `buildColumnTraceView` (`src/engine/columnTraceView.ts`). */
   view: ColumnTraceViewNode;
   /** Whether the scoped-view remove control is shown — same chrome as {@link CustomNodeData}. */

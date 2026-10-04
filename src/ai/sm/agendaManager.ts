@@ -1,6 +1,8 @@
 import Graph from 'graphology';
 import { stronglyConnectedComponents } from 'graphology-components';
 import type { ColumnCarry } from './smTypes';
+import { uniqueScalarReturnTargets } from './scalarReturnBinding';
+import { schemaKey } from '../../utils/sql';
 
 /**
  * Represents an entry in the navigation agenda.
@@ -44,34 +46,37 @@ export interface AgendaEntry {
   lineageQuestions?: string[];
 }
 
-/**
- * Resolves the carry decision when two enqueues land on one node.
- *
- * @remarks
- * The one surviving cross-hop column-carry conflict rule in the engine (the same-hop rule is a
- * rejection, not a merge — see `smBase.ts` `routeCarryFor`). A stated decision beats an unstated
- * one, and the later statement wins between two stated ones: an absent carry is "no opinion" and
- * never overwrites what is already recorded, while a router that names columns or a row role has
- * judged this exact neighbor and its word stands until the router says otherwise. This is how a
- * route's `columns: 'none'` against a node an EARLIER hop already committed `column_flow` columns
- * to is honored rather than rejected — neither statement is wrong for the hop that made it, so the
- * later one simply supersedes on the shared agenda entry (the earlier committed column can still
- * resurface at dispatch; see `smBase.ts` `getHopContext`).
- *
- * @param existing - Carry already on the queued entry, if any.
- * @param incoming - Carry supplied by the re-push, if any.
- * @returns The carry to record, or `undefined` when neither side stated one.
- */
-function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): ColumnCarry | undefined {
-  if (incoming === undefined) return existing;
-  return incoming;
+/** Unions column demands; a row-only arrival cannot erase an existing demand. */
+function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined, identifierCaseSensitive = false): ColumnCarry | undefined {
+  if (existing?.kind === 'scalar_return' && incoming?.kind === 'carry' || existing?.kind === 'carry' && incoming?.kind === 'scalar_return') {
+    // Mixed arrival; defensive fallback keeping the existing kind's constraints
+    if (existing?.kind === 'scalar_return') return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets(existing.outputs, identifierCaseSensitive) };
+    return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets((incoming as any).outputs, identifierCaseSensitive) };
+  }
+  if (existing?.kind === 'scalar_return' || incoming?.kind === 'scalar_return') {
+    const outputs = [...(existing?.kind === 'scalar_return' ? existing.outputs : []), ...(incoming?.kind === 'scalar_return' ? incoming.outputs : [])];
+    return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets(outputs, identifierCaseSensitive) };
+  }
+  if (existing?.kind === 'carry' || incoming?.kind === 'carry') {
+    return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : [], identifierCaseSensitive) };
+  }
+  return incoming ?? existing;
 }
 
+
+
 /** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
-function mergeUnique(existing: string[] | undefined, incoming: string[]): string[] {
-  const merged = new Set(existing ?? []);
-  for (const value of incoming) merged.add(value);
-  return Array.from(merged);
+function mergeUnique(existing: readonly string[] | undefined, incoming: readonly string[], identifierCaseSensitive = false): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const value of [...(existing ?? []), ...incoming]) {
+    const key = schemaKey(value, identifierCaseSensitive);
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(value);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -91,8 +96,10 @@ export interface WorklistView {
   distance(entry: AgendaEntry): number;
 }
 
-/** Lexicographic dispatch key among ready entries: tier, then directed distance, then node id. */
+/** Lexicographic key among ready entries: column class, explicit priority, distance, then node id. */
 export interface WorklistRank {
+  /** Ready CT, then a BB prerequisite of pending CT, then ordinary BB. */
+  readonly columnTier: number;
   /** `0` for an origin or follow-up entry (priority 3), `1` for every other entry. */
   readonly tier: number;
   readonly distance: number;
@@ -100,12 +107,21 @@ export interface WorklistRank {
 }
 
 /** The dispatch key of one agenda entry under `view`. */
-function worklistRank(entry: AgendaEntry, view: WorklistView): WorklistRank {
-  return { tier: entry.priority === 3 ? 0 : 1, distance: view.distance(entry), nodeId: entry.nodeId };
+function worklistRank(entry: AgendaEntry, view: WorklistView, prerequisites: ReadonlySet<string>): WorklistRank {
+  return { columnTier: hasColumnWork(entry) ? 0 : prerequisites.has(entry.nodeId) ? 1 : 2,
+    tier: entry.priority === 3 ? 0 : 1, distance: view.distance(entry), nodeId: entry.nodeId };
+}
+
+/** Only this arrival's persisted demand selects CT; global provenance never selects a queue tier. */
+function hasColumnWork(entry: AgendaEntry): boolean {
+  if (entry.columnCarry?.kind === 'row_role_only') return false;
+  return entry.columnCarry?.kind === 'scalar_return'
+    || (entry.activeColumns?.length ?? 0) > 0;
 }
 
 /** Total order over {@link WorklistRank} — smaller dispatches first. */
 export function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
+  if (a.columnTier !== b.columnTier) return a.columnTier - b.columnTier;
   if (a.tier !== b.tier) return a.tier - b.tier;
   if (a.distance !== b.distance) return a.distance - b.distance;
   return a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0;
@@ -128,6 +144,13 @@ export function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
  * @returns The ready subset of `queued`, in `queued` order.
  */
 export function readyNodeIds(queued: readonly string[], successors: (nodeId: string) => Iterable<string>): string[] {
+  return analyzeWorklist(queued, successors, []).ready;
+}
+
+/** One condensation owns readiness and the predecessors needed to unblock pending CT. */
+function analyzeWorklist(queued: readonly string[], successors: (nodeId: string) => Iterable<string>, columnNodes: readonly string[]): {
+  ready: string[]; prerequisites: ReadonlySet<string>;
+} {
   const live = new Graph({ type: 'directed', allowSelfLoops: false, multi: false });
   const frontier: string[] = [];
   for (const id of queued) {
@@ -146,11 +169,29 @@ export function readyNodeIds(queued: readonly string[], successors: (nodeId: str
     for (const id of members) componentOf.set(id, index);
   });
   const blocked = new Set<number>();
+  const predecessors = new Map<number, Set<number>>();
   live.forEachDirectedEdge((_edge, _attr, from, to) => {
     const target = componentOf.get(to)!;
-    if (componentOf.get(from) !== target) blocked.add(target);
+    const source = componentOf.get(from)!;
+    if (source !== target) {
+      blocked.add(target);
+      const incoming = predecessors.get(target) ?? new Set<number>();
+      incoming.add(source);
+      predecessors.set(target, incoming);
+    }
   });
-  return queued.filter(id => !blocked.has(componentOf.get(id)!));
+  const needed = new Set<number>();
+  const frontierComponents = columnNodes.map(id => componentOf.get(id)!);
+  for (let i = 0; i < frontierComponents.length; i++) {
+    const component = frontierComponents[i];
+    if (needed.has(component)) continue;
+    needed.add(component);
+    frontierComponents.push(...(predecessors.get(component) ?? []));
+  }
+  return {
+    ready: queued.filter(id => !blocked.has(componentOf.get(id)!)),
+    prerequisites: new Set(queued.filter(id => needed.has(componentOf.get(id)!))),
+  };
 }
 
 /**
@@ -161,6 +202,8 @@ export function readyNodeIds(queued: readonly string[], successors: (nodeId: str
  * questions remain independently addressable in the task ledger.
  */
 export class AgendaManager {
+  /** Uses the source policy when merging qualified column destinations. */
+  constructor(private readonly identifierCaseSensitive = false) {}
   private _entries: AgendaEntry[] = [];
   /** Id-keyed index onto `_entries`, kept in sync at every mutation site for O(1) lookups. */
   private _byId = new Map<string, AgendaEntry>();
@@ -171,6 +214,10 @@ export class AgendaManager {
   }
 
   /** Returns true if the node is currently in the agenda. */
+  public get(nodeId: string): AgendaEntry | undefined {
+    return this._byId.get(nodeId);
+  }
+
   public has(nodeId: string): boolean {
     return this._byId.has(nodeId);
   }
@@ -193,15 +240,17 @@ export class AgendaManager {
       for (const taskId of entry.taskIds) {
         if (!existing.taskIds.includes(taskId)) existing.taskIds.push(taskId);
       }
-      const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry);
+      const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry, this.identifierCaseSensitive);
       if (carry) existing.columnCarry = carry;
       if (carry?.kind === 'row_role_only') {
-        if (entry.activeColumns !== undefined) existing.activeColumns = [...entry.activeColumns];
+        existing.activeColumns = [];
+      } else if (carry?.kind === 'scalar_return') {
+        existing.activeColumns = mergeUnique(carry.outputs.map(o => o.col), [], this.identifierCaseSensitive);
       } else if (entry.activeColumns) {
-        existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns);
+        existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns, this.identifierCaseSensitive);
       }
       if (entry.lineageQuestions) {
-        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions);
+        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions, this.identifierCaseSensitive);
       }
       existing.priority = Math.max(existing.priority, entry.priority);
       existing.depth = Math.min(existing.depth, entry.depth);
@@ -217,8 +266,8 @@ export class AgendaManager {
    * @remarks
    * The textbook dynamic topological schedule, recomputed from `view` on every call so scope
    * growth, contraction admits and prunes take effect immediately: among the
-   * {@link readyNodeIds ready} entries, the smallest {@link worklistRank} wins. The order is the
-   * same in both modes — nothing in it reads columns or question text.
+   * {@link readyNodeIds ready} entries, the smallest {@link worklistRank} wins. The order is
+   * shared by both modes. Column work changes rank only after structural readiness.
    *
    * @param view - The engine's current note graph and distances.
    * @returns The next entry, or `undefined` when the agenda is empty.
@@ -227,12 +276,14 @@ export class AgendaManager {
    */
   public dequeue(view: WorklistView): AgendaEntry | undefined {
     if (this._entries.length === 0) return undefined;
-    const ready = new Set(readyNodeIds(this._entries.map(entry => entry.nodeId), id => view.successors(id)));
+    const analysis = analyzeWorklist(this._entries.map(entry => entry.nodeId), id => view.successors(id),
+      this._entries.filter(hasColumnWork).map(entry => entry.nodeId));
+    const ready = new Set(analysis.ready);
     let nextIdx = -1;
     let best: WorklistRank | undefined;
     this._entries.forEach((entry, index) => {
       if (!ready.has(entry.nodeId)) return;
-      const rank = worklistRank(entry, view);
+      const rank = worklistRank(entry, view, analysis.prerequisites);
       if (!best || compareWorklistRank(rank, best) < 0) { best = rank; nextIdx = index; }
     });
     if (nextIdx < 0) throw new Error(`agenda has ${this._entries.length} entries and no ready node`);

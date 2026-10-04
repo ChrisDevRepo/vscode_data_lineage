@@ -122,7 +122,7 @@ export function useGraphology(): UseGraphologyReturn {
     const schemas = [...new Set(
       allowlistFiltered.nodes.map(n => n.schema)
     )].filter(s => !!s && s.trim().length > 0).sort();
-    const schemaColorMap = createSchemaColorMap(schemas);
+    const schemaColorMap = createSchemaColorMap(schemas, undefined, model.identifierCaseSensitive);
     setRenderedSchemas(schemas);
 
     const withSchemaColors = (nodes: FlowNode<CustomNodeData>[]): FlowNode<CustomNodeData>[] =>
@@ -132,7 +132,7 @@ export function useGraphology(): UseGraphologyReturn {
           ...node,
           data: {
             ...node.data,
-            schemaColor: getSchemaColorFromMap(node.data.schema, schemaColorMap),
+            schemaColor: getSchemaColorFromMap(node.data.schema, schemaColorMap, model.identifierCaseSensitive),
           },
         };
       });

@@ -56,11 +56,11 @@ const NODE_H = 70;
 const COLOR_BAND_W = 6;
 
 /** Constructs a rich HTML label for a node in the Draw.io diagram. */
-function buildLabel(d: CustomNodeData): string {
+function buildLabel(d: CustomNodeData, identifierCaseSensitive: boolean): string {
   const icon = TYPE_COLORS[d.objectType]?.icon || '■';
   const schemaLabel = d.externalType === 'file' ? 'FILE SOURCE'
     : d.externalType === 'db' ? 'CROSS-DATABASE'
-    : d.schema.toUpperCase();
+    : identifierCaseSensitive ? d.schema : d.schema.toUpperCase();
   return (
     `<span style="color:#888888;font-size:14px;">${icon}</span>` +
     ` <span style="font-size:9px;color:#888888;">${d.inDegree}↓ ${d.outDegree}↑</span><br>` +
@@ -74,7 +74,7 @@ function buildLabel(d: CustomNodeData): string {
  *
  * @param externalSchemas - Schema names rendered with the external-node color.
  */
-function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number, externalSchemas: ReadonlySet<string> = new Set()): { cells: MxCell[]; nextId: number } {
+function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number, externalSchemas: ReadonlySet<string>, identifierCaseSensitive: boolean): { cells: MxCell[]; nextId: number } {
   const cells: MxCell[] = [];
   let id = startId;
 
@@ -108,7 +108,7 @@ function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: numbe
 
   for (let i = 0; i < schemas.length; i++) {
     const y = padY + headerH + i * rowH + 10;
-    const color = externalSchemas.has(schemas[i]) ? getExternalNodeColor() : getSchemaColorFromMap(schemas[i], colorMap);
+    const color = externalSchemas.has(schemas[i]) ? getExternalNodeColor() : getSchemaColorFromMap(schemas[i], colorMap, identifierCaseSensitive);
 
     cells.push({
       '@_id': String(id++),
@@ -167,12 +167,14 @@ function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: s
  * - Styled vertices with custom HTML labels and color bands.
  * - Orthogonal edges with bidirectional support.
  * - Embedded metadata (tooltips, full names) using `<object>` containers.
+ * Schema colors use the checked source identifier policy; absent/false retains CI keys.
  */
 export function exportToDrawio(
   nodes: FlowNode<CustomNodeData>[],
   edges: FlowEdge[],
   schemas: string[],
   clusterNodes?: FlowNode<SchemaNodeData>[],
+  identifierCaseSensitive = false,
 ): string {
   if (nodes.length === 0 && (!clusterNodes || clusterNodes.length === 0)) return '';
 
@@ -196,9 +198,9 @@ export function exportToDrawio(
   const exportSchemas = Array.from(new Set([...schemas, ...realNodeSchemas]))
     .filter(s => !!s && s.trim().length > 0)
     .sort();
-  const schemaColorMap = createSchemaColorMap(exportSchemas.filter(schema => !externalSchemas.has(schema)), true);
+  const schemaColorMap = createSchemaColorMap(exportSchemas.filter(schema => !externalSchemas.has(schema)), true, identifierCaseSensitive);
 
-  const legend = buildLegend(exportSchemas, schemaColorMap, nextId, externalSchemas);
+  const legend = buildLegend(exportSchemas, schemaColorMap, nextId, externalSchemas, identifierCaseSensitive);
   nextId = legend.nextId;
 
   const nodeObjects: MxObject[] = [];
@@ -209,11 +211,11 @@ export function exportToDrawio(
     idMap.set(node.id, nodeId);
 
     const isExternal = d.objectType === 'external';
-    const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColorFromMap(d.schema, schemaColorMap);
+    const schemaColor = isExternal ? getExternalNodeColor() : getSchemaColorFromMap(d.schema, schemaColorMap, identifierCaseSensitive);
 
     nodeObjects.push({
       '@_id': nodeId,
-      '@_label': buildLabel(d),
+      '@_label': buildLabel(d, identifierCaseSensitive),
       '@_tooltip': `${d.fullName}\nType: ${d.objectType}\nIn: ${d.inDegree}\nOut: ${d.outDegree}`,
       '@_fullName': d.fullName,
       '@_inputCount': String(d.inDegree),
@@ -367,6 +369,7 @@ function buildSchemaClusterObject(
 
 /**
  * Converts schema-overview cluster nodes into a Draw.io diagram showing schema-level dependencies.
+ * Schema colors use the checked source identifier policy; absent/false retains CI keys.
  *
  * @returns Draw.io XML document, or an empty string when no schema nodes exist.
  */
@@ -374,6 +377,7 @@ export function exportSchemaOverviewToDrawio(
   nodes: FlowNode<SchemaNodeData>[],
   edges: FlowEdge[],
   schemas: string[],
+  identifierCaseSensitive = false,
 ): string {
   if (nodes.length === 0) return '';
 
@@ -387,8 +391,8 @@ export function exportSchemaOverviewToDrawio(
     new Set([...schemas, ...nodes.map(n => n.data.schemaName)])
   ).filter(Boolean).sort();
   const realSchemas = exportSchemas.filter(schema => !externalSchemas.has(schema));
-  const colorMap = createSchemaColorMap(realSchemas, true);
-  const legend = buildLegend(exportSchemas, colorMap, nextId, externalSchemas);
+  const colorMap = createSchemaColorMap(realSchemas, true, identifierCaseSensitive);
+  const legend = buildLegend(exportSchemas, colorMap, nextId, externalSchemas, identifierCaseSensitive);
   nextId = legend.nextId;
 
   const schemaObjects: MxObject[] = [];
@@ -397,7 +401,7 @@ export function exportSchemaOverviewToDrawio(
     const nodeId = String(nextId++);
     const bandId = String(nextId++);
     idMap.set(node.id, nodeId);
-    const color = getSchemaDisplayColor(node.data.schemaName, colorMap, node.data.typeBreakdown);
+    const color = getSchemaDisplayColor(node.data.schemaName, colorMap, node.data.typeBreakdown, identifierCaseSensitive);
     const { obj, band } = buildSchemaClusterObject(node, nodeId, bandId, color);
     schemaObjects.push(obj);
     bandCells.push(band);

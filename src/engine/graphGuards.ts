@@ -17,6 +17,7 @@
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path';
+import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel } from './types';
 
 /** Direction in which a shortest path between two endpoints was found. */
@@ -40,8 +41,8 @@ export interface OrderedShortestPath {
  * connected in either direction (or an endpoint is absent).
  *
  * @param graph - Graphology directed dependency graph.
- * @param sourceId - First endpoint (canonical, lowercase).
- * @param targetId - Second endpoint (canonical, lowercase).
+ * @param sourceId - First canonical endpoint.
+ * @param targetId - Second canonical endpoint.
  * @returns The ordered path and the direction it was found in, or `null` when disconnected.
  */
 export function findShortestPathOrdered(
@@ -110,38 +111,91 @@ export function bfsReachable(
 }
 
 
+/** A fixed directed lineage leg; combining legs never permits changing direction mid-walk. */
+export type RemovalSide = 'upstream' | 'downstream';
+
+/** Shared inputs for pruning one or more nodes from an existing lineage scope. */
+export interface RemovalContext {
+  originId: string;
+  scope: ReadonlySet<string>;
+  removedBefore: ReadonlySet<string>;
+  removedAfter: ReadonlySet<string>;
+  /** Only this active/clicked node may self-prune if already visited. Omission permits no exception. */
+  currentNodeId?: string;
+  /** Committed analysis anchors, protected from removal by any other node. */
+  visited: ReadonlySet<string>;
+  /** Explicit permitted legs; a zero-depth side must be omitted by its caller. */
+  sides: ReadonlyArray<RemovalSide>;
+}
+
+/** Directed support and the open nodes removed by one atomic pruning proposal. */
+export interface RemovalAnalysis {
+  before: Set<string>;
+  after: Set<string>;
+  disconnectedVisited: string[];
+  cutIds: string[];
+  /** Invalid proposals have no cut. Callers must reject them before applying edits. */
+  rejection?: 'origin' | 'invalid-scope' | 'unknown-node' | 'visited';
+}
+
 /**
- * Computes the nodes a removal cuts loose from the origin — the shared self-prune cut applied by
- * both the AI navigation engine and the webview trace.
+ * Analyzes the same pruning policy for AI navigation and interactive traces.
  *
- * @remarks
- * A cut node is one reachable from `originId` before the removal and not after: the removed
- * node's subtree, per the self-prune contract (a pruned node leaves together with every node
- * reachable from the origin only through it). The origin itself is never a member of the result
- * because it seeds both walks. `removedAfter` and `keep` are excluded from the result even when
- * the before/after reachability delta would otherwise include them.
+ * Each permitted leg walks from the origin in one direction. A newly removed node starts an
+ * open branch cut on the legs that originally reached it. The cut stops before a surviving
+ * shared join, another removed node, or a committed visited node. A current node may remove
+ * itself, but losing support for another visited anchor is reported for atomic rejection.
+ * The origin is protected. Invalid scopes or unknown removal nodes return a rejection without
+ * invoking traversal on missing nodes. This function never mutates its graph or input sets.
  *
- * @param graph - Graphology instance to traverse.
- * @param originId - Exploration origin node id, never itself a cut candidate.
- * @param removedBefore - Node ids treated as removed before this removal.
- * @param removedAfter - Node ids treated as removed after this removal (superset of `removedBefore`).
- * @param scope - Optional traversal scope restriction, applied to both walks.
- * @param keep - Optional node ids excluded from the cut regardless of reachability (for example, already-visited nodes whose analysis is committed).
- * @param reachableBefore - Optional precomputed `bfsReachable(graph, originId, removedBefore, undefined, scope)`, for callers probing many removals against one "before" state.
- * @returns Node ids reachable from origin before the removal, unreachable after, excluding `removedAfter` and `keep`.
+ * @param graph - Directed dependency graph.
+ * @param context - Explicit scope, removal proposal, committed anchors and open direction legs.
+ * @returns Support before/after, disconnected committed anchors, and exclusive open cut nodes.
  */
-export function nodesCutByRemoval(
-  graph: Graph,
-  originId: string,
-  removedBefore: ReadonlySet<string>,
-  removedAfter: ReadonlySet<string>,
-  scope?: ReadonlySet<string>,
-  keep?: ReadonlySet<string>,
-  reachableBefore?: ReadonlySet<string>,
-): string[] {
-  const before = reachableBefore ?? bfsReachable(graph, originId, removedBefore, undefined, scope);
-  const after = bfsReachable(graph, originId, removedAfter, undefined, scope);
-  return [...before].filter(id => !after.has(id) && !removedAfter.has(id) && !(keep?.has(id) ?? false));
+export function analyzeRemoval(graph: Graph, context: RemovalContext): RemovalAnalysis {
+  const { originId, scope, removedBefore, removedAfter, visited, sides, currentNodeId } = context;
+  const invalid = (rejection: NonNullable<RemovalAnalysis['rejection']>): RemovalAnalysis =>
+    ({ before: new Set(), after: new Set(), disconnectedVisited: [], cutIds: [], rejection });
+  if (removedAfter.has(originId)) return invalid('origin');
+  if (!graph.hasNode(originId)) return invalid('unknown-node');
+  if (!scope.has(originId) || [...removedBefore].some(id => !removedAfter.has(id))) return invalid('invalid-scope');
+  const starts = [...removedAfter].filter(id => !removedBefore.has(id));
+  if (starts.some(id => !graph.hasNode(id))) return invalid('unknown-node');
+  if (starts.some(id => !scope.has(id))) return invalid('invalid-scope');
+  if (starts.some(id => visited.has(id) && id !== currentNodeId)) return invalid('visited');
+  const modeFor = (side: RemovalSide): 'inbound' | 'outbound' => side === 'upstream' ? 'inbound' : 'outbound';
+  const support = (removed: ReadonlySet<string>, side: RemovalSide): Set<string> => {
+    const found = new Set<string>();
+    bfsFromNode(graph, originId, id => {
+      if (!scope.has(id) || removed.has(id)) return true;
+      found.add(id);
+      return false;
+    }, { mode: modeFor(side) });
+    return found;
+  };
+  const before = new Set<string>([originId]);
+  const after = new Set<string>([originId]);
+  const beforeBySide = new Map<RemovalSide, Set<string>>();
+  for (const side of new Set(sides)) {
+    const legBefore = support(removedBefore, side);
+    beforeBySide.set(side, legBefore);
+    for (const id of legBefore) before.add(id);
+    for (const id of support(removedAfter, side)) after.add(id);
+  }
+  const disconnectedVisited = [...visited].filter(id => !removedAfter.has(id) && before.has(id) && !after.has(id));
+  const cut = new Set<string>();
+  for (const [side, legBefore] of beforeBySide) {
+    for (const start of starts) {
+      if (!legBefore.has(start)) continue;
+      bfsFromNode(graph, start, id => {
+        if (id === start) return false;
+        if (!scope.has(id) || visited.has(id) || removedAfter.has(id) || after.has(id) || !before.has(id)) return true;
+        cut.add(id);
+        return false;
+      }, { mode: modeFor(side) });
+    }
+  }
+  return { before, after, disconnectedVisited, cutIds: [...cut] };
 }
 
 /**
@@ -149,7 +203,7 @@ export function nodesCutByRemoval(
  *
  * @remarks
  * The single add-guard primitive: an add must target a node directly adjacent to
- * the current scope. Reads the precomputed `neighborIndex` (case-insensitive),
+ * the current scope. Reads the precomputed `neighborIndex` under the source comparison policy,
  * falling back to an edge scan. Shared by the AI neighbor-column validator and
  * the webview trace add-neighbor control.
  *
@@ -163,7 +217,8 @@ export function directNeighborIds(
   nodeId: string,
   side: NeighborSide,
 ): string[] {
-  const indexed = model.neighborIndex?.[nodeId] ?? model.neighborIndex?.[nodeId.toLowerCase()];
+  const indexed = model.neighborIndex?.[nodeId]
+    ?? (model.identifierCaseSensitive ? undefined : model.neighborIndex?.[nodeId.toLowerCase()]);
   const fromIndex = indexed?.[side];
   if (fromIndex) return Array.from(new Set(fromIndex));
 

@@ -80,7 +80,7 @@ export function captureDiscoveryWalkFromObservations(
     }
     inspected.push(view.data.id.trim());
   }
-  const distinct = new Set(inspected.map(id => id.toLowerCase()));
+  const distinct = new Set(inspected);
   if (distinct.size < 2) return null;
   return { walkCount: distinct.size, origin: inspected[0], answer };
 }

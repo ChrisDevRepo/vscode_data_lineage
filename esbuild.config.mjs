@@ -58,6 +58,7 @@ const deferredRuntimePlugin = {
 };
 
 const configs = [
+  { ...sharedConfig, entryPoints: ['./src/ai/support/regexSearch.worker.ts'], outfile: 'out/regexSearch.worker.js' },
   {
     ...sharedConfig,
     entryPoints: ['./src/extension.ts'],

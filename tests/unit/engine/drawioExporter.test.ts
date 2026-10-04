@@ -43,6 +43,28 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 describe('Draw.io Exporter', () => {
+  it.each([false, true])('preserves source schema identity in object and overview exports (CS=%s)', cs => {
+    const schemas = ['Sales', 'sales'];
+    const nodes = schemas.map(schema => makeNode(`${schema}.Orders`, 'Orders', schema));
+    const clusters: FlowNode<SchemaNodeData>[] = schemas.map(schema => ({
+      id: `__schema__${schema}`, type: 'schemaNode', position: { x: 0, y: 0 },
+      data: { schemaName: schema, objectCount: 1, typeBreakdown: { table: 1 }, color: '#4E79A7' },
+    }));
+    const objectXml = exportToDrawio(nodes, [], schemas, undefined, cs);
+    const overviewXml = exportSchemaOverviewToDrawio(clusters, [], schemas, cs);
+    for (const xml of [objectXml, overviewXml]) {
+      const bandColors = [...xml.matchAll(/fillColor=(#[\dA-Fa-f]{6});strokeColor=none;rounded=0/g)].map(match => match[1]);
+      expect(bandColors).toHaveLength(2);
+      expect(bandColors[0] === bandColors[1]).toBe(!cs);
+      expect(xml).toContain('fullName="Sales');
+      expect(xml).toContain('fullName="sales');
+    }
+    if (cs) {
+      expect(objectXml).toContain('&gt;Sales&lt;/span&gt;');
+      expect(objectXml).toContain('&gt;sales&lt;/span&gt;');
+    }
+  });
+
   it('empty nodes returns empty string', () => {
     const result = exportToDrawio([], [], []);
     expect(result, 'empty node list returns empty string').toBe('');

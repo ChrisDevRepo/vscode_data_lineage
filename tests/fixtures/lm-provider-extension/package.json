@@ -1,6 +1,6 @@
 {
   "name": "data-lineage-test-model-provider",
-  "displayName": "Data Lineage Deterministic Test Model",
+  "displayName": "Data Lineage Test Model Provider",
   "publisher": "data-lineage-test",
   "version": "0.0.0",
   "engines": {
@@ -15,20 +15,6 @@
       {
         "vendor": "lineage-test",
         "displayName": "Lineage Test Model"
-      }
-    ],
-    "commands": [
-      {
-        "command": "lineageTestModel.getRequests",
-        "title": "Lineage Test Model: Get Requests"
-      },
-      {
-        "command": "lineageTestModel.reset",
-        "title": "Lineage Test Model: Reset"
-      },
-      {
-        "command": "lineageTestModel.setCase",
-        "title": "Lineage Test Model: Set Case"
       }
     ]
   }

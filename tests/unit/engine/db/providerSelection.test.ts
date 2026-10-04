@@ -381,17 +381,20 @@ describe('connectDatabase — mssqlExtension', () => {
     expect((err as InstanceType<typeof DbConnectionError>).target.provider).toBe('mssqlExtension');
   });
 
-  it('redacts secrets in the direct-reconnect warning', async () => {
+  it('keeps reconnect detail at debug level and redacts secrets there too', async () => {
     mssqlConnect.mockRejectedValue(new Error('Login failed. Password=abc123'));
     const warn = vi.fn();
-    const logged = { debug() {}, info() {}, warn, error() {}, trace() {} } as never;
+    const debug = vi.fn();
+    const logged = { debug, info() {}, warn, error() {}, trace() {} } as never;
     await connectDatabase({ ...env, outputChannel: logged }, { server: 'localhost', database: 'AdventureWorks', user: 'sa', authenticationType: 'SqlLogin' }).catch(() => undefined);
     mssqlConnect.mockReset();
     mssqlConnect.mockResolvedValue('uri://mssql');
     const reconnectWarning = warn.mock.calls.map((c) => String(c[0])).find((m) => /Direct reconnect failed/.test(m));
     expect(reconnectWarning).toBeDefined();
     expect(reconnectWarning).not.toContain('abc123');
-    expect(reconnectWarning).toContain('Password=[removed]');
+    expect(reconnectWarning).not.toContain('Password=');
+    expect(JSON.stringify(debug.mock.calls)).toContain('Password=[removed]');
+    expect(JSON.stringify(debug.mock.calls)).not.toContain('abc123');
   });
 
   it('reports a missing extension with the install instruction', async () => {

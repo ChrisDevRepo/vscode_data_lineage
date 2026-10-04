@@ -10,8 +10,10 @@
 import type { ScopeSummary } from '../sm/smTypes';
 import type { PendingExplorationProposal } from '../session/session';
 import { CLASSIFICATION_LABEL, type ClassificationValue } from '../session/classification';
-import { pluralize } from '../support/text';
+import { escapeMarkdownText, pluralize } from '../support/text';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
+import { normalizeName } from '../../engine/shared/sqlIdentifier';
+import { quoteIdentifier, schemaKey } from '../../utils/sql';
 
 /** In-scope object types the card lists before folding the rest into one `…` line. */
 const CARD_OBJECT_TYPE_LIMIT = 3;
@@ -62,9 +64,10 @@ function oneParagraph(text: string): string {
  *
  * @param requested - The proposal's requested `excludeSchemas`.
  * @param active - The schemas the proposal's active filter still excludes.
+ * @param identifierCaseSensitive - Checked catalog policy. Absent or false keeps case-insensitive comparison.
  */
-export function schemaFiltersRemovedByOrigin(requested: readonly string[], active: readonly string[]): string[] {
-  return requested.filter(schema => !active.some(kept => kept.toLowerCase() === schema.toLowerCase()));
+export function schemaFiltersRemovedByOrigin(requested: readonly string[], active: readonly string[], identifierCaseSensitive: boolean | undefined): string[] {
+  return requested.filter(schema => !active.some(kept => schemaKey(kept, identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive)));
 }
 
 /**
@@ -74,11 +77,12 @@ export function schemaFiltersRemovedByOrigin(requested: readonly string[], activ
  * @param requested - The proposal's requested `excludeNodeIds`.
  * @param origin - The proposal's origin id.
  * @param active - The object ids the proposal's active filter still excludes.
+ * @param identifierCaseSensitive - Checked catalog policy. Absent or false keeps case-insensitive comparison.
  */
-export function nodeFiltersRemovedByOrigin(requested: readonly string[], origin: string, active: readonly string[]): string[] {
+export function nodeFiltersRemovedByOrigin(requested: readonly string[], origin: string, active: readonly string[], identifierCaseSensitive: boolean | undefined): string[] {
   const originOnly = new Map([[origin, true]]);
-  if (active.some(kept => resolveModelNodeId(kept, originOnly) !== null)) return [];
-  return requested.filter(id => resolveModelNodeId(id, originOnly) !== null);
+  if (active.some(kept => resolveModelNodeId(kept, originOnly, identifierCaseSensitive) !== null)) return [];
+  return requested.filter(id => resolveModelNodeId(id, originOnly, identifierCaseSensitive) !== null);
 }
 
 /** Schemas in plan order: most hops first, then most nodes, then name. */
@@ -128,7 +132,7 @@ function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
       const group = groups.get(type) ?? { type, scope: 0, names: [], omitted: 0 };
       const ambiguous = summary.ambiguousObjectNames?.[type];
       const names = leaf.nodeNames.map(name =>
-        ambiguous?.includes(name.toLowerCase()) ? `${schema}.${name}` : name,
+        ambiguous?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? escapeMarkdownText(`${schema}.${name}`) : escapeMarkdownText(name),
       );
       groups.set(type, {
         type,
@@ -155,18 +159,14 @@ function planHeading(revision?: number): string {
  * @param classification - The proposal's answer angle. It is part of the approved contract, so it
  * is stated in the plan beside the tracing mode — on the card the user approves and in the summary
  * a gate refine replays to the model.
- * @param removedSchemaFilters - Requested schema exclusions the named origin removed from the
- * contract; the card names each removal once.
- * @param removedNodeFilters - Requested object exclusions the named origin removed from the
- * contract; named once, like the schema removals.
  * @returns The assembled scope-summary markdown.
  */
 export function renderScopeSummaryMd(
   summary: ScopeSummary,
   revision?: number,
   classification?: ClassificationValue,
-  removedSchemaFilters: readonly string[] = [],
-  removedNodeFilters: readonly string[] = [],
+  _removedSchemaFilters: readonly string[] = [],
+  _removedNodeFilters: readonly string[] = [],
 ): string {
   const lines: string[] = [];
   const direction = summary.direction === 'bidirectional' ? 'bidirectional' : summary.direction;
@@ -204,14 +204,6 @@ export function renderScopeSummaryMd(
   if (filters.types.length > 0) {
     readAs.push(`- Types excluded: ${filters.types.map(code).join(', ')}`);
   }
-  if (removedSchemaFilters.length > 0) {
-    const askedOrigin = summary.originLabel ?? summary.origin;
-    readAs.push(`- Filter removed: schema ${removedSchemaFilters.map(code).join(', ')} (asked: ${code(askedOrigin)})`);
-  }
-  if (removedNodeFilters.length > 0) {
-    const askedOrigin = summary.originLabel ?? summary.origin;
-    readAs.push(`- Filter removed: object ${removedNodeFilters.map(code).join(', ')} (asked: ${code(askedOrigin)})`);
-  }
   for (const note of summary.scopeNotes) {
     stated.push(`- Noted: "${oneParagraph(note)}"`);
   }
@@ -239,16 +231,21 @@ export function renderScopeSummaryMd(
   if (classification) lines.push(`- **Analysis:** ${CLASSIFICATION_LABEL[classification]}`);
   lines.push('');
 
-  const passSet = new Set(summary.activeFilters.passNodeIds.map(nodeId => nodeId.toLowerCase()));
+  const sourceNodeId = (schema: string, name: string) => normalizeName(`${quoteIdentifier(schema)}.${quoteIdentifier(name)}`, summary.identifierCaseSensitive);
+  const sourceNodes = new Map(schemasInPlanOrder(summary).flatMap(([schema, entry]) =>
+    Object.values(entry.byType).flatMap(leaf => leaf.nodeNames.map(name =>
+      [sourceNodeId(schema, name), true] as const))));
+  const passNodes = new Set(summary.activeFilters.passNodeIds.map(nodeId =>
+    resolveModelNodeId(nodeId, sourceNodes, summary.identifierCaseSensitive)).filter(id => id !== null));
   for (const [schema, schemaEntry] of schemasInPlanOrder(summary)) {
-    lines.push(`- **${schema}** — ${plural(schemaEntry.scope, 'node')}`);
+    lines.push(`- **${escapeMarkdownText(schema)}** — ${plural(schemaEntry.scope, 'node')}`);
     const types = Object.entries(schemaEntry.byType).sort((a, b) =>
       b[1].hops - a[1].hops || b[1].scope - a[1].scope || a[0].localeCompare(b[0]),
     );
     for (const [type, leaf] of types) {
       const names = leaf.nodeNames.map(name => {
-        const fq = `[${schema.toLowerCase()}].[${name.toLowerCase()}]`;
-        return passSet.has(fq) ? `${name} _(pass)_` : name;
+        const fq = sourceNodeId(schema, name);
+        return passNodes.has(fq) ? `${escapeMarkdownText(name)} _(pass)_` : escapeMarkdownText(name);
       }).join(', ');
       const omitted = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
       lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}): ${names}${omitted}`);
@@ -320,15 +317,27 @@ export function renderScopeCardMd(
   ].filter(Boolean);
   if (excluded.length > 0) lines.push(`- **Excluded:** ${excluded.join('; ')}`);
   if (filters.passNodeIds.length > 0) lines.push(`- **Keep but skip:** ${filters.passNodeIds.map(code).join(', ')}`);
-  const removed = schemaFiltersRemovedByOrigin(proposal.init.excludeSchemas ?? [], filters.schemas);
-  if (removed.length > 0) {
-    lines.push(`- **Filter removed:** schema ${removed.map(code).join(', ')} (asked: ${code(summary.originLabel ?? summary.origin)})`);
-  }
-  const removedNodes = nodeFiltersRemovedByOrigin(proposal.init.excludeNodeIds ?? [], summary.origin, filters.nodeIds);
-  if (removedNodes.length > 0) {
-    lines.push(`- **Filter removed:** object ${removedNodes.map(code).join(', ')} (asked: ${code(summary.originLabel ?? summary.origin)})`);
-  }
   return lines.join('\n');
+}
+
+/**
+ * Renders the **Show full plan** reply: the discovery summary (when the proposal has one) ahead
+ * of the plan, every in-scope object the stored proposal carries.
+ *
+ * @remarks
+ * Built directly from the held proposal rather than reused from the gate's stored `detail` —
+ * that string is the model-facing tool-response copy (discovery summary trailing, not leading)
+ * and stays exactly as the backend built it. This is a separate, user-facing rendering of the
+ * same underlying scope data.
+ *
+ * @param proposal - Stored proposal containing the effective approved scope.
+ * @returns The user-facing plan markdown.
+ */
+export function renderFullPlanMd(
+  proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary' | 'discoverySummary'>,
+): string {
+  const plan = renderScopeSummaryMd(proposal.summary, proposal.revision, proposal.classification);
+  return proposal.discoverySummary ? `${proposal.discoverySummary}\n\n${plan}` : plan;
 }
 
 /**
