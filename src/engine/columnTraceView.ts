@@ -130,6 +130,26 @@ export interface ColumnTraceViewEdge {
 }
 
 /**
+ * An object-level edge between two presented objects, drawn where a column edge cannot be.
+ *
+ * @remarks
+ * The same dependency the Objects view draws. Only added when at least one endpoint carries no
+ * column relation, so it never duplicates a column thread.
+ */
+export interface ColumnTraceViewObjectEdge {
+  /** Stable edge id, unique across the view and distinct from every {@link ColumnTraceViewEdge} id. */
+  id: string;
+  /** Source node id. */
+  source: string;
+  /** Target node id. */
+  target: string;
+  /** Handle on the source node: its first row's handle, absent on a node without rows. */
+  sourceHandle?: string;
+  /** Handle on the target node: its first row's handle, absent on a node without rows. */
+  targetHandle?: string;
+}
+
+/**
  * Two ports of one node the same relation passes between — the hop's inside link.
  *
  * @remarks
@@ -158,6 +178,8 @@ interface ColumnTraceView {
   nodes: ColumnTraceViewNode[];
   /** Per-column edges between row handles. */
   edges: ColumnTraceViewEdge[];
+  /** Object-level edges that join an object without traced columns to its neighbours. */
+  objectEdges: ColumnTraceViewObjectEdge[];
   /** Inside-the-hop port links, drawn as nothing and traversed like an edge. */
   portBridges: ColumnTracePortBridge[];
 }
@@ -171,8 +193,22 @@ export interface ColumnTraceViewInput {
   identifierCaseSensitive?: boolean;
   /** Recorded column relations from `AIViewMetadata.columnAspect.edges`. */
   relations: ColumnTraceRelation[];
-  /** Object identity for every referenced node, keyed by {@link schemaKey} under the source policy. */
+  /**
+   * Object identity for every presented node, keyed by {@link schemaKey} under the source policy.
+   *
+   * @remarks
+   * An object no relation touches still becomes a node, with no rows — the column view shows the
+   * same objects as the object view.
+   */
   objects: Map<string, ColumnTraceViewObject>;
+  /**
+   * Dependency edges of the object view between presented objects, by node id.
+   *
+   * @remarks
+   * Drawn only where an endpoint has no column relation; endpoints missing from `objects` and
+   * self edges are ignored.
+   */
+  objectEdges?: ReadonlyArray<{ source: string; target: string }>;
   /**
    * Per-node trace verdict, keyed by {@link schemaKey} under the source policy.
    *
@@ -536,7 +572,9 @@ function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
  * (source to hop, hop to target) rather than one line past it — a collapsed line would leave the
  * hop with no inbound edge and park it at the left margin; the target's incoming count and rename
  * signal still describe the original endpoint pair. A relation whose endpoint node is absent from
- * `input.objects` is skipped — it was filtered out of the view, not a lost finding.
+ * `input.objects` is skipped — it was filtered out of the view, not a lost finding. An object no
+ * relation touches is appended as a node with no rows, joined by `input.objectEdges`; a column
+ * trace is the object trace plus columns, so it never loses an object.
  *
  * @param input - Recorded column relations, object identities, and verdicts for one trace.
  * @returns Positioned nodes and per-column edges ready to render.
@@ -645,6 +683,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     });
   });
 
+  for (const object of input.objects.values()) getAcc(object);
+
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map((acc) => {
     const rows = buildRows(acc, input.identifierCaseSensitive);
     const isTransform = isColumnTraceTransformNode(acc.object);
@@ -710,11 +750,33 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state, relation.transforms, relation.note);
   }
 
+  const objectEdges: ColumnTraceViewObjectEdge[] = [];
+  const seenObjectEdges = new Set<string>();
+  for (const { source, target } of input.objectEdges ?? []) {
+    const sourceAcc = nodeAccs.get(schemaKey(source, input.identifierCaseSensitive));
+    const targetAcc = nodeAccs.get(schemaKey(target, input.identifierCaseSensitive));
+    if (!sourceAcc || !targetAcc || sourceAcc === targetAcc) continue;
+    if (sourceAcc.rowKeys.length > 0 && targetAcc.rowKeys.length > 0) continue;
+    const pair = JSON.stringify([schemaKey(source, input.identifierCaseSensitive), schemaKey(target, input.identifierCaseSensitive)]);
+    if (seenObjectEdges.has(pair)) continue;
+    seenObjectEdges.add(pair);
+    const firstRow = (acc: NodeAccumulator) => acc.rowKeys.length > 0 ? acc.rowNames.get(acc.rowKeys[0]) : undefined;
+    const sourceRow = firstRow(sourceAcc);
+    const targetRow = firstRow(targetAcc);
+    objectEdges.push({
+      id: `object::${sourceAcc.object.id}->${targetAcc.object.id}`,
+      source: sourceAcc.object.id,
+      target: targetAcc.object.id,
+      ...(sourceRow !== undefined ? { sourceHandle: columnHandleId(sourceRow, 'source', input.identifierCaseSensitive) } : {}),
+      ...(targetRow !== undefined ? { targetHandle: columnHandleId(targetRow, 'target', input.identifierCaseSensitive) } : {}),
+    });
+  }
+
   const boxes = new Map(nodes.map(n => [n.id, { width: n.width, height: n.height }]));
   const direction = input.layoutDirection ?? input.config.layout.direction;
   const positions = dagreLayout({
     nodeIds: nodes.map(n => n.id),
-    edges: edges.filter(e => e.source !== e.target).map(e => ({ source: e.source, target: e.target })),
+    edges: [...edges, ...objectEdges].filter(e => e.source !== e.target).map(e => ({ source: e.source, target: e.target })),
     config: withAnnotationBand(input.config, direction),
     direction,
     sizeOf: id => boxes.get(id) ?? { width: COLUMN_NODE_WIDTH, height: 0 },
@@ -724,5 +786,5 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     if (positioned) node.position = positioned;
   }
 
-  return { nodes, edges, portBridges, identifierCaseSensitive: input.identifierCaseSensitive };
+  return { nodes, edges, objectEdges, portBridges, identifierCaseSensitive: input.identifierCaseSensitive };
 }

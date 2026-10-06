@@ -106,6 +106,17 @@ describe('scope summary identifier comparison', () => {
     expect(md.startsWith('Orders feed the mart.\n\n### Exploration plan')).toBe(true);
     expect(renderScopeCardMd(proposal).includes('Orders feed the mart.')).toBe(false);
   });
+
+  it('renders card object names verbatim inside code spans, without Markdown escapes', () => {
+    const summary = sampleSummary({
+      bySchema: { Finance: { hops: 3, scope: 3, byType: { procedure: leaf(['usp_Load_Order_Lines', 'a*b[c]', 'odd`name']) } } },
+    });
+    const md = renderScopeCardMd({ summary, revision: 1, classification: 'technical', init });
+    expect(md).toContain('`usp_Load_Order_Lines`');
+    expect(md).toContain('`a*b[c]`');
+    expect(md).toContain('`` odd`name ``');
+    expect(md).not.toContain('\\');
+  });
 });
 
 /** The locked card fixture: schema `Sales` against active `sales`, object `sales.orders` against the origin. */

@@ -1,7 +1,8 @@
 -- UPDATE ALIAS Pattern 03: UPDATE via CTE (CTE names must NOT be captured as targets)
 -- EXPECT  sources:[dbo].[Inventory],[dbo].[SalesOrderLine]  targets:[dbo].[Inventory]
 -- mustNotContain: InventoryWithSales (CTE name, no schema dot)
--- CTE-based UPDATE: the update target is the underlying table, not the CTE name
+-- The CTE joins one base table to a GROUP BY derived table, which cannot be written through, so
+-- the write lands on the base table; the CTE name itself is never a target.
 
 WITH InventoryWithSales AS (
     SELECT
@@ -9,6 +10,7 @@ WITH InventoryWithSales AS (
         inv.[LocationID],
         inv.[QtyOnHand],
         inv.[ReorderLevel],
+        inv.[LastUpdated],
         ISNULL(sold.[QtySold30d], 0) AS QtySold30d
     FROM [dbo].[Inventory] AS inv
     LEFT JOIN (

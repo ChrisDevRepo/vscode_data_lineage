@@ -72,7 +72,7 @@ const DepthSideSchema: z.ZodType<DepthSideValue> = z.object({
   levels: numericStringDepth(z.union([z.number().int().min(0), z.literal('all')]))
     .describe('Starting level count for this side, or "all" for the full chain.'),
   exactness: z.enum(['exact', 'approximate'])
-    .describe('"exact" is a limit the user stated, enforced as a border. "approximate" is your own estimate, shown on the plan; it does not bound the scope, which runs until the filters or the border stop it.'),
+    .describe('"exact" is a limit the user stated, enforced as a border. "approximate" is your own estimate, shown on the plan; above 0 it does not bound the scope, which runs until the filters or the border stop it.'),
 }).strict();
 
 /** True when the two sides carry different verdicts (`levels` or `exactness`). */

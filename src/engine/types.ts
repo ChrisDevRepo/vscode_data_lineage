@@ -57,6 +57,12 @@ export interface LineageNode {
   externalUrl?: string;
   /** Database name for cross-database virtual nodes, shown in UI tooltips. */
   externalDatabase?: string;
+  /**
+   * True for a stored procedure whose definition is not readable (encrypted or no permission).
+   * The node is loaded without edges: the catalog cannot give their direction. A view or
+   * function keeps its catalog edges, whose direction needs no body.
+   */
+  definitionUnreadable?: boolean;
 }
 
 /**
@@ -73,6 +79,12 @@ export interface LineageEdge {
    * - `exec`: Referenced in an EXEC/EXECUTE call.
    */
   type: 'body' | 'exec';
+  /**
+   * Set only on a procedure's write edge whose every mutation of the target in the body is a
+   * `DELETE` or `TRUNCATE`: the write removes rows and supplies no column data. Absent on every
+   * other edge. Additive metadata; the edge, its direction and the graph shape are unchanged.
+   */
+  deleteOnly?: true;
 }
 
 /**
@@ -119,6 +131,8 @@ export interface ParseStats {
   droppedRefs: string[];
   /** Detailed breakdown for each analyzed script. */
   spDetails: SpParseDetail[];
+  /** Full names of modules loaded without edges because their definition is not readable. */
+  unreadableDefinitions?: string[];
 }
 
 /**
@@ -783,6 +797,8 @@ export type CustomNodeData = {
   externalUrl?: string;
   /** Database name displayed for cross-database external references. */
   externalDatabase?: string;
+  /** Definition not readable: the node has no edges and shows a warning marker. */
+  definitionUnreadable?: boolean;
   /** Resolved schema color supplied by the parent graph projection. */
   schemaColor?: string;
   /** AI-authored badge rendered above the node. */
@@ -846,6 +862,11 @@ export type ColumnTraceNodeData = {
   aiBadge?: AiBadge;
   /** AI-authored note rendered below the node. */
   aiNote?: { text: string };
+  /**
+   * Resolved colour of the node's schema, matching {@link CustomNodeData.schemaColor} of the object
+   * node it replaces (the external colour for an external object).
+   */
+  schemaColor?: string;
 };
 
 /**

@@ -144,7 +144,7 @@ export class TaskLedger {
         ? [{ sourceRefs: input.sourceRefs.map(ref => [this.identifierKey(ref.node), normalizeColName(ref.col, this.identifierCaseSensitive)]).sort() }]
         : []),
       ...(input.kind === 'column_lineage' && input.returnTargets
-        ? [input.returnTargets.map(target => [this.identifierKey(target.node), this.identifierKey(target.col)]).sort()]
+        ? [input.returnTargets.map(target => [this.identifierKey(target.node), normalizeColName(target.col, this.identifierCaseSensitive)]).sort()]
         : []),
       ...(input.callerContext ? [[input.callerContext.node, input.callerContext.col, input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
     ]);
@@ -250,24 +250,6 @@ export class TaskLedger {
       if (lead.status !== 'scheduled' || this.identifierKey(lead.nodeId) !== key) continue;
       lead.status = 'resolved';
       this.setTaskStatus(lead.taskId, 'resolved', hop);
-    }
-  }
-
-  /**
-   * Restores a validated current-format checkpoint ledger without recomputing identifiers.
-   * @param tasks - Validated persisted task records.
-   * @param leads - Validated persisted follow-up records.
-   */
-  public restore(tasks: ReadonlyArray<InvestigationTask>, leads: ReadonlyArray<PendingLead>): void {
-    this.clear();
-    for (const task of tasks) {
-      const { id: _id, ...input } = task;
-      const restored = this.ensureTask(input);
-      if (restored.id !== task.id) throw new Error(`Investigation task id drift: ${task.id}`);
-    }
-    for (const lead of leads) {
-      this.leads.set(lead.id, { ...lead });
-      this.leadIdsByIdentity.set(leadIdentity(lead, this.identifierCaseSensitive), lead.id);
     }
   }
 }

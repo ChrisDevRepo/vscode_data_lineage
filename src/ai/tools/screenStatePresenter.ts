@@ -478,8 +478,10 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
  * Summarises what is on screen in one prompt-context phrase.
  *
  * @remarks
- * Grounds the stage prompts so a bare "explain this" can reach `lineage_get_screen_state`; the
- * phrase names the surfaces present, never their contents, which stay behind the tool call.
+ * Grounds the stage prompts so a bare "explain this" can reach `lineage_get_screen_state`. The
+ * phrase names each surface present with its identity — the trace origin and levels, the analysis
+ * type and selected group label, the applied bookmark's name — never its contents (objects,
+ * findings), which stay behind the tool call.
  *
  * @param uiState - Latest `filter-changed` ui-state buffer, read defensively.
  * @returns The raw phrase — the prompt slot builder escapes it — or `null` when no trace, analysis, or bookmark is applied.

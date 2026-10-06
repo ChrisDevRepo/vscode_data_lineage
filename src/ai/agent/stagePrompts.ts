@@ -33,7 +33,7 @@ import { SCRIPT_TYPES } from '../support/graphUtils';
  * message. The hop is blinkered: the worker sees this payload plus `lineage_submit_findings` and
  * `lineage_get_neighbor_columns`, not prior hops' tool results.
  */
-export function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
+function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
   let escapedBody: string;
   if (hop) {
     const hopForJson = { ...hop };
@@ -77,6 +77,7 @@ function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, re
     sess.memory.slotCount,
     isCtMode,
     render,
+    sess.outputSections,
   );
 }
 

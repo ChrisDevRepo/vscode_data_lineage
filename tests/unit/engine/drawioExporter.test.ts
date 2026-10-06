@@ -245,7 +245,7 @@ describe('Draw.io Exporter', () => {
  * The column view is a second rendering of the same scope in its own coordinate space, and the
  * export is an object-view artifact. `GraphCanvas` therefore hands the exporter the object nodes and
  * object-level edges it kept aside (`objectNodes()` / `localEdges`) rather than the mounted column
- * nodes — pinned as source in graph-canvas-object-positions.test.ts. This is the other half: given
+ * nodes — pinned by tests/unit/webview/graphCanvasObjectPositions.test.tsx. This is the other half: given
  * that object-space input, the XML carries object geometry and object-level edges, and nothing from
  * the column space.
  */

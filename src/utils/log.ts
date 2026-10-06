@@ -45,7 +45,7 @@ function normalizeCategorizedLogMessage(cat: LogCategory, msg: string): string {
  *
  * @param msg - The message to log. Format: `Operation — key result (timing)`
  */
-export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
+function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   ch.info(`[${cat}] ${norm}`);
 }
@@ -58,7 +58,7 @@ export function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): vo
  *
  * @param msg - The message to log. Format: `Detail — context, parameters, timing`
  */
-export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
+function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   ch.debug(`[${cat}] ${norm}`);
 }
@@ -71,7 +71,7 @@ export function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): v
  *
  * @param msg - The message to log. Format: `What happened — what system did → recovery hint`
  */
-export function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
+function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
   ch.warn(`[${cat}] ${norm}`);
 }
@@ -204,7 +204,7 @@ export function sanitizeForLog(s: string): string {
  * @remarks
  * Format: `[CAT] FAILED: operation — error detail`
  */
-export function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
+function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
   const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
   const msg = `FAILED: ${normalizeCategorizedLogMessage(cat, op)} — ${detail}`;
   ch.error(`[${cat}] ${msg}`);

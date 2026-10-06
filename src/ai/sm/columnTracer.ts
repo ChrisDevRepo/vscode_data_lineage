@@ -1,6 +1,7 @@
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
+import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
@@ -25,7 +26,7 @@ export class ColumnTracer {
 
   /**
    * @param targetColumns - Columns requested at the start of the trace.
-   * @param initialAspect - Restored aspect when rehydrating from a snapshot.
+   * @param initialAspect - Existing aspect to continue from instead of a fresh one; the engine always starts fresh.
    *
    * @remarks
    * `target_columns` and `active_columns` are copied, never aliased: the snapshot invariant is
@@ -52,19 +53,41 @@ export class ColumnTracer {
    *
    * @remarks
    * A projection for delivery only, never a mutation: {@link state} keeps every committed edge, so
-   * a checkpoint resumes on the chain it was dumped with and completeness accounting reads the
-   * same edge set it always did. `target_columns`/`active_columns` carry through untouched.
+   * the state dump records the full chain and completeness accounting reads the same edge set it
+   * always did. `target_columns`/`active_columns` carry through untouched. Every
+   * call projects the edges that remain after withholding through {@link columnAttachment} of `roots`:
+   * an edge outside it (one whose path ran through a withheld endpoint) is withheld too and named in one `log` line; no edge is added or rewritten.
    *
    * @param droppedEndpointIds - Endpoint node ids the render withheld; empty on almost every call.
+   * @param roots - The requested output columns the trace started from.
+   * @param direction - The approved trace direction that defines the closure.
+   * @param log - Optional logger naming the edges withheld by the closure.
+   * @param rendered - Node ids of the delivered object result; an edge whose destination or
+   *   authoring hop is outside it is withheld and named in one `log` line. A source may lie outside.
    * @returns The aspect to deliver — the live state itself when nothing was withheld.
    */
-  deliveredState(droppedEndpointIds: ReadonlySet<string>): ColumnAspect {
-    if (droppedEndpointIds.size === 0) return this.aspect;
-    return {
-      ...this.aspect,
-      edges: this.aspect.edges.filter(
-        e => !droppedEndpointIds.has(e.from_node) && !droppedEndpointIds.has(e.to_node)),
-    };
+  deliveredState(
+    droppedEndpointIds: ReadonlySet<string>,
+    roots: readonly { node: string; col: string }[],
+    direction: 'upstream' | 'downstream' | 'both',
+    log?: TracerLogFn,
+    rendered?: ReadonlySet<string>,
+  ): ColumnAspect {
+    const present = this.aspect.edges.filter(
+      e => !droppedEndpointIds.has(e.from_node) && !droppedEndpointIds.has(e.to_node));
+    const kept = rendered ? present.filter(e => rendered.has(e.to_node) && rendered.has(e.hop_node)) : present;
+    if (kept.length < present.length) {
+      const absent = present.filter(e => !kept.includes(e)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col} (hop ${e.hop_node})`);
+      log?.('debug', `[Disposition] getResult withholds ${absent.length} column edge(s) whose destination or authoring hop is not in the delivered object result — ${absent.join(', ')}`);
+    }
+    const endpointKey = columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive);
+    const closure = columnAttachment(roots, kept, direction, endpointKey);
+    const delivered = kept.filter(e => closure.attaches(e));
+    if (delivered.length < kept.length) {
+      const detached = kept.filter(e => !delivered.includes(e)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col}`);
+      log?.('debug', `[Disposition] getResult withholds ${detached.length} column edge(s) outside the closure of the tracked roots — ${detached.join(', ')}`);
+    }
+    return delivered.length === this.aspect.edges.length ? this.aspect : { ...this.aspect, edges: delivered };
   }
 
   /** Columns requested at the start of the trace. */
@@ -139,12 +162,9 @@ export class ColumnTracer {
     traceDirection: 'upstream' | 'downstream',
   ): string[] {
     const spineByNorm = new Map<string, string>();
-    for (const e of this.aspect.edges) {
-      const nodeKey = traceDirection === 'downstream' ? e.to_node : e.from_node;
-      const colVal = traceDirection === 'downstream' ? e.to_col : e.from_col;
-      if (!colVal || (nodeKey !== candidateNodeId && !writtenCarrierIds.has(nodeKey))) continue;
-      const key = this.columnKey(colVal);
-      if (!spineByNorm.has(key)) spineByNorm.set(key, colVal);
+    for (const ref of this.spineEndpointsFor(candidateNodeId, writtenCarrierIds, traceDirection)) {
+      const key = this.columnKey(ref.col);
+      if (!spineByNorm.has(key)) spineByNorm.set(key, ref.col);
     }
     if (spineByNorm.size === 0) return entryColumns;
     const spine = [...spineByNorm.values()];
@@ -156,6 +176,36 @@ export class ColumnTracer {
       }
     }
     return spine;
+  }
+
+  /**
+   * The committed endpoints a candidate owns on the traced spine, as qualified identities.
+   *
+   * @remarks
+   * Upstream, an endpoint is the source side of a committed edge that sits on the candidate or on a
+   * non-bodied carrier it writes; downstream, the destination side. Each endpoint is an exact
+   * recorded (node, column) pair, deduplicated by identity — never a column name matched on
+   * another object.
+   *
+   * @param candidateNodeId - Canonical id of the candidate node.
+   * @param writtenCarrierIds - Non-bodied carriers the candidate writes.
+   * @param traceDirection - Which edge side names the candidate's endpoint.
+   * @returns The candidate's qualified spine endpoints in commit order.
+   */
+  spineEndpointsFor(
+    candidateNodeId: string,
+    writtenCarrierIds: ReadonlySet<string>,
+    traceDirection: 'upstream' | 'downstream',
+  ): Array<{ node: string; col: string }> {
+    const endpoints = new Map<string, { node: string; col: string }>();
+    for (const e of this.aspect.edges) {
+      const node = traceDirection === 'downstream' ? e.to_node : e.from_node;
+      const col = traceDirection === 'downstream' ? e.to_col : e.from_col;
+      if (!col || (node !== candidateNodeId && !writtenCarrierIds.has(node))) continue;
+      const key = `${node}|${this.columnKey(col)}`;
+      if (!endpoints.has(key)) endpoints.set(key, { node, col });
+    }
+    return [...endpoints.values()];
   }
 
   /**
@@ -221,14 +271,19 @@ export class ColumnTracer {
    * @param traceDirection - Trace direction of the owning exploration; resolves which neighbour
    * side a continuation may name at a body-less focus (producers for upstream, consumers for
    * downstream).
-   * @param incomingRefs - Transient qualified endpoints supplied by the task context.
-   * Explicit links must be continuous with these exact identities through either endpoint;
-   * task traversal side controls continuation routing, not relationship relevance. When omitted,
-   * committed endpoints anchor validation, or the initial
-   * focus columns when no edges are committed. Submitted renames may continue an anchored chain.
+   * @param incomingRefs - Transient qualified endpoints supplied by the task context. When omitted,
+   * committed endpoints anchor validation, or the initial focus columns when no edges are committed.
+   * They select entry sides; attachment is decided by the {@link columnAttachment} of `roots` alone.
    * @param incomingDownstreamRefs - Separate explicitly arriving downstream obligations at a mixed-side hop.
    *   The two anchor sets remain separate to preserve their recorded continuation legs.
-   * @returns Validation result containing any error, invalid routes, successfully staged edges, and
+   * @param roots - The requested output columns; with the committed and staged edges they define
+   *   {@link columnAttachment} in the hop's direction (both sides at a mixed-side hop).
+   * @param contributorIds - Canonical ids an `upstream_columns` contributor may name besides the
+   *   focus: its object neighbors and the read suppliers of its declared scalar callers. A column the
+   *   object does not declare, a literal, or a carrier continuation at a non-writer is refused wherever
+   *   the object sits; any other contributor is dropped with an `absent_contributor` notice, so no column edge joins an object
+   *   unconnected to the hop; omitted, adjacency is not checked.
+   * @returns Validation result containing any error, invalid routes, successfully staged edges and
    *   the accepted entry sides when separate downstream obligations were supplied.
    */
   validateColumnFlow(
@@ -244,6 +299,8 @@ export class ColumnTracer {
     returnTargets: readonly { node: string; col: string }[] = [],
     callerTargets: readonly { node: string; col: string }[] = [],
     incomingDownstreamRefs: readonly { node: string; col: string }[] = [],
+    roots: readonly { node: string; col: string }[] = [],
+    contributorIds?: ReadonlySet<string>,
   ): { error?: { error: string; hint: string }; invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[]; entrySides?: Array<{ index: number; upstream: boolean; downstream: boolean }> } {
     const identifierKey = (id: string): string => schemaKey(id, model.identifierCaseSensitive);
     const invalidRoutes: InvalidRoute[] = [];
@@ -336,7 +393,11 @@ export class ColumnTracer {
             verbs.add(edgeApiType(e.type, focusNode.type));
           }
         }
-        if (verbs.size > 0 && [...verbs].every((v) => v === 'read')) {
+        if (verbs.size === 0) {
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node.` });
+          continue;
+        }
+        if ([...verbs].every((v) => v === 'read')) {
           invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node; every open neighbor you do not prune is visited anyway.` });
           continue;
         }
@@ -355,6 +416,7 @@ export class ColumnTracer {
       }
       const toNodeForEdge = toNodeId ?? focusId;
 
+      const rowRoleOnly: string[] = [];
       for (let refIndex = 0; refIndex < entry.upstream_columns.length; refIndex++) {
         const cont = entry.upstream_columns[refIndex];
         if (cont.col.trim().length === 0) {
@@ -442,6 +504,18 @@ export class ColumnTracer {
           }
         }
 
+        // Adjacency is judged last, after the column and the carrier's continuation: a nonexistent column or a literal is refused wherever the object sits, and a non-writer continuation keeps its own refusal.
+        if (contributorIds && neighbor.id !== focusId && !contributorIds.has(neighbor.id)) {
+          invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" has no dependency edge to ${focusId}; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.` });
+          continue;
+        }
+
+        // Direct lineage only: a column that just joins, filters, groups or orders rows is object lineage — its node is a row-role visit and the hop's sections explain the rule.
+        if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
+          rowRoleOnly.push(`${fromNode}.${cont.col}`);
+          continue;
+        }
+
         stagedEdges.push({
           hop: 0, // Assigned by caller
           hop_node: focusId,
@@ -454,10 +528,13 @@ export class ColumnTracer {
         });
       }
 
+      if (rowRoleOnly.length > 0) {
+        log?.('debug', `[Normalize] column_flow.${entryIndex} into "${entry.out_col}" — row role only, not a column source: [${rowRoleOnly.join(', ')}]`);
+      }
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
-        && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry)) {
+        && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry || rowRoleOnly.length > 0)) {
         stagedEdges.push({
           hop: 0, // Assigned by caller
           hop_node: focusId,
@@ -470,58 +547,76 @@ export class ColumnTracer {
       entryEdges.set(entryIndex, stagedEdges.slice(stagedBeforeEntry));
     }
 
-    if (!focusIsCarrier) {
-      const reachable = reachableColumnEndpoints(
-        new Set(anchors.keys()),
-        stagedEdges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) })),
-        traceDirection,
-      );
-      const downstreamReachable = incomingDownstreamRefs.length > 0
-        ? reachableColumnEndpoints(new Set(incomingDownstreamRefs.map(ref => endpointKey(ref.node, ref.col))),
-          stagedEdges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) })), 'downstream')
-        : undefined;
-      const entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> = [];
+    // A link is admitted only when its destination is in the closure of the tracked roots over the
+    // committed and staged links; one fixpoint, so the order of the entries never decides.
+    const mixed = incomingDownstreamRefs.length > 0;
+    const closureEdges = [...this.aspect.edges, ...stagedEdges];
+    const attached = columnAttachment(roots, closureEdges, mixed ? 'upstream' : traceDirection, endpointKey);
+    const downstreamAttached = mixed ? columnAttachment(roots, closureEdges, 'downstream', endpointKey) : undefined;
+    const detachedIn = (edges: ColumnEdge[], closure: ColumnAttachment): ColumnEdge[] =>
+      edges.filter(edge => !closure.attaches(edge));
+    const rejectDetached = (entryIndex: number, detached: ColumnEdge[]): void => {
+      const entry = columnFlow[entryIndex];
+      const tracked = [...anchors.values()].join(', ');
+      invalidRoutes.push({
+        kind: 'untracked_out_col',
+        id: focusId,
+        path: `column_flow.${entryIndex}.upstream_columns`,
+        reason: detached.length > 0
+          ? `column_flow.${entryIndex} into "${entry.out_col}" links ${[...new Set(detached.map(edge => `${edge.from_node}.${edge.from_col} -> ${edge.to_node}.${edge.to_col}`))].join(', ')}, which attach to no tracked endpoint [${tracked}].`
+          : `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${tracked}].`,
+        available_columns: [...this.aspect.active_columns],
+      });
+    };
+
+    if (focusIsCarrier) {
       const rejectedEdges = new Set<ColumnEdge>();
       for (const [entryIndex, edges] of entryEdges) {
-        const entry = columnFlow[entryIndex];
-        if (entry.upstream_columns.length === 0) {
-          const target = resolveColumnFlowTarget(entry, focusId, nodeMap, model.identifierCaseSensitive);
-          const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
-            || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
-          const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
-          if (incomingDownstreamRefs.length === 0 || upstream || downstream) {
+        const upDetached = detachedIn(edges, attached);
+        const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : upDetached;
+        const detached = downDetached.length < upDetached.length ? downDetached : upDetached;
+        if (detached.length === 0) continue;
+        rejectDetached(entryIndex, detached);
+        for (const edge of edges) rejectedEdges.add(edge);
+      }
+      return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)) };
+    }
+
+    const entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> = [];
+    const rejectedEdges = new Set<ColumnEdge>();
+    for (const [entryIndex, edges] of entryEdges) {
+      const entry = columnFlow[entryIndex];
+      const upDetached = detachedIn(edges, attached);
+      const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : undefined;
+      if (entry.upstream_columns.length === 0) {
+        const target = resolveColumnFlowTarget(entry, focusId, nodeMap, model.identifierCaseSensitive);
+        const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
+          || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
+        const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
+        if (!mixed || upstream || downstream) {
+          if (!mixed ? upDetached.length === 0
+            : upstream && upDetached.length === 0 || downstream && downDetached?.length === 0) {
             entrySides.push({ index: entryIndex, upstream, downstream });
             continue;
           }
-        }
-        if (edges.length === 0 && entry.upstream_columns.length > 0) continue;
-        const connectedUpstream = anchors.has(endpointKey(focusId, entry.out_col)) || edges.some(edge => {
-          const source = endpointKey(edge.from_node, edge.from_col);
-          const target = endpointKey(edge.to_node, edge.to_col);
-          return reachable.has(target) || reachable.has(source);
-        });
-        const connectedDownstream = downstreamReachable !== undefined && edges.some(edge =>
-          downstreamReachable.has(endpointKey(edge.from_node, edge.from_col))
-          || downstreamReachable.has(endpointKey(edge.to_node, edge.to_col)));
-        const upstream = connectedUpstream && activeNorm.includes(this.columnKey(entry.out_col));
-        if (incomingDownstreamRefs.length > 0 ? upstream || connectedDownstream : connectedUpstream) {
-          entrySides.push({ index: entryIndex, upstream, downstream: connectedDownstream });
+          rejectDetached(entryIndex, downDetached && downDetached.length < upDetached.length ? downDetached : upDetached);
+          for (const edge of edges) rejectedEdges.add(edge);
           continue;
         }
-        invalidRoutes.push({
-          kind: 'untracked_out_col',
-          id: focusId,
-          path: `column_flow.${entryIndex}.upstream_columns`,
-          reason: `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${[...anchors.values()].join(', ')}]. Name the actual source and explicit write destination where applicable. Keep unrelated analysis in sections; do not invent a write or replace a real contributor with upstream_columns: [].`,
-          available_columns: [...this.aspect.active_columns],
-        });
-        for (const edge of edges) rejectedEdges.add(edge);
       }
-      return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)),
-        ...(incomingDownstreamRefs.length > 0 ? { entrySides } : {}) };
+      if (edges.length === 0 && entry.upstream_columns.length > 0) continue;
+      const attachedUpstream = edges.length === 0 ? anchors.has(endpointKey(focusId, entry.out_col)) : upDetached.length === 0;
+      const attachedDownstream = edges.length > 0 && downDetached?.length === 0;
+      const upstream = attachedUpstream && activeNorm.includes(this.columnKey(entry.out_col));
+      if (mixed ? upstream || attachedDownstream : attachedUpstream) {
+        entrySides.push({ index: entryIndex, upstream, downstream: attachedDownstream });
+        continue;
+      }
+      rejectDetached(entryIndex, downDetached && downDetached.length < upDetached.length ? downDetached : upDetached);
+      for (const edge of edges) rejectedEdges.add(edge);
     }
-
-    return { invalidRoutes, stagedEdges };
+    return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)),
+      ...(mixed ? { entrySides } : {}) };
   }
 }
 
@@ -582,6 +677,98 @@ export function reachableColumnEndpoints(
   }
   for (const endpoint of visited) reachable.add(endpoint);
   return reachable;
+}
+
+/** The fields of a column edge that {@link columnClosure} reads. */
+export type ColumnClosureEdge = Pick<ColumnEdge, 'hop_node' | 'from_node' | 'from_col' | 'to_node' | 'to_col'>;
+
+/** Which column endpoints and edges are attached to the trace; see {@link columnAttachment}. */
+export interface ColumnAttachment {
+  /** Keys of the attached endpoints. */
+  readonly endpoints: Set<string>;
+  /**
+   * Keys of the endpoints the tracked value flows through: the requested outputs and, when the
+   * direction includes downstream, everything they feed. A link out of one is attached; an input of
+   * what they feed (a second contributor) is in {@link endpoints} but not here, so it is never carried on.
+   */
+  readonly flowing: Set<string>;
+  /** Whether a committed or staged edge is attached. */
+  attaches(edge: ColumnClosureEdge): boolean;
+}
+
+/**
+ * The one definition of what is attached to the trace — a column island is an endpoint or edge
+ * outside it. Admission, carry and delivery all read it.
+ *
+ * @remarks
+ * Upstream: the requested output columns and everything that feeds them. Downstream: the requested
+ * outputs, everything they feed, and every input of what they feed — a second contributor to a
+ * reached output is attached, its other outputs are not. Both: the union. An edge is attached when
+ * its `to` endpoint is.
+ *
+ * The origin's own explicit write of a requested output (an edge from the root out of the origin
+ * hop to another node) attaches that one destination when the direction rule does not already hold
+ * it, together with what the origin hop itself recorded into it and whatever feeds those inputs. It
+ * is not an anchor for another hop: an edge into it authored elsewhere is not attached.
+ * Library BFS only ({@link reachableColumnEndpoints}).
+ *
+ * @param roots - The requested output columns on the origin.
+ * @param edges - Committed plus staged column edges.
+ * @param direction - The approved trace direction.
+ * @param endpointKey - Key factory of {@link columnEndpointKeyFactory}.
+ */
+export function columnAttachment(
+  roots: readonly { node: string; col: string }[],
+  edges: ReadonlyArray<ColumnClosureEdge>,
+  direction: 'upstream' | 'downstream' | 'both',
+  endpointKey: (node: string, col: string) => string,
+): ColumnAttachment {
+  const rootKeys = new Set(roots.map(root => endpointKey(root.node, root.col)));
+  const links = edges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) }));
+  const endpoints = new Set(rootKeys);
+  if (direction !== 'downstream') for (const key of reachableColumnEndpoints(rootKeys, links, 'upstream')) endpoints.add(key);
+  const flowing = new Set(rootKeys);
+  if (direction !== 'upstream') {
+    const fed = reachableColumnEndpoints(rootKeys, links, 'downstream');
+    for (const key of fed) flowing.add(key);
+    for (const key of reachableColumnEndpoints(fed, links, 'upstream')) endpoints.add(key);
+  }
+  const ownWrites = new Map<string, string>();
+  edges.forEach((edge, index) => {
+    if (edge.from_node === edge.hop_node && edge.to_node !== edge.from_node && rootKeys.has(links[index].from)
+      && !endpoints.has(links[index].to)) ownWrites.set(links[index].to, edge.hop_node);
+  });
+  if (ownWrites.size > 0) {
+    const ownInputs = new Set<string>();
+    edges.forEach((edge, index) => { if (ownWrites.get(links[index].to) === edge.hop_node) ownInputs.add(links[index].from); });
+    for (const key of ownWrites.keys()) endpoints.add(key);
+    for (const key of reachableColumnEndpoints(ownInputs, links.filter(link => !ownWrites.has(link.to)), 'upstream')) endpoints.add(key);
+  }
+  return {
+    endpoints,
+    flowing,
+    attaches: edge => {
+      const to = endpointKey(edge.to_node, edge.to_col);
+      return endpoints.has(to) && (!ownWrites.has(to) || ownWrites.get(to) === edge.hop_node);
+    },
+  };
+}
+
+/**
+ * The attached endpoint keys of {@link columnAttachment}; the carry reads this set.
+ *
+ * @param roots - The requested output columns on the origin.
+ * @param edges - Committed plus staged column edges.
+ * @param direction - The approved trace direction.
+ * @param endpointKey - Key factory of {@link columnEndpointKeyFactory}.
+ */
+export function columnClosure(
+  roots: readonly { node: string; col: string }[],
+  edges: ReadonlyArray<ColumnClosureEdge>,
+  direction: 'upstream' | 'downstream' | 'both',
+  endpointKey: (node: string, col: string) => string,
+): Set<string> {
+  return columnAttachment(roots, edges, direction, endpointKey).endpoints;
 }
 
 /** Where one `column_flow` entry's recorded columns land, and the writer edge it stages. */

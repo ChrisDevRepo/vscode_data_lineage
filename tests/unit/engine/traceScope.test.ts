@@ -223,6 +223,39 @@ describe("Trace Scope Safety Tests", () => {
   }
 });
 
+  it("manually added co-parent leaves with the only node it hangs on", () => {
+  // O→N traced downstream; M→N was added with the + control (no directed support from O).
+  const g = makeGraph([{ id: 'O' }, { id: 'N' }, { id: 'M' }], [['O', 'N'], ['M', 'N']]);
+  const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'M']), 'N', ['downstream']);
+  expect(check.safe).toBe(true);
+  expect(check.cutNodeIds, 'M would be stranded without N').toEqual(['M']);
+});
+
+  it("manually added sibling chain leaves with the cut branch that carries it", () => {
+  // O→A→B traced downstream; S (S→B) and then T (T→S) were added by hand.
+  const g = makeGraph(
+    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'S' }, { id: 'T' }],
+    [['O', 'A'], ['A', 'B'], ['S', 'B'], ['T', 'S']],
+  );
+  const check = canPruneTraceNode(g, 'O', new Set(['O', 'A', 'B', 'S', 'T']), 'A', ['downstream']);
+  expect(new Set(check.cutNodeIds)).toEqual(new Set(['B', 'S', 'T']));
+});
+
+  it("manually added node with another visible link survives the prune", () => {
+  const g = makeGraph(
+    [{ id: 'O' }, { id: 'N' }, { id: 'K' }, { id: 'M' }],
+    [['O', 'N'], ['O', 'K'], ['M', 'N'], ['M', 'K']],
+  );
+  const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'K', 'M']), 'N', ['downstream']);
+  expect(check.cutNodeIds).toEqual([]);
+});
+
+  it("a node already disconnected before the prune is not swept into an unrelated cut", () => {
+  const g = makeGraph([{ id: 'O' }, { id: 'N' }, { id: 'Z' }], [['O', 'N']]);
+  const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'Z']), 'N', ['downstream']);
+  expect(check.cutNodeIds).toEqual([]);
+});
+
   it("origin not in visible: not safe", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
   const visible = new Set(['A']);

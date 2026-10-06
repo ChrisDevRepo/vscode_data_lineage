@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { stepOutcome } from './gate-status.mjs';
 import { nodeBin, npmCommand } from './npm-launcher.mjs';
 
 /** Where a failing step's captured output is written, so a red gate stays diagnosable. */
@@ -42,7 +43,11 @@ const STEPS = [
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'test environment profiles', cmd: nodeBin, args: ['--test', 'tests/tools/load-test-env.test.mjs'] },
-  { name: 'isolated GUI host contract', cmd: nodeBin, args: ['--test', 'tests/tools/gui-test-host.test.mjs'] },
+  {
+    name: 'test tooling contracts',
+    cmd: nodeBin,
+    args: ['--test', 'tests/tools/gui-test-host.test.mjs', 'tests/tools/chat-ui-replay-trace.test.mjs', 'tests/tools/gate-status.test.mjs'],
+  },
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
   { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },
   { name: 'no tracked scratch files', cmd: nodeBin, args: ['tests/tools/assert-no-tracked-scratch.mjs'] },
@@ -62,7 +67,8 @@ for (const step of STEPS) {
   process.stdout.write(`\n──── ${step.name}\n`);
   const started = Date.now();
   const run = await runStep(step);
-  const ok = run.status === 0;
+  const outcome = run.error ? 'FAIL' : stepOutcome(run.status);
+  const ok = outcome !== 'FAIL';
   let logPath = '';
   if (!ok) {
     logPath = join(LOG_DIR, `${step.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.log`);
@@ -70,6 +76,7 @@ for (const step of STEPS) {
   }
   results.push({
     name: step.name,
+    outcome,
     ok,
     logPath,
     note: run.error ? `did not start: ${run.error.message}`
@@ -85,12 +92,16 @@ process.stdout.write(`\n${'='.repeat(width + 18)}\nGATE SUMMARY\n${'='.repeat(wi
 for (const r of results) {
   const note = r.note ? `  (${r.note})` : '';
   const log = r.logPath ? `  → ${r.logPath}` : '';
-  process.stdout.write(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name.padEnd(width)}  ${r.seconds}s${note}${log}\n`);
+  process.stdout.write(`${r.outcome}  ${r.name.padEnd(width)}  ${r.seconds}s${note}${log}\n`);
 }
 
 const failed = results.filter((r) => !r.ok);
+const skipped = results.filter((r) => r.outcome === 'SKIP');
 process.stdout.write(`${'='.repeat(width + 18)}\n`);
-process.stdout.write(`${results.length - failed.length}/${results.length} green\n`);
+process.stdout.write(
+  `${results.length - failed.length - skipped.length}/${results.length} green`
+  + `${skipped.length > 0 ? `, ${skipped.length} skipped (not verified)` : ''}\n`,
+);
 process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n');
 process.stdout.write(
   'Additional checks: npm run test:edh exercises the VS Code host with fixed responses; '

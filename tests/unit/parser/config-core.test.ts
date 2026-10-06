@@ -102,6 +102,23 @@ describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
   });
 });
 
+describe('overlay example in docs/AI_PROMPTS.md', () => {
+  it('parses as an overlay and carries a string instruction under each key it sets', () => {
+    const doc = readFileSync(rootPath('docs/AI_PROMPTS.md'), 'utf-8');
+    const example = /Example — guidance for a junior DBA[\s\S]*?```yaml\n([\s\S]*?)```/.exec(doc)?.[1];
+    expect(example, 'the junior-DBA overlay example is present').toBeDefined();
+
+    const parsed = parseAiOutputTemplatesYaml(`schemaVersion: ${AI_TEMPLATE_SCHEMA_VERSION}\n${example}`) as Record<string, { instruction?: unknown }>;
+    const keys = Object.keys(parsed).filter((key) => key !== 'schemaVersion');
+
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      expect(REQUIRED_AI_TEMPLATE_KEYS as string[], `'${key}' is a template key`).toContain(key);
+      expect(typeof parsed[key].instruction, `'${key}' sets instruction, the only field the loader reads`).toBe('string');
+    }
+  });
+});
+
 describe('clampDeclaredNumericSetting', () => {
   it('holds a value above the declared maximum at the maximum', () => {
     expect(clampDeclaredNumericSetting('maxNodes', 11000)).toBe(5000);

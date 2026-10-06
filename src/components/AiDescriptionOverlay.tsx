@@ -129,6 +129,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const dockMenu = useDropdown();
 
   const anchorRef = useRef<HTMLDivElement | null>(null);
+  /** Observes the panel while expanded; a dock switch re-observes so the new edge's size is reported even when unchanged. */
   useEffect(() => {
     if (!expanded || !onPanelResize) return;
     const el = anchorRef.current;
@@ -138,7 +139,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [expanded, onPanelResize]);
+  }, [expanded, onPanelResize, dockPosition]);
 
   const litSections = activeSection != null ? [activeSection] : [];
 

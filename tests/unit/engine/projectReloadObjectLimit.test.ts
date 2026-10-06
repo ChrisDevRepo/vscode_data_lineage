@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
 import type { ProjectStore } from '../../../src/engine/projectStore';
 import type { DbCellValue, SimpleExecuteResult } from '../../../src/types/mssql';
+import { ColumnStore } from '../../../src/engine/columnStore';
 import { formatObjectLimitMessage } from '../../../src/engine/modelFilters';
 import { buildSyntheticDacpac } from '../helpers/syntheticDacpac';
 
@@ -18,6 +19,10 @@ vi.mock('vscode', async (importOriginal) => ({
   window: { withProgress: (_o: unknown, task: (p: unknown, t: unknown) => unknown) => task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) }) },
   ProgressLocation: { Notification: 15 },
   commands: { executeCommand: vi.fn(async () => undefined) },
+  workspace: {
+    getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
+    onDidChangeConfiguration: () => ({ dispose() {} }),
+  },
 }));
 
 vi.mock('../../../src/engine/connectionManager', async (importOriginal) => {
@@ -72,7 +77,7 @@ async function reload(host: BridgeHost, connection: Record<string, unknown>): Pr
     schemaVersion: 1,
     projects: [{ id: 'p1', name: 'Sales', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', connection }],
   } as unknown as ProjectStore;
-  const session = { model: null, uiState: {}, renderState: null, isDbSession: false, columnStore: new Map(), clearDiscoveryTranscript: vi.fn() };
+  const session = { model: null, uiState: {}, renderState: null, isDbSession: false, columnStore: new ColumnStore(), clearDiscoveryTranscript: vi.fn() };
   const { handlers } = createMessageHandlers(
     host,
     { globalState: { get: () => undefined, update: () => Promise.resolve() }, secrets: {} } as never,

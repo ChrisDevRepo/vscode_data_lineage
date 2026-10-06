@@ -11,7 +11,7 @@ import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
 import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
-import { redactSecrets } from './connectionErrors';
+import { redactSecrets } from '../../utils/redact';
 import type { DbQueryOptions, DbSession } from './dbSession';
 import { acquireSqlToken } from './entraSignIn';
 import type { DmvQuery } from '../connectionManager';
@@ -371,6 +371,7 @@ export async function openBuiltInSession(
   if (options.token?.isCancellationRequested) return undefined;
 
   const lib = await import('tedious');
+  if (options.token?.isCancellationRequested) return undefined;
   const encrypt = connection.encrypt ?? true;
   const trustServerCertificate = connection.trustServerCertificate ?? false;
   const address = resolveServerAddress(connection.server);

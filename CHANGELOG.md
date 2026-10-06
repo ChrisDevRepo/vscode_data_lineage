@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4] - 2026-10-06
+
+### Fixed
+- Approval card object names show underscores and other Markdown characters as written instead of with a leading backslash.
+- The schema legend's expanded list scrolls inside the canvas so every schema is reachable; **Show less** stays visible below the list, and scrolling the list no longer zooms the graph.
+- Column traces follow only the columns whose value produces the traced column; join, filter, group and order columns are explained, not traced.
+
 ## [1.2.3] - 2026-10-01
 
 ### Fixed

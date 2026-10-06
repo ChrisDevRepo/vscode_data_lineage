@@ -28,11 +28,9 @@ export interface CurrentHopActionPolicyInput {
 
 /** Pure action classification consumed atomically by NavigationEngine. */
 export interface CurrentHopActionPolicyResult {
-  /** Fatal conflicts that reject the complete submission. */
-  fatalErrors: InvalidRoute[];
   /** Nonfatal refused/unknown actions recorded for the next hop. */
   notices: InvalidRoute[];
-  /** Prune targets — in scope or out — that are not already visited, queued, noted or removed, eligible for the declared-column check. */
+  /** Resolved prune targets that are not the origin and not already visited, queued, noted or removed. */
   acceptedPruneIds: string[];
 }
 
@@ -44,13 +42,12 @@ export interface CurrentHopActionPolicyResult {
  * protected rather than turned into a retry-loop rejection.
  */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
-  const fatalErrors: InvalidRoute[] = [];
   const notices: InvalidRoute[] = [];
   const acceptedPruneIds: string[] = [];
 
   for (const target of input.pruneTargets) {
-    const id = target.resolved ?? target.raw.toLowerCase();
-    if (!target.resolved) {
+    const id = target.resolved;
+    if (!id) {
       notices.push({ kind: 'prune_absent', id: target.raw, path: target.path, reason: `\`${target.raw}\` is not in the loaded model.` });
       continue;
     }
@@ -82,5 +79,5 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
     acceptedPruneIds.push(id);
   }
 
-  return { fatalErrors, notices, acceptedPruneIds };
+  return { notices, acceptedPruneIds };
 }

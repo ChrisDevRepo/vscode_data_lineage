@@ -7,7 +7,7 @@
  */
 import * as yaml from 'js-yaml';
 import { z } from 'zod';
-import type { AiOutputTemplates } from './ai/session/types';
+import { AI_SECTION_KEY_BY_ANGLE, type AiOutputSections, type AiOutputTemplates, type AiSectionAngle } from './ai/session/types';
 import { contributes } from '../package.json';
 
 /**
@@ -20,12 +20,15 @@ import { contributes } from '../package.json';
  * field is coerced to a number (`"1"` → `1`) rather than a `number | string` union that would
  * always fail that comparison and silently disable the overlay. Every OTHER top-level key must be
  * a template object (`{ instruction?: string, ...extra }`) — `catchall` enforces that while
- * leaving `schemaVersion` as the one legal scalar exception.
+ * leaving `schemaVersion` as the one legal scalar exception. The optional `sections` field of a
+ * capture recipe is read by {@link readAiOutputSections}, which validates it per key so a malformed
+ * list costs only that list, never the file.
  */
 const AiOutputTemplatesConfigSchema = z.object({
   schemaVersion: z.coerce.number().optional(),
 }).catchall(z.object({
   instruction: z.string().optional(),
+  sections: z.unknown().optional(),
 }).passthrough());
 
 /** Parsed shape of the AI-output-templates YAML — the return contract of {@link parseAiOutputTemplatesYaml}. */
@@ -64,6 +67,34 @@ export const REQUIRED_AI_TEMPLATE_KEYS: (keyof AiOutputTemplates)[] = [
   'loading_pattern',
   'column_trace_capture',
 ];
+
+/** A declared section label list: non-empty, every label a non-blank string. */
+const SectionLabelsSchema = z.array(z.string().trim().min(1)).min(1);
+
+/**
+ * Reads the optional `sections` label list of each capture recipe.
+ *
+ * @remarks
+ * A recipe without the field contributes nothing. A malformed value (not a non-empty list of
+ * non-blank strings) is reported in `rejected` and skipped, so the loader warns and the label list
+ * from the file underneath (built-in) stays in force.
+ *
+ * @param parsed - A parsed templates file.
+ * @returns The valid label lists per angle and the template keys whose `sections` value was rejected.
+ */
+export function readAiOutputSections(parsed: AiOutputTemplatesConfig | undefined): { sections: AiOutputSections; rejected: string[] } {
+  const sections: Partial<Record<AiSectionAngle, readonly string[]>> = {};
+  const rejected: string[] = [];
+  for (const angle of Object.keys(AI_SECTION_KEY_BY_ANGLE) as AiSectionAngle[]) {
+    const key = AI_SECTION_KEY_BY_ANGLE[angle];
+    const declared = parsed?.[key]?.sections;
+    if (declared === undefined) continue;
+    const result = SectionLabelsSchema.safeParse(declared);
+    if (result.success) sections[angle] = result.data;
+    else rejected.push(key);
+  }
+  return { sections, rejected };
+}
 
 /**
  * Parses and validates raw YAML text against {@link AiOutputTemplatesConfigSchema}.

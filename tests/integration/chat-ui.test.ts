@@ -271,4 +271,62 @@ suite('Native chat confirmations — actual UI', () => {
     console.log(`[chat-ui] live E2E passed elapsedMs=${Date.now()-start} followupMs=${Date.now()-followupStart} bullets=${bulletText.length}`);
   });
 
+  // DDL of tests/fixtures/AdventureWorks2025_AI.dacpac: [ai].[spRefreshPrices] is the only writer of [ai].[PriceMaster].[ListPrice]:
+  //   ListPrice = sc.CostPrice * (1 + COALESCE(m.MarkupPct, 0.15))  FROM [ai].[SupplierPrices] sp CROSS JOIN [ai].[RegionLookup] r
+  //   INNER JOIN [ai].[CurrencyConfig] cc ON sp.Currency = cc.Code WHERE cc.IsBase = 1 ... LEFT JOIN [ai].[MarkupRules] m ON RegionCode.
+  // Value input: [ai].[SupplierPrices].[CostPrice] (also MarkupPct). Key/filter-only: [ai].[CurrencyConfig].[Code] (join key) and
+  // [ai].[CurrencyConfig].[IsBase] (filter); the procedure comment itself says "CurrencyConfig: FILTER ONLY".
+  if (real) test('live column trace → value inputs only, rendered report intact',async function () {
+    const column = '[ai].[PriceMaster].[ListPrice]';
+    const normalized = (text:string|null) => (text ?? '').replace(/[\[\]`]/g,'').toLowerCase();
+    await newChat();
+    assert.ok(exports.getSession().model?.nodes.some(node=>node.id.toLowerCase()==='[ai].[pricemaster]'),'the real fixture must contain the traced table');
+    await send(`@lineage /trace ${column} — trace this column back to its original sources.`);
+    await continueButton().or(page.getByRole('button',{name:/Show graph preview/}).last()).waitFor({state:'visible',timeout:180000});
+    if (!await continueButton().isVisible()) {
+      await page.getByRole('button',{name:/Show graph preview/}).last().click();
+      await page.getByRole('button',{name:/Run trace/}).last().waitFor({state:'visible',timeout:180000});
+      await page.getByRole('button',{name:/Run trace/}).last().click();
+      await continueButton().waitFor({state:'visible',timeout:180000});
+    }
+    assert.equal(exports.getSession().phase.kind,'awaiting_gate');
+    assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'no hop runs before consent');
+    await idleInput();
+    await approveOnce();
+    await deadlineWait(()=>exports.getSession().phase.kind==='completed','approved column trace must complete');
+    const fullReport = page.getByRole('button',{name:/Show (the )?full description/}).last();
+    await fullReport.waitFor({state:'visible',timeout:180000});
+    await fullReport.click();
+    await idleInput();
+    const reply = responses().last();
+    const chainHeading = reply.locator('.rendered-markdown').locator('h1,h2,h3,h4,h5,h6').filter({hasText:/^\s*Column Chain\s*$/i});
+    await chainHeading.first().waitFor({state:'visible',timeout:60000});
+    // Source rows of the Column Chain: table rows between its heading and the next h1/h2 section, first cell = source column.
+    const chainSources = await reply.evaluate(root=>{
+      const nodes=Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6,tr'));
+      const start=nodes.findIndex(n=>/^H\d$/.test(n.tagName) && /^\s*column chain\s*$/i.test(n.textContent ?? ''));
+      const rows:string[]=[];
+      for (const n of nodes.slice(start+1)) {
+        if (/^H[12]$/.test(n.tagName)) break;
+        if (n.tagName==='TR' && n.querySelector('td')) rows.push(n.querySelector('td')?.textContent ?? '');
+      }
+      return rows;
+    });
+    const sources = chainSources.map(normalized);
+    assert.ok(sources.some(row=>row.includes('costprice')),`Column Chain must list the value input CostPrice; rows: ${JSON.stringify(chainSources)}`);
+    assert.ok(!sources.some(row=>row.includes('currencyconfig')),`join/filter-only CurrencyConfig must not be a Column Chain source; rows: ${JSON.stringify(chainSources)}`);
+    const reportText = await reply.innerText();
+    assert.match(normalized(reportText),/currencyconfig/,'the join/filter object stays in the report');
+    assert.ok(!(await reply.locator('.rendered-markdown').allInnerTexts()).join('\n').includes('```'),'no literal code fence may render as text');
+    const listStarts = await reply.locator('.rendered-markdown ol').evaluateAll(lists=>lists.map(list=>list.getAttribute('start') ?? '1'));
+    assert.deepEqual(listStarts.filter(start=>start!=='1'),[],'an ordered list that restarts above 1 was split by an interrupting block');
+    for (const line of (exports.getSession().lastPresentResultDescription ?? '').split('\n')) {
+      assert.ok(!line.includes('```') || /^\s*```/.test(line),`an SQL fence must stand on its own line: ${line.slice(0,120)}`);
+    }
+    mkdirSync(artifactDir,{recursive:true});
+    writeFileSync(`${artifactDir}/column-report.txt`,reportText);
+    await reply.scrollIntoViewIfNeeded();
+    await capture('column-trace');
+  });
+
 });

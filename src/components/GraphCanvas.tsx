@@ -41,7 +41,7 @@ import { TracedFilterBanner, TRACE_ICON } from './TracedFilterBanner';
 import { ModeBanner } from './ModeBanner';
 import { PathFinderBar } from './PathFinderBar';
 import { TRACE_NAVIGATOR_WIDTH, TraceTreePanel } from './TraceTreePanel';
-import { buildTraceTree } from './traceTreeModel';
+import { buildTraceTree } from '../engine/traceTree';
 import { AnalysisBanner } from './AnalysisBanner';
 import { AnalysisSidebar } from './AnalysisSidebar';
 import { AiViewBanner } from './AiViewBanner';
@@ -83,6 +83,8 @@ import { directNeighborIds, type NeighborSide, type RemovalSide } from '../engin
 import { notifyUser } from '../utils/notify';
 import { normalizeColName, schemaKey } from '../utils/sql';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
+import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
+import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 
 /**
  * Mapping of custom node types for React Flow.
@@ -100,8 +102,6 @@ const AiDescriptionOverlay = lazy(async () => {
   const module = await import('./AiDescriptionOverlay');
   return { default: module.AiDescriptionOverlay };
 });
-import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
-import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 
 /** The panel's reserved extent before its own `ResizeObserver` has reported a measured size. */
 const AI_PANEL_DEFAULT_WIDTH = 'min(440px, 55vw)';
@@ -124,6 +124,9 @@ export function aiLayoutCacheKey(originId: string | undefined, viewName: string)
 const FIT_VIEW_PADDING = 0.15;
 
 type FitViewPadding = NonNullable<FitViewOptions['padding']>;
+
+/** React Flow's mount-time `fitViewOptions`; module-level so the prop keeps one identity. */
+const INITIAL_FIT_VIEW_OPTIONS: FitViewOptions = { padding: FIT_VIEW_PADDING };
 
 /** Fit padding while the trace navigator card covers the canvas's left edge: its width plus a gap. */
 const TRACE_NAVIGATOR_FIT_PADDING: FitViewPadding = { x: FIT_VIEW_PADDING, y: FIT_VIEW_PADDING, left: `${TRACE_NAVIGATOR_WIDTH + 40}px` };
@@ -340,6 +343,9 @@ const EDGE_DENSITY_CLASS_NAME = 'ln-edge-density';
 
 /** Stable empty route-target list for the navigator outside a focus. */
 const NO_FOCUS_TARGETS: readonly string[] = [];
+
+/** Stable empty stale-name list for the AI preview info card. */
+const NO_STALE_NAMES: string[] = [];
 
 /**
  * Name of the per-edge CSS custom property carrying its own base stroke width, set once when an
@@ -863,6 +869,21 @@ export function GraphCanvas({
   const displayedGraphRef = useRef({ nodes: flowNodes, edges: flowEdges, sourceNodes: flowNodes, sourceEdges: flowEdges });
   const vscodeApi = useVsCode();
 
+  /** Schema colours of the current graph, collision-resolved across its schemas as the object nodes carry them. */
+  const graphSchemaColors = useMemo(
+    () => deriveLegendColorMap(flowNodes, model?.identifierCaseSensitive),
+    [flowNodes, model?.identifierCaseSensitive],
+  );
+  /**
+   * A node's canvas colour: the external colour, or its schema's colour in the current graph. A
+   * schema outside the graph (a listed but filtered trace node) falls back to the per-schema hash.
+   */
+  const resolveNodeColor = useCallback((schema: string, objectType?: string): string => {
+    if (objectType === 'external') return getExternalNodeColor();
+    return graphSchemaColors.get(schemaKey(schema, model?.identifierCaseSensitive))
+      ?? getSchemaColor(schema, undefined, model?.identifierCaseSensitive);
+  }, [graphSchemaColors, model?.identifierCaseSensitive]);
+
   const [localNodes, setLocalNodes] = useState<FlowNode[]>(flowNodes);
   const [localEdges, setLocalEdges] = useState<FlowEdge[]>(flowEdges);
   const [syncedGraph, setSyncedGraph] = useState({ nodes: flowNodes, edges: flowEdges });
@@ -925,11 +946,15 @@ export function GraphCanvas({
     const saved = (vscodeApi.getState() as Record<string, unknown> | undefined)?.[AI_DOCK_STATE_KEY];
     return saved === 'left' || saved === 'bottom' ? saved : 'right';
   });
-  const setDockPosition = useCallback((position: AiDockPosition) => {
-    setDockPositionState(position);
-    vscodeApi.setState({ ...(vscodeApi.getState() ?? {}), [AI_DOCK_STATE_KEY]: position });
-  }, [vscodeApi]);
+  /** The report panel's measured size on the current dock edge; null until it reports there. */
   const [panelSizePx, setPanelSizePx] = useState<{ width: number; height: number } | null>(null);
+  /** Moves the report to another edge, dropping the size measured on the old one. */
+  const setDockPosition = useCallback((position: AiDockPosition) => {
+    if (position === dockPosition) return;
+    setDockPositionState(position);
+    setPanelSizePx(null);
+    vscodeApi.setState({ ...(vscodeApi.getState() ?? {}), [AI_DOCK_STATE_KEY]: position });
+  }, [vscodeApi, dockPosition]);
   const handleAiPanelResize = useCallback((width: number, height: number) => {
     setPanelSizePx(prev => (prev && prev.width === width && prev.height === height) ? prev : { width, height });
   }, []);
@@ -990,6 +1015,7 @@ export function GraphCanvas({
         identifierCaseSensitive: model?.identifierCaseSensitive,
         relations,
         objects,
+        objectEdges: flowEdges,
         verdicts,
         config,
         layoutDirection: activeAiMetadata?.layoutDirection,
@@ -1002,7 +1028,7 @@ export function GraphCanvas({
       });
       return null;
     }
-  }, [activeAiMetadata, config, flowNodes, model, vscodeApi]);
+  }, [activeAiMetadata, config, flowNodes, flowEdges, model, vscodeApi]);
 
   /** Whether the column view — not the object view — is the rendering currently on stage. */
   const columnViewActive = columnView && !!columnTraceView;
@@ -1180,13 +1206,13 @@ export function GraphCanvas({
           : color;
       }
       if (node.type === 'columnTraceNode') {
-        const view = (node.data as ColumnTraceNodeData).view;
-        return view.objectType === 'external' ? getExternalNodeColor() : getSchemaColor(view.schema, undefined, model?.identifierCaseSensitive);
+        const data = node.data as ColumnTraceNodeData;
+        return data.schemaColor ?? resolveNodeColor(data.view.schema, data.view.objectType);
       }
       const d = node.data as CustomNodeData;
-      return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? getSchemaColor(String(d.schema), undefined, model?.identifierCaseSensitive));
+      return d.objectType === 'external' ? getExternalNodeColor() : (d.schemaColor ?? resolveNodeColor(String(d.schema)));
     },
-    [isExpandedSchemaViewActive, model?.identifierCaseSensitive]
+    [isExpandedSchemaViewActive, resolveNodeColor]
   );
 
   const minimapNodeStrokeColor = useCallback(
@@ -1572,6 +1598,9 @@ export function GraphCanvas({
     []
   );
 
+  const onCameraChangeRef = useRef(onCameraChange);
+  onCameraChangeRef.current = onCameraChange;
+
   /**
    * Shows or hides AI notes as the canvas crosses the legibility zoom.
    *
@@ -1580,9 +1609,6 @@ export function GraphCanvas({
    * decoration and a gesture resting on one exact zoom value would rebuild the whole node set on
    * each crossing. Off below {@link NOTES_ZOOM_OUT}, on above {@link NOTES_ZOOM_IN}.
    */
-  const onCameraChangeRef = useRef(onCameraChange);
-  onCameraChangeRef.current = onCameraChange;
-
   const handleViewportChange = useCallback((vp: { x: number; y: number; zoom: number }) => {
     setNotesVisible(prev => {
       if (prev && vp.zoom < NOTES_ZOOM_OUT) return false;
@@ -1813,10 +1839,11 @@ export function GraphCanvas({
         showRemoveButton: d.removable,
         onRemoveFromView: d.onRemoveFromView,
         traceControls: d.traceControls,
+        schemaColor: resolveNodeColor(view.schema, view.objectType),
       });
     }
     return byNode;
-  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode, model?.identifierCaseSensitive]);
+  }, [columnTraceView, notesVisible, highlightedNodeId, level1Neighbors, aiHighlightMap, aiBadgeMap, aiNoteMap, isBookmarkMode, canRemoveNodeFromScopedView, onRemoveFromView, traceControlsByNode, trace.selectedNodeId, trace.mode, model?.identifierCaseSensitive, resolveNodeColor]);
 
   const displayNodes = useMemo((): FlowNode[] => {
     if (columnViewActive && columnTraceView) {
@@ -1851,7 +1878,32 @@ export function GraphCanvas({
       const litBySelection = (edge: { source: string; target: string }) =>
         !highlightedNodeId || edge.source === highlightedNodeId || edge.target === highlightedNodeId;
 
-      return columnTraceView.edges.map(edge => {
+      const objectEdges = columnTraceView.objectEdges.map(edge => {
+        const lit = !hoveredColumnPath && litBySelection(edge);
+        return {
+          id: edge.id,
+          type: 'columnTraceEdge',
+          source: edge.source,
+          target: edge.target,
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: COLUMN_EDGE_MARKER_SIZE,
+            height: COLUMN_EDGE_MARKER_SIZE,
+            color: lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)',
+          },
+          data: {
+            state: 'unknown',
+            lit,
+            focused: lit && !!highlightedNodeId,
+            sourceColumn: '',
+            targetColumn: '',
+            objectLevel: true,
+          } satisfies ColumnTraceEdgeData,
+        };
+      });
+      return [...objectEdges, ...columnTraceView.edges.map(edge => {
         const lit = hoveredColumnPath ? litByHover(edge) : litBySelection(edge);
         return {
           id: edge.id,
@@ -1869,13 +1921,14 @@ export function GraphCanvas({
           data: {
             state: edge.state,
             lit,
+            focused: lit && (!!hoveredColumnPath || !!highlightedNodeId),
             sourceColumn: edge.sourceColumn,
             targetColumn: edge.targetColumn,
             ...(edge.transforms?.length ? { transforms: edge.transforms } : {}),
             ...(edge.note ? { note: edge.note } : {}),
           } satisfies ColumnTraceEdgeData,
         };
-      });
+      })];
     }
     if (!highlightedNodeId && !isFocusPaths) return localEdges;
 
@@ -1937,9 +1990,9 @@ export function GraphCanvas({
   const resolveTraceTreeNode = useCallback(
     (id: string) => {
       const n = modelNodeMap.get(id);
-      return n ? { name: n.name, detail: n.schema, type: n.type as ObjectType } : undefined;
+      return n ? { name: n.name, detail: n.schema, type: n.type as ObjectType, color: resolveNodeColor(n.schema, n.type) } : undefined;
     },
-    [modelNodeMap],
+    [modelNodeMap, resolveNodeColor],
   );
 
   const visibleNodeIds = useMemo(
@@ -1961,6 +2014,16 @@ export function GraphCanvas({
     () => deriveLegendColorMap(localNodes, model?.identifierCaseSensitive),
     [localNodes, model?.identifierCaseSensitive],
   );
+
+  /** Info-card profile for an unsaved AI preview; memoized so the memoized card skips unrelated canvas renders. */
+  const aiPreviewProfile = useMemo((): FilterProfile | null => (aiPreview ? {
+    id: '',
+    name: aiPreview.name,
+    createdAt: new Date().toISOString(),
+    source: 'ai',
+    filter: { schemas: [], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: true, externalRefTypes: [], exclusionPatterns: [] },
+    aiMetadata: aiPreview.aiMetadata,
+  } : null), [aiPreview]);
 
   useEffect(() => {
     if (!graphErrorContext) return;
@@ -2213,7 +2276,7 @@ export function GraphCanvas({
                   onNodeContextMenu(node, event.clientX, event.clientY);
                 }}
                 fitView
-                fitViewOptions={{ padding: 0.15 }}
+                fitViewOptions={INITIAL_FIT_VIEW_OPTIONS}
                 minZoom={minZoom}
                 maxZoom={MAX_CANVAS_ZOOM}
                 defaultViewport={{ x: 0, y: 0, zoom: 1 }}
@@ -2324,19 +2387,12 @@ export function GraphCanvas({
             staleNodeNames={bookmarkStaleNames ?? []}
           />
         )}
-        {aiPreview && !activeAdvancedProfile && (
+        {aiPreviewProfile && !activeAdvancedProfile && (
           <BookmarkInfoCard
-            profile={{
-              id: '',
-              name: aiPreview.name,
-              createdAt: new Date().toISOString(),
-              source: 'ai',
-              filter: { schemas: [], types: [], searchTerm: '', hideIsolated: false, focusSchemas: [], showExternalRefs: true, externalRefTypes: [], exclusionPatterns: [] },
-              aiMetadata: aiPreview.aiMetadata,
-            }}
+            profile={aiPreviewProfile}
             nodeCount={localNodes.length}
             schemaCount={legendSchemas.length}
-            staleNodeNames={[]}
+            staleNodeNames={NO_STALE_NAMES}
           />
         )}
         {/* AI report column — docked to the chosen edge, collapsible to a slim rail; section chips scroll and highlight that section's nodes */}

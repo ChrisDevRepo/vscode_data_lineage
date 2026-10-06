@@ -51,7 +51,7 @@ function committedState(engine: NavigationEngine) {
 }
 
 describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs => {
-  it.each(['bb', 'ct'] as const)('keeps source identity through %s approval, hops, repair, synthesis and checkpoint', async mode => {
+  it.each(['bb', 'ct'] as const)('keeps source identity through %s approval, hops, repair, synthesis and the captured run record', async mode => {
     const model = dirtyCatalog(cs);
     expect(model.edges.length, JSON.stringify(model.parseStats)).toBeGreaterThan(0);
     const session = new AiSession({ ...EMPTY_AI_TEMPLATES, technical_capture: 'Capture the supplied SQL.', structural_summary: 'Describe source columns.' });
@@ -149,8 +149,7 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
       expect(edges.some(edge => edge.toCol === 'VALUE')).toBe(false);
     }
     const checkpoint = session.presentationArtifact!.checkpoint!;
-    const restored = NavigationEngine.fromJSON(checkpoint, model, session.graph!, () => {});
-    expect(restored.getResult().fullNodes.map(node => node.id)).toEqual(session.stateMachine!.getResult().fullNodes.map(node => node.id));
-    expect(restored.columnAspect).toEqual(session.stateMachine!.columnAspect);
+    expect(checkpoint.identifierCaseSensitive).toBe(cs);
+    expect(checkpoint).toEqual(session.stateMachine!.toJSON());
   });
 });

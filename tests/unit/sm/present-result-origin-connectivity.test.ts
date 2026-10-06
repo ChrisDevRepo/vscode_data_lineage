@@ -1,4 +1,4 @@
-/** Result amendments retain the declared origin and reject disconnected views without committing. */
+/** Result amendments retain the declared origin, reject disconnected views without committing, and commit applied graph edits. */
 import { describe, expect, it, vi } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
@@ -17,7 +17,7 @@ function world(cs: boolean) {
   const epoch = session.beginTurn();
   session.resultGraph = { nodeIds: [origin, source, sibling], edges: [[source, origin, 'read'], [sibling, origin, 'read']], source: 'blackboard', originNodeId: origin };
   session.enterCompleted(epoch);
-  const deliverPreview = vi.fn().mockResolvedValue(true);
+  const deliverPreview = vi.fn().mockResolvedValue('delivered');
   const services = {
     getSession: () => session, turnEpoch: () => epoch, requireModel: () => model,
     logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
@@ -25,7 +25,7 @@ function world(cs: boolean) {
     logAndReturn: (_name: string, data: object) => JSON.stringify(data),
     toolError: (_name: string, error: unknown) => { throw error; },
   } as unknown as ToolServices;
-  return { session, services, deliverPreview, origin, source, sibling };
+  return { session, services, deliverPreview, model, origin, source, sibling };
 }
 
 describe.each([false, true])('result origin closure (CS=%s)', cs => {
@@ -61,5 +61,39 @@ describe.each([false, true])('result origin closure (CS=%s)', cs => {
     expect(corrected.success).toBe(true);
     expect(session.resultGraph?.nodeIds).toEqual([origin, source]);
     expect(deliverPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, false] as const)('commits a completed-phase prune with is_update=%s so the next render keeps it pruned', async isUpdate => {
+    const { session, services, deliverPreview, origin, source, sibling } = world(cs);
+    const render = (extra: Record<string, unknown>) => executePresentResult({ name: 'Report lineage', summary: 'Report sources.',
+      sections: [{ label: 'Sources', node_ids: [origin, source], text: 'Source supplies the report.' }],
+      highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }], ...extra,
+    }, services).then(out => JSON.parse(out));
+    const first = await render({ prune_node_ids: [sibling], ...(isUpdate === undefined ? {} : { is_update: isUpdate }) });
+    expect(first.success).toBe(true);
+    expect(first.node_count).toBe(2);
+    expect(session.resultGraph?.nodeIds).toEqual([origin, source]);
+    expect(session.resultGraph?.edges).toEqual([[source, origin, 'read']]);
+    const second = await render({});
+    expect(second.success).toBe(true);
+    expect(second.node_count).toBe(2);
+    expect(deliverPreview).toHaveBeenLastCalledWith(expect.objectContaining({ nodeIds: [origin, source] }));
+  });
+
+  it('commits a completed-phase add without is_update so the next render keeps the added node', async () => {
+    const { session, services, deliverPreview, model, origin, source, sibling } = world(cs);
+    model.edges.push({ source, target: origin, type: 'body' }, { source: sibling, target: origin, type: 'body' });
+    session.resultGraph!.nodeIds = [origin, source];
+    session.resultGraph!.edges = [[source, origin, 'read']];
+    const render = (extra: Record<string, unknown>) => executePresentResult({ name: 'Report lineage', summary: 'Report sources.',
+      sections: [{ label: 'Sources', node_ids: [origin, source, sibling], text: 'Source and sibling supply the report.' }],
+      highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }], ...extra,
+    }, services).then(out => JSON.parse(out));
+    const first = await render({ add_node_ids: [sibling] });
+    expect(first).toMatchObject({ success: true });
+    expect(session.resultGraph?.nodeIds).toEqual([origin, source, sibling]);
+    const second = await render({});
+    expect(second.success).toBe(true);
+    expect(deliverPreview).toHaveBeenLastCalledWith(expect.objectContaining({ nodeIds: expect.arrayContaining([origin, source, sibling]) }));
   });
 });

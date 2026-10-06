@@ -52,6 +52,7 @@ function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartR
   const tag = issue.code === 'custom' ? issue.params?.startIssue : undefined;
   if (tag === 'bb_target_columns_forbidden') return { code: REJECTION_CODES.ctFieldForbiddenInBb, path, message: issue.message, action: BB_ACTION };
   if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message: issue.message, action: CT_TARGET_COLUMNS_RECOVERY };
+  if (tag === 'start_shape_conflict') return { code: 'invalid_value', path, message: issue.message, action: issue.message };
   if (tag === ASYMMETRIC_DEPTH_BOTH_ZERO) return { code: ASYMMETRIC_DEPTH_BOTH_ZERO, path, message: issue.message, action: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' };
   if (issue.code === 'unrecognized_keys') return { code: 'unknown_field', path: issue.keys.join(',') || path, message: issue.message, action: 'Remove the unknown field and resubmit.' };
   if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message: issue.message, action: RESEND };

@@ -209,13 +209,6 @@ function appendUniqueSections(
  */
 export class AiMemoryManager {
   private detailSlots = new Map<string, DetailSlot>();
-  /**
-   * Archive of content already captured for a node at the hop where its focus verdict landed
-   * `prune`. Storage only — never read by {@link getResult} or {@link getWorkingMemory}, so a
-   * self-prune cannot resurrect a node into the synthesis-visible archive. Kept so a later,
-   * separately-approved read path can cite it; see `getPrunedDetails`.
-   */
-  private prunedDetails = new Map<string, DetailSlot>();
   private userQuestion = '';
   private missionBrief = '';
   private scopeNotes: string[] = [];
@@ -225,7 +218,6 @@ export class AiMemoryManager {
   /** Clears every field so the manager can be reused across sessions. */
   public reset(): void {
     this.detailSlots.clear();
-    this.prunedDetails.clear();
     this.userQuestion = '';
     this.missionBrief = '';
     this.scopeNotes = [];
@@ -234,12 +226,13 @@ export class AiMemoryManager {
   }
 
   /**
-   * Records one verdict against the running A/P/prune tally.
+   * Records one focus verdict against the running tally.
    *
-   * @param verdict - The verdict recorded this hop (`analyze`, `passthrough`, or `prune` — the internal name of
-   * the wire verdict `end_branch`, see `NavigationEngine.submitFindings`).
+   * @param verdict - The verdict committed this hop. A focus is kept as `analyze` or `passthrough`;
+   *   the tally's `prune` count is not fed from here, and the engine reports pruned nodes from node
+   *   lifecycle (`NavigationEngine` progress).
    */
-  public recordVerdict(verdict: 'analyze' | 'passthrough' | 'prune'): void {
+  public recordVerdict(verdict: 'analyze' | 'passthrough'): void {
     this.verdictCounts[verdict]++;
   }
 
@@ -365,50 +358,6 @@ export class AiMemoryManager {
   }
 
   /**
-   * Retains a self-pruned focus node's already-captured content instead of discarding it.
-   *
-   * @param node - The node the findings describe.
-   * @param sections - Captured sections at the hop where the verdict landed `prune`.
-   * @param summary - One-line digest submitted alongside the prune verdict.
-   * @param meta - Optional synthesis metadata — `badge_label`, `reason_for_visit`.
-   *
-   * @remarks
-   * No-op when nothing was captured (`sections` empty and `summary` blank) — a bare prune with no
-   * prior content leaves nothing worth retaining. Writes to {@link prunedDetails}, a store distinct
-   * from {@link detailSlots}; {@link getResult} never reads it, so this cannot change what synthesis
-   * sees on a run that would otherwise succeed.
-   */
-  public storePrunedDetail(
-    node: LineageNode,
-    sections: CapturedSection[],
-    summary: string,
-    meta?: { badge_label?: string; reason_for_visit?: string },
-  ): void {
-    if (sections.length === 0 && !summary.trim()) return;
-    this.prunedDetails.set(node.id, {
-      nodeId: node.id,
-      schema: node.schema,
-      name: node.name,
-      type: node.type,
-      sections,
-      summary,
-      badge_label: meta?.badge_label,
-      reason_for_visit: meta?.reason_for_visit,
-    });
-  }
-
-  /**
-   * Archive of content retained from self-pruned focus nodes, in insertion order.
-   *
-   * @remarks
-   * Not consumed by any current caller — the read side is deferred past rollout. Exposed for
-   * diagnostics and for tests pinning the retention write.
-   */
-  public getPrunedDetails(): DetailSlot[] {
-    return Array.from(this.prunedDetails.values());
-  }
-
-  /**
    * Produces the working-memory snapshot delivered to the model this hop.
    *
    * @param hopCount - Hop index (1-based) supplied by the engine.
@@ -475,8 +424,7 @@ export class AiMemoryManager {
    * @remarks
    * The inverse of {@link toJSON}: restores the detail archive **in insertion order** (so the
    * sliding `<short_term_memory>` window and synthesis lift see the same sequence), plus the
-   * mission brief, verdict tally and rejection ring. Engine restore passes a memory snapshot
-   * already validated as part of the strict current-format checkpoint.
+   * mission brief, verdict tally and rejection ring.
    *
    * @param snapshot - A prior `toJSON()` payload (typically after a JSON serialize/parse round-trip).
    * @returns A new manager carrying the restored state.
@@ -497,7 +445,7 @@ export class AiMemoryManager {
    *
    * @remarks
    * `AiSession.memory` is a stable readonly object shared by prompt builders and the
-   * state machine. Cross-restart graph resume must therefore restore the object in place
+   * state machine. An in-process rollback must therefore restore the object in place
    * rather than swapping the reference.
    */
   public restoreFromJSON(snapshot: MemoryStateSnapshot): void {

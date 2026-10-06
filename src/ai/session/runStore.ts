@@ -36,7 +36,7 @@ export interface StoredAiRun {
 export type StoredRunReader = (bookmarkId: string) => StoredAiRun | undefined;
 
 /** Global-state key prefix under which one {@link StoredAiRun} is persisted per bookmark. */
-export const AI_RUN_KEY_PREFIX = 'dataLineageViz.aiRun.';
+const AI_RUN_KEY_PREFIX = 'dataLineageViz.aiRun.';
 
 /**
  * Builds the global-state key holding the {@link StoredAiRun} for one bookmark.
@@ -52,7 +52,7 @@ export function aiRunStorageKey(bookmarkId: string): string {
 export const UNKNOWN_DDL_HASH = 'unknown';
 
 /** Minimal write surface of the global-state store the run records live in. */
-export type RunStoreWriter = {
+type RunStoreWriter = {
   update(key: string, value: unknown): PromiseLike<void>;
 };
 
@@ -67,8 +67,8 @@ type RunStoreReader = {
  * @remarks
  * Tolerant where the record can degrade and strict where it cannot. A top-level key from a newer
  * build is carried through rather than treated as corruption; an unreadable `origin` or
- * `ddlHashes` costs only the staleness annotation. The snapshot is validated by the same schema
- * the engine restores from, so a damaged checkpoint answers "no run memory" rather than reaching
+ * `ddlHashes` costs only the staleness annotation. The snapshot is validated by the navigation
+ * snapshot schema, so a damaged record answers "no run memory" rather than reaching
  * the presenter as a half-shaped object.
  */
 const StoredAiRunSchema = z.object({

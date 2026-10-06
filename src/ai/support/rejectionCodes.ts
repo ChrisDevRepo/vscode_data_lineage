@@ -77,7 +77,7 @@ export const REJECTION_CODES = {
   emptyStructuredOutput: 'empty_structured_output',
   /** The provider generated text or nothing instead of the phase's required terminal tool call (`toolAttempt.ts`). */
   missingRequiredToolCall: 'missing_required_tool_call',
-  /** `submit_findings` carries a classification that no longer matches the locked exploration classification (`submitFindings.ts`). */
+  /** `submit_findings` carries a classification that no longer matches the locked exploration classification (`smBase.ts`). */
   classificationLockViolation: 'classification_lock_violation',
   /** A registered tool handler threw; the generic fallback envelope both LM lanes feed back to the model (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
   toolExecutionError: 'tool_execution_error',

@@ -7,7 +7,7 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 1. Open the **Command Palette** (`Ctrl+Shift+P`) and run **Data Lineage: Create DMV Queries** — copies the built-in YAML into your workspace as `dmvQueries.yaml`.
 2. Set `dataLineageViz.dmvQueriesFile` to `dmvQueries.yaml` in VS Code Settings (`Ctrl+,`, search "dataLineageViz").
 3. Edit the SQL — add WHERE filters, adjust JOINs, swap a query for a vendor variant.
-4. The YAML is loaded on every DB import. Missing or unreadable files, invalid YAML, or a file with no usable query entries falls back to the built-in queries with a warning. Invalid individual entries are skipped; a partially valid custom file remains active.
+4. The YAML is loaded on every DB import. Table statistics on a built-in connection reuse the queries last loaded, until the next import or a change of `dataLineageViz.dmvQueriesFile`, so an invalid file warns once rather than on every request. Missing or unreadable files, invalid YAML, or a file with no usable query entries falls back to the built-in queries with a warning. Invalid individual entries are skipped; a partially valid custom file remains active.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ Nothing runs automatically in the background. The standard import path uses:
 | Phase | Queries | When |
 |-------|---------|------|
 | Phase 1 | `schema-preview` | Runs first to populate the schema-selection wizard. |
-| Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the extension uses authoritative MSSQL server metadata; if neither source is available, the model records `Unknown database platform` without failing the import. |
+| Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the extension uses authoritative MSSQL server metadata; if neither source is available, the model records `Unknown database platform` without failing the import. A built-in connection has no other source, so it records `Unknown database platform` directly instead of sending the query again. |
 | Built-in connection | `platform-info` | A built-in connection (`dataLineageViz.database.connectionProvider` = `builtIn`) reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. The database name is typed, not listed. |
 | Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
 | Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
@@ -89,6 +89,22 @@ queries:
       SELECT ... WHERE s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}})
 ```
 
+### Example: keep a schema out of the model
+
+To hide a schema from the wizard and the graph, add the same predicate to every
+query that returns objects. A restriction in only one query leaves the schema
+reachable through the others.
+
+| Query | Built-in predicate | Restricted |
+|---|---|---|
+| `schema-preview`, `all-objects` | `s.name NOT IN ('sys','INFORMATION_SCHEMA')` | `s.name NOT IN ('sys','INFORMATION_SCHEMA', N'Audit')` |
+| `nodes`, `columns`, `constraints` | `s.name IN ({{SCHEMAS}})` | `s.name IN ({{SCHEMAS}}) AND s.name NOT IN (N'Audit')` |
+| `dependencies` | `(s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))` | add `AND s1.name NOT IN (N'Audit') AND d.referenced_schema_name NOT IN (N'Audit')` |
+
+Keep `{{SCHEMAS}}` in every Phase 2 query: a query without it runs verbatim and
+ignores the wizard's schema selection (the output channel logs a warning). The
+file is read at each import, so an edit applies to the next import.
+
 ## Expected columns — the contract
 
 Each query must return the columns below. Column matching is case-insensitive and extra columns are ignored. The host currently validates `platform-info` before using it; the main extraction queries have no complete preflight check, so test custom result shapes before production use.
@@ -130,7 +146,7 @@ Used to identify dependencies into unselected schemas and preserve schema casing
 | `FN` | Scalar Function |
 | `IF` | Inline Table-Valued Function |
 | `TF` | Multi-Statement Table-Valued Function |
-| `ET` | External Table (PolyBase, Synapse, Fabric) |
+| `ET` | External Table (PolyBase, Synapse Dedicated SQL Pool, Fabric) |
 
 ### `platform-info` — platform detection
 

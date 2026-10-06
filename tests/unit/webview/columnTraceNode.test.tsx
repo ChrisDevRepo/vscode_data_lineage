@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ColumnTraceNode } from '../../../src/components/ColumnTraceNode';
 import { ColumnViewToggle } from '../../../src/components/ColumnViewToggle';
 import { ColumnHoverProvider } from '../../../src/contexts/ColumnHoverContext';
-import { COLUMN_ROW_DIM_OPACITY, columnRowKey } from '../../../src/engine/columnTraceView';
+import { COLUMN_ROW_DIM_OPACITY, COLUMN_TRANSFORM_CIRCLE_DIAMETER, COLUMN_TRANSFORM_NODE_HEIGHT, COLUMN_TRANSFORM_NODE_WIDTH, columnRowKey } from '../../../src/engine/columnTraceView';
 import type { ColumnTraceNodeData } from '../../../src/engine/types';
 
 // React 19 reads this to decide whether `act` may drive updates; without it every act() warns.
@@ -145,6 +145,18 @@ describe('ColumnTraceNode', () => {
     expect(rendered.map(r => r.textContent)).toEqual(['OrderId', 'CustomerId', 'Total']);
     // A bare column name is ambiguous across a multi-node trace, so the object rides the label.
     expect(rendered[0].getAttribute('aria-label')).toBe('dbo.Orders column OrderId');
+  });
+
+  it('borders the card in the resolved schema colour the caller supplies', () => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="dbo.orders" data={{ ...makeData(['OrderId']), schemaColor: '#123456' }} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const bordered = [...host.querySelectorAll<HTMLElement>('*')].find(el => el.style.borderLeftColor);
+    expect(bordered?.style.borderLeftColor).toBe('rgb(18, 52, 86)');
   });
 
   it('shows the declared backend data type beside the column name, and no shape annotation', () => {
@@ -343,6 +355,66 @@ describe('ColumnTraceNode', () => {
     );
     act(() => { rows()[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
     expect(rows()[1].getAttribute('aria-current'), 'Enter pins the row a click would pin').toBe('true');
+  });
+});
+
+describe('ColumnTraceNode without traced columns', () => {
+  const rowless = makeData([]);
+  rowless.aiBadge = { text: 'Archive' };
+
+  it('renders the header of an object that carries no column relation, with no rows', () => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="dbo.orders" data={rowless} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    expect(rows()).toHaveLength(0);
+    expect(host.textContent).toContain('dbo.Orders');
+    expect(host.textContent).toContain('Archive');
+  });
+
+  it('offers one id-less handle pair so its object edges have an anchor', () => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="dbo.orders" data={rowless} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const handles = [...host.querySelectorAll<HTMLElement>('.react-flow__handle')];
+    expect(handles.map(h => [h.classList.contains('source') ? 'source' : 'target', h.getAttribute('data-handleid')]))
+      .toEqual([['target', null], ['source', null]]);
+  });
+
+  it('anchors a row-less procedure hub on its circle, not on the box edge', () => {
+    const hub = makeData([]);
+    hub.view = { ...hub.view, isTransformNode: true, width: COLUMN_TRANSFORM_NODE_WIDTH, height: COLUMN_TRANSFORM_NODE_HEIGHT };
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness>
+          <ColumnTraceNode id="dbo.proc" data={hub} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const left = (side: string) => parseFloat(host.querySelector<HTMLElement>(`.react-flow__handle.${side}`)!.style.left);
+    const centre = COLUMN_TRANSFORM_NODE_WIDTH / 2;
+    const radius = COLUMN_TRANSFORM_CIRCLE_DIAMETER / 2;
+    expect(left('target') + 4).toBe(centre - radius);
+    expect(left('source') + 4).toBe(centre + radius);
+  });
+
+  it('dims while a column thread is active, being on none', () => {
+    mount(
+      <ReactFlowProvider>
+        <HoverHarness seed={new Set([columnRowKey('dbo.other', 'Qty')])}>
+          <ColumnTraceNode id="dbo.orders" data={rowless} />
+        </HoverHarness>
+      </ReactFlowProvider>,
+    );
+    const card = host.querySelector<HTMLElement>('.ln-node-card')!;
+    expect((card.parentElement as HTMLElement).style.opacity).not.toBe('1');
   });
 });
 

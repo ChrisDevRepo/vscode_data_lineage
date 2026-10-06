@@ -66,9 +66,10 @@ interface UseGraphologyReturn {
   /**
    * Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns
    * `true` and posts the refusal warning when the build would be refused, so a caller that defers the
-   * build into a transition can still learn about the refusal synchronously.
+   * build into a transition, or vets a candidate schema selection, learns about the refusal
+   * synchronously. Only the filter's schema selection decides admission.
    */
-  refusesBuild: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig) => boolean;
+  refusesBuild: (model: DatabaseModel, filter: Pick<FilterState, 'schemas'>, config?: ExtensionConfig) => boolean;
 }
 
 /**
@@ -87,7 +88,7 @@ export function useGraphology(): UseGraphologyReturn {
   const [filteredCount, setFilteredCount] = useState(0);
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
-  const refusesBuild = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG): boolean =>
+  const refusesBuild = useCallback((model: DatabaseModel, filter: Pick<FilterState, 'schemas'>, config: ExtensionConfig = DEFAULT_CONFIG): boolean =>
     refuseOverObjectLimit(filterBySchemas(model, filter.schemas), config.maxNodes, 'Filter') !== null, []);
 
   const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false, annotatedNodeIds?: readonly string[]): number => {
@@ -188,7 +189,7 @@ export function useGraphology(): UseGraphologyReturn {
       log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
     }
     return count;
-  }, [refusesBuild]);
+  }, []);
 
   return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel, refusesBuild };
 }

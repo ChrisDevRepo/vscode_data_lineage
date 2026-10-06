@@ -75,7 +75,7 @@ export function buildToolExecutionError(toolName: string): string {
 }
 
 /** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
-export const NO_PROJECT_LOADED_MESSAGE =
+const NO_PROJECT_LOADED_MESSAGE =
   'No project is loaded in the Data Lineage panel (closed or not opened yet); open the project and ask again.';
 
 /**
@@ -268,7 +268,7 @@ function describeUnionBranchText(descriptors: string[]): string {
  * number tells the model nothing beyond what the first already said.
  * @param issue - The narrowed `invalid_union` issue.
  * @param input - The value that failed parsing, when available — enables the per-field defect
- * enrichment in {@link unionBranchFieldDescriptor}; absent fields keep their bare-name listing.
+ * enrichment in {@link describeUnionBranch}; absent fields keep their bare-name listing.
  * @returns The composed reason line and the deduped, first-branch-first field paths.
  */
 function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line: string; paths: string[] } {
@@ -300,7 +300,7 @@ export const INVALID_TOOL_INPUT_REPAIR_HINT
  *
  * @returns The offending key names, empty when `error` carries no `unrecognized_keys` issue.
  */
-export function zodUnrecognizedKeys(error: z.ZodError): string[] {
+function zodUnrecognizedKeys(error: z.ZodError): string[] {
   return [...new Set(
     error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? issue.keys : [])),
   )];
@@ -324,6 +324,7 @@ interface JsonSchemaShape {
   properties?: Record<string, JsonSchemaShape>;
   required?: string[];
   enum?: unknown[];
+  minItems?: number;
 }
 
 /** A Zod issue path as the model reads it: `sections[2].blocks`. */
@@ -379,7 +380,8 @@ function acceptsNullAt(schema: z.ZodType | undefined, path: readonly PropertyKey
 }
 
 /**
- * Removal hint for `unrecognized_keys` issues, naming the keys the object they sit in accepts; the
+ * Hint for `unrecognized_keys` issues: states that the key is no field and names the fields of the
+ * object it sits in, so a misspelt key is renamed and an invented one dropped; the
  * call itself is the object for an issue at the root.
  *
  * @returns The object-directed hint; `undefined` when the schema is absent or does not resolve the
@@ -399,7 +401,7 @@ function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
     clauses.set(where, clause);
   }
   const parts = [...clauses].map(([where, { keys, allowed }]) =>
-    `remove ${[...keys].map(quoteKey).join(', ')} from ${where} (it accepts only ${allowed.join(', ')})`);
+    `${[...keys].map(quoteKey).join(', ')} ${keys.size > 1 ? 'are not fields' : 'is not a field'} of ${where}; its fields are ${allowed.join(', ')}`);
   const sentence = parts.join('; ');
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
 }
@@ -475,8 +477,8 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
  *
  * @remarks
  * Every applicable link, in this order: a refinement's own hint, an unrecognized key (removal is
- * unambiguous), a field absent outright (addition), a present value of the wrong JSON type, and an
- * array outside its size bound. The links are schema-derived, so any caller composing its own reject
+ * unambiguous), a field absent outright (addition), a present value of the wrong JSON type, a present
+ * value outside its enum, and an array outside its size bound. The links are schema-derived, so any caller composing its own reject
  * envelope gets the same repair intelligence {@link rejectionFromZodError} already gives. A hint
  * states the fault and the field repair only; the resend rule is appended once, last, by the caller.
  *
@@ -493,9 +495,61 @@ export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z
     unrecognizedKeyRepairHint(error, schema),
     missingFieldRepairHint(error, input, schema),
     typeMismatchRepairHint(error, input, schema),
+    invalidValueRepairHint(error, input, schema),
     sizeBoundRepairHint(error),
   ].filter((hint): hint is string => hint !== undefined);
   return hints.length > 0 ? [...new Set(hints)].join(' ') : undefined;
+}
+
+/** Whether `issue` is a present value outside its accepted values, the issue kind {@link invalidValueRepairHint} states. */
+function isPresentInvalidValue(issue: z.core.$ZodIssue, input: unknown): boolean {
+  return issue.code === 'invalid_value' && issue.path.length > 0
+    && (input === undefined || resolveAtPath(input, issue.path) !== undefined);
+}
+
+/** Reason line of an issue whose accepted values the repair hint states; the values are named once, in the hint. */
+const INVALID_VALUE_REASON = 'Invalid value';
+
+/**
+ * Repair hint for a present value outside the values its field accepts (an enum or literal).
+ *
+ * @remarks
+ * Names the accepted values and the repairs the call allows: set the field to one of them, or, for a
+ * field inside an array element, drop that entry when the array stays within its served minimum
+ * with every flagged entry of that array dropped.
+ * Issues sharing a field shape and accepted values are one clause. An absent field belongs to
+ * {@link missingFieldRepairHint}.
+ *
+ * @returns The value-directed hint; `undefined` when no `invalid_value` issue names a present value.
+ */
+function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
+  const issues = error.issues.filter((issue): issue is Extract<z.core.$ZodIssue, { code: 'invalid_value' }> =>
+    isPresentInvalidValue(issue, input));
+  const entryDepth = (path: readonly PropertyKey[]): number => path.map((key) => typeof key === 'number').lastIndexOf(true);
+  const flaggedEntries = new Map<string, Set<PropertyKey>>();
+  for (const issue of issues) {
+    const index = entryDepth(issue.path);
+    if (index < 0) continue;
+    const array = dottedPath(issue.path.slice(0, index));
+    flaggedEntries.set(array, (flaggedEntries.get(array) ?? new Set()).add(issue.path[index]!));
+  }
+  const clauses = new Set<string>();
+  for (const issue of issues) {
+    const field = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '');
+    const set = `Set "${field}" to one of ${issue.values.map((value) => JSON.stringify(value)).join(', ')}`;
+    const index = entryDepth(issue.path);
+    if (index < 0) {
+      clauses.add(`${set}.`);
+      continue;
+    }
+    const arrayPath = issue.path.slice(0, index);
+    const entries = input === undefined ? undefined : (resolveAtPath(input, arrayPath) as unknown[] | undefined)?.length;
+    const arrayNode = jsonSchemaNodeAt(schema, arrayPath);
+    const minItems = (arrayNode ? unwrapNullable(arrayNode) : undefined)?.minItems ?? 0;
+    const removable = entries === undefined || entries - flaggedEntries.get(dottedPath(arrayPath))!.size >= minItems;
+    clauses.add(removable ? `${set}, or remove the entry from "${dottedPath(arrayPath)}".` : `${set}.`);
+  }
+  return clauses.size > 0 ? [...clauses].join(' ') : undefined;
 }
 
 /**
@@ -623,11 +677,13 @@ function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecogn
  * apart from their array index (same code, message and path shape) collapse into the first, which
  * names the other indices, so one defect repeated across N entries is one line. Only STRUCTURAL
  * bounds reach this function; a content cap is enforced and reported separately by the validator
- * or engine.
+ * or engine. A present value outside its accepted values names them in the default hint
+ * ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves the
+ * reason carrying them.
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
  * {@link zodFieldRepairHint}, followed by the one generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input`
- * (the value that failed parsing) enabling measured-size and scalar-echo enrichment; optional `schema`
+ * (the value that failed parsing) enabling measured-size enrichment and absent-field hints; optional `schema`
  * (the schema it failed) enabling the hints that name what the schema accepts.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
  */
@@ -647,9 +703,11 @@ export function rejectionFromZodError(
       const path = issue.path.join('.');
       if (issue.code === 'unrecognized_keys') issuePaths.push(...unrecognizedKeyPaths(issue));
       else if (path) issuePaths.push(path);
-      message = opts.input !== undefined
-        ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
-        : baseIssueMessage(issue);
+      message = opts.hint === undefined && isPresentInvalidValue(issue, opts.input)
+        ? INVALID_VALUE_REASON
+        : opts.input !== undefined
+          ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
+          : baseIssueMessage(issue);
     }
     const shape = `${issue.code}|${message}|${issue.path.map(key => (typeof key === 'number' ? '*' : String(key))).join('.')}`;
     const first = shown.get(shape);

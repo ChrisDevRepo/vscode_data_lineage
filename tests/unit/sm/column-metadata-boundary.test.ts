@@ -5,6 +5,9 @@ import type { ColumnFlowEntry, HopFindingKept } from '../../../src/ai/sm/smTypes
 import type { ObjectType } from '../../../src/engine/types';
 import { makeModel, makeNode } from './helpers/fixtures';
 
+/** The requested output of the origin the focus is traced from. */
+const focusRoot = [{ node: 'focus', col: 'Result' }];
+
 function node(id: string, type: ObjectType, columns: string[]) {
   return makeNode({ id, name: id, schema: 'dbo', type,
     columns: columns.map(name => ({ name, type: 'int', nullable: 'NULL', extra: '' })) });
@@ -13,7 +16,7 @@ function validate(focusType: ObjectType, focusCols: string[], sourceType: Object
   const nodes = [node('focus', focusType, focusCols), node('source', sourceType, sourceCols), ...(targetType ? [node('target', targetType, targetCols)] : [])];
   const model = makeModel(nodes, [['source', 'focus'], ...(targetType ? [['focus', 'target'] as [string, string]] : [])], ['dbo']);
   const finding: HopFindingKept = { focus_node_id: 'focus', verdict: 'analyze', sections: [], summary: 'SQL-supported relation', column_flow: [flow ?? { out_col: 'Result', upstream_columns: [{ node: 'source', col: 'Input' }] }] };
-  return new ColumnTracer(['Result']).validateColumnFlow('focus', finding, new Map(nodes.map(n => [n.id, n])), model, null, undefined, undefined, 'upstream');
+  return new ColumnTracer(['Result']).validateColumnFlow('focus', finding, new Map(nodes.map(n => [n.id, n])), model, null, undefined, undefined, 'upstream', undefined, [], [], [], focusRoot);
 }
 
 describe('column metadata boundary', () => {
@@ -73,7 +76,7 @@ describe('column metadata boundary', () => {
     nodes[1].externalType = subtype;
     const model = makeModel(nodes, [['source', 'focus']], ['dbo']);
     const finding: HopFindingKept = { focus_node_id: 'focus', verdict: 'analyze', sections: [], summary: 'Explicit SQL source', column_flow: [{ out_col: 'Result', upstream_columns: [{ node: 'source', col: 'Input' }] }] };
-    const validate = () => new ColumnTracer(['Result']).validateColumnFlow('focus', finding, new Map(nodes.map(n => [n.id, n])), model, null, undefined, undefined, 'upstream');
+    const validate = () => new ColumnTracer(['Result']).validateColumnFlow('focus', finding, new Map(nodes.map(n => [n.id, n])), model, null, undefined, undefined, 'upstream', undefined, [], [], [], focusRoot);
     expect(validate().invalidRoutes).toEqual([]);
     expect(validate().stagedEdges).toEqual([expect.objectContaining({ from_node: 'source', from_col: 'Input', to_node: 'focus', to_col: 'Result' })]);
     nodes[1].columns = node('source', 'external', ['Different']).columns;
@@ -86,7 +89,7 @@ describe('column metadata boundary', () => {
     model.neighborIndex.source = { in: ['input'], out: ['focus'] };
     model.neighborIndex.focus = { in: ['source'], out: [] };
     const finding: HopFindingKept = { focus_node_id: 'focus', verdict: 'analyze', sections: [], summary: 'Writer attribution required', column_flow: [{ out_col: 'Result', upstream_columns: [{ node: 'source', col: 'Result' }] }] };
-    const result = new ColumnTracer(['Result']).validateColumnFlow('focus', finding, new Map(nodes.map(n => [n.id, n])), model, null, undefined, undefined, 'upstream');
+    const result = new ColumnTracer(['Result']).validateColumnFlow('focus', finding, new Map(nodes.map(n => [n.id, n])), model, null, undefined, undefined, 'upstream', undefined, [], [], [], focusRoot);
     expect(result.invalidRoutes).toEqual([]);
     expect(result.stagedEdges).toEqual([expect.objectContaining({ from_node: 'source', from_col: 'Result', to_node: 'focus', to_col: 'Result' })]);
   });

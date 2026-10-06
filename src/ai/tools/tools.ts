@@ -3,7 +3,8 @@
  * Retrieval functions invoked through the shared tool registry.
  * CT and BB lifecycle tools are handled by `NavigationEngine` through `toolProvider.ts`.
  *
- * This file owns RETRIEVAL ONLY. All formatting/normalization lives in aiPresenter.ts.
+ * This file owns RETRIEVAL ONLY. Payload formatting lives in aiPresenter.ts; input normalization in
+ * inputNormalization.ts.
  */
 import { bfsFromNode } from 'graphology-traversal';
 import type Graph from 'graphology';
@@ -17,6 +18,7 @@ import {
 } from '../../engine/types';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { schemaKey } from '../../utils/sql';
+import { sanitizeForLog } from '../../utils/log';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { applyIsolationFilter } from '../../engine/shared/modelFilters';
@@ -41,7 +43,8 @@ import {
   type TurnTokenBudget,
 } from '../support/tokenBudget';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
-import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
+import { getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
+import { getModelNodeMap } from './handlers/toolServices';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { cursorOffset, nextCursor } from '../support/text';
 
@@ -66,6 +69,19 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
     m.set(`${e.source}→${e.target}`, edgeApiType(e.type, nodeTypeById.get(e.source) ?? ''));
   }
   return m;
+}
+
+/** {@link buildEdgeTypeMap} per loaded model instance; a newly loaded model is a new key. */
+const edgeTypeMapCache = new WeakMap<DatabaseModel, Map<string, string>>();
+
+/** Returns the memoized edge-type map for `model`, building it once per model instance. */
+function getModelEdgeTypeMap(model: DatabaseModel): Map<string, string> {
+  let map = edgeTypeMapCache.get(model);
+  if (!map) {
+    map = buildEdgeTypeMap(model);
+    edgeTypeMapCache.set(model, map);
+  }
+  return map;
 }
 
 
@@ -277,8 +293,8 @@ function validateQuery(query: string): ToolRejection | null {
  * @param schemas - Optional filter for schemas.
  * @param mode - Search mode ('substring' or 'regex').
  * @param activeFilter - Current UI filter state to tag results.
- * @param onDebug - Optional debug sink; logged when `normalizeSearchQueryInput` splits a
- * schema-qualified query (e.g. `dbo.FactSales`) into a schema hint and a bare name.
+ * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `normalizeSearchQueryInput`
+ * rewrites the query (e.g. `[dbo].[FactSales]` into the schema hint `dbo` and the name `FactSales`).
  * @returns A list of matches with metadata, the `by_type` breakdown of that list, and AI hints.
  */
 export async function searchObjects(
@@ -294,8 +310,8 @@ export async function searchObjects(
 ) {
   const isRegex = mode === 'regex';
   const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
-  if (normalizedQuery.schemaHint) {
-    onDebug?.(`[AI] search-query-normalized raw=${JSON.stringify(query)} schema=${normalizedQuery.schemaHint} name=${normalizedQuery.query}`);
+  if (normalizedQuery.schemaHint || normalizedQuery.query !== query.trim()) {
+    onDebug?.(`[Normalize] tool=search_objects field=query from=${JSON.stringify(query)} to=${JSON.stringify(normalizedQuery.query)}${normalizedQuery.schemaHint ? ` schema_hint=${JSON.stringify(normalizedQuery.schemaHint)}` : ''}`);
   }
   const normalizedSchemas =
     schemas && schemas.length > 0
@@ -473,6 +489,9 @@ const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact objec
  * @param model - The full database model.
  * @param id - The unique identifier of the object (e.g., "schema.name").
  * @param store - Optional column store for high-fidelity metadata.
+ * @param cursor - Neighbour page cursor from a previous call.
+ * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `id` resolves to a different
+ * canonical spelling.
  * @returns A detailed object representation or a "not_found" error.
  */
 export function getObjectDetail(
@@ -480,16 +499,20 @@ export function getObjectDetail(
   id: string,
   store?: import('../../engine/columnStore').ColumnStore,
   cursor?: string,
+  onDebug?: (msg: string) => void,
 ): object {
-  const nodeMap = buildNodeMap(model);
+  const nodeMap = getModelNodeMap(model);
   const normalizedId = resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? '';
+  if (normalizedId && normalizedId !== id) {
+    onDebug?.(`[Normalize] tool=get_object_detail field=id from=${sanitizeForLog(id)} to=${sanitizeForLog(normalizedId)}`);
+  }
   const node      = nodeMap.get(normalizedId);
   if (!node) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { id } });
   }
 
   const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
-  const edgeMap   = buildEdgeTypeMap(model);
+  const edgeMap   = getModelEdgeTypeMap(model);
 
   const upRaw  = neighbors.in;
   const dnRaw  = neighbors.out;
@@ -554,6 +577,8 @@ export function getObjectDetail(
  * @param input - The scope bundle input payload.
  * @param budget - The calling turn's budget, which the discovery guard is measured against.
  * @param store - Optional column store for high-fidelity metadata.
+ * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `origin` resolves to a
+ * different canonical spelling.
  * @returns The requested scope bundle.
  */
 export function getScopeBundle(
@@ -562,9 +587,13 @@ export function getScopeBundle(
   input: GetScopeBundleInput,
   budget: TurnTokenBudget,
   store?: import('../../engine/columnStore').ColumnStore,
+  onDebug?: (msg: string) => void,
 ): object {
-  const nodeMap = buildNodeMap(model);
+  const nodeMap = getModelNodeMap(model);
   const origin = resolveModelNodeId(input.origin, nodeMap, model.identifierCaseSensitive) ?? '';
+  if (origin && origin !== input.origin) {
+    onDebug?.(`[Normalize] tool=get_scope_bundle field=origin from=${sanitizeForLog(input.origin)} to=${sanitizeForLog(origin)}`);
+  }
   const originNode = nodeMap.get(origin);
   if (!originNode) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: 'Call lineage_search_objects to resolve the canonical origin ID.', detail: { origin: input.origin } });
@@ -651,7 +680,7 @@ export function getScopeBundle(
     .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
     .map(e => [e.source, e.target, edgeApiType(e.type, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
 
-  const edgeTypeMap = buildEdgeTypeMap(model);
+  const edgeTypeMap = getModelEdgeTypeMap(model);
   const nodes = [...scopeIds]
     .map(id => nodeMap.get(id))
     .filter((n): n is LineageNode => !!n)
@@ -714,22 +743,21 @@ export function getScopeBundle(
  * `NavigationEngine.validateNeighborIds`.
  *
  * @param model - Loaded database model.
- * @param ids - Node ids to inspect (pre-validated by the engine).
+ * @param ids - Canonical node ids that passed `NavigationEngine.validateNeighborIds`.
  * @param store - Optional column store for high-fidelity column data.
  * @returns `{ results: [...], total }` — one row per input id, columns and FKs only. `columns` is
  * always present, `[]` for an object with none (a procedure), so an empty answer reads as an answer.
+ * @throws When an id is not a model node — a caller that skipped engine validation.
  */
 export function getNeighborColumns(
   model: DatabaseModel,
   ids: string[],
   store?: ColumnStore,
 ): object {
-  const nodeMap = buildNodeMap(model);
+  const nodeMap = getModelNodeMap(model);
   const results = ids.map(id => {
     const node = nodeMap.get(id);
-    if (!node) {
-      return { id, error: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT };
-    }
+    if (!node) throw new Error('get_neighbor_columns received an id outside the model; validate ids with NavigationEngine.validateNeighborIds first');
     const cols = getNodeColumns(id, nodeMap, store);
     const foreignKeys = presentForeignKeys(node.fks);
     return {

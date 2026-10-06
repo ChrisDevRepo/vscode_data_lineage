@@ -60,7 +60,7 @@ export type PresentNodeIdState =
  * (`ROUTE_REJECTION_DIRECTIVE`, the `getResult` disposition lines) — no second dialect for the same
  * facts.
  */
-export const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> = {
+const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> = {
   not_in_model: 'not in the loaded model',
   pruned: 'already pruned on an earlier hop',
   render_dropped: 'in scope, dropped from the render',
@@ -391,13 +391,15 @@ export function presentResultRepairInstruction(
 }
 
 /**
- * Holds the valid fields of a `lineage_present_result` call rejected at the tool-attempt boundary,
+ * Holds the valid fields of a `lineage_present_result` call its stage schema rejected in the handler,
  * so the retry resends only the failed field(s) and {@link mergePresentResultRepairPatch} restores the rest.
  *
  * @param store - The session's held `present_result` draft.
  * @param input - The rejected payload as the model sent it.
  * @param failedPaths - Dotted Zod issue paths of the rejection.
  * @param stage - The stage the call was made in.
+ * @param committed - Sections of the committed report an update call may keep text for, or `null`. A
+ *   keep-text section (label, no text) whose label has no committed body is invalid, so `sections` is not held.
  * @returns The repair sentence naming the failed fields to resend; `null` when nothing was held: a draft is
  *   already held, the payload is not an object, or a failed path names no repairable field.
  */
@@ -406,6 +408,7 @@ export function holdRejectedPresentResult(
   input: unknown,
   failedPaths: readonly string[],
   stage: PresentResultStage,
+  committed: ReadonlyArray<{ label: string; text?: string }> | null = null,
 ): string | null {
   if (store.get() || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
   const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
@@ -433,6 +436,11 @@ export function holdRejectedPresentResult(
     }))
     : undefined;
   const hasLeafRepair = highlightLabelIndexes || sectionTextLeaves;
+  const bodies = new Set((committed ?? []).filter(sec => sec.text).map(sectionKey));
+  const unkept = Array.isArray(rawSections) && committed
+    ? (rawSections as PresentSectionPatch[]).filter(sec => !('text' in sec && sec.text?.trim()) && !bodies.has(sectionKey(sec))).map(sec => sec.label)
+    : [];
+  if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
   const kept = hasLeafRepair
     ? Object.fromEntries(Object.entries(input).filter(([key]) => (
       (key === 'highlight_groups' && highlightLabelIndexes)
@@ -450,7 +458,10 @@ export function holdRejectedPresentResult(
   const heldDescription = hasLeafRepair
     ? 'Held from this call: every valid report field and the complete affected lists; only the offending text is replaceable.'
     : `Held from this call: every field except ${fields.join(', ')}.`;
-  return `${heldDescription} ${presentResultRepairInstruction(fields, stage, false, highlightLabelIndexes, sectionTextLeaves)}`;
+  const unheld = unkept.length > 0 && !hasLeafRepair
+    ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them. Its sections are ${quoteIds((committed ?? []).map(sec => sec.label))}; omit sections to keep the committed report.`
+    : '';
+  return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage, false, highlightLabelIndexes, sectionTextLeaves)}`;
 }
 
 /**
@@ -564,6 +575,8 @@ function sqlFenceAt(text: string, openIndex: number): string | undefined {
   const close = rest.indexOf('```', '```sql'.length);
   // A following language opener cannot close this SQL block or turn intervening prose into SQL.
   if (close === -1) return undefined;
+  // A marker on the opening line closes it: a language opener starts a line of its own.
+  if (!rest.slice(0, close).includes('\n')) return rest.slice(0, close + 3);
   const suffix = rest.slice(close + 3);
   const spacedOpener = /^[ \t]+[a-z][\w.+-]*(?:[ \t]+S\d+)?[ \t]*(?:\r?\n|$)/i.test(suffix);
   if (/^[a-z]/i.test(suffix) || spacedOpener) return undefined;
@@ -680,24 +693,81 @@ function fenceBodyKey(lines: readonly string[]): string {
   return lines.join('\n').replace(/\s+/g, ' ').trim();
 }
 
-/**
- * The span of the whole lines a fence occupies — container prefix and one newline included — when
- * nothing else shares them; otherwise the fence alone.
- */
-function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
+/** Where a fence stands on its line, widened over a parenthesis pair that wraps only the fence. */
+interface FenceExtent {
+  readonly lineStart: number;
+  /** Offset of the line's newline, or `text.length` on the last line. */
+  readonly lineEnd: number;
+  /** Start of the fence, or of the `(` that wraps it. */
+  readonly from: number;
+  /** End of the fence, or just past the `)` that wraps it. */
+  readonly to: number;
+  /** Nothing but the container prefix precedes `from` and nothing but whitespace follows `to` on the line. */
+  readonly ownLine: boolean;
+}
+
+/** Locates `fence` on its line; a `(` before and a `)` after it with nothing else between are part of the extent. */
+function fenceExtent(text: string, fence: LocatedSqlFence): FenceExtent {
   const lineStart = text.lastIndexOf('\n', fence.start - 1) + 1;
-  const lineEnd = text.indexOf('\n', fence.end);
-  const after = text.slice(fence.end, lineEnd === -1 ? text.length : lineEnd);
-  if (text.slice(lineStart, fence.start) !== fence.container || after.trim() !== '') return [fence.start, fence.end];
-  return lineEnd === -1 ? [Math.max(0, lineStart - 1), text.length] : [lineStart, lineEnd + 1];
+  const newline = text.indexOf('\n', fence.end);
+  const lineEnd = newline === -1 ? text.length : newline;
+  const open = /[ \t]*\([ \t]*$/.exec(text.slice(lineStart + fence.container.length, fence.start));
+  const close = /^[ \t]*\)/.exec(text.slice(fence.end, lineEnd));
+  const wrapped = open !== null && close !== null;
+  const from = wrapped ? fence.start - open[0].length : fence.start;
+  const to = wrapped ? fence.end + close[0].length : fence.end;
+  return { lineStart, lineEnd, from, to, ownLine: text.slice(lineStart, from) === fence.container && text.slice(to, lineEnd).trim() === '' };
 }
 
 /**
- * Expands evidence references in one rendered text field in place: a ```sql fence whose info string
- * ends in a served id (```` ```sql S7 ```` closed with no body, or the one-line ```` ```sql S7``` ````)
- * is replaced where it stands by the captured block, indented to its position.
+ * The span of the whole lines a fence occupies — container prefix and one newline included — when
+ * nothing else shares them; otherwise the fence alone, with a wrapping `( )` pair.
+ */
+function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
+  const { lineStart, lineEnd, from, to, ownLine } = fenceExtent(text, fence);
+  if (!ownLine) return [from, to];
+  return lineEnd === text.length ? [Math.max(0, lineStart - 1), text.length] : [lineStart, lineEnd + 1];
+}
+
+/**
+ * Renders `blockLines` where `fence` stands as a block that starts on its own line and ends before a
+ * line break, every line indented to the fence's container so a list item or block quote keeps it.
+ * Prose before the fence on its line stays before it; prose after it continues on a new line.
+ *
+ * @returns `out` — the text from `cursor` through the block (and the break before any continuation);
+ * `cursor` — where the caller resumes copying `text`.
+ */
+function placeFenceBlock(
+  text: string,
+  cursor: number,
+  fence: LocatedSqlFence,
+  extent: FenceExtent,
+  blockLines: readonly string[],
+): { out: string; cursor: number } {
+  const indent = fence.container.replace(/[^\s>]/g, ' ');
+  const ownStart = text.slice(extent.lineStart, extent.from) === fence.container;
+  const before = ownStart ? text.slice(cursor, extent.from) : `${text.slice(cursor, extent.from).trimEnd()}\n`;
+  const block = blockLines.map((line, k) => (line && (k > 0 || !ownStart) ? indent + line : line)).join('\n');
+  const after = text.slice(extent.to, extent.lineEnd);
+  const rest = after.trimStart();
+  if (rest === '') return { out: before + block, cursor: extent.to };
+  return { out: `${before}${block}\n${indent}`, cursor: extent.to + after.length - rest.length };
+}
+
+/**
+ * Expands evidence references in one rendered text field: a ```sql fence whose info string ends in
+ * a served id (```` ```sql S7 ```` closed with no body, or the one-line ```` ```sql S7``` ````) is
+ * replaced by the captured block.
  *
  * @remarks
+ * The expanded block always starts on its own line and a line break follows its closing fence,
+ * because CommonMark opens a fenced block only at the start of a line: every line of the block is
+ * indented to the content column of the list item or block quote the reference stands in, prose
+ * before the reference on its line stays before it, and prose after it continues on a new line at
+ * the same indent. A `( )` pair that wrapped only the reference is dropped with it. A reference
+ * already on a line of its own expands byte for byte as written, and a fence the model wrote with
+ * its own SQL and an id is placed the same way when it shares its line with prose.
+ *
  * A reference is an optional shorthand for writing the captured SQL out — the model may always
  * write SQL itself. Fences are located by the rule {@link assignEvidenceIds} numbers them with, so a
  * fence the model opens mid-line never pairs with a later reference's marker. Two cases are
@@ -741,9 +811,17 @@ export function expandEvidenceRefs(
     if (!id) continue;
     const block = blocks.get(id);
     if (fence.lines.length > 0) {
-      const infoStart = fence.start + '```sql'.length;
-      out += text.slice(cursor, infoStart) + fence.info.slice(0, fence.info.lastIndexOf(id)).trimEnd();
-      cursor = infoStart + fence.info.length;
+      const info = fence.info.slice(0, fence.info.lastIndexOf(id)).trimEnd();
+      const extent = fenceExtent(text, fence);
+      if (extent.ownLine) {
+        const infoStart = fence.start + '```sql'.length;
+        out += text.slice(cursor, infoStart) + info;
+        cursor = infoStart + fence.info.length;
+      } else {
+        const placed = placeFenceBlock(text, cursor, fence, extent, [`\`\`\`sql${info}`, ...fence.lines, '```']);
+        out += placed.out;
+        cursor = placed.cursor;
+      }
       normalized.push(`${id} dropped from a fence that carries its own SQL`);
     } else if (!block) {
       unknownIds.push(id);
@@ -758,9 +836,9 @@ export function expandEvidenceRefs(
         continue;
       }
       shown.add(key);
-      const indent = fence.container.replace(/[^\s>]/g, ' ');
-      out += text.slice(cursor, fence.start) + blockLines.map((line, k) => (k > 0 && line ? indent + line : line)).join('\n');
-      cursor = fence.end;
+      const placed = placeFenceBlock(text, cursor, fence, fenceExtent(text, fence), blockLines);
+      out += placed.out;
+      cursor = placed.cursor;
     }
   }
   return { text: out + text.slice(cursor), unknownIds, normalized, malformedRefs };
@@ -1031,10 +1109,10 @@ export function findUnrenderedDetailSlotIds(
  * Validates the full `present_result` input against the contracts a schema cannot express.
  *
  * @remarks
- * `input` has already passed the served schema at the tool-attempt boundary, which owns
- * shape, required and blank fields, length caps and unique section labels. This function enforces
- * node-id resolution against the result graph, the highlight-group requirement (waived for an
- * amendment) and highlight/section/note coverage. Markdown/KaTeX formatting is deliberately
+ * `input` has already passed the served stage schema in the `present_result` handler, which owns
+ * shape, required and blank fields, length caps, unique section labels and the at-least-one
+ * highlight group requirement. This function enforces node-id resolution against the result graph
+ * and highlight/section/note coverage. Markdown/KaTeX formatting is deliberately
  * not validated: formatting can never reject a call (the renderer degrades gracefully).
  *
  * A node linked from more than one section keeps only its first link
@@ -1048,10 +1126,6 @@ export function findUnrenderedDetailSlotIds(
  * @param resolvedNodeIds - The canonical set of node IDs.
  * @param assembledBadges - Pre-assembled numbered badges for consistency.
  * @param assembledDescription - Engine-built markdown blob from {@link orderAndAssemble}.
- * @param isAmendment - Engine-derived: this render updates an existing committed presentation in
- *   Completed Phase, so `highlight_groups` may be inherited from that prior render. A held synthesis
- *   draft is not an amendment and must still pass the complete new-render contract. Computed by the
- *   dispatcher — never the model's raw `is_update` flag.
  * @param externalViolations - Findings from checks that need context this function does not hold
  *   (the cached discovery answer, the result graph), reported through this accumulator alongside the
  *   structural rules below — see {@link PresentResultViolation}.
@@ -1069,7 +1143,6 @@ export function validatePresentResult(
   resolvedNodeIds: string[],
   assembledBadges?: Array<{ node_id: string; text: string }>,
   assembledDescription?: string,
-  isAmendment = false,
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
   nodeIdState?: PresentNodeIdStateLookup,
@@ -1128,6 +1201,9 @@ export function validatePresentResult(
     ...(input.highlight_groups ?? []).flatMap(group => group.node_ids ?? []),
   ].filter(id => !resolvedSet.has(id)))];
   const allHallucinated = unlinkableNodeIds.every(id => stateOf(id) === 'not_in_model');
+  /** `add_node_ids` accepts any id inside the approved scope — pruned, render-dropped or undispositioned — so only those offenders earn its route. */
+  const addNodeIdsReveals = unlinkableNodeIds.some(id => stateOf(id) !== 'not_in_model' && stateOf(id) !== 'out_of_scope');
+  const routeServed = stage === 'completed' ? addNodeIdsReveals : !allHallucinated;
   const nodeIdNoun = allHallucinated
     ? 'contains unknown IDs'
     : 'names IDs the result graph cannot link';
@@ -1144,10 +1220,11 @@ export function validatePresentResult(
   const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
     if (nodeIdHintNeeded) return '';
     nodeIdHintNeeded = true;
+    if (stage === 'completed' && routeServed) repairFields.add('add_node_ids');
     const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
     return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
       + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds)}.`
-      + (allHallucinated ? '' : ` ${PRESENT_REAL_ID_ROUTE[stage]}`);
+      + (routeServed ? ` ${PRESENT_REAL_ID_ROUTE[stage]}` : '');
   };
 
   for (const [sectionIndex, sec] of (input.sections ?? []).entries()) {
@@ -1172,23 +1249,23 @@ export function validatePresentResult(
   }
 
   const highlightedNodeIds = new Set<string>();
-  if (!input.highlight_groups || input.highlight_groups.length === 0) {
-    if (!isAmendment) {
-      addError('highlight_groups', 'highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)');
+  // A repair patch can leave a held draft without the field: the schema that requires it never saw the merged draft.
+  if (!input.highlight_groups) {
+    addError('highlight_groups', 'highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)', ['highlight_groups'], ['highlight_groups']);
+  }
+  for (const [groupIndex, g] of (input.highlight_groups ?? []).entries()) {
+    const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
+    if (unknownIds.length > 0) {
+      addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
     }
-  } else {
-    for (const [groupIndex, g] of input.highlight_groups.entries()) {
-      const unknownIds = (g.node_ids ?? []).filter(nodeId => !resolvedSet.has(nodeId));
-      if (unknownIds.length > 0) {
-        addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
-      }
-      for (const nodeId of g.node_ids ?? []) {
-        if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
-      }
+    for (const nodeId of g.node_ids ?? []) {
+      if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
     }
   }
 
-  const unexplainedHighlightNodeIds = [...highlightedNodeIds].filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id));
+  // An id an external violation already asks to place in a section (or note) is not repeated with a second repair.
+  const alreadyRepairedIds = new Set(externalViolations.flatMap(v => v.entryIds ?? []));
+  const unexplainedHighlightNodeIds = [...highlightedNodeIds].filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id) && !alreadyRepairedIds.has(id));
   if (unexplainedHighlightNodeIds.length > 0) {
     addError(
       'highlight_groups',
@@ -1232,7 +1309,7 @@ export function validatePresentResult(
     summary: input.summary,
     description: assembledDescription!,
     layout_direction: input.layout_direction,
-    highlight_groups: input.highlight_groups ?? [],
+    highlight_groups: input.highlight_groups,
     badges: assembledBadges ?? [],
     notes: input.notes ?? [],
   };

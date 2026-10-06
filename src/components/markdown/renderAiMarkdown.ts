@@ -1,4 +1,4 @@
-import DOMPurify from 'dompurify';
+import DOMPurify, { type DOMPurify as DOMPurifyInstance } from 'dompurify';
 import katex from 'katex';
 import { Marked, type Tokens } from 'marked';
 import { markedKatexExtension } from './markedKatexExtension';
@@ -36,13 +36,24 @@ const marked = new Marked({ gfm: true, breaks: false })
 
 const SANITIZE_CONFIG = { FORBID_ATTR: ['name'] };
 
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (!(node instanceof Element)) return;
-  const id = node.getAttribute('id');
-  if (!id) return;
-  if (node.tagName === 'H2' && id.startsWith(AI_SECTION_ID_PREFIX)) return;
-  node.removeAttribute('id');
-});
+let purifier: DOMPurifyInstance | null = null;
+
+/**
+ * The renderer's own sanitizer instance, created on first use. Its id hook keeps only numbered
+ * section ids; a private instance keeps that hook off the shared `DOMPurify` other code uses.
+ */
+function aiPurifier(): DOMPurifyInstance {
+  if (purifier) return purifier;
+  purifier = DOMPurify(window);
+  purifier.addHook('afterSanitizeAttributes', (node) => {
+    if (!(node instanceof Element)) return;
+    const id = node.getAttribute('id');
+    if (!id) return;
+    if (node.tagName === 'H2' && id.startsWith(AI_SECTION_ID_PREFIX)) return;
+    node.removeAttribute('id');
+  });
+  return purifier;
+}
 
 /**
  * Renders an engine-assembled AI description to sanitized HTML.
@@ -55,5 +66,5 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
  * @returns Sanitized HTML ready for insertion into the overlay.
  */
 export function renderAiMarkdown(description: string): string {
-  return DOMPurify.sanitize(marked.parse(description, { async: false }), SANITIZE_CONFIG);
+  return aiPurifier().sanitize(marked.parse(description, { async: false }), SANITIZE_CONFIG);
 }

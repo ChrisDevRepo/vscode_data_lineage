@@ -4,6 +4,8 @@
 # EDIT `instruction:` — it is the only text sent to the AI. In every block below:
 #   instruction:  sent to the AI. Change this to change the output.
 #   stages:       label only. Routing is decided in code; editing it does nothing.
+#   sections:     business_capture / technical_capture only, optional: the ordered bold labels the recipe
+#                 writes. Synthesis lists the active angle's labels where `general` says {{sections}}.
 #   example:      sample for you to read. Never sent to the AI.
 # Neither ignored field warns you. No `instruction:` changed = nothing changed.
 #
@@ -114,8 +116,11 @@ notes:
 # no cross-references between templates. Each key is self-contained;
 # synthesis groups across nodes at the next phase.
 
+# `sections` lists the bold labels this recipe writes, in order. Synthesis serves the labels of the active
+# angle(s) in `general` (Section structure), so a label is declared here once and nowhere else.
 business_capture:
   stages: [active]
+  sections: [Purpose, Rules and branches, Grain, Column mapping, Steps, Loading, Error handling, Gaps]
   instruction: |
     What the node does to the meaning of the data.
     1. Purpose: the domain role and the decision it serves.
@@ -136,8 +141,12 @@ business_capture:
     </scope_relevance>
   example: ""
 
+# `sections` lists the bold labels this recipe writes, in order. Synthesis serves the labels of the active
+# angle(s) in `general` (Section structure), so a label is declared here once and nowhere else. The built-in list
+# is the one synthesis has always served a technical answer.
 technical_capture:
   stages: [active]
+  sections: [Purpose, Rules and branches, Grain, Column mapping, Steps, Loading, Error handling, Gaps]
   instruction: |
     The mechanics, and which rows survive them.
     1. Purpose: the execution role.
@@ -191,11 +200,13 @@ column_trace_capture:
 # rule fires only when the captured slot bodies contain the underlying
 # material; the AI does NOT invent tables / formulas / fences without source.
 
+# `{{sections}}` is replaced by the `sections` labels of the active angle(s): business, technical, or both (ordered union).
+# An instruction without the placeholder is sent as written.
 general:
   stages: [synthesis]
   instruction: |
     Render what the captured bodies contain, business meaning first; nothing is invented to fill a bullet:
-    - **Section structure**: use only these bold labels, in this order when applicable: **Purpose**, **Rules and branches**, **Grain**, **Column mapping**, **Steps**, **Loading**, **Error handling**, **Gaps**. Embed formulas in the relevant rule or step, on their own lines with explanation or in a table with short descriptions. Never make a Formulas subsection or isolated inventory. Put lifecycle transitions under Steps and normal defaults under Rules and branches. Business explains meaning and consequences, technical explains execution, and both states shared facts once. Omit empty or inapplicable labels, including None/not applicable boilerplate and lists of absent mechanisms. Gaps contains only material unresolved questions. Preserve substantive facts without repeated wording.
+    - **Section structure**: use only these bold labels, in this order when applicable: {{sections}}. Embed formulas in the relevant rule or step, on their own lines with explanation or in a table with short descriptions. Never make a Formulas subsection or isolated inventory. Put lifecycle transitions under Steps and normal defaults under Rules and branches. Business explains meaning and consequences, technical explains execution, and both states shared facts once. Omit empty or inapplicable labels, including None/not applicable boilerplate and lists of absent mechanisms. Gaps contains only material unresolved questions. Preserve substantive facts without repeated wording.
     - **Steps**: a real markdown numbered list, one step per line. Put tables and SQL fences on separate lines with blank lines around them; keep SQL to the deciding expression, using captured witness references when available.
     - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation only when the backend does not supply that inventory; backend-ownership instructions take precedence over Column mapping labels and tables.
     - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.

@@ -27,15 +27,15 @@ rules:
     enabled: true
     priority: 5
     category: source
-    pattern: "\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\b(?:FROM|(?:(?:INNER|LEFT|RIGHT|FULL|CROSS|OUTER)\\s+(?:OUTER\\s+)?)?JOIN)(?:\\s+|\\s*(?=[(\\[]))(?:\\(\\s*)*((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
-    description: FROM/JOIN sources
+    description: "FROM/JOIN sources; opening parentheses of a parenthesised joined table are skipped"
 
   - name: extract_sources_tsql_apply
     enabled: true
     priority: 7
     category: source
-    pattern: "\\b(?:CROSS|OUTER)\\s+APPLY\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\b(?:CROSS|OUTER)\\s+APPLY(?:\\s+|\\s*(?=\\[))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
     description: CROSS/OUTER APPLY sources
 
@@ -43,48 +43,48 @@ rules:
     enabled: true
     priority: 9
     category: source
-    pattern: "\\bMERGE\\b[^;]{0,5000}?\\bUSING\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\bMERGE\\b[^;]{0,5000}?\\bUSING(?:\\s+|\\s*(?=[(\\[]))(?:\\(\\s*)*((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
-    description: MERGE ... USING source table
+    description: "MERGE ... USING source table; opening parentheses of a parenthesised joined table are skipped"
 
   - name: extract_udf_calls
     enabled: true
     priority: 10
     category: source
-    pattern: "(?<![\\p{L}\\p{Nd}_@$#.\\]])(?<!\\bCREATE\\s+TABLE\\s+)(?<!\\b(?:CREATE(?:\\s+OR\\s+ALTER)?|ALTER)\\s+FUNCTION\\s+)((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)+(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))\\s*\\("
+    pattern: "(?:(?<![\\p{L}\\p{Nd}_@$#.\\]])|(?<=[\\p{L}\\p{Nd}_$])(?=\\[))(?=[\\p{L}_@#\\[])(?<!\\b(?:TABLE|VIEW|FUNCTION|PROC|PROCEDURE|REFERENCES|STATISTICS)\\s*)(?<!\\b(?:INDEX|STATISTICS)(?:\\s+|(?=\\[))(?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)(?:\\s+|(?<=\\])))?ON\\s*)(?<!\\b(?:GRANT|DENY|REVOKE)\\s+(?:(?!\\b(?:TO|FROM)\\b)[\\p{L}\\p{Nd}_\\s,()\\[\\]])*?\\bON\\s*(?:[\\p{L}]+::\\s*)?)(?!(?:\\[sys\\]|sys)\\.(?:\\[(?:binary|char|datetime2|datetimeoffset|dec|decimal|float|nchar|numeric|nvarchar|time|varbinary|varchar|vector|xml)\\]|(?:binary|char|datetime2|datetimeoffset|dec|decimal|float|nchar|numeric|nvarchar|time|varbinary|varchar|vector|xml))\\s*\\()((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)+(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))\\s*\\("
     flags: giu
-    description: "Inline scalar UDF calls (schema.func()) — table and function declarations are not calls"
+    description: "Inline scalar UDF calls (schema.func()) — sys.<type>(n) is a data type with a length, precision or scale and not a call; a name directly after TABLE, VIEW, FUNCTION, PROC[EDURE], REFERENCES or STATISTICS, or after the ON of index or statistics DDL or of a GRANT, DENY or REVOKE permission list, names an object and is not a call"
 
   # ── Target extraction ──────────────────────────────────────────────────────
   - name: extract_targets_dml
     enabled: true
     priority: 6
     category: target
-    pattern: "\\b(?:INSERT\\s+(?:INTO\\s+)?|UPDATE\\s+|MERGE\\s+(?:INTO\\s+)?)((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\b(?:(?:INSERT|MERGE)(?:\\s+|\\s*(?=\\[))(?:INTO(?:\\s+|\\s*(?=\\[)))?|UPDATE(?:\\s+|\\s*(?=\\[)))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
-    description: INSERT/UPDATE/MERGE targets (DELETE excluded — removes rows, contributes no column data)
+    description: INSERT/UPDATE/MERGE targets; the parser has already taken TOP (expression) out (DELETE excluded — removes rows, contributes no column data)
 
   - name: extract_ctas
     enabled: true
     priority: 13
     category: target
-    pattern: "\\bCREATE\\s+TABLE\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))\\s[^;]{0,500}?\\bAS\\s+SELECT"
+    pattern: "\\bCREATE\\s+TABLE(?:\\s+|\\s*(?=\\[))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))\\s+AS\\s+(?:SELECT|WITH)\\b"
     flags: giu
-    description: CREATE TABLE AS SELECT target (Synapse/Fabric) — the WITH distribution clause is mandatory there
+    description: CREATE TABLE AS SELECT target (Synapse/Fabric); the parser has already removed the column list and WITH options; the SELECT may open with a CTE
 
   - name: extract_select_into
     enabled: true
     priority: 14
     category: target
-    pattern: "\\bINTO\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))\\s+FROM"
+    pattern: "\\bINTO(?:\\s+|\\s*(?=\\[))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
-    description: SELECT INTO target
+    description: "SELECT ... INTO target; every INTO names a write target, and a variable or temp table is dropped as a non-object"
 
   - name: extract_copy_into
     enabled: true
     priority: 15
     category: target
-    pattern: "\\bCOPY\\s+INTO\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\bCOPY\\s+INTO(?:\\s+|\\s*(?=\\[))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
     description: "COPY INTO target (Fabric/Synapse)"
 
@@ -92,7 +92,7 @@ rules:
     enabled: true
     priority: 16
     category: target
-    pattern: "\\bBULK\\s+INSERT\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\bBULK\\s+INSERT(?:\\s+|\\s*(?=\\[))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
     description: "BULK INSERT target (SQL Server)"
 
@@ -100,15 +100,15 @@ rules:
     enabled: true
     priority: 17
     category: target
-    pattern: "\\bUPDATE\\s+(?!\\[?[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*\\]?\\s*\\.)\\[?[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*\\]?\\s+SET\\b(?:(?!\\bFROM\\b|\\bSELECT\\b)[^;]){0,3000}?\\bFROM\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\bUPDATE(?:\\s+|\\s*(?=\\[))((?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:\\s+|(?<=\\])\\s*)SET\\b"
     flags: giu
-    description: "UPDATE alias SET ... FROM schema.table (alias case)"
+    description: "UPDATE alias SET — anchors the statement and captures the alias; the parser binds it to a FROM/JOIN table of the same statement"
 
   - name: extract_output_into
     enabled: true
     priority: 18
     category: target
-    pattern: "\\bOUTPUT\\b[^;]{0,500}?\\bINTO\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\bOUTPUT\\b[^;]{0,500}?\\bINTO(?:\\s+|\\s*(?=\\[))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
     description: "OUTPUT ... INTO schema.table"
 
@@ -116,16 +116,16 @@ rules:
     enabled: true
     priority: 19
     category: target
-    pattern: "\\bCREATE\\s+EXTERNAL\\s+TABLE\\s+((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))\\s[^;]{0,2000}?\\bAS\\s+SELECT"
+    pattern: "\\bCREATE\\s+EXTERNAL\\s+TABLE(?:\\s+|\\s*(?=\\[))((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))\\s+AS\\s+(?:SELECT|WITH)\\b"
     flags: giu
-    description: "CREATE EXTERNAL TABLE AS SELECT target (Synapse/Fabric)"
+    description: "CREATE EXTERNAL TABLE AS SELECT target (Synapse/Fabric); the parser has already removed the column list and WITH options; the SELECT may open with a CTE"
 
   # ── Exec calls ─────────────────────────────────────────────────────────────
   - name: extract_sp_calls
     enabled: true
     priority: 8
     category: exec
-    pattern: "\\bEXEC(?:UTE)?\\s+(?!AS\\s+)(?:@[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*\\s*=\\s*)?((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
+    pattern: "\\bEXEC(?:UTE)?(?:\\s+|\\s*(?=\\[))(?!AS\\s+)(?:@[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*\\s*=\\s*)?((?:(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*)\\.)*(?:\\[(?:[^\\]]|\\]\\])+\\]|[\\p{L}_@#][\\p{L}\\p{Nd}_@$#]*))(?:(?<=\\])(?![\\].])|(?=$|[\\s,;()]))"
     flags: giu
     description: "EXEC/EXECUTE procedure calls"
 

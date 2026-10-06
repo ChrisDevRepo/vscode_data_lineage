@@ -46,13 +46,15 @@ export interface AgendaEntry {
   lineageQuestions?: string[];
 }
 
-/** Unions column demands; a row-only arrival cannot erase an existing demand. */
+/**
+ * Unions column demands; a row-only arrival cannot erase an existing demand.
+ *
+ * @remarks
+ * A scalar-return demand on either side selects the entry's carry: it holds only the qualified
+ * scalar outputs. The ordinary demand of the other side stays on its own task, which the merged
+ * entry keeps in `taskIds`; {@link ordinaryColumnsBeside} names those columns.
+ */
 function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined, identifierCaseSensitive = false): ColumnCarry | undefined {
-  if (existing?.kind === 'scalar_return' && incoming?.kind === 'carry' || existing?.kind === 'carry' && incoming?.kind === 'scalar_return') {
-    // Mixed arrival; defensive fallback keeping the existing kind's constraints
-    if (existing?.kind === 'scalar_return') return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets(existing.outputs, identifierCaseSensitive) };
-    return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets((incoming as any).outputs, identifierCaseSensitive) };
-  }
   if (existing?.kind === 'scalar_return' || incoming?.kind === 'scalar_return') {
     const outputs = [...(existing?.kind === 'scalar_return' ? existing.outputs : []), ...(incoming?.kind === 'scalar_return' ? incoming.outputs : [])];
     return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets(outputs, identifierCaseSensitive) };
@@ -63,7 +65,12 @@ function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCar
   return incoming ?? existing;
 }
 
-
+/** Ordinary carried columns a scalar-return merge leaves to their own task, empty otherwise. */
+function ordinaryColumnsBeside(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): readonly string[] {
+  if (existing?.kind === 'scalar_return' && incoming?.kind === 'carry') return incoming.columns;
+  if (incoming?.kind === 'scalar_return' && existing?.kind === 'carry') return existing.columns;
+  return [];
+}
 
 /** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
 function mergeUnique(existing: readonly string[] | undefined, incoming: readonly string[], identifierCaseSensitive = false): string[] {
@@ -97,7 +104,7 @@ export interface WorklistView {
 }
 
 /** Lexicographic key among ready entries: column class, explicit priority, distance, then node id. */
-export interface WorklistRank {
+interface WorklistRank {
   /** Ready CT, then a BB prerequisite of pending CT, then ordinary BB. */
   readonly columnTier: number;
   /** `0` for an origin or follow-up entry (priority 3), `1` for every other entry. */
@@ -120,7 +127,7 @@ function hasColumnWork(entry: AgendaEntry): boolean {
 }
 
 /** Total order over {@link WorklistRank} — smaller dispatches first. */
-export function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
+function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
   if (a.columnTier !== b.columnTier) return a.columnTier - b.columnTier;
   if (a.tier !== b.tier) return a.tier - b.tier;
   if (a.distance !== b.distance) return a.distance - b.distance;
@@ -128,8 +135,8 @@ export function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
 }
 
 /**
- * The queued node ids that are ready to dispatch: Kahn readiness over the live note graph, with
- * every strongly connected component treated as one unit.
+ * Readiness of the queued node ids — Kahn readiness over the live note graph, with every strongly
+ * connected component treated as one unit — plus the queued predecessors pending CT work waits on.
  *
  * @remarks
  * Live = the queued nodes plus every unfinished node reachable from one along `⇒`
@@ -141,13 +148,9 @@ export function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
  *
  * @param queued - Node ids currently on the agenda.
  * @param successors - Unfinished note-graph successors of a node.
- * @returns The ready subset of `queued`, in `queued` order.
+ * @param columnNodes - Queued ids with column work; their live predecessors become `prerequisites`.
+ * @returns The ready subset of `queued`, in `queued` order, and the queued CT prerequisites.
  */
-export function readyNodeIds(queued: readonly string[], successors: (nodeId: string) => Iterable<string>): string[] {
-  return analyzeWorklist(queued, successors, []).ready;
-}
-
-/** One condensation owns readiness and the predecessors needed to unblock pending CT. */
 function analyzeWorklist(queued: readonly string[], successors: (nodeId: string) => Iterable<string>, columnNodes: readonly string[]): {
   ready: string[]; prerequisites: ReadonlySet<string>;
 } {
@@ -202,8 +205,15 @@ function analyzeWorklist(queued: readonly string[], successors: (nodeId: string)
  * questions remain independently addressable in the task ledger.
  */
 export class AgendaManager {
-  /** Uses the source policy when merging qualified column destinations. */
-  constructor(private readonly identifierCaseSensitive = false) {}
+  /**
+   * @param identifierCaseSensitive - Source policy used when merging qualified column destinations.
+   * @param onSeparateCarry - Told when a merge keeps ordinary columns on their own task beside a
+   *   scalar-return carry, so the split is never silent.
+   */
+  constructor(
+    private readonly identifierCaseSensitive = false,
+    private readonly onSeparateCarry?: (nodeId: string, columns: readonly string[]) => void,
+  ) {}
   private _entries: AgendaEntry[] = [];
   /** Id-keyed index onto `_entries`, kept in sync at every mutation site for O(1) lookups. */
   private _byId = new Map<string, AgendaEntry>();
@@ -213,11 +223,12 @@ export class AgendaManager {
     return this._entries;
   }
 
-  /** Returns true if the node is currently in the agenda. */
+  /** Returns the queued entry for the node, or `undefined` when it is not on the agenda. */
   public get(nodeId: string): AgendaEntry | undefined {
     return this._byId.get(nodeId);
   }
 
+  /** Returns true if the node is currently in the agenda. */
   public has(nodeId: string): boolean {
     return this._byId.has(nodeId);
   }
@@ -230,7 +241,8 @@ export class AgendaManager {
   /**
    * Adds or updates an entry in the agenda.
    * A node consumes at most one hop: a re-push merges task identities and columns onto the
-   * existing entry, priority keeps the highest tier and depth the shortest known path.
+   * existing entry, priority keeps the highest tier and depth the shortest known path. An
+   * ordinary carry beside a scalar-return carry stays on its own task and is reported.
    *
    * @param entry - The agenda entry to add or update.
    */
@@ -240,6 +252,8 @@ export class AgendaManager {
       for (const taskId of entry.taskIds) {
         if (!existing.taskIds.includes(taskId)) existing.taskIds.push(taskId);
       }
+      const beside = ordinaryColumnsBeside(existing.columnCarry, entry.columnCarry);
+      if (beside.length > 0) this.onSeparateCarry?.(entry.nodeId, beside);
       const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry, this.identifierCaseSensitive);
       if (carry) existing.columnCarry = carry;
       if (carry?.kind === 'row_role_only') {
@@ -266,13 +280,13 @@ export class AgendaManager {
    * @remarks
    * The textbook dynamic topological schedule, recomputed from `view` on every call so scope
    * growth, contraction admits and prunes take effect immediately: among the
-   * {@link readyNodeIds ready} entries, the smallest {@link worklistRank} wins. The order is
+   * {@link analyzeWorklist ready} entries, the smallest {@link worklistRank} wins. The order is
    * shared by both modes. Column work changes rank only after structural readiness.
    *
    * @param view - The engine's current note graph and distances.
    * @returns The next entry, or `undefined` when the agenda is empty.
    * @throws Error when entries remain but none is ready — impossible by the progress argument in
-   *   {@link readyNodeIds}, so reaching it is an engine defect, never a state to recover from.
+   *   {@link analyzeWorklist}, so reaching it is an engine defect, never a state to recover from.
    */
   public dequeue(view: WorklistView): AgendaEntry | undefined {
     if (this._entries.length === 0) return undefined;
@@ -293,7 +307,7 @@ export class AgendaManager {
   }
 
   /**
-   * Removes the queued entry for `nodeId`, if any — the cut of an `end_branch` or prune.
+   * Removes the queued entry for `nodeId`, if any — the cut of a resolved prune.
    *
    * @param nodeId - Node whose entry leaves the agenda.
    * @returns The removed entry, or `undefined` when the node was not queued.

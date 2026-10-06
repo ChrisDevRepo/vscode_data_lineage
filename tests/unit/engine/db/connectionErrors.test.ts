@@ -38,8 +38,9 @@ vi.mock('vscode', async (importOriginal) => {
 });
 
 const {
-  describeConnectionError, reportConnectionError, redactSecrets, isDriverError, targetFromStored, CONNECTION_ERROR_LABELS,
+  describeConnectionError, reportConnectionError, isDriverError, targetFromStored, CONNECTION_ERROR_LABELS,
 } = await import('../../../../src/engine/db/connectionErrors');
+const { redactSecrets } = await import('../../../../src/utils/redact');
 const { MicrosoftSignInError } = await import('../../../../src/engine/db/dbSession');
 
 const NAME = 'Local Docker AW';
@@ -124,6 +125,131 @@ describe('describeConnectionError — text', () => {
 
   it('redactSecrets leaves ordinary text alone', () => {
     expect(redactSecrets("Cannot open database \"Sales\" requested by the login.")).toBe("Cannot open database \"Sales\" requested by the login.");
+  });
+
+  it.each([
+    ['client_secret pair', 'Request failed client_secret=Zq8~abcDEF123 grant=x', ['Zq8~abcDEF123']],
+    ['access_token pair', 'Refused access_token=abc.def-123_xyz tail', ['abc.def-123_xyz']],
+    ['AccountKey pair', 'DefaultEndpointsProtocol=https;AccountKey=a1B2c3+/d4E5==;EndpointSuffix=core', ['a1B2c3']],
+    ['URL userinfo', 'Cannot reach https://svc_user:p4ss%21word@host.example.net:1433/db now', ['svc_user', 'p4ss%21word']],
+    ['Authorization Basic', 'Header Authorization: Basic dXNlcjpwYXNzd29yZA== rejected', ['dXNlcjpwYXNzd29yZA']],
+    ['quoted value with space and semicolon', 'Server=x;Password="a b;c d";Database=y', ['a b', 'c d', '"a']],
+    ['single-quoted value with semicolon', "Server=x;Password='a b;c d';Database=y", ['a b', 'c d']],
+    ['braced value with semicolon', 'Server=x;Password={a;b c};Database=y', ['a;b', 'b c']],
+  ])('redactSecrets removes %s', (_name, input, secrets) => {
+    const out = redactSecrets(input);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+  });
+
+  it.each([
+    ['api_key pair', 'Request rejected api_key=Zk93mQpL71xv tail', ['Zk93mQpL71xv']],
+    ['apikey colon', 'Header apikey: Zk93mQpL71xv rejected', ['Zk93mQpL71xv']],
+    ['x-api-key header', 'Sent x-api-key: Zk93mQpL71xv to host', ['Zk93mQpL71xv']],
+    ['SharedAccessKey pair', 'Endpoint=sb://ns.servicebus.windows.net/;SharedAccessKeyName=root;SharedAccessKey=Zk93mQpL71xv+/=;EntityPath=q', ['Zk93mQpL71xv']],
+    ['access_key pair', 'Refused access_key=Zk93mQpL71xv tail', ['Zk93mQpL71xv']],
+    ['SAS signature in URL query', 'GET https://acct.blob.core.windows.net/c/b?sv=2022-11-02&sig=Zk93mQpL71xv%2Bq%3D&se=2030-01-01 failed', ['Zk93mQpL71xv']],
+    ['single-quoted JSON-like field', "Config {'server': 'x', 'password': 'hun\\'ter2', 'accessToken': 'tok-9876'}", ['hun', 'ter2', 'tok-9876']],
+    ['unterminated double-quoted tail', 'Server=x;Password="abc def ghi', ['abc', 'def', 'ghi']],
+    ['unterminated single-quoted tail', "Server=x;Password='abc def ghi", ['abc', 'def', 'ghi']],
+    ['unterminated braced tail', 'Server=x;Password={abc def ghi', ['abc', 'def', 'ghi']],
+    ['quoted value after a colon', 'Sent x-api-key: "Zk93 mQpL71xv" and client_secret: \'Zk93 mQpL71xv\' to host', ['Zk93', 'mQpL71xv']],
+    ['SAS signature leading a connection-string value', 'BlobEndpoint=https://acct.blob.core.windows.net;SharedAccessSignature=sig=Zk93mQpL71xv&sv=2022-11-02', ['Zk93mQpL71xv']],
+    ['account_key pair', 'Refused account_key=Zk93mQpL71xv tail', ['Zk93mQpL71xv']],
+    ['JWT glued to a preceding word', 'Rejected id-eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJkYXRhYmFzZSJ9.c2lnbmF0dXJlMTIz tail', ['eyJhbGciOiJSUzI1NiJ9', 'eyJhdWQiOiJkYXRhYmFzZSJ9', 'c2lnbmF0dXJlMTIz']],
+  ])('redactSecrets removes %s', (_name, input, secrets) => {
+    const out = redactSecrets(input);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+  });
+
+  it.each([
+    ['private_key pair', 'Refused private_key=Zk93mQpL71xv tail', ['Zk93mQpL71xv']],
+    ['private-key colon', 'Sent private-key: Zk93mQpL71xv to host', ['Zk93mQpL71xv']],
+    ['JSON private_key with a PEM body and \\n escapes', 'Config {"type":"service_account","private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\nKcwggSjAgEAAoIBAQC7\\n-----END PRIVATE KEY-----\\n","client_email":"a@b.c"}', ['MIIEvQIBADANBgkq', 'KcwggSjAgEAAoIBAQC7']],
+    ['passphrase pair', 'Cannot load key passphrase=Zk93mQpL71xv now', ['Zk93mQpL71xv']],
+    ['quoted passphrase colon', 'Config {"passphrase": "Zk93 mQpL71xv"}', ['Zk93', 'mQpL71xv']],
+    ['subscription-key colon', 'Sent subscription-key: Zk93mQpL71xv to host', ['Zk93mQpL71xv']],
+    ['Ocp-Apim-Subscription-Key header', 'Header Ocp-Apim-Subscription-Key: Zk93mQpL71xv rejected', ['Zk93mQpL71xv']],
+    ['subscription_key pair', 'Refused subscription_key=Zk93mQpL71xv tail', ['Zk93mQpL71xv']],
+  ])('redactSecrets removes %s', (_name, input, secrets) => {
+    const out = redactSecrets(input);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+  });
+
+  it('redactSecrets keeps a prose colon value that is only closing punctuation, and never doubles a marker', () => {
+    expect(redactSecrets('Unexpected token: } in JSON')).toBe('Unexpected token: } in JSON');
+    expect(redactSecrets('Unexpected token: ) at 4')).toBe('Unexpected token: ) at 4');
+    expect(redactSecrets('Invalid token=eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJkYXRhYmFzZSJ9.c2lnbmF0dXJlMTIz tail')).toBe('Invalid token=[token removed] tail');
+    expect(redactSecrets('Invalid access_token: eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJkYXRhYmFzZSJ9.c2lnbmF0dXJlMTIz tail')).toBe('Invalid access_token: [token removed] tail');
+    expect(redactSecrets('token: abc')).toBe('token: [removed]');
+  });
+
+  it('redactSecrets keeps the text before and after a terminated or unterminated tail readable', () => {
+    expect(redactSecrets('Server=x;Password="abc def\nnext line')).toContain('Server=x');
+    expect(redactSecrets('Server=x;Password="abc def\nnext line')).toContain('next line');
+    expect(redactSecrets('Password="abc def;Database=y')).toContain('Database=y');
+    expect(redactSecrets('GET /b?sv=1&sig=abc123&se=2030')).toContain('se=2030');
+    expect(redactSecrets('Endpoint=sb://ns/;SharedAccessKey=abc;EntityPath=q')).toContain('EntityPath=q');
+    expect(redactSecrets('Sent x-api-key: "ab cd" to host')).toBe('Sent x-api-key: [removed] to host');
+    expect(redactSecrets(`Password={${'a'.repeat(2000)};Database=y`)).toBe('Password=[removed];Database=y');
+  });
+
+  it('redactSecrets keeps the surrounding connection-string keys readable after a quoted value', () => {
+    const out = redactSecrets('Server=x;Password="a b;c";Database=y');
+    expect(out).toContain('Server=x');
+    expect(out).toContain('Database=y');
+  });
+
+  it.each([
+    'The server name is sql-prod-01.contoso.database.windows.net and the port is 1433.',
+    'Cannot reach https://host.example.net:1433/path?db=Sales&mode=read (timeout).',
+    'Login failed for user dlv_reader at 10:42; retry later, see https://learn.microsoft.com/sql/errors/18456.',
+    'The token endpoint returned 400; the secret store was unavailable; password policy requires 12 characters.',
+    'Contact admin@contoso.com about Basic authentication being disabled.',
+    'Cannot reach https://host.example.net?notify=admin@contoso.com (timeout).',
+    'Cannot reach https://host.example.net#admin@contoso.com (timeout).',
+    'The signature of the function does not match the call.',
+    'Contact the sig team; sig and design review follow.',
+    'Cannot apply design=modern to the layout.',
+    'Cannot reach https://host.example.net/items?id=5&page=2 (timeout).',
+    'The keyboard shortcut was ignored.',
+    'Cannot set monkey=1 for this session.',
+    'Cannot read key=1 or keys=2 or primary_key=3 from the table.',
+    'Violation of foreign key: x on table Orders; partition_key=4 and api_key_id=5 were kept.',
+    'Invalid object name [dbo].[ApiKeys] in SELECT * FROM [dbo].[ApiKeys] WHERE [Key] = \'x\'.',
+  ])('redactSecrets leaves ordinary text unchanged: %s', (text) => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+
+  it.each([
+    ['dotted identifier run', 'ab.'.repeat(70_000)],
+    ['scheme-shaped run', `a${'+.-x'.repeat(50_000)}://`],
+    ['unterminated quoted value', `Password="${'a""'.repeat(70_000)}`],
+    ['unterminated braced value', `Password={${'}}'.repeat(100_000)}`],
+    ['key followed by whitespace', `token${' '.repeat(200_000)}`],
+    ['hyphenated key run', 'x-api-'.repeat(35_000)],
+    ['api key run without value', 'api_key '.repeat(25_000)],
+    ['equals-heavy key run', 'api_key='.repeat(25_000)],
+    ['equals-heavy sig run', '&sig='.repeat(40_000)],
+    ['quote-heavy single-quoted JSON-like run', `'password': '${"a''".repeat(70_000)}`],
+    ['repeated unterminated braced values', 'Password={ '.repeat(20_000)],
+    ['repeated unterminated quoted tails', `${'SharedAccessKey=" '.repeat(1)}${'password=\' '.repeat(18_000)}`],
+    ['quote-heavy key run', `${'apikey:"'.repeat(25_000)}`],
+    ['JWT prefix run', 'eyJ'.repeat(67_000)],
+    ['hyphenated JWT prefix run', 'eyJ-'.repeat(50_000)],
+    ['unterminated braced values each ended by a semicolon', 'Password={;'.repeat(18_000)],
+    ['unterminated braced values each ended by a newline', 'Password={\n'.repeat(18_000)],
+    ['unterminated quoted values after a colon', 'token:"\n'.repeat(25_000)],
+    ['private key run without value', 'private_key '.repeat(17_000)],
+    ['equals-heavy private key run', 'private-key='.repeat(17_000)],
+    ['passphrase colon run', 'passphrase:'.repeat(18_000)],
+    ['subscription key hyphen run', 'subscription-'.repeat(15_000)],
+    ['punctuation-only colon values', 'token: }'.repeat(25_000)],
+    ['colon values followed by a long closing run', `token: ${'}'.repeat(200_000)}`],
+    ['JWT behind a key', 'token=eyJabcdefgh.abcdefgh.'.repeat(7_500)],
+  ])('redactSecrets stays linear on a 200 kB %s', (_name, input) => {
+    const started = performance.now();
+    redactSecrets(input);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });
 

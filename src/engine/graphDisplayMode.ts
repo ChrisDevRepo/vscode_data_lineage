@@ -273,62 +273,9 @@ export function deriveRenderLimitFallback(): RenderLimitFallback {
   return { message: RENDER_LIMIT_NOTICE };
 }
 
-/** One candidate trace depth and the node count it would produce. */
-export interface TraceDepthCandidate {
-  /** Upstream levels this candidate would apply. */
-  upstream: number;
-  /** Downstream levels this candidate would apply. */
-  downstream: number;
-  /** Node count the candidate would render. */
-  count: number;
-}
-
-/**
- * Picks the largest trace depth, among candidates already probed, that renders within the
- * render limit.
- *
- * @remarks
- * Pure selection only — the caller probes each candidate depth and hands the counts here.
- *
- * @param candidates - Depths tried, in any order.
- * @param renderLimit - The configured render ceiling.
- * @returns The candidate with the largest total depth that fits, or `null` when none fit.
- */
-export function largestFittingTraceDepth(
-  candidates: readonly TraceDepthCandidate[],
-  renderLimit: number,
-): TraceDepthCandidate | null {
-  let best: TraceDepthCandidate | null = null;
-  for (const candidate of candidates) {
-    if (candidate.count > renderLimit) continue;
-    const bestDepth = best ? best.upstream + best.downstream : -1;
-    if (candidate.upstream + candidate.downstream > bestDepth) best = candidate;
-  }
-  return best;
-}
-
-/**
- * Depths a render-limit "reduce depth" suggestion probes: each level from 0 up to the deeper side,
- * with every side capped at its own current depth, so a side the trace does not follow stays at 0.
- *
- * @param maxProbe - Deepest level probed, bounding the BFS count work.
- */
-export function traceReduceDepthLevels(
-  upstreamLevels: number,
-  downstreamLevels: number,
-  maxProbe: number,
-): Array<Omit<TraceDepthCandidate, 'count'>> {
-  const deepest = Math.min(Math.max(upstreamLevels, downstreamLevels), maxProbe);
-  return Array.from({ length: deepest + 1 }, (_, level) => ({
-    upstream: Math.min(upstreamLevels, level),
-    downstream: Math.min(downstreamLevels, level),
-  }));
-}
-
 /**
  * Node count a trace from `nodeId` at the given depths would render — BFS only, never layout, so
- * it is cheap enough to probe several candidate depths (a render-limit "reduce depth" suggestion,
- * a depth-choice count label) before committing to one.
+ * it is cheap enough to probe a candidate depth (a depth-choice count label) before committing to one.
  */
 export function traceSizeByDepth(
   graph: Graph,

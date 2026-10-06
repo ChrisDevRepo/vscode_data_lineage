@@ -34,3 +34,26 @@ describe('source-authoritative retrieval identifiers',()=>{
   expect(await searchObjects(m,'CASETAB')).toMatchObject({name_match:{status:'unique',ids:['[dbo].[casetab]']}});
  });
 });
+describe('retrieval id normalization logging',()=>{
+ async function invoke(tool:'lineage_get_object_detail'|'lineage_get_scope_bundle',input:object){
+  const { AiSession }=await import('../../../src/ai/session/session');
+  const { buildAiToolRegistry }=await import('../../../src/ai/tools/toolProvider');
+  const m=model(false),session=new AiSession();session.model=m;session.graph=buildGraphologyGraph(m);session.beginTurn();
+  const debug:string[]=[];const noop=()=>{};
+  const channel={info:noop,warn:noop,error:noop,debug:(line:string)=>debug.push(line)} as unknown as Parameters<typeof buildAiToolRegistry>[1];
+  const result=JSON.parse(await buildAiToolRegistry(()=>session,channel,()=>undefined).invoke(tool,input));
+  return { result, normalize:debug.filter(line=>line.includes('[Normalize]')) };
+ }
+ it('logs the resolved get_object_detail id and stays silent for a canonical id',async()=>{
+  const rewritten=await invoke('lineage_get_object_detail',{id:'DBO.CASETAB'});
+  expect(rewritten.result).toMatchObject({id:'[dbo].[casetab]'});
+  expect(rewritten.normalize).toEqual([expect.stringContaining('[Normalize] tool=get_object_detail field=id from=DBO.CASETAB to=[dbo].[casetab]')]);
+  expect((await invoke('lineage_get_object_detail',{id:'[dbo].[casetab]'})).normalize).toEqual([]);
+ });
+ it('logs the resolved get_scope_bundle origin and stays silent for a canonical origin',async()=>{
+  const rewritten=await invoke('lineage_get_scope_bundle',{origin:'DBO.READER',direction:'upstream',depth:1});
+  expect(rewritten.result).toMatchObject({origin:'[dbo].[reader]'});
+  expect(rewritten.normalize).toEqual([expect.stringContaining('[Normalize] tool=get_scope_bundle field=origin from=DBO.READER to=[dbo].[reader]')]);
+  expect((await invoke('lineage_get_scope_bundle',{origin:'[dbo].[reader]',direction:'upstream',depth:1})).normalize).toEqual([]);
+ });
+});

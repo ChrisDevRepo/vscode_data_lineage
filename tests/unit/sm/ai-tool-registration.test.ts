@@ -1,14 +1,39 @@
 /**
- * Pins tool registration: the manifest's `languageModelTools` match the read-only catalog, and the
- * canonical registry rejects duplicates and unknown tools and passes raw input through.
+ * Pins tool registration: the manifest's `languageModelTools` match the read-only catalog,
+ * `vscode.lm` receives exactly that subset while the participant registry keeps the full catalog,
+ * and the canonical registry rejects duplicates and unknown tools and passes raw input through.
  */
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type * as VSCode from 'vscode';
 import { z } from 'zod';
+
+const { lmBindings, ToolResult } = vi.hoisted(() => ({
+  lmBindings: new Map<string, VSCode.LanguageModelTool<unknown>>(),
+  /** The shared vscode stub has no tool-result class; this one records the parts it is given. */
+  ToolResult: class { constructor(public readonly content: unknown[]) {} },
+}));
+vi.mock('vscode', async importOriginal => {
+  const actual = await importOriginal<typeof import('vscode')>();
+  return {
+    ...actual,
+    LanguageModelToolResult: ToolResult,
+    lm: {
+      registerTool: (name: string, tool: VSCode.LanguageModelTool<unknown>) => {
+        lmBindings.set(name, tool);
+        return { dispose: () => { lmBindings.delete(name); } };
+      },
+    },
+  };
+});
+
+import * as vscode from 'vscode';
 import { rootPath } from '../helpers/testUtils';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
 import { TOOL_DEFS } from '../../../src/ai/tools/toolDefs';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
+import { buildAiToolRegistry, registerAiTools } from '../../../src/ai/tools/toolProvider';
+import { AiSession } from '../../../src/ai/session/session';
 
 type ManifestTool = {
   name: string;
@@ -64,14 +89,37 @@ describe('AI tool registration', () => {
     expect(missingDescriptions).toEqual([]);
   });
 
-  it('registers the read-only catalog through the filtered shared registry', () => {
-    const source = readFileSync(
-      rootPath('src', 'ai', 'tools', 'toolProvider.ts'),
-      'utf8',
-    );
-    expect(source).toMatch(/\bTOOL_DEFS\b/);
-    expect(source).toMatch(/external\.getTools\(\)/);
-    expect(source).toMatch(/vscode\.lm\.registerTool\(/);
+  it('binds exactly the read-only catalog to vscode.lm; the participant registry keeps every tool', async () => {
+    const session = new AiSession();
+    const channel = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as VSCode.LogOutputChannel;
+    const participantNames = buildAiToolRegistry(() => session, channel, () => undefined)
+      .getTools().map(tool => tool.name);
+    expect(participantNames).toEqual(TOOL_DEFS.map(tool => tool.name));
+
+    const internalOnly = TOOL_DEFS.filter(contract => contract.effect !== 'read').map(tool => tool.name);
+    expect(internalOnly.length).toBeGreaterThan(0);
+
+    lmBindings.clear();
+    const disposables = registerAiTools(() => session, channel, () => undefined);
+    try {
+      expect(disposables).toHaveLength(externalDefs.length);
+      expect([...lmBindings.keys()].sort()).toEqual(manifestTools.map(tool => tool.name).sort());
+      for (const name of internalOnly) expect(lmBindings.has(name)).toBe(false);
+
+      const [first] = externalDefs;
+      if (!first) throw new Error('registration precondition: expected a read-only tool');
+      const binding = lmBindings.get(first.name)!;
+      const tokenSource = new vscode.CancellationTokenSource();
+      const result = await binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token);
+      tokenSource.dispose();
+      expect(result).toBeInstanceOf(ToolResult);
+      const [part] = (result as InstanceType<typeof ToolResult>).content;
+      expect(part).toBeInstanceOf(vscode.LanguageModelTextPart);
+      expect((part as VSCode.LanguageModelTextPart).value).not.toBe('');
+    } finally {
+      disposables.forEach(item => item.dispose());
+    }
+    expect(lmBindings.size).toBe(0);
   });
 });
 

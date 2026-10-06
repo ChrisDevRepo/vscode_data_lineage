@@ -26,7 +26,7 @@ import {
   resolveCanonicalQuestion,
 } from '../../interaction/rules/startExplorationRules';
 import type { ToolServices } from './toolServices';
-import { composeDiscoverySummaryText } from '../../support/discoverySummary';
+import { composeDiscoverySummaryText } from './discoverySummary';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { makeRejection } from '../../support/toolErrorEnvelope';
@@ -102,11 +102,11 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
         const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
         if ('code' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
-        const skippedIdsSuffix = res.skippedDetails.length > 0
-          ? ` skippedIds=[${res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(',')}]`
-          : '';
+        if (res.skippedDetails.length > 0) {
+          s.logger.debug(`[${sess.id}] supplement skippedIds=[${sanitizeForLog(res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(','))}]`);
+        }
         if (res.agendaed === 0 && res.contracted === 0) {
-          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 contracted=0 skipped=${res.skipped}${skippedIdsSuffix}`);
+          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 contracted=0 skipped=${res.skipped}`);
           const unresolvedIds = res.skippedDetails.filter(skip => skip.reason === 'unresolved').map(skip => skip.nodeId);
           const borderSkips = res.skippedDetails.filter(skip => skip.reason !== 'unresolved');
           const hint = [
@@ -129,16 +129,9 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         );
         applyFollowUpContext();
         sess.enterExploring(s.turnEpoch(sess));
-        s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}${skippedIdsSuffix}`);
+        s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}`);
         const hopCtx = priorEngine.getHopContext();
         return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
-      }
-
-      if (!data.origin && data.proposalRevision === undefined) {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: REJECTION_CODES.missingField,
-          hint: "Field 'origin' is required for a fresh exploration. Supply 'supplement' with nodeIds only when extending a completed prior exploration (follow-up phase).",
-        }), loggedInput);
       }
 
       const prior = sess.stateMachine as NavigationEngine | null;
@@ -186,14 +179,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       engine.sessionId = sess.id;
 
       const pendingInit = sess.pendingExploration?.init;
-      const stringArray = (v: unknown, fallback: string[] = []): string[] => v === undefined
-        ? [...fallback]
-        : Array.isArray(v) ? (v as unknown[]).filter((t): t is string => typeof t === 'string') : [];
-      const excludeTypes = stringArray(data.excludeTypes, pendingInit?.excludeTypes ?? engine.getGuiHiddenTypes());
-      const excludeSchemas = stringArray(data.excludeSchemas, pendingInit?.excludeSchemas ?? engine.getGuiHiddenSchemas());
-      const excludeNodeIds = stringArray(data.excludeNodeIds, pendingInit?.excludeNodeIds ?? engine.getGuiExcludedNodeIds());
-      const passNodeIds = stringArray(data.passNodeIds, pendingInit?.passNodeIds);
-      const scopeNotes = stringArray(data.scopeNotes, pendingInit?.scopeNotes);
+      const listOr = (sent: readonly string[] | undefined, fallback: readonly string[] = []): string[] => [...(sent ?? fallback)];
+      const excludeTypes = listOr(data.excludeTypes, pendingInit?.excludeTypes ?? engine.getGuiHiddenTypes());
+      const excludeSchemas = listOr(data.excludeSchemas, pendingInit?.excludeSchemas ?? engine.getGuiHiddenSchemas());
+      const excludeNodeIds = listOr(data.excludeNodeIds, pendingInit?.excludeNodeIds ?? engine.getGuiExcludedNodeIds());
+      const passNodeIds = listOr(data.passNodeIds, pendingInit?.passNodeIds);
+      const scopeNotes = listOr(data.scopeNotes, pendingInit?.scopeNotes);
       const refineOrigin = isRefining ? (data.origin ?? pendingInit?.origin ?? '') : (data.origin ?? '');
       const canonicalRefineQuestion = resolveCanonicalQuestion({
         lastDiscoveryQuestion: sess.lastDiscoveryQuestion,

@@ -122,9 +122,9 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
 }
 
 /**
- * Derives the ACTIVE-mode tag from the navigation engine's state flags.
+ * Derives the ACTIVE-mode tag from the current hop's analysis mode.
  *
- * @param hasColumnAspect - Whether `engine.columnAspect !== null` (column-trace mode).
+ * @param hasColumnAspect - Whether the current hop runs in column-trace mode.
  */
 export function activeModeOf(hasColumnAspect: boolean): ActiveMode {
   return hasColumnAspect ? 'sm_ct' : 'sm_bb';

@@ -53,4 +53,10 @@ describe('report-label normalization contract', () => {
     expect(description).toMatch(/trimm/i);
     expect(description).toMatch(/whitespace.*collaps|collaps.*whitespace/i);
   });
+  it('serves the text constraint on a repair section entry where the model decides the field', () => {
+    const schema = presentResultRepairPatchSchemaForFields(['sections'], 'synthesis', 0);
+    const projected = toModelJsonSchema(schema) as { properties: { sections: { items: { anyOf: Array<{ properties: { text?: { description: string } } }> } } } };
+    const description = projected.properties.sections.items.anyOf[0]!.properties.text!.description;
+    expect(description).toBe("Detail body for this section label. Required when the label is not a held label; omit to keep a held label's text.");
+  });
 });

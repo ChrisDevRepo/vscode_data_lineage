@@ -355,6 +355,12 @@ body.vscode-reduce-motion *::after {
   cursor: help;
 }
 
+/* A chip on a highlighted column path takes the line's highlight colour. */
+.ln-column-edge-chip[data-focused='true'] {
+  color: var(--ln-focus-border);
+  border-color: var(--ln-focus-border);
+}
+
 .ln-column-edge-chip:hover,
 .ln-column-edge-chip:focus-visible {
   border-color: var(--ln-ai-or);

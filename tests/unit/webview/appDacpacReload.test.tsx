@@ -15,10 +15,12 @@ import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 
 let lastFlowNodeCount = -1;
 let lastModelGraphOrder = -1;
+let lastFlowNodeIds: string[] = [];
 
 vi.mock('../../../src/components/GraphCanvas', () => ({
   GraphCanvas: (props: { flowNodes: { id: string }[]; modelGraph?: { order: number } | null }) => {
     lastFlowNodeCount = props.flowNodes.length;
+    lastFlowNodeIds = props.flowNodes.map(n => n.id);
     lastModelGraphOrder = props.modelGraph?.order ?? -1;
     return null;
   },
@@ -37,6 +39,7 @@ beforeEach(() => {
   root = createRoot(host);
   lastFlowNodeCount = -1;
   lastModelGraphOrder = -1;
+  lastFlowNodeIds = [];
 });
 
 afterEach(() => {
@@ -48,7 +51,8 @@ afterEach(() => {
 /** Config forcing Object View (never Schema View) regardless of node count, so the mocked canvas's `flowNodes` prop is the object graph — the same surface the Electron reload evidence measured. */
 const objectViewConfig = { ...DEFAULT_CONFIG, overview: { ...DEFAULT_CONFIG.overview, enabled: false } };
 
-function postDacpacModel(objectCount: number, seed: number, sourceName: string, config: object = objectViewConfig): void {
+/** Posts a `dacpac-model` frame for a generated model and returns that model's node ids. */
+function postDacpacModel(objectCount: number, seed: number, sourceName: string, config: object = objectViewConfig): ReadonlySet<string> {
   const { model } = generateDwhModel({ objectCount, seed, profile: { externalRefCount: 0 } });
   const frame = {
     protocolVersion: BRIDGE_PROTOCOL_VERSION,
@@ -61,6 +65,21 @@ function postDacpacModel(objectCount: number, seed: number, sourceName: string, 
   act(() => {
     window.dispatchEvent(new MessageEvent('message', { data: frame }));
   });
+  return new Set(model.nodes.map(n => n.id));
+}
+
+/**
+ * Waits, bounded in real time, until the canvas shows a non-empty graph drawn only from `nodeIds`.
+ * Each poll advances the fake clock inside `act`, so the deferred build and the spinner hold run
+ * however slowly the host schedules them.
+ */
+async function waitForCanvasOf(nodeIds: ReadonlySet<string>, label: string): Promise<void> {
+  await vi.waitFor(async () => {
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    if (lastFlowNodeIds.length === 0 || !lastFlowNodeIds.every(id => nodeIds.has(id))) {
+      throw new Error(`the canvas does not show ${label} yet`);
+    }
+  }, { timeout: 10_000, interval: 25 });
 }
 
 async function loadTwice(secondConfig: object): Promise<{ firstCount: number; secondCount: number }> {
@@ -72,11 +91,9 @@ async function loadTwice(secondConfig: object): Promise<{ firstCount: number; se
       </VsCodeProvider>
     );
   });
-  postDacpacModel(40, 1, 'first.dacpac');
-  await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
+  await waitForCanvasOf(postDacpacModel(40, 1, 'first.dacpac'), 'first.dacpac');
   const firstCount = lastFlowNodeCount;
-  postDacpacModel(90, 2, 'second.dacpac', secondConfig);
-  await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
+  await waitForCanvasOf(postDacpacModel(90, 2, 'second.dacpac', secondConfig), 'second.dacpac');
   return { firstCount, secondCount: lastFlowNodeCount };
 }
 
@@ -86,18 +103,18 @@ describe('reload into an already-open panel', () => {
     const { firstCount, secondCount } = await loadTwice(changed);
     expect(firstCount).toBeGreaterThan(0);
     expect(secondCount).toBeGreaterThan(firstCount);
-  }, 15000);
+  }, 30000);
 
   it('renders the second model with unchanged settings', async () => {
     const { firstCount, secondCount } = await loadTwice(objectViewConfig);
     expect(firstCount).toBeGreaterThan(0);
     expect(secondCount).toBeGreaterThan(firstCount);
-  }, 15000);
+  }, 30000);
 
   it('passes the full-model graph of the loaded model to the canvas', async () => {
     const { secondCount } = await loadTwice(objectViewConfig);
     expect(lastModelGraphOrder).toBeGreaterThanOrEqual(secondCount);
-  }, 15000);
+  }, 30000);
 
   it('renders the second model when rebuild-config lands between its build and the next render', async () => {
     const { App } = await import('../../../src/components/App');
@@ -121,17 +138,15 @@ describe('reload into an already-open panel', () => {
           </VsCodeProvider>
         );
       });
-      postDacpacModel(40, 1, 'first.dacpac');
-      await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
+      await waitForCanvasOf(postDacpacModel(40, 1, 'first.dacpac'), 'first.dacpac');
       const firstCount = lastFlowNodeCount;
       armed = true;
-      postDacpacModel(90, 2, 'second.dacpac');
-      await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
+      await waitForCanvasOf(postDacpacModel(90, 2, 'second.dacpac'), 'second.dacpac');
       expect(armed).toBe(false);
       expect(firstCount).toBeGreaterThan(0);
       expect(lastFlowNodeCount).toBeGreaterThan(firstCount);
     } finally {
       delete w.vscode;
     }
-  }, 15000);
+  }, 30000);
 });

@@ -1,16 +1,16 @@
-/** Backend routing dispatches once per node, deterministically, with node-specific questions across restore. */
+/** Backend routing dispatches once per node, deterministically, with node-specific questions. */
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
 
 describe('backend routing invariants', () => {
-  it.each([false, true])('orders a cyclic converging graph and preserves each node\'s questions (restore=%s)', restore => {
+  it('orders a cyclic converging graph and preserves each node\'s questions', () => {
     const nodes = ['A', 'B', 'C', 'D', 'E'].map(id => makeNode({ id, name: id, schema: 'dbo', type: 'view' }));
     const pairs: Array<[string, string]> = [['A', 'B'], ['B', 'D'], ['B', 'C'], ['C', 'E'], ['D', 'E'], ['E', 'B']];
     const model = makeModel(nodes, pairs, ['dbo']);
     const graph = makeGraph(nodes, pairs);
-    let engine = new NavigationEngine(model, graph, () => {}, {});
+    const engine = new NavigationEngine(model, graph, () => {}, {});
     expect(engine.init({ origin: 'A', question: 'Trace downstream', direction: 'downstream', analysisMode: 'bb',
       depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
     })).toMatchObject({ ok: true });
@@ -35,7 +35,6 @@ describe('backend routing invariants', () => {
       expect(engine.submitFindings({ focus_node_id: focus, verdict: 'analyze', summary: `Observed ${focus}`,
         sections: [{ angle: 'technical', text: `Recorded ${focus}` }], questions,
       })).toMatchObject({ ok: true });
-      if (restore) engine = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
     }
     expect(order).toEqual(['A', 'B', 'C', 'D', 'E']);
     expect(engine.getHopContext()).toMatchObject({ done: true });

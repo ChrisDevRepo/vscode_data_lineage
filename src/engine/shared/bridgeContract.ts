@@ -147,6 +147,7 @@ const LineageNodeSchema = z.object({
   externalType: z.enum(['et', 'file', 'db']).optional(),
   externalUrl: z.string().optional(),
   externalDatabase: z.string().optional(),
+  definitionUnreadable: z.boolean().optional(),
 });
 
 /** Zod schema defining a directed dependency or execution relationship between two lineage nodes. */
@@ -339,6 +340,16 @@ export const COLUMN_TRANSFORM_DIRECTION: Readonly<Record<ColumnTransformClass, '
   combine:      'INDIRECT',
   filter:       'INDIRECT',
 };
+
+/**
+ * Whether a classified column only shaped which rows appear — every class is INDIRECT.
+ *
+ * @param transforms - The column's transform classes; absent or empty means unclassified.
+ * @returns `true` only for a non-empty list with no DIRECT class.
+ */
+export function isIndirectOnly(transforms: readonly ColumnTransformClass[] | undefined): boolean {
+  return !!transforms?.length && transforms.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
+}
 
 /** Zod form of {@link COLUMN_TRANSFORM_CLASSES}, shared by every schema that carries the field. */
 export const ColumnTransformClassSchema = z.enum(COLUMN_TRANSFORM_CLASSES);
@@ -719,9 +730,6 @@ export const UiStateSnapshotSchema = z.looseObject({
   renderLimitHit: z.number(),
   screenState: ScreenStateExtrasSchema.optional(),
 });
-
-/** Validated `filter-changed` ui-state buffer. */
-export type UiStateSnapshot = z.infer<typeof UiStateSnapshotSchema>;
 
 /**
  * Zod schema representing the complete discriminated union of message types

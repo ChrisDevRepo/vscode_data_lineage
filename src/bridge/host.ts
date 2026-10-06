@@ -9,6 +9,7 @@ import {
   ExtensionToDetailMsgSchema,
   type ExtensionToDetailMsg,
 } from '../engine/shared/bridgeContract';
+import { redactSecrets } from '../utils/redact';
 
 /**
  * Defines the abstract interface for the extension-webview communication bridge.
@@ -19,7 +20,14 @@ import {
 export interface BridgeHost {
   /** Sends a type-safe message from the extension host to the webview. */
   postMessage(msg: ExtensionToWebviewMsg): Thenable<boolean>;
-  /** Records a log entry with a specific severity level and category. */
+  /**
+   * Records a log entry with a specific severity level and category.
+   *
+   * @remarks
+   * The text is redacted at every level, and at `error` level the error message and the stack too, before they
+   * reach the output channel: warn, info and debug lines also carry caught driver messages.
+   * Pass a message string, not a synthetic `Error`, when there is no thrown error: its stack names only the logging site.
+   */
   log(level: 'info' | 'debug' | 'warn' | 'error', cat: LogCategory, text: string, err?: any): void;
   /** Displays a VS Code error notification to the user. */
   showErrorMessage(msg: string): void;
@@ -59,7 +67,8 @@ interface WebviewPostTarget {
  * Validates `msg` against `schema` and **drops** a malformed frame (returning `false`) rather than
  * shipping it — a drop is a send-side bug. The webview is left waiting on data that will never
  * arrive, so the drop is notified as well as logged rather than being visible only to a developer
- * with the Output channel open. Raw `panel.webview.postMessage` bypasses the contract; go through
+ * with the Output channel open. A caller that already tells the user about its `false` result passes
+ * `notifyDrop = false`; the drop is then logged only, so one cause raises one notice. Raw `panel.webview.postMessage` bypasses the contract; go through
  * {@link postToWebview} / {@link postToDetail} (or {@link BridgeHost.postMessage}, which delegates).
  *
  * Being the one send path, this is also where {@link BRIDGE_PROTOCOL_VERSION} is stamped. The stamp
@@ -72,10 +81,18 @@ function postValidated<S extends z.ZodTypeAny>(
   msg: z.infer<S>,
   label: string,
   logger: Logger,
+  notifyDrop: boolean,
 ): Thenable<boolean> {
   const parsed = schema.safeParse(msg);
   if (!parsed.success) {
     const type = (msg as { type?: string }).type ?? '?';
+    if (!notifyDrop) {
+      logger.error(
+        `${label}(${type}) — dropped, failed validation`,
+        new Error(`issues=${summarizeZodError(parsed.error)}`),
+      );
+      return Promise.resolve(false);
+    }
     notifyError(
       logger,
       `${label}(${type})`,
@@ -91,11 +108,17 @@ function postValidated<S extends z.ZodTypeAny>(
   });
 }
 
-/** Sends a validated message to the main lineage webview. */
+/**
+ * Sends a validated message to the main lineage webview.
+ *
+ * @param notifyDrop - Raise the error toast when a malformed frame is dropped (default). A caller whose
+ * `false` result already reaches the user through its own notice passes `false`; the drop is then a log line only.
+ */
 export function postToWebview(
   panel: vscode.WebviewPanel,
   msg: ExtensionToWebviewMsg,
   logger: Logger,
+  notifyDrop = true,
 ): Thenable<boolean> {
   return postValidated(
     panel,
@@ -103,6 +126,7 @@ export function postToWebview(
     msg,
     'postToWebview',
     logger,
+    notifyDrop,
   );
 }
 
@@ -118,7 +142,19 @@ export function postToDetail(
     msg,
     'postToDetail',
     logger,
+    true,
   );
+}
+
+/** Redacts credential-shaped text from a caught value's message and stack before it is logged. */
+function redactErrorDetail(err: unknown): unknown {
+  if (err instanceof Error) {
+    const safe = new Error(redactSecrets(err.message));
+    safe.name = err.name;
+    safe.stack = err.stack === undefined ? undefined : redactSecrets(err.stack);
+    return safe;
+  }
+  return err === undefined ? undefined : redactSecrets(String(err));
 }
 
 /** Creates a concrete {@link BridgeHost} implementation tied to a specific WebviewPanel. */
@@ -128,10 +164,11 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
     postMessage: (msg) => postToWebview(panel, msg, bridgeLogger),
     log: (level, cat, text, err) => {
       const logger = Logger.create(outputChannel, cat);
-      if (level === 'info') logger.info(text);
-      else if (level === 'warn') logger.warn(text);
-      else if (level === 'error') logger.error(text, err);
-      else logger.debug(text);
+      const safeText = redactSecrets(text);
+      if (level === 'info') logger.info(safeText);
+      else if (level === 'warn') logger.warn(safeText);
+      else if (level === 'error') logger.error(safeText, redactErrorDetail(err));
+      else logger.debug(safeText);
     },
     showErrorMessage: (msg) => { void vscode.window.showErrorMessage(msg); },
     executeCommand: (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args),

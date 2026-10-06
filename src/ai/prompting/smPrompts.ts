@@ -389,7 +389,7 @@ export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensit
   const undispositioned = qualifying.filter(n => !actionById.has(n.id));
 
   return [
-    'Kept nodes without a detail slot (engine flow facts). Document each in the section of its writer or reader — what it holds for this flow, the predicate it is read or written under, the row grain it lands at, from that writer\'s or reader\'s captured SQL — and give it a `sections[].node_ids`, `highlight_groups[].node_ids` or `notes[].node_id` entry:',
+    'Kept nodes without a detail slot (engine flow facts). Document each in the section of its writer or reader — what it holds for this flow, the predicate it is read or written under, the row grain it lands at, from that writer\'s or reader\'s captured SQL — and give it a `sections[].node_ids` or `notes[].node_id` entry:',
     ...dispositioned.map(renderLine),
     ...(undispositioned.length > 0
       ? [
@@ -485,9 +485,9 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
  * @remarks
  * Single source of truth for the synthesis evidence surface; both the `lineage_submit_findings`
  * completion branch and the host-graph synthesis node call this builder. {@link synthesis_reminder}
- * carries the user-question anchor plus, in CT, the rendered flow-role block — the only place the
- * model is told which nodes are terminal sources, since a kept node with no column edge is absent
- * from those buckets by construction. It also carries the {@link buildPassthroughFlowFacts} digest
+ * carries the user-question anchor plus the rendered flow-role block (BB from node edges, CT from
+ * column edges plus the Column Trace Chain) — the only place the model is told which nodes are
+ * terminal sources. It also carries the {@link buildPassthroughFlowFacts} digest
  * for kept nodes with no detail slot, which otherwise have no semantic content to document.
  */
 interface SmCompletionEnvelope {
@@ -522,7 +522,7 @@ interface SmCompletionEnvelope {
  *
  * @param result - The completed `engine.getResult()` archive (full `detail_slots` across all hops).
  * @param userQuestion - The verbatim mission question anchoring the synthesis reminder.
- * @param deferred - BFS-skipped questions, surfaced once at the end if material.
+ * @param deferred - The engine's deferred follow-up leads (`DeferredQuestion.reason` names why each was not visited).
  */
 export function buildSmCompletionEnvelope(
   result: SmResult,

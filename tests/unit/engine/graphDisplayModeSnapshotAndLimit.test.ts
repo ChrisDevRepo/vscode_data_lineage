@@ -1,5 +1,5 @@
 /**
- * A1 view-snapshot transition and A2 render-limit fallback/reduce-depth decisions.
+ * A1 view-snapshot transition, A2 render-limit fallback notice, and the BFS-only trace size probe.
  *
  * @remarks
  * Pure decision tables only — the mechanics of storing/restoring a snapshot and probing trace
@@ -13,8 +13,6 @@ import {
   deriveViewSnapshotTransition,
   filterAfterAiPreviewDiscard,
   deriveRenderLimitFallback,
-  largestFittingTraceDepth,
-  traceReduceDepthLevels,
   collapseLastExpandedSchema,
   retainExistingSchemas,
   serializeExpandedSchemas,
@@ -138,58 +136,6 @@ describe('deriveRenderLimitFallback', () => {
     expect(result).not.toHaveProperty('offerSchemaView');
     expect(result.message).not.toContain('Schema View');
     expect(result.message).not.toContain('Reduce depth');
-  });
-});
-
-describe('largestFittingTraceDepth', () => {
-  it('picks the deepest candidate that fits the render limit', () => {
-    const candidates = [
-      { upstream: 3, downstream: 3, count: 5000 },
-      { upstream: 2, downstream: 2, count: 1800 },
-      { upstream: 1, downstream: 1, count: 400 },
-    ];
-    expect(largestFittingTraceDepth(candidates, 2000)).toEqual({ upstream: 2, downstream: 2, count: 1800 });
-  });
-
-  it('returns null when no candidate fits', () => {
-    const candidates = [{ upstream: 1, downstream: 1, count: 5000 }];
-    expect(largestFittingTraceDepth(candidates, 2000)).toBeNull();
-  });
-
-  it('returns the only candidate at zero depth when it is the sole fit', () => {
-    const candidates = [
-      { upstream: 2, downstream: 2, count: 5000 },
-      { upstream: 0, downstream: 0, count: 1 },
-    ];
-    expect(largestFittingTraceDepth(candidates, 2000)).toEqual({ upstream: 0, downstream: 0, count: 1 });
-  });
-});
-
-describe('traceReduceDepthLevels', () => {
-  it('keeps a zero side at zero on a one-sided trace', () => {
-    expect(traceReduceDepthLevels(3, 0, 10)).toEqual([
-      { upstream: 0, downstream: 0 },
-      { upstream: 1, downstream: 0 },
-      { upstream: 2, downstream: 0 },
-      { upstream: 3, downstream: 0 },
-    ]);
-  });
-
-  it('caps each side at its own depth on an asymmetric trace', () => {
-    expect(traceReduceDepthLevels(1, 3, 10)).toEqual([
-      { upstream: 0, downstream: 0 },
-      { upstream: 1, downstream: 1 },
-      { upstream: 1, downstream: 2 },
-      { upstream: 1, downstream: 3 },
-    ]);
-  });
-
-  it('stops probing at the probe ceiling', () => {
-    expect(traceReduceDepthLevels(Infinity, 0, 2)).toEqual([
-      { upstream: 0, downstream: 0 },
-      { upstream: 1, downstream: 0 },
-      { upstream: 2, downstream: 0 },
-    ]);
   });
 });
 

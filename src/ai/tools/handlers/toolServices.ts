@@ -17,6 +17,7 @@ import type { ModelPort } from '../../model/modelPort';
 import type { TurnTokenBudget } from '../../support/tokenBudget';
 import type { ExtensionToWebviewMsg } from '../../../engine/shared/bridgeContract';
 import type { ToolName } from '../toolDefs';
+import type { PreviewDelivery } from '../../support/chatAnswer';
 
 /** The one webview message a tool handler may hand to the host for delivery. */
 export type AiViewPreviewMessage = Extract<ExtensionToWebviewMsg, { type: 'ai-view-preview' }>;
@@ -32,10 +33,10 @@ export interface ToolServices {
    * The host owns the panel and the transport: it reveals before sending — a hidden panel measures
    * its canvas at zero, and a graph framed against a box that does not exist yet is never re-framed
    * once the tab comes forward — and it returns the webview's render ACK, which `present_result`
-   * writes into the committed artifact. `false` covers every non-delivery: no panel open, a
-   * rejected send, a transport error.
+   * writes into the committed artifact. The outcome is one of {@link PreviewDelivery}: an absent
+   * panel is a deferral, a refused send is a failure; a transport throw propagates to the caller.
    */
-  deliverPreview(message: AiViewPreviewMessage): Promise<boolean>;
+  deliverPreview(message: AiViewPreviewMessage): Promise<PreviewDelivery>;
   /** Resolves the persisted AI run behind an applied bookmark; absent when the host wires no store. */
   readonly getStoredRun?: StoredRunReader;
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */

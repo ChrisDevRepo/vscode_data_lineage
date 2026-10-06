@@ -5,7 +5,6 @@
  * Keeps boundary normalization deterministic and reusable across tool handlers,
  * state-machine init, and prompt rendering.
  */
-import { z } from 'zod';
 import { parsePartialJson } from '@langchain/core/output_parsers';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
@@ -24,36 +23,6 @@ export type SubmitFindingsInputObject = Record<string, unknown> & {
   questions?: unknown;
   column_flow?: unknown;
 };
-
-/**
- * Key paths a raw tool payload carries that its parsed form does not — what a non-strict object
- * schema stripped.
- *
- * @param raw - The payload as the model sent it.
- * @param parsed - The same payload after a successful schema parse.
- * @returns Dotted paths (`column_flow.0.bogus`), empty when nothing was dropped.
- *
- * @remarks
- * The strip itself runs inside a schema, where no logger is reachable; the caller that holds both
- * forms logs this list so a dropped parameter is never silent. Walks objects and arrays in step.
- */
-export function droppedKeyPaths(raw: unknown, parsed: unknown, path = ''): string[] {
-  const at = (key: string | number) => (path ? `${path}.${key}` : String(key));
-  if (Array.isArray(raw)) {
-    if (!Array.isArray(parsed) || parsed.length !== raw.length) return [];
-    return raw.flatMap((item, i) => droppedKeyPaths(item, parsed[i], at(i)));
-  }
-  if (!raw || typeof raw !== 'object' || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
-  return Object.entries(raw as Record<string, unknown>).flatMap(([key, value]) =>
-    key in parsed ? droppedKeyPaths(value, (parsed as Record<string, unknown>)[key], at(key)) : [at(key)]);
-}
-
-/** Rejects a scalar destination that an ordinary hop schema would strip, preserving unrelated legacy strips. */
-export function droppedScalarReturnFieldError(raw: unknown, parsed: unknown): z.ZodError | undefined {
-  const paths = droppedKeyPaths(raw, parsed).filter(path => /^column_flow\.\d+\.returns_to$/.test(path));
-  if (!paths.length) return undefined;
-  return new z.ZodError(paths.map(path => ({ code: 'unrecognized_keys', path: path.split('.').slice(0, -1).map(part => /^\d+$/.test(part) ? Number(part) : part), keys: ['returns_to'], message: 'returns_to is unavailable on this ordinary hop.' })));
-}
 
 /** One field-level ID canonicalization applied to a cloned `submit_findings` payload. */
 export interface SubmitFindingsIdNormalization {

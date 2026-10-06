@@ -14,7 +14,7 @@ export class RegexSearchExecutionError extends Error {
 const SEARCH_EXECUTION_DEADLINE_MS = 1000;
 
 /** Startup watchdog: a worker that never reports `online` is terminated instead of hanging. */
-export const SEARCH_WORKER_STARTUP_TIMEOUT_MS = 5000;
+const SEARCH_WORKER_STARTUP_TIMEOUT_MS = 5000;
 
 /**
  * Executes one complete native-regexp search outside the extension host thread.

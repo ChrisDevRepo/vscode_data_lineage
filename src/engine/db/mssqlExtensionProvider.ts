@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import type { IExtension, IConnectionInfo, IConnectionSharingService } from '../../types/mssql';
 import { Logger } from '../../utils/log';
-import { redactSecrets } from './connectionErrors';
+import { redactSecrets } from '../../utils/redact';
 import type { StoredConnectionInfo } from '../shared/bridgeContract';
 import type { DbSession } from './dbSession';
 

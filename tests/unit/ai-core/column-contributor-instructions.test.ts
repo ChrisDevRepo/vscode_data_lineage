@@ -1,4 +1,4 @@
-/** Model-facing contributor guidance preserves bindings and separates value inputs from selection keys. */
+/** Model-facing contributor guidance preserves bindings and admits value inputs only as column sources. */
 import { describe, expect, it } from 'vitest';
 import { SubmitFindingsModelSchema } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
@@ -6,22 +6,24 @@ import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 const flow = SubmitFindingsModelSchema.shape.column_flow.unwrap().element;
 
 describe('column contributor instructions', () => {
-  it('advertises caller bindings and row/group contributors without invented parameter columns', () => {
+  it('advertises caller bindings and value-flow sources, and excludes row-selection keys', () => {
     const projected = toModelJsonSchema(SubmitFindingsModelSchema) as {
       properties: { column_flow: { items: { properties: { upstream_columns: { description: string } } } } };
     };
     const description = projected.properties.column_flow.items.properties.upstream_columns.description;
-    expect(description).toContain('caller-bound inputs');
+    expect(description).toContain('caller-bound value inputs');
+    expect(description).toContain('only the real source columns whose value flows into out_col');
     expect(description).toContain('Resolve parameters and computed aliases to their source columns');
-    expect(description).toContain('grouping, partition and row-selection keys');
-    expect(description).toContain('exclude display-only sorting');
+    expect(description).toContain('A column used only to join, filter, group, partition or order rows is not a source');
+    expect(description).toContain('Exclude the entry’s own writes_to column and unused expressions');
     expect(description).toContain('writers upstream, readers downstream');
   });
 
   it('distinguishes aggregate values from grouping and row-selection roles', () => {
     const description = flow.shape.upstream_columns.element.shape.transforms.description!;
     expect(description).toContain('aggregate: value summarised by an aggregate');
-    expect(description).toContain('combine: join/set-combination input or grouping/partition key');
+    expect(description).toContain('compute: expression input, including a CASE condition operand');
+    expect(description).toContain('combine: join key or grouping/partition key');
     expect(description).toContain('filter: predicate or ordering key selecting contributing rows');
     expect(description).toContain('omit when SQL does not determine it');
   });

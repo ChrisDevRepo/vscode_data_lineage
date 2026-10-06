@@ -31,7 +31,6 @@ const SECTION_RULES: Record<ClassificationValue, {
  * Validates findings carry the `sections.business`/`sections.technical` keys required by the
  * locked classification.
  *
- * @remarks
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
  * (`AiMemoryManager.getArchivedAngles`). A follow-up (`supplementAgenda`) revisits a node whose earlier sections
  * `storeDetail` already appended into the archive (never replaced), so an angle present there

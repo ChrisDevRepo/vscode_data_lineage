@@ -2,7 +2,7 @@
  * Stage-scoped prompt assembly for the synthesis / active / discover phases.
  */
 
-import type { AiOutputTemplates } from '../session/types';
+import { AI_SECTION_KEY_BY_ANGLE, SECTIONS_PLACEHOLDER, type AiOutputSections, type AiOutputTemplates, type AiSectionAngle } from '../session/types';
 import type { ClassificationValue } from '../session/classification';
 import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
 
@@ -155,6 +155,24 @@ function bareSummaryAngleClause(classification: ClassificationValue | undefined)
   return `Submit this under \`sections.${kept[0]}\` — never a descriptive label.`;
 }
 
+/**
+ * The ordered bold section labels the active angle(s) write, as one list for the synthesis
+ * `general` instruction.
+ *
+ * @remarks
+ * Reads the `sections` each capture recipe declares, for the angles {@link CLASSIFICATION_KEPT_ANGLES}
+ * keeps: one angle gives its own list, `both` the ordered union, first occurrence winning. An
+ * unlocked classification keeps every angle, as the capture gates do. A label declared only by an
+ * angle the mission did not fire is therefore never served.
+ */
+function activeSectionLabels(sections: AiOutputSections, classification: ClassificationValue | undefined): string {
+  const angles: readonly AiSectionAngle[] = classification
+    ? CLASSIFICATION_KEPT_ANGLES[classification]
+    : (Object.keys(AI_SECTION_KEY_BY_ANGLE) as AiSectionAngle[]);
+  const labels = new Set(angles.flatMap(angle => sections[angle] ?? []));
+  return [...labels].map(label => `**${label}**`).join(', ');
+}
+
 /** Render scope for {@link resolveStagePrompt}: hop-invariant system block vs per-focus hop block. */
 export type StageRenderScope =
   | { readonly scope: 'stable' }
@@ -182,9 +200,8 @@ export interface StagePromptResult {
  * The non-bodied per-focus render is the exception: `structural_summary` ships bare, with no
  * `### ` header, keeping only {@link bareSummaryAngleClause} ahead of it.
  *
- * At synthesis, if `classification` is known, a `**Mission type:** <value>` one-liner is emitted
- * before the bullet list. The value is code-resolved; the `intro` template instruction references
- * it explicitly.
+ * At synthesis, if `classification` is known, a code-resolved `**Mission type:** <value>`
+ * one-liner is emitted before the bullet list.
  *
  * @param templates - The loaded AI output templates (instruction strings).
  * @param phase - The current conversation phase.
@@ -192,14 +209,18 @@ export interface StagePromptResult {
  * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below the `CLOSING_MIN_SLOTS` threshold (3).
  * @param isCtMode - True if column trace mode is active.
  * @param render - The render scope configuration.
+ * @param sections - Section labels declared by the capture recipes; at synthesis they replace
+ *   {@link SECTIONS_PLACEHOLDER} in the `general` instruction, for the active angle only. Required, so
+ *   a render never serves the placeholder an empty list by omission; the session carries the loaded
+ *   labels, and an instruction without the placeholder renders as written.
  * @returns An object containing the assembled prompt block, shipped keys, and dropped keys.
  */
 export function resolveStagePrompt(
   templates: AiOutputTemplates,
   phase: TemplateStage,
   classification: ClassificationValue | undefined,
-  slotCount?: number,
-  isCtMode?: boolean,
+  slotCount: number | undefined,
+  isCtMode: boolean | undefined,
   /**
    * Which slice of the active stage to render. Default `{ scope: 'stable' }` — every
    * hop-invariant key, per-focus capture keys excluded. `{ scope: 'per_focus', focusKind }`
@@ -208,6 +229,7 @@ export function resolveStagePrompt(
    * carry no per-focus keys, so the scope is a no-op there.
    */
   render: StageRenderScope = { scope: 'stable' },
+  sections: AiOutputSections,
 ): StagePromptResult {
   const CLOSING_MIN_SLOTS = 3;
 
@@ -261,6 +283,10 @@ export function resolveStagePrompt(
   const bareSummary = render.scope === 'per_focus' && render.focusKind === 'non_bodied';
   const blocks = passing.map(key => {
     if (bareSummary) return templates[key].trim();
+    if (key === 'general') {
+      const instruction = templates[key].trim().split(SECTIONS_PLACEHOLDER).join(activeSectionLabels(sections, classification));
+      return `- ${key}: ${instruction}`;
+    }
     const angle = CAPTURE_ANGLE[key];
     if (angle) return `- ${angle}: ${templates[key].trim()}`;
     if (render.scope === 'per_focus') return `- ${templates[key].trim()}`;

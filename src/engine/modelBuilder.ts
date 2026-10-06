@@ -235,7 +235,7 @@ function isSystemRef(name: string, ctx?: EdgeContext): boolean {
 }
 
 /**
- * Heuristically determines if a script writes to a specific object.
+ * Heuristically classifies how a script mutates a specific object.
  *
  * @remarks
  * Uses a regex to look for INSERT/UPDATE/DELETE/MERGE/TRUNCATE keywords
@@ -244,22 +244,45 @@ function isSystemRef(name: string, ctx?: EdgeContext): boolean {
  * @param body - The SQL script body.
  * @param schema - Object schema.
  * @param name - Object name.
- * @returns `'write'` when the SQL mutates the named object; otherwise `'read'`.
+ * @returns `'delete'` when every matched mutation is a DELETE or TRUNCATE (rows removed, no column
+ * data supplied) and no INSERT, UPDATE or MERGE names the object by a three-part name; `'write'` when
+ * any matched mutation is an INSERT, UPDATE or MERGE; otherwise `'read'`.
  */
-function inferBodyDirection(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'read' {
+function classifyBodyMutation(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'delete' | 'read' {
   const esc = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const identifier = (value: string) =>
     `(?:${esc(quoteIdentifier(value))}|${esc(value)}(?![\\p{L}\\p{N}_@$#]))`;
   const pattern = new RegExp(
-    `\\b(?:UPDATE|INSERT(?:\\s+INTO)?|DELETE(?:\\s+FROM)?|MERGE(?:\\s+INTO)?|TRUNCATE\\s+TABLE)\\s+` +
-    `(?:TOP\\s*\\([^)]*\\)\\s*)?(?:(${identifier(schema)})\\s*\\.\\s*)?(${identifier(name)})(?!\\s*\\.)`,
+    `\\b(UPDATE|INSERT|DELETE|MERGE|TRUNCATE\\s+TABLE)\\s+` +
+    `(?:TOP\\s*\\([^)]*\\)\\s*(?:PERCENT\\s+)?)?(?:(?:INTO|FROM)\\s+)?(?:(${identifier(schema)})\\s*\\.\\s*)?(${identifier(name)})(?!\\s*\\.)`,
     'giu',
   );
+  let deleted = false;
   for (const match of body.matchAll(pattern)) {
-    if ((match[1] === undefined || schemaKey(stripBrackets(match[1]), identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive))
-      && schemaKey(stripBrackets(match[2]), identifierCaseSensitive) === schemaKey(name, identifierCaseSensitive)) return 'write';
+    if ((match[2] === undefined || schemaKey(stripBrackets(match[2]), identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive))
+      && schemaKey(stripBrackets(match[3]), identifierCaseSensitive) === schemaKey(name, identifierCaseSensitive)) {
+      if (!/^(?:DELETE|TRUNCATE)/iu.test(match[1])) return 'write';
+      deleted = true;
+    }
   }
-  return 'read';
+  if (!deleted) return 'read';
+  const threePart = new RegExp(
+    `\\b(?:UPDATE|INSERT(?:\\s+INTO)?|MERGE(?:\\s+INTO)?)\\s+(?:\\[[^\\]]+\\]|[\\p{L}_][\\p{L}\\p{N}_@$#]*)\\s*\\.\\s*${identifier(schema)}\\s*\\.\\s*${identifier(name)}`,
+    'iu',
+  );
+  return threePart.test(body) ? 'write' : 'delete';
+}
+
+/**
+ * Heuristically determines if a script writes to a specific object.
+ *
+ * @param body - The SQL script body.
+ * @param schema - Object schema.
+ * @param name - Object name.
+ * @returns `'write'` when the SQL mutates the named object (DELETE and TRUNCATE included); otherwise `'read'`.
+ */
+function inferBodyDirection(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'read' {
+  return classifyBodyMutation(body, schema, name, identifierCaseSensitive) === 'read' ? 'read' : 'write';
 }
 
 /**
@@ -270,18 +293,20 @@ function inferBodyDirection(body: string, schema: string, name: string, identifi
  * @param source - Source node ID.
  * @param target - Target node ID.
  * @param type - The edge type (body-read, write, or exec).
+ * @param deleteOnly - Marks a write edge whose every mutation is a DELETE or TRUNCATE.
  */
 function addEdge(
   edges: LineageEdge[],
   edgeKeys: Set<string>,
   source: string,
   target: string,
-  type: 'body' | 'exec'
+  type: 'body' | 'exec',
+  deleteOnly = false,
 ) {
   const key = `${source}→${target}`;
   if (!edgeKeys.has(key)) {
     edgeKeys.add(key);
-    edges.push({ source, target, type });
+    edges.push(deleteOnly ? { source, target, type, deleteOnly: true } : { source, target, type });
   }
 }
 
@@ -644,10 +669,11 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
         addEdge(ctx.edges, ctx.edgeKeys, sourceId, depId, 'exec');
       } else if (
         (depNode?.type === 'table' || depNode?.type === 'external') &&
-        node.bodyScript &&
-        inferBodyDirection(node.bodyScript, depNode.schema, depNode.name, ctx.identifierCaseSensitive) === 'write'
+        node.bodyScript
       ) {
-        addEdge(ctx.edges, ctx.edgeKeys, sourceId, depId, 'body');
+        const mutation = classifyBodyMutation(node.bodyScript, depNode.schema, depNode.name, ctx.identifierCaseSensitive);
+        if (mutation === 'read') addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
+        else addEdge(ctx.edges, ctx.edgeKeys, sourceId, depId, 'body', mutation === 'delete');
       } else {
         addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
       }
@@ -735,6 +761,11 @@ function buildNodesAndEdges(
 
   for (const node of nodes) {
     const xmlDeps = grouped.depsPerSource.get(node.id) ?? [];
+    if (!node.bodyScript && node.type === 'procedure') {
+      node.definitionUnreadable = true;
+      (stats.unreadableDefinitions ??= []).push(node.fullName);
+      continue;
+    }
     if (node.bodyScript && node.type === 'procedure') {
       scriptedCount++;
       processSpEdges(node, xmlDeps, ctx);
@@ -858,7 +889,7 @@ function createVirtualNodes(
 
   const addLocalEdge = (sourceId: string, localId: string, isWrite: boolean): void => {
     const resolved = normalizeName(localId, identifierCaseSensitive);
-    if (!nodeIds.has(resolved)) return;
+    if (!nodeIds.has(resolved) || resolved === sourceId) return;
     if (isWrite) addEdge(edges, edgeKeys, sourceId, resolved, 'body');
     else addEdge(edges, edgeKeys, resolved, sourceId, 'body');
   };

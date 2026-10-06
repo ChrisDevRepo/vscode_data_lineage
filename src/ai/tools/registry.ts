@@ -114,7 +114,7 @@ export class ToolRegistry<O = unknown> implements IToolRegistry<O> {
  *
  * @remarks
  * The phase-aware host loop exposes only the tools allowed in the current phase (the
- * phase tool-policy set without mutating the underlying registry. Lookup and dispatch are
+ * phase tool-policy set) without mutating the underlying registry. Lookup and dispatch are
  * filtered so a phase-disallowed name fails as an unknown tool. The single dispatch surface
  * is preserved; `register` is disabled because the view is immutable.
  *

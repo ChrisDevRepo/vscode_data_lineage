@@ -1,4 +1,4 @@
-/** Invalid procedure continuations cannot poison checkpoints, and corrected references remain restorable. */
+/** Invalid procedure continuations cannot poison the state dump, and corrected references stay admissible. */
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph } from '../helpers/testUtils';
@@ -13,8 +13,7 @@ describe.each([false, true])('procedure continuation admission (CS=%s)', identif
     ];
     const pairs: Array<[string, string]> = [[writer, carrier]];
     const model = { ...makeModel(nodes, pairs, ['ct']), identifierCaseSensitive };
-    const graph = makeGraph(nodes, pairs);
-    const engine = new NavigationEngine(model, graph, () => {}, {});
+    const engine = new NavigationEngine(model, makeGraph(nodes, pairs), () => {}, {});
     expect(engine.init({ origin: carrier, question: 'Trace Value to its original sources', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Value'], depthIntent: { upstream: { levels: 'all', exactness: 'approximate' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
     engine.getHopContext();
     const finding = { focus_node_id: carrier, verdict: 'passthrough' as const, summary: 'Stored value', sections: [{ angle: 'technical' as const, text: 'The procedure writes Value.' }], column_flow: [{ out_col: 'Value', upstream_columns: [{ node: writer, col: '' }] }] };
@@ -25,10 +24,9 @@ describe.each([false, true])('procedure continuation admission (CS=%s)', identif
     expect(engine.columnAspect?.edges).toEqual([]);
     expect(engine.toJSON().hopCount).toBe(before.hopCount);
     expect(engine.currentFocus).toBe(carrier);
-    expect(() => NavigationEngine.fromJSON(JSON.parse(JSON.stringify(engine.toJSON())), model, graph, () => {})).not.toThrow();
+    expect(() => engine.toJSON()).not.toThrow();
     expect(engine.submitFindings({ ...finding, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: writer, col: correctedColumn }] }] })).toHaveProperty('ok', true);
-    const restored = NavigationEngine.fromJSON(JSON.parse(JSON.stringify(engine.toJSON())), model, graph, () => {});
-    expect(restored.getHopContext().focus_node?.id).toBe(writer);
-    expect(restored.columnAspect?.edges).toContainEqual(expect.objectContaining({ from_node: writer, from_col: correctedColumn, to_node: carrier, to_col: 'Value' }));
+    expect(engine.getHopContext().focus_node?.id).toBe(writer);
+    expect(engine.columnAspect?.edges).toContainEqual(expect.objectContaining({ from_node: writer, from_col: correctedColumn, to_node: carrier, to_col: 'Value' }));
   });
 });

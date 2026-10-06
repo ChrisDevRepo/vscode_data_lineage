@@ -327,3 +327,24 @@ describe('CLR method suppression', () => {
     expect(dbNodes[0].externalDatabase).toBe('otherdb');
   });
 });
+
+describe('three-part self-reference in the current database', () => {
+  it.each([
+    ['procedure calling itself recursively', 'procedure', 'CREATE PROCEDURE [dbo].[pSelf] AS EXEC MyDb.dbo.pSelf', '[dbo].[pSelf]'],
+    ['view reading itself by three-part name', 'view', 'CREATE VIEW [dbo].[vSelf] AS SELECT * FROM MyDb.dbo.vSelf', '[dbo].[vSelf]'],
+    ['view reading itself by four-part name', 'view', 'CREATE VIEW [dbo].[vSelf] AS SELECT * FROM Srv.MyDb.dbo.vSelf', '[dbo].[vSelf]'],
+  ] as const)('creates no self-loop edge for a %s', (_label, type, bodyScript, fullName) => {
+    for (const caseSensitive of [false, true]) {
+      const model = buildModel([{ fullName, type, bodyScript } as BuildObject], [], undefined, 'MyDb', false, undefined, caseSensitive);
+      expect(model.edges.filter(edge => edge.source === edge.target)).toEqual([]);
+      expect(model.nodes.filter(node => node.externalType === 'db')).toEqual([]);
+    }
+  });
+
+  it('still links a three-part reference to another local object', () => {
+    const model = buildModel(
+      [procedure('[dbo].[pLoad]', 'CREATE PROCEDURE [dbo].[pLoad] AS SELECT * FROM MyDb.dbo.Src'), table('[dbo].[Src]')],
+      [], undefined, 'MyDb');
+    expect(model.edges.some(edge => edge.source === '[dbo].[src]' && edge.target === '[dbo].[pload]')).toBe(true);
+  });
+});

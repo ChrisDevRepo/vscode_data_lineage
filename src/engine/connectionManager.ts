@@ -12,11 +12,6 @@
 import * as vscode from 'vscode';
 import * as yaml from 'js-yaml';
 import { z } from 'zod';
-
-const DmvQueriesConfigSchema = z.object({
-  version: z.coerce.number().optional(),
-  queries: z.array(z.record(z.string(), z.any())).optional()
-}).passthrough();
 import type { IConnectionInfo, SimpleExecuteResult } from '../types/mssql';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
@@ -25,7 +20,7 @@ import { notifyInfo, notifyWarning } from '../utils/notifications';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
 import { DbConnectionError, getConnectionProvider, type ConnectionErrorTarget, type ConnectionProviderId, type DbSession } from './db/dbSession';
 import {
-  MSSQL_EXTENSION_ID, MssqlApiError, createMssqlSession, isMssqlExtensionAvailable,
+  MssqlApiError, createMssqlSession, isMssqlExtensionAvailable,
   promptForMssqlConnection, reconnectMssqlConnection,
 } from './db/mssqlExtensionProvider';
 import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
@@ -33,7 +28,10 @@ import { describeConnection, readBuiltInConnections, type BuiltInConnection } fr
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
 import { targetFromStored, type ConnectionErrorHooks } from './db/connectionErrors';
 
-export { MSSQL_EXTENSION_ID };
+const DmvQueriesConfigSchema = z.object({
+  version: z.coerce.number().optional(),
+  queries: z.array(z.record(z.string(), z.any())).optional()
+}).passthrough();
 
 /**
  * Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server.
@@ -178,6 +176,60 @@ export async function loadDmvQueries(
   }
 
   return loadBuiltInDmvQueries(outputChannel, extensionUri);
+}
+
+/** Setting that names a custom DMV queries YAML. */
+const DMV_QUERIES_FILE_SETTING = 'dataLineageViz.dmvQueriesFile';
+
+/** The file `dataLineageViz.dmvQueriesFile` currently resolves to, or `''` for the built-in queries. */
+function configuredDmvQueriesFile(): string {
+  const value = vscode.workspace.getConfiguration('dataLineageViz').get<string>('dmvQueriesFile', '');
+  return value ? resolveWorkspacePath(value) ?? value : '';
+}
+
+/** DMV queries kept between reads until the configured YAML file changes. */
+export interface DmvQueryCache extends vscode.Disposable {
+  /** The kept queries, loading them on first use or after the setting changed. A failed load is not kept. */
+  get(): Promise<DmvQuery[]>;
+  /** Loads the queries again and keeps the result; an import uses it so an edit to the file applies to the next import. */
+  reload(): Promise<DmvQuery[]>;
+}
+
+/**
+ * Creates a DMV queries cache that reloads when `dataLineageViz.dmvQueriesFile` names another file.
+ *
+ * @remarks
+ * Each load reads the YAML, logs and may show a warning toast for an unusable custom file, so callers
+ * that need the queries repeatedly — the built-in provider's server-info lookup on every table-statistics
+ * request — read the cached result instead. A setting change that keeps the resolved file (a relative
+ * path rewritten to its absolute form) keeps the cache. Listening for setting changes starts with the
+ * first load; dispose to stop it.
+ *
+ * @param load - Reads and validates the queries, normally {@link loadDmvQueries}.
+ */
+export function createDmvQueryCache(load: () => Promise<DmvQuery[]>): DmvQueryCache {
+  let cached: Promise<DmvQuery[]> | undefined;
+  let loadedFile: string | undefined;
+  let subscription: vscode.Disposable | undefined;
+  const reload = (): Promise<DmvQuery[]> => {
+    subscription ??= vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration(DMV_QUERIES_FILE_SETTING) && configuredDmvQueriesFile() !== loadedFile) cached = undefined;
+    });
+    loadedFile = configuredDmvQueriesFile();
+    const loading = load();
+    cached = loading;
+    loading.catch(() => { if (cached === loading) cached = undefined; });
+    return loading;
+  };
+  return {
+    get: () => cached ?? reload(),
+    reload,
+    dispose: () => {
+      subscription?.dispose();
+      subscription = undefined;
+      cached = undefined;
+    },
+  };
 }
 
 /**

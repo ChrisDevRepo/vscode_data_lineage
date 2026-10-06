@@ -30,6 +30,12 @@ const INSET_LEFT: Record<'none' | 'sidebar' | 'navigator' | 'rail', number | str
 const SCHEMA_DISPLAY_LIMIT = 10;
 
 /**
+ * Height cap for the expanded schema list: it scrolls inside the canvas instead of running past
+ * its bottom edge, while the toggle stays pinned below the list.
+ */
+const LEGEND_LIST_MAX_HEIGHT = 'min(60vh, calc(100vh - 160px))';
+
+/**
  * Maps rendered schemas to colors with collapsible overflow and theme-aware contrast.
  */
 export const Legend = memo(function Legend({
@@ -75,7 +81,11 @@ export const Legend = memo(function Legend({
 
       {!collapsed && (
         <div className="px-3 py-2.5">
-          <div>
+          <div
+            className={expanded ? 'nowheel overflow-y-auto overscroll-contain pr-1' : undefined}
+            style={expanded ? { maxHeight: LEGEND_LIST_MAX_HEIGHT } : undefined}
+            data-testid="legend-schema-list"
+          >
             <div className="space-y-1.5">
               {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT))
                 .filter(s => !!s && s.trim().length > 0)
@@ -100,17 +110,18 @@ export const Legend = memo(function Legend({
                     </div>
                   );
                 })}
-
-              {schemas.length > SCHEMA_DISPLAY_LIMIT && (
-                <button
-                  onClick={() => setExpanded(!expanded)}
-                  className="text-[11px] ln-text-link mt-1 hover:underline cursor-pointer bg-transparent border-none p-0"
-                >
-                  {expanded ? 'Show less' : `+${schemas.length - SCHEMA_DISPLAY_LIMIT} more…`}
-                </button>
-              )}
             </div>
           </div>
+
+          {schemas.length > SCHEMA_DISPLAY_LIMIT && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              aria-expanded={expanded}
+              className="text-[11px] ln-text-link mt-2 hover:underline cursor-pointer bg-transparent border-none p-0"
+            >
+              {expanded ? 'Show less' : `+${schemas.length - SCHEMA_DISPLAY_LIMIT} more…`}
+            </button>
+          )}
         </div>
       )}
     </div>

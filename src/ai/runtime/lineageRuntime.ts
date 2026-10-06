@@ -79,16 +79,40 @@ export class LineageRuntime {
 
   public constructor(private readonly deps: LineageRuntimeDeps) {}
 
-  /** Generates suggestions from compact facts without tools, history replay or session mutation. */
+  /**
+   * Generates suggestions from compact facts without tools, history replay or session mutation.
+   *
+   * @remarks
+   * Writes the same `turn-start`/`turn-terminal` lifecycle pair as {@link run}, so the trace joins
+   * this turn's wire records to a turn like any other request.
+   */
   public async runSuggestions(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
+    const session = this.deps.getSession();
+    const runFingerprint = fingerprint(`${session.id}:${input.request.id}`);
+    const startedAt = performance.now();
+    this.writeLifecycle({
+      type: 'turn-start',
+      requestId: input.request.id,
+      runFingerprint,
+      sessionFingerprint: fingerprint(session.id),
+      modelFingerprint: fingerprint(input.model.identity.id),
+    });
     const result = await input.model.generateToolTurn({
       messages: [modelUserMessage(input.request.prompt)], tools: [], toolChoice: 'none',
       phase: 'suggestions', signal: input.signal,
       onTextDelta: text => input.sink.stream(text),
     });
     const outcome = result.status === 'completed' ? 'ok' : result.status;
+    this.writeLifecycle({
+      type: 'turn-terminal',
+      requestId: input.request.id,
+      runFingerprint,
+      status: outcome,
+      modelCalls: input.model.modelCalls,
+      durationMs: elapsedMs(startedAt),
+    });
     input.sink.result(outcome);
-    return { outcome, modelCalls: 1, ...(result.status === 'error'
+    return { outcome, modelCalls: input.model.modelCalls, ...(result.status === 'error'
       ? { failure: { message: result.error } } : {}) };
   }
 

@@ -7,7 +7,7 @@ import { postToWebview } from './bridge/host';
 import { Logger } from './utils/log';
 import { notifyError, notifyWarning } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
-import { type AiOutputTemplates, EMPTY_AI_TEMPLATES, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
+import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
 import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
@@ -15,7 +15,7 @@ import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules } from './engine/sqlBodyParser';
-import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
+import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import { buildExtensionConfig } from './bridge/messageHandlers';
 
@@ -98,11 +98,12 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     traceWriter,
   ));
 
-  const templates = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
+  const templateSet = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
     logger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
-    return { ...EMPTY_AI_TEMPLATES };
+    return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
   });
-  getSession().outputTemplates = templates;
+  getSession().outputTemplates = templateSet.templates;
+  getSession().outputSections = templateSet.sections;
 
   const aiEnabled = vscode.workspace
     .getConfiguration('dataLineageViz.ai')
@@ -207,9 +208,10 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
         const t = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
           configLogger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
-          return { ...EMPTY_AI_TEMPLATES };
+          return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
         });
-        getSession().outputTemplates = t;
+        getSession().outputTemplates = t.templates;
+        getSession().outputSections = t.sections;
       }
 
       if (e.affectsConfiguration('dataLineageViz.parseRulesFile')) {
@@ -282,15 +284,18 @@ export default { activateRuntime, deactivate };
  *
  * @param outputChannel - The log channel for reporting load status.
  * @param extensionUri - The root URI of the extension.
- * @returns A promise resolving to the validated and merged `AiOutputTemplates`.
+ * @returns A promise resolving to the validated and merged `AiOutputTemplates` and the section labels
+ *   declared by the capture recipes (a custom file's list replaces the built-in list of the same recipe).
  */
 async function loadAiOutputTemplates(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
-): Promise<AiOutputTemplates> {
+): Promise<AiOutputTemplateSet> {
   const logger = Logger.create(outputChannel, 'Config');
   const builtIn: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   const builtInKeys: string[] = [];
+  let sections: AiOutputSections = EMPTY_AI_SECTIONS;
+  const result = (): AiOutputTemplateSet => ({ templates: builtIn, sections });
 
   const builtInUri = vscode.Uri.joinPath(extensionUri, 'assets', 'aiOutputTemplates.yaml');
   logger.debug(`Reading AI templates built-in: ${builtInUri.fsPath}`);
@@ -306,6 +311,7 @@ async function loadAiOutputTemplates(
         logger.debug(`Skipped AI template '${key}': built-in missing or non-string 'instruction' field`);
       }
     }
+    sections = readAiOutputSections(parsed).sections;
   } catch (err) {
     notifyError(
       logger,
@@ -320,7 +326,7 @@ async function loadAiOutputTemplates(
   const customPath = cfg.get<string>('outputTemplateFile', '');
   if (!customPath) {
     logger.info(`Applied AI templates: ${builtInKeys.length} loaded from built-in, 0 overlaid`);
-    return builtIn;
+    return result();
   }
 
   const resolved = resolveWorkspacePath(customPath);
@@ -331,7 +337,7 @@ async function loadAiOutputTemplates(
       `Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`,
       { reason: 'cannot resolve path', path: customPath, setting: 'ai.outputTemplateFile', fallback: 'built-in defaults' },
     );
-    return builtIn;
+    return result();
   }
 
   logger.debug(`Reading AI templates custom: ${resolved}`);
@@ -355,7 +361,7 @@ async function loadAiOutputTemplates(
           fallback: 'built-in defaults',
         },
       );
-      return builtIn;
+      return result();
     }
     if (parsed && typeof parsed === 'object') {
       const required = new Set<string>(REQUIRED_AI_TEMPLATE_KEYS);
@@ -375,6 +381,11 @@ async function loadAiOutputTemplates(
         logger.debug(`Skipped AI template '${key}': missing or non-string 'instruction' field in custom YAML`);
       }
     }
+    const custom = readAiOutputSections(parsed);
+    for (const key of custom.rejected) {
+      logger.warn(`Skipped AI template '${key}' sections: must be a non-empty list of section labels — keeping the built-in labels`);
+    }
+    sections = { ...sections, ...custom.sections };
     await persistAbsolutePath('ai.outputTemplateFile', customPath, resolved);
     logger.info(`Applied AI templates: ${builtInKeys.length} loaded from built-in, ${overlaid.length} overlaid from custom (${overlaid.join(', ') || 'none'})`);
   } catch (err) {
@@ -386,7 +397,7 @@ async function loadAiOutputTemplates(
     );
   }
 
-  return builtIn;
+  return result();
 }
 
 /**

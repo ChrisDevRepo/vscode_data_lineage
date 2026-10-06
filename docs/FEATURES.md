@@ -300,7 +300,8 @@ current AI-authored view in the graph panel.
 
 When a run records column findings, the preview offers an **Objects / Detail** switch.
 Detail shows traced columns and their connections, with procedures and scalar
-functions as transformation hubs. Hover a column to highlight its thread; hover
+functions as transformation hubs. Objects without traced columns stay visible as
+plain boxes, joined by dashed object-level edges. Hover a column to highlight its thread; hover
 a transform chip to read its explanation. AI badges and notes carry over from
 Objects view, and layout uses the same direction and spacing settings.
 
@@ -409,7 +410,7 @@ Defaults and ranges below match `package.json`; the Settings UI shows the short 
 | `database.connectionProvider` | `mssqlExtension` | Where live connections come from; application-scoped. See [Database connections](#database-connections). |
 | `database.connections` | `[]` | Connections of the `builtIn` provider: server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption. Passwords are kept in VS Code secret storage under `dataLineageViz.database.password.<id>`. Manage entries with **Add / Edit / Remove Database Connection**; replace a password with **Update Database Password**. Hand-editing the JSON is not needed. |
 | `dmvQueryTimeout` | 120 s (10–600) | Time allowed per metadata query; raise for large databases. |
-| `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; contract in [`DMV_QUERIES.md`](DMV_QUERIES.md). Applies after reload. |
+| `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; contract in [`DMV_QUERIES.md`](DMV_QUERIES.md). The file is read at each import; no reload needed. |
 
 #### Table statistics
 

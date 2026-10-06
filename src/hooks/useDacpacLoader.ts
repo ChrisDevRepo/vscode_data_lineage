@@ -107,6 +107,11 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
+  /**
+   * Status auto-clear policy: transient info messages (progress, connecting, loading) clear 6 s
+   * after loading ends; success messages carry the load summary, and warnings and errors need the
+   * user's attention, so those stay until the next status replaces them.
+   */
   useEffect(() => {
     if (status && status.type === 'info' && !isLoading) {
       const timer = setTimeout(() => setStatus(null), 6000);

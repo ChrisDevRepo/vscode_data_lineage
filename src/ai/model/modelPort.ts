@@ -87,7 +87,7 @@ function modelToolArgs(input: unknown): Record<string, unknown> {
 /**
  * Creates the tool-result message paired with a preceding tool call.
  * @param status - Standard tool-result outcome: `'success'` for an executed call, `'error'`
- * otherwise. Omitted only by a caller with no outcome to report (e.g. replayed chat history).
+ * otherwise.
  * @param artifact - Machine-only facts riding `@langchain/core`'s documented `ToolMessage.artifact`
  * side channel — kept on the message for a reader that needs the full structured record, never sent
  * to the provider. Omitted when the caller has none.
@@ -96,14 +96,14 @@ export function modelToolResultMessage(
   callId: string,
   toolName: string,
   text: string,
-  status?: 'success' | 'error',
+  status: 'success' | 'error',
   artifact?: unknown,
 ): ToolMessage {
   return new ToolMessage({
     tool_call_id: callId,
     name: toolName,
     content: text,
-    ...(status !== undefined ? { status } : {}),
+    status,
     ...(artifact !== undefined ? { artifact } : {}),
   });
 }

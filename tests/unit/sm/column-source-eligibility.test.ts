@@ -23,7 +23,7 @@ function world() {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   expect(engine.init({ origin: caller, question: 'Trace Value', direction: 'bidirectional', analysisMode: 'ct', targetColumns: ['Value'], depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
   engine.getHopContext();
-  return { engine, model, graph };
+  return { engine };
 }
 
 const finding = { focus_node_id: caller, verdict: 'analyze' as const, summary: 'View applies the function.', sections: { technical: 'Value is the function over Amount.' } };
@@ -78,29 +78,27 @@ describe('metadata-derived upstream contributor eligibility', () => {
     expect(schema.safeParse({ ...finding, focus_node_id: focus, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: bare, col: 'Value' }] }] }).success).toBe(false);
   });
 
-  it('caches by the eligible-source identity and recomputes a restored hop', () => {
-    const { engine, model, graph } = world();
+  it('caches by the eligible-source identity across fresh hop columns', () => {
+    const { engine } = world();
     const first = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
     expect(submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns)).toBe(first);
     const narrowed = submitFindingsSchemaForMode('ct', 'technical', true, { outCols: ['Value'], writesTo: false, columnSourceNodeIds: [source] });
     expect(narrowed).not.toBe(first);
     expect(submitFindingsSchemaForMode('ct', 'technical', true, { outCols: ['Value'], writesTo: false, columnSourceNodeIds: [source] })).toBe(narrowed);
-    const restored = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
-    expect(restored.hopSubmitColumns.columnSourceNodeIds).toEqual([source, tvf]);
-    expect(submitFindingsSchemaForMode('ct', 'technical', true, restored.hopSubmitColumns)).toBe(first);
+    expect(engine.hopSubmitColumns.columnSourceNodeIds).toEqual([source, tvf]);
+    expect(submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns)).toBe(first);
   });
 
   it('derives the scalar-return function hop from the caller read suppliers and refuses invented function columns there', () => {
-    const { engine, model, graph } = world();
+    const { engine } = world();
     const submitted = engine.submitFindings({ ...finding, verdict: 'analyze', sections: [{ angle: 'technical' as const, text: finding.sections.technical }],
       column_flow: [],
       prune_neighbors: [{ id: tvf, reason: 'Rate does not reach the traced value.' }],
       questions: [{ nodeId: fn, question: 'Establish how the function computes its returned value.', caller_context: { node: caller, col: 'Value' } }] });
     expect(submitted).toHaveProperty('ok', true);
-    const restored = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
-    const hop = restored.getHopContext();
+    const hop = engine.getHopContext();
     expect(hop).toMatchObject({ focus_node: { id: fn }, caller_output_targets: [{ node: caller, col: 'Value' }] });
-    const fnHop = restored.hopSubmitColumns;
+    const fnHop = engine.hopSubmitColumns;
     expect(fnHop.columnSourceNodeIds).toEqual([caller, source]);
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, fnHop);
     const gold = { focus_node_id: fn, verdict: 'analyze' as const, summary: 'Function returns the surcharged amount.', sections: { technical: 'The caller arguments come from the source table.' },

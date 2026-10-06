@@ -22,11 +22,12 @@ import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../e
 import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import {
   connectDatabase, connectionErrorHooks, releaseSession, getConnectionAvailability, stripSensitiveFields,
-  loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered,
+  loadDmvQueries, createDmvQueryCache, executeDmvQueries, executeDmvQueriesFiltered,
   executeSimpleQuery, withQueryTimeout, isPhase2Query, type DmvQuery, type DbConnectEnv,
 } from '../engine/connectionManager';
 import { DATABASE_CONFIG_SECTION, getConnectionProvider, type DbSession } from '../engine/db/dbSession';
-import { isDbConnectionError, isDriverError, redactSecrets, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
+import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
+import { redactSecrets } from '../utils/redact';
 import { type IConnectionInfo, type SimpleExecuteResult } from '../types/mssql';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
 import { type StatsMode } from '../engine/profilingEngine';
@@ -281,6 +282,11 @@ export function applyModelToSession(
   void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
 }
 
+/** Mutable holder for the session's untitled AI report document; a closed document is never reused. */
+export interface ReportDocumentRef {
+  document?: vscode.TextDocument;
+}
+
 /**
  * Factory for creating the IPC (Inter-Process Communication) bridge between the Extension Host and the Webview.
  *
@@ -293,6 +299,9 @@ export function applyModelToSession(
  * @param migrateFromWorkspaceState - Migration helper for legacy workspace state.
  * @param loadDemoFlag - Whether demo data should be loaded instead of a persisted project.
  * @param setDetailPanel - Setter for the current detail panel reference.
+ * @param reportDocumentRef - Holder of the untitled AI report document, owned by the caller so one
+ *   report document survives the handlers being re-created when the panel is closed and reopened.
+ *   Defaults to a holder private to this handler set.
  *
  * @returns The per-message-type handler map plus the panel-dispose cleanup function.
  */
@@ -305,16 +314,70 @@ export function createMessageHandlers(
   saveProjectStore: (context: vscode.ExtensionContext, store: ProjectStore) => Promise<void>,
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
   loadDemoFlag: boolean,
-  setDetailPanel: (panel: vscode.WebviewPanel | undefined) => void
+  setDetailPanel: (panel: vscode.WebviewPanel | undefined) => void,
+  reportDocumentRef: ReportDocumentRef = {}
 ): MessageHandlerBundle {
 
   let cachedElements: XmlElement[] | null = null;
   let cachedDspName = '';
   let cachedIdentifierCaseSensitive = false;
   let lastConnectionInfo: StoredConnectionInfo | undefined;
-  const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: () => loadDmvQueries(outputChannel, context.extensionUri) };
+  const dmvQueries = createDmvQueryCache(() => loadDmvQueries(outputChannel, context.extensionUri));
+  const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: dmvQueries.get };
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
+
+  let reportWrite: Promise<unknown> = Promise.resolve();
+  /** Puts `content` into the session's report document, one call at a time so a second click meets the document the first created. */
+  function writeReportDocument(content: string): Promise<vscode.TextDocument> {
+    const written = reportWrite.then(() => putReportContent(content));
+    reportWrite = written.catch(() => undefined);
+    return written;
+  }
+  /** Replaces the report document's text, creating the document when none is open or the edit is refused. */
+  async function putReportContent(content: string): Promise<vscode.TextDocument> {
+    const open = reportDocumentRef.document;
+    if (open && !open.isClosed) {
+      if (open.getText() === content) return open;
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(open.uri, open.validateRange(new vscode.Range(0, 0, open.lineCount, 0)), content);
+      if (await vscode.workspace.applyEdit(edit)) return open;
+    }
+    const created = await vscode.workspace.openTextDocument({ content, language: 'markdown' });
+    reportDocumentRef.document = created;
+    return created;
+  }
+  /**
+   * The built-in markdown preview tabs titled for `doc`, across every editor group.
+   *
+   * @remarks
+   * The built-in preview labels a tab `<prefix> <name>` (`Preview <name>`, `[Preview] <name>` when locked,
+   * the prefix localized), so the document name must be the whole last word of the label. The webview tab
+   * exposes no document URI; a different document whose name has a space before the same `Untitled-N`
+   * text is the one case this match cannot tell apart.
+   */
+  function reportPreviewTabs(doc: vscode.TextDocument): vscode.Tab[] {
+    const name = path.basename(doc.uri.path);
+    return vscode.window.tabGroups.all.flatMap((group) =>
+      group.tabs.filter((tab) =>
+        tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('markdown.preview') && tab.label.endsWith(` ${name}`)));
+  }
+  /**
+   * Leaves at most the visible report previews on screen; returns true when one is the visible tab of an editor group.
+   *
+   * @remarks
+   * A preview hidden behind another tab is closed, also when another report preview is visible: the preview
+   * command opens a new preview whenever the group beside the active one holds none, so a hidden one would
+   * end as a second preview. A refused or failed close is logged and the command still runs.
+   */
+  async function settleReportPreviews(doc: vscode.TextDocument): Promise<boolean> {
+    const previews = reportPreviewTabs(doc);
+    for (const tab of previews.filter((candidate) => !candidate.isActive)) {
+      const closed = await Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => false);
+      if (!closed) host.log('warn', 'Bridge', `Hidden report preview tab "${tab.label}" could not be closed`);
+    }
+    return previews.some((tab) => tab.isActive);
+  }
 
   const statsConnState: StatsConnState = { session: undefined, pending: null };
   async function cleanupStatsConnection(): Promise<void> {
@@ -464,7 +527,7 @@ export function createMessageHandlers(
               await handlers['show-warning'](m);
             }
           } catch (err) {
-            host.log('error', 'Bridge', 'Detail panel handler threw unexpectedly', err instanceof Error ? err : new Error(String(err)));
+            host.log('error', 'Bridge', 'Detail panel handler threw unexpectedly', err);
           }
         });
       } else {
@@ -547,7 +610,7 @@ export function createMessageHandlers(
       const store = loadProjectStore(context);
       const project = store.projects.find(p => p.id === msg.id);
       if (!project) {
-        host.log('error', 'Bridge', 'Load project', new Error(`Project not found: ${msg.id}`));
+        host.log('error', 'Bridge', 'Load project', `Project not found: ${msg.id}`);
         host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
         return;
       }
@@ -603,9 +666,9 @@ export function createMessageHandlers(
           lastConnectionInfo = session.connectionInfo;
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
-            await runDbPhase1Host(host, session, outputChannel);
+            await runDbPhase1Host(host, session, outputChannel, dmvQueries.reload);
           } else {
-            await runDbPhase2Host(host, session, schemas, outputChannel, getSession, session.connectionInfo.database, dbConn.sourceName, (m) => {
+            await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, getSession, session.connectionInfo.database, dbConn.sourceName, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
             });
             const refreshed = {
@@ -651,7 +714,7 @@ export function createMessageHandlers(
     'dacpac-visualize': async (msg) => {
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       if (!cachedElements) {
-        host.log('error', 'Bridge', 'Dacpac visualize', new Error('Session expired (cachedElements is null)'));
+        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedElements is null)');
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
         return;
       }
@@ -681,7 +744,7 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, token) => {
         if (!lastConnectionInfo) {
-          host.log('error', 'Bridge', 'Database visualize', new Error('No stored connection info'));
+          host.log('error', 'Bridge', 'Database visualize', 'No stored connection info');
           host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
           return undefined;
         }
@@ -698,16 +761,18 @@ export function createMessageHandlers(
               schemas: msg.schemas,
             });
           } catch (err) {
+            const dbLogger = Logger.create(outputChannel, 'DB');
             notifyWarning(
-              Logger.create(outputChannel, 'DB'),
+              dbLogger,
               'Persist database project',
               `Data Lineage: the project "${msg.projectName}" could not be saved — the connection info failed validation. The graph still loads.`,
-              { sourceName, error: err },
+              { error: err },
             );
+            dbLogger.debug(`Unsaved project source: ${sourceName}`);
           }
         }
 
-        await runDbPhase2Host(host, conn, msg.schemas, outputChannel, getSession, conn.connectionInfo.database, sourceName, (m) => {
+        await runDbPhase2Host(host, conn, msg.schemas, outputChannel, dmvQueries.reload, getSession, conn.connectionInfo.database, sourceName, (m) => {
           if (pendingProject) {
             setCurrentModel(m, true, { id: pendingProject.id, name: pendingProject.name });
           } else {
@@ -751,7 +816,7 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', 'Database connect requested');
       return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn) => {
         lastConnectionInfo = conn.connectionInfo;
-        return runDbPhase1Host(host, conn, outputChannel);
+        return runDbPhase1Host(host, conn, outputChannel, dmvQueries.reload);
       });
     },
     'check-mssql': () => {
@@ -843,20 +908,25 @@ export function createMessageHandlers(
       }
     },
     /**
-     * Opens the AI report as an untitled markdown document and previews it beside the panel.
+     * Shows the AI report in one untitled markdown document and one preview beside the panel.
      *
      * @remarks
-     * No HTML sanitizing pass runs here: the content lands in a text document, and VS Code's own
-     * markdown preview renders it under its `markdown.preview.security` policy. The preview command
-     * belongs to the built-in markdown extension, which a user can disable — its absence is not a
-     * failed action, so the fallback shows the document itself and reports it as a warning.
+     * The first click creates the document; later clicks replace its text and re-use it while it is
+     * open, so repeated clicks never accumulate documents or previews. The unsaved document stays
+     * available for the user to keep or save. An open preview follows its document by itself, so the
+     * preview command runs only when no preview of the report is the visible tab of a group; a preview
+     * hidden behind another tab is closed first, because the built-in command opens a new preview whenever
+     * the group beside the active one holds none. No HTML sanitizing pass runs
+     * here: the content lands in a text document, and VS Code's own markdown preview renders it under
+     * its `markdown.preview.security` policy. The preview command belongs to the built-in markdown
+     * extension, which a user can disable — its absence is not a failed action, so the fallback shows
+     * the document itself and reports it as a warning.
      */
     'ai-open-in-editor': async (msg) => {
       host.log('debug', 'Bridge', 'Opening AI description in editor');
-      const doc = await vscode.workspace.openTextDocument({
-        content: stripFocusNodeLinks(msg.markdown),
-        language: 'markdown',
-      });
+      const content = stripFocusNodeLinks(msg.markdown);
+      const doc = await writeReportDocument(content);
+      if (await settleReportPreviews(doc)) return;
       try {
         await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
       } catch (err) {
@@ -876,7 +946,6 @@ export function createMessageHandlers(
     },
     'error': (msg) => {
       const source = msg.source ?? 'unknown';
-      const logger = Logger.create(outputChannel, 'Bridge');
       const err = new Error(msg.error);
       if (msg.stack) err.stack = msg.stack;
       const componentLine = msg.componentStack
@@ -889,8 +958,8 @@ export function createMessageHandlers(
       recordWebviewError(getSession(), {
         timestamp: msg.timestamp ?? Date.now(),
         source,
-        message: msg.error,
-        stack: msg.stack ? trunc(sanitizeForLog(msg.stack), 600) : undefined,
+        message: redactSecrets(msg.error),
+        stack: msg.stack ? trunc(redactSecrets(sanitizeForLog(msg.stack)), 600) : undefined,
         componentStack: componentLine,
         context: msg.context,
       });
@@ -899,14 +968,8 @@ export function createMessageHandlers(
         ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
         : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
 
-      notifyError(
-        logger,
-        `Webview ${source}`,
-        userMessage,
-        err,
-        { messageType: 'error', source, component: componentLine, context: contextLine },
-        host.showErrorMessage,
-      );
+      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}; context=${contextLine}`, err);
+      host.showErrorMessage(userMessage);
     },
     'show-warning': (msg) => {
       const text = typeof msg.text === 'string' ? msg.text : '';
@@ -932,7 +995,10 @@ export function createMessageHandlers(
 
   return {
     handlers,
-    cleanup: cleanupStatsConnection,
+    cleanup: async () => {
+      dmvQueries.dispose();
+      await cleanupStatsConnection();
+    },
     triggerDemoLoad: () => handleLoadDemo(host, getSession, outputChannel, (m) => {
       setCurrentModel(m, false, null);
       getSession().projectName = 'Demo';
@@ -1019,8 +1085,8 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
   }
 }
 
-async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChannel: vscode.LogOutputChannel) {
-  const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
+async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>) {
+  const queries = await loadQueries();
   const previewQuery = queries.find(q => q.name === 'schema-preview');
   if (!previewQuery) throw new Error('Missing schema-preview query');
   host.log('info', 'DB', 'Running schema preview query');
@@ -1035,8 +1101,8 @@ async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChann
   host.log('info', 'DB', `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
 }
 
-async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
-  const queries = await loadDmvQueries(outputChannel, host.getExtensionUri());
+async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
+  const queries = await loadQueries();
   host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
@@ -1115,7 +1181,8 @@ const ServerInfoSchema = z.object({
  * @remarks
  * Three tiers, none of which may fail the import: the `platform-info` query, then authoritative
  * MSSQL `getServerInfo` metadata, then an explicit unknown label — never an invented `SQL Server`
- * default the model would reason from. Runs ahead of the Phase 2 sweep because `buildModelFromDmv`
+ * default the model would reason from. A built-in session skips the middle tier: its `getServerInfo`
+ * sends the same `platform-info` query, so it cannot succeed where the probe did not. Runs ahead of the Phase 2 sweep because `buildModelFromDmv`
  * needs the result at model construction.
  */
 async function loadDatabasePlatform(
@@ -1127,6 +1194,7 @@ async function loadDatabasePlatform(
   const logger = Logger.create(outputChannel, 'DB');
   const platformQuery = queries.find(q => q.name === 'platform-info');
   const probeTimeoutMs = Math.min(timeoutMs, PLATFORM_PROBE_TIMEOUT_MS);
+  const fallback = session.provider === 'builtIn' ? 'platform will be explicit unknown' : 'using MSSQL server metadata';
 
   if (platformQuery) {
     try {
@@ -1137,13 +1205,14 @@ async function loadDatabasePlatform(
       const reason = missingColumns.length > 0
         ? `missing columns: ${missingColumns.join(', ')}`
         : 'no rows';
-      logger.warn(`Platform query returned unusable metadata (${reason}) — using MSSQL server metadata`);
+      logger.warn(`Platform query returned unusable metadata (${reason}) — ${fallback}`);
     } catch (err) {
-      logger.warn(`Platform query failed — using MSSQL server metadata: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`Platform query failed — ${fallback}: ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
     }
   } else {
-    logger.warn('Custom DMV configuration has no platform-info query — using MSSQL server metadata');
+    logger.warn(`Custom DMV configuration has no platform-info query — ${fallback}`);
   }
+  if (session.provider === 'builtIn') return { serverPlatform: UNKNOWN_DB_PLATFORM };
 
   try {
     const serverInfo = ServerInfoSchema.parse(await withQueryTimeout(
@@ -1203,7 +1272,7 @@ async function withDbProgressHost(
         host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
       } else {
         const message = redactSecrets(err instanceof Error ? err.message : String(err));
-        host.log('error', 'DB', `${title}: ${message}`);
+        host.log('error', 'DB', title, message);
         host.postMessage({ type: 'db-error', message, phase: 'connect' });
       }
     } finally {
@@ -1230,7 +1299,8 @@ async function handleTableStatsRequestHost(
   const logger = Logger.create(outputChannel, 'Stats');
   const cfg = host.getConfiguration();
   if (!cfg.get('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled)) {
-    logger.info(`Profiling disabled — rejected request for ${schema}.${objectName}`);
+    logger.info('Profiling disabled — request rejected');
+    logger.debug(`Rejected profiling target: ${schema}.${objectName}`);
     void postToDetail(panel, {
       type: 'table-stats-error',
       message: 'Table profiling is disabled by dataLineageViz.tableStatistics.enabled.',
@@ -1245,7 +1315,8 @@ async function handleTableStatsRequestHost(
   const timeoutMs = timeoutSec * 1000;
   const t0 = Date.now();
 
-  logger.info(`Profiling ${schema}.${objectName} (mode=${mode})`);
+  logger.info(`Profiling started (mode=${mode}, columns=${cols.length})`);
+  logger.debug(`Profiling target: ${schema}.${objectName}`);
   const perRequest = getConnectionProvider() === 'builtIn';
   let session: DbSession | undefined;
   try {
@@ -1268,7 +1339,7 @@ async function handleTableStatsRequestHost(
     const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
     const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
     if (!profilingSql) {
-      logger.info(`No profileable columns for ${schema}.${objectName} — nothing to query`);
+      logger.info('No profileable columns — nothing to query');
       void postToDetail(panel, {
         type: 'table-stats-error',
         message: `No profileable columns in ${schema}.${objectName} — the column types are not supported by statistics, or dataLineageViz.tableStatistics.maxColumns excludes them all.`,
@@ -1301,7 +1372,7 @@ async function handleTableStatsRequestHost(
     const needsSampling = rowCount > sampleThreshold && sampleThreshold >= 0;
     const samplePercent = needsSampling ? computeSamplePercent(sampleSize, rowCount) : undefined;
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
-    logger.info(`Table statistics ready — ${schema}.${objectName} rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
+    logger.info(`Table statistics ready — rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
     void postToDetail(panel, { type: 'table-stats-result', stats, mode }, logger);
   } catch (err) {
     if (isDbConnectionError(err)) {
@@ -1337,6 +1408,10 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
     if (stats.droppedRefs.length > 0) {
       logger.info(`Phase 2 Result: Dropped — ${stats.droppedRefs.length} refs unrelated (aliases/built-ins)`);
     }
+  }
+
+  if (stats.unreadableDefinitions?.length) {
+    logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges: ${stats.unreadableDefinitions.join(', ')}`);
   }
 
   if (spCount === 0) {
@@ -1546,7 +1621,7 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
       add(`  [${new Date(e.timestamp).toISOString()}] source=${e.source}`);
       add(`    message:   ${e.message}`);
       if (e.componentStack) add(`    component: ${e.componentStack}`);
-      if (e.context !== undefined) add(`    context:   ${trunc(JSON.stringify(e.context), 800)}`);
+      if (e.context !== undefined) add(`    context:   ${trunc(redactSecrets(JSON.stringify(e.context)), 800)}`);
       if (e.stack) add(`    stack:     ${e.stack}`);
     }
   }

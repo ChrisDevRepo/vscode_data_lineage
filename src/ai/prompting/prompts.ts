@@ -64,8 +64,8 @@ export interface GeneralPromptContext {
  *
  * @remarks
  * Contains the role definition, injected app context (platform, schemas, node counts),
- * and core grounding rules. LaTeX is intentionally absent — it is only relevant during
- * active exploration where math expressions appear in SQL transform analysis.
+ * and core grounding rules. LaTeX is intentionally absent — the capture recipe and the synthesis
+ * block state it where formulas are authored.
  *
  * The rendering rule is stated here rather than in a phase block because it is true in every
  * phase, and because the phase that needs it most is discovery: given a lineage question and
@@ -208,7 +208,7 @@ function buildActivePhasePrompt(): string {
     '2. With `analyze` or `passthrough`: `sections` and a one-sentence `summary`.',
     '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     '',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; `prune_protected` ones are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.',
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.',
   ].join('\n');
 }
 
@@ -321,7 +321,7 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     '- Every node with a `detail_slots[]` entry appears in a section (`sections[].node_ids`); a highlight group or a note does not cover it.',
     ...(isCt
       ? [
-        '- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section, a highlight group or a note.',
+        '- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section or a note.',
         '- The backend inserts the Column Chain from validated column-flow edges after the intro and owns column-lineage tables and inventories. Do not add a Column mapping table, exhaustive lineage list or separate trace block; explain bindings, calculations, predicates and relevant conversions in detailed Steps instead.',
       ]
       : ['- Keep the explanation concise while preserving important formulas, rules and supported warnings.']),
@@ -763,9 +763,10 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * CT rules live in the stable system prompt and CT capture template so sliding
  * memory wipes do not duplicate the same rulebook every hop. When the engine
  * routed this focus node to continue an earlier hop's column_flow, a
- * `<lineage_questions>` block follows labelled as PRIMARY follow-up (more
- * important than the AI's own sub_question) — the questions are always this
- * focus's own, carried on its AgendaEntry, never a different node's.
+ * `<lineage_questions>` block follows asking the model to address those
+ * continuations; neither it nor the sub-questions carry a priority label. The
+ * questions are always this focus's own, carried on its AgendaEntry, never a
+ * different node's.
  *
  * @param currentTasks - Structured tasks assigned to the active node.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.

@@ -53,4 +53,22 @@ describe('Legend inset', () => {
   it('follows the navigator card width', () => {
     expect(legendLeft('navigator')).toBe(`${TRACE_NAVIGATOR_WIDTH + 24}px`);
   });
+
+  it('scrolls the expanded schema list and keeps the toggle outside it', () => {
+    const schemas = Array.from({ length: 40 }, (_, i) => `schema_${i}`);
+    act(() => root.render(<Legend schemas={schemas} />));
+    const list = host.querySelector<HTMLElement>('[data-testid="legend-schema-list"]')!;
+    const toggle = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('more'))!;
+    expect(list.style.maxHeight).toBe('');
+    expect(list.contains(toggle)).toBe(false);
+
+    act(() => toggle.click());
+    expect(list.querySelectorAll('.w-4.h-4')).toHaveLength(40);
+    expect(list.style.maxHeight).not.toBe('');
+    expect(list.classList).toContain('overflow-y-auto');
+    expect(list.classList).toContain('nowheel');
+    expect(toggle.textContent).toBe('Show less');
+    expect(list.contains(toggle)).toBe(false);
+  });
 });
+

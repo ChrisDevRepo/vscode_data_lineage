@@ -269,6 +269,10 @@ export class VscodeLangChainBridge extends BaseChatModel<
  * An assistant message replays the provider stream parts it carries ({@link PROVIDER_PARTS_KEY})
  * as the original objects, ahead of its text and tool calls, in the order the provider streamed
  * them: the model's own turn goes back verbatim, never rebuilt from the fields this bridge reads.
+ *
+ * A `ToolMessage`'s `status` is not projected: `vscode.LanguageModelToolResultPart` has no error
+ * flag, and the bridge adds no prose. A failed call reaches the model through its content alone,
+ * which for every rejection or dispatch error is the shared error envelope naming its code.
  */
 export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {

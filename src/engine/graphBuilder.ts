@@ -156,6 +156,8 @@ type LineageFlowNodeSource = {
   externalUrl?: string;
   /** Originating database name for cross-database external references. */
   externalDatabase?: string;
+  /** Set for a module whose definition is not readable; drives the node's warning marker. */
+  definitionUnreadable?: boolean;
 };
 
 function buildLineageFlowNode(
@@ -180,6 +182,7 @@ function buildLineageFlowNode(
       ...(source.externalType && { externalType: source.externalType }),
       ...(source.externalUrl && { externalUrl: source.externalUrl }),
       ...(source.externalDatabase && { externalDatabase: source.externalDatabase }),
+      ...(source.definitionUnreadable && { definitionUnreadable: true }),
       ...(options?.highlighted !== undefined && { highlighted: options.highlighted }),
       ...(options?.schemaColor && { schemaColor: options.schemaColor }),
     },
@@ -237,6 +240,7 @@ function toFlowResult(
       externalType: node.externalType,
       externalUrl: node.externalUrl,
       externalDatabase: node.externalDatabase,
+      definitionUnreadable: node.definitionUnreadable,
     },
     graph,
     positions.get(node.id) || { x: 0, y: 0 },
@@ -439,6 +443,7 @@ function synthesizeMissingTraceScope(
         ...(mn.externalType && { externalType: mn.externalType }),
         ...(mn.externalUrl && { externalUrl: mn.externalUrl }),
         ...(mn.externalDatabase && { externalDatabase: mn.externalDatabase }),
+        ...(mn.definitionUnreadable && { definitionUnreadable: true }),
       },
     });
   }
@@ -1084,6 +1089,7 @@ function buildExpandedSchemaViewFlowNodes(
       externalType?: string;
       externalUrl?: string;
       externalDatabase?: string;
+      definitionUnreadable?: boolean;
     };
     const source: LineageFlowNodeSource = {
       id: String(n.id ?? id),
@@ -1094,6 +1100,7 @@ function buildExpandedSchemaViewFlowNodes(
       externalType: n.externalType,
       externalUrl: n.externalUrl,
       externalDatabase: n.externalDatabase,
+      definitionUnreadable: n.definitionUnreadable,
     };
     flowNodes.push(buildLineageFlowNode(
       source,

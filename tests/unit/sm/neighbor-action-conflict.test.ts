@@ -21,7 +21,7 @@ function setup(caseSensitive = false) {
     depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
   })).toMatchObject({ ok: true });
   expect(engine.getHopContext().focus_node?.id).toBe('[dbo].[origin]');
-  return { engine, model, graph };
+  return { engine, model };
 }
 
 const kept: HopFindingKept = {
@@ -40,7 +40,7 @@ function committedState(engine: NavigationEngine) {
 
 describe('neighbor action conflicts', () => {
   it.each([false, true])('rejects the same resolved node in prune and questions (CS=%s), preserving commit state and allowing repair', caseSensitive => {
-    const { engine, model, graph } = setup(caseSensitive);
+    const { engine } = setup(caseSensitive);
     const before = committedState(engine);
     const result = engine.submitFindings({
       ...kept,
@@ -50,23 +50,17 @@ describe('neighbor action conflicts', () => {
     expect(result).toMatchObject({ code: 'route_validation_failed', issuePaths: ['questions.0.nodeId', 'prune_neighbors'],
       detail: [expect.objectContaining({ id: '[dbo].[writer]', path: 'questions.0.nodeId' })] });
     expect(committedState(engine)).toEqual(before);
-    const restored = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {}, {});
-    const repaired = restored.applyHeldContent({ ...kept, prune_neighbors: [] });
+    const repaired = engine.applyHeldContent({ ...kept, prune_neighbors: [] });
     if ('code' in repaired) throw new Error(repaired.reason);
-    expect(restored.submitFindings(repaired)).toMatchObject({ ok: true });
-    expect(restored.toJSON().removedSet).not.toContain('[dbo].[writer]');
-    expect(restored.getHopContext().focus_node?.id).toBe('[dbo].[other]');
-    expect(restored.submitFindings({ ...kept, focus_node_id: '[dbo].[other]' })).toMatchObject({ ok: true });
-    expect(restored.getHopContext().focus_node?.id).toBe('[dbo].[writer]');
+    expect(engine.submitFindings(repaired)).toMatchObject({ ok: true });
+    expect(engine.toJSON().removedSet).not.toContain('[dbo].[writer]');
+    expect(engine.getHopContext().focus_node?.id).toBe('[dbo].[other]');
+    expect(engine.submitFindings({ ...kept, focus_node_id: '[dbo].[other]' })).toMatchObject({ ok: true });
+    expect(engine.getHopContext().focus_node?.id).toBe('[dbo].[writer]');
   });
 
-  it.each([
-    { restore: false, explicitEmpty: false },
-    { restore: true, explicitEmpty: false },
-    { restore: false, explicitEmpty: true },
-    { restore: true, explicitEmpty: true },
-  ])('does not resurrect a conflicting prune after a question-only retry ($restore, $explicitEmpty)', ({ restore, explicitEmpty }) => {
-    const { engine, model, graph } = setup();
+  it.each([false, true])('does not resurrect a conflicting prune after a question-only retry (explicitEmpty=%s)', explicitEmpty => {
+    const { engine } = setup();
     const before = committedState(engine);
     const rejected = engine.submitFindings({
       ...kept, badge_label: 'Origin report',
@@ -81,8 +75,7 @@ describe('neighbor action conflicts', () => {
       prune_neighbors: [{ id: '[dbo].[writer]', reason: 'Off the answer' }],
       questions: [{ nodeId: '[dbo].[writer]', question: 'Analyze the writer load.' }],
     }, rejected.issuePaths ?? []);
-    const retryEngine = restore ? NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {}, {}) : engine;
-    const repaired = retryEngine.applyHeldContent({
+    const repaired = engine.applyHeldContent({
       focus_node_id: kept.focus_node_id, verdict: 'analyze', summary: '', sections: [],
       questions: [{ nodeId: '[dbo].[writer]', question: 'Analyze the writer load.' }],
       ...(explicitEmpty ? { prune_neighbors: [] } : {}),
@@ -90,8 +83,8 @@ describe('neighbor action conflicts', () => {
     if ('code' in repaired) throw new Error(repaired.reason);
     expect(repaired).toMatchObject({ summary: kept.summary, sections: kept.sections, badge_label: 'Origin report' });
     expect(repaired.prune_neighbors ?? []).toEqual([]);
-    expect(retryEngine.submitFindings(repaired)).toMatchObject({ ok: true });
-    expect(retryEngine.toJSON().removedSet).not.toContain('[dbo].[writer]');
+    expect(engine.submitFindings(repaired)).toMatchObject({ ok: true });
+    expect(engine.toJSON().removedSet).not.toContain('[dbo].[writer]');
   });
 
   it('allows pruning one neighbor while investigating a different neighbor', () => {

@@ -9,7 +9,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { postToDetail } from '../../../src/bridge/host';
-import type { ExtensionToDetailMsg } from '../../../src/engine/shared/bridgeContract';
+import { ExtensionToDetailMsgSchema, type ExtensionToDetailMsg } from '../../../src/engine/shared/bridgeContract';
 import type { LineageNode } from '../../../src/engine/types';
 import { Logger } from '../../../src/utils/log';
 
@@ -47,5 +47,11 @@ describe('bridge node fields', () => {
 
     expect(sent).toHaveLength(1);
     expect((sent[0] as { node: unknown }).node).toEqual(node);
+  });
+  it('accepts a node without definitionUnreadable and rejects a non-boolean one', () => {
+    const node = { id: 'a', schema: 'dbo', name: 'a', fullName: '[dbo].[a]', type: 'procedure' };
+    const parse = (n: object) => ExtensionToDetailMsgSchema.safeParse({ type: 'detail-update', node: n, config: {} }).success;
+    expect(parse(node)).toBe(true);
+    expect(parse({ ...node, definitionUnreadable: 'yes' })).toBe(false);
   });
 });

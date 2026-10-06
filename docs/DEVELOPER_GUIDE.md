@@ -48,9 +48,12 @@ npm ci
 ```
 
 Press <kbd>F5</kbd> to build the extension host and webview bundles and launch
-the Extension Development Host. **Run Extension (Watch)** starts the
-extension-bundle watcher only; rebuild the webview with `npm run build:webview`
-after React/CSS changes.
+the Extension Development Host. **Run Extension (Watch)** builds the webview
+once, then starts the extension-bundle watcher; rebuild the webview with
+`npm run build:webview` after React/CSS changes.
+
+Machine requirements for each test tier, including headless Linux, are in
+[`testing/ENVIRONMENTS.md`](testing/ENVIRONMENTS.md).
 
 ```bash
 npm run typecheck             # type-check only
@@ -97,7 +100,7 @@ flowchart LR
 ```
 
 *The live lane supports SQL Server, Azure SQL, Fabric Data Warehouse, and
-Synapse. Platform-specific query availability is covered in
+Synapse Dedicated SQL Pool. Platform-specific query availability is covered in
 [`DMV_QUERIES.md`](DMV_QUERIES.md).
 
 The parser has no awareness of the source. Both lanes use the same
@@ -118,10 +121,14 @@ live import derives one from the server.
   After schema selection, platform detection completes before the
   selected-schema model is built: `platform-info` is preferred, the session's
   `getServerInfo` is the non-failing fallback, and failure of both records
-  `Unknown database platform`. Query definitions live in
+  `Unknown database platform`. A built-in session skips the fallback, because its
+  `getServerInfo` sends the same `platform-info` query. Query definitions live in
   [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and
   [`DMV_QUERIES.md`](DMV_QUERIES.md). A change to the SQL sent to a live
   database ships the matching `DMV_QUERIES.md` update in the same commit.
+  Each import reads the YAML again; the panel keeps the last load for the
+  built-in provider's server-info lookup (table statistics) and drops it when
+  `dataLineageViz.dmvQueriesFile` names another file.
 - **Connection providers** — [`src/engine/db/`](../src/engine/db/). `connectDatabase`
   returns a `DbSession` from either the mssql extension or the built-in `tedious`
   provider, selected by `dataLineageViz.database.connectionProvider`; saved
@@ -192,7 +199,10 @@ logging. User-facing errors and warnings must go through the notification
 helpers (`notifyError`, `notifyWarning`, `notifyInfo` in
 [`src/utils/notifications.ts`](../src/utils/notifications.ts)) rather than raw
 output-channel calls; each logs the full detail at the matching level before it
-shows the toast. Webview errors funnel through the bridge `'error'` message.
+shows the toast, with credential-shaped context removed by `redactSecrets`
+([`src/utils/redact.ts`](../src/utils/redact.ts)). Database, schema and object
+identifiers belong in debug lines; info lines carry counts, modes and timing.
+Webview errors funnel through the bridge `'error'` message.
 
 `src/engine/` code never names `window` directly: a layout or build diagnostic
 raised in `graphBuilder.ts` goes through a `setGraphLogSink` callback the
@@ -272,6 +282,6 @@ are required; a bounded graph preview has no state machine to dump).
 | SQL parsing rules | [`PARSE_RULES.md`](PARSE_RULES.md), [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml), [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts). Run `npm run test:parser`. |
 | AI behaviour or prompts | [`AI_PROMPTS.md`](AI_PROMPTS.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`src/ai/prompting/`](../src/ai/prompting/), [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). |
 | Tool surface, phase routing, or process guards | [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts), [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts), [`src/ai/session/sessionPhase.ts`](../src/ai/session/sessionPhase.ts), [`src/ai/interaction/rules/`](../src/ai/interaction/rules/). |
-| Webview (React Flow, filters, themes) | [`src/panelProvider.ts`](../src/panelProvider.ts), [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts), [`src/engine/graphDisplayMode.ts`](../src/engine/graphDisplayMode.ts), [`src/engine/nodeDecoration.ts`](../src/engine/nodeDecoration.ts), [`src/engine/columnTraceView.ts`](../src/engine/columnTraceView.ts), [`src/components/`](../src/components/). |
+| Webview (React Flow, filters, themes) | [`src/panelProvider.ts`](../src/panelProvider.ts), [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts), [`src/engine/graphDisplayMode.ts`](../src/engine/graphDisplayMode.ts), [`src/engine/nodeDecoration.ts`](../src/engine/nodeDecoration.ts), [`src/engine/columnTraceView.ts`](../src/engine/columnTraceView.ts), [`src/engine/traceTree.ts`](../src/engine/traceTree.ts) (trace navigator levels), [`src/components/`](../src/components/). |
 | DMV ingestion / DBA contract | [`DMV_QUERIES.md`](DMV_QUERIES.md), [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml), [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts). |
 | Profiling SQL | [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md), [`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts). |
