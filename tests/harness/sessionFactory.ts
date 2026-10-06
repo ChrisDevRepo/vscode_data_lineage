@@ -1,24 +1,20 @@
 /** Loads public DACPAC data and production parse rules/templates into a headless runtime session. */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseAiOutputTemplatesYaml, parseParseRulesYaml, REQUIRED_AI_TEMPLATE_KEYS } from '../../src/configCore';
+import { parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from '../../src/configCore';
 import { extractDacpac } from '../../src/engine/dacpacExtractor';
 import { populateColumnStore } from '../../src/engine/modelBuilder';
 import { loadRules } from '../../src/engine/sqlBodyParser';
 import { buildBareGraph } from '../../src/ai/support/graphUtils';
 import { AiSession } from '../../src/ai/session/session';
-import { EMPTY_AI_TEMPLATES, type AiOutputTemplates } from '../../src/ai/session/types';
-import * as tokenBudgetModule from '../../src/ai/support/tokenBudget';
+import { EMPTY_AI_TEMPLATES, type AiOutputTemplates, type AiOutputTemplateSet } from '../../src/ai/session/types';
 import {
+  createTurnTokenBudget,
   DEFAULT_DISCOVERY_NODE_CAP,
   DEFAULT_DISCOVERY_TOKEN_BUDGET,
   DISCOVERY_WINDOW_SHARE,
   type TurnTokenBudget,
 } from '../../src/ai/support/tokenBudget';
-
-/** Ceilings a pinned pre-admission tree read; the current tree has no token axis. */
-const LEGACY_EXPLORATION_TOKEN_BUDGET = 80_000;
-const LEGACY_EXPLORATION_WINDOW_SHARE = 0.5;
 
 /** Repository root: launchers run with the repository as their working directory. */
 export function repoPath(...segments: string[]): string {
@@ -58,14 +54,14 @@ export interface HarnessSessionOptions {
  * behaviour — only the VS Code file API and the user-overlay setting are left out, because a headless
  * lane has neither.
  */
-async function loadOutputTemplates(path: string): Promise<AiOutputTemplates> {
+async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
   const templates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   const parsed = parseAiOutputTemplatesYaml(await readFile(path, 'utf8'));
   for (const key of REQUIRED_AI_TEMPLATE_KEYS) {
     const instruction = parsed?.[key]?.instruction;
     if (typeof instruction === 'string' && instruction) templates[key] = instruction.trim();
   }
-  return templates;
+  return { templates, sections: readAiOutputSections(parsed).sections };
 }
 
 /**
@@ -76,8 +72,8 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplates> {
  * defaults because the headless shim answers `getConfiguration().get(key, default)` with that
  * default verbatim — reading them through the shim would produce the same numbers with more
  * indirection, so the constants are used directly and stay the single source of the ceiling.
- * The harness never learns a model window from its lanes, so — as before this returned a value —
- * `modelWindowTokens` is left unset and resolves to `Infinity` via `createTurnTokenBudget`.
+ * The harness never learns a model window from its lanes, so `modelWindowTokens` is left unset and
+ * resolves to `Infinity` via `createTurnTokenBudget`.
  *
  * @param contextWindow - Model input window in tokens; `POSITIVE_INFINITY` when unknown.
  * @returns The frozen budget the turn's model port carries.
@@ -91,20 +87,7 @@ export function calibrateTokenBudgets(contextWindow: number): TurnTokenBudget {
       Math.floor(window * DISCOVERY_WINDOW_SHARE),
     ),
   };
-  if (typeof tokenBudgetModule.createTurnTokenBudget === 'function') {
-    return tokenBudgetModule.createTurnTokenBudget(settings);
-  }
-  // A pinned tree that predates the per-turn budget object (`main` `20356737e`) calibrates the
-  // module-level ceilings instead, exactly as its lineageParticipant.ts did; its engine never reads
-  // a port budget, so none is returned.
-  const legacy = tokenBudgetModule as unknown as Record<
-    'setDiscoveryNodeCap' | 'setDiscoveryTokenBudget' | 'setExplorationTokenBudget',
-    (value: number) => void
-  >;
-  legacy.setDiscoveryNodeCap(settings.discoveryNodeCap);
-  legacy.setDiscoveryTokenBudget(settings.discoveryTokenBudget);
-  legacy.setExplorationTokenBudget(Math.min(LEGACY_EXPLORATION_TOKEN_BUDGET, Math.floor(window * LEGACY_EXPLORATION_WINDOW_SHARE)));
-  return undefined as unknown as TurnTokenBudget;
+  return createTurnTokenBudget(settings);
 }
 
 /** A fully loaded harness session plus the token budget calibrated for its lane. */
@@ -132,7 +115,8 @@ export async function createHarnessSession(options: HarnessSessionOptions): Prom
   const buffer = await readFile(dacpacPath);
   const model = await extractDacpac(buffer);
 
-  const session = new AiSession(await loadOutputTemplates(templatesPath));
+  const loaded = await loadOutputTemplates(templatesPath);
+  const session = new AiSession(loaded.templates, loaded.sections);
   populateColumnStore(model, session.columnStore);
   for (const override of options.ddlOverrides ?? []) {
     const existing = session.columnStore.getDdl(override.nodeId)

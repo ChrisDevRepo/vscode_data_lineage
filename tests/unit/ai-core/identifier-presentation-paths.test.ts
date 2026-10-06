@@ -11,6 +11,7 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { getObjectDetail } from '../../../src/ai/tools/tools';
 import { presentRunRecall } from '../../../src/ai/tools/screenStatePresenter';
 import { validatePresentResult } from '../../../src/ai/tools/presentResult';
+import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 
@@ -173,4 +174,51 @@ it.each([undefined, false, true])('recalls historical identities using the saved
   expect(input).toEqual(before);
   expect(session.hopLog.at(-1)?.input).toBe(input);
   expect(logs).toEqual(expect.arrayContaining([expect.stringContaining('get_screen_state id resolved raw=Sales.Orders')]));
+});
+
+it('gives one repair per id: a highlighted id an external violation already places is not listed again', () => {
+  const id = '[ai].[vwpricelist]';
+  const result = validatePresentResult({
+    name: 'Prices', summary: 'Price lineage.',
+    highlight_groups: [{ label: 'Prices', color: 'source', node_ids: [id] }],
+    sections: [{ label: 'Other', node_ids: [], text: 'Other.' }],
+  }, [id], undefined, undefined, [{
+    field: 'sections',
+    messages: [`Detail slot(s) reached no section: \`${id}\`.`, 'Add each id to a section\'s node_ids.'],
+    repairFields: ['sections'], paths: ['sections'], entryIds: [id],
+  }]);
+  expect(result.success).toBe(false);
+  if (result.success === false) {
+    expect(result.rejection.reason).toContain('Detail slot(s) reached no section');
+    expect(result.rejection.reason).not.toContain('must be explained by');
+    expect(result.rejection.reason).not.toContain('notes entry');
+  }
+});
+
+describe('present_result id rejection route', () => {
+  const call = (state: 'pruned' | 'out_of_scope') => validatePresentResult({
+    name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
+    sections: [{ label: 'Report', node_ids: ['[dbo].[x]'], text: 'Report output.' }],
+  }, ['[dbo].[a]'], undefined, undefined, [], 'completed', () => state);
+
+  it('does not offer add_node_ids for an id outside the approved scope, and keeps the remove/state-in-text action', () => {
+    const result = call('out_of_scope');
+    expect(result.success).toBe(false);
+    if (result.success === false) {
+      const text = `${result.rejection.reason} ${result.rejection.hint}`;
+      expect(text).not.toContain('add_node_ids');
+      expect(text).toContain('Remove the named ids from node_ids, or state the fact in sections[].text.');
+      expect(result.repairFields).toEqual(['sections']);
+    }
+  });
+
+  it('authorizes add_node_ids in the repair whenever the rejection names it', () => {
+    const result = call('pruned');
+    expect(result.success).toBe(false);
+    if (result.success === false) {
+      expect(result.rejection.reason).toContain('brought into the view with add_node_ids');
+      expect([...result.repairFields].sort()).toEqual(['add_node_ids', 'sections']);
+      expect(presentResultRepairPatchSchemaForFields(result.repairFields).safeParse({ sections: [{ label: 'Report', node_ids: ['[dbo].[a]'] }], add_node_ids: ['[dbo].[x]'] }).success).toBe(true);
+    }
+  });
 });

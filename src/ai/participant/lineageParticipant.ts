@@ -267,7 +267,10 @@ export class LineageParticipant {
       return {};
     }
 
-    const suggestionFollowup = session.phase.kind === 'completed'
+    // The badge exists only below a completed answer, so the same words in an empty chat are a
+    // new-chat request and still pass the boundary reset.
+    const suggestionFollowup = chatContext.history.length > 0
+      && session.phase.kind === 'completed'
       && normalizeFollowupTrigger(request.prompt) === normalizeFollowupTrigger(NEXT_QUESTIONS_TRIGGER);
 
     if (!suggestionFollowup && applyNativeChatBoundary(
@@ -315,7 +318,7 @@ export class LineageParticipant {
           return;
         }
         out.markdown(`${renderFullPlanMd(proposal)}\n\n`);
-        if (pending) this.writeGateButtons(out, pending.gateId, pending.classes);
+        if (pending) this.writeGateButtons(out, pending.gateId);
       });
       return { metadata: { [FULL_PLAN_SHOWN]: true } };
     }
@@ -402,11 +405,14 @@ export class LineageParticipant {
 
       const message = sanitizeProviderError(result.failure?.message ?? '')
         || 'Data Lineage could not complete this request.';
+      // Provider text can echo prompt content, so error level carries enumerated fields only.
       this.logger.error(
-        `[${session.id}] native turn terminal status=error modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
-        message,
+        `[${session.id}] native turn terminal status=error stop=${result.failure?.stop ?? 'none'}`
+        + ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
+        `code=${result.failure?.code ?? 'none'}`,
       );
-      return { metadata, errorDetails: { message: `${message} (Retry — send the request again.)` } };
+      this.logger.debug(`[${session.id}] native turn failure message: ${message}`);
+      return { metadata, errorDetails: { message } };
     } finally {
       this.statusBarStop();
       cancellation.dispose();
@@ -490,7 +496,7 @@ export class LineageParticipant {
         this.pendingGate = pending;
         const card = proposal ? renderScopeCardMd(proposal) : event.summary;
         stream.markdown(`${GATE_CARD_HEADER}${card}${HOLD_GATE_NOTICE}\n\n`);
-        this.writeGateButtons(stream, event.gateId, pending.classes);
+        this.writeGateButtons(stream, event.gateId);
         void this.runtime.resumeGate(event.gateId, { kind: 'hold' })
           .then((resumed) => {
             this.traceGateResolution(pending, event.gateId, 'hold', resumed ? 'accepted' : 'no_owning_turn', undefined, new Date().toISOString());
@@ -506,7 +512,7 @@ export class LineageParticipant {
         // Native chat may collapse older responses. Keep a held plan actionable on this answer.
         if (event.status === 'ok' && this.sessionHoldsGateProposal() && this.pendingGate
           && this.pendingGate.requestId !== requestId) {
-          this.writeGateButtons(stream, this.pendingGate.gateId, this.pendingGate.classes);
+          this.writeGateButtons(stream, this.pendingGate.gateId);
         }
         if (
           event.status === 'ok'
@@ -535,21 +541,21 @@ export class LineageParticipant {
   }
 
   /** The approval card's three buttons, bound to the gate they resolve. */
-  private writeGateButtons(stream: vscode.ChatResponseStream, gateId: string, classes: readonly string[]): void {
+  private writeGateButtons(stream: vscode.ChatResponseStream, gateId: string): void {
     stream.button({
       command: 'dataLineageViz.aiResumeNativeGate',
       title: '$(check) Approve & Proceed',
-      arguments: [gateId, 'approve', [...classes]],
+      arguments: [gateId, 'approve'],
     });
     stream.button({
       command: 'dataLineageViz.aiResumeNativeGate',
       title: '$(edit) Change scope',
-      arguments: [gateId, 'change', [...classes]],
+      arguments: [gateId, 'change'],
     });
     stream.button({
       command: 'dataLineageViz.aiResumeNativeGate',
       title: '$(close) Cancel',
-      arguments: [gateId, 'cancel', [...classes]],
+      arguments: [gateId, 'cancel'],
     });
   }
 

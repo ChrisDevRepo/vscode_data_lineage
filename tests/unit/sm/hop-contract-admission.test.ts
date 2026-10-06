@@ -133,14 +133,13 @@ describe('current-hop submission contract', () => {
     expect(ct).toContain('<lineage_questions>'); expect(ct).toContain('<column_trace>'); expect(ct).toContain('Trace Value.');
   });
 
-  it('projects restored BB instructions without stale lineage riders while preserving the original question', () => {
+  it('projects BB instructions without a stale lineage rider while preserving the original question', () => {
     const w = world('ct');
     expect(JSON.parse(executeSubmitFindings({ ...finding(), column_flow: [] }, w.bind()))).toHaveProperty('ok', true);
     expect(w.engine.peekHopContext()).toMatchObject({ analysis_mode: 'bb', focus_node: { id: branch } });
-    const snapshot = w.engine.toJSON(); snapshot.lineageQuestionsLastHop = ['Trace stale Value at this branch'];
-    const restored = NavigationEngine.fromJSON(snapshot, w.model, w.graph, () => {}, {}); w.session.stateMachine = restored;
-    const system = buildActiveInstruction(w.session, context, restored.currentHopAnalysisMode);
-    const message = buildActiveHopInstruction(w.session, restored, branch);
+    (w.engine as unknown as { _pendingLineageQuestions: string[] })._pendingLineageQuestions = ['Trace stale Value at this branch'];
+    const system = buildActiveInstruction(w.session, context, w.engine.currentHopAnalysisMode);
+    const message = buildActiveHopInstruction(w.session, w.engine, branch);
     expect(system.system).toContain(userQuestion);
     expect(message.message).not.toContain('<lineage_questions>'); expect(message.message).not.toContain('<column_trace>');
     expect(system.system).not.toContain('column_flow');
@@ -321,5 +320,17 @@ describe('native receiving-boundary execution and finite retries', () => {
     const model = nativePort(() => [new vscode.LanguageModelToolCallPart('cancelled', 'lineage_submit_findings', finding())]);
     expect((await executeToolAttempt(model.port, activePlan(w, w.registry, controller.signal))).stop).toBe('cancelled');
     expect(w.engine.toJSON()).toEqual(before); expect(model.sendRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns no partial message group when a batch is cancelled between two tool calls', async () => {
+    const w = world('ct'); w.model.neighborIndex = { [origin]: { in: [branch], out: [] }, [branch]: { in: [], out: [origin] } };
+    const controller = new AbortController(); const invoke = w.registry.invoke.bind(w.registry);
+    const dispatched = vi.spyOn(w.registry, 'invoke').mockImplementation(async (...args) => {
+      const result = await invoke(...args); controller.abort(); return result;
+    });
+    const model = nativePort(() => ['read-1', 'read-2'].map(id => new vscode.LanguageModelToolCallPart(id, 'lineage_get_neighbor_columns', { ids: [branch] })));
+    const attempt = await executeToolAttempt(model.port, activePlan(w, w.registry, controller.signal));
+    expect(attempt.stop).toBe('cancelled'); expect(dispatched).toHaveBeenCalledTimes(1);
+    expect(attempt.messages).toEqual([]);
   });
 });

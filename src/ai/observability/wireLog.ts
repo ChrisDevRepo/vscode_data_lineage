@@ -37,7 +37,14 @@ export type WirePart =
 
 /** One converted message as handed to the provider. */
 export interface WireMessage {
-  /** The role exactly as the lane spells it, never normalized — `vscode.lm` records the raw `LanguageModelChatMessageRole` integer (no system role in that API), OpenAI-compatible lanes record the wire string, and both are kept verbatim so a trace never claims a role its provider never saw. */
+  /**
+   * The role exactly as the lane spells it, never normalized.
+   *
+   * @remarks
+   * `vscode.lm` records the raw `LanguageModelChatMessageRole` integer (that API has no system
+   * role); OpenAI-compatible lanes record the wire string. Both are kept verbatim so a trace never
+   * claims a role its provider never saw.
+   */
   readonly role: number | string;
   /** Message content parts, shaped exactly as they sit on the wire. */
   readonly parts: readonly WirePart[];
@@ -66,11 +73,23 @@ export type WireEvent =
   | {
       readonly type: 'wire-request';
       readonly messages: readonly WireMessage[];
-      /** The tool input schema is the field no other capture surface exposes; the description rides as its {@link systemPromptHash} digest, so a trace proves which revision the model received. */
+      /**
+       * Tools offered on the request.
+       *
+       * @remarks
+       * The input schema is the field no other capture surface exposes. The description rides as
+       * its {@link systemPromptHash} digest, so a trace proves which revision the model received.
+       */
       readonly tools: ReadonlyArray<{ readonly name: string; readonly descriptionHash: string; readonly inputSchema: unknown }>;
       /** `LanguageModelChatToolMode` integer, absent when the request carries no tools. */
       readonly toolMode?: number;
-      /** The verbatim system instruction, captured only while the trace runs verbose; the default trace records {@link systemHash} alone since the prompt is unchanged across generations, and verbose mode exists to prove which prompt revision a bad answer came from. */
+      /**
+       * The verbatim system instruction, captured only while the trace runs verbose.
+       *
+       * @remarks
+       * The default trace records {@link systemHash} alone, since the prompt is unchanged across
+       * generations; verbose mode exists to prove which prompt revision a bad answer came from.
+       */
       readonly system?: string;
       /** SHA-256 of the system instruction ({@link systemPromptHash}); always present when one was sent. */
       readonly systemHash?: string;
@@ -86,7 +105,12 @@ export type WireEvent =
       /** Raw provider stop reason, on lanes whose protocol reports one. */
       readonly finishReason?: string;
       readonly usage?: TokenUsage;
-      /** Stream parts that are neither text nor a tool call (reasoning, signatures), replayed verbatim on the next request; absent when none arrived. */
+      /**
+       * Stream parts that are neither text nor a tool call (reasoning, signatures).
+       *
+       * @remarks
+       * Replayed verbatim on the next request; absent when none arrived.
+       */
       readonly otherParts?: readonly WirePart[];
     }
   | {
@@ -95,7 +119,15 @@ export type WireEvent =
       readonly diagnostic: ProviderErrorDiagnostic;
     }
   | {
-      /** One completed generation, summarized: which model answered, how it stopped, how long it took, and what it cost — deliberately separate from `wire-response` (the payload); the only record naming the model in CLEAR TEXT, since a `modelFingerprint` hash cannot answer which model misbehaved and a model id is a public identifier, never a credential. */
+      /**
+       * One completed generation, summarized: which model answered, how it stopped, how long it
+       * took, and what it cost.
+       *
+       * @remarks
+       * Deliberately separate from `wire-response` (the payload). This is the only record naming the
+       * model in clear text: a `modelFingerprint` hash cannot answer which model misbehaved, and a
+       * model id is a public identifier, never a credential.
+       */
       readonly type: 'generation';
       readonly modelId: string;
       readonly finishReason: string;
@@ -103,7 +135,13 @@ export type WireEvent =
       readonly usage?: TokenUsage;
     }
   | {
-      /** One verbatim provider HTTP body, captured only while the trace runs verbose; bodies only — request headers are never captured on any lane, since the Authorization header is where the credential lives and a trace attached to a bug report must be safe to attach. */
+      /**
+       * One verbatim provider HTTP body, captured only while the trace runs verbose.
+       *
+       * @remarks
+       * Bodies only: request headers are never captured on any lane, since the Authorization header
+       * is where the credential lives and a trace attached to a bug report must be safe to attach.
+       */
       readonly type: 'provider-raw';
       readonly direction: 'request' | 'response';
       readonly url: string;

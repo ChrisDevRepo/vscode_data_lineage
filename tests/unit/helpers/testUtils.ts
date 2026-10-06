@@ -45,10 +45,7 @@ export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   return extractDacpac(buffer);
 }
 
-/**
- * Full end-to-end: `assets/demo.dacpac` → DatabaseModel — the SAME dacpac and extractor the
- * Extension Development Host loads via `openDemo`.
- */
+/** Loads the public demo DACPAC the Extension Development Host opens via `openDemo`. */
 export async function loadDemoModel(): Promise<DatabaseModel> {
   loadParseRules();
   const buffer = readFileSync(rootPath('assets/demo.dacpac'));

@@ -684,7 +684,10 @@ export function App() {
   const rebuildStartRef = useRef(0);
   const rebuildTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /** Stops the {@link REBUILD_TIMEOUT_MS} watchdog once a reply has arrived. */
+  /**
+   * Stops the pending rebuild timer: the {@link REBUILD_TIMEOUT_MS} watchdog once a reply has
+   * arrived, or the minimum-spinner hold when a new rebuild starts or the app unmounts.
+   */
   const clearRebuildTimeout = useCallback(() => {
     if (rebuildTimeoutRef.current) {
       clearTimeout(rebuildTimeoutRef.current);
@@ -862,15 +865,15 @@ export function App() {
   }, [filter, model, config, rebuild]);
 
   /**
-   * Refuses a candidate schema selection that would exceed `dataLineageViz.maxNodes`, surfacing
-   * the shared refusal message as a warning notification. The single guard every
+   * Refuses a candidate schema selection that would exceed `dataLineageViz.maxNodes`, through the
+   * build's own admission check, which surfaces the shared refusal warning. The single guard every
    * in-canvas schema-filter handler calls before committing its next filter state.
    *
    * @returns `true` when the selection is within the configured limit.
    */
   const guardSchemaSelection = useCallback(
-    (m: DatabaseModel, schemas: Set<string>): boolean => refuseOverObjectLimit(filterBySchemas(m, schemas), config.maxNodes, 'Filter') === null,
-    [config],
+    (m: DatabaseModel, schemas: Set<string>): boolean => !refusesBuild(m, { schemas }, config),
+    [refusesBuild, config],
   );
 
   /**
@@ -1303,7 +1306,10 @@ export function App() {
           if (elapsed >= MIN_REBUILD_SPINNER_MS) {
             setIsRebuilding(false);
           } else {
-            setTimeout(() => setIsRebuilding(false), MIN_REBUILD_SPINNER_MS - elapsed);
+            rebuildTimeoutRef.current = setTimeout(() => {
+              rebuildTimeoutRef.current = null;
+              setIsRebuilding(false);
+            }, MIN_REBUILD_SPINNER_MS - elapsed);
           }
         }
       } else if (msg.type === 'reload-source') {
@@ -1330,14 +1336,14 @@ export function App() {
         setActiveAdvancedProfile(null);
         const allowlist = preview.nodeIds;
         aiPreviewRef.current = preview;
-        setFilter(prev => {
-          const next: FilterState = { ...(bookmarkExitSelection ?? prev), allowlistNodeIds: allowlist };
-          if (renderModel) {
-            setGraphMode('full');
-            rebuildRef.current(renderModel, next, configRef.current, false, 'full', annotatedNodeIdsFromAiMetadata(metadata));
-          }
-          return next;
-        });
+        const next: FilterState = { ...(bookmarkExitSelection ?? filterRef.current), allowlistNodeIds: allowlist };
+        filterRef.current = next;
+        setFilter(next);
+        if (renderModel) {
+          graphModeRef.current = 'full';
+          setGraphMode('full');
+          rebuildRef.current(renderModel, next, configRef.current, false, 'full', annotatedNodeIdsFromAiMetadata(metadata));
+        }
         setExpandedSchemaView(null);
         setAiPreview(preview);
       }

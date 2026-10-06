@@ -21,7 +21,7 @@ function world(functionReadsCaller = true) {
   const engine = new NavigationEngine(model, graph, () => {}, {});
   expect(engine.init({ origin: caller, question: 'Trace Value', direction: 'bidirectional', analysisMode: 'ct', targetColumns: ['Value'], depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
   engine.getHopContext();
-  return { engine, model, graph };
+  return { engine };
 }
 const finding = { focus_node_id: caller, verdict: 'analyze' as const, summary: 'Function computes Value.', sections: { technical: 'Value is twice Amount.' }, column_flow: [] };
 
@@ -60,16 +60,15 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.toJSON().engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
   });
 
-  it('retains qualified output and supplied caller SQL across a function checkpoint, without inventing value edges', () => {
-    const { engine, model, graph } = world();
+  it('retains qualified output and supplied caller SQL at the function hop, without inventing value edges', () => {
+    const { engine } = world();
     const question = { nodeId: fn, question: 'Determine Value from the actual caller argument.', caller_context: { node: caller, col: 'Value' } };
     expect(engine.submitFindings({ ...finding, verdict: 'analyze', sections: [{ angle: 'technical' as const, text: finding.sections.technical }], questions: [question] })).toHaveProperty('ok', true);
-    const restored = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
-    const hop = restored.getHopContext();
+    const hop = engine.getHopContext();
     expect(hop).toMatchObject({ focus_node: { id: fn }, caller_requested_outputs: [{ node: caller, col: 'Value' }] });
     expect(hop.caller_objects).toContainEqual(expect.objectContaining({ node: caller, ddl: expect.stringContaining(`${fn}(s.Amount) AS Value`) }));
-    expect(restored.columnAspect?.edges ?? []).toEqual([]);
-    const task = restored.getCurrentTasks().find(t => t.callerContext);
+    expect(engine.columnAspect?.edges ?? []).toEqual([]);
+    const task = engine.getCurrentTasks().find(t => t.callerContext);
     expect(task?.callerContext).toMatchObject({ node: caller, col: 'Value', callerTaskId: expect.any(String), ddlHash: expect.any(String) });
   });
 });

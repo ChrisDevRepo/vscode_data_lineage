@@ -14,7 +14,6 @@ import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
 import { PendingGateSchema } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
-import { InvalidEngineCheckpointError } from '../sm/navigationSnapshotSchema';
 import { activeModeOf, type LmStage } from '../tools/toolPolicy';
 import {
   StartExplorationCompletedProviderInputSchema,
@@ -44,8 +43,8 @@ import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
-import { sanitizeForLog, trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, type ProviderErrorDiagnostic } from '../support/text';
+import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, sanitizeDescriptionForChat, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -395,9 +394,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * of fault (still working the issue), a changed group means it moved to a different one. A hop
    * with only one rejection has no prior group to diverge from, so it reads as converging by default.
    *
-   * `charged=` is intentionally absent — {@link isChargeableRejection}'s accounting lives in
-   * `toolAttempt.ts`, a file this package does not own.
-   *
    * @param hop - The hop number this attempt state belongs to, matching the chat "Hop X/Y" counter.
    * @param focusId - The hop's focus node id, `[schema].[object]` form.
    * @param attempt - The hop's cumulative attempt state at its terminal disposition.
@@ -418,15 +414,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       `[Retry] hop=${hop} focus=${focusId} attempts=${attempt.rejections.length} classes=${classes.join('→')}`
       + ` providerCalls=${attempt.providerCalls}/${MAX_TOOL_PROVIDER_CALLS} converging=${converging ? 'yes' : 'no'} outcome=${outcome}`,
     );
-  };
-
-  const failEngineRestore = (err: unknown): AgentStateUpdate => {
-    if (err instanceof InvalidEngineCheckpointError) {
-      deps.logger?.error(`engine checkpoint restore rejected — paths=${trunc(sanitizeForLog(err.diagnostic), LOG_TRUNC_CONTENT)}`, err);
-      return fail(err.message, err.code);
-    }
-    deps.logger?.error('[AI] engine restore failed', err);
-    return fail(err instanceof Error ? err.message : String(err));
   };
 
   /**
@@ -515,7 +502,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     holdRejectedPresentResult: (input, issuePaths) => {
       const sess = deps.getSession();
       if (sess.activeLmStage?.kind === 'visual_preview') return null;
-      return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis');
+      return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
     },
     holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
   });
@@ -1081,7 +1068,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (cachedDiscoverySummary) engine.setDiscoverySummary(cachedDiscoverySummary);
     return {
       messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), modelUserMessage(buildActiveContinuationAnchor())],
-      engineSnapshot: engine.toJSON(),
       phase: 'active_coordinator',
     };
   };
@@ -1105,53 +1091,35 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   const advanceToSynthesis = (sess: AiSession, engine: NavigationEngine): AgentStateUpdate => {
     if (!sess.resultGraph) observeWrite(sess.storeSmResult(engine.getResult(), deps.turnEpoch));
-    return {
-      engineSnapshot: engine.toJSON(),
-      phase: 'synthesis',
-    };
+    return { phase: 'synthesis' };
   };
 
   const activeCoordinatorNode = (state: AgentStateType): AgentStateUpdate => {
-    let engine: NavigationEngine | null;
-    try {
-      engine = ensureEngine(state, deps);
-    } catch (err) {
-      return failEngineRestore(err);
-    }
+    const sess = deps.getSession();
+    const engine = sess.stateMachine as NavigationEngine | null;
     if (!engine) return fail('Active phase started without an exploration engine.');
 
     if (state.activeHopCount === 0) deps.sink.status('thinking', 'Analysing hop-by-hop...');
-    const sess = deps.getSession();
-    observeWrite(sess.setHopCount(deps.turnEpoch, safeHopCount(engine)));
+    observeWrite(sess.setHopCount(deps.turnEpoch, engine.currentHop));
 
     if (engine.status === 'complete') {
       return advanceToSynthesis(sess, engine);
     }
+    // A refused dispatch sets the engine's error status, so one check covers both.
+    const hop = engine.status !== 'error' && !engine.currentFocus ? engine.getHopContext() : null;
     if (engine.status === 'error') {
-      return failActiveIncomplete(state, engine, 'engine_error', 'Exploration engine entered an error state.');
+      return failActiveIncomplete(state, engine, 'engine_error', engine.errorReason ?? 'Exploration engine entered an error state.');
+    }
+    if (hop?.done) {
+      return advanceToSynthesis(sess, engine);
     }
 
-    if (!engine.currentFocus) {
-      const hop = engine.getHopContext();
-      if (hop.done) {
-        return advanceToSynthesis(sess, engine);
-      }
-    }
-
-    return {
-      engineSnapshot: engine.toJSON(),
-      phase: 'active_worker',
-    };
+    return { phase: 'active_worker' };
   };
 
   const activeWorkerNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
     const sess = deps.getSession();
-    let engine: NavigationEngine | null;
-    try {
-      engine = ensureEngine(state, deps);
-    } catch (err) {
-      return failEngineRestore(err);
-    }
+    const engine = sess.stateMachine as NavigationEngine | null;
     if (!engine) return fail('Active phase started without an exploration engine.');
     if (deps.signal?.aborted) return { outcome: 'cancelled', phase: 'done' };
 
@@ -1165,7 +1133,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     const focusId = engine.currentFocus;
     if (!focusId) {
-      return { engineSnapshot: engine.toJSON(), phase: 'active_coordinator' };
+      return { phase: 'active_coordinator' };
     }
 
     const hopMode = engine.currentHopAnalysisMode;
@@ -1229,21 +1197,16 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${safeHopCount(engine)}`, hopStartedAt);
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt);
 
     /**
      * Routes the exploration's submitted hops to synthesis with a user-visible partial-coverage
-     * note. Submitted hops are finished work; the archive render (`advanceToSynthesis`) presents
-     * them as partial coverage instead of discarding the exploration.
-     */
-    /**
-     * Ends the exploration on the hops already submitted instead of discarding them.
+     * note instead of discarding them; the archive render (`advanceToSynthesis`) presents them as
+     * partial coverage.
      *
-     * @param reason - The attempt-budget or transport stop that ended the active hop.
-     * @param stoppedOnLabel - Display label of the focus the run stopped on, when the stop names
-     *   one. Included in the user-visible line so the notice says WHERE coverage ends, not just
-     *   that it does — a bare "stopped early" leaves the reader unable to tell which part of the
-     *   graph is incomplete.
+     * @param reason - The attempt-budget or transport stop that ended the active hop (logged).
+     * @param notice - User-visible stop text naming where coverage ends; omitted, a generic
+     *   partial-coverage line is queued instead.
      */
     const salvageSubmittedHops = (reason: string, notice?: string): AgentStateUpdate => {
       deps.logger?.debug(
@@ -1287,14 +1250,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (!submitted) {
       emitRepairProgress('active', `Hop ${progress.current}`, priorAttempt, nextAttempt, hopHeader);
       return {
-        engineSnapshot: engine.toJSON(),
         toolAttempt: nextAttempt,
         phase: 'active_worker',
       };
     }
 
     emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'committed');
-    const hop = safeHopCount(engine);
+    const hop = engine.currentHop;
     observeWrite(sess.setHopCount(deps.turnEpoch, hop));
     const wipeTrigger = 'submit_ok';
     observeWrite(sess.recordMemoryWipeEvent(deps.turnEpoch, {
@@ -1312,7 +1274,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const anchor = modelUserMessage(buildActiveContinuationAnchor());
     return {
-      engineSnapshot: engine.toJSON(),
       messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), anchor],
       activeHopCount: state.activeHopCount + 1,
       lastPruned: progress.pruned,
@@ -1328,7 +1289,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     message: string,
   ): AgentStateUpdate => {
     const sess = deps.getSession();
-    const hopCount = safeHopCount(engine);
+    const hopCount = engine.currentHop;
     const hopLog = sess.hopLog;
     sess.resetExploration();
     observeWrite(sess.setHopCount(deps.turnEpoch, hopCount));
@@ -1341,7 +1302,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         state.messages,
         modelUserMessage(buildActiveContinuationAnchor()),
       )],
-      engineSnapshot: engine.toJSON(),
       activeStop: stop,
       phase: 'done',
     };
@@ -1349,12 +1309,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   const synthesisNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
     const sess = deps.getSession();
-    let engine: NavigationEngine | null;
-    try {
-      engine = ensureEngine(state, deps);
-    } catch (err) {
-      return failEngineRestore(err);
-    }
+    const engine = sess.stateMachine as NavigationEngine | null;
     if (!engine) return fail('Synthesis requires a completed exploration engine.');
     let classification: ClassificationValue;
     try {
@@ -1405,7 +1360,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     } else if (!sess.presentResultCalledThisTurn) {
       const { result: res, nextAttempt } = attempt;
       if (res.stop === 'continue') {
-        return { engineSnapshot: engine.toJSON(), toolAttempt: nextAttempt, phase: 'synthesis' };
+        return { toolAttempt: nextAttempt, phase: 'synthesis' };
       }
       deps.logger?.info(
         `[ai-present] phase=synthesis gate=present_committed status=fail attempts=${sess.presentResultAttemptCountThisTurn}`
@@ -1415,11 +1370,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     deps.logger?.info(
       `[ai-present] phase=synthesis gate=present_committed status=pass attempts=${sess.presentResultAttemptCountThisTurn} envelopeChars=${envelopeJson.length}`
     );
-    const chatAnswer = buildChatAnswer({
-      summary: sess.lastPresentResultSummary,
-      intro: sess.resultGraph?.intro,
-      closing: sess.resultGraph?.closing,
-    });
+    const chatAnswer = presentedChatAnswer(sess);
     const closing = sess.takeClosingNotices() + (chatAnswer ? '\n\n' + chatAnswer : '');
     if (closing) {
       deps.sink.stream(closing);
@@ -1471,8 +1422,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       if (sess.phase.kind !== 'exploring') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
       const live = sess.stateMachine as NavigationEngine | null;
       return {
-        engineSnapshot: live ? live.toJSON() : state.engineSnapshot,
-        activeHopCount: live ? safeHopCount(live) : state.activeHopCount,
+        activeHopCount: live ? live.submittedHopCount : state.activeHopCount,
         messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), modelUserMessage(buildActiveContinuationAnchor())],
         toolAttempt: null,
         phase: 'active_coordinator',
@@ -1483,17 +1433,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { ...fail('Follow-up ended without an accepted answer or action.'), toolAttempt: nextAttempt };
     }
     let assistantText = res.stop === 'final' ? res.text : '';
-    const followUpAnswer = sess.presentResultCalledThisTurn
-      ? buildChatAnswer({
-        summary: sess.lastPresentResultSummary,
-        intro: sess.resultGraph?.intro,
-        closing: sess.resultGraph?.closing,
-      })
-      : null;
+    const followUpAnswer = sess.presentResultCalledThisTurn ? presentedChatAnswer(sess) : null;
     const closingNotices = sess.takeClosingNotices();
     if (followUpAnswer) {
       assistantText = followUpAnswer;
       deps.sink.stream(closingNotices + '\n\n' + assistantText);
+      if (sess.synthesisRenderDegradedReason) deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
     } else if (closingNotices) {
       deps.sink.stream(closingNotices);
     }
@@ -1736,48 +1681,6 @@ function detectRefusalFromToolResult(toolName: string, resultText: string): stri
   }
 }
 
-function ensureEngine(state: AgentStateType, deps: AgentGraphDeps): NavigationEngine | null {
-  const sess = deps.getSession();
-  const live = sess.stateMachine as NavigationEngine | null;
-  if (live) return live;
-  const snapshot = state.engineSnapshot;
-  if (!snapshot) return null;
-  if (!sess.model || !sess.graph) {
-    throw new Error('Cannot restore exploration engine without a loaded model and graph.');
-  }
-  let restored: NavigationEngine;
-  let completedResult: ReturnType<NavigationEngine['getResult']> | null = null;
-  let restoreOutcome: SessionWriteOutcome;
-  try {
-    restored = NavigationEngine.fromJSON(
-      snapshot,
-      sess.model,
-      sess.graph,
-      toEngineLog(deps.logger),
-      { activeFilter: sess.filter },
-      sess.columnStore,
-    );
-    restored.classification = sess.classification;
-    if (restored.status === 'complete' && !sess.resultGraph) completedResult = restored.getResult();
-    restoreOutcome = sess.restoreExplorationFromSnapshot(restored, snapshot, deps.turnEpoch);
-  } catch (err) {
-    throw err instanceof InvalidEngineCheckpointError
-      ? err
-      : new InvalidEngineCheckpointError(['(materialization)'], { cause: err });
-  }
-  if (restoreOutcome.kind === 'dropped_stale_turn') {
-    deps.logger?.debug(`[AI] stale-turn write dropped — op=${restoreOutcome.op} captured=${restoreOutcome.captured} current=${restoreOutcome.current}`);
-    throw new Error('Exploration checkpoint restore was superseded by a newer turn.');
-  }
-  if (completedResult) {
-    const outcome = sess.storeSmResult(completedResult, deps.turnEpoch);
-    if (outcome.kind === 'dropped_stale_turn') {
-      deps.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
-    }
-  }
-  return restored;
-}
-
 
 /**
  * Wraps the synthesis completion envelope for the model-facing message, the same untrusted-JSON
@@ -1803,14 +1706,6 @@ export function buildSynthesisEnvelopeMessage(envelope: ReturnType<typeof buildS
     escapeDelimitedJson(envelope),
     '</synthesis_envelope>',
   ].join('\n');
-}
-
-function safeHopCount(engine: NavigationEngine): number {
-  try {
-    return engine.getHopDiagnostics().hop;
-  } catch {
-    return engine.currentHop;
-  }
 }
 
 /** Generic partial-coverage line for a stop that names no object (a transport failure). */
@@ -1844,8 +1739,32 @@ function loopStopText(at: { readonly object: string; readonly completedHops: num
  * @param submittedHops - The graph's `activeHopCount` at the point of the stop.
  * @returns Whether the turn should render the submitted hops instead of failing outright.
  */
-export function shouldSalvageActiveStop(submittedHops: number): boolean {
+function shouldSalvageActiveStop(submittedHops: number): boolean {
   return submittedHops > 0;
+}
+
+/**
+ * Chat text for the committed `lineage_present_result`, chosen by how its preview was delivered.
+ *
+ * @remarks
+ * A render-degraded mark set by the present handler means the post failed or threw
+ * (`post_failed`); otherwise the auto-dispatch flag separates `delivered` from the deferred
+ * `no_panel`. See {@link buildChatAnswer} for what each outcome carries. The assembled description
+ * passes through {@link sanitizeDescriptionForChat}: its object links resolve only in the webview.
+ *
+ * @param sess - The live session, read for the committed artifact and delivery flags.
+ * @returns The chat answer body, or null when the result carries no text.
+ */
+function presentedChatAnswer(sess: AiSession): string | null {
+  const delivery = sess.synthesisRenderDegradedReason ? 'post_failed'
+    : sess.presentResultAutoDispatched ? 'delivered' : 'no_panel';
+  const description = sess.lastPresentResultDescription;
+  return buildChatAnswer({
+    summary: sess.lastPresentResultSummary,
+    intro: sess.resultGraph?.intro,
+    closing: sess.resultGraph?.closing,
+    description: description ? sanitizeDescriptionForChat(description) : null,
+  }, delivery);
 }
 
 /**

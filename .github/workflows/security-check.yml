@@ -98,7 +98,7 @@ jobs:
 
           FOUND=0
           for pattern in "${PATTERNS[@]}"; do
-            if git grep -iE "$pattern" -- '*.ts' '*.js' '*.json' '*.yaml' '*.yml' 2>/dev/null | grep -v "package-lock.json" | grep -v "node_modules"; then
+            if git grep -iE "$pattern" -- '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.json' '*.yaml' '*.yml' '*.md' 2>/dev/null | grep -v "package-lock.json" | grep -v "node_modules"; then
               FOUND=1
             fi
           done

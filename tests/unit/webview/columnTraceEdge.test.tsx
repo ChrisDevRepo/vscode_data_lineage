@@ -115,6 +115,12 @@ describe('ColumnTraceEdge', () => {
     expect(edgeChip(), 'the only state with something to assert gets the chip').not.toBeNull();
   });
 
+  it('draws an object-level edge dashed and without a chip, however its state reads', () => {
+    mountEdge(makeData({ state: 'transformation', objectLevel: true }));
+    expect(edgePath()!.style.strokeDasharray, 'broken line: no value crosses this edge').not.toBe('');
+    expect(edgeChip(), 'an object edge states no transformation').toBeNull();
+  });
+
   it('draws the class glyph the model recorded for the edge', () => {
     mountEdge(makeData({ transforms: ['combine'] }));
     expect(chipClasses(), 'the chip shows one glyph per recorded class').toEqual(['combine']);
@@ -137,6 +143,13 @@ describe('ColumnTraceEdge', () => {
   ])('draws no chip for %s', (_label, overrides) => {
     mountEdge(makeData(overrides));
     expect(edgeChip(), 'nothing to assert is not the same as a transformation').toBeNull();
+  });
+
+  it('marks the chip of an edge on a highlighted column path, and leaves an unfocused chip unmarked', () => {
+    mountEdge(makeData({ transforms: ['compute'], focused: true }));
+    expect(edgeChip()!.getAttribute('data-focused'), 'the symbol follows the line highlight').toBe('true');
+    mountEdge(makeData({ transforms: ['compute'] }));
+    expect(edgeChip()!.hasAttribute('data-focused'), 'no narrowing, no highlight').toBe(false);
   });
 
   it('keeps the chip beside pass_through when a real class rides with it', () => {

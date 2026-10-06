@@ -144,20 +144,27 @@ The setting `dataLineageViz.database.connectionProvider` selects the implementat
 code sees only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, `dispose`).
 
 - **`mssqlExtension`** (default) — [`mssqlExtensionProvider.ts`](../src/engine/db/mssqlExtensionProvider.ts) wraps the
-  mssql extension's connection API (legacy `connect` or saved profiles with connection sharing). Sessions stay
-  with that extension and are not closed by this one.
+  mssql extension's connection API (legacy `connect` or saved profiles with connection sharing). Import sessions
+  stay with that extension and are not closed by this one (`releaseSession` is a no-op for them). The one
+  exception is the table-statistics session: negotiated once and reused for the panel's lifetime, it is
+  disconnected when the panel closes or another project loads.
 - **`builtIn`** — [`builtInProvider.ts`](../src/engine/db/builtInProvider.ts) opens a `tedious` connection loaded by
   dynamic import and bundled by esbuild. It serializes requests, cancels on the wire when `dataLineageViz.dmvQueryTimeout`
-  elapses, returns the first result set, and is closed after the operation. With this provider nothing looks up,
+  elapses, returns the first result set, and is closed after the operation. Its `getServerInfo` runs the YAML
+  `platform-info` query from the panel's DMV query cache (reloaded by each import and when
+  `dataLineageViz.dmvQueriesFile` names another file), so platform detection does not retry it as a fallback. With this provider nothing looks up,
   activates or calls the mssql extension, and `extensionDependencies` stays empty.
 - **Connection store** — [`connectionSettings.ts`](../src/engine/db/connectionSettings.ts) reads the application-scoped
   array `dataLineageViz.database.connections` tolerantly and validates every write; the item schema has no password
-  property. Passwords live in `SecretStorage` under `dataLineageViz.database.password.<id>`. Entra connections request a
+  property. Upserts and deletes rewrite the list one at a time through a module-level queue, so concurrent saves
+  never drop an entry. Passwords live in `SecretStorage` under `dataLineageViz.database.password.<id>`. Entra connections request a
   `microsoft` session for `https://database.windows.net//.default` (plus `VSCODE_TENANT:<tenant>`) and pass the token to
   the driver.
 - **Commands and wizard** — [`connectionCommands.ts`](../src/engine/db/connectionCommands.ts) registers add, edit,
   remove and update-password; `addDatabaseConnection` also accepts a Zod-validated `{connection, password?}` argument
   and then runs without prompts, except the certificate-trust confirmation when the argument turns trust on.
+  Update-password accepts only SQL login connections, whether picked or named by id; an Entra ID id is refused with a
+  warning and nothing is stored.
 - **Errors** — [`connectionErrors.ts`](../src/engine/db/connectionErrors.ts) is the one owner of connection failure
   presentation for both providers. The message is `<connection name>: <original driver text>` with secrets redacted;
   actions are chosen by error number, code or text pattern and are never retried automatically.
@@ -165,7 +172,7 @@ code sees only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, 
   `provider` reads as `mssqlExtension`. When a stored record names a different provider than the setting, the setting
   wins and one info message says so.
 - **Identifier comparison** — `DatabaseModel.identifierCaseSensitive` is enabled only by checked source catalog metadata. Database imports probe the effective collation of `sys.schemas.name`; data/column or server collation does not establish identifier comparison. DACPAC imports read the model's explicit case comparator and catalog-collation options, including Azure's separate catalog setting. Missing or ambiguous metadata retains the existing CI normalization and IDs. Verified CS imports retain exact object/schema/column identities through catalog, dependencies, AI routing, checkpoints and the webview. Existing CI bookmarks keep their IDs; an old checkpoint cannot reinterpret a previously collapsed object as a new CS identity.
-  Canonical IDs are comparison keys: CI folds casing, CS preserves casing, and both compare keys exactly. Object and column display names come from source metadata when available. Checkpoints record their comparison policy; legacy snapshots without the flag remain CI, and restore rejects a different loaded policy. Historical recall uses the saved policy independently of the current model.
+  Canonical IDs are comparison keys: CI folds casing, CS preserves casing, and both compare keys exactly. Object and column display names come from source metadata when available. Snapshots record their comparison policy; legacy snapshots without the flag remain CI. Historical recall uses the saved policy independently of the current model.
   In a DACPAC ZIP, the inputs are in `model.xml`: `DataSchemaModel/@CollationCaseSensitive` and the `SqlDatabaseOptions` properties `CatalogCollation` and `Containment`. Repeated or conflicting options cannot enable CS. For live imports, the DMV platform query returns the catalog column's collation and `ComparisonStyle`; extraction validates that single metadata record before enabling CS.
 - **Dependency scanning** — The configured `maxNodes` governs model admission. SQL extraction has no per-rule match-count cutoff: every match contributes to dependency resolution. Validated rules must be global; the shared collector advances correctly after zero-width matches, including Unicode input, rather than dropping references after an arbitrary count.
 - **Webview** — `mssql-status` carries `provider`; while `mssqlExtension` is active the wizard shows an inline retirement
@@ -322,7 +329,7 @@ Depth is a required per-side shape in
 [`explorationDepthContract.ts`](../src/engine/shared/explorationDepthContract.ts).
 Both `upstream` and `downstream` carry `levels` and `exactness`: `exact`
 enforces a stated border; `approximate` displays an estimate without bounding
-scope. `levels: 0` closes that side, and both sides zero is rejected.
+scope. `levels: 0` closes that side whatever its exactness, and both sides zero is rejected.
 A node within either side's permitted ceiling is admitted. Approved hard
 borders hold throughout the run; changing them requires a gate refinement or
 post-result follow-up.
@@ -455,6 +462,7 @@ object. A sole sender's vote resolves immediately. If the agenda empties with
 votes pending on a cycle, resolution uses the votes already cast and logs the
 unheard senders. A reactivated sender replaces its own previous vote.
 Queued or visited neighbors are not pulled from the agenda by a later prune.
+The prunes one hop resolves together are cut as one proposal, so the removed set never depends on the order of `prune_neighbors`.
 
 **The cut.** AI pruning and Trace View removal use the same pure policy,
 `analyzeRemoval` in `src/engine/graphGuards.ts`. Its inputs include the origin,
@@ -462,19 +470,28 @@ scope, removed nodes, committed visited nodes, current/clicked node and explicit
 open direction legs. Trace View derives those legs from its effective upstream
 and downstream levels; a side at zero levels is closed. Preview and application
 use the same trace membership and levels. Display-only undirected reachability
-is not a pruning decision.
+is not a pruning decision: it never keeps a node the directed cut removes. Trace
+View also removes a manually added neighbour outside the directed legs once the
+removal leaves it with no visible link to the origin (`canPruneTraceNode` in
+`src/engine/traceScope.ts`), so the trace stays connected.
 
 The origin is protected. Previously visited nodes cannot be pruned by another
 node. The current node may self-prune, but a removal that would disconnect
 another committed visited node is rejected before any state changes. The
 renderer is not used to repair an invalid accepted removal.
 
-After an accepted `end_branch` or resolved neighbor vote, the cut walks open
-unvisited nodes from the newly removed node on each approved fixed direction
-leg. It stops before another removed node, a visited node, the scope boundary,
-or a shared join with surviving directed support from the origin. Upstream and
+After a resolved neighbor vote, the cut is every open unvisited node that an
+approved fixed direction leg reached from the origin before the removal and
+that no leg reaches after it. A shared join with surviving directed support
+stays; a continuation whose only directed path ran through the removed node
+leaves, even behind a join the other leg still holds. Upstream and
 downstream support are separate walks; neither changes direction partway.
 CT and BB use the same cut.
+
+One invariant follows, and the delivered graph is read from the same state:
+every retained object has a directed path to the origin on an approved leg, or
+was added by a completed follow-up and is linked to the trace. A visited object
+is never removed by another object.
 
 For A → B ↔ C → D, with A/B already visited, C self-prune removes C and an
 exclusive unvisited D. If another surviving path reaches D, only C leaves.
@@ -515,9 +532,9 @@ assembles the Markdown, derives badges, and commits the result graph.
 Contracted in-scope objects remain part of that graph and are labeled as
 retained supporting objects. New deferred follow-up work is relevant to the
 approved question and crosses a `schema`, `depth`, `direction`, or `excluded`
-boundary. Legacy `budget` leads and out-of-scope `contracted` leads remain
-readable. Historical pruned leads and in-scope contracted leads are preserved
-in saved records but are not offered. Eligible questions reach the completion
+boundary; the live engine records only those four lead reasons. Legacy
+`budget`, `contracted` and pruned lead reasons remain readable in saved
+records and are never offered. Eligible questions reach the completion
 envelope; an excluded target is offered with a new scope approval requirement.
 
 Completed follow-ups can update presentation, supplement the existing
@@ -538,17 +555,37 @@ exploration follows the consent path and establishes new state.
 
 Checkpoints retain the explicitly admitted supplement targets. Their visited
 analysis requires connectivity to the retained trace, even when a user follow-up
-crosses the initial direction; ordinary exploration retains directed support.
+crosses the initial direction; ordinary exploration retains directed support. A
+named object the analysis pruned earlier is the user's decision and returns with
+the pruned connectors on its shortest path to the retained trace, in one action;
+an object with no path to the start even through pruned objects is refused.
 
 A follow-up that exhausts its correction budget still delivers the answer it
 already wrote, with a plain statement that the graph did not change — the
 mirror of synthesis's held-draft render: when synthesis's breaker trips with a
 held, repairable `lineage_present_result` draft, or the panel/preview dispatch
-throws after a committed result, the held draft's own intro, sections and
+fails after a committed result, the held draft's own intro, sections and
 closing render straight into the chat stream through the existing assembler,
 followed by one plain line that the AI preview could not be rendered; the
 cause is in the debug log and a warning toast is raised once, from the
 participant.
+
+A committed result's preview delivery is one of three named outcomes:
+`delivered` (the webview accepted the post), `no_panel` (no panel is open;
+delivery is deferred to the "Show in Graph" button and is not a failure) and
+`post_failed` (the post was refused or threw; the session is marked
+render-degraded by name). The outcome is recorded only after the turn's
+commit is accepted, and the latest present of a turn decides it: a delivered
+or deferred present clears a mark left by an earlier failed post. The chat
+text at the terminal follows the outcome.
+When delivered, the preview is on screen and chat carries the authored summary
+only. When the post failed, chat carries the summary followed by the whole
+assembled description (intro, sections, closing; object links as plain
+names), once, then the same
+failed-render line and toast; a result with no sections falls back to its
+summary, intro and closing. With no panel, chat carries the summary, intro and
+closing and the button stays. Nothing is cut and chat is never empty while the
+result carries authored text.
 
 ## Memory and state ownership
 
@@ -562,13 +599,22 @@ compiles against a fresh in-memory saver so the consent gate can pause and
 resume through `Command({ resume })` inside a single turn. Cross-turn state
 is `AiSession`; `thread_id` is a fresh value per request.
 
-Restored navigation state must agree on queued task identities, qualified carry,
-the active hop and any caller SQL provenance. Historical column edges are not a
-substitute for missing active carry. An incompatible active checkpoint is refused
-with an explicit restart outcome; it is never silently upgraded or repaired by
-inventing bindings. Valid completed archives remain available as historical evidence.
-An otherwise valid legacy checkpoint may retain stale lineage-question text;
-BB prompt projection excludes that operational rider without discarding historical facts.
+A chat turn never rebuilds the navigation engine from a snapshot: the consent
+resume and every later hop read the session's live engine. `toJSON` snapshots are
+written to the state dump and to saved runs, and are read back only as shape-validated
+historical evidence (saved-run recall); a snapshot that fails validation is refused,
+never silently upgraded or repaired by inventing bindings. Dispatch and
+follow-up do not report a live invariant failure as an invalid saved state: a
+dispatch whose recorded function binding no longer holds, or whose column task
+has no qualified source, sets the engine's error status with a user-facing
+reason, which the coordinator settles through the incomplete-run path, and a
+follow-up whose recorded scalar binding no longer resolves is refused before
+any state changes. `toJSON` is the exception: it validates its own snapshot and
+throws the invalid-checkpoint error when the live state fails the shape check.
+Historical column edges
+are not a substitute for missing active carry. Valid completed archives remain
+available as historical evidence. BB prompt projection excludes stale lineage-question
+text without discarding historical facts.
 
 The findings archive is the durable semantic store for an exploration.
 `NavigationEngine` separately owns agenda and node lifecycle. Each active hop
@@ -644,15 +690,29 @@ object/column destination or `null` for no table write. Stored records retain
 an optional field for tolerant reads; an omitted destination is not inferred.
 For downstream tracing, `out_col` can be the resolved output rename, not just
 the incoming column name.
-Downstream continuation follows validated column edges in their data-flow
-direction, including an explicitly recorded writer-to-destination edge. A
-second contributor to a reached output remains attribution evidence; it does
-not seed that contributor's other outputs. Column-link admission validates identities,
-attributes and explicit continuity with qualified arriving task endpoints. Either end of a
-model-authored link may connect to those endpoints; traversal direction controls continuation
-routing, not whether the relationship is relevant to the answer. The AI authors relationships,
-row-selection meaning, cardinality and whether the chain stops; the backend does not infer those
-decisions from SQL, column names or an output-side restriction. Disconnected links remain refused.
+Column-link admission validates identities, attributes and attachment. An `upstream_columns` contributor must be a neighbor of the focus in the object graph, or a read supplier of its declared scalar caller; the same set is served as the contributor enum, and any other node is dropped with an `absent_contributor` notice once its column and, at a carrier, its continuation validate (a column the object does not declare, a literal, or a continuation at a non-writer is refused first). A `writes_to` destination
+other than the focus must be a node the focus has a recorded write dependency into. One definition
+(`columnAttachment`) decides which endpoints and edges are attached; admission, carry and delivery
+all read it. It runs from the requested output columns in the
+approved direction over the committed and staged edges: upstream is the requested outputs and
+everything that feeds them; downstream is the requested outputs, what they feed and every input of
+what they feed; bidirectional is the union. A link is admitted only when its destination is
+attached, and a column is carried only when it is attached (downstream, only when the tracked
+value flows through it: a second contributor's output is attached but never handed on), so an
+island cannot be committed or carried. A second contributor to a reached output is attached as attribution evidence; it does not
+seed that contributor's other outputs, so a link out of it into an unrelated column is refused, as
+is a link out of a tracked column into a destination that feeds no tracked endpoint. The origin's
+own explicit write of a requested output (including a terminal write) attaches that one destination
+together with the inputs the origin hop itself recorded into it and whatever feeds those inputs; it
+is not an anchor for another hop, whose link into that destination is refused unless the direction
+rule attaches it. Delivery always projects the committed edges through the same definition and
+names what it withholds, whether the cause is a withheld border endpoint or
+a destination or authoring hop that is not in the delivered object result (a source may lie
+outside it); the committed state is not rewritten. Downstream continuation
+follows validated edges in their data-flow direction, including an explicitly recorded
+writer-to-destination edge. The AI authors relationships, row-selection meaning, cardinality and
+whether the chain stops; the backend does not infer those decisions from SQL, column names or an
+output-side restriction. Detached links remain refused.
 An empty whole `column_flow: []` ends ordinary incoming column continuation
 at a non-origin hop; it does not forward the incoming name to later objects.
 An empty `upstream_columns` in one entry does not end every other incoming
@@ -663,6 +723,20 @@ When a hop maps only some incoming columns, the remaining source-qualified
 column tasks stay unresolved and continue alongside the recorded outputs.
 Mapped inputs are replaced by their outputs; an explicit terminal declaration
 ends that input's continuation.
+
+Continuation is carried only by qualified identity. Every non-root column task
+holds the (node, column) endpoints of the committed edge or carry that created
+it: a routed continuation, a contraction through a non-bodied carrier, a
+deferred lead, or a follow-up. The root task's only anchor is the origin with
+its explicitly requested target columns. No task recovers its source from task
+ancestry, historical edges or a column name that exists on another object. A
+follow-up named by object continues from the committed endpoints that object
+owns on the traced spine; with none it is an object (BB) visit. A user pass
+node is topology only, so no mapping through it is recorded: an ordinary column
+continuation that reaches it stays a source-qualified unresolved question and
+its neighbors receive the shared BB visit. A column task without qualified
+endpoints is an engine invariant violation: its dispatch stops the run with the
+engine's error status, never a BB visit and never a continuation by a guess.
 
 The backend owns routing, scope, lifecycle, and validation of recorded object
 and column references. It stores model-authored links and passes recorded
@@ -711,6 +785,19 @@ DIRECT means the upstream value reaches the output; INDIRECT means no value
 crosses the edge and the node only decided which rows appear. The field is
 optional on both contracts, and the engine never fills it in.
 
+A column trace follows direct lineage. `upstream_columns` asks for the columns
+whose value flows into the output: expression operands including the operands of
+a `CASE` condition, an aggregate's argument, each set-operation branch's column
+at that position, and caller-bound value inputs. A column used only to join,
+filter, group, partition or order rows is object lineage: its object stays in
+the graph, and the rule it applies to the traced value (which rows are summed,
+which row is first, which partition) is stated in the hop's sections beside the
+calculation, where hop memory keeps it for synthesis and follow-up questions. It
+is neither a column source nor traced further: a contributor whose classes are
+all INDIRECT stages no column edge, and its object is visited in a row role
+without a column task. The INDIRECT
+classes remain valid for a source column that also selects rows.
+
 A compiler-declared scalar projection carries its qualified real caller output into
 an admitted function task. The optional column `expressionDependencies` metadata
 must identify the loaded local scalar function (`SqlScalarFunction`, or catalog
@@ -728,7 +815,10 @@ no synthetic columns, formal-parameter endpoints, or writer edges. Missing flow,
 missing destinations, or a prune cannot settle the task. An explicit empty
 upstream list can document local production. Multiple callers sharing a column
 name remain separate obligations. Existing queued tasks merge demands without
-changing traversal order or scheduling a second visit.
+changing traversal order or scheduling a second visit. An ordinary column
+arrival at a function already queued for a scalar return, or the reverse, is
+neither refused nor dropped: the entry carries the scalar outputs, the ordinary
+carry stays its own qualified task on the same visit, and the split is logged.
 
 A completed function follow-up retains the selected task's qualified destinations,
 or unions its prior scalar tasks when the function is named directly. Bindings are
@@ -775,8 +865,8 @@ not establish complete SQL lineage.
 
 Checkpoints with scalar return carry or qualified task targets use
 `snapshotVersion: 2`; ordinary records remain version 1. The current decoder
-reads both, rejects qualified fields in version 1 and inconsistent projections,
-and revalidates declared bindings against the loaded model on resume. Missing
+reads both with the same strict schema; version 1 additionally drops agenda
+entries already visited. Missing
 binding evidence leaves ordinary row-only function visits under BB with an
 unavailable-binding diagnostic; those visits do not prove a complete directed
 column path. Older metadata and checkpoints never acquire guessed bindings.
@@ -824,15 +914,20 @@ assembly, and commit. Markdown and KaTeX formatting is never validated and
 never rejects a commit: an expression the renderer cannot parse degrades to
 its original source text. Nodes may remain visible without a badge or
 highlight; pruning is the only operation that removes them from the answer
-graph.
+graph. A completed-phase `add_node_ids` or `prune_node_ids` edit commits its
+resolved node ids and edges to the result graph with the render, whether or
+not `is_update` is set, so the next render starts from the view the user saw.
 
 A `present_result` bound — a name, title, section label or highlight label's length,
 a blank required field, a repeated section label — is one Zod declaration on the
 model schema. The JSON schema the model reads states it as a typed constraint
-(`maxLength`, `maxItems`, `minLength`), the tool-attempt boundary rejects a violation
-against the same schema before the handler runs. `validatePresentResult` keeps only what a schema cannot
-express: node-id resolution against the result graph and highlight, section and
-note coverage. Highlight labels are trimmed, must be nonempty, and have a
+(`maxLength`, `maxItems`, `minLength`), and the `present_result` handler parses the
+raw call once against that same stage schema, rejecting a violation before
+normalization, held-draft merging or any session write. A repair's merged
+held-draft sections are then checked once against the shared section bound
+(`MergedSectionsSchema`). `validatePresentResult`
+keeps only what a schema cannot express: node-id resolution against the result
+graph and highlight, section and note coverage. Highlight labels are trimmed, must be nonempty, and have a
 60-character hard limit for GUI readability, with a soft authoring target of
 about 40 characters. An overlong label is rejected for shortening rather than
 truncated. A presentation needs at least one highlight group; group count has
@@ -878,16 +973,21 @@ answer blocks (`B<n>`) for the preview, SQL snippets (`S<n>`) for synthesis. A
 rejected large message is repaired by resending only the named part; every held
 part not resent is kept.
 
-In CT, the synthesis prompt requires validated terminal source nodes to remain
-visible in the final source presentation surface so the rendered answer cannot
-silently drop the root of a column chain; no validator rejects an omission.
+In CT, every Column Trace Chain node in scope without a detail slot must appear
+in a section's node ids or a note, so the rendered answer cannot silently drop
+part of a column chain; the present-result handler rejects a render that omits
+one, and a highlight group does not cover it.
 
 ## History, privacy, and no-egress boundary
 
 VS Code supplies prior participant turns through `ChatContext.history`.
 [`src/ai/participant/chatHistoryAdapter.ts`](../src/ai/participant/chatHistoryAdapter.ts)
-projects ordered user/assistant text and preserves only complete native
-tool-call/result pairs. It does not select a model or own exploration memory.
+projects ordered user/assistant text only, bounded by turn count and bytes. Tool
+calls and results are not replayed across turns: `ChatResult.metadata` carries
+request status and UI flags only, never tool rounds, so database content is not
+persisted in VS Code's chat store. A later turn re-reads facts through the
+phase-valid read tools; exploration and result state cross turns in `AiSession`.
+The adapter does not select a model or own exploration memory.
 
 The local LangChain bridge is a translation boundary, not a provider
 abstraction. An npm override resolves LangChain's transitive `langsmith`

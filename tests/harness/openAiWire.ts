@@ -260,7 +260,7 @@ export function suspectsToolCallAsText(text: string): boolean {
 }
 
 /** A fenced ```json (or bare ```) code block wrapping exactly one JSON value. */
-export const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
+const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
 
 /** One `<parameter=name>` pair of the Hermes/XML tool-call envelope; the closing tag is the bare `</parameter>`. */
 const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
@@ -270,8 +270,8 @@ const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parame
  * as JSON, or the Hermes/XML `<parameter=…>` envelope — without judging it against any schema.
  *
  * @remarks
- * Harness diagnostics only: it feeds {@link suspectsToolCallAsText} and the pinned-tree promotion
- * mirror in `openAiCompatiblePort.ts`. Zero `<parameter=…>` pairs is not this envelope.
+ * Harness diagnostics only: it feeds {@link suspectsToolCallAsText}. Zero `<parameter=…>` pairs is
+ * not this envelope.
  */
 export function readProseToolCandidate(text: string): Record<string, unknown> | null {
   const match = FENCED_JSON_BLOCK.exec(text);

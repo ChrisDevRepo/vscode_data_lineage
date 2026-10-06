@@ -172,7 +172,7 @@ describe('presentation SQL-reference fence boundary', () => {
 
   it('retains bare closes followed by newline prose, inline punctuation and existing prose-bearing closing markers', () => {
     const blocks = new Map([['S1', { id: 'S1', nodeId: ORIGIN, raw: `\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` }]]);
-    for (const text of ['```sql S1\n```\nNext paragraph.', '```sql S1```! Next paragraph.', '```sql\nSELECT 2;\n``` The adjustment is a hardcoded fallback multiplier.']) {
+    for (const text of ['```sql S1\n```\nNext paragraph.', '```sql S1```! Next paragraph.', '```sql S1```Next paragraph.', '```sql\nSELECT 2;\n``` The adjustment is a hardcoded fallback multiplier.']) {
       const result = expandEvidenceRefs(text, blocks);
       expect(result.malformedRefs).toEqual([]);
       expect(result.text).toContain(text.includes('SELECT 2') ? 'SELECT 2;' : CAPTURED_SQL);
@@ -185,6 +185,66 @@ describe('presentation SQL-reference fence boundary', () => {
     expect((await run(session, basePayload({intro:'```sql S9\n```'}))).code).toBe('validation');
     const text = 'Ordinary S1 reference and ```json\n{"value":"S1"}\n```.';
     expect(expandEvidenceRefs(text, new Map()).text).toBe(text);
+  });
+});
+
+
+describe('evidence reference placement on its own line', () => {
+  const SQL = 'SELECT SUM(Amount) FROM Demo.Sales';
+  const blocks = new Map([['S1', { id: 'S1', nodeId: ORIGIN, raw: `\`\`\`sql\n${SQL}\n\`\`\`` }]]);
+  const fence = (indent: string): string => `${indent}\`\`\`sql\n${indent}${SQL}\n${indent}\`\`\``;
+
+  it('keeps a mid-line reference in an ordered list item inside the item and the later steps numbered', () => {
+    const written = '1. Country denominator: $$S=\\sum x$$ (```sql S1\n```)\n2. Second step.\n3. Third step.';
+    const { text } = expandEvidenceRefs(written, blocks);
+    expect(text).toBe(`1. Country denominator: $$S=\\sum x$$\n${fence('   ')}\n2. Second step.\n3. Third step.`);
+    const tokens = marked.lexer(text);
+    expect(tokens.map(token => token.type)).toEqual(['list']);
+    const list = tokens[0] as { items: Array<{ tokens: Array<{ type: string; text: string }> }> };
+    expect(list.items).toHaveLength(3);
+    expect(list.items[0].tokens.filter(token => token.type === 'code').map(token => token.text)).toEqual([SQL]);
+    expect(list.items[1].tokens[0].text).toBe('Second step.');
+    expect(list.items[2].tokens[0].text).toBe('Third step.');
+  });
+
+  it('starts the block on its own line in a plain paragraph and continues the prose after it', () => {
+    const { text } = expandEvidenceRefs('Revenue is summed ```sql S1```, per country.', blocks);
+    expect(text).toBe(`Revenue is summed\n${fence('')}\n, per country.`);
+    expect(marked.lexer(text).filter(token => token.type === 'code')).toHaveLength(1);
+  });
+
+  it('indents every line of a block in a nested list item to that item\'s content column', () => {
+    const { text } = expandEvidenceRefs('1. Outer\n   - Inner step (```sql S1\n```) done.\n2. Next', blocks);
+    expect(text).toBe(`1. Outer\n   - Inner step\n${fence('     ')}\n     done.\n2. Next`);
+    const outer = (marked.lexer(text)[0] as { items: Array<{ tokens: Array<{ type: string; items?: unknown[] }> }> }).items;
+    expect(outer).toHaveLength(2);
+    expect(outer[0].tokens.find(token => token.type === 'list')?.items).toHaveLength(1);
+  });
+
+  it('leaves no empty parentheses when the section already shows that SQL', () => {
+    const shown = `\`\`\`sql\n${SQL}\n\`\`\``;
+    const inline = expandEvidenceRefs(`${shown}\n\nTotals are summed (\`\`\`sql S1\n\`\`\`) per country.`, blocks);
+    expect(inline.text).toBe(`${shown}\n\nTotals are summed per country.`);
+    const item = expandEvidenceRefs(`- ${shown.replace(/\n/g, '\n  ')}\n- Total (\`\`\`sql S1\`\`\`)\n- Next`, blocks);
+    expect(item.text).toBe(`- ${shown.replace(/\n/g, '\n  ')}\n- Total\n- Next`);
+    expect(item.normalized).toEqual([expect.stringContaining('S1')]);
+  });
+
+  it.each([
+    ['a paragraph', 'Intro.\n\n```sql S1\n```\n\nThen load.', `Intro.\n\n${fence('')}\n\nThen load.`],
+    ['a bullet', '- Guard:\n  ```sql S1\n  ```\n- Next', `- Guard:\n${fence('  ')}\n- Next`],
+    ['a bullet opener', '- ```sql S1```\n- Next', `- ${fence('  ').trimStart()}\n- Next`],
+  ])('expands a reference already on its own line exactly as before: %s', (_name, written, expected) => {
+    expect(expandEvidenceRefs(written, blocks).text).toBe(expected);
+  });
+
+  it('places a mid-line fence that carries its own SQL on its own line and drops only the id', () => {
+    const own = 'SELECT 1;';
+    const { text, normalized } = expandEvidenceRefs(`- Rule: \`\`\`sql S1\n${own}\n\`\`\` — applies.\n- Next`, blocks);
+    expect(text).toBe(`- Rule:\n  \`\`\`sql\n  ${own}\n  \`\`\`\n  — applies.\n- Next`);
+    expect(normalized).toEqual([expect.stringContaining('S1')]);
+    const list = marked.lexer(text)[0] as { items: unknown[] };
+    expect(list.items).toHaveLength(2);
   });
 });
 
@@ -244,5 +304,35 @@ describe('merged report section repair diagnosis', () => {
     expect(result.hint).toContain('No section is held: resend every section.');
     expect(session.presentResultRepairDraft.get()?.sections).toEqual([]);
     expect(session.presentResultRepairDraft.getAuthorization()).toEqual({ fields: ['sections'] });
+  });
+  it('does not hold keep-text sections of an update call whose labels the committed report lacks', async () => {
+    const session = seedSession();
+    session.explorationRunId = 'run-1';
+    session.phase = { kind: 'completed' };
+    session.resultGraph = { ...session.resultGraph!, sectionsRunId: 'run-1', sections: [
+      { label: 'Alpha', node_ids: [ORIGIN], text: 'Alpha body.' },
+      { label: 'Beta', node_ids: [ORIGIN], text: 'Beta body.' },
+    ] } as ResultGraph;
+    const first = await run(session, { is_update: true, sections: [{ label: 'Invented One' }, { label: 'Invented Two' }] });
+    expect(first.hint).toContain('`Alpha`, `Beta`');
+    expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
+    const second = await run(session, { is_update: true, name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }] });
+    expect(second.success).toBe(true);
+    expect(session.resultGraph?.sections?.map(sec => sec.label)).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('authorizes a section resend when a rejected update loses its sections, so authored text is not dropped', async () => {
+    const session = seedSession();
+    session.explorationRunId = 'run-1';
+    session.phase = { kind: 'completed' };
+    session.resultGraph = { ...session.resultGraph!, sectionsRunId: 'run-1', sections: [
+      { label: 'Alpha', node_ids: [ORIGIN], text: 'Alpha body.' },
+    ] } as ResultGraph;
+    const first = await run(session, { is_update: true, sections: [{ label: 'Alpha', text: 'New Alpha body.' }, { label: 'Invented' }] });
+    expect(first.hint).toContain('sections');
+    expect(first.hint).not.toContain('every field except name, summary, highlight_groups.');
+    const second = await run(session, { is_update: true, name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }], sections: [{ label: 'Alpha', node_ids: [ORIGIN], text: 'New Alpha body.' }] });
+    expect(second.success).toBe(true);
+    expect(session.resultGraph?.sections?.map(sec => sec.text)).toEqual(['New Alpha body.']);
   });
 });

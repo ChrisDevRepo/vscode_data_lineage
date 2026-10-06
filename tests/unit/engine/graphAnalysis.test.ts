@@ -168,6 +168,13 @@ describe('analyzeOrphans', () => {
   it('returns nothing for an empty graph', () => {
     expect(analyzeOrphans(emptyGraph()).groups).toEqual([]);
   });
+
+  it('keeps a schema name that contains a slash intact in the group label and meta', () => {
+    const graph = makeGraph([{ id: 'X', schema: 'ops/archive', type: 'table' }], []);
+    const [group] = analyzeOrphans(graph).groups;
+    expect(group.label).toBe('[ops/archive] tables');
+    expect(group.meta).toEqual({ schema: 'ops/archive', type: 'table', count: 1 });
+  });
 });
 
 

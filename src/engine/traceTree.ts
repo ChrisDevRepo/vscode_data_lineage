@@ -1,3 +1,9 @@
+/**
+ * @module TraceTree
+ * Projects a trace scope into the L0-anchored tree the trace navigator renders: per-side hop levels
+ * from direction-restricted breadth-first walks, a group for visible nodes neither walk reaches, and
+ * the out-of-scope grow candidates of every node.
+ */
 import type Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 

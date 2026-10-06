@@ -3,7 +3,7 @@
 ## Default Checks
 
 ```sh
-npm install
+npm ci
 npm test                    # deterministic unit tests
 npm run test:core           # parser, engine and webview
 npm run test:runtime        # AI runtime contracts, without inference
@@ -12,14 +12,16 @@ npm run gate                # configured deterministic checks
 
 Focused parser and graph checks are `npm run test:parser` and `npm run test:bfs`. TypeScript checks are `npm run typecheck` and `npm run typecheck:tests`. The repository has no lint script.
 
+The gate summary marks a step `SKIP` when it could not run its comparison; a skipped step is not verified. The output template schema version step compares against the newest `v*` tag, or `origin/main` when no tag exists, and skips locally when neither is present. With `CI` set it fails instead, so a CI checkout must fetch tags or `origin/main` (for example `actions/checkout` with `fetch-depth: 0`).
+
 Function caller-context and findings-schema regressions can be checked together:
 
 ```sh
-npm test -- tests/unit/sm/function-caller-context.test.ts tests/unit/sm/fresh-kept-schema-parity.test.ts
+npm test -- tests/unit/sm/function-question-schema.test.ts tests/unit/sm/fresh-kept-schema-parity.test.ts
 ```
 
 These tests cover qualified scalar destinations, TVF argument context, directed
-contributors, stale SQL and checkpoint provenance, input identity, fresh kept
+contributors, stale SQL and saved-run provenance, input identity, fresh kept
 requirements, legal cuts and held repairs. They create no model calls. Check
 model-authored argument bindings and omitted SQL contributors separately; a
 structurally valid delivered graph does not establish complete SQL lineage.
@@ -29,7 +31,7 @@ case-only schema/object/function/column twins, CT route rejection and completene
 saved-run policy, metadata display names, and graph/export consumers:
 
 ```sh
-npm test -- tests/unit/parser/identifier-case.test.ts tests/unit/sm/identifier-policy-checkpoint.test.ts tests/unit/ai-core/identifier-runtime-flow.test.ts tests/unit/engine/columnTraceView.test.ts
+npm test -- tests/unit/parser/identifier-case.test.ts tests/unit/sm/identifier-policy-saved-run.test.ts tests/unit/ai-core/identifier-runtime-flow.test.ts tests/unit/engine/columnTraceView.test.ts
 ```
 
 These cases exercise backend contracts without a live database or model inference.
@@ -47,7 +49,7 @@ complex SQL without statement delimiters remain outside this case-policy guarant
 Build the extension package from the repository root:
 
 ```sh
-npm install
+npm ci
 npm run package
 ```
 
@@ -60,6 +62,8 @@ code --install-extension ./data-lineage-viz-<version>.vsix
 Test the VSIX in a separate VS Code profile before sharing it. Packaging does not publish the extension.
 
 ## Optional Integration Checks
+
+Machine prerequisites for each tier: [Test Environments](ENVIRONMENTS.md).
 
 `npm test` and `npm run gate` require no database, model provider, tracing account, or graphical session.
 

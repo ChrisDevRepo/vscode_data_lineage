@@ -8,19 +8,19 @@ Vendor-agnostic instructions for coding agents working on Data Lineage Viz. Read
 - TypeScript `^5.7`; VS Code extension host, esbuild `^0.28`, Vite `^6.4`.
 - React/React DOM `19.3`; webview uses React Flow (`@xyflow/react` `12.11`).
 - Graph: graphology `0.26`; validation: Zod `4.6`; tests: Vitest `4.1`, Mocha `11.8`, `@vscode/test-electron` `3.1`.
-- Sources are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse. No application-owned database schema or migration command.
+- Sources are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse Dedicated SQL Pool. No application-owned database schema or migration command.
 
 ## Quickstart
 
 ```sh
-npm install
+npm ci
 npm run dev                 # webview dev server
 npm run build               # extension and webview
 npm run typecheck
 npm test                    # deterministic unit tests
 npm run test:core           # parser, engine and webview
 npm run test:runtime        # AI runtime contracts
-npm run test:edh             # VS Code Electron smoke lanes
+npm run test:edh            # VS Code Electron smoke lanes; needs a display
 npm run gate                 # configured deterministic checks
 npm run package              # create VSIX
 ```
@@ -51,11 +51,12 @@ docs/             product architecture, developer and testing documentation
 - Before changing SQL parsing, graph traversal, or runtime contracts, read `docs/ARCHITECTURE.md` and the relevant `docs/` contract.
 - For database connection behavior, read `docs/DEVELOPER_GUIDE.md` database sections and `.agents/skills/testing/SKILL.md`.
 - For a trace, state dump, NDJSON conversation, or Langfuse observation, read `.agents/skills/trace-debug/SKILL.md`.
-- For function column-lineage routing or follow-ups, read the column-provenance contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Preserve the caller SQL, qualified requested output and function definition across investigation, retry and restore; parameters are binding context, not invented graph columns. Keep ordinary view routing unchanged.
+- For function column-lineage routing or follow-ups, read the column-provenance contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Preserve the caller SQL, qualified requested output and function definition across investigation and retry; parameters are binding context, not invented graph columns. Keep ordinary view routing unchanged.
 - For CT/BB routing, read the shared readiness and continuation contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Structural readiness precedes mode ranking; qualified arriving tasks select mode. Do not recover continuation from historical edges, column names or prose.
 - Before comparing prompt variants, read `.agents/skills/prompt-playground/SKILL.md`.
 - Before editing prompt text or AI output templates, read `.agents/skills/prompt-change/SKILL.md` and `docs/AI_PROMPTS.md`.
 - For test tiers and optional environment configuration, read `docs/testing/README.md` and `docs/EDH_TESTING.md`.
+- Before provisioning or verifying a machine, container, CI runner or agent sandbox for tests, read `docs/testing/ENVIRONMENTS.md`. Report which tiers the host can run; do not mark a tier passed when its prerequisites are missing.
 - For native chat buttons, pending-input behavior, AI-preview formulas or follow-up badges, use the Playwright chat acceptance lanes in `docs/EDH_TESTING.md`. Verify actual UI submission and rendered content; direct participant calls and scripted responses do not prove live inference behavior. Use isolated profiles and repeatable CLI commands.
 
 ## Change Constraints
@@ -67,3 +68,10 @@ docs/             product architecture, developer and testing documentation
 - TypeScript uses ESM imports/exports. Exported APIs need contract-focused TSDoc. Keep comments actionable and current.
 - Never include credentials, customer database content, raw conversations, or generated test artifacts in tracked files.
 - Do not change `package.json` or lockfile versions unless the user asks.
+
+
+## Test Configuration
+
+- Optional test settings are listed in `.env.example`; values come from the process environment, then the ignored `.env`. Never commit `.env` or print secret values.
+- If a needed setting is empty, copy it from the environment's secret store when one exists; otherwise skip that tier. Do not override non-empty values.
+- Report each tier as passed, failed or not runnable, with the missing prerequisite. Do not work around network blocks.

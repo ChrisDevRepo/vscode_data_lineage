@@ -12,6 +12,7 @@ import type { StoredConnectionInfo } from '../shared/bridgeContract';
 import { readBuiltInConnections, upsertBuiltInConnection, describeConnection, type BuiltInConnection } from './connectionSettings';
 import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from './dbSession';
 import { pickAccount, signInForSql } from './entraSignIn';
+import { redactSecrets } from '../../utils/redact';
 
 /** Identifier of an action a connection error can offer. */
 export type ConnectionErrorActionId =
@@ -93,22 +94,6 @@ function errorNumber(err: unknown): number | undefined {
  */
 export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
-}
-
-/**
- * Removes credential-shaped text from a driver message.
- *
- * @remarks
- * Driver messages do not normally contain secrets; this guards the rare one that echoes a
- * connection string, a JSON credential field, a bearer token or a JWT.
- */
-export function redactSecrets(text: string): string {
-  return text
-    .replace(/eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*/g, '[token removed]')
-    .replace(/\bBearer\s+[\w.~+/=-]{8,}/gi, 'Bearer [token removed]')
-    .replace(/\b(password|pwd|token|secret|accesstoken)\s*=\s*[^;\s]+/gi, '$1=[removed]')
-    .replace(/("(?:password|pwd|token|secret|accessToken)"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[removed]"')
-    .replace(/\b(password|pwd|token|secret|accesstoken)\s*:\s*[^;,\s]+/gi, '$1: [removed]');
 }
 
 function classify(err: unknown): ErrorKind {

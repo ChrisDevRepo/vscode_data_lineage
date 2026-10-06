@@ -1,7 +1,6 @@
-/** Accepted user follow-ups restore outside the initial direction without admitting disconnected visits. */
+/** Accepted user follow-ups run outside the initial direction without admitting disconnected visits. */
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
-import { InvalidEngineCheckpointError } from '../../../src/ai/sm/navigationSnapshotSchema';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
 
@@ -23,7 +22,7 @@ function world(direction: 'upstream' | 'downstream', mode: 'bb' | 'ct') {
     keep(engine, id);
   }
   expect(engine.getHopContext()).toMatchObject({ done: true });
-  return { engine, model, graph };
+  return { engine };
 }
 
 function keep(engine: NavigationEngine, id: string) {
@@ -33,44 +32,21 @@ function keep(engine: NavigationEngine, id: string) {
   })).toMatchObject({ ok: true });
 }
 
-describe.each(['upstream', 'downstream'] as const)('supplement restoration (%s)', direction => {
-  it.each(['bb', 'ct'] as const)('resumes an accepted opposite-side target before and after dispatch (%s)', mode => {
+describe.each(['upstream', 'downstream'] as const)('supplement (%s)', direction => {
+  it.each(['bb', 'ct'] as const)('dispatches an accepted opposite-side target (%s)', mode => {
     const w = world(direction, mode);
     expect(w.engine.supplementAgenda(['c'])).toMatchObject({ ok: true, agendaed: 1 });
-    let engine = NavigationEngine.fromJSON(w.engine.toJSON(), w.model, w.graph, () => {});
+    const engine = w.engine;
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: 'c' } });
-    engine = NavigationEngine.fromJSON(engine.toJSON(), w.model, w.graph, () => {});
     expect(engine.currentFocus).toBe('c');
     keep(engine, 'c');
     expect(engine.getHopContext()).toMatchObject({ done: true });
     expect(engine.getResult().fullNodes.map(node => node.id)).toEqual(expect.arrayContaining(['a', 'b', 'c']));
   });
 
-  it('rejects an opposite-side visited node without recorded supplement admission', () => {
-    const w = world(direction, 'bb');
-    w.engine.supplementAgenda(['c']); w.engine.getHopContext();
-    const snapshot = w.engine.toJSON();
-    delete snapshot.engineInternals.supplementNodeIds;
-    expect(() => NavigationEngine.fromJSON(snapshot, w.model, w.graph, () => {})).toThrow(InvalidEngineCheckpointError);
-  });
-
-  
-
-  it('rejects an admitted target when its connection disappears', () => {
-    const w = world(direction, 'bb');
-    w.engine.supplementAgenda(['c']); w.engine.getHopContext();
-    const snapshot = w.engine.toJSON();
-    w.graph.dropNode('c'); w.graph.addNode('c');
-    expect(() => NavigationEngine.fromJSON(snapshot, w.model, w.graph, () => {})).toThrow(InvalidEngineCheckpointError);
-  });
-
-  it('refuses disconnected targets and validates malformed supplement metadata', () => {
+  it('refuses disconnected targets', () => {
     const w = world(direction, 'bb');
     expect(w.engine.supplementAgenda(['x'])).toMatchObject({ ok: true, agendaed: 0, skipped: 1 });
-    const snapshot = w.engine.toJSON();
-    snapshot.engineInternals.supplementNodeIds = ['x'];
-    expect(() => NavigationEngine.fromJSON(snapshot, w.model, w.graph, () => {})).toThrow(InvalidEngineCheckpointError);
-    snapshot.engineInternals.supplementNodeIds = ['a', 'a'];
-    expect(() => NavigationEngine.fromJSON(snapshot, w.model, w.graph, () => {})).toThrow(InvalidEngineCheckpointError);
+    expect(w.engine.toJSON().engineInternals.supplementNodeIds).toEqual([]);
   });
 });

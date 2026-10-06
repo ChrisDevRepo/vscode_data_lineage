@@ -732,3 +732,59 @@ it('keeps checked CS object and column twins distinct through rows, handles, ver
   expect(index.down.get(columnRowKey(lower,'Value',true))).toEqual([columnRowKey(sink,'lower',true)]);
   expect(columnRowKey(upper,'Value',true)).not.toBe(columnRowKey(upper,'value',true));
 });
+
+describe('buildColumnTraceView — objects without a column relation', () => {
+  const [src, mid, rowless] = ['[ai].[src]', '[ai].[mid]', '[ai].[sparchiveoldorders]'];
+  const relations: ColumnTraceRelation[] = [
+    { hopNode: mid, fromNode: src, fromCol: 'Qty', toNode: mid, toCol: 'Qty' },
+  ];
+
+  it('keeps a row-less object as a node with no rows and joins it by its object edge', () => {
+    const view = buildColumnTraceView({
+      relations, objects: mkObjects(mkObj(src), mkObj(mid), mkObj(rowless, 'procedure')), config: DEFAULT_CONFIG,
+      objectEdges: [{ source: mid, target: rowless }],
+    });
+    expect(view.nodes.map(n => n.id)).toEqual([src, mid, rowless]);
+    expect(findNode(view, rowless).rows).toEqual([]);
+    expect(view.objectEdges.map(e => [e.source, e.target])).toEqual([[mid, rowless]]);
+    expect(findNode(view, rowless).position, 'laid out beside its neighbour, not parked at the origin')
+      .not.toEqual(findNode(view, mid).position);
+  });
+
+  it('draws no object edge between two objects a column edge already joins', () => {
+    const view = buildColumnTraceView({
+      relations, objects: mkObjects(mkObj(src), mkObj(mid), mkObj(rowless)), config: DEFAULT_CONFIG,
+      objectEdges: [{ source: src, target: mid }, { source: mid, target: rowless }, { source: mid, target: rowless }, { source: rowless, target: rowless }],
+    });
+    expect(view.edges).toHaveLength(1);
+    expect(view.objectEdges.map(e => [e.source, e.target]), 'one line per pair, none for a self edge').toEqual([[mid, rowless]]);
+  });
+
+  it('ignores an object edge whose endpoint is not a presented object', () => {
+    const view = buildColumnTraceView({
+      relations, objects: mkObjects(mkObj(src), mkObj(mid), mkObj(rowless)), config: DEFAULT_CONFIG,
+      objectEdges: [{ source: mid, target: '[ai].[elsewhere]' }],
+    });
+    expect(view.objectEdges).toEqual([]);
+  });
+
+  it('leaves the output unchanged when every object has a column relation', () => {
+    const objects = mkObjects(mkObj(src), mkObj(mid));
+    const plain = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    const withEdges = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG, objectEdges: [{ source: src, target: mid }] });
+    expect(withEdges).toEqual(plain);
+    expect(plain.objectEdges).toEqual([]);
+    expect(plain.nodes.map(n => n.id)).toEqual([src, mid]);
+  });
+
+  it('keeps the row-less object out of every column thread', () => {
+    const view = buildColumnTraceView({
+      relations, objects: mkObjects(mkObj(src), mkObj(mid), mkObj(rowless)), config: DEFAULT_CONFIG,
+      objectEdges: [{ source: mid, target: rowless }],
+    });
+    const index = buildColumnThreadIndex(view);
+    const thread = columnThread(index, columnRowKey(src, 'Qty'));
+    expect(thread).toEqual(new Set([columnRowKey(src, 'Qty'), columnRowKey(mid, 'Qty')]));
+    expect([...index.down.keys(), ...index.up.keys()].every(key => !key.includes('sparchiveoldorders'))).toBe(true);
+  });
+});

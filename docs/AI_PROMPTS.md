@@ -105,7 +105,7 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   prompt) before the model-supplied paraphrase.
 - The active hop's carried tasks select its BB or CT contract. A BB hop receives
   BB tools, BB findings fields and BB active instructions, including on a branch
-  of a CT session or after checkpoint restore. Pending column-chain instructions
+  of a CT session. Pending column-chain instructions
   are absent on BB; the original question, ordinary analytical questions and
   factual earlier-hop memory remain. CT adds its column tools and capture rider
   to the shared BB process. Historical CT evidence alone does not reactivate it.
@@ -219,8 +219,8 @@ To move a customization forward after an upgrade:
 2. Re-apply your edits to the new file, comparing against your previous copy.
    Read the updated instruction text first — the built-in wording may already
    cover what your overlay was added for.
-3. Point `dataLineageViz.ai.outputTemplateFile` at the new file, then reload the
-   window and confirm the warning is gone from the output channel.
+3. Point `dataLineageViz.ai.outputTemplateFile` at the new file and confirm on
+   the next chat turn that the warning is gone from the output channel.
 
 Only `instruction` values are overlaid. The `stages:` and `example:` keys are
 inert: the loader never reads them, so editing them changes nothing and raises no
@@ -338,8 +338,8 @@ per-hop verdict: `analyze` (transforms data on the answer path) or `passthrough`
 (on the path, handing values on unchanged). The focus stays. Both verdicts require
 `sections` and `summary`, and may add `badge_label`. `summary` and `sections` are
 served optional at the schema; the requirement is enforced at parse. A kept verdict
-ignores any `reason` sent with it (logged, never rejected). Each open neighbor is
-named in `prune_neighbors` or left unnamed and visited. Naming every neighbor
+ignores any `reason` sent with it (logged, never rejected). Each `can_prune: true`
+neighbor is named in `prune_neighbors` or left unnamed and visited. Naming every neighbor
 leaves the focus visible as a dead end. In column trace, object retention follows
 the shared BB decisions; column evidence is not a separate reason to change that graph.
 
@@ -355,7 +355,8 @@ the shared BB decisions; column evidence is not a separate reason to change that
   and requires all recorded votes to favor pruning. Once resolved, it cuts
   unvisited nodes reachable only through that neighbor; naming a neighbor already visited, analyzed,
   queued or removed is a no-op (`prune_noop_visited`, `prune_noop_analyzed`,
-  `prune_noop_queued`, `prune_noop_removed`) and changes nothing.
+  `prune_noop_queued`, `prune_noop_removed`), as is naming one outside the approved
+  scope (`prune_noop_out_of_scope`); a no-op changes nothing.
   Instructions require a self-contained subquestion for each eligible in-scope
   neighbor kept for analysis or passthrough, tied to the approved user question.
   For an eligible neighbor outside scope, a relevant follow-up is optional and
@@ -397,7 +398,11 @@ the shared BB decisions; column evidence is not a separate reason to change that
   verifies a classification but never authors one, so an unclassified edge stays
   unclassified. The value set and its DIRECT / INDIRECT split have one home,
   `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`, shared by
-  the tool schema, the wire contract and the webview.
+  the tool schema, the wire contract and the webview. A column trace follows
+  direct lineage: `upstream_columns` asks for value inputs only, and a reference
+  classified with INDIRECT classes alone (a join, filter, grouping, partition or
+  ordering key) records no column link — its rule belongs in `sections`, and its
+  object is visited in a row role.
 - Column context comes from recorded model-authored links. A retained neighbor
   without a column aspect receives the shared BB instructions. Neither a matching
   column name nor a single possible carrier establishes a write mapping.
@@ -420,12 +425,12 @@ column identity. Caller output targets and caller SQL are retained separately
 for function binding. Neither question route guarantees an exhaustive column
 inventory or repairs absent model-authored dependencies by inference.
 
-An accepted `end_branch`, or a resolved neighbor prune, uses the same directed
+A resolved neighbor prune uses the same directed
 pruning policy as Trace View removal (`analyzeRemoval` in the engine graph
 guards). The origin and previously visited nodes are protected; only the current
 node has a self-prune exception, and disconnecting another committed visited
-node is refused atomically. An open cut stops before visited nodes and surviving
-shared joins, following each approved direction leg without changing direction.
+node is refused atomically. An open cut takes every open node left without a directed
+path from the origin on an approved direction leg; surviving shared joins stay.
 It records and logs removed open nodes. Removing the last surviving diamond arm
 can then cut the shared join and its exclusive continuation. See the pruning
 contract in `ARCHITECTURE.md` for examples and Trace View level handling.
@@ -474,11 +479,12 @@ checks upfront — unique section labels, trimmed nonempty highlight legend labe
 with a 60-character readability limit (soft target: about 40 characters), at
 least one highlight group without an upper count limit, and the held-draft repair
 convention — so a model learns
-each rule before its first call rather than from a rejection. The CT terminal-source mandate
-(terminal sources must appear in a section's node ids or a source highlight
-group) is stated in the synthesis prompt; no validator rejects its absence —
-the engine-owned Column Trace Chain block carries the terminal-source facts the
-prompt reasons from.
+each rule before its first call rather than from a rejection. The CT coverage rule
+(every Column Trace Chain node in scope without a detail slot appears in a
+section's node ids or a note; a highlight group does not cover it) is stated in
+the synthesis prompt and checked by the present-result handler, which rejects a
+render that leaves such a node out; the engine-owned Column Trace Chain block
+carries the facts the prompt reasons from.
 
 Validation is structural and field-scoped, and completes before commit.
 Markdown and math formatting do not reject a call: unparseable math renders
@@ -512,8 +518,8 @@ change analysis mode, author relationships, store memory or create follow-ups.
 For a new render, sections and highlights are required. A node can belong to at
 most one final section; highlighted nodes must be explained by a section or
 note. Nodes may remain visible without a badge or highlight. In CT mode,
-the synthesis prompt requires terminal source nodes reached by the validated
-column chain in the final source presentation; this is not a validator rejection.
+every Column Trace Chain node without a detail slot must appear in a section or
+a note; the present-result handler rejects a render that omits one.
 
 There is no AI-writeable assembled `description` field. The engine builds the
 rendered document from title and numbered section bodies. For preview, the host
@@ -557,10 +563,10 @@ After a preview is accepted by the active graph webview, chat emits only a short
 confirmation and does not add a redundant **Show in Graph** action. If automatic
 dispatch did not succeed, the existing action remains available.
 
-Native `ChatContext.history` is adapted into ordered user/assistant text. Tool
-call/result pairs are preserved only when matching native metadata is present;
-orphan tool messages are not fabricated. Completed turns rely on the retained
-conversation plus session-owned result/navigation state.
+Native `ChatContext.history` is adapted into ordered user/assistant text only;
+prior tool calls and results are not replayed. Completed turns rely on the
+retained conversation text plus session-owned result/navigation state, and
+re-read graph facts through the phase-valid read tools.
 
 The **Show full description** follow-up replays the same cached presentation
 artifact committed by `present_result`, without a model call. Other completed follow-ups can adjust presentation,
@@ -621,12 +627,55 @@ need catalog or runtime evidence.
 
 1. Run **Data Lineage: Create AI Output Templates** to scaffold an overlay.
 2. Set `dataLineageViz.ai.outputTemplateFile` to the overlay path.
-3. Reload the VS Code window.
+3. Send the next chat turn; the overlay is re-read per turn, no window reload.
 4. Exercise each changed stage/classification/mode combination in the Extension
    Development Host.
 5. Inspect **Output → Data Lineage Viz** at Debug level for selected templates,
    hop diagnostics, and structured rejection envelopes.
 6. Verify the final chat answer, graph badges/highlights, and notes together.
+
+Example — guidance for a junior DBA. Keep the scaffolded `schemaVersion` and
+change only the `instruction` of the keys that carry the guidance; every other
+key keeps the built-in text. Each key is a block with an `instruction` field — a
+bare string under a key makes the whole overlay fail to load:
+
+```yaml
+discovery_chat:
+  instruction: "Write for a junior DBA: define each technical term the first time it appears."
+business_capture:
+  instruction: "For each object, add one sentence a junior DBA can act on."
+closing:
+  instruction: "End with a short list titled 'Tips for junior DBAs' with two practical tips drawn from this lineage."
+```
+
+An `instruction` replaces the built-in text of its key, it does not add to it.
+Each key reaches the model only at its own stage and under its own gates.
+`business_capture` shapes what is recorded at a hop whose object has a SQL body,
+on a business or mixed question; a table hop receives `structural_summary`
+instead. The final report is written at synthesis, which may rephrase or drop a
+captured sentence, so wording that must appear in the report belongs in a
+synthesis key. `closing` is omitted for small results; `intro` is sent on every
+synthesis.
+
+A section label has one home: the capture recipe that writes it. `business_capture`
+and `technical_capture` take an optional `sections` list, the ordered bold labels the
+recipe writes. At synthesis the built-in `general` instruction names them through the
+`{{sections}}` placeholder, and the report receives the labels of the active angle
+only: business, technical, or both as the ordered union (first occurrence wins). A
+label declared only by `technical_capture` therefore never reaches a business answer.
+A `sections` list replaces the built-in list of its recipe, so copy the built-in list
+and insert the label where it belongs:
+
+```yaml
+technical_capture:
+  sections: [Purpose, Rules and branches, Grain, Column mapping, Steps, Loading, Error handling, Operational checks, Gaps]
+  instruction: "... 6. Error handling: ... 7. Operational checks: rerun safety and locks."
+```
+
+A file without `sections` keeps the built-in lists. A `general` instruction that lists
+labels in its own text and carries no `{{sections}}` placeholder is sent as written.
+A `sections` value that is not a non-empty list of labels is skipped with a warning in
+the Output channel and the built-in list stays.
 
 `npm run test:runtime` checks agent-runtime and state-machine contracts,
 including depth/gate and column-trace regressions. Template changes also need

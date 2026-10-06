@@ -885,6 +885,12 @@ function testPkOrdinalFromDmv() {
     expect(sql).toMatch(/GROUP BY[^]*COALESCE\(TYPE_NAME\(c\.system_type_id\), TYPE_NAME\(c\.user_type_id\)\)/);
   });
 
+  it('the dependencies query returns object references only, no type or schema-collection rows', () => {
+    const config = yaml.load(readFileSync(rootPath('assets/dmvQueries.yaml'), 'utf-8')) as { queries: Array<{ name: string; sql: string }> };
+    const sql = config.queries.find(q => q.name === 'dependencies')!.sql;
+    expect(sql).toMatch(/WHERE[^]*AND d\.referenced_class = 1/);
+  });
+
   it('expands schema placeholders', testExpandSchemaPlaceholder);
   it('keeps placeholders in configured queries', testYamlQueriesHavePlaceholder);
   it('classifies phase-two queries', testPhase2QueryPredicate);

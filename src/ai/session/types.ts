@@ -28,7 +28,7 @@ export interface PresentationArtifact {
   readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
   /** Identifier of the run that authored this presentation. */
   readonly runId?: string;
-  /** Engine checkpoint captured at present time; absent when no exploration engine was live. */
+  /** Serialized engine state captured at present time; absent when no exploration engine was live. */
   readonly checkpoint?: SmState;
 }
 
@@ -154,6 +154,38 @@ export interface AiOutputTemplates {
    * Additive alongside classification-gated templates (business_capture / technical_capture).
    */
   column_trace_capture: string;
+}
+
+/** Capture angle whose recipe declares `sections` labels. */
+export type AiSectionAngle = 'business' | 'technical';
+
+/**
+ * Template key whose recipe declares the section labels of each {@link AiSectionAngle}.
+ *
+ * @remarks
+ * The `sections` field of that key is the single home of the bold labels the angle writes:
+ * synthesis serves the active angle's list from it, so a label is never listed a second time.
+ */
+export const AI_SECTION_KEY_BY_ANGLE: Readonly<Record<AiSectionAngle, 'business_capture' | 'technical_capture'>> = {
+  business: 'business_capture',
+  technical: 'technical_capture',
+};
+
+/** Ordered section labels per capture angle, read from the optional `sections` field of the capture recipes. */
+export type AiOutputSections = Readonly<Partial<Record<AiSectionAngle, readonly string[]>>>;
+
+/** No declared section labels: a synthesis template carrying the placeholder gets an empty list. */
+export const EMPTY_AI_SECTIONS: AiOutputSections = {};
+
+/** Placeholder in the `general` instruction that synthesis replaces with the active angle's section labels. */
+export const SECTIONS_PLACEHOLDER = '{{sections}}';
+
+/** Loader result: the instruction strings plus the section labels declared beside them. */
+export interface AiOutputTemplateSet {
+  /** Instruction string per template key. */
+  readonly templates: AiOutputTemplates;
+  /** Section labels per capture angle. */
+  readonly sections: AiOutputSections;
 }
 
 /**

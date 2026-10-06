@@ -5,7 +5,7 @@ import { resolveNodeHighlightStyle } from '../utils/nodeHighlightVisuals';
 import { Tooltip } from './ui/Tooltip';
 import { AiBadgeToolbar, AiNoteToolbar } from './AiNodeAnnotations';
 import { CloseIcon } from './ui/CloseIcon';
-import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
+import { useTraceNeighborPicker, type TraceNeighborAction, type TraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
 import { SIMPLE_NODE_ZOOM_THRESHOLD } from '../engine/nodeDecoration';
 import type { CustomNodeData, TraceNeighborOption, TraceNodeControls } from '../engine/types';
 import type { NeighborSide } from '../engine/graphGuards';
@@ -14,16 +14,6 @@ import type { NeighborSide } from '../engine/graphGuards';
 export function isZoomBelowSimpleThreshold(zoom: number): boolean {
   return zoom < SIMPLE_NODE_ZOOM_THRESHOLD;
 }
-
-/** User action supported by the interactive trace node controls. */
-export type TraceNeighborAction = 'add' | 'prune';
-
-/** Picker state for adding or pruning one inbound or outbound neighbor set. */
-export type TraceNeighborPicker = {
-  action: TraceNeighborAction;
-  side: NeighborSide;
-  options: TraceNeighborOption[];
-};
 
 function traceActionLabel(action: TraceNeighborAction, side: NeighborSide): string {
   return `${action === 'add' ? 'Add' : 'Prune'} ${side === 'in' ? 'inbound' : 'outbound'} neighbor`;
@@ -193,6 +183,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   else tooltipLines.push(`${data.schema}.${data.label}`);
   tooltipLines.push(`Object Type: ${TYPE_LABELS[data.objectType]}${isVirtual ? (data.externalType === 'file' ? ' (File Source)' : ' (Cross-Database)') : ''}`);
   tooltipLines.push(`In: ${data.inDegree} | Out: ${data.outDegree}`);
+  if (data.definitionUnreadable) tooltipLines.push('⚠ Definition not readable (encrypted or no permission) — dependencies not shown');
 
   const tooltipContent: string = tooltipLines.join('\n');
 
@@ -251,7 +242,7 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
           <Handle type="target" position={Position.Left} className="w-2! h-2! ln-handle" />
           <div className="px-3 pt-1 pb-1 flex flex-col h-full">
             <div className="flex items-center justify-between gap-1.5 whitespace-nowrap" style={{ lineHeight: 1 }}>
-              <span className="text-base font-medium whitespace-nowrap leading-none" style={{ color: 'var(--ln-fg-muted)' }}>{displayIcon}</span>
+              <span className="text-base font-medium whitespace-nowrap leading-none" style={{ color: 'var(--ln-fg-muted)' }}>{displayIcon}{data.definitionUnreadable && <span className="ln-text-warning text-[11px]"> ⚠</span>}</span>
               <span className="text-[9px] shrink-0 whitespace-nowrap" style={{ color: 'var(--ln-fg-muted)' }}>{data.inDegree}↓ {data.outDegree}↑</span>
             </div>
             <div className="text-[11px] overflow-hidden text-ellipsis whitespace-nowrap mt-0.5" style={{ color: 'var(--ln-fg)' }}>{data.label}</div>

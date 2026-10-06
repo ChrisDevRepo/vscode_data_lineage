@@ -17,7 +17,7 @@ function world(pairs: Array<[string, string]>, direction: 'upstream' | 'downstre
       downstream: { levels: direction === 'downstream' ? 'all' : 0, exactness: 'exact' } },
   })).toMatchObject({ ok: true });
   engine.getHopContext();
-  return { engine, nodes, model, graph };
+  return { engine, nodes };
 }
 
 describe('carrier contraction work bound', () => {
@@ -48,6 +48,6 @@ describe('carrier contraction work bound', () => {
     const tasks = w.engine.getCurrentTasks().filter(task => task.kind === 'column_lineage');
     expect(tasks.flatMap(task => task.kind === 'column_lineage' ? task.sourceRefs ?? [] : []))
       .toEqual(expect.arrayContaining([{ node: 'left', col: 'Amount' }, { node: 'right', col: 'Other' }]));
-    expect(() => NavigationEngine.fromJSON(w.engine.toJSON(), w.model, w.graph, () => {})).not.toThrow();
+    expect(() => w.engine.toJSON()).not.toThrow();
   });
 });

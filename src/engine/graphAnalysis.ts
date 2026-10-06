@@ -125,23 +125,22 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
     }
   });
 
-  const buckets = new Map<string, string[]>();
+  const buckets = new Map<string, { schema: string; type: string; nodeIds: string[] }>();
   for (const id of orphanIds) {
     const schema = graph.getNodeAttribute(id, 'schema');
     const type = graph.getNodeAttribute(id, 'type');
     const key = `${schema}/${type}`;
-    const arr = buckets.get(key) || [];
-    arr.push(id);
-    buckets.set(key, arr);
+    const bucket = buckets.get(key) ?? { schema, type, nodeIds: [] as string[] };
+    bucket.nodeIds.push(id);
+    buckets.set(key, bucket);
   }
 
   const sortedKeys = [...buckets.keys()].sort(
-    (a, b) => (buckets.get(b)?.length || 0) - (buckets.get(a)?.length || 0)
+    (a, b) => buckets.get(b)!.nodeIds.length - buckets.get(a)!.nodeIds.length
   );
 
   const groups: AnalysisGroup[] = sortedKeys.map((key) => {
-    const nodeIds = buckets.get(key)!;
-    const [schema, type] = key.split('/');
+    const { schema, type, nodeIds } = buckets.get(key)!;
     return {
       id: `orphan-${key}`,
       label: `[${schema}] ${type}s`,

@@ -96,7 +96,7 @@ for (const [file, scripts] of claimedBy) {
 if (problems.length > 0) {
   console.error('FAIL  the gate unit steps do not cover the unit suite exactly:\n');
   for (const problem of problems) console.error(`  - ${problem}\n`);
-  console.error('See docs/EDH_TESTING.md §Pre-push gate.');
+  console.error('See docs/testing/README.md §Default Checks and tests/tools/gate.mjs.');
   process.exit(1);
 }
 

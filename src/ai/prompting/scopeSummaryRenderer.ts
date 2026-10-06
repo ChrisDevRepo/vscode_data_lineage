@@ -48,9 +48,16 @@ function depthValue(levels: number | 'all', exact: boolean): string {
   return exact ? plural(levels, 'level') : `≈${plural(levels, 'level')}`;
 }
 
-/** Wraps a name as inline code. */
+/**
+ * Wraps a raw name as an inline code span. Code spans render their content literally, so the
+ * name must not be Markdown-escaped first; a fence one backtick longer than the name's longest
+ * backtick run keeps a backtick inside the name from closing the span.
+ */
 function code(value: string): string {
-  return `\`${value}\``;
+  const longestRun = Math.max(0, ...(value.match(/`+/g) ?? []).map(run => run.length));
+  const fence = '`'.repeat(longestRun + 1);
+  const pad = longestRun > 0 ? ' ' : '';
+  return `${fence}${pad}${value}${pad}${fence}`;
 }
 
 /** Collapses whitespace so model-authored prose renders as one markdown paragraph. */
@@ -132,7 +139,7 @@ function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
       const group = groups.get(type) ?? { type, scope: 0, names: [], omitted: 0 };
       const ambiguous = summary.ambiguousObjectNames?.[type];
       const names = leaf.nodeNames.map(name =>
-        ambiguous?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? escapeMarkdownText(`${schema}.${name}`) : escapeMarkdownText(name),
+        ambiguous?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? `${schema}.${name}` : name,
       );
       groups.set(type, {
         type,

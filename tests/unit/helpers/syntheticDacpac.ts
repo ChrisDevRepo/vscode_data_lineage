@@ -112,7 +112,8 @@ export function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edg
     const relXml = deps.length === 0
       ? ''
       : `<Relationship Name="BodyDependencies">${deps.map(name => `<Entry><References Name="${xmlEscape(name)}" /></Entry>`).join('')}</Relationship>`;
-    elements.push(`<Element Type="${dacpacType}" Name="${xmlEscape(node.fullName)}">${relXml}</Element>`);
+    const bodyXml = node.type === 'procedure' ? '<Property Name="BodyScript" Value="SELECT 1" />' : '';
+    elements.push(`<Element Type="${dacpacType}" Name="${xmlEscape(node.fullName)}">${bodyXml}${relXml}</Element>`);
   }
 
   const xml = `<?xml version="1.0" encoding="utf-8"?>\n`

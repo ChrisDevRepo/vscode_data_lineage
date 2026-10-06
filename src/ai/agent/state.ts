@@ -6,7 +6,6 @@ import { ColumnIdentifierSchema } from '../tools/toolSchemas';
 import type { TurnOutcome } from '../core/agentCore';
 import type { StagePromptContext } from '../prompting/hostPrompts';
 import type { PendingGate } from '../session/sessionPhase';
-import type { SmState } from '../sm/smTypes';
 import type { ToolPhaseAttemptState } from './toolAttempt';
 
 /**
@@ -95,7 +94,6 @@ type AgentGraphPhase =
 
 /** Stable machine-readable graph failures that callers may diagnose without parsing prose. */
 export type AgentErrorCode =
-  | 'invalid_engine_checkpoint'
   | 'incompatible_tool_call_format';
 
 const lastValue = <T>(_current: T, next: T): T => next;
@@ -105,8 +103,8 @@ const lastValue = <T>(_current: T, next: T): T => next;
  *
  * @remarks
  * Runtime handles (model port, registry, event sink, session) live in graph-node closures, not in
- * checkpointed channels. The checkpoint carries only the serializable turn projection needed
- * for interrupt/resume, state inspection, and restart recovery.
+ * checkpointed channels. The in-process checkpoint carries only the serializable turn projection
+ * needed for the consent interrupt and its resume within one turn; the live engine stays on the session.
  */
 export const AgentState = Annotation.Root({
   prompt: Annotation<string>({ reducer: lastValue, default: () => '' }),
@@ -117,7 +115,6 @@ export const AgentState = Annotation.Root({
   targetColumns: Annotation<string[] | null>({ reducer: lastValue, default: () => null }),
   gate: Annotation<PendingGate | null>({ reducer: lastValue, default: () => null }),
   gateDecision: Annotation<GateDecision | null>({ reducer: lastValue, default: () => null }),
-  engineSnapshot: Annotation<SmState | null>({ reducer: lastValue, default: () => null }),
   activeHopCount: Annotation<number>({ reducer: lastValue, default: () => 0 }),
   /** Cumulative prune count at the previous hop start, used to show per-hop prune deltas. */
   lastPruned: Annotation<number>({ reducer: lastValue, default: () => 0 }),

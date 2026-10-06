@@ -10,16 +10,29 @@ This project prioritizes stability, logical accuracy, and high-performance SQL p
 ## 2. Development Setup
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) 20 or newer (`engines.node` in `package.json`).
+- [Git](https://git-scm.com/).
+- [Node.js](https://nodejs.org/) 20 or newer with npm 10 or newer (`engines.node`
+  and `engines.npm` in `package.json`).
 - [VS Code](https://code.visualstudio.com/) at a version allowed by
   `engines.vscode` in `package.json`.
 - A VS Code Language Model Chat provider, such as GitHub Copilot or a compatible
   BYOK provider (for `@lineage`)
 
 ### Local Setup
-1. Clone the repository and run `npm ci`.
-2. Press `F5` in VS Code to launch the **Extension Development Host**.
-3. Open a folder containing a `.dacpac` file or use the **Try with demo data** option in the wizard.
+1. Clone the repository and run `npm ci` (not `npm install`, which can rewrite
+   `package-lock.json`).
+2. Open the repository folder in VS Code and press `F5` (**Run Extension**). It
+   builds the extension and webview, then launches the **Extension Development Host**.
+3. In the Extension Development Host, open a folder containing a `.dacpac` file
+   or use the **Try with demo data** option in the wizard.
+
+No database, model provider or credentials are needed to build, run or pass
+`npm run gate`. Optional test settings go in `.env`, copied from
+[`.env.example`](.env.example).
+
+Requirements per test tier, network hosts, headless Linux setup and
+host-specific provisioning are in
+[`docs/testing/ENVIRONMENTS.md`](docs/testing/ENVIRONMENTS.md).
 
 ## 3. Testing Protocol
 All changes must pass the applicable maintained checks locally before push.

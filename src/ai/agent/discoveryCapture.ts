@@ -102,7 +102,7 @@ export function detectOverBudgetFromResult(toolName: string, resultText: string)
 }
 
 /** A parsed `over_discovery_budget` rejection from any catalog tool — drives the user-visible notice. */
-export interface OverBudgetNotice {
+interface OverBudgetNotice {
   /** Tool whose result carried the rejection envelope. */
   readonly toolName: string;
   /** Projected node count from the envelope, when the emitting guard provided one. */
@@ -123,7 +123,7 @@ export interface OverBudgetNotice {
  * @param resultText - The tool's serialized result.
  * @returns The notice payload, or `null` when the result is not an over-budget rejection.
  */
-export function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetNotice | null {
+function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetNotice | null {
   let raw: unknown;
   try {
     raw = JSON.parse(resultText);

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
+import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent, type ToolCall } from '@langchain/core/messages';
 import {
   type CompleteTextInput,
   type GeneratedToolCall,
@@ -151,7 +151,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const { message, nonTextChars } = await this.collectGeneration(
+      const { message, toolCalls: emittedCalls, nonTextChars } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -166,7 +166,7 @@ export class VscodeModelPort implements ModelPort {
       const toolCalls: GeneratedToolCall[] = [];
       const callIds = new Set<string>();
 
-      for (const { id: callId = '', name: toolName, args } of message.tool_calls ?? []) {
+      for (const { id: callId, name: toolName, args } of emittedCalls) {
         const duplicate = callIds.has(callId);
         callIds.add(callId);
         const definition = definitionsByName.get(toolName);
@@ -316,6 +316,8 @@ export class VscodeModelPort implements ModelPort {
     buildRunnable?: (bridge: VscodeLangChainBridge) => VscodeBridgeRunnable,
   ): Promise<{
     message: AIMessageChunk;
+    /** The message's tool calls, each verified to carry a call ID. */
+    toolCalls: readonly IdentifiedToolCall[];
     nonTextChars: number;
   }> {
     const cancellation = bindCancellation(signal);
@@ -349,9 +351,10 @@ export class VscodeModelPort implements ModelPort {
         description: definition.description,
         inputSchema: toModelJsonSchema(definition.inputSchema),
       }));
+      const requiresTool = choice === 'required' || typeof choice === 'object';
       const runnable = buildRunnable
         ? buildRunnable(bridge)
-        : tools.length > 0
+        : tools.length > 0 || requiresTool
           ? bridge.bindTools(tools, {
               tool_choice: toLangChainToolChoice(choice),
             })
@@ -376,7 +379,8 @@ export class VscodeModelPort implements ModelPort {
           'Language model returned non-object tool input.',
         );
       }
-      if ((message.tool_calls ?? []).some((call) => !call.id)) {
+      const toolCalls = message.tool_calls ?? [];
+      if (!toolCalls.every(hasCallId)) {
         throw new ModelPortError(
           'unsupported_response',
           'Language model returned an incomplete tool call.',
@@ -388,7 +392,7 @@ export class VscodeModelPort implements ModelPort {
         finishReason: (message.tool_calls?.length ?? 0) > 0 ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
       });
-      return { message, nonTextChars };
+      return { message, toolCalls, nonTextChars };
     } catch (error) {
       if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(error)) {
         emitWire({
@@ -401,6 +405,13 @@ export class VscodeModelPort implements ModelPort {
       cancellation.dispose();
     }
   }
+}
+
+/** A LangChain tool call whose provider call ID is present. */
+type IdentifiedToolCall = ToolCall & { readonly id: string };
+
+function hasCallId(call: ToolCall): call is IdentifiedToolCall {
+  return typeof call.id === 'string' && call.id.length > 0;
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {

@@ -29,7 +29,7 @@ function questionWorld(mapped: boolean, declared = true, type: ObjectType = 'vie
     sections: [{ angle: 'technical', text: 'Observed SQL' }],
     column_flow: [{ out_col: 'Discount', upstream_columns: [
       { node: 'amounts', col: 'Amount' },
-      ...(mapped ? [{ node: 'rules', col: 'ValidTo', transforms: ['filter' as const] }] : []),
+      ...(mapped ? [{ node: 'rules', col: 'ValidTo', transforms: ['compute' as const] }] : []),
     ] }],
     questions: [{ nodeId: 'rules', question: 'Determine how ValidTo selects the Discount rows at origin.' }],
   })).toMatchObject({ ok: true });
@@ -56,13 +56,13 @@ it('retains the related view as BB when its question mentions a foreign origin o
   expect(result.edges).toContainEqual(['rules', 'origin', 'read']);
 });
 
-it('preserves an explicit selector mapping despite the same origin-output mention', () => {
+it('preserves an explicit value mapping despite the same origin-output mention', () => {
   const engine = questionWorld(true);
   expect(engine.getHopContext()).toMatchObject({ focus_node: { id: 'rules' }, analysis_mode: 'ct' });
   expect(engine.columnAspect?.active_columns).toEqual(['ValidTo']);
   expect(engine.hopSubmitColumns.outCols).toEqual(['ValidTo']);
   expect(engine.columnAspect?.edges).toContainEqual(expect.objectContaining({
-    from_node: 'rules', from_col: 'ValidTo', to_node: 'origin', to_col: 'Discount', transforms: ['filter'],
+    from_node: 'rules', from_col: 'ValidTo', to_node: 'origin', to_col: 'Discount', transforms: ['compute'],
   }));
 });
 
@@ -79,7 +79,7 @@ it.each(['view', 'table'] as const)('keeps question-only %s work BB when column 
 it.each(['procedure', 'external'] as const)('preserves explicit authored %s carry without column metadata', type => {
   const engine = questionWorld(true, false, type);
   expect(engine.columnAspect?.edges).toContainEqual(expect.objectContaining({
-    from_node: 'rules', from_col: 'ValidTo', to_node: 'origin', to_col: 'Discount', transforms: ['filter'],
+    from_node: 'rules', from_col: 'ValidTo', to_node: 'origin', to_col: 'Discount', transforms: ['compute'],
   }));
   if (type === 'procedure') {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: 'rules' }, analysis_mode: 'ct' });

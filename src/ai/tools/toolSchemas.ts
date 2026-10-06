@@ -3,7 +3,7 @@
  * Zero VS Code imports — pure schema definitions.
  */
 import { z } from 'zod';
-import { droppedScalarReturnFieldError, resolveModelNodeId } from '../support/inputNormalization';
+import { resolveModelNodeId } from '../support/inputNormalization';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -84,7 +84,7 @@ const SupplementSchema = z.object({
  * session, not merely a one-time skip of the initial seed.
  */
 const DEPTH_DESCRIPTION =
-  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" when the user literally stated that level count, "approximate" when it is your own estimate — an approximate side does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
+  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" when the user literally stated that level count, "approximate" when it is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
 
 const StartDepthSchema = ExplorationDepthSelectionSchema.nullish().describe(DEPTH_DESCRIPTION);
 
@@ -180,7 +180,7 @@ export const StartExplorationInputSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['supplement'],
-      message: 'Fresh origin and completed-session supplement are mutually exclusive.',
+      message: 'origin and supplement cannot be sent together: send supplement alone to add objects to the completed analysis, or origin without supplement to start a new exploration.',
       params: { startIssue: 'start_shape_conflict' },
     });
   }
@@ -465,9 +465,9 @@ const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough. ';
  * Single source for the `prune_neighbors` field describe text, shared by the strict per-mode
  * schemas and the permissive participant union so the two cannot drift.
  */
-export const PRUNE_NEIGHBORS_DESCRIPTION =
-  'Name each open neighbor this node\'s SQL shows is off the path; that neighbor and whatever only it leads to are removed. '
-  + 'An unnamed open neighbor is visited. The focus stays on the graph, including when every neighbor is named (a dead end).';
+const PRUNE_NEIGHBORS_DESCRIPTION =
+  'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path; that neighbor and whatever only it leads to are removed. '
+  + 'The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
@@ -482,7 +482,7 @@ const PruneNeighborSchema = z.object({
 const QUESTIONS_DESCRIPTION =
   KEPT_VERDICT_ONLY + 'Provide a self-contained subquestion for each eligible in-scope neighbor kept for analysis or passthrough, tied to the user question. '
   + 'For an eligible out-of-scope neighbor, optionally propose a relevant follow-up; it is deferred until scope approval. '
-  + 'No questions to visited or pruned neighbors, or neighbors named in prune_neighbors.';
+  + 'No questions to visited or pruned neighbors.';
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
@@ -537,7 +537,7 @@ export const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
  * same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere
  * else: `badge_label` is a per-hop tool field, not template-governed content.
  */
-export const BADGE_LABEL_DESCRIPTION = KEPT_VERDICT_ONLY + '2-4 word label for this node.';
+const BADGE_LABEL_DESCRIPTION = KEPT_VERDICT_ONLY + '2-4 word label for this node.';
 
 /**
  * Hard cap on `column_flow[].upstream_columns[].note`.
@@ -553,8 +553,8 @@ const ColumnRefSchema = z.object({
   col: z.string(),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
-    'pass_through: unchanged value. compute: expression input. aggregate: value summarised by an aggregate. ' +
-    'combine: join/set-combination input or grouping/partition key. filter: predicate or ordering key ' +
+    'pass_through: unchanged value. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
+    'combine: join key or grouping/partition key. filter: predicate or ordering key ' +
     'selecting contributing rows. Grouping and selection keys are not aggregate value inputs; ' +
     'display-only sorting contributes no role.',
   ),
@@ -578,9 +578,10 @@ const ColumnFlowEntrySchema = z.object({
   writes_to: ColumnFlowWritesToObject.nullish().describe('Actual destination object and column for this procedure\'s output, as declared by its SQL; null when it writes no table.'),
   returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
-    'At a bodied focus, real source columns determining out_col’s value or contributing rows/groups, ' +
-    'including caller-bound inputs and grouping, partition and row-selection keys; exclude display-only ' +
-    'sorting and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
+    'At a bodied focus, only the real source columns whose value flows into out_col: operands of its expression, ' +
+    'an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. ' +
+    'A column used only to join, filter, group, partition or order rows is not a source: omit it here and state it in sections. ' +
+    'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
     'At a bodyless focus, follow carrier-side neighbours (writers upstream, readers downstream) with the ' +
     'tracked column unchanged; [] only when out_col terminates here.',
   ),
@@ -815,20 +816,15 @@ const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>
  *
  * @remarks
  * One kept angle drops the other key. Sending it on a kept verdict raises a custom issue from
- * {@link refineSubmitFindingsShape} whose hint says to fold that key's content into the kept angle;
- * `end_branch` sections are inert, so the key is never refused there. The fold guidance also lives on the kept key's
- * description, where the model reads it before authoring.
- * `both` keeps both angles, each key optional; a fresh
- * kept submission serves both keys through {@link finalizeSubmitFindingsSchema}'s conditional
- * requiredness, so a retry with a held draft names
- * only the angle it changes. {@link refineSubmitFindingsShape} refuses `{}` on a
- * kept verdict of a fresh submission, and {@link validateSectionsAgainstClassification} requires
- * both angles of a kept verdict at the handler, after held and archived angles are counted;
- * {@link refineSubmitFindingsShape} names a missing angle of a fresh kept verdict in the same parse
- * as a shape fault . The parent
- * field is served optional and non-nullable: {@link refineSubmitFindingsShape} accepts an `end_branch`
- * whether `sections` is omitted, `{}` or present, and requires it on a fresh kept verdict;
- * {@link toHopFinding} drops it.
+ * {@link refineSubmitFindingsShape} whose hint says to fold that key's content into the kept angle.
+ * The fold guidance also lives on the kept key's description, where the model reads it before
+ * authoring. `both` keeps both angles, each key optional; a fresh kept submission serves both keys
+ * through {@link finalizeSubmitFindingsSchema}'s conditional requiredness, so a retry with a held
+ * draft names only the angle it changes. {@link refineSubmitFindingsShape} refuses `{}` on a kept
+ * verdict of a fresh submission and names a missing angle of a fresh `both` submission in the same
+ * parse as a shape fault; `validateSectionsAgainstClassification` then requires every kept angle in
+ * `NavigationEngine.submitFindings`, after held and archived angles are counted. The parent field
+ * is served optional and non-nullable.
  *
  * @param classification - The locked classification this dispatch's schema narrows to.
  * @returns The sections object for that classification. A one-angle lock carries only that key;
@@ -930,8 +926,8 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  * `technical` lock structurally cannot author the other angle's key, so a surplus angle fails
  * Zod at this boundary instead of being silently dropped at commit. A `both` lock advertises both
  * keys and the classification validator requires both on a fresh submission, while a retry
- * with a held draft names only the angle it changes; `sections: {}` is the `end_branch`
- * shape {@link refineSubmitFindingsShape} exempts. The host path uses this at the last seam
+ * with a held draft names only the angle it changes (`sections: {}` keeps the held angles).
+ * The host path uses this at the last seam
  * before the model sees the tool set so the model cannot fill a field or angle invalid for the
  * locked mode/classification — the contract is the form's shape, not prompt prose. The static
  * catalog and `package.json` manifest keep the permissive union (drift guard + single-tool Copilot
@@ -955,7 +951,7 @@ export function submitFindingsSchemaForMode(
   hop?: SubmitFindingsHopColumns,
 ): z.ZodType<FlatSubmitFindings> {
   const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}` : '';
-  if (!classification && !hopKey) {
+  if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
   const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}`;
@@ -1030,8 +1026,7 @@ export function validateHopSubmissionShape(
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
 ): { readonly ok: true; readonly data: HopSubmission } | { readonly ok: false; readonly error: ToolRejection } {
-  const kept = internalKeptFindingSchema(mode, classification, freshSubmission, hop);
-  const schema = kept;
+  const schema = internalKeptFindingSchema(mode, classification, freshSubmission, hop);
   const parsed = schema.safeParse(input);
   return parsed.success
     ? { ok: true, data: parsed.data as HopSubmission }
@@ -1115,30 +1110,20 @@ export const SearchDdlInputSchema = z.object({
   types: z.array(z.enum(['view', 'procedure', 'function'])).optional().describe('Optional body-type filter; omit to search all three.'),
 }).strict();
 
-/**
- * Model-facing `lineage_present_result` input schema.
- *
- * @remarks
- * Mirrors the AI-authored `PresentResultInput` contract (`src/ai/tools/handlers/presentResult.ts`)
- * for the participant-internal tool. The runtime handler (`toolProvider.presentResult`)
- * still consumes the structural `PresentResultInput` TS type; this Zod object exists so
- * the model-facing JSON Schema has one generated source under the drift guard. `angle`
- * on a section is advisory capture metadata carried in the manifest.
- */
 /** Hard cap on `name` (graph node label); its soft target is the field's own description. */
-export const PRESENT_RESULT_NAME_MAX = 90;
+const PRESENT_RESULT_NAME_MAX = 90;
 /** Hard cap on `title` (report heading); its soft target is the `title` output template. */
-export const PRESENT_RESULT_TITLE_MAX = 120;
+const PRESENT_RESULT_TITLE_MAX = 120;
 /**
  * Hard cap on a `sections[].label`. The label's shape is owned by the field's own `.describe()`,
  * which states its role and deliberately no character target.
  */
-export const PRESENT_RESULT_SECTION_LABEL_MAX = 90;
+const PRESENT_RESULT_SECTION_LABEL_MAX = 90;
 /**
  * Hard boundary that keeps graph legend labels readable in the GUI. The softer authoring target is
  * owned by the `highlights` output template.
  */
-export const PRESENT_RESULT_HIGHLIGHT_LABEL_MAX = 60;
+const PRESENT_RESULT_HIGHLIGHT_LABEL_MAX = 60;
 /**
  * Identity of a section label: whitespace collapsed, trimmed, case-folded. Two labels with the same
  * key name the same section, in a submission, a repair patch and a committed report alike.
@@ -1283,7 +1268,7 @@ const PresentResultSectionDeletionSchema = z.object({
 const PresentResultSectionPatchSchema = z.union([
   PresentResultSectionSchema.extend({
     node_ids: PresentResultSectionSchema.shape.node_ids.optional(),
-    text: PresentResultSectionSchema.shape.text.optional().describe('Detail body for this section label.'),
+    text: PresentResultSectionSchema.shape.text.optional().describe('Detail body for this section label. Required when the label is not a held label; omit to keep a held label\'s text.'),
   }),
   PresentResultSectionDeletionSchema,
 ]);
@@ -1423,7 +1408,7 @@ export function presentResultSchemaForPhase(
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionTextLeaves);
+  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionTextLeaves, retainable);
   if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
   const synthesis = phase === 'synthesis';
   const schema = retainable
@@ -1453,7 +1438,7 @@ const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, keyed by label.'
  * boundary reject, never a silent no-op merge). The inferred type lives in `presentResult.ts` (its
  * sole consumer) as the single source of truth.
  */
-export const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
+const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
   name: true,
   summary: true,
   title: true,
@@ -1473,8 +1458,9 @@ export const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
  *
  * @remarks
  * A held draft that fails on `add_node_ids`/`prune_node_ids` is otherwise unrepairable: the patch
- * cannot edit them, so the model has no call that corrects the field the rejection names. No other
- * rejection authorizes them, so a repair of any other field still cannot change graph structure.
+ * cannot edit them, so the model has no call that corrects the field the rejection names. Beyond
+ * that, only a completed-stage node-id rejection that offers `add_node_ids` as its route authorizes
+ * it; a repair of any other field still cannot change graph structure.
  */
 export const PresentResultAuthorizableRepairSchema = PresentResultRepairPatchSchema.extend({
   prune_node_ids: PresentResultModelSchema.shape.prune_node_ids,
@@ -1495,7 +1481,7 @@ export const PRESENT_RESULT_REPAIR_FIELDS = [
 ] as const;
 
 /** Graph-edit fields that only a rejection of that same edit authorizes for repair. */
-export const PRESENT_RESULT_GRAPH_EDIT_FIELDS = ['prune_node_ids', 'add_node_ids'] as const;
+const PRESENT_RESULT_GRAPH_EDIT_FIELDS = ['prune_node_ids', 'add_node_ids'] as const;
 
 /** Presentation field that may be authorized in a held-draft repair patch. */
 export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[number] | typeof PRESENT_RESULT_GRAPH_EDIT_FIELDS[number];
@@ -1527,6 +1513,7 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * @param previewBlockCount - Number of engine-served preview blocks.
  * @param highlightLabelIndexes - Highlight entries restricted to `{index, label}` leaf repair.
  * @param sectionTextLeaves - Section entries restricted to indexed `label`/`text` leaf repair.
+ * @param retainable - Whether a committed report exists whose sections an omitted `sections` keeps.
  * @returns A strict schema for exactly the authorized repair transaction.
  */
 export function presentResultRepairPatchSchemaForFields(
@@ -1535,13 +1522,14 @@ export function presentResultRepairPatchSchemaForFields(
   previewBlockCount = 0,
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
+  retainable = false,
 ): z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>> {
   const keys = [...new Set<PresentResultRepairField>(fields)].sort();
   const preview = phase === 'visual_preview';
   const labelIndexes = highlightLabelIndexes ? [...new Set(highlightLabelIndexes)].sort((left, right) => left - right) : undefined;
   const sectionLeaves = sectionTextLeaves?.map(leaf => ({ index: leaf.index, fields: [...new Set(leaf.fields)].sort() }))
     .sort((left, right) => left.index - right.index);
-  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
+  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
   const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
@@ -1596,7 +1584,8 @@ export function presentResultRepairPatchSchemaForFields(
   }
   const declared = labelIndexes || sectionLeaves
     ? staged.required(Object.fromEntries(keys.map(key => [key, true])) as Record<string, true>)
-    : keys.length === 1
+    // A committed report keeps its sections when the repair omits them, so a lone `sections` field is optional then.
+    : keys.length === 1 && !(retainable && keys[0] === 'sections')
     ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
     : staged;
   const strict = declared.strict().superRefine((data, ctx) => {
@@ -1629,7 +1618,7 @@ export function presentResultRepairPatchSchemaForFields(
  * DERIVED from {@link PresentResultModelSchema} via `.omit()` — not hand-listed — so presentation
  * fields cannot drift while the new-render requiredness stays intact.
  */
-export const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({
+const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({
   prune_node_ids: true,
   add_node_ids: true,
   is_update: true,
@@ -1692,10 +1681,6 @@ export function parseToolInput<T extends z.ZodType>(
   | { readonly ok: true; readonly data: z.output<T> }
   | { readonly ok: false; readonly error: ToolRejection } {
   const parsed = schema.safeParse(input);
-  if (parsed.success) {
-    const returnFieldError = droppedScalarReturnFieldError(input, parsed.data);
-    if (returnFieldError) return { ok: false, error: rejectionFromZodError(returnFieldError, { code: REJECTION_CODES.invalidInput, input, schema }) };
-    return { ok: true, data: parsed.data };
-  }
+  if (parsed.success) return { ok: true, data: parsed.data };
   return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
 }

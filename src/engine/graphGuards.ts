@@ -141,9 +141,9 @@ export interface RemovalAnalysis {
 /**
  * Analyzes the same pruning policy for AI navigation and interactive traces.
  *
- * Each permitted leg walks from the origin in one direction. A newly removed node starts an
- * open branch cut on the legs that originally reached it. The cut stops before a surviving
- * shared join, another removed node, or a committed visited node. A current node may remove
+ * Each permitted leg walks from the origin in one direction. The cut is every open node the
+ * legs reached before the removal and no leg reaches after it, so a surviving shared join stays
+ * and nothing is left without a directed path to the origin. A current node may remove
  * itself, but losing support for another visited anchor is reported for atomic rejection.
  * The origin is protected. Invalid scopes or unknown removal nodes return a rejection without
  * invoking traversal on missing nodes. This function never mutates its graph or input sets.
@@ -175,27 +175,13 @@ export function analyzeRemoval(graph: Graph, context: RemovalContext): RemovalAn
   };
   const before = new Set<string>([originId]);
   const after = new Set<string>([originId]);
-  const beforeBySide = new Map<RemovalSide, Set<string>>();
   for (const side of new Set(sides)) {
-    const legBefore = support(removedBefore, side);
-    beforeBySide.set(side, legBefore);
-    for (const id of legBefore) before.add(id);
+    for (const id of support(removedBefore, side)) before.add(id);
     for (const id of support(removedAfter, side)) after.add(id);
   }
-  const disconnectedVisited = [...visited].filter(id => !removedAfter.has(id) && before.has(id) && !after.has(id));
-  const cut = new Set<string>();
-  for (const [side, legBefore] of beforeBySide) {
-    for (const start of starts) {
-      if (!legBefore.has(start)) continue;
-      bfsFromNode(graph, start, id => {
-        if (id === start) return false;
-        if (!scope.has(id) || visited.has(id) || removedAfter.has(id) || after.has(id) || !before.has(id)) return true;
-        cut.add(id);
-        return false;
-      }, { mode: modeFor(side) });
-    }
-  }
-  return { before, after, disconnectedVisited, cutIds: [...cut] };
+  const lost = [...before].filter(id => !after.has(id) && !removedAfter.has(id));
+  const disconnectedVisited = lost.filter(id => visited.has(id));
+  return { before, after, disconnectedVisited, cutIds: disconnectedVisited.length ? [] : lost };
 }
 
 /**

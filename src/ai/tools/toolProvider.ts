@@ -50,6 +50,7 @@ import { postToWebview } from '../../bridge/host';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { cursorOffset } from '../support/text';
 import { getModelNodeMap, type AiViewPreviewMessage, type ToolServices } from './handlers/toolServices';
+import type { PreviewDelivery } from '../support/chatAnswer';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePresentResult } from './handlers/presentResult';
@@ -64,8 +65,8 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
  * a debug trace and what the user saw can never disagree about which group a code belongs to.
  *
  * @remarks
- * Deliberately five groups, not six: there is no "scope limit" group. The two budget codes are
- * non-chargeable and never reach `rejections[]`, so a sixth group for them would be unreachable and
+ * Deliberately four groups, not five: there is no "scope limit" group. The two budget codes are
+ * non-chargeable and never reach `rejections[]`, so a fifth group for them would be unreachable and
  * would misrepresent a budget refusal as a model correction.
  */
 export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'correction';
@@ -112,6 +113,24 @@ export function classifyRejectionCode(code: string): RejectionChatGroup {
 }
 
 /**
+ * Reveals the result panel and posts one preview, naming the outcome.
+ *
+ * @param panel - The open result panel, or `undefined` when none is open.
+ * @returns `no_panel` without a panel, `delivered` when the webview accepted the message,
+ * `post_failed` when the validated send was dropped or refused. A transport throw propagates. A schema drop
+ * is a log line here: the participant's failed-render toast is the one user-visible notice.
+ */
+export async function deliverToPanel(
+  panel: vscode.WebviewPanel | undefined,
+  message: AiViewPreviewMessage,
+  logger: Logger,
+): Promise<PreviewDelivery> {
+  if (!panel) return 'no_panel';
+  panel.reveal();
+  return (await postToWebview(panel, message, logger, false)) ? 'delivered' : 'post_failed';
+}
+
+/**
  * Private handler for AI tool execution.
  *
  * Owns the shared VS Code host services and thin read-tool handlers. Mutating
@@ -137,11 +156,8 @@ class ToolHandler implements ToolServices {
     return this.turnLease?.epoch ?? sess.turnEpoch;
   }
 
-  public async deliverPreview(message: AiViewPreviewMessage): Promise<boolean> {
-    const panel = this.getPanel();
-    if (!panel) return false;
-    panel.reveal();
-    return postToWebview(panel, message, this.logger);
+  public deliverPreview(message: AiViewPreviewMessage): Promise<PreviewDelivery> {
+    return deliverToPanel(this.getPanel(), message, this.logger);
   }
 
   public requireModel(): DatabaseModel {
@@ -322,7 +338,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetScopeBundleInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_scope_bundle', parsed.error, input);
       const sess = this.getSession();
-      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore) as Record<string, unknown>;
+      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore, msg => this.logger.debug(msg)) as Record<string, unknown>;
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
@@ -372,7 +388,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetObjectDetailInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_object_detail', parsed.error, input);
       const { id, cursor } = parsed.data;
-      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore, cursor) as Record<string, unknown>;
+      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore, cursor, msg => this.logger.debug(msg)) as Record<string, unknown>;
 
       return this.logAndReturn('lineage_get_object_detail', detail, input);
     } catch (err) { return this.toolError('get_object_detail', err); }
@@ -430,10 +446,10 @@ class ToolHandler implements ToolServices {
 
       const model = this.requireModel();
       const nodeMap = getModelNodeMap(model);
-      const ids = parsed.data.ids.map(raw => {
+      const ids = parsed.data.ids.map((raw, index) => {
         const canonical = resolveModelNodeId(raw, nodeMap, model.identifierCaseSensitive);
         if (canonical && canonical !== raw) {
-          this.logger.debug(`[Normalize] tool=get_neighbor_columns from=${sanitizeForLog(raw)} to=${sanitizeForLog(canonical)}`);
+          this.logger.debug(`[Normalize] tool=get_neighbor_columns field=ids.${index} from=${sanitizeForLog(raw)} to=${sanitizeForLog(canonical)}`);
         }
         return canonical ?? raw;
       });

@@ -781,7 +781,7 @@ describe('extractExternalRefs', () => {
       count: 1, kind: 'bulk_from',
     },
     {
-      name: 'a Synapse serverless OPENROWSET with a wildcard path',
+      name: 'an OPENROWSET with a wildcard path',
       sql: `
         SELECT r.filepath(1) AS [Year], r.filepath(2) AS [Month], *
         FROM OPENROWSET(

@@ -1,7 +1,7 @@
 /** Tree shaping over a trace scope: L0 anchor, per-side levels, Connected group, directional grow checks. */
 import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';
-import { buildTraceTree } from '../../../src/components/traceTreeModel';
+import { buildTraceTree } from '../../../src/engine/traceTree';
 
 function fixture(): Graph {
   const graph = new Graph({ type: 'directed', multi: false });

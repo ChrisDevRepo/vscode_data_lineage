@@ -6,7 +6,7 @@ import {
   type EdgeProps,
 } from '@xyflow/react';
 import { Tooltip } from './ui/Tooltip';
-import { COLUMN_TRANSFORM_DIRECTION, type ColumnTransformClass } from '../engine/shared/bridgeContract';
+import { isIndirectOnly, type ColumnTransformClass } from '../engine/shared/bridgeContract';
 import { COLUMN_EDGE_DIM_OPACITY } from '../engine/columnTraceView';
 import type { ColumnLineState } from '../engine/columnTraceView';
 
@@ -48,6 +48,8 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
   state: ColumnLineState;
   /** Whether this edge is inside the lit set — the hovered column path, or the selected node's edges. */
   lit: boolean;
+  /** Whether the edge is lit by a narrowing — a hovered or selected column path, or a selected node — so its marker chip takes the line's highlight. */
+  focused?: boolean;
   /** Source column name as recorded, for the marker's hover text. */
   sourceColumn: string;
   /** Target column name as recorded, for the marker's hover text. */
@@ -56,6 +58,11 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
   transforms?: ColumnTransformClass[];
   /** One-clause model note for the edge; absent whenever the model offered none. */
   note?: string;
+  /**
+   * Whether the edge is an object-level dependency rather than a column thread: drawn broken, since
+   * no column value crosses it, and never marked with a chip.
+   */
+  objectLevel?: boolean;
 }
 
 /**
@@ -92,7 +99,7 @@ export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn
   if (classes.length === 0) {
     return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
   }
-  const indirectOnly = classes.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
+  const indirectOnly = isIndirectOnly(classes);
   const detail = data.note
     ?? `${data.sourceColumn} → ${data.targetColumn} — ${indirectOnly ? 'shapes which rows reach here.' : 'the value changes here.'}`;
   return `${classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${detail}`;
@@ -225,7 +232,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   markerEnd,
   data,
 }: EdgeProps) {
-  const { state, lit, sourceColumn, targetColumn, transforms, note } = (data ?? {}) as ColumnTraceEdgeData;
+  const { state, lit, focused, sourceColumn, targetColumn, transforms, note, objectLevel } = (data ?? {}) as ColumnTraceEdgeData;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -237,8 +244,8 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const opacity = lit ? 1 : COLUMN_EDGE_DIM_OPACITY;
   const classes = markedTransformClasses(transforms);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
-  const indirect = classes.length > 0 && classes.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
-  const showChip = !identityOnly && (state === 'transformation' || classes.length > 0);
+  const indirect = !!objectLevel || isIndirectOnly(classes);
+  const showChip = !objectLevel && !identityOnly && (state === 'transformation' || classes.length > 0);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
   const stroke = lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)';
@@ -269,6 +276,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
               className="nodrag nopan ln-column-edge-chip"
               tabIndex={0}
               aria-label={description}
+              data-focused={focused ? 'true' : undefined}
               style={{
                 position: 'absolute',
                 transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,

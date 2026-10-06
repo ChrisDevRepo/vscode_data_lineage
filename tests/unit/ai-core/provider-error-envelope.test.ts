@@ -1,6 +1,6 @@
-import { expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { OpenAiCompatiblePort } from '../../harness/openAiCompatiblePort';
+import { OpenAiCompatiblePort, type FetchLike } from '../../harness/openAiCompatiblePort';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 
 it.each([false, true])('preserves an HTTP-success provider error without retrying or executing tool calls (mixed choices: %s)', async mixedChoices => {
@@ -47,4 +47,40 @@ it('rejects a choice-level provider error before exposing its 24 partial tool ca
   expect(JSON.stringify(result)).toContain('Network connection lost.');
   expect(JSON.stringify(result)).not.toMatch(/synthetic-secret|private\.example|partial-23|Partial answer/);
   expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+describe('transient upstream error delivered inside HTTP 200 (DD-4a)', () => {
+  const envelope = (code: number) => ({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({
+    choices: [{ finish_reason: 'error', error: { code, message: 'Server error. Stream terminated' }, message: { role: 'assistant', content: '' } }],
+  }) });
+  const completion = { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({
+    choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'synthetic answer' } }],
+  }) };
+  const turn = (fetchImpl: FetchLike, logs: string[] = []) =>
+    new OpenAiCompatiblePort({ baseUrl: 'https://provider.example/v1', apiKey: 'synthetic-secret', model: 'synthetic-model' },
+      { fetchImpl, debugLog: line => logs.push(line) })
+      .generateToolTurn({ messages: [modelUserMessage('synthetic input')], tools: [], toolChoice: 'auto', phase: 'active' });
+
+  it('retries a transient envelope once and returns the following completion', async () => {
+    const fetchImpl = vi.fn<FetchLike>().mockResolvedValueOnce(envelope(503)).mockResolvedValueOnce(completion);
+    const logs: string[] = [];
+    const result = await turn(fetchImpl, logs);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ status: 'completed', text: 'synthetic answer' });
+    expect(logs.join('\n')).toMatch(/\[AI\] transport-retry attempt=1\/3 status=503/);
+  });
+
+  it('does not retry a non-transient envelope code', async () => {
+    const fetchImpl = vi.fn(async () => envelope(400));
+    const result = await turn(fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ status: 'error', providerError: { code: 'provider_error', cause: { code: '400' } } });
+  });
+
+  it('stops at the attempt bound and surfaces the provider error', async () => {
+    const fetchImpl = vi.fn(async () => envelope(502));
+    const result = await turn(fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ status: 'error', providerError: { code: 'provider_error', cause: { code: '502' } } });
+  }, 15_000);
 });

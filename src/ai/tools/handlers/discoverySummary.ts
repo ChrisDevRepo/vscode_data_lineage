@@ -10,13 +10,13 @@
  * `NavigationEngine.setDiscoverySummary` rather than recomposing it.
  */
 import { z } from 'zod';
-import type { ModelPort } from '../model/modelPort';
-import { modelUserMessage } from '../model/modelPort';
-import { compileInstructionPlan, executeInstructionPlan, explorationFacts } from '../agent/instructionPlan';
-import { buildDiscoverySummaryComposePrompt, DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT } from '../prompting/prompts';
-import type { NavigationEngine } from '../sm/smBase';
-import type { ClassificationValue } from '../session/classification';
-import { sanitizeForLog, type Logger } from '../../utils/log';
+import type { ModelPort } from '../../model/modelPort';
+import { modelUserMessage } from '../../model/modelPort';
+import { compileInstructionPlan, executeInstructionPlan, explorationFacts } from '../../agent/instructionPlan';
+import { buildDiscoverySummaryComposePrompt, DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT } from '../../prompting/prompts';
+import type { NavigationEngine } from '../../sm/smBase';
+import type { ClassificationValue } from '../../session/classification';
+import { sanitizeForLog, type Logger } from '../../../utils/log';
 
 /**
  * Validated boundary for the optional one-shot discovery-to-exploration memo.

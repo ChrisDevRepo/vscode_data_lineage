@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { isCi, SKIP_EXIT_CODE } from './gate-status.mjs';
 import { breakingStructureChanges, structureDiff, templateStructure } from './templateStructure.mjs';
 
 const ASSET = 'assets/aiOutputTemplates.yaml';
@@ -67,16 +68,27 @@ if (constantVersion !== assetVersion) {
   process.exit(1);
 }
 
+/** Reports a comparison that cannot run; the gate shows it as SKIP, not PASS. */
+const skip = (message) => {
+  console.log(`SKIP  ${message}`);
+  process.exit(SKIP_EXIT_CODE);
+};
+
 const { ref: baseline, label: baselineLabel } = baselineRef();
 if (!baseline) {
-  console.log('SKIP  no release tag and no origin/main — cannot compare the templates asset against a baseline.');
-  process.exit(0);
+  if (isCi()) {
+    console.error(
+      'FAIL  no release tag and no origin/main in this CI checkout — fetch tags or origin/main ' +
+      '(actions/checkout `fetch-depth: 0`) so the templates asset is compared against a baseline.',
+    );
+    process.exit(1);
+  }
+  skip('no release tag and no origin/main — cannot compare the templates asset against a baseline.');
 }
 
 const baselineAsset = showAtTag(baseline, ASSET);
 if (baselineAsset === undefined) {
-  console.log(`SKIP  ${baselineLabel} predates ${ASSET} — no comparable baseline.`);
-  process.exit(0);
+  skip(`${baselineLabel} predates ${ASSET} — no comparable baseline.`);
 }
 
 if (baselineAsset === currentAsset) {
@@ -93,8 +105,7 @@ const formattedChanges = changes.map((line) => `      ${line}`).join('\n');
 
 const baselineTypes = showAtTag(baseline, TYPES);
 if (baselineTypes === undefined) {
-  console.log(`SKIP  ${baselineLabel} predates ${TYPES} — no comparable baseline for the constant.`);
-  process.exit(0);
+  skip(`${baselineLabel} predates ${TYPES} — no comparable baseline for the constant.`);
 }
 const baselineVersion = readVersion(baselineTypes, VERSION_RE, `AI_TEMPLATE_SCHEMA_VERSION at ${baselineLabel}`);
 

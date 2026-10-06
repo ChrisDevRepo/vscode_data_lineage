@@ -1,8 +1,8 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist';
-import type { TraceTree, TraceTreeGroup, TraceTreeLevel, TraceTreeSide } from './traceTreeModel';
+import type { TraceTree, TraceTreeGroup, TraceTreeLevel, TraceTreeSide } from '../engine/traceTree';
 import type { ObjectType } from '../engine/types';
-import { TYPE_COLORS, getExternalNodeColor, getSchemaColor } from '../utils/schemaColors';
+import { TYPE_COLORS } from '../utils/schemaColors';
 import { SidePanel } from './SidePanel';
 import { TRACE_ICON } from './TracedFilterBanner';
 import { Tooltip } from './ui/Tooltip';
@@ -15,17 +15,16 @@ export interface TraceTreeNodeMeta {
   detail?: string;
   /** Canvas object type; drives the type symbol. */
   type?: ObjectType;
+  /**
+   * The node's colour on the canvas — its resolved schema colour, or the external colour — which
+   * tints the type symbol. The caller resolves it so a row matches its canvas node and the legend.
+   */
+  color?: string;
 }
 
 /** Type symbol for a tree row; same glyphs as the canvas nodes. */
 function typeIcon(type?: ObjectType): string {
   return (type && TYPE_COLORS[type]?.icon) || '▪';
-}
-
-/** Schema color for a tree row; identical to the canvas node border rule. */
-function schemaColor(type?: ObjectType, schema?: string): string | undefined {
-  if (type === 'external') return getExternalNodeColor();
-  return schema ? getSchemaColor(schema) : undefined;
 }
 
 export interface TraceTreePanelProps {
@@ -256,7 +255,7 @@ function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNode
         name: meta?.name ?? nodeId,
         fullName: meta?.detail ? `${meta.detail}.${meta.name}` : meta?.name ?? nodeId,
         typeIcon: typeIcon(meta?.type),
-        schemaColor: schemaColor(meta?.type, meta?.detail),
+        schemaColor: meta?.color,
       };
       return { schema: meta?.detail || 'External', row };
     })
@@ -372,8 +371,16 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     if (api) setVisibleRowCount(countVisibleRows(data, (id) => api.isOpen(id)));
   }, [data]);
 
-  /** A level at depth 1–2 that appears after mount starts open, once. A collapse the user made stays closed. */
+  /**
+   * A level at depth 1–2 that appears after mount starts open, once. A collapse the user made stays
+   * closed. Hiding the panel unmounts the tree, which reopens from {@link initialOpenState}, so the
+   * decisions are dropped then and the visible rows are recounted when it shows again.
+   */
   useEffect(() => {
+    if (collapsed) {
+      openDecisions.current.clear();
+      return;
+    }
     const api = treeRef.current;
     if (!api) return;
     const visit = (rows: PanelRow[]): void => {
@@ -387,7 +394,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     };
     visit(data);
     refreshVisibleRows();
-  }, [data, refreshVisibleRows]);
+  }, [data, refreshVisibleRows, collapsed]);
 
   const checkedIds = useMemo(() => new Set(focusTargetIds), [focusTargetIds]);
 
@@ -419,7 +426,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
 
   const currentMatch = matches.length > 0 ? matches[Math.min(findIndex, matches.length - 1)] : undefined;
   const originMeta = resolveNode(tree.originId);
-  const originColor = schemaColor(originMeta?.type, originMeta?.detail);
+  const originColor = originMeta?.color;
 
   useEffect(() => {
     setFindIndex(0);

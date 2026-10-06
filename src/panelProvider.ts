@@ -6,7 +6,7 @@ import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
 import { summarizeZodError } from './bridge/host';
-import { createMessageHandlers, PROJECT_STORE_KEY } from './bridge/messageHandlers';
+import { createMessageHandlers, PROJECT_STORE_KEY, type ReportDocumentRef } from './bridge/messageHandlers';
 import { getConnectionAvailability } from './engine/connectionManager';
 import {
   BRIDGE_PROTOCOL_VERSION,
@@ -17,6 +17,8 @@ import {
 
 let activePanel: vscode.WebviewPanel | undefined;
 let activeTriggerDemo: (() => Promise<void>) | undefined;
+/** Outlives every panel: handlers are re-created per panel, the AI report document is one per session. */
+const reportDocumentRef: ReportDocumentRef = {};
 
 export { PROJECT_STORE_KEY };
 
@@ -115,7 +117,8 @@ export function openPanel(
     saveProjectStore,
     migrateFromWorkspaceState,
     loadDemo,
-    (dp) => detailPanel = dp
+    (dp) => detailPanel = dp,
+    reportDocumentRef
   );
 
   activeTriggerDemo = triggerDemoLoad;

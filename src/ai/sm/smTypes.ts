@@ -1,9 +1,8 @@
 /**
  * Navigation Engine hop lifecycle types.
  *
- * Concrete types for the IHopStateMachine contract — replaces `any` returns.
- * Keep this file dependency-free (only imports `memoryManager` types + scalar
- * types from smBase) so it can be unit-tested without a live engine.
+ * Concrete types for the IHopStateMachine contract. Type-only imports keep this file free of
+ * runtime dependencies, so it can be unit-tested without a live engine.
  */
 
 import type { ClassificationValue } from '../session/classification';
@@ -380,7 +379,6 @@ export interface RouteOutcome {
   /**
    * Reason for deferral:
    * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
-   * - `depth_contracted_beyond_budget` — legacy outcome for a non-bodied route without an enqueued hop.
    * - `non_bodied_passthrough` — the in-scope non-bodied neighbor is retained without a separate analysis hop; no follow-up is created for it.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer.
@@ -390,13 +388,12 @@ export interface RouteOutcome {
    *   that can be granted through a new proposal.
    * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was already analyzed on an earlier hop; visit-once, no new hop.
    * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
-   * - `carries_no_tracked_column` — legacy checkpoint reason; no longer emitted.
    */
-  reason?: 'depth' | 'depth_contracted_beyond_budget' | 'non_bodied_passthrough' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
+  reason?: 'depth' | 'non_bodied_passthrough' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
 }
 
-/** Settled route reasons. `carries_no_tracked_column` is retained only for historical checkpoints. */
-export type SettledRouteReason = 'already_visited' | 'already_pruned' | 'carries_no_tracked_column';
+/** Route reasons for a target an earlier hop already settled (visit-once). */
+export type SettledRouteReason = 'already_visited' | 'already_pruned';
 
 /** Per-node enqueue disposition: settled by an earlier hop or not enqueued for a scope/depth reason. */
 export type RouteSkipDisposition = SettledRouteReason | 'not_enqueued';
@@ -662,11 +659,11 @@ export interface SmResult {
  * A route request to an out-of-approved-scope node, captured during an SM session.
  *
  * @remarks
- * Produced by the engine when a `submit_findings` route targets a node outside the approved
- * border (schema, exclusion or direction), past an exact depth, pruned, or reached only as a
- * contracted non-bodied carrier; a lead restored from an older record may still carry `budget`.
- * Derived from typed pending leads for the synthesis evidence envelope and native-chat follow-up
- * action.
+ * Produced by the engine when a `submit_findings` route, or a contraction through a non-bodied
+ * carrier, targets a node outside the approved border (schema, exclusion or direction) or past an
+ * exact depth. Derived from typed pending leads for the synthesis evidence envelope and
+ * native-chat follow-up action; the older lead reasons a saved run may hold stay readable on
+ * {@link PendingLead} only.
  */
 export interface DeferredQuestion {
   /** Fully-qualified id of the out-of-scope target. */
@@ -677,14 +674,8 @@ export interface DeferredQuestion {
   fromFocusNodeId: string;
   /** Sub-question the AI wanted to ask at the target. */
   question: string;
-  /**
-   * Discriminator for why the route was deferred. `'budget'` — in-border but over the active
-   * scope budget. `'pruned'` — a legacy checkpoint lead from a prune/question combination;
-   * new submissions reject that combination. `'contracted'` — retained in approved scope but
-   * not given separate hop analysis;
-   * still a real, answerable continuation.
-   */
-  reason: 'schema' | 'depth' | 'budget' | 'direction' | 'excluded' | 'pruned' | 'contracted';
+  /** Which approved border deferred the route. */
+  reason: 'schema' | 'depth' | 'direction' | 'excluded';
   /** Depth-from-origin of the target. Populated when `reason` includes 'depth'. */
   depth?: number;
   /** Hop number at which the deferral was recorded. */
@@ -770,7 +761,7 @@ export interface ApprovedBorder {
 /**
  * The `init` parameters captured so the refine path (gate cycle) can re-run init without the
  * AI re-sending origin / direction / depth / mission_brief. Named here (rather than inlined on
- * the engine field) so {@link EngineInternalsSnapshot} can round-trip it for resume.
+ * the engine field) so {@link EngineInternalsSnapshot} can record it.
  */
 export interface EngineInitSnapshot {
   /** Original user question. */
@@ -844,13 +835,12 @@ export interface NavigationInitParams {
 
 /**
  * Serializable projection of the {@link NavigationEngine}'s private working state not already
- * carried by the top-level checkpoint fields.
+ * carried by the top-level fields of {@link SmState}.
  *
  * @remarks
  * Runtime handles (model, graph, logger, store, node map, and edge map) are rebuilt by the caller
  * from the active host and are deliberately not serialized. Maps and sets are flattened to arrays
- * for the JSON boundary. Restore accepts only a snapshot validated against the current strict
- * checkpoint schema; it does not synthesize omitted state.
+ * for the JSON boundary. A saved run is read back only through the `NavigationSnapshot` schema.
  */
 export interface EngineInternalsSnapshot {
   /** Resolved origin/root node id (anchors the trace). */
@@ -861,7 +851,7 @@ export interface EngineInternalsSnapshot {
   depthBudget: number | null;
   /** How strictly the depth budget is enforced. */
   depthEnforcement: 'strict' | 'silent';
-  /** Per-side ceilings, `null` where that side is unbounded; absent in a v1 checkpoint. */
+  /** Per-side ceilings, `null` where that side is unbounded; absent in a v1 saved run. */
   depthLimits?: { upstream: number | null; downstream: number | null };
   /** BFS depth-from-origin, flattened to `[nodeId, depth]` pairs (insertion order preserved). */
   depthFromOrigin: Array<[string, number]>;
@@ -915,26 +905,26 @@ export interface EngineInternalsSnapshot {
   pendingLeads: PendingLead[];
   /** The `init` params snapshot kept for the refine re-run. */
   initSnapshot: EngineInitSnapshot | null;
-  /** Explicit post-completion follow-up targets; absent in older checkpoints. */
+  /** Explicit post-completion follow-up targets; absent in older saved runs. */
   supplementNodeIds?: string[];
   /** Accepted prune/keep votes not yet resolved because another sender remains live. */
   pruneBallots?: Array<{ nodeId: string; votes: Array<{ senderId: string; vote: 'prune' | 'keep' }> }>;
-  /** Held finding and its authorization must resume together or restart explicitly. */
+  /** Held finding and its authorization, recorded together. */
   heldFinding?: { focusId: string; hop: number; mode: 'bb' | 'ct'; failed: string[]; finding: HopFindingKept } | null;
-  /** Complete continuation-state format; unfinished older checkpoints require a fresh run. */
+  /** Continuation-state format marker, written as `1`. */
   continuationVersion?: 1;
 }
 
 /**
- * Current-format serialized state-machine checkpoint and diagnostic projection.
+ * Serialized state-machine projection: the state dump and the saved run's snapshot.
  *
  * @remarks
- * Unknown restore input must pass the strict `NavigationSnapshot` schema before reconstruction.
+ * A saved run is untrusted input and passes the strict `NavigationSnapshot` schema when read.
  */
 export interface SmState {
   /** Current fail-closed persistence contract version. */
   snapshotVersion: 1 | 2;
-  /** Source identifier policy at capture; an absent field denotes a legacy CI checkpoint. */
+  /** Source identifier policy at capture; an absent field denotes a legacy CI saved run. */
   identifierCaseSensitive?: boolean;
   /** The current aspect mode (e.g. column tracing). */
   columnAspect: ColumnAspect | null;
@@ -976,11 +966,10 @@ export interface SmState {
   /** Serialized snapshot of the associated memory manager. */
   memory: MemoryStateSnapshot;
   /**
-   * Engine working-state projection required by the current checkpoint version.
+   * Engine working-state projection.
    *
    * @remarks
-   * Missing or malformed internals reject before engine reconstruction. The restore path does not
-   * infer fields from older telemetry projections.
+   * Missing or malformed internals fail the `NavigationSnapshot` schema; no field is inferred.
    */
   engineInternals: EngineInternalsSnapshot;
   /**
@@ -989,7 +978,7 @@ export interface SmState {
    * for diagnosing CT tracking failures.
    */
   lineageQuestionsLastHop?: string[];
-  /** Legacy key from checkpoints written before focus cuts were removed; accepted and ignored on restore. */
+  /** Legacy key from saved runs written before focus cuts were removed; accepted and ignored. */
   ctPrunedNodeIds?: string[];
   /**
    * Recorded column-edge endpoint IDs. The historical checkpoint key remains readable;

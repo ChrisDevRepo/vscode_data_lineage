@@ -418,6 +418,20 @@ describe('openBuiltInSession — failures', () => {
     expect(fake.connections).toHaveLength(0);
   });
 
+  it('a token cancelled while the driver module loads opens no socket', async () => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    let reads = 0;
+    const token = {
+      // Not cancelled at the check before the driver import; cancelled by the time it resolves.
+      get isCancellationRequested() { return reads++ > 0; },
+      onCancellationRequested: () => ({ dispose: () => {} }),
+    };
+
+    await expect(openBuiltInSession(sqlLogin, env, { token: token as never })).resolves.toBeUndefined();
+    expect(reads).toBeGreaterThan(1);
+    expect(fake.connections).toHaveLength(0);
+  });
+
   it('a Microsoft sign-in that does not complete raises a MicrosoftSignInError carrying the reason', async () => {
     ui.getSession.mockRejectedValue(new Error('User did not consent to login.'));
     const { env } = makeEnv();

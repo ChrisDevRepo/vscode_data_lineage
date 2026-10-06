@@ -302,7 +302,7 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
 
   const icon = TYPE_COLORS[view.objectType as ObjectType]?.icon ?? '▪';
   const typeLabel = SHORT_TYPE_LABELS[view.objectType as ObjectType] ?? view.objectType;
-  const schemaColor = getSchemaColor(view.schema, undefined, data.identifierCaseSensitive);
+  const schemaColor = data.schemaColor ?? getSchemaColor(view.schema, undefined, data.identifierCaseSensitive);
   const nodeTitle = `${view.schema}.${view.label}`;
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
@@ -403,6 +403,12 @@ function ColumnTraceNodeComponent({ id, data }: { id: string; data: ColumnTraceN
         </>
       )}
 
+      {view.rows.length === 0 && (
+        <>
+          <Handle type="target" position={Position.Left} className="w-2! h-2! ln-handle" style={view.isTransformNode ? portHandleStyle(view, 0, 'target') : undefined} />
+          <Handle type="source" position={Position.Right} className="w-2! h-2! ln-handle" style={view.isTransformNode ? portHandleStyle(view, 0, 'source') : undefined} />
+        </>
+      )}
       {view.rows.map((row, i) => (
         <Handle
           key={`t-${row.name}`}

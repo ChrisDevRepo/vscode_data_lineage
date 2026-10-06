@@ -177,9 +177,6 @@ export const AddConnectionArgsSchema = z.object({
   password: z.string().max(MAX_PASSWORD_LENGTH).optional(),
 });
 
-/** Validated argument of `dataLineageViz.addDatabaseConnection`. */
-export type AddConnectionArgs = z.infer<typeof AddConnectionArgsSchema>;
-
 /**
  * Reads the saved built-in connections.
  *
@@ -209,25 +206,35 @@ export function readBuiltInConnections(logger?: Pick<Logger, 'debug'>): BuiltInC
   return connections;
 }
 
-/** The raw setting value, as the user's settings.json holds it. */
+/** A copy of the raw setting value, as the user's settings.json holds it. */
 function readRawConnections(): unknown[] {
   const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
-  return Array.isArray(raw) ? raw : [];
+  return Array.isArray(raw) ? [...raw] : [];
 }
 
 function rawId(entry: unknown): unknown {
   return entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
 }
 
+/** Tail of the connection-list rewrites; each read-modify-write starts after the previous one settles. */
+let rewriteTail: Promise<unknown> = Promise.resolve();
+
 /**
- * Writes the connection list to the user (global) settings.
+ * Rewrites the connection list in the user (global) settings, one rewrite at a time.
  *
  * @remarks
- * The setting is application-scoped, so a workspace can neither hold nor override it.
+ * The setting is application-scoped, so a workspace can neither hold nor override it. `change` reads
+ * the list only after every earlier rewrite has landed, so concurrent saves never drop each other's
+ * entries. A failed rewrite rejects its own caller and does not block the next one.
  */
-async function writeRawConnections(entries: unknown[]): Promise<void> {
-  await vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION)
-    .update(CONNECTIONS_SETTING, entries, vscode.ConfigurationTarget.Global);
+function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<void> {
+  const run = async (): Promise<void> => {
+    await vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION)
+      .update(CONNECTIONS_SETTING, change(readRawConnections()), vscode.ConfigurationTarget.Global);
+  };
+  const result = rewriteTail.then(run, run);
+  rewriteTail = result.catch(() => undefined);
+  return result;
 }
 
 /**
@@ -235,18 +242,23 @@ async function writeRawConnections(entries: unknown[]): Promise<void> {
  *
  * @remarks
  * Every other entry is written back as stored, including a hand-edited one that fails validation.
+ * Serialized with {@link deleteBuiltInConnection}, so concurrent calls never drop an entry.
  */
-export async function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
-  const entries = readRawConnections();
-  const at = entries.findIndex((entry) => rawId(entry) === connection.id);
-  if (at >= 0) entries[at] = connection;
-  else entries.push(connection);
-  await writeRawConnections(entries);
+export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
+  return rewriteConnections((entries) => {
+    const at = entries.findIndex((entry) => rawId(entry) === connection.id);
+    if (at >= 0) entries[at] = connection;
+    else entries.push(connection);
+    return entries;
+  });
 }
 
-/** Removes the saved connection with the given id; every other entry is written back as stored. */
-export async function deleteBuiltInConnection(id: string): Promise<void> {
-  await writeRawConnections(readRawConnections().filter((entry) => rawId(entry) !== id));
+/**
+ * Removes the saved connection with the given id; every other entry is written back as stored.
+ * Serialized with {@link upsertBuiltInConnection}.
+ */
+export function deleteBuiltInConnection(id: string): Promise<void> {
+  return rewriteConnections((entries) => entries.filter((entry) => rawId(entry) !== id));
 }
 
 /** Human-readable `server / database` label. */

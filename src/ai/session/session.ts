@@ -10,12 +10,12 @@ import { getGlobalSingleton } from '../../utils/globalSingleton';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { ColumnStore } from '../../engine/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
-import { type ResultGraph, type AiOutputTemplates, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES } from '../session/types';
+import { type ResultGraph, type AiOutputTemplates, type AiOutputSections, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS } from '../session/types';
 import type { IHopStateMachine } from '../sm/smBase';
-import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult, SmState } from '../sm/smTypes';
+import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
-import { contextBlockBytes, discoveryEvidenceItemBytes, type TurnTokenBudget } from '../support/tokenBudget';
+import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
@@ -91,10 +91,10 @@ export type ExplorationActivationOutcome =
  * Maximum accepted discovery observations retained in one live session — a *count* bound, so a long
  * discovery walk cannot grow the retained set even when every result is individually small.
  */
-export const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
+const MAX_DISCOVERY_EVIDENCE_OBSERVATIONS = 24;
 /*
  * Byte bounds for the discovery-evidence message, one evidence item, and the replayed transcript
- * live in `support/tokenBudget.ts` (`contextBlockBytes()`, `discoveryEvidenceItemBytes()`).
+ * live in `support/tokenBudget.ts` (`contextBlockBytes()`, `storedEvidenceKindBytes()`).
  */
 /**
  * Maximum complete canonical discovery turns retained in one live session — bounds cross-turn history
@@ -283,6 +283,20 @@ export class AiSession {
     this._synthesisRenderDegradedReason = reason;
   }
 
+  /**
+   * Clears a render-degraded mark that a preview delivery set, leaving a mark from any other cause.
+   *
+   * @remarks
+   * The latest present's delivery outcome decides: a post that went through (or a deferred one) supersedes
+   * an earlier failed post of the same turn.
+   */
+  public clearPreviewDeliveryDegraded(): void {
+    if (this._synthesisRenderDegradedReason === 'preview_post_failed'
+      || this._synthesisRenderDegradedReason === 'preview_dispatch') {
+      this._synthesisRenderDegradedReason = null;
+    }
+  }
+
   /** Peeks the render-degraded reason without clearing it — read by the synthesis node's own chat line. */
   public get synthesisRenderDegradedReason(): string | null {
     return this._synthesisRenderDegradedReason;
@@ -350,8 +364,8 @@ export class AiSession {
   public currentTurnPrompt: string | null = null;
 
   /**
-   * The AI's discovery-turn final chat answer (Markdown). Captured from
-   * the last `toolCallRound.response` after the discover loop ends. Read
+   * The AI's discovery-turn final chat answer (Markdown). Recorded by
+   * {@link settleDiscoveryTurn} when the discover loop ends. Read
    * by the post-approval discovery-summary composition round so the
    * compressed memo can cite the headline finding the AI already wrote.
    * Cleared in {@link resetExploration}.
@@ -373,11 +387,11 @@ export class AiSession {
   public classification?: ClassificationValue;
   /** YAML-loaded instructions for report generation. */
   public outputTemplates: AiOutputTemplates;
+  /** Section labels declared by the capture recipes; synthesis serves the active angle's list. */
+  public outputSections: AiOutputSections;
 
   /** Sequential log of tool calls and results for the current exploration. */
   public hopLog: HopLogEntry[] = [];
-  /** Sliding-memory replacements emitted during the current API turn — derived from the event log so the two can never drift. */
-  public get slidingMemoryWipeCountThisTurn(): number { return this._memoryWipeEventsThisTurn.length; }
   /**
    * Per-wipe detail for this turn — the memory-leak waste basis the analytics layer needs.
    * Each entry records WHY a wipe fired and how many threaded messages it discarded, so a
@@ -463,12 +477,14 @@ export class AiSession {
    * Creates a new AiSession.
    *
    * @param templates - Optional report generation templates.
+   * @param sections - Optional section labels declared by the capture recipes.
    */
-  constructor(templates?: AiOutputTemplates) {
+  constructor(templates?: AiOutputTemplates, sections?: AiOutputSections) {
     this.id = this.generateId();
     this.memory = new AiMemoryManager();
     this.columnStore = new ColumnStore();
     this.outputTemplates = templates ?? { ...EMPTY_AI_TEMPLATES };
+    this.outputSections = sections ?? EMPTY_AI_SECTIONS;
     this.startTime = Date.now();
   }
 
@@ -695,8 +711,8 @@ export class AiSession {
         continue;
       }
       const resultBytes = Buffer.byteLength(observation.result, 'utf8');
-      if (resultBytes > discoveryEvidenceItemBytes(budget)) {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized bytes=${resultBytes} cap=${discoveryEvidenceItemBytes(budget)}`);
+      if (resultBytes > storedEvidenceKindBytes(budget)) {
+        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized bytes=${resultBytes} cap=${storedEvidenceKindBytes(budget)}`);
         continue;
       }
       let result: unknown;
@@ -739,7 +755,10 @@ export class AiSession {
       : transcript;
   }
 
-  /** Clears cross-turn discovery memory. Called on model/project (re)load, never on SM start. */
+  /**
+   * Clears cross-turn discovery memory: on model/project (re)load, on a new native chat, and after
+   * every turn that supplied native history (which then owns cross-turn conversation). Never on SM start.
+   */
   public clearDiscoveryTranscript(): void {
     this.discoveryTranscript = [];
     this.discoveryEvidence = [];
@@ -990,28 +1009,6 @@ export class AiSession {
     this._presentResultCalledThisTurn = true;
     this._presentResultAutoDispatched = autoDispatched;
     this.presentResultRepairDraft.clear();
-    return guard;
-  }
-
-  /**
-   * Reattaches a state machine rebuilt from a checkpointed engine snapshot.
-   *
-   * @remarks
-   * The LangGraph checkpointer persists the serializable engine projection, not live runtime
-   * handles. On resume, the graph reconstructs the `NavigationEngine` from fresh model/graph handles
-   * and restores this session's memory object in place so prompt builders and synthesis see one archive.
-   * @param engine - Fully reconstructed engine, not yet published to this session.
-   * @param snapshot - Validated serializable engine projection.
-   * @param token - The restoring turn's captured ownership epoch.
-   * @returns Whether the atomic restore committed or was rejected as stale.
-   */
-  public restoreExplorationFromSnapshot(engine: IHopStateMachine, snapshot: SmState, token: number): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'restoreExplorationFromSnapshot');
-    if (guard.kind !== 'accepted') return guard;
-    this.memory.restoreFromJSON(snapshot.memory);
-    this.stateMachine = engine;
-    this.hopCount = snapshot.hopCount;
-    this.phase = snapshot.status === 'complete' ? { kind: 'completed' } : { kind: 'exploring' };
     return guard;
   }
 

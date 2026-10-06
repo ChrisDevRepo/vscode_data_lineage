@@ -7,7 +7,7 @@ import { StrictMode, act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TraceTreePanel, type TraceTreeNodeMeta } from '../../../src/components/TraceTreePanel';
-import type { TraceTree } from '../../../src/components/traceTreeModel';
+import type { TraceTree } from '../../../src/engine/traceTree';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,6 +42,7 @@ const resolveNode = (id: string): TraceTreeNodeMeta => ({
   name: `name-${id}`,
   detail: 'dbo',
   type: id === 'a' ? 'view' : 'table',
+  color: '#123456',
 });
 
 async function renderPanel(overrides: Partial<React.ComponentProps<typeof TraceTreePanel>> = {}) {
@@ -135,7 +136,7 @@ describe('TraceTreePanel', () => {
     await renderPanel();
     const leaf = host.querySelector('[data-testid="trace-tree-row-up:a"]') as HTMLElement;
     expect(leaf?.querySelector('.ln-tree-type')?.textContent).toBe('●');
-    expect(leaf?.style.getPropertyValue('--ln-tree-schema')).not.toBe('');
+    expect(leaf?.style.getPropertyValue('--ln-tree-schema'), 'the caller-resolved canvas colour').toBe('#123456');
     const group = host.querySelector('[data-testid="trace-tree-row-trace-up"]');
     expect(group?.querySelector('.ln-tree-type')).toBeNull();
   });
@@ -207,6 +208,20 @@ describe('TraceTreePanel', () => {
       (host.querySelector('[data-testid="trace-tree-row-trace-up-L1"] .ln-tree-chevron') as HTMLElement).click();
     });
     expect(host.querySelector('[data-testid="trace-tree-row-up:a"]')).not.toBeNull();
+  });
+
+  it('sizes the card to the rows it shows again after being hidden and reopened', async () => {
+    await renderPanel({ tree: deepTree });
+    await act(async () => {
+      (host.querySelector('button[aria-label="Collapse all"]') as HTMLButtonElement).click();
+    });
+    // Up side, L1, L2, L3, down side.
+    expect((host.querySelector('.ln-trace-tree-body') as HTMLElement).style.height).toBe(`${5 * 22}px`);
+    await renderPanel({ tree: deepTree, collapsed: true });
+    await renderPanel({ tree: deepTree, collapsed: false });
+    // The reopened tree starts from its initial open levels: up side, L1, a, L2, b, L3 (closed), down side.
+    expect((host.querySelector('.ln-trace-tree-body') as HTMLElement).style.height).toBe(`${7 * 22}px`);
+    expect(host.querySelector('[data-testid="trace-tree-row-up:b"]'), 'the last open leaf is not clipped').not.toBeNull();
   });
 
   it('expands and collapses every level from the title bar while the sides stay open', async () => {

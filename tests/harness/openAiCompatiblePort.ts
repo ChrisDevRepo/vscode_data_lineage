@@ -18,7 +18,6 @@ import {
   messageContentToText,
   modelToolCallMessage,
 } from '../../src/ai/model/modelPort';
-import * as modelPortModule from '../../src/ai/model/modelPort';
 import {
   systemPromptHash,
   type TokenUsage,
@@ -44,57 +43,9 @@ import {
 import {
   projectMessages,
   readUsage,
-  FENCED_JSON_BLOCK,
   suspectsToolCallAsText,
   toWireMessages,
 } from './openAiWire';
-
-/** Outcome of reading a text-only generation as a tool call on a tree whose product port promoted one. */
-type ProseToolCallMatch =
-  | { readonly kind: 'promoted'; readonly toolName: string; readonly input: Record<string, unknown> }
-  | { readonly kind: 'ambiguous'; readonly tools: readonly string[] }
-  | { readonly kind: 'none' };
-
-/** Call id the pinned tree's product port gives a prose-promoted call. */
-const PROSE_PROMOTED_CALL_ID: string =
-  (modelPortModule as { readonly PROSE_PROMOTED_CALL_ID?: string }).PROSE_PROMOTED_CALL_ID ?? 'text-promoted-0';
-
-/**
- * The pinned tree's prose-tool behaviour.
- *
- * @remarks
- * A capture worktree pins `src/` at the measured sha while this harness is copied in from the source
- * repo, so the mirror is chosen by what that tree exports. Three generations exist:
- * - exports `matchProseToolCall` — that recognizer promotes (the testing branches before its removal);
- * - exports `PROVIDER_PARTS_KEY` but no recognizer — the product port promotes nothing: a call exists
- *   only on the native tool-call channel, and a text generation stays text;
- * - exports neither — `main` (`20356737e`), whose product port promoted privately
- *   (`vscodeModelPort.ts` `promoteProseToolCall`): the first fenced JSON block whose object one
- *   offered schema accepts.
- */
-type ProseToolCallRecognizer = (text: string, definitions: readonly ModelToolDefinition[]) => ProseToolCallMatch;
-const pinnedRecognizer = (modelPortModule as { readonly matchProseToolCall?: ProseToolCallRecognizer }).matchProseToolCall;
-const matchProseToolCall: ProseToolCallRecognizer =
-  typeof pinnedRecognizer === 'function'
-    ? pinnedRecognizer
-    : typeof (modelPortModule as { readonly PROVIDER_PARTS_KEY?: unknown }).PROVIDER_PARTS_KEY === 'string'
-      ? () => ({ kind: 'none' })
-      : (text, definitions) => {
-        if (definitions.length === 0) return { kind: 'none' };
-        const match = FENCED_JSON_BLOCK.exec(text);
-        if (!match) return { kind: 'none' };
-        let candidate: unknown;
-        try {
-          candidate = JSON.parse(match[1]);
-        } catch {
-          return { kind: 'none' };
-        }
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return { kind: 'none' };
-        const definition = definitions.find((entry) => entry.inputSchema.safeParse(candidate).success);
-        return definition
-          ? { kind: 'promoted', toolName: definition.name, input: candidate as Record<string, unknown> }
-          : { kind: 'none' };
-      };
 
 /** Minimal HTTP response surface the port consumes; keeps the module free of DOM/node lib skew. */
 export interface HttpResponseLike {
@@ -405,6 +356,23 @@ function retryAfterDelayMs(response: HttpResponseLike): number | undefined {
 }
 
 /** Bounded exponential backoff with full jitter, capped at {@link TRANSPORT_RETRY_MAX_DELAY_MS}. */
+/**
+ * The transient status of an upstream failure delivered inside HTTP 200: `choices[0].finish_reason`
+ * is `"error"`, `choices[0].error.code` is in {@link TRANSIENT_TRANSPORT_HTTP_STATUSES}, and the
+ * choice carries no text and no tool call. A choice with any model output is never reported, so a
+ * retry cannot replace a measured answer (DD-4).
+ */
+function transientEnvelopeStatus(body: unknown): number | undefined {
+  const choices = asRecord(body)?.choices;
+  const choice = asRecord(Array.isArray(choices) ? choices[0] : undefined);
+  if (choice?.finish_reason !== 'error') return undefined;
+  const code = Number(asRecord(choice.error)?.code);
+  if (!TRANSIENT_TRANSPORT_HTTP_STATUSES.has(code)) return undefined;
+  const message = asRecord(choice.message);
+  const hasToolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length > 0;
+  return readContentText(message?.content) || hasToolCalls ? undefined : code;
+}
+
 function transportRetryDelayMs(attempt: number, retryAfterMs: number | undefined): number {
   if (retryAfterMs !== undefined) return Math.min(retryAfterMs, TRANSPORT_RETRY_MAX_DELAY_MS);
   const exponential = TRANSPORT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
@@ -916,49 +884,20 @@ export class OpenAiCompatiblePort implements ModelPort {
         latencyMs,
         ...(collected.usage ? { usage: collected.usage } : {}),
       });
-      // MIRROR: a pinned tree whose production port promoted a prose-written tool call is mirrored
-      // here; on a tree that does not, the match is always `none`. Applied after every record is written,
-      // so `wire-response` and `provider-raw` still hold the provider's verbatim text — the harness
-      // records what the provider did and classifies what production would have accepted.
-      const promotion = toolCallParts.length === 0
-        ? matchProseToolCall(text, definitions)
-        : { kind: 'none' as const };
-      if (promotion.kind === 'promoted') {
-        this.options.debugLog?.(
-          `[AI] prose-tool-call-promoted phase=${phase ?? 'unknown'} call=${generation}`
-          + ` tool=${promotion.toolName}`,
-        );
-      } else if (promotion.kind === 'ambiguous') {
-        this.options.debugLog?.(
-          `[AI] prose-tool-call-ambiguous phase=${phase ?? 'unknown'} call=${generation}`
-          + ` tools=${promotion.tools.join(',')}`,
-        );
-      }
       this.generations.push({
         generation,
         ...(phase !== undefined ? { phase } : {}),
         finishReason: collected.rawFinishReason,
         latencyMs,
         ...(collected.usage ? { usage: collected.usage } : {}),
-        // Only meaningful when the model emitted no structured call at all. A payload the recognizer
-        // read is a tool call written as text whether or not a schema accepted it, so the reader
-        // answers first and the marker heuristic covers the rest.
+        // Only meaningful when the model emitted no structured call at all; a text generation stays
+        // text, exactly as the product port treats it.
         suspectedToolCallAsText: toolCallParts.length === 0 && suspectsToolCallAsText(text),
         toolCalls: toolCallParts.length,
         textChars: text.length,
       });
       return {
-        parts: promotion.kind === 'promoted'
-          ? [{
-              type: 'tool-call',
-              callId: PROSE_PROMOTED_CALL_ID,
-              toolName: promotion.toolName,
-              input: promotion.input,
-              // Never emitted: promotion happens after `wire-response`. Kept as the prose the call
-              // was read from, so a part carries its own evidence.
-              rawArguments: text,
-            }]
-          : collected.parts,
+        parts: collected.parts,
         rawFinishReason: collected.rawFinishReason,
         ...(collected.usage ? { usage: collected.usage } : {}),
       };
@@ -1054,10 +993,12 @@ export class OpenAiCompatiblePort implements ModelPort {
           } catch {
             body = undefined;
           }
-          if (!response!.ok && TRANSIENT_TRANSPORT_HTTP_STATUSES.has(response!.status) && canRetry()) {
-            retryDelayMs = transportRetryDelayMs(attempt, retryAfterDelayMs(response!));
+          const transientStatus = response!.ok ? transientEnvelopeStatus(body)
+            : TRANSIENT_TRANSPORT_HTTP_STATUSES.has(response!.status) ? response!.status : undefined;
+          if (transientStatus !== undefined && canRetry()) {
+            retryDelayMs = transportRetryDelayMs(attempt, response!.ok ? undefined : retryAfterDelayMs(response!));
             this.options.debugLog?.(
-              `[AI] transport-retry attempt=${attempt}/${MAX_TRANSPORT_ATTEMPTS} status=${response!.status}`
+              `[AI] transport-retry attempt=${attempt}/${MAX_TRANSPORT_ATTEMPTS} status=${transientStatus}`
               + ` delay_ms=${Math.round(retryDelayMs)}`,
             );
           } else {

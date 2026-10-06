@@ -20,6 +20,10 @@ const host = vi.hoisted(() => ({
   getSession: vi.fn(),
   openBuiltInSession: vi.fn(),
   tenants: [] as Array<{ tenantId: string; displayName: string }>,
+  /** When set, a settings write lands only after a macrotask, as VS Code's file-backed write does. */
+  deferWrites: false,
+  /** When set, the next settings write rejects. */
+  failNextWrite: false,
 }));
 
 vi.mock('@microsoft/vscode-azext-azureauth', async (importOriginal) => ({
@@ -53,7 +57,12 @@ vi.mock('vscode', async (importOriginal) => {
       getConfiguration: () => ({
         get: (_k: string, d: unknown) => host.stored ?? d,
         inspect: () => ({ globalValue: host.stored }),
-        update: async (key: string, value: unknown, target: unknown) => { host.updates.push({ key, value, target }); host.stored = value; },
+        update: async (key: string, value: unknown, target: unknown) => {
+          if (host.deferWrites) await new Promise((resolve) => setTimeout(resolve, 0));
+          if (host.failNextWrite) { host.failNextWrite = false; throw new Error('settings write failed'); }
+          host.updates.push({ key, value, target });
+          host.stored = value;
+        },
       }),
     },
   };
@@ -65,6 +74,7 @@ vi.mock('../../../../src/engine/db/builtInProvider', () => ({
 
 const {
   BuiltInConnectionSchema, readBuiltInConnections, passwordSecretKey, encodeSavedPassword, readSavedPassword, savePassword,
+  upsertBuiltInConnection, deleteBuiltInConnection,
 } = await import('../../../../src/engine/db/connectionSettings');
 const { registerConnectionCommands } = await import('../../../../src/engine/db/connectionCommands');
 
@@ -84,6 +94,8 @@ beforeEach(() => {
   host.stored = undefined;
   host.updates.length = 0;
   host.tenants = [];
+  host.deferWrites = false;
+  host.failNextWrite = false;
   host.handlers.clear();
   for (const fn of [host.showInputBox, host.showQuickPick, host.createInputBox, host.createQuickPick, host.showWarningMessage, host.showInformationMessage, host.showErrorMessage, host.withProgress, host.getSession, host.openBuiltInSession]) fn.mockReset();
 });
@@ -257,6 +269,53 @@ describe('connection commands', () => {
 
     expect(host.showInputBox.mock.calls[0][0]).toMatchObject({ password: true });
     expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), encodeSavedPassword(valid as never, 'new-pw'));
+  });
+
+  it('updateDatabasePassword refuses an Entra ID connection named by id without prompting or storing', async () => {
+    const entraEntry = { id: 'e1', name: 'Cloud', server: 'x.database.windows.net', authenticationType: 'entraId' };
+    host.stored = [entraEntry];
+    const { context, secrets } = makeContext();
+    registerConnectionCommands(context, outputChannel, async () => []);
+
+    const stored = await host.handlers.get('dataLineageViz.updateDatabasePassword')!(entraEntry.id);
+
+    expect(stored).toBe(false);
+    expect(host.showInputBox).not.toHaveBeenCalled();
+    expect(secrets.store).not.toHaveBeenCalled();
+    expect(host.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(String(host.showWarningMessage.mock.calls[0][0])).toMatch(/"Cloud".*Microsoft Entra ID.*no password/i);
+  });
+});
+
+describe('connection list writes', () => {
+  const second = { ...valid, id: 'b0f3a1c2-0000-4000-8000-000000000002', name: 'Second' };
+
+  it('two concurrent upserts both survive', async () => {
+    host.deferWrites = true;
+
+    await Promise.all([upsertBuiltInConnection(valid as never), upsertBuiltInConnection(second as never)]);
+
+    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([valid.id, second.id]);
+  });
+
+  it('a delete issued alongside an upsert sees the upserted entry', async () => {
+    host.stored = [valid];
+    host.deferWrites = true;
+
+    await Promise.all([upsertBuiltInConnection(second as never), deleteBuiltInConnection(valid.id)]);
+
+    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([second.id]);
+  });
+
+  it('a failed write rejects its caller and the next write still runs', async () => {
+    host.failNextWrite = true;
+
+    const failed = upsertBuiltInConnection(valid as never);
+    const next = upsertBuiltInConnection(second as never);
+
+    await expect(failed).rejects.toThrow(/settings write failed/);
+    await expect(next).resolves.toBeUndefined();
+    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([second.id]);
   });
 });
 

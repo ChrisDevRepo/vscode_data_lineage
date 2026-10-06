@@ -189,7 +189,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const repair = isVisualPreview ? null : holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], presentResultStage);
+        const repair = isVisualPreview ? null : holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
         const authorization = sess.presentResultRepairDraft.getAuthorization();
         const held = sess.presentResultRepairDraft.get();
         if (held && authorization) rejection.hint = [
@@ -217,12 +217,18 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: `sections[] names label(s) not on file with no ${body}: ${quoteIds(textlessNewLabels)}.`,
-            hint: `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored; resend every field it carried, notes[] included.`,
+            hint: [
+              `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored.`,
+              presentResultRepairInstruction(authorization.fields, presentResultStage,
+                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes),
+            ].join(' '),
             issuePaths: ['sections'],
           }));
         }
         presentInput = mergePresentResultRepairPatch(held, patch, authorization);
-        const merged = MergedSectionsSchema.safeParse({ sections: presentInput.sections });
+        const merged = presentInput.sections === undefined && retainableSections
+          ? { success: true as const }
+          : MergedSectionsSchema.safeParse({ sections: presentInput.sections });
         if (!merged.success) {
           const owed = new Set<string>(['sections', ...authorization.fields.filter(field => presentInput[field] === undefined)]);
           const fields = PRESENT_RESULT_REPAIR_FIELDS.filter(field => owed.has(field));
@@ -233,7 +239,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           sess.presentResultRepairDraft.hold(presentInput, { fields, ...(sectionTextLeaves ? { sectionTextLeaves } : {}) });
           return reject(rejectionFromZodError(merged.error, {
             code: REJECTION_CODES.validation,
-            hint: presentResultRepairInstruction(fields, isVisualPreview ? 'visual_preview' : 'synthesis', sectionsHeld, undefined, sectionTextLeaves),
+            hint: presentResultRepairInstruction(fields, presentResultStage, sectionsHeld, undefined, sectionTextLeaves),
           }));
         }
       } else if (isVisualPreview) {
@@ -290,6 +296,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
       const graphSource = resultGraph.source;
       const modelNodeMap = getModelNodeMap(model);
+      // A completed-phase graph edit changes the rendered view, so its ids and edges commit with it.
+      let graphEdited = false;
 
       const canonicalNodeId = (id: string, field: string): string => {
         const resolved = resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ?? id;
@@ -351,6 +359,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         resolvedEdges = model.edges
           .filter(e => newSet.has(e.source) && newSet.has(e.target))
           .map(e => [e.source, e.target, edgeApiType(e.type, modelNodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
+        graphEdited = true;
       }
 
       if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
@@ -366,6 +375,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
         resolvedEdges = pruned.edges;
+        graphEdited = true;
       }
 
       if (resultGraph.originNodeId) {
@@ -393,7 +403,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: `sections[] asks to keep text for ${quoteIds(retained.unknownLabels)}, which the committed report has no body for.`,
-            hint: 'Send that section with its own text, or use a label from the committed report to keep its text.',
+            hint: `Send that section with its own text, or use a label from the committed report: ${quoteIds(retainableSections.map(sec => sec.label))}.`,
             issuePaths: ['sections'],
           }));
         }
@@ -482,8 +492,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       s.logger.info(
-        `[Presentation] Output assembled — title="${trunc(presentInput.title ?? '(none)', 60)}" sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
+        `[Presentation] Output assembled — sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
       );
+      s.logger.debug(`[Presentation] Output assembled title="${trunc(presentInput.title ?? '(none)', 60)}"`);
 
       const externalViolations: PresentResultViolation[] = [...malformedEvidence];
       const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
@@ -494,8 +505,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes)}.`,
             'For each one: add its id to a sections[].node_ids, or give it one grounded notes[] entry. Tables carry the traced column even when they have no detail slot.',
           ],
-          repairFields: ['sections', 'highlight_groups', 'notes'],
-          paths: ['sections', 'highlight_groups', 'notes'],
+          repairFields: ['sections', 'notes'],
+          paths: ['sections', 'notes'],
           entryIds: uncoveredCtNodes,
         });
       }
@@ -534,7 +545,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
         return 'out_of_scope';
       };
-      const validation = validatePresentResult(renderInput, resolvedNodeIds, assembledBadges, assembledDescription, isAmendment, externalViolations, presentResultStage, nodeIdState);
+      const validation = validatePresentResult(renderInput, resolvedNodeIds, assembledBadges, assembledDescription, externalViolations, presentResultStage, nodeIdState);
 
       if (!validation.success) {
         if (validation.repairable) {
@@ -585,13 +596,19 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       };
 
       let autoDispatched = false;
+      let previewFailure: 'preview_post_failed' | 'preview_dispatch' | null = null;
       try {
-        autoDispatched = await s.deliverPreview(
+        const delivery = await s.deliverPreview(
           { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
         );
+        autoDispatched = delivery === 'delivered';
+        if (delivery === 'post_failed') {
+          s.logger.warn('AI preview post failed');
+          previewFailure = 'preview_post_failed';
+        }
       } catch (error) {
         s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
-        sess.markSynthesisRenderDegraded('preview_dispatch');
+        previewFailure = 'preview_dispatch';
       }
 
       const repeatedSuccess = sess.presentResultCalledThisTurn;
@@ -602,7 +619,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           hint: 'The result was not committed because the turn no longer owns this session.',
         }), rawInput);
       }
-      if (isAmendment) {
+      // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.
+      if (previewFailure) sess.markSynthesisRenderDegraded(previewFailure);
+      else sess.clearPreviewDeliveryDegraded();
+      if (isAmendment || graphEdited) {
         resultGraph.nodeIds = resolvedNodeIds;
         resultGraph.edges = resolvedEdges;
       }
@@ -623,7 +643,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         s.logger.debug(`[Presentation] repeated present_result in one turn (success #${sess.presentResultAttemptCountThisTurn}) — single-shot guard may have regressed`);
       }
 
-      s.logger.info(`AI view "${validation.name}" displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
+      s.logger.debug(`AI view name="${trunc(validation.name, 60)}"`);
+      s.logger.info(`AI view displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('lineage_present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
     } catch (err) { return s.toolError('present_result', err); }
 }
@@ -638,7 +659,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
  * @returns The leaves, or `undefined` when no issue addresses an indexed section, so the caller
  * holds a fields-only repair instead of an indexless/NaN leaf.
  */
-export function sectionTextLeavesFromIssues(
+function sectionTextLeavesFromIssues(
   issues: readonly { readonly path: readonly PropertyKey[] }[],
 ): Array<{ index: number; fields: Array<'label' | 'text'> }> | undefined {
   const byIndex = new Map<number, Set<'label' | 'text'>>();

@@ -357,8 +357,19 @@ export async function runAddConnectionFlow(
   }
 }
 
-async function pickConnection(placeholder: string, filter?: (c: BuiltInConnection) => boolean): Promise<BuiltInConnection | undefined> {
-  const connections = readBuiltInConnections().filter(filter ?? (() => true));
+/** Narrows the connections a command accepts; `refusal` explains why a connection named by id is not one. */
+interface ConnectionFilter {
+  accepts: (connection: BuiltInConnection) => boolean;
+  refusal: (connection: BuiltInConnection) => string;
+}
+
+const SQL_LOGIN_ONLY: ConnectionFilter = {
+  accepts: (c) => c.authenticationType === 'sqlLogin',
+  refusal: (c) => `"${c.name}" signs in with Microsoft Entra ID, which uses no password. Only SQL login connections have a saved password.`,
+};
+
+async function pickConnection(placeholder: string, filter?: ConnectionFilter): Promise<BuiltInConnection | undefined> {
+  const connections = readBuiltInConnections().filter((c) => filter?.accepts(c) ?? true);
   if (connections.length === 0) {
     void vscode.window.showInformationMessage('No matching built-in database connections. Use "Data Lineage: Add Database Connection" first.');
     return undefined;
@@ -375,10 +386,16 @@ async function pickConnection(placeholder: string, filter?: (c: BuiltInConnectio
   return picked?.connection;
 }
 
-function connectionFromArg(arg: unknown, placeholder: string, filter?: (c: BuiltInConnection) => boolean): Promise<BuiltInConnection | undefined> {
+/** The connection an argument names by id, or the one picked; a named connection the filter rejects is refused with a warning. */
+function connectionFromArg(arg: unknown, placeholder: string, filter?: ConnectionFilter): Promise<BuiltInConnection | undefined> {
   const id = typeof arg === 'string' ? arg : (arg as { id?: unknown } | undefined)?.id;
-  if (typeof id === 'string') return Promise.resolve(readBuiltInConnections().find((c) => c.id === id));
-  return pickConnection(placeholder, filter);
+  if (typeof id !== 'string') return pickConnection(placeholder, filter);
+  const named = readBuiltInConnections().find((c) => c.id === id);
+  if (named && filter && !filter.accepts(named)) {
+    void vscode.window.showWarningMessage(filter.refusal(named));
+    return Promise.resolve(undefined);
+  }
+  return Promise.resolve(named);
 }
 
 /**
@@ -392,7 +409,8 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: (c: Built
  * Replacing an existing id that changes server, port, user or authentication type drops its saved
  * password unless a new one is supplied. `removeDatabaseConnection` always asks for confirmation.
  * The other commands take an optional connection id and otherwise show a picker; edit returns the
- * saved id and update-password returns whether a password was stored.
+ * saved id and update-password returns whether a password was stored. Update-password lists and
+ * accepts only SQL login connections; an Entra ID connection named by id is refused with a warning.
  */
 export function registerConnectionCommands(
   context: vscode.ExtensionContext,
@@ -443,7 +461,7 @@ export function registerConnectionCommands(
     }),
 
     vscode.commands.registerCommand('dataLineageViz.updateDatabasePassword', async (arg?: unknown): Promise<boolean> => {
-      const target = await connectionFromArg(arg, 'Select a connection', (c) => c.authenticationType === 'sqlLogin');
+      const target = await connectionFromArg(arg, 'Select a connection', SQL_LOGIN_ONLY);
       if (!target) return false;
       const password = await vscode.window.showInputBox({
         title: `New password for ${target.name}`,

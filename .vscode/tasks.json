@@ -12,9 +12,23 @@
     },
     {
       "type": "npm",
+      "script": "build:webview",
+      "problemMatcher": []
+    },
+    {
+      "type": "npm",
       "script": "watch",
       "isBackground": true,
-      "problemMatcher": ["$tsc-watch"]
+      "dependsOn": ["npm: build:webview"],
+      "problemMatcher": {
+        "owner": "esbuild",
+        "pattern": { "regexp": "^✘ \\[ERROR\\] (.*)$", "message": 1 },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^> data-lineage-viz@",
+          "endsPattern": "^Watching for extension changes"
+        }
+      }
     },
     {
       "type": "npm",

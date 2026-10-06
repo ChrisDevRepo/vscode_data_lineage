@@ -99,4 +99,82 @@ describe("tool-error-envelope", () => {
     });
   });
 
+  describe('rejectionFromZodError: a present value outside its enum', () => {
+    const flowSchema = z.object({
+      verdict: z.enum(['pass', 'fail']),
+      flow: z.array(z.object({ out: z.literal('Qty'), src: z.string() }).strict()).optional(),
+      pair: z.array(z.object({ out: z.enum(['a', 'b']) }).strict()).min(2).optional(),
+    }).strict();
+    const rejectionFor = (payload: unknown) => {
+      const result = flowSchema.safeParse(payload);
+      expect(result.success, 'the payload violates an enum').toBe(false);
+      if (result.success) throw new Error('unreachable');
+      return rejectionFromZodError(result.error, { code: 'invalid_input', input: payload, schema: flowSchema });
+    };
+
+    it('an entry inside an optional array names the allowed value and both repairs', () => {
+      const rejection = rejectionFor({ verdict: 'pass', flow: [{ out: 'Qty', src: 'x' }, { out: 'Other', src: 'y' }, { out: 'More', src: 'z' }] });
+      expect(rejection.hint).toContain('Set "flow[].out" to one of "Qty", or remove the entry from "flow".');
+      expect(rejection.hint, 'the generic resend rule still closes the hint').toContain('Resend the full tool call');
+    });
+
+    it('a top-level required enum field names the allowed values and only the set repair', () => {
+      const rejection = rejectionFor({ verdict: 'maybe' });
+      expect(rejection.hint).toContain('Set "verdict" to one of "pass", "fail".');
+      expect(rejection.hint).not.toContain('remove the entry');
+    });
+
+    it('an entry the array minimum forbids dropping is offered the set repair only', () => {
+      const rejection = rejectionFor({ verdict: 'pass', pair: [{ out: 'a' }, { out: 'z' }] });
+      expect(rejection.hint).toContain('Set "pair[].out" to one of "a", "b".');
+      expect(rejection.hint).not.toContain('remove the entry');
+    });
+
+    it('flagged entries that cannot all be dropped within the array minimum are offered the set repair only', () => {
+      const rejection = rejectionFor({ verdict: 'pass', pair: [{ out: 'a' }, { out: 'y' }, { out: 'z' }] });
+      expect(rejection.hint).toContain('Set "pair[].out" to one of "a", "b".');
+      expect(rejection.hint).not.toContain('remove the entry');
+    });
+
+    it('a nullable array at its minimum is offered the set repair only', () => {
+      const schema = z.object({ pair: z.array(z.object({ out: z.enum(['a', 'b']) }).strict()).min(2).nullable() }).strict();
+      const payload = { pair: [{ out: 'a' }, { out: 'z' }] };
+      const result = schema.safeParse(payload);
+      if (result.success) throw new Error('the payload violates an enum');
+      const rejection = rejectionFromZodError(result.error, { code: 'invalid_input', input: payload, schema });
+      expect(rejection.hint).toContain('Set "pair[].out" to one of "a", "b".');
+      expect(rejection.hint).not.toContain('remove the entry');
+    });
+
+    it('the first and the repeated rejection of the same call carry the identical hint', () => {
+      const payload = { verdict: 'pass', flow: [{ out: 'Other', src: 'y' }] };
+      expect(rejectionFor(payload).hint).toBe(rejectionFor(structuredClone(payload)).hint);
+    });
+
+    it('the allowed values are stated once: in the hint, not again in the reason line', () => {
+      const rejection = rejectionFor({ verdict: 'pass', flow: [{ out: 'Qty', src: 'x' }, { out: 'Other', src: 'y' }, { out: 'More', src: 'z' }] });
+      expect(rejection.reason).toContain('at flow[1].out');
+      expect(rejection.reason, 'the second offending entry is still named').toContain('flow[2].out');
+      expect(rejection.reason, 'the reason names the defect without the values').not.toContain('"Qty"');
+      expect(rejection.hint).toContain('one of "Qty"');
+      const enumRejection = rejectionFor({ verdict: 'maybe' });
+      expect(enumRejection.reason).not.toMatch(/"pass"|"fail"/);
+      expect(enumRejection.hint).toContain('one of "pass", "fail"');
+    });
+
+    it('a caller-supplied hint leaves the allowed values in the reason', () => {
+      const payload = { verdict: 'maybe' };
+      const result = flowSchema.safeParse(payload);
+      if (result.success) throw new Error('the payload violates an enum');
+      const rejection = rejectionFromZodError(result.error, { code: 'invalid_input', input: payload, schema: flowSchema, hint: 'Own hint.' });
+      expect(rejection.reason).toContain('"pass"');
+      expect(rejection.reason).toContain('"fail"');
+    });
+
+    it('an absent enum field keeps the addition hint, not the value hint', () => {
+      const rejection = rejectionFor({});
+      expect(rejection.hint).not.toContain('Set "verdict"');
+    });
+  });
+
 });

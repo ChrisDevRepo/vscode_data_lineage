@@ -11,9 +11,16 @@ SQL-body dependencies are extracted by a multi-pass regex engine driven by metad
 
 ## Parsing pipeline
 
-The parser removes comments and neutralises string literals, applies YAML
-rules in priority order, normalises captures, and resolves references against
-the loaded catalog. Bracketed identifiers and escaped brackets are preserved.
+The parser removes comments and neutralises string literals, removes
+whitespace around the period of a multipart name (`dbo . T` reads as `dbo.T`),
+reads the `FROM` of `IS [NOT] DISTINCT FROM` and of `TRIM(... FROM ...)` as an
+operand separator instead of a FROM clause, takes `TOP (expression) [PERCENT]`
+out of `INSERT`, `UPDATE` and `MERGE` so the target follows the keyword,
+removes the column list and `WITH` options of `CREATE [EXTERNAL] TABLE ... AS SELECT`
+so the name stands directly before `AS`,
+applies YAML rules in priority order, normalises captures, and resolves
+references against the loaded catalog. Bracketed identifiers and escaped
+brackets are preserved.
 File and URL rules inspect raw SQL because their values occur in string literals.
 
 ## Rule schema
@@ -47,6 +54,25 @@ CTAS-style targets, procedure calls, and file references from `OPENROWSET`,
 `COPY INTO`, and `BULK INSERT`. Read
 [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml) for the
 current names and regex bodies; that file is the source of truth.
+`tests/unit/parser/tsql-coverage-matrix.test.ts` states the expected reads,
+writes and calls for each supported T-SQL construct.
+
+`extract_update_alias_target` only anchors `UPDATE alias SET`; its
+match must contain that text and must not consume the statement, and capture
+group 1 is the alias. The parser
+binds the alias to the single top-level `FROM`/`JOIN` table of the same
+statement, or to a top-level `FROM`/`JOIN` derived table whose query names one
+table, however long the `SET` list is. A CTE name used as an
+`UPDATE` target, or as a `FROM`/`JOIN` table of that `UPDATE`, resolves before the rules run to the one table its
+query names: exactly one `FROM` at the query's own level holding one table reference (a derived
+table there is read the same way), followed through earlier CTEs of the same `WITH` list. A join
+list names one table when exactly one member is a table reference and every other member is a
+derived table that cannot be written through (`DISTINCT`, `GROUP BY` or a set operator at its own
+level). The rewrite applies only to the `UPDATE` that directly follows the `WITH` list. A CTE
+that joins two table references, a table function or a writable derived table, uses `APPLY` or a
+set operator, or names no single table leaves the write unresolved; a comma list is read as a join
+list. An
+`INSERT` or `MERGE` into a CTE yields no write target.
 
 Temp tables (`#local`, `##global`), table variables (`@name`), CTE names,
 and unqualified captures are not lineage nodes. Flow through a shared global
@@ -54,15 +80,49 @@ temp table therefore does not connect procedures in the graph.
 
 ### Known boundaries
 
-These constructs can lose references in SQL-body parsing. Native DACPAC or DMV
-metadata may still supply dependencies.
+These constructs can lose references in SQL-body parsing, or are left
+unresolved by design because only syntax and identifier normalisation are
+applied. Native DACPAC or DMV metadata may still supply dependencies.
 
 | Construct | Behaviour | Where it applies |
 |---|---|---|
 | `FREETEXTTABLE(dbo.T, ...)` / `CONTAINSTABLE(dbo.T, ...)` | the table is not captured | Where full-text table functions are available |
 | `OPENDATASOURCE(...)...` | nothing is captured, including the four-part table name | Where the SQL dialect supports this syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | neither table is captured | partition switching is DDL, not DML; no edge is modelled either way |
-| ANSI-89 comma list followed by `UNION`, `OPTION`, `PIVOT` or `TABLESAMPLE`, or containing a table variable | the whole list fails to normalise, so tables after the first are lost | legacy bodies on any platform |
+| ANSI-89 comma list whose member is followed by `TABLESAMPLE`, or that continues with a comma after a `JOIN ... ON` condition or an `APPLY` | the list ends at that member, so tables after it are lost (table-variable members are not tables) | legacy bodies on any platform |
+| `DELETE` / `TRUNCATE TABLE` | no write is captured; the table named after `FROM` is read as a source, and `DELETE dbo.T` without `FROM` names nothing | by design: model building marks catalog-backed delete-only writes |
+| `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d` | `dbo.T` is read as a source; the delete-only write is not marked because the statement names only the CTE | any platform with CTEs |
+| Schema-less `EXEC uspA`, `FROM T`, `db..T` | not captured; only schema-qualified names resolve | by design: the parser does not choose a schema |
+| `EXEC db.schema.proc` / `EXEC server.db.schema.proc` | the cross-database call is not captured; the parse result has cross-database reads and writes but no cross-database call | SQL Server, Azure SQL Managed Instance |
+| `alias.method(...)` on an xml, spatial or hierarchyid column, such as `x.value(...)` or `g.STDistance(...)` | captured as a two-part reference that becomes an edge only if the catalog holds that schema-qualified object | by design: the text does not distinguish `column.method()` from `schema.function()` |
+| `UPDATE alias SET` where the alias names a derived table or CTE that joins more than one writable member (two tables, a table function, a derived table without `DISTINCT`, `GROUP BY` or a set operator), uses `APPLY` or a set operator, or names no single table, or is declared inside a parenthesised joined table | the write is not captured; the parser does not choose among the tables | any platform |
+| A body with an unbalanced parenthesis | the CTAS pass and the `UPDATE alias` binding stop at the open parenthesis, so a CTAS target or aliased write after it is not captured | malformed text only: a body the database compiled always balances |
+
+### Out of scope
+
+Lineage covers five object kinds: table, view, function, stored procedure and
+external object (external table, external file, cross-database reference). Every
+other kind is not loaded: no node, no edge, no warning. Built-in and
+function-style features, types, column methods and variables are not database
+objects and are ignored. Supported platforms are SQL Server, Azure SQL, Fabric
+Data Warehouse and Synapse Dedicated SQL Pool.
+
+| Item | Behaviour | Reason |
+|---|---|---|
+| Triggers, DML and DDL | not loaded; the catalog query lists only the types `U`, `V`, `P`, `FN`, `IF`, `TF`, `ET` and the DACPAC reader tracks only table, view, procedure, function and external-table elements | not an object kind of the lineage |
+| Synonyms | not loaded; a reference through a synonym is captured as a two-part name, no catalog object carries it, and it resolves to nothing | not an object kind of the lineage |
+| CLR procedures, functions and aggregates; extended stored procedures | not loaded from a live database; the types `PC`, `FS`, `FT`, `AF`, `X` are outside the catalog query | not an object kind of the lineage |
+| Numbered procedures `proc;2` | the group number is dropped: `EXEC dbo.p;2` reads as a call to `dbo.p`; the groups are not told apart | not an object kind of the lineage |
+| Sequences, user-defined types, table types, XML schema collections, rules, defaults | not loaded; `NEXT VALUE FOR dbo.Seq` and `DECLARE @t dbo.TableType` add no edge; the `dependencies` query keeps only `referenced_class = 1`, so a dependency row on a type or XML schema collection is filtered | not an object kind of the lineage |
+| A stored procedure whose definition is not readable (`WITH ENCRYPTION`, or no `VIEW DEFINITION` permission) | loaded as a node without edges and marked with a warning; its catalog dependencies carry no read or write direction without the body, so none is drawn | no body to parse |
+| `VECTOR_SEARCH`, `VECTOR_DISTANCE`, the `vector` type | ignored; the other tables of the statement are read normally, but the table named in `VECTOR_SEARCH(TABLE = ...)` is not read | functions and a type, not objects |
+| `OPENJSON`, `JSON_VALUE`, `FOR JSON`, `FOR XML`, `OPENXML`, `STRING_SPLIT` | ignored; the tables around them are read normally; xml methods follow the `alias.method(...)` row above | functions and clauses, not objects |
+| SQL Graph: `MATCH`, `SHORTEST_PATH`, `$node_id`, `$from_id` and the other node and edge pseudo-columns | the graph semantics are not interpreted; node and edge tables are ordinary tables, and their `FROM` references are read as such; a `FOR PATH` member of a comma list falls under the comma-list boundary | graph semantics are not lineage |
+| `PREDICT(MODEL = ..., DATA = dbo.T AS d)` | the table after `DATA =` is not read; a table named in a subquery inside the call is | a function, not an object |
+| `READTEXT`, `WRITETEXT`, `UPDATETEXT` | the `dbo.T.col` operand names no table | deprecated statements |
+| Four-part name `server.db.schema.object` | the server part is dropped; the reference is the cross-database `db.schema.object`, in a read or a write; the `EXEC` form is in the table above | the remote server is not introspected |
+| Synapse serverless SQL pool syntax, such as `OPENROWSET(...) AS r` with `r.filepath()` | not covered | not a supported platform |
+| Babelfish syntax, such as `pg_catalog.varchar` | not covered | not a supported platform |
 
 ## XML fallback direction
 

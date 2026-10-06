@@ -4,6 +4,7 @@
 // reported document.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import DOMPurify from 'dompurify';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { renderAiMarkdown } from '../../../src/components/markdown/renderAiMarkdown';
 
@@ -129,6 +130,12 @@ describe('renderAiMarkdown — links and sanitization', () => {
     const host = render('## 1 Sales\n\n<img id="vscode" src="x">');
     expect(host.querySelector('h2')?.id).toBe('ln-ai-sec-1');
     expect(host.querySelector('img')?.getAttribute('id') ?? null).toBeNull();
+  });
+
+  it('configures a private sanitizer, leaving the shared DOMPurify instance untouched', () => {
+    render('## 1 Sales');
+    expect(DOMPurify.sanitize('<p id="kept" name="kept">x</p>')).toBe('<p id="kept" name="kept">x</p>');
+    expect(render('## 1 Sales').querySelector('h2')?.id, 'the renderer still keeps its section ids').toBe('ln-ai-sec-1');
   });
 });
 

@@ -13,7 +13,8 @@
 
 import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';
-import { traceNodeWithLevels } from '../../../src/engine/graphBuilder';
+import { buildGraphologyGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
+import type { DatabaseModel } from '../../../src/engine/types';
 import {
   bfsDepthMap,
   bfsReachable,
@@ -117,10 +118,6 @@ describe('traceNodeWithLevels — depth boundary', () => {
     [4, ['A', 'B', 'C', 'D']],
   ])('admits exactly the nodes within %i downstream hops', (level, expected) => {
     expect(traced(chain(), 'A', 0, level)).toEqual(expected);
-  });
-
-  it('returns the origin alone when both caps are zero', () => {
-    expect(traced(chain(), 'B', 0, 0)).toEqual(['B']);
   });
 
   it('follows both arms of an asymmetric diamond to the convergence node', () => {
@@ -246,5 +243,76 @@ describe('analyzeRemoval — cycles', () => {
 
   it('terminates on a two-node cycle and cuts nothing beyond the removed node', () => {
     expect( analyzeRemoval(twoCycle(), {originId:'A',scope:new Set(twoCycle().nodes()),removedBefore:NONE,removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds).toEqual([]);
+  });
+});
+
+const sorted = (ids: Iterable<string>) => [...ids].sort();
+
+describe('traceNodeWithLevels — direction and cap semantics', () => {
+  const fan = () => makeGraph(['P', 'X', 'S', 'S2', 'K', 'Q'].map(id => ({ id })),
+    [['P', 'X'], ['P', 'S'], ['S', 'S2'], ['X', 'K'], ['Q', 'K']]);
+
+  it('never admits a sibling reached up-then-down in a both-direction trace', () => {
+    const ids = traceNodeWithLevels(fan(), 'X', Infinity, Infinity).nodeIds;
+    expect(sorted(ids)).toEqual(['K', 'P', 'X']);
+  });
+
+  it('never admits a co-parent reached down-then-up in a both-direction trace', () => {
+    expect(traceNodeWithLevels(fan(), 'X', 5, 5).nodeIds.has('Q')).toBe(false);
+  });
+
+  it('closes a side whose cap is zero, negative or NaN', () => {
+    for (const closed of [0, -1, Number.NaN]) {
+      expect(sorted(traceNodeWithLevels(fan(), 'X', closed, closed).nodeIds)).toEqual(['X']);
+    }
+  });
+
+  it('treats the settings maximum (99) as the uncapped trace on a graph shallower than 99', () => {
+    const graph = fan();
+    expect(sorted(traceNodeWithLevels(graph, 'P', 99, 99).nodeIds))
+      .toEqual(sorted(traceNodeWithLevels(graph, 'P', Infinity, Infinity).nodeIds));
+  });
+
+  it('returns ids in a stable order across repeated runs', () => {
+    const graph = fan();
+    const first = traceNodeWithLevels(graph, 'X', 3, 3);
+    for (let i = 0; i < 5; i++) {
+      const next = traceNodeWithLevels(graph, 'X', 3, 3);
+      expect([...next.nodeIds]).toEqual([...first.nodeIds]);
+      expect([...next.edgeIds]).toEqual([...first.edgeIds]);
+    }
+  });
+});
+
+describe('buildGraphologyGraph — identity and malformed input', () => {
+  const node = (id: string) => ({ id, name: id, schema: 'dbo', fullName: id, type: 'table' as const });
+  const model = (ids: string[], edges: [string, string][], caseSensitive = false): DatabaseModel => ({
+    nodes: ids.map(node),
+    edges: edges.map(([source, target]) => ({ source, target, type: 'body' as const })),
+    schemas: [],
+    parseStats: { parsedRefs: 0, resolvedEdges: 0, droppedRefs: [] },
+    ...(caseSensitive && { identifierCaseSensitive: true }),
+  } as unknown as DatabaseModel);
+
+  it('keeps ids that differ only by case distinct under a case-sensitive model', () => {
+    const graph = buildGraphologyGraph(model(['[dbo].[A]', '[dbo].[a]', '[dbo].[V]'], [['[dbo].[A]', '[dbo].[V]']], true));
+    expect(sorted(traceNodeWithLevels(graph, '[dbo].[V]', Infinity, 0).nodeIds)).toEqual(['[dbo].[A]', '[dbo].[V]']);
+    expect(sorted(traceNodeWithLevels(graph, '[dbo].[a]', Infinity, Infinity).nodeIds)).toEqual(['[dbo].[a]']);
+  });
+
+  it('does not resolve an origin by case — the caller passes the canonical id', () => {
+    const graph = buildGraphologyGraph(model(['[dbo].[a]'], []));
+    expect(traceNodeWithLevels(graph, '[dbo].[A]', 1, 1).nodeIds.size).toBe(0);
+  });
+
+  it('drops an edge whose endpoint is not a node and collapses a repeated edge', () => {
+    const graph = buildGraphologyGraph(model(['A', 'B'], [['A', 'B'], ['A', 'B'], ['A', 'missing'], ['missing', 'B']]));
+    expect(graph.edges()).toEqual(['A→B']);
+  });
+
+  it('keeps the first of two nodes with the same id', () => {
+    const graph = buildGraphologyGraph({ ...model(['A'], []), nodes: [{ ...node('A'), name: 'first' }, { ...node('A'), name: 'second' }] } as DatabaseModel);
+    expect(graph.order).toBe(1);
+    expect(graph.getNodeAttribute('A', 'name')).toBe('first');
   });
 });

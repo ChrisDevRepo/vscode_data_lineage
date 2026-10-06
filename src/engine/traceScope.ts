@@ -10,7 +10,7 @@ import type Graph from 'graphology';
 import type { DatabaseModel, LineageEdge, TraceState } from './types';
 import { bfsFromNode } from 'graphology-traversal';
 import { buildGraphologyGraph } from './graphBuilder';
-import { analyzeRemoval, type RemovalSide } from './graphGuards';
+import { analyzeRemoval, bfsReachable, type RemovalSide } from './graphGuards';
 
 /**
  * Whether a trace mode permits manual add/prune edits.
@@ -220,7 +220,9 @@ export function traceRemovalSides(upstreamLevels: number, downstreamLevels: numb
  * The clicked node is the current self-prune candidate. Other visible nodes have no committed
  * AI analysis, so the trace supplies no visited anchors. Surviving directed joins stop the open
  * cut. Both preview and application must supply the same effective trace levels through
- * {@link traceRemovalSides}; the origin is always protected.
+ * {@link traceRemovalSides}; the origin is always protected. A visible node outside the directed
+ * legs (a manually added neighbour) that this removal leaves with no visible link to the origin
+ * leaves too, so the trace stays connected; a node already unlinked before the removal is kept.
  *
  * @param graph - Full directed model graph; traversal is restricted to the visible scope.
  * @param originNodeId - Protected trace origin.
@@ -244,5 +246,9 @@ export function canPruneTraceNode(
     removedAfter: new Set([candidateNodeId]), currentNodeId: candidateNodeId, visited: new Set(), sides,
   });
   if (analysis.rejection) return { safe: false, reason: analysis.rejection === 'origin' ? 'origin' : 'not-visible' };
-  return { safe: true, cutNodeIds: analysis.cutIds };
+  const leaving = new Set([candidateNodeId, ...analysis.cutIds]);
+  const linkedBefore = bfsReachable(graph, originNodeId, new Set(), undefined, visibleNodeIds);
+  const linkedAfter = bfsReachable(graph, originNodeId, leaving, undefined, visibleNodeIds);
+  const stranded = [...linkedBefore].filter(id => !leaving.has(id) && !linkedAfter.has(id));
+  return { safe: true, cutNodeIds: [...analysis.cutIds, ...stranded] };
 }

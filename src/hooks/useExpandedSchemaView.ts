@@ -56,6 +56,15 @@ export function useExpandedSchemaView({
   );
   const expandedSchemaKey = expandedSchemaNames.join('\u0000');
 
+  /**
+   * The projected expanded-schema graph, or null when there is none to show.
+   *
+   * @remarks
+   * The render limit is checked here, in the layer that owns the projection, because expanded
+   * schemas can arrive without passing `applyExpandedSchemaViewSchemas`: a restored view or bookmark
+   * whose graph grew, or whose limit shrank, since it was saved. Over the limit nothing is projected,
+   * so the webview never lays out an oversized graph and shows the render-limit notice instead.
+   */
   const expandedSchemaViewGraph = useMemo(() => {
     if (graphMode !== 'overview' || !expandedSchemaView || !graph) return null;
     const projectedCount = countExpandedSchemaViewRenderedNodes(

@@ -12,6 +12,8 @@ npm run test:participant-turn
 npx vscode-test --label kill-switch
 ```
 
+On Linux without a desktop session, prefix each command with `xvfb-run -a`; see [Test Environments](testing/ENVIRONMENTS.md#linux-without-a-desktop-session).
+
 `npm run test:edh` builds the extension and webview, compiles the integration tests, and runs all configured lanes. Run one lane at a time because lanes share the build output and VS Code test profile.
 
 | Lane | What it verifies |
@@ -42,6 +44,7 @@ npm run pretest:integration
 npx vscode-test --config .vscode-test.chat-ui.mjs
 npx vscode-test --config .vscode-test.chat-ui.mjs --label live
 npx vscode-test --config .vscode-test.chat-ui.mjs --label badge
+npx vscode-test --config .vscode-test.chat-ui.mjs --label column
 ```
 
 Both lanes check Approve & Proceed, Change scope and Cancel, typed `approve`, typed scope changes and typed `no`, `stop` and `no stop`. Cancel must discard the plan without a hop; stale approval must be ignored. A scope change must produce a reviewable revision without starting analysis. The fixture lane also checks that an unrelated typed question receives an answer while preserving the proposal. Buttons may show their short action labels; internal routing instructions and confirmation status prose must not appear in chat.
@@ -53,6 +56,8 @@ The default fixture lane checks the real native chat input and plan lifecycle wi
 The live report scenario selects the contributed model in the actual picker, submits the original question, clicks preview and Run trace, and verifies no hop before consent. If the proposed classification is not already both business and technical, Change scope requests that classification while preserving the original depth. Assertions check all upstream levels, one downstream level, both classifications and the eight-node scope before Approve & Proceed starts analysis. The separate action matrix covers typed approval, scope changes and cancellation.
 
 The live lane clicks the actual next-question badge and checks short question bullets, no heading, the invitation to choose a question, one tool-free model call, and unchanged completed analysis. The faster `--label badge` lane replays a previously successful public AdventureWorks AI analysis for setup, then clicks the real badge and makes one live suggestion call. It proves badge submission and the newly generated suggestion, not fresh exploration or synthesis. Missing successful replay evidence fails setup.
+
+The `--label column` lane (also part of `--label live`) sends `@lineage /trace [ai].[PriceMaster].[ListPrice] — trace this column back to its original sources.` through the same input path, approves the plan, then opens the report with the real **Show full description** follow-up. It reads the rendered DOM: the Column Chain lists the value input `CostPrice` and has no source row from `[ai].[CurrencyConfig]`, which `spRefreshPrices` only joins and filters on; that object is still named in the report. Rendering must not break: no literal code fence in the text, no ordered list restarting above 1, and every SQL fence of the assembled description on its own line. Assertions are structural and model-agnostic; the report and a screenshot go to `tmp/chat-ui/live/column-report.txt` and `column-trace.png`.
 
 Formula verification runs separately through headless production AI with the same public DACPAC, model and original question. Inspect the generated Markdown and fresh NDJSON for contextual prose around substantive formula groups, or short explanatory descriptions alongside formulas in tables, and the absence of formula-only headings or subsections. This establishes generated-content behavior; it does not establish rendered webview layout. These are dataset-specific acceptance observations; one run is not a universal latency or model-quality guarantee.
 

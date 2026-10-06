@@ -244,11 +244,8 @@ export interface ToolAttemptResult {
    * (text, every tool call, provider parts) followed by one `ToolMessage` per call in call order, or
    * — when the generation carried no tool call — the model's own text `AIMessage` followed by one
    * `HumanMessage` correction. Empty when the generation itself was cancelled, errored, or
-   * output-limited before any call dispatched. A cancel mid-batch (one dispatched call cancels while
-   * a later call in the same batch is still pending) instead carries the `AIMessage` plus every
-   * `ToolMessage` committed before the cancel point — `stop: 'cancelled'` regardless, and the caller
-   * discards the whole attempt state on that outcome, so the partial delta never joins the phase
-   * transcript.
+   * output-limited before any call dispatched. Empty on any
+   * cancellation, including a cancel between two calls of one batch.
    */
   readonly messages: readonly ModelMessage[];
   /** Model prose emitted by this generation. */
@@ -947,7 +944,8 @@ interface ToolCallDispatchLoopResult {
  * batch and does not survive past the return. Every call, dispatched or synthetically closed,
  * appends exactly one {@link ModelMessage} `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages},
  * so the caller's one leading `AIMessage` always pairs with the same number of tool results as it
- * has tool calls.
+ * has tool calls. A cancellation is the one exit that leaves later siblings unanswered; the caller
+ * then appends no message group at all.
  *
  * @returns The batch's calls, observations, rejections, tool-result messages and terminal-control
  *   signals; never a provider transcript.
@@ -1126,6 +1124,8 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
  * dispatches the returned tool calls against gate/reroute/phase-completion detection. Every dispatched
  * generation appends its own transcript delta — the model's own `AIMessage` plus its `ToolMessage`s,
  * or its text `AIMessage` plus a `HumanMessage` correction — to {@link ToolAttemptResult.messages}.
+ * A cancelled attempt appends none: its batch may be partly answered, and the turn ends without
+ * another send.
  *
  * @param model - Request-scoped model port; must record exactly one provider call.
  * @param input - Turn context: message history, registry, tool choice, and phase/gate detectors.
@@ -1133,7 +1133,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
  * @throws When the model port violates the single-generation contract by recording more or fewer
  *   than one provider call for this attempt.
  */
-export async function executeToolGenerationAttempt(
+async function executeToolGenerationAttempt(
   model: SingleGenerationModelPort,
   input: ToolGenerationAttemptInput,
 ): Promise<ToolAttemptResult> {
@@ -1202,7 +1202,7 @@ export async function executeToolGenerationAttempt(
   const { calls, observations, gate, reroute, refusal, phaseComplete, cancelled, toolMessages } = batch;
   const rejections = batch.rejections;
   const messages: ModelMessage[] = [];
-  if (generated.toolCalls.length > 0) {
+  if (generated.toolCalls.length > 0 && !cancelled) {
     messages.push(generated.message, ...toolMessages);
   }
 

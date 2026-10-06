@@ -56,18 +56,26 @@ function fakeSession(kind: string) {
   };
 }
 
-async function requestStatsTwice(isDbSession = true): Promise<void> {
+function makeOutputChannel() {
+  return { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
+}
+
+async function requestStatsTwice(
+  isDbSession = true,
+  outputChannel = makeOutputChannel(),
+  settings: Record<string, unknown> = {},
+): Promise<() => Promise<void>> {
   const host = {
     postMessage: vi.fn().mockResolvedValue(true),
     log: vi.fn(),
     getExtensionUri: () => 'ext',
-    getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }),
+    getConfiguration: () => ({ get: (key: string, fallback: unknown) => (key in settings ? settings[key] : fallback) }),
   } as unknown as BridgeHost;
-  const { handlers } = createMessageHandlers(
+  const { handlers, cleanup } = createMessageHandlers(
     host,
     { globalState: { get: vi.fn(), update: vi.fn() }, secrets: {} } as never,
     () => ({ isDbSession }) as never,
-    { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() } as never,
+    outputChannel as never,
     () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
     vi.fn(),
     vi.fn(),
@@ -78,6 +86,7 @@ async function requestStatsTwice(isDbSession = true): Promise<void> {
   for (let i = 0; i < 2; i++) {
     await detailPanelListener!({ type: 'table-stats-request', schema: 'dbo', objectName: 'Orders', mode: 'quick', columns: [] });
   }
+  return cleanup;
 }
 
 describe('table statistics connection lifetime', () => {
@@ -104,6 +113,37 @@ describe('table statistics connection lifetime', () => {
 
     expect(connectDatabase).toHaveBeenCalledTimes(1);
     expect(session.dispose).not.toHaveBeenCalled();
+  });
+
+  it('disconnects the reused mssql-extension connection when the panel closes', async () => {
+    provider = 'mssqlExtension';
+    const session = fakeSession('mssqlExtension');
+    connectDatabase.mockResolvedValue(session);
+
+    const cleanup = await requestStatsTwice();
+    await cleanup();
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a failed profiling query', {}, (session: ReturnType<typeof fakeSession>) => session],
+    ['a table with no profileable columns', {}, (session: ReturnType<typeof fakeSession>) => {
+      session.executeSimpleQuery.mockResolvedValue({ rowCount: 1, columnInfo: [], rows: [[{ displayValue: '5', isNull: false }]] });
+      return session;
+    }],
+    ['profiling switched off', { 'tableStatistics.enabled': false }, (session: ReturnType<typeof fakeSession>) => session],
+  ] as const)('%s logs the object name at debug only', async (_case, settings, prepare) => {
+    provider = 'builtIn';
+    connectDatabase.mockImplementation(async () => prepare(fakeSession('builtIn')));
+    const channel = makeOutputChannel();
+
+    await requestStatsTwice(true, channel, settings);
+
+    const lines = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.map(([line]) => String(line));
+    expect(lines(channel.info).length).toBeGreaterThan(0);
+    expect(lines(channel.info).filter((line) => line.includes('Orders'))).toEqual([]);
+    expect(lines(channel.debug).some((line) => line.includes('dbo.Orders'))).toBe(true);
   });
 
   it('a request from a detail panel while a DACPAC model is loaded never connects', async () => {

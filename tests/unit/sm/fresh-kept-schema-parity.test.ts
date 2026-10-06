@@ -125,4 +125,14 @@ describe('fresh kept required-field projection', () => {
     expect(fresh.safeParse(complete).success).toBe(true);
     expect(wire(complete)).toBe(true);
   });
+
+  it.each(['bb', 'ct'] as const)('honours a held submission without a classification in %s', mode => {
+    const held = submitFindingsSchemaForMode(mode, undefined, false);
+    const fresh = submitFindingsSchemaForMode(mode, undefined, true);
+    expect(held).not.toBe(fresh);
+    expect(submitFindingsSchemaForMode(mode, undefined, false)).toBe(held);
+    const patch = { focus_node_id: 'source', verdict: 'analyze', ...(mode === 'ct' ? { column_flow: [] } : {}) };
+    expect(held.safeParse(patch).success).toBe(true);
+    expect(fresh.safeParse(patch).success).toBe(false);
+  });
 });

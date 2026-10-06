@@ -57,12 +57,12 @@ describe('source identifier policy in AI', () => {
     expect(reconciled.metadata.nodeVerdicts?.map(verdict => verdict.nodeId)).toEqual([upper, lower]);
   });
 
-  it.each([false, true])('routes both CS twins once and preserves them across checkpoint (restore=%s)', restore => {
+  it('routes both CS twins once and keeps them distinct', () => {
     const nodes = [upper, lower, origin].map(id => makeNode({ id, schema: 'dbo', name: id, type: 'view' }));
     const pairs: [string, string][] = [[upper, origin], [lower, origin]];
     const model = { ...makeModel(nodes, pairs, ['dbo']), identifierCaseSensitive: true };
     const graph = makeGraph(nodes, pairs);
-    let engine = new NavigationEngine(model, graph, () => {}, {});
+    const engine = new NavigationEngine(model, graph, () => {}, {});
     expect(engine.init({ origin, question: 'Inspect both inputs', direction: 'upstream', analysisMode: 'bb', depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toMatchObject({ ok: true });
     const seen: string[] = [];
     for (let i = 0; i < 3; i++) {
@@ -70,7 +70,6 @@ describe('source identifier policy in AI', () => {
       const focus = engine.currentFocus!;
       seen.push(focus);
       expect(engine.submitFindings({ focus_node_id: focus, verdict: 'analyze', summary: `Observed ${focus}`, sections: [{ angle: 'technical', text: `Observed ${focus}` }] })).toMatchObject({ ok: true });
-      if (restore) engine = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {});
     }
     expect(new Set(seen)).toEqual(new Set([upper, lower, origin]));
     expect(engine.getResult().fullNodes.map(node => node.id)).toEqual(expect.arrayContaining([upper, lower, origin]));

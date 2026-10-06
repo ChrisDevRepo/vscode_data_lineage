@@ -3,9 +3,8 @@
  *
  * @remarks
  * Pure, engine-state-free: maps a structural {@link InvalidRouteKind} to its machine error code
- * and verb-led corrective order, and builds the content-error rejection envelope. Extracted from
- * `smBase.ts` so the policy is one focused, independently-testable unit; the engine consumes
- * {@link isAbsentKind} and {@link buildSubmissionRejection}. Absent/no-op references are
+ * and verb-led corrective order, and builds the content-error rejection envelope. The engine
+ * consumes {@link isAbsentKind} and {@link buildRouteValidationRejection}. Absent/no-op references are
  * nonfatal notices and never reach the rejection envelope.
  */
 
@@ -70,6 +69,10 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Remove questions[] entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
 };
 
+/** Repair order for an `untracked_out_col` whose reason names detached links (path `.upstream_columns`). */
+const DETACHED_LINK_DIRECTIVE =
+  'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in sections; do not invent a write.';
+
 /**
  * Resubmission order for a rejection made only of field-scoped content errors (a column or prune
  * reference the reason names). The engine holds the draft for that set, so the prose the model
@@ -120,22 +123,22 @@ function routeErrorLine(error: InvalidRoute): string {
  * @remarks
  * Each kind is emitted by one policy owner, so no message-text inference or mode branch is needed.
  * `code` is the specific per-kind code when one kind dominates; `hint` is the verb-led
- * order(s); `reason` states each failure with its valid set as one line per error; `detail` carries the
- * same facts as data.
+ * order(s) followed by the held-correction order, since the engine holds the draft of every
+ * rejected submission; `reason` states each failure with its valid set as one line per error;
+ * `detail` carries the same facts as data.
  *
- * @param errors - Field-resolved validation failures accumulated before commit.
- * @param holdsDraft - Whether the engine holds the draft for this rejection; the held-correction
- * order is stated only when it does.
+ * @param errors - Field-resolved validation failures accumulated before commit; at least one.
  * @returns A stable structured rejection without a second repair protocol.
  */
-export function buildRouteValidationRejection(errors: InvalidRoute[], holdsDraft = true): ToolRejection {
+export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
   const hint = [
     ...distinctKinds.filter(kind => kind !== 'untracked_out_col'
       || errors.some(error => error.kind === kind && error.path?.endsWith('.out_col')))
       .map(kind => ROUTE_REJECTION_DIRECTIVE[kind]),
-    holdsDraft ? HELD_CORRECTION_ORDER : '',
+    errors.some(error => error.kind === 'untracked_out_col' && error.path?.endsWith('.upstream_columns')) ? DETACHED_LINK_DIRECTIVE : '',
+    HELD_CORRECTION_ORDER,
   ].filter(Boolean).join(' ');
   return makeRejection({
     code,
@@ -153,26 +156,3 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], holdsDraft
   });
 }
 
-/**
- * The fault one submission carries: route/column faults from `submit_findings`.
- */
-export interface SubmissionFaults {
-  /** Prune and column-reference faults; nonfatal notice kinds already removed. */
-  routes: InvalidRoute[];
-}
-
-/**
- * Composes the rejection envelope for a submission's fault.
- *
- * @param faults - The accumulated faults; none means the payload passed.
- * @returns The envelope plus whether the finding draft is held for the retry, or `null` when there
- * is no fault to report.
- */
-export function buildSubmissionRejection(
-  faults: SubmissionFaults,
-): { rejection: ToolRejection; hold: boolean } | null {
-  
-  if (faults.routes.length === 0) return null;
-  const hold = true;
-  return { rejection: buildRouteValidationRejection(faults.routes, hold), hold };
-}

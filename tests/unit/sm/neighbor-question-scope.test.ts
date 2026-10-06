@@ -35,7 +35,7 @@ function setup(mode: Mode, boundary: Boundary) {
   })).toMatchObject({ ok: true });
   const context = engine.getHopContext();
   expect(context.focus_node?.id).toBe('focus');
-  return { engine, context, model, graph };
+  return { engine, context };
 }
 
 const finding = {
@@ -47,7 +47,7 @@ describe('question eligibility across approval boundaries', () => {
   it.each((['bb', 'ct'] as const).flatMap(mode =>
     (['schema', 'exclusion', 'direction', 'depth'] as const).map(boundary => [mode, boundary] as const),
   ))('discloses and defers the %s question at a %s boundary', (mode, boundary) => {
-      const { engine, context, model, graph } = setup(mode, boundary);
+      const { engine, context } = setup(mode, boundary);
       const outside = context.neighbors?.find(neighbor => neighbor.id === 'outside');
       expect(outside, boundary).toMatchObject({ can_question: true, can_prune: false, in_approved_scope: false });
       const before = engine.toJSON().scopeNodeIds;
@@ -60,8 +60,6 @@ describe('question eligibility across approval boundaries', () => {
       expect(engine.deferredQuestions, boundary).toContainEqual(expect.objectContaining({ nodeId: 'outside', reason }));
       expect(engine.toJSON().scopeNodeIds, boundary).toEqual(before);
       expect(engine.toJSON().scopeNodeIds, boundary).not.toContain('outside');
-      const restored = NavigationEngine.fromJSON(engine.toJSON(), model, graph, () => {}, {});
-      expect(restored.deferredQuestions).toEqual(engine.deferredQuestions);
   });
 
   it.each(['bb', 'ct'] as const)('rejects a question for a visited neighbor in %s', mode => {
@@ -88,5 +86,24 @@ describe('question eligibility across approval boundaries', () => {
     expect(engine.deferredQuestions).toEqual([]);
   });
 
-  
+  it('serves can_prune: false on every prune_protected neighbor, and naming one prunes nothing', () => {
+    const nodes = [['origin', 'view'], ['carrier', 'table'], ['writer', 'procedure']].map(([id, type]) => makeNode({
+      id, name: id, schema: 'dbo', type: type as 'view', columns: [{ name: 'Amount', type: 'int', nullable: 'NULL', extra: '' }],
+    }));
+    const pairs: Array<[string, string]> = [['carrier', 'origin'], ['writer', 'carrier']];
+    const engine = new NavigationEngine(makeModel(nodes, pairs, ['dbo']), makeGraph(nodes, pairs), () => {}, {});
+    engine.classification = 'technical';
+    expect(engine.init({ origin: 'origin', question: 'Trace Amount upstream', direction: 'upstream', analysisMode: 'bb',
+      depthIntent: depth('all') })).toMatchObject({ ok: true });
+    expect(engine.getHopContext().focus_node?.id).toBe('origin');
+    expect(engine.submitFindings({ focus_node_id: 'origin', verdict: 'analyze', summary: 'Origin reads the carrier.',
+      sections: [{ angle: 'technical', text: 'Origin reads Amount from the carrier table.' }] })).toMatchObject({ ok: true });
+    const context = engine.getHopContext();
+    expect(context.focus_node?.id).toBe('writer');
+    expect(context.neighbors?.find(neighbor => neighbor.id === 'carrier')).toMatchObject({ prune_protected: true, can_prune: false });
+    expect(engine.submitFindings({ focus_node_id: 'writer', verdict: 'analyze', summary: 'Writer loads the carrier.',
+      sections: [{ angle: 'technical', text: 'Writer inserts Amount into the carrier table.' }],
+      prune_neighbors: [{ id: 'carrier', reason: 'Named although protected.' }] })).toMatchObject({ ok: true });
+    expect(engine.toJSON().removedSet).not.toContain('carrier');
+  });
 });
