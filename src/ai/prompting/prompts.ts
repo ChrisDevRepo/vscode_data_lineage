@@ -322,7 +322,7 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     ...(isCt
       ? [
         '- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section or a note.',
-        '- The backend inserts the Column Chain from validated column-flow edges after the intro and owns column-lineage tables and inventories. Do not add a Column mapping table, exhaustive lineage list or separate trace block; explain bindings, calculations, predicates and relevant conversions in detailed Steps instead.',
+        '- The backend inserts the Column Chain from validated column-flow edges after the intro and owns column-lineage tables and inventories. Do not add a Column mapping table, exhaustive lineage list or separate trace block; explain bindings, each captured calculation and intermediate result, each rule with the conditions it applies under, predicates and relevant conversions in detailed Steps instead.',
       ]
       : ['- Keep the explanation concise while preserving important formulas, rules and supported warnings.']),
     '- Id fields take only ids from `result.scope.node_ids`; name any other object in section text.',
