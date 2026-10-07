@@ -24,7 +24,8 @@ describe('column contributor instructions', () => {
     expect(description).toContain('aggregate: value summarised by an aggregate');
     expect(description).toContain('compute: expression input, including a CASE condition operand');
     expect(description).toContain('combine: join key or grouping/partition key');
-    expect(description).toContain('filter: predicate or ordering key selecting contributing rows');
+    expect(description).toContain('filter: column in a WHERE, HAVING or ON predicate that removes rows');
+    expect(description).toContain('an ordering or ranking key carries no role and is stated in sections');
     expect(description).toContain('omit when SQL does not determine it');
   });
 
