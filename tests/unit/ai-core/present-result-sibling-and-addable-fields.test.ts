@@ -79,3 +79,22 @@ it('holds nothing when only undefined keys failed', () => {
   expect(holdRejectedPresentResult(store, { name: 'Orders lineage', label: 'Stage' }, ['label'], 'synthesis')).toBeNull();
   expect(store.get()).toBeFalsy();
 });
+
+it('merges a notes repair by node id: one missing caption is one resent entry', () => {
+  const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
+  const stale = '[mart].[retired]';
+  store.hold({
+    name: 'Orders lineage', summary: 'Orders from stage to mart.',
+    highlight_groups: [{ label: 'Source', color: 'source', node_ids: [source] }],
+    sections: [{ label: 'Stage', node_ids: [source], text: 'Raw orders.' }],
+    notes: [{ node_id: source, caption: 'Landed hourly.' }, { node_id: stale, caption: 'Dropped object.' }],
+  } as PresentResultInput, { fields: ['notes'] });
+  const authorization = store.getAuthorization()!;
+  const repair = { notes: [{ node_id: 'mart.orders', caption: 'Loaded nightly.' }, { node_id: stale, remove: true }] };
+
+  const parsed = presentResultSchemaForPhase('synthesis', authorization.fields, false).safeParse(repair);
+  expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+
+  const merged = mergePresentResultRepairPatch(store.get()!, parsed.data as PresentResultRepairPatch, authorization);
+  expect(merged.notes).toEqual([{ node_id: source, caption: 'Landed hourly.' }, { node_id: 'mart.orders', caption: 'Loaded nightly.' }]);
+});

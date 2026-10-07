@@ -1420,6 +1420,15 @@ export function presentResultSchemaForPhase(
 /** How a resent `sections` list merges into the held draft is stated once, by the rejection (`keyedResendRule`). */
 const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, keyed by label.';
 
+/** One note of a held repair draft: a caption to add or replace under its node id, or the removal of the held one. */
+const PresentResultNotePatchSchema = z.union([
+  NoteSchema,
+  z.object({
+    node_id: NoteSchema.shape.node_id,
+    remove: z.literal(true).describe('true drops the held note for this node id.'),
+  }).strict(),
+]);
+
 /**
  * Strict patch schema for repairing a held `present_result` draft.
  *
@@ -1450,6 +1459,7 @@ const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
   notes: true,
 }).partial().extend({
   sections: sectionList(PresentResultSectionPatchSchema).optional().describe(REPAIR_SECTIONS_DESCRIPTION),
+  notes: z.array(PresentResultNotePatchSchema).min(1).optional().describe('Notes to add or change, keyed by node_id.'),
   is_update: z.boolean().optional().describe('Optional — a repair keeps the held draft\'s own value; the value sent here is not applied.'),
 }).strict();
 

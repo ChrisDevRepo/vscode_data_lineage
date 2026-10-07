@@ -375,7 +375,7 @@ export function presentResultRepairInstruction(
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: PresentResultRepairAuthorization['sectionTextLeaves'],
 ): string {
-  const wholeFields = resendList.filter(field => field === 'notes' || (field === 'highlight_groups' && !highlightLabelIndexes));
+  const wholeFields = resendList.filter(field => field === 'highlight_groups' && !highlightLabelIndexes);
   return [
     `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
     resendList.includes('sections') && !sectionTextLeaves
@@ -387,6 +387,7 @@ export function presentResultRepairInstruction(
     sectionTextLeaves
       ? `Repair only the rejected section text leaves: sections accepts one indexed object containing exactly the listed replacement field or fields for ${sectionTextLeaves.map(leaf => `zero-based ${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Every node_ids list, other section field and section position stays held.`
       : '',
+    resendList.includes('notes') ? `${keyedResendRule('notes', 'node_id')} {node_id: …, remove: true} drops a held note.` : '',
     wholeFields.length > 0 ? `${wholeFields.join(', ')}: a resend replaces the held list whole, so send every entry, corrected.` : '',
   ].filter(Boolean).join(' ');
 }
@@ -472,14 +473,22 @@ export function holdRejectedPresentResult(
   return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage, false, highlightLabelIndexes, sectionTextLeaves)}`;
 }
 
+type PresentNote = NonNullable<PresentResultInput['notes']>[number];
+type PresentNotePatch = Partial<PresentNote> & { remove?: boolean };
+
+/** A note's merge key: its node id without brackets or case, so a bare and a bracketed id name one note. */
+function noteKey(note: Partial<PresentNote>): string {
+  return (note.node_id ?? '').replace(/[[\]]/g, '').trim().toLowerCase();
+}
+
 /**
  * Merges a strict repair patch into a held full `present_result` draft.
  *
  * @remarks
  * `sections` merge by label ({@link RepairDraftStore.mergeByKey}); a preview list, whose sections
  * each carry a `start`, is then ordered by its effective start (the held first section at B1), so a new mid-answer section never trips the
- * ascending-starts check (two sections sharing a start still do). `notes` and ordinary
- * `highlight_groups` repairs replace their lists whole. A parse rejection confined to overlong
+ * ascending-starts check (two sections sharing a start still do). `notes` merge by node id, so one
+ * missing caption is one resent entry; an ordinary `highlight_groups` repair replaces its list whole. A parse rejection confined to overlong
  * highlight labels instead authorizes `{index, label}` leaves. Likewise, a rejection confined to a
  * section's `label` or `text` authorizes only those indexed leaves. Each narrow merge preserves the
  * rest of the held list, and the normal validation/assembly path checks the restored full draft.
@@ -542,6 +551,10 @@ export function mergePresentResultRepairPatch(
       updates.sections = merged.every(section => section.start)
         ? merged.sort((a, b) => Number(a.start!.slice(1)) - Number(b.start!.slice(1)))
         : merged;
+      continue;
+    }
+    if (key === 'notes' && Array.isArray(value)) {
+      updates.notes = RepairDraftStore.mergeByKey<PresentNote>(draft.notes ?? [], value as PresentNotePatch[], noteKey);
       continue;
     }
     Object.assign(updates, { [key]: value });
