@@ -33,6 +33,7 @@ import {
 import { REJECTION_CODES } from '../../src/ai/support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../../src/ai/support/tokenBudget';
 import { coerceStringifiedArguments } from '../../src/ai/support/inputNormalization';
+import { toolCallNotationFault } from '../../src/ai/support/toolCallNotation';
 import { sanitizeForLog, trunc } from '../../src/utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
@@ -707,6 +708,8 @@ export class OpenAiCompatiblePort implements ModelPort {
         );
       }
     }
+    const notation = toolCallNotationFault(structuredInput);
+    if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
     const parsed = single && !single.argumentsIssue
       ? input.schema.safeParse(structuredInput)
       : undefined;

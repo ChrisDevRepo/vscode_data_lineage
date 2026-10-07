@@ -664,10 +664,15 @@ logged; text that is not valid JSON is rejected at its field, never completed. E
 call states the rule broken, the allowed form and the replies the step has
 left; the rejection the last reply answers also names the top-level fields to
 correct when the fault has a field path. A field that failed its check is not
-held, committed or served to a later hop. A `submit_findings.summary` that
-contains tool-call argument notation is rejected on `summary`, naming the
-notation and the argument to send separately; other string fields carry no
-such check.
+held, committed or served to a later hop. Every text value of every tool call
+the `@lineage` runtime dispatches is checked for tool-call notation
+(`<parameter name=…>`, `<invoke name=…>`, `</invoke>`, or a `</parameter>`
+that ends an argument) before dispatch. A call that carries it is rejected
+with code `tool_call_notation` at each offending field, naming the argument to
+send separately; the notation is never parsed or split, and no field of that
+call is held, because no schema has checked it. The read-only tools registered
+for other VS Code agents carry no such check. A backend-fault rejection closes
+its reply: later tool calls of the same reply are not executed.
 
 A stop is an error, logged with its reason. During active exploration both
 stop reasons — `no_progress` (the reply limit) and `backend_fault` — end the

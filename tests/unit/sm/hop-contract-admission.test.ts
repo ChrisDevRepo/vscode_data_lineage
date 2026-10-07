@@ -13,9 +13,10 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { buildActiveHopInstruction, buildActiveInstruction } from '../../../src/ai/agent/stagePrompts';
 import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { getAllowedLmToolNames } from '../../../src/ai/tools/toolPolicy';
-import { displacedArgumentIn, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
+import { makeRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { parseAiOutputTemplatesYaml, REQUIRED_AI_TEMPLATE_KEYS } from '../../../src/configCore';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
@@ -372,73 +373,68 @@ describe('native receiving-boundary execution and finite retries', () => {
   });
 });
 
-describe('summary carrying another argument', () => {
+describe('tool-call notation inside a text argument', () => {
   const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Value' }] }];
-  const glued = 'Observed SQL.</summary>\n<parameter name="sections">{"technical":"Observed SQL detail."}';
+  const glued = 'Observed SQL.</parameter>\n<parameter name="sections">{"technical":"Observed SQL detail."}';
   const leaked = { focus_node_id: origin, verdict: 'analyze' as const, column_flow, summary: glued, questions: [{ nodeId: branch, question: 'Establish Value.' }] };
+  const clean = { focus_node_id: origin, verdict: 'analyze' as const, column_flow, summary: 'Observed SQL.', sections: { technical: 'Observed SQL detail.' } };
+  const reply = async (w: ReturnType<typeof world>, input: object, state = initialToolPhaseAttemptState('active'), tool = 'lineage_submit_findings') => {
+    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('call', tool, input)]);
+    const hold = vi.fn((held: unknown, issuePaths: readonly string[]) => w.engine.holdRejectedSubmission(held, issuePaths));
+    const attempt = await executeToolAttempt(model.port, activePlan(w), { priorState: state, holdRejectedSubmission: hold });
+    const message = attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage;
+    return { attempt, message, hold, content: String(message.content), state: recordToolAttempt(state, attempt, 'lineage_submit_findings') };
+  };
 
-  it.each([
-    ['Observed SQL.</summary>\n<parameter name="sections">{"technical":"x"}', 'sections'],
-    ['Observed SQL.</parameter>\n<parameter name="prune_neighbors">[]', 'prune_neighbors'],
-    ['Observed SQL.</parameter>\n</invoke>', ''],
-    ['Observed SQL.</summary>', ''],
-  ])('names the argument a glued summary carries: %j', (value, displaced) => {
-    expect(displacedArgumentIn(value, 'summary')).toBe(displaced);
+  it('rejects the call at the field before the engine sees it and holds no field of it', async () => {
+    const w = world('ct'); const before = w.engine.toJSON();
+    const { message, content, hold } = await reply(w, leaked);
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['summary'] } });
+    expect(content).toContain('summary: contains tool-call notation');
+    expect(content).toContain('End `summary` before the notation and send `sections` as its own argument.');
+    expect(content).toContain('Resend the full tool call with only the offending field(s) corrected');
+    expect(content).not.toContain('Held:');
+    expect(hold).not.toHaveBeenCalled();
+    expect(w.engine.toJSON()).toEqual(before);
   });
 
-  it.each([
-    'Keeps rows where Amount < Limit and Rate > 0.',
-    'Reads the <summary> column and the parameter name of each call.',
-    'Passes Value through unchanged.',
-  ])('leaves ordinary prose alone: %s', value => {
-    expect(displacedArgumentIn(value, 'summary')).toBeNull();
-    const w = world('ct');
-    expect(JSON.parse(executeSubmitFindings({ ...finding(), column_flow, summary: value }, w.bind()))).toHaveProperty('ok', true);
+  it('holds no sibling field of a call rejected for notation, checked or not', async () => {
+    const w = world('ct'); const before = w.engine.toJSON();
+    const first = await reply(w, { ...leaked, questions: 'not a list' });
+    expect(first.message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['summary'] } });
+    expect(first.hold).not.toHaveBeenCalled();
+    expect(w.engine.toJSON()).toEqual(before);
+    const second = await reply(w, { ...clean, questions: 'not a list' }, first.state);
+    expect(second.message).toMatchObject({ status: 'error', artifact: { code: 'invalid_input' } });
+    expect(String(second.message.content)).toContain('questions');
   });
 
-  it('rejects the summary at its own path with one fault statement and holds none of it', () => {
-    const w = world('ct');
-    const first = JSON.parse(executeSubmitFindings(leaked, w.bind()));
-    expect(first).toMatchObject({ code: 'invalid_input', issuePaths: ['summary'] });
-    expect(first.reason).toContain('contains tool-call notation');
-    expect(first.hint).toContain('End summary at its one sentence. Send the text after it as the separate `sections` argument.');
-    expect(first.hint).not.toMatch(/Held: [^.]*summary/);
-    expect(w.engine.toJSON().engineInternals.heldFinding?.finding.summary ?? '').toBe('');
+  it('rejects a read call that carries notation without dispatching it', async () => {
+    const w = world('ct'); const invoke = vi.spyOn(w.registry, 'invoke');
+    const { message, state } = await reply(w, { ids: [`${branch}</parameter>\n</invoke>`] }, initialToolPhaseAttemptState('active'), 'lineage_get_neighbor_columns');
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['ids.0'] } });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(state).toMatchObject({ noProgressCalls: 1, rejectedTerminalCalls: 0 });
   });
 
-  it('states the same fault on a repeated call once a draft is held', () => {
+  it('rejects a structured argument delivered as text that ends in notation, naming the notation', async () => {
     const w = world('ct');
-    const first = JSON.parse(executeSubmitFindings(leaked, w.bind()));
-    const second = JSON.parse(executeSubmitFindings(leaked, w.bind()));
-    expect(second).toMatchObject({ code: first.code, reason: first.reason, issuePaths: first.issuePaths });
+    const { message, content } = await reply(w, { ...clean, sections: '{"technical":"Observed SQL detail."}</parameter>\n</invoke>\n' });
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['sections'] } });
+    expect(content).toContain('Send `sections` as its own value only, without the notation.');
   });
 
-  it('names the missing sections and what is held when a retry omits them', () => {
+  it('states one fault on every reply, names the field on the last one and stops the hop', async () => {
     const w = world('ct');
-    executeSubmitFindings(leaked, w.bind());
-    const retry = JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow, summary: 'Observed SQL.' }, w.bind()));
-    expect(retry).toMatchObject({ code: 'invalid_input', issuePaths: ['sections'] });
-    expect(retry.reason).toMatch(/^sections: .*missing sections.technical/);
-    expect(retry.hint).toContain('Held: questions.');
-    expect(retry.hint).not.toContain('summary,');
-    expect(retry.hint).toContain('always focus_node_id, verdict and every other required field');
-  });
-
-  it('states one fault on every reply and names the field to correct on the last one', async () => {
-    const w = world('ct');
-    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('glued', 'lineage_submit_findings', leaked)]);
-    const plan = activePlan(w);
     let state = initialToolPhaseAttemptState('active');
     const contents: string[] = [];
     for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
-      const attempt = await executeToolAttempt(model.port, plan, { priorState: state });
-      contents.push(String((attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage).content));
-      state = recordToolAttempt(state, attempt);
+      const result = await reply(w, leaked, state);
+      contents.push(result.content); state = result.state;
     }
     for (const content of contents) {
       expect(content).toContain('a field holds its own value only.');
-      expect(content).toContain('Send the text after it as the separate `sections` argument.');
-      expect(content).not.toMatch(/Held:[^.]*summary/);
+      expect(content).toContain('send `sections` as its own argument.');
     }
     expect(contents[0]).not.toContain('Fields to correct');
     expect(contents[0]).toMatch(/2 replies left for this step.$/);
@@ -448,14 +444,66 @@ describe('summary carrying another argument', () => {
     expect(w.engine.currentFocus).toBe(origin);
   });
 
-  it('commits a clean resend without any carried text', () => {
+  it('commits the corrected resend without any carried text', async () => {
     const w = world('ct');
-    executeSubmitFindings(leaked, w.bind());
-    expect(JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow,
-      summary: 'Observed SQL.', sections: { technical: 'Observed SQL detail.' } }, w.bind()))).toHaveProperty('ok', true);
+    const first = await reply(w, leaked);
+    const second = await reply(w, clean, first.state);
+    expect(second.message.status).toBe('success');
     const slot = w.engine.getDetailSlots().find(entry => entry.nodeId === origin);
     expect(slot).toMatchObject({ summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL detail.' }] });
     expect(JSON.stringify(slot)).not.toContain('<parameter');
+  });
+
+  it.each([
+    'Keeps rows where Amount < Limit and Rate > 0.',
+    'Reads the <summary> column, closes </summary> and the parameter name of each call.',
+    'Shreds <row><parameter>1</parameter-list></row> with nodes().',
+  ])('accepts ordinary text: %s', async value => {
+    const w = world('ct');
+    expect((await reply(w, { ...clean, summary: value })).message.status).toBe('success');
+  });
+
+  it('rejects the final report call the same way', async () => {
+    const w = world(); w.session.resultGraph = { nodeIds: [origin, branch], edges: [[branch, origin, 'read']], source: 'blackboard', originNodeId: origin };
+    w.session.enterCompleted(w.session.turnEpoch); const before = structuredClone(w.session.resultGraph);
+    const input = { name: 'Report', summary: 'Branch supplies the report.', sections: '\n<parameter name="text">Branch supplies the report.', label: 'Sources', node_ids: [origin] };
+    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('report', 'lineage_present_result', input)]);
+    const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'completed' }, registry: w.registry,
+      messages: [new HumanMessage('Show the result')], sink: new TurnEventSink(() => {}),
+      presentResultRepairFields: () => w.session.presentResultRepairFields,
+      presentResultRepairHighlightLabelIndexes: () => w.session.presentResultRepairHighlightLabelIndexes,
+      presentResultRepairSectionTextLeaves: () => w.session.presentResultRepairSectionTextLeaves,
+      presentResultRetainableSections: () => w.session.retainableReportSections() !== null,
+      requiredTerminalTool: 'lineage_present_result', toolChoice: 'required', isPhaseComplete: () => w.session.presentationArtifact !== null,
+    });
+    const hold = vi.fn(() => null);
+    const rejected = await executeToolAttempt(model.port, plan, { holdRejectedPresentResult: hold });
+    const message = rejected.messages.find(item => item instanceof ToolMessage) as ToolMessage;
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['sections'] } });
+    expect(String(message.content)).toContain('Send `sections` as its own value only, without the notation.');
+    expect(w.session.resultGraph).toEqual(before); expect(w.session.presentationArtifact).toBeNull();
+
+    input.sections = [{ label: 'Sources', node_ids: [origin, branch], text: 'Branch supplies the report.</parameter>\n</invoke>' }] as never;
+    const leaf = await executeToolAttempt(model.port, plan, { holdRejectedPresentResult: hold });
+    expect(leaf.messages.find(item => item instanceof ToolMessage)).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['sections.0.text'] } });
+    expect(hold).not.toHaveBeenCalled();
+    expect(w.session.presentResultRepairDraft.get()).toBeNull();
+  });
+});
+
+describe('backend fault inside a reply', () => {
+  it('executes no later tool call of the same reply', async () => {
+    const w = world('ct'); w.model.neighborIndex = { [origin]: { in: [branch], out: [] }, [branch]: { in: [], out: [origin] } };
+    const invoke = vi.spyOn(w.registry, 'invoke').mockImplementation(async () => JSON.stringify(makeRejection({ code: 'internal_error', reason: 'Synthetic fault.' })));
+    const model = nativePort(() => [
+      new vscode.LanguageModelToolCallPart('read', 'lineage_get_neighbor_columns', { ids: [branch] }),
+      new vscode.LanguageModelToolCallPart('submit', 'lineage_submit_findings', finding()),
+    ]);
+    const attempt = await executeToolAttempt(model.port, activePlan(w));
+    const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(results.map(item => (item.artifact as { code: string }).code)).toEqual(['internal_error', 'phase_closed']);
+    expect(recordToolAttempt(initialToolPhaseAttemptState('active'), attempt, 'lineage_submit_findings').stopReason).toBe('backend_fault');
   });
 });
 

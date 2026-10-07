@@ -52,6 +52,7 @@ import {
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { toolCallNotationFault } from '../support/toolCallNotation';
 import { heldSubmissionRepairHint } from '../tools/toolSchemas';
 import {
   contextBlockBytes,
@@ -622,6 +623,31 @@ function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinit
   }));
 }
 
+/** Whether an invalid call was rejected for its arguments, so the rejection carries a field-level repair. */
+function isArgumentRejection(code: string): boolean {
+  return code === REJECTION_CODES.invalidToolInput || code === REJECTION_CODES.toolCallNotation;
+}
+
+/**
+ * Applies the tool-call notation check to one provider call.
+ *
+ * @returns The call unchanged, or its invalid form naming each text value that carries notation.
+ */
+function checkToolCallNotation(call: GeneratedToolCall): GeneratedToolCall {
+  const fault = call.valid ? toolCallNotationFault(call.input) : null;
+  if (!fault) return call;
+  return {
+    valid: false,
+    callId: call.callId,
+    toolName: call.toolName,
+    input: call.input,
+    code: REJECTION_CODES.toolCallNotation,
+    reason: fault.reason,
+    hint: fault.hint,
+    issuePaths: fault.issuePaths,
+  };
+}
+
 function rejectionFromInvalid(
   call: Extract<GeneratedToolCall, { valid: false }>,
   registry: IToolRegistry<string>,
@@ -632,7 +658,7 @@ function rejectionFromInvalid(
     code: call.code,
     message: call.reason,
     correction: {
-      ...(call.code === REJECTION_CODES.invalidToolInput && call.hint !== undefined ? { hint: call.hint } : {}),
+      ...(isArgumentRejection(call.code) && call.hint !== undefined ? { hint: call.hint } : {}),
       ...(call.code === REJECTION_CODES.unknownTool ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
@@ -987,7 +1013,10 @@ interface ToolCallDispatchLoopResult {
  * `phase_closed` without dispatch — that closure state is internal to this one
  * batch and does not survive past the return. A second call of a {@link ONE_CALL_PER_REPLY_TOOLS}
  * tool is recorded the same way, whatever became of the first, so it can neither be held as the
- * repair draft nor answer the first call's rejection inside the same reply. Every call, dispatched or synthetically closed,
+ * repair draft nor answer the first call's rejection inside the same reply. A call whose text
+ * values carry tool-call notation ({@link toolCallNotationFault}) is rejected before dispatch and
+ * none of its fields is held: no schema has checked them. A backend-fault rejection closes the
+ * batch like a phase completion, so no later sibling is dispatched. Every call, dispatched or synthetically closed,
  * appends exactly one {@link ModelMessage} `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages},
  * so the caller's one leading `AIMessage` always pairs with the same number of tool results as it
  * has tool calls. A cancellation is the one exit that leaves later siblings unanswered; the caller
@@ -1011,7 +1040,8 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
   let heldObservationBytes = loop.heldObservationBytes;
   const evaluatedOncePerReply = new Map<string, string>();
 
-  for (const call of toolCalls) {
+  for (const emitted of toolCalls) {
+    const call = checkToolCallNotation(emitted);
     if (input.signal?.aborted) {
       cancelled = true;
       break;
@@ -1052,8 +1082,9 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     if (ONE_CALL_PER_REPLY_TOOLS.has(call.toolName)) evaluatedOncePerReply.set(call.toolName, call.callId);
     if (!call.valid) {
       const rejected = rejectionFromInvalid(call, input.registry);
+      const argumentRejected = isArgumentRejection(call.code);
       const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
-      let resend: string | undefined = schemaRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
+      let resend: string | undefined = argumentRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
       if (schemaRejected && call.toolName === SUBMIT_FINDINGS_TOOL && input.holdRejectedSubmission) {
         const held = input.holdRejectedSubmission(call.input, call.issuePaths ?? []);
         if (held) resend = heldSubmissionRepairHint(held);
@@ -1068,7 +1099,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       input.debugLog?.(
-        `[Reject] source=${call.code === REJECTION_CODES.invalidToolInput ? 'provider_prevalidation' : 'provider_generation'}`
+        `[Reject] source=${argumentRejected ? 'provider_prevalidation' : 'provider_generation'}`
         + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
         + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
         + ` callId=${safeCallId(call.callId)}`
@@ -1133,6 +1164,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
+      if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName };
     } else {
       const observe = !controlSuccess && !terminalSuccess;
       let storedResult = resultText;

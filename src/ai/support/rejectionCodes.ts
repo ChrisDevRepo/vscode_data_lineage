@@ -91,8 +91,10 @@ export const REJECTION_CODES = {
   explorationComplete: 'exploration_complete',
   /** `submit_findings.focus_node_id` is a real node other than the current hop focus (`smBase.ts`). */
   focusNodeIdMismatch: 'focus_node_id_mismatch',
-  /** A provider tool call failed its tool's input schema before dispatch (`vscodeModelPort.ts`, `toolAttempt.ts`, `toolErrorEnvelope.ts`). */
+  /** A provider tool call failed its tool's input schema before dispatch; raised by a model port that validates arguments itself (`modelPort.ts`, `toolAttempt.ts`). */
   invalidToolInput: 'invalid_tool_input',
+  /** A text value of a provider tool call carries tool-call notation (`toolCallNotation.ts`, `toolAttempt.ts`). */
+  toolCallNotation: 'tool_call_notation',
   /** A provider tool call named a tool the phase does not expose (`vscodeModelPort.ts`, `toolAttempt.ts`). */
   unknownTool: 'unknown_tool',
   /** The synthetic structured-output call was missing, duplicated or schema-invalid (`structuredOutput.ts`, `vscodeModelPort.ts`). */

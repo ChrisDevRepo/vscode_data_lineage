@@ -84,7 +84,7 @@ export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer
  *
  * Other session/state codes, transport artifacts, the budget guards, and control-flow markers are
  * deliberately absent — none says anything about the model's semantic accuracy, so they fall to
- * `correction` rather than borrowing one of the three named groups.
+ * `correction` rather than borrowing one of the named groups.
  */
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
   [REJECTION_CODES.outColNotTracked]: 'column_mapping',
@@ -102,6 +102,7 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.fieldLengthExceeded]: 'answer_format',
   [REJECTION_CODES.emptyStructuredOutput]: 'answer_format',
   [REJECTION_CODES.missingRequiredToolCall]: 'answer_format',
+  [REJECTION_CODES.toolCallNotation]: 'answer_format',
   [REJECTION_CODES.engineCrash]: 'backend_fault',
   [REJECTION_CODES.internalError]: 'backend_fault',
   [REJECTION_CODES.invalidStatus]: 'backend_fault',

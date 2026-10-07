@@ -1205,7 +1205,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt, 'lineage_submit_findings');
 
     if (res.stop === 'error') {
-      failProvider(res, 'Active hop failed.');
       return {
         ...failActiveIncomplete(state, engine, 'provider_error', providerStopText(
           { object: focusId.replace(/[[\]]/g, ''), completedHops: state.activeHopCount }, res.error ?? 'Active hop failed.')),

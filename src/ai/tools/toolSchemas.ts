@@ -670,33 +670,10 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
  */
 export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema> };
 
-/** Tool-call argument notation inside a string value: the start of a named argument, or the end of one or of the call. */
-const ARGUMENT_BOUNDARY = /<parameter\s+name="([A-Za-z_]\w*)"\s*>|<\/parameter>|<\/invoke>/;
-/** The notation {@link ARGUMENT_BOUNDARY} matches, as stated in the rejection. */
-const ARGUMENT_BOUNDARY_RULE = 'contains tool-call notation (`<parameter name=…>`, `</parameter>`, `</invoke>` or its own closing tag); a field holds its own value only.';
-
-/**
- * Finds a tool-call argument boundary inside one string argument: the value was delivered with the
- * arguments that follow it still attached.
- *
- * @param value - The string argument as received.
- * @param field - The argument's own name; its closing tag counts as a boundary.
- * @returns The first argument named after the boundary, `''` when a boundary names none, `null`
- *   when the value carries no boundary.
- */
-export function displacedArgumentIn(value: string, field: string): string | null {
-  const boundary = ARGUMENT_BOUNDARY.exec(value);
-  if (!boundary) return value.includes(`</${field}>`) ? '' : null;
-  return /<parameter\s+name="([A-Za-z_]\w*)"\s*>/.exec(value)?.[1] ?? '';
-}
-
 /**
  * Enforces the fresh kept shape of one flat `submit_findings` payload.
  *
  * @remarks
- * A `summary` that contains tool-call argument notation ({@link displacedArgumentIn}) fails at its own
- * path on every call, fresh or not, so it is never held; when the argument it carries is `sections`,
- * that one issue states the fault and the missing-`sections` issue is not added beside it.
  * A kept verdict carries `sections` and `summary` (and, in CT, `column_flow`). A `reason` sent
  * with it is accepted and dropped by {@link toHopFinding}. `summary` may be empty only when a held
  * draft exists (`fresh` unset), and the engine keeps the held summary. A fresh kept verdict under
@@ -724,22 +701,9 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     const unknown = surplus.filter((key) => key !== offAngle);
     if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
   }
-  const displaced = typeof value.summary === 'string' ? displacedArgumentIn(value.summary, 'summary') : null;
-  if (displaced !== null) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['summary'],
-      message: ARGUMENT_BOUNDARY_RULE,
-      params: {
-        hint: displaced
-          ? `End summary at its one sentence. Send the text after it as the separate \`${displaced}\` argument.`
-          : 'End summary at its one sentence. Send every other field as its own argument.',
-      },
-    });
-  }
   const filled = new Set(Object.entries(value.sections ?? {})
     .filter(([, body]) => typeof body === 'string' && body.trim() !== '').map(([angle]) => angle));
-  if (fresh && filled.size === 0 && displaced !== 'sections') {
+  if (fresh && filled.size === 0) {
     ctx.addIssue({
       code: 'custom',
       path: ['sections'],

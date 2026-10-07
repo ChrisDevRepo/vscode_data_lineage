@@ -267,9 +267,10 @@ export interface InvalidGeneratedToolCall {
    * the same tool would be indistinguishable. Never dispatched, replayed, or logged raw.
    */
   readonly input?: unknown;
-  /** Rejection category — schema-invalid input, unknown tool, or a duplicate call id. */
+  /** Rejection category — schema-invalid input, tool-call notation in a text value, unknown tool, or a duplicate call id. */
   readonly code:
     | typeof REJECTION_CODES.invalidToolInput
+    | typeof REJECTION_CODES.toolCallNotation
     | typeof REJECTION_CODES.unknownTool
     | typeof REJECTION_CODES.duplicateCallId;
   /** Human-readable rejection prose returned to the model for repair. */
