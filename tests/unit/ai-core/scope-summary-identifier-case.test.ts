@@ -8,6 +8,8 @@ import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
 import { buildGraphologyGraph } from '../../../src/engine/graphBuilder';
 import { quoteIdentifier } from '../../../src/utils/sql';
 
+/** A GUI filter that excludes nothing; a test adds only the keys it exercises. */
+const NO_FILTER = { schemas: [], types: [], hideIsolated: false, focusSchemas: [], showExternalRefs: false, externalRefTypes: [] };
 const leaf = (nodeNames: string[]) => ({ hops: nodeNames.length, scope: nodeNames.length, nodeNames, omitted: 0 });
 const init: NavigationInitParams = {
   question: 'Explain order lineage', origin: '[Sales].[Orders]',
@@ -204,8 +206,8 @@ describe('approval card and full plan exclusions', () => {
     const objects = ['Main', 'uspGet_Archive', 'uspGetBillOfMaterials', 'Legacy'].map(name => ({ fullName: qualified(name), type: 'view' as const }));
     const model = buildModel(objects, [{ sourceName: qualified('Main'), targetName: qualified('Legacy') }], objects, undefined, true, undefined, false);
     const engine = new NavigationEngine(model, buildGraphologyGraph(model), () => {}, {
-      activeFilter: { schemas: [], types: [], exclusionPatterns: ['%uspGet%', '%_Archive', '%nomatch%'] },
-    } as ConstructorParameters<typeof NavigationEngine>[3]);
+      activeFilter: { ...NO_FILTER, exclusionPatterns: ['%uspGet%', '%_Archive', '%nomatch%'] },
+    });
     expect(engine.init({
       ...init, origin: qualified('Main'), direction: 'upstream', analysisMode: 'bb',
       excludeNodeIds: [...engine.getGuiExcludedNodeIds(), qualified('Legacy')],
@@ -225,8 +227,8 @@ describe('approval card and full plan exclusions', () => {
     ];
     const model = buildModel(objects, [], objects, undefined, true, undefined, false);
     const engine = new NavigationEngine(model, buildGraphologyGraph(model), () => {}, {
-      activeFilter: { schemas: [], types: [], exclusionPatterns: ['%uspGet%'] },
-    } as ConstructorParameters<typeof NavigationEngine>[3]);
+      activeFilter: { ...NO_FILTER, exclusionPatterns: ['%uspGet%'] },
+    });
     expect(engine.init({
       ...init, origin: '[etl].[Main]', direction: 'upstream', analysisMode: 'bb',
       excludeNodeIds: engine.getGuiExcludedNodeIds(), excludeSchemas: ['bak'], excludeTypes: ['function'],
