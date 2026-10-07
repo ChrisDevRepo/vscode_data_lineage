@@ -625,6 +625,13 @@ export interface ScopeSummary {
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
   activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
   /**
+   * Every schema of the loaded model that {@link activeFilters} does not exclude, alphabetised —
+   * with `activeFilters.schemas` the full schema set, so a renderer can state the filter from its
+   * shorter side. Absent on a summary built before this field existed; a renderer then falls back
+   * to the schemas carrying in-scope nodes.
+   */
+  selectedSchemas?: string[];
+  /**
    * The excluded objects of {@link activeFilters} grouped by what excluded them, for the approval
    * card and the full plan. Absent on a summary built before this rollup existed; a renderer then
    * falls back to the flat `activeFilters.nodeIds`.

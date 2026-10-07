@@ -1623,9 +1623,11 @@ export class NavigationEngine implements IHopStateMachine {
       return node ? `${quoteIdentifier(node.schema)}.${quoteIdentifier(node.name)}` : key;
     };
     const schemaNames = new Map<string, string>();
+    const selectedSchemas = new Map<string, string>();
     for (const n of this.nodeMap.values()) {
       const key = this.identifierKey(n.schema);
-      if (this.excludedSchemas.has(key) && !schemaNames.has(key)) schemaNames.set(key, n.schema);
+      const target = this.excludedSchemas.has(key) ? schemaNames : selectedSchemas;
+      if (!target.has(key)) target.set(key, n.schema);
     }
 
     return {
@@ -1653,11 +1655,16 @@ export class NavigationEngine implements IHopStateMachine {
         nodeIds: Array.from(this.excludedNodeIds, canonicalNodeId).sort(),
         passNodeIds: Array.from(this.passNodeIds, canonicalNodeId).sort(),
       },
+      selectedSchemas: [...selectedSchemas.values()].sort((a, b) => a.localeCompare(b)),
       exclusions: this.excludedObjectsByCause(),
     };
   }
 
-  /** Groups every excluded object under the first GUI exclusion rule matching it, or under `named` when none does. */
+  /**
+   * Groups every excluded object under the first GUI exclusion rule matching it, or under `named`
+   * when none does. An object the schema or type filter already removes is left out, so each count
+   * states what the rule removes from the selected schemas and types.
+   */
   private excludedObjectsByCause(): ScopeExclusions {
     const group = (): ScopeExclusionGroup => ({ count: 0, byType: {} });
     const rules = this.guiExclusionRules.map(rule => ({ pattern: rule.pattern, ...group() }));
@@ -1665,6 +1672,8 @@ export class NavigationEngine implements IHopStateMachine {
     for (const id of this.excludedNodeIds) {
       const node = this.nodeMap.get(resolveModelNodeId(id, this.nodeMap, this.model.identifierCaseSensitive) ?? id);
       if (!node) continue;
+      if (this.excludedSchemas.has(this.identifierKey(node.schema))) continue;
+      if (node.type && this.excludedTypes.has(node.type.toLowerCase())) continue;
       const ruleIndex = this.guiExclusionRules.findIndex(rule => rule.matches(node));
       const target = ruleIndex >= 0 ? rules[ruleIndex] : named;
       target.count++;
