@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DepthIntent } from '../../../src/ai/sm/smTypes';
 import { directionFromDepth } from '../../../src/engine/shared/explorationDepthContract';
-import { buildModel, newEngine } from './helpers/engineFixture';
+import { buildModel, completeRun, newEngine } from './helpers/engineFixture';
 
 const UP: DepthIntent = { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } };
 
@@ -34,6 +34,7 @@ describe('qualified CT target column', () => {
     expect('error' in outcome, JSON.stringify(outcome)).toBe(false);
     const keys = (edges: any[]): string[] => edges.map(e => `${e.from_node}.${e.from_col}>${e.to_node}.${e.to_col}`);
     expect(keys(engine.tracer.edges)).toEqual(['x.s.Amt>x.v.Discount']);
+    completeRun(engine);
     expect(keys(engine.getResult().columnAspect?.edges ?? [])).toEqual(['x.s.Amt>x.v.Discount']);
   });
 });

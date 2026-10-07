@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DepthIntent } from '../../../src/ai/sm/smTypes';
 import { directionFromDepth } from '../../../src/engine/shared/explorationDepthContract';
-import { buildModel, newEngine } from './helpers/engineFixture';
+import { buildModel, completeRun, newEngine } from './helpers/engineFixture';
 
 type Kind = 'table' | 'view' | 'procedure' | 'function';
 const node = (id: string, type: Kind, columns: string[] = []) => ({ id, type, columns });
@@ -30,7 +30,7 @@ function submit(engine: any, focus: string, column_flow: object[], extra: object
 }
 
 const edgesOf = (engine: any): string[] => engine.tracer.edges.map((e: any) => `${e.from_node}.${e.from_col}>${e.to_node}.${e.to_col}@${e.hop_node}`);
-const delivered = (engine: any): string[] => (engine.getResult().columnAspect?.edges ?? []).map((e: any) => `${e.from_node}.${e.from_col}>${e.to_node}.${e.to_col}@${e.hop_node}`);
+const delivered = (engine: any): string[] => (completeRun(engine), engine.getResult().columnAspect?.edges ?? []).map((e: any) => `${e.from_node}.${e.from_col}>${e.to_node}.${e.to_col}@${e.hop_node}`);
 
 describe('column contributor adjacency', () => {
   it('downstream trace: a view naming a procedure that only writes to its neighbour records no edge from it', () => {

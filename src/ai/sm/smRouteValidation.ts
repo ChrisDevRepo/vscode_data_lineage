@@ -46,7 +46,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_caller_context:
     'Use questions[].caller_context only for a neighboring function with supplied caller SQL and an active real caller output; otherwise omit caller_context and keep the question.',
   bad_writes_to_target:
-    'Point writes_to at the node and column this hop actually writes — usually the focus itself, so omit writes_to and let it default. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
+    'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
   pruned_contributor:
     'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
   prune_absent:

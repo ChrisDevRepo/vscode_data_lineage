@@ -1,7 +1,7 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection, HELD_CORRECTION_ORDER, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, heldSubmissionRepairHint, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -15,14 +15,14 @@ import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../suppo
 import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
 import { analyzeRemoval, bfsDepthMap, bfsReachable, type LogFn, type RemovalAnalysis } from '../../engine/graphGuards';
-import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
+import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
@@ -467,6 +467,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected guiHiddenSchemas: Set<string> = new Set();
   /** Node ids (lower-cased) matching a GUI exclusion pattern at session start. Seeds a fresh proposal's default `excludeNodeIds` ({@link getGuiExcludedNodeIds}); never enforced on its own. */
   protected guiExcludedNodeIds: Set<string> = new Set();
+  /** Each GUI exclusion pattern that compiles, in filter order, with its own node predicate — attributes an excluded object to the rule that matched it ({@link getScopeSummary}). */
+  private readonly guiExclusionRules: Array<{ pattern: string; matches: (node: { schema: string; name: string; fullName: string }) => boolean }> = [];
   /**
    * Specific node ids (lower-cased) the user asked to keep in scope but skip analysis on.
    * The hop dispatcher detects these on dequeue and auto-emits `verdict:'passthrough'` — topology
@@ -561,6 +563,10 @@ export class NavigationEngine implements IHopStateMachine {
       for (const n of this.nodeMap.values()) {
         if (isGuiExcluded(n)) this.guiExcludedNodeIds.add(this.identifierKey(n.id));
       }
+    }
+    for (const pattern of config.activeFilter?.exclusionPatterns ?? []) {
+      const matches = compileExclusionMatcher([pattern]);
+      if (matches) this.guiExclusionRules.push({ pattern, matches });
     }
   }
 
@@ -1617,9 +1623,11 @@ export class NavigationEngine implements IHopStateMachine {
       return node ? `${quoteIdentifier(node.schema)}.${quoteIdentifier(node.name)}` : key;
     };
     const schemaNames = new Map<string, string>();
+    const selectedSchemas = new Map<string, string>();
     for (const n of this.nodeMap.values()) {
       const key = this.identifierKey(n.schema);
-      if (this.excludedSchemas.has(key) && !schemaNames.has(key)) schemaNames.set(key, n.schema);
+      const target = this.excludedSchemas.has(key) ? schemaNames : selectedSchemas;
+      if (!target.has(key)) target.set(key, n.schema);
     }
 
     return {
@@ -1647,7 +1655,36 @@ export class NavigationEngine implements IHopStateMachine {
         nodeIds: Array.from(this.excludedNodeIds, canonicalNodeId).sort(),
         passNodeIds: Array.from(this.passNodeIds, canonicalNodeId).sort(),
       },
+      selectedSchemas: [...selectedSchemas.values()].sort((a, b) => a.localeCompare(b)),
+      exclusions: this.excludedObjectsByCause(),
     };
+  }
+
+  /**
+   * Groups every excluded object under the first GUI exclusion rule matching it, or under `named`
+   * when none does. An object the schema or type filter already removes is left out, so each count
+   * states what the rule removes from the selected schemas and types.
+   */
+  private excludedObjectsByCause(): ScopeExclusions {
+    const group = (): ScopeExclusionGroup => ({ count: 0, byType: {} });
+    const rules = this.guiExclusionRules.map(rule => ({ pattern: rule.pattern, ...group() }));
+    const named = group();
+    for (const id of this.excludedNodeIds) {
+      const node = this.nodeMap.get(resolveModelNodeId(id, this.nodeMap, this.model.identifierCaseSensitive) ?? id);
+      if (!node) continue;
+      if (this.excludedSchemas.has(this.identifierKey(node.schema))) continue;
+      if (node.type && this.excludedTypes.has(node.type.toLowerCase())) continue;
+      const ruleIndex = this.guiExclusionRules.findIndex(rule => rule.matches(node));
+      const target = ruleIndex >= 0 ? rules[ruleIndex] : named;
+      target.count++;
+      (target.byType[node.type ?? 'external'] ??= []).push({ schema: node.schema, name: node.name });
+    }
+    for (const entry of [...rules, named]) {
+      for (const objects of Object.values(entry.byType)) {
+        objects.sort((a, b) => a.name.localeCompare(b.name) || a.schema.localeCompare(b.schema));
+      }
+    }
+    return { rules: rules.filter(rule => rule.count > 0), named };
   }
 
   /** Applies the shared graph removal policy with this session's scope, anchors and direction legs. */
@@ -1769,7 +1806,7 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
     if (excludeIds.resolved.length + passIds.resolved.length > 0) {
-      this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}]`);
+      this.log('debug', `[NL] excludeNodeIds resolved=[${trunc(excludeIds.resolved, LOG_TRUNC_LIST)}] passNodeIds resolved=[${trunc(passIds.resolved, LOG_TRUNC_LIST)}]`);
     }
 
     const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap, this.model.identifierCaseSensitive);
@@ -2586,10 +2623,11 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
     if (this._status !== 'awaiting_findings') {
-      const hint = this._status === 'error'
-        ? 'The engine is in an error state. Call start_exploration to begin a fresh exploration.'
-        : `Engine is in status '${this._status}'. Expected 'awaiting_findings'. Wait for a hop context, or restart via start_exploration if the session was wiped.`;
-      return makeRejection({ code: REJECTION_CODES.invalidStatus, hint, detail: { current_status: this._status } });
+      return makeRejection({
+        code: REJECTION_CODES.invalidStatus,
+        reason: `Findings arrived while the engine is in status '${this._status}', not 'awaiting_findings'.`,
+        detail: { current_status: this._status },
+      });
     }
 
     const archivedAngles = this.memory.getArchivedAngles(this.currentFocusNodeId ?? '');
@@ -2601,7 +2639,15 @@ export class NavigationEngine implements IHopStateMachine {
     params = merged;
     const classViolation = validateSectionsAgainstClassification(params.sections,
       this.classification, archivedAngles);
-    if (classViolation) return makeRejection({ code: REJECTION_CODES.classificationLockViolation, hint: classViolation });
+    if (classViolation) {
+      const held = this.heldPartsOfCurrentFocus();
+      return makeRejection({
+        code: REJECTION_CODES.invalidInput,
+        reason: `sections: ${classViolation}`,
+        ...(held ? { hint: heldSubmissionRepairHint(held) } : {}),
+        issuePaths: ['sections'],
+      });
+    }
 
     if (this.getCurrentTasks().some(task => task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(task.nodeId, task.callerContext)))) {
       return makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' });
@@ -2622,7 +2668,9 @@ export class NavigationEngine implements IHopStateMachine {
         const expected = this.currentFocusNodeId ?? '';
         return makeRejection({
           code: REJECTION_CODES.focusNodeIdMismatch,
-          hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${expected}. Resubmit with the correct focus_node_id.`,
+          reason: `focus_node_id names \`${focusId}\`; the current object is \`${expected}\`.`,
+          hint: `Resend the same call with focus_node_id \`${expected}\`.`,
+          issuePaths: ['focus_node_id'],
           detail: { expected, got: focusId },
         });
       }
@@ -2802,7 +2850,11 @@ export class NavigationEngine implements IHopStateMachine {
             && task.activeColumns.some(col => this.columnKey(col) === this.columnKey(q.caller_context!.col)));
           const ddl = getNodeDdl(focusId, this.nodeMap, this.store ?? undefined);
           if (!target || target.node !== focusId || !callerTask || !ddl || !this.scopeNodeIds.has(focusId)) {
-            invalidRoutes.push({ kind: 'bad_caller_context', id: nid, path: `questions.${index}.caller_context`, reason: 'caller_context must name an active real output of the current caller, which reads this loaded function.' });
+            const activeOutputs = [...new Set(this.getCurrentTasks()
+              .filter(task => task.kind === 'column_lineage' && task.nodeId === focusId)
+              .flatMap(task => task.activeColumns))];
+            invalidRoutes.push({ kind: 'bad_caller_context', id: nid, path: `questions.${index}.caller_context`,
+              reason: `caller_context must name an active real output of the current caller, which reads this loaded function.${activeOutputs.length > 0 ? ` Active outputs of \`${focusId}\`: ${activeOutputs.join(', ')}.` : ''}` });
             return;
           }
           callerContext = { ...target, callerTaskId: callerTask.id, ddlHash: functionCallerDdlHash(ddl) };
@@ -3002,9 +3054,8 @@ export class NavigationEngine implements IHopStateMachine {
       this._status = 'error';
       const message = err instanceof Error ? err.message : String(err);
       return makeRejection({
-        code: 'engine_crash',
-        reason: message || undefined,
-        hint: 'The engine crashed while processing findings. Call start_exploration to restart the session.',
+        code: REJECTION_CODES.engineCrash,
+        reason: message || 'The engine failed while applying findings.',
       });
     }
   }
@@ -4096,8 +4147,13 @@ export class NavigationEngine implements IHopStateMachine {
    * Packages exploration records into the final presentation topology.
    *
    * @returns Detailed analysis metrics matching the outcome format.
+   * @throws When the exploration is not `complete`: a result exists only once no agenda entry and
+   *   no focus is left, so a stopped run never yields one.
    */
   public getResult(): SmResult {
+    if (this._status !== 'complete') {
+      throw new Error(`Exploration result requested in status '${this._status}': a result exists only for a complete exploration.`);
+    }
     const mem = this.memory.getResult();
 
     const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);

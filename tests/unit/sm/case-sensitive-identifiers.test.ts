@@ -72,6 +72,7 @@ describe('source identifier policy in AI', () => {
       expect(engine.submitFindings({ focus_node_id: focus, verdict: 'analyze', summary: `Observed ${focus}`, sections: [{ angle: 'technical', text: `Observed ${focus}` }] })).toMatchObject({ ok: true });
     }
     expect(new Set(seen)).toEqual(new Set([upper, lower, origin]));
+    expect(engine.getHopContext()).toMatchObject({ done: true });
     expect(engine.getResult().fullNodes.map(node => node.id)).toEqual(expect.arrayContaining([upper, lower, origin]));
   });
 });

@@ -4,11 +4,12 @@
  * every table-statistics request.
  */
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../../src/bridge/host';
 import { rootPath } from '../../helpers/testUtils';
 
-const CUSTOM_PATH = '/workspace/dmvQueries.yaml';
+const CUSTOM_PATH = resolve('/workspace', 'dmvQueries.yaml');
 
 const env = vi.hoisted(() => ({
   setting: '',
@@ -21,6 +22,7 @@ const env = vi.hoisted(() => ({
 
 vi.mock('vscode', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
+  const { resolve: resolvePath } = await import('node:path');
   return {
     ...actual,
     Uri: {
@@ -29,7 +31,7 @@ vi.mock('vscode', async (importOriginal) => {
     },
     ViewColumn: { Beside: -2 },
     workspace: {
-      workspaceFolders: [{ uri: { fsPath: '/workspace' } }],
+      workspaceFolders: [{ uri: { fsPath: resolvePath('/workspace') } }],
       getConfiguration: () => ({
         get: (key: string, fallback: unknown) => {
           if (key === 'dmvQueriesFile') return env.setting;

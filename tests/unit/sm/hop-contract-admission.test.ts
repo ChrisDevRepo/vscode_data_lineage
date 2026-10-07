@@ -16,6 +16,7 @@ import { getAllowedLmToolNames } from '../../../src/ai/tools/toolPolicy';
 import { submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
+import { makeRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { parseAiOutputTemplatesYaml, REQUIRED_AI_TEMPLATE_KEYS } from '../../../src/configCore';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
@@ -43,6 +44,8 @@ function world(mode: 'bb' | 'ct' = 'bb') {
   const registry = buildAiToolRegistry(() => session, logger, () => undefined);
   return { engine, session, model, graph, bind, registry };
 }
+/** The engine snapshot with the held repair draft blanked: what a schema rejection leaves untouched. */
+const navigationState = (engine: { toJSON(): unknown }) => JSON.parse(JSON.stringify(engine.toJSON(), (key, value) => (key === 'heldFinding' ? null : value)));
 const finding = (focus = origin) => ({ focus_node_id: focus, verdict: 'analyze' as const, summary: 'Observed SQL.', sections: { technical: 'Observed SQL.' } });
 
 describe('current-hop submission contract', () => {
@@ -65,12 +68,13 @@ describe('current-hop submission contract', () => {
   });
 
   it('refuses caller context on a non-function at the advertised boundary before engine mutation', () => {
-    const w = world('ct'); const submit = vi.spyOn(w.engine, 'submitFindings'); const before = w.engine.toJSON();
+    const w = world('ct'); const submit = vi.spyOn(w.engine, 'submitFindings'); const before = navigationState(w.engine);
     const input = { ...finding(), column_flow: [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Value' }] }],
       questions: [{ nodeId: branch, question: 'Establish Value.', caller_context: { node: origin, col: 'Value' } }] };
     expect(JSON.parse(executeSubmitFindings(input, w.bind()))).toMatchObject({ code: 'invalid_input', issuePaths: ['questions.0.caller_context'] });
     expect(submit).not.toHaveBeenCalled();
-    expect(w.engine.toJSON()).toEqual(before);
+    expect(navigationState(w.engine)).toEqual(before);
+    expect(w.engine.heldFindingFocus).toBe(origin);
   });
 
   it('uses one held-draft repair directive after a schema rejection and keeps the accepted patch', () => {
@@ -83,6 +87,16 @@ describe('current-hop submission contract', () => {
     expect(rejected.hint).not.toContain('repeating the unflagged elements exactly as first sent');
     const repaired = { focus_node_id: origin, verdict: 'analyze', column_flow: [{ out_col: 'Value', upstream_columns: [] }] };
     expect(JSON.parse(executeSubmitFindings(repaired, w.bind()))).toHaveProperty('ok', true);
+    expect(w.engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: origin, summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL.' }] }));
+  });
+
+  it('holds the prose of a submission that also carries a key the hop does not define', () => {
+    const w = world('ct');
+    const column_flow = [{ out_col: 'Value', upstream_columns: [] }];
+    const rejected = JSON.parse(executeSubmitFindings({ ...finding(), column_flow, caption: 'Not a hop field.' }, w.bind()));
+    expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: ['caption'] });
+    expect(rejected.hint).toContain('Held:');
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow }, w.bind()))).toHaveProperty('ok', true);
     expect(w.engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: origin, summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL.' }] }));
   });
 
@@ -164,7 +178,7 @@ function activePlan(w: ReturnType<typeof world>, registry = w.registry, signal?:
 }
 
 describe('native receiving-boundary execution and finite retries', () => {
-  it('discloses verified object columns only on the final budgeted identity rejection', async () => {
+  it('states the replies left and discloses verified object columns on the rejection the last reply answers', async () => {
     const w = world('ct');
     const input = { ...finding(), column_flow: [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Missing' }] }] };
     const model = nativePort(() => [new vscode.LanguageModelToolCallPart('identity', 'lineage_submit_findings', input)]);
@@ -178,11 +192,15 @@ describe('native receiving-boundary execution and finite retries', () => {
       expect(message.artifact).toMatchObject({ detail: [{ actual_columns: ['Value'] }] });
       state = recordToolAttempt(state, attempt);
     }
-    expect(contents[0]).toBe(contents[1]);
     expect(contents[0]).not.toContain('Actual columns');
+    expect(contents[0]).toMatch(/2 replies left for this step\.$/);
+    expect(contents[1]).toContain('Actual columns of [hop].[branch]: Value.');
+    expect(contents[1]).toMatch(/Last reply for this step\.$/);
     expect(contents[2]).toContain('Actual columns of [hop].[branch]: Value.');
+    expect(contents[2]).not.toContain('for this step');
     expect(contents[2]).not.toContain('follow-up');
     expect(JSON.stringify(model.sendRequest.mock.calls[1])).not.toContain('actual_columns');
+    expect(JSON.stringify(model.sendRequest.mock.calls[2])).toContain('Actual columns of [hop].[branch]: Value.');
     expect(state.stopReason).toBe('no_progress');
     expect(model.sendRequest).toHaveBeenCalledTimes(MAX_TOOL_PROVIDER_CALLS);
     expect(w.engine.currentFocus).toBe(origin);
@@ -224,25 +242,45 @@ describe('native receiving-boundary execution and finite retries', () => {
     invoke.mockRestore();
   });
 
+  it('evaluates only the first submission of a reply, so a filler sibling never reaches the engine', async () => {
+    const w = world(); const submit = vi.spyOn(w.engine, 'submitFindings');
+    const garbled = { ...finding(), sections: 'not an object' };
+    const filler = { ...finding(), summary: 'placeholder', sections: { technical: 'placeholder' } };
+    const model = nativePort(() => [
+      new vscode.LanguageModelToolCallPart('garbled', 'lineage_submit_findings', garbled),
+      new vscode.LanguageModelToolCallPart('filler', 'lineage_submit_findings', filler),
+    ]);
+    const attempt = await executeToolAttempt(model.port, activePlan(w));
+    const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
+    expect(results.map(result => [result.tool_call_id, (result.artifact as { code: string }).code])).toEqual([
+      ['garbled', 'invalid_input'], ['filler', 'extra_call_not_evaluated'],
+    ]);
+    expect(String(results[1].content)).toContain('a reply carries one lineage_submit_findings call');
+    expect(submit).not.toHaveBeenCalled();
+    expect(w.engine.currentFocus).toBe(origin);
+    expect(attempt.rejections.map(rejection => rejection.callId)).toEqual(['garbled']);
+  });
+
   it('parses raw BB input once at dispatch, pairs a rejection, then accepts the correction once', async () => {
-    const w = world(); const before = w.engine.toJSON(); const submit = vi.spyOn(w.engine, 'submitFindings');
+    const w = world(); const before = navigationState(w.engine); const submit = vi.spyOn(w.engine, 'submitFindings');
     const schema = submitFindingsSchemaForMode('bb', 'technical', true, w.engine.hopSubmitColumns);
     const parse = vi.spyOn(schema, 'safeParse');
+    const heldParse = vi.spyOn(submitFindingsSchemaForMode('bb', 'technical', false, w.engine.hopSubmitColumns), 'safeParse');
     let input: object = { ...finding(), column_flow: [] }; let call = 'invalid-bb';
     const model = nativePort(() => [new vscode.LanguageModelToolCallPart(call, 'lineage_submit_findings', input)]);
     const plan = activePlan(w);
     const rejected = await executeToolAttempt(model.port, plan);
     expect(parse).toHaveBeenCalledTimes(1); expect(submit).not.toHaveBeenCalled();
-    expect(w.engine.toJSON()).toEqual(before);
+    expect(navigationState(w.engine)).toEqual(before);
     const error = rejected.messages.find(message => message instanceof ToolMessage) as ToolMessage;
     expect(error).toMatchObject({ tool_call_id: 'invalid-bb', status: 'error', artifact: { code: 'invalid_input' } });
     input = finding(); call = 'corrected-bb';
     const accepted = await executeToolAttempt(model.port, plan, { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), rejected) });
-    expect(parse).toHaveBeenCalledTimes(2); expect(submit).toHaveBeenCalledTimes(1);
+    expect(parse).toHaveBeenCalledTimes(1); expect(heldParse).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
     expect(accepted.stop).toBe('phase_complete');
     expect(accepted.messages.find(message => message instanceof ToolMessage)).toMatchObject({ tool_call_id: 'corrected-bb', status: 'success' });
     expect(model.sendRequest).toHaveBeenCalledTimes(2);
-    parse.mockRestore();
+    parse.mockRestore(); heldParse.mockRestore();
   });
 
   it.each(['text-only', 'empty'] as const)('stops %s replies at the existing limit while tasks remain undispositioned', async kind => {
@@ -332,5 +370,216 @@ describe('native receiving-boundary execution and finite retries', () => {
     const attempt = await executeToolAttempt(model.port, activePlan(w, w.registry, controller.signal));
     expect(attempt.stop).toBe('cancelled'); expect(dispatched).toHaveBeenCalledTimes(1);
     expect(attempt.messages).toEqual([]);
+  });
+});
+
+describe('tool-call notation inside a text argument', () => {
+  const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Value' }] }];
+  const glued = 'Observed SQL.</parameter>\n<parameter name="sections">{"technical":"Observed SQL detail."}';
+  const leaked = { focus_node_id: origin, verdict: 'analyze' as const, column_flow, summary: glued, questions: [{ nodeId: branch, question: 'Establish Value.' }] };
+  const clean = { focus_node_id: origin, verdict: 'analyze' as const, column_flow, summary: 'Observed SQL.', sections: { technical: 'Observed SQL detail.' } };
+  const reply = async (w: ReturnType<typeof world>, input: object, state = initialToolPhaseAttemptState('active'), tool = 'lineage_submit_findings') => {
+    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('call', tool, input)]);
+    const hold = vi.fn((held: unknown, issuePaths: readonly string[]) => w.engine.holdRejectedSubmission(held, issuePaths));
+    const attempt = await executeToolAttempt(model.port, activePlan(w), { priorState: state, holdRejectedSubmission: hold });
+    const message = attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage;
+    return { attempt, message, hold, content: String(message.content), state: recordToolAttempt(state, attempt, 'lineage_submit_findings') };
+  };
+
+  it('rejects the call at the field before the engine sees it and holds no field of it', async () => {
+    const w = world('ct'); const before = w.engine.toJSON();
+    const { message, content, hold } = await reply(w, leaked);
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['summary'] } });
+    expect(content).toContain('summary: contains tool-call notation');
+    expect(content).toContain('End `summary` before the notation and send `sections` as its own argument.');
+    expect(content).toContain('Resend the full tool call with only the offending field(s) corrected');
+    expect(content).not.toContain('Held:');
+    expect(hold).not.toHaveBeenCalled();
+    expect(w.engine.toJSON()).toEqual(before);
+  });
+
+  it('holds no sibling field of a call rejected for notation, checked or not', async () => {
+    const w = world('ct'); const before = w.engine.toJSON();
+    const first = await reply(w, { ...leaked, questions: 'not a list' });
+    expect(first.message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['summary'] } });
+    expect(first.hold).not.toHaveBeenCalled();
+    expect(w.engine.toJSON()).toEqual(before);
+    const second = await reply(w, { ...clean, questions: 'not a list' }, first.state);
+    expect(second.message).toMatchObject({ status: 'error', artifact: { code: 'invalid_input' } });
+    expect(String(second.message.content)).toContain('questions');
+  });
+
+  it('rejects a read call that carries notation without dispatching it', async () => {
+    const w = world('ct'); const invoke = vi.spyOn(w.registry, 'invoke');
+    const { message, state } = await reply(w, { ids: [`${branch}</parameter>\n</invoke>`] }, initialToolPhaseAttemptState('active'), 'lineage_get_neighbor_columns');
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['ids.0'] } });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(state).toMatchObject({ noProgressCalls: 1, rejectedTerminalCalls: 0 });
+  });
+
+  it('rejects a structured argument delivered as text that ends in notation, naming the notation', async () => {
+    const w = world('ct');
+    const { message, content } = await reply(w, { ...clean, sections: '{"technical":"Observed SQL detail."}</parameter>\n</invoke>\n' });
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['sections'] } });
+    expect(content).toContain('Send `sections` as its own value only, without the notation.');
+  });
+
+  it('states one fault on every reply, names the field on the last one and stops the hop', async () => {
+    const w = world('ct');
+    let state = initialToolPhaseAttemptState('active');
+    const contents: string[] = [];
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      const result = await reply(w, leaked, state);
+      contents.push(result.content); state = result.state;
+    }
+    for (const content of contents) {
+      expect(content).toContain('a field holds its own value only.');
+      expect(content).toContain('send `sections` as its own argument.');
+    }
+    expect(contents[0]).not.toContain('Fields to correct');
+    expect(contents[0]).toMatch(/2 replies left for this step.$/);
+    expect(contents[1]).toContain('Fields to correct in this reply: summary.');
+    expect(contents[1]).toMatch(/Last reply for this step.$/);
+    expect(state.stopReason).toBe('no_progress');
+    expect(w.engine.currentFocus).toBe(origin);
+  });
+
+  it('commits the corrected resend without any carried text', async () => {
+    const w = world('ct');
+    const first = await reply(w, leaked);
+    const second = await reply(w, clean, first.state);
+    expect(second.message.status).toBe('success');
+    const slot = w.engine.getDetailSlots().find(entry => entry.nodeId === origin);
+    expect(slot).toMatchObject({ summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL detail.' }] });
+    expect(JSON.stringify(slot)).not.toContain('<parameter');
+  });
+
+  it.each([
+    'Keeps rows where Amount < Limit and Rate > 0.',
+    'Reads the <summary> column, closes </summary> and the parameter name of each call.',
+    'Shreds <row><parameter>1</parameter-list></row> with nodes().',
+  ])('accepts ordinary text: %s', async value => {
+    const w = world('ct');
+    expect((await reply(w, { ...clean, summary: value })).message.status).toBe('success');
+  });
+
+  it('rejects the final report call the same way', async () => {
+    const w = world(); w.session.resultGraph = { nodeIds: [origin, branch], edges: [[branch, origin, 'read']], source: 'blackboard', originNodeId: origin };
+    w.session.enterCompleted(w.session.turnEpoch); const before = structuredClone(w.session.resultGraph);
+    const input = { name: 'Report', summary: 'Branch supplies the report.', sections: '\n<parameter name="text">Branch supplies the report.', label: 'Sources', node_ids: [origin] };
+    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('report', 'lineage_present_result', input)]);
+    const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'completed' }, registry: w.registry,
+      messages: [new HumanMessage('Show the result')], sink: new TurnEventSink(() => {}),
+      presentResultRepairFields: () => w.session.presentResultRepairFields,
+      presentResultRepairHighlightLabelIndexes: () => w.session.presentResultRepairHighlightLabelIndexes,
+      presentResultRepairSectionTextLeaves: () => w.session.presentResultRepairSectionTextLeaves,
+      presentResultRetainableSections: () => w.session.retainableReportSections() !== null,
+      requiredTerminalTool: 'lineage_present_result', toolChoice: 'required', isPhaseComplete: () => w.session.presentationArtifact !== null,
+    });
+    const hold = vi.fn(() => null);
+    const rejected = await executeToolAttempt(model.port, plan, { holdRejectedPresentResult: hold });
+    const message = rejected.messages.find(item => item instanceof ToolMessage) as ToolMessage;
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['sections'] } });
+    expect(String(message.content)).toContain('Send `sections` as its own value only, without the notation.');
+    expect(w.session.resultGraph).toEqual(before); expect(w.session.presentationArtifact).toBeNull();
+
+    input.sections = [{ label: 'Sources', node_ids: [origin, branch], text: 'Branch supplies the report.</parameter>\n</invoke>' }] as never;
+    const leaf = await executeToolAttempt(model.port, plan, { holdRejectedPresentResult: hold });
+    expect(leaf.messages.find(item => item instanceof ToolMessage)).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: ['sections.0.text'] } });
+    expect(hold).not.toHaveBeenCalled();
+    expect(w.session.presentResultRepairDraft.get()).toBeNull();
+  });
+});
+
+describe('backend fault inside a reply', () => {
+  it('executes no later tool call of the same reply', async () => {
+    const w = world('ct'); w.model.neighborIndex = { [origin]: { in: [branch], out: [] }, [branch]: { in: [], out: [origin] } };
+    const invoke = vi.spyOn(w.registry, 'invoke').mockImplementation(async () => JSON.stringify(makeRejection({ code: 'internal_error', reason: 'Synthetic fault.' })));
+    const model = nativePort(() => [
+      new vscode.LanguageModelToolCallPart('read', 'lineage_get_neighbor_columns', { ids: [branch] }),
+      new vscode.LanguageModelToolCallPart('submit', 'lineage_submit_findings', finding()),
+    ]);
+    const attempt = await executeToolAttempt(model.port, activePlan(w));
+    const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(results.map(item => (item.artifact as { code: string }).code)).toEqual(['internal_error', 'phase_closed']);
+    expect(recordToolAttempt(initialToolPhaseAttemptState('active'), attempt, 'lineage_submit_findings').stopReason).toBe('backend_fault');
+  });
+});
+
+describe('reply limit of one hop', () => {
+  const rejected = { callId: 'submit', toolName: 'lineage_submit_findings', code: 'invalid_input', reason: 'summary: required.' };
+  const read = { callId: 'read', toolName: 'lineage_get_neighbor_columns', result: '{}', input: {} };
+  const reply = (rejections: Array<{ callId: string; toolName: string; code: string; reason: string }>, observations = [read], stop: 'continue' | 'phase_complete' = 'continue') =>
+    ({ stop, providerCalls: 1, observations, rejections, messages: [] });
+
+  it('stops after three rejected findings even when every reply carries an accepted read', () => {
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      expect(state.stopReason).toBeNull();
+      state = recordToolAttempt(state, reply([rejected]), 'lineage_submit_findings');
+    }
+    expect(state).toMatchObject({ noProgressCalls: 0, rejectedTerminalCalls: MAX_TOOL_PROVIDER_CALLS, stopReason: 'no_progress' });
+  });
+
+  it('does not count a rejected read against the finding limit', () => {
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      state = recordToolAttempt(state, reply([{ ...rejected, toolName: 'lineage_get_neighbor_columns' }]), 'lineage_submit_findings');
+    }
+    expect(state).toMatchObject({ rejectedTerminalCalls: 0, stopReason: null });
+  });
+
+  it('ends on a backend fault even when the same reply carries an accepted finding', () => {
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'),
+      reply([{ ...rejected, toolName: 'lineage_get_neighbor_columns', code: 'internal_error' }], [], 'phase_complete'), 'lineage_submit_findings');
+    expect(state.stopReason).toBe('backend_fault');
+  });
+
+  it('names the object sent and the current object on a focus mismatch', () => {
+    const w = world('ct');
+    const result = JSON.parse(executeSubmitFindings({ ...finding(), focus_node_id: branch, column_flow: [] }, w.bind()));
+    expect(result).toMatchObject({
+      code: 'focus_node_id_mismatch',
+      reason: `focus_node_id names \`${branch}\`; the current object is \`${origin}\`.`,
+      hint: `Resend the same call with focus_node_id \`${origin}\`.`,
+      issuePaths: ['focus_node_id'],
+    });
+  });
+
+  it('states the replies left on every text-only reply', async () => {
+    const w = world('ct');
+    const model = nativePort(() => [new vscode.LanguageModelTextPart('The view passes Value through.')]);
+    const plan = activePlan(w);
+    let state = initialToolPhaseAttemptState('active');
+    const corrections: string[] = [];
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      const attempt = await executeToolAttempt(model.port, plan, { priorState: state });
+      corrections.push(String(attempt.messages[attempt.messages.length - 1].content));
+      state = recordToolAttempt(state, attempt, 'lineage_submit_findings');
+    }
+    expect(corrections[0]).toMatch(/No tool call was received; prose is discarded\..*\n2 replies left for this step\.$/s);
+    expect(corrections[1].endsWith('\nLast reply for this step.')).toBe(true);
+    expect(state.stopReason).toBe('no_progress');
+  });
+});
+
+describe('structured argument delivered as cut-off JSON text', () => {
+  it('rejects the field by name, holds the valid rest and commits the complete resend', async () => {
+    const w = world('ct');
+    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Value' }] }];
+    const cut = { focus_node_id: origin, verdict: 'analyze', column_flow, summary: 'Observed SQL.', sections: '{"technical":"Observed SQL det' };
+    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('cut', 'lineage_submit_findings', cut)]);
+    const attempt = await executeToolAttempt(model.port, activePlan(w), { priorState: initialToolPhaseAttemptState('active') });
+    const content = String((attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage).content);
+    expect(content).toContain('sections');
+    expect(content).toContain('characters of text that is not valid JSON. Send it again as one complete JSON object, with line breaks inside strings written as \\n.');
+    expect(content).toContain('Held: summary');
+    expect(content).not.toContain('Observed SQL det');
+    expect(content).toMatch(/2 replies left for this step\.$/);
+    expect(w.engine.currentFocus).toBe(origin);
+    const resend = JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow, sections: { technical: 'Observed SQL detail.' } }, w.bind()));
+    expect(resend).toHaveProperty('ok', true);
+    expect(JSON.stringify(w.session.memory.getResult().detail_slots)).not.toContain('Observed SQL det"');
   });
 });

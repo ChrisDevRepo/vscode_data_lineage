@@ -44,7 +44,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, sanitizeDescriptionForChat, type ProviderErrorDiagnostic } from '../support/text';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, sanitizeDescriptionForChat, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -149,6 +149,7 @@ const REJECTION_GROUP_CHAT_TEXT: Readonly<Record<RejectionChatGroup, string>> = 
   column_mapping: 'column mapping',
   source_selection: 'source selection',
   answer_format: 'answer format',
+  backend_fault: 'internal error',
   correction: 'correction',
 };
 
@@ -379,8 +380,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   /**
    * Debug-only per-hop convergence summary, emitted once an active hop that recorded at least one
-   * rejection reaches a terminal disposition (committed, salvaged with the focus left
-   * undispositioned, or failed the turn outright).
+   * rejection reaches a terminal disposition (committed, or failed the turn outright).
    *
    * @remarks
    * Complements the per-attempt `[AI] [Attempt]` line and toolProvider's `[Reject]` line with the
@@ -403,7 +403,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     hop: number,
     focusId: string,
     attempt: Pick<ToolPhaseAttemptState, 'rejections' | 'providerCalls'>,
-    outcome: 'committed' | 'kept_undispositioned' | 'failed',
+    outcome: 'committed' | 'failed',
   ): void => {
     if (attempt.rejections.length === 0) return;
     const classes = attempt.rejections.map(rejection => classifyRejectionCode(rejection.code));
@@ -427,8 +427,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     res: ToolAttemptResult,
     phaseLabel: string,
     startedAt?: number,
+    terminalTool?: string,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res);
+    const nextAttempt = recordToolAttempt(priorAttempt, res, terminalTool);
     const last = nextAttempt.rejections[nextAttempt.rejections.length - 1];
     deps.logger?.debug(
       `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`
@@ -481,8 +482,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   /**
    * Executes one compiled tool plan — a single physical attempt, with no retry of any kind.
    * Whatever it returns, including a transport failure, is final; the calling node decides its
-   * disposition (the active worker salvages already-submitted hops via
-   * {@link isTransportProviderError}).
+   * disposition.
    *
    * @remarks
    * `presentResultRepairDraftContext` shows the held section labels through {@link heldSectionsForRepair};
@@ -513,8 +513,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   /**
    * The one attempt-stop policy every self-looping phase applies after {@link recordToolAttempt}:
-   * maps {@link MAX_TOOL_PROVIDER_CALLS} model replies without progress to the stuck-step stop and
-   * its failure message. Returns `null` while the phase may keep looping. Callers wrap the message
+   * maps a backend fault, or {@link MAX_TOOL_PROVIDER_CALLS} model replies without progress, to the
+   * stop and its failure message. Returns `null` while the phase may keep looping. Callers wrap the message
    * in their own `fail`-shaped update so phase-specific cleanup (repair drafts, active-hop reset)
    * stays local.
    */
@@ -523,15 +523,19 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     subject: string,
     incompleteSuffix: string,
     at?: { readonly object: string; readonly completedHops: number },
-  ): { reason: 'no_progress'; message: string } | null => {
-    if (nextAttempt.stopReason !== 'no_progress') return null;
+  ): { reason: 'no_progress' | 'backend_fault'; message: string } | null => {
+    const reason = nextAttempt.stopReason;
+    if (!reason) return null;
+    const fault = [...nextAttempt.rejections].reverse().find(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')?.code ?? 'unknown';
     deps.logger?.debug(
-      `[AI] [Breaker] phase=${nextAttempt.phase} reason=no_progress noProgressCalls=${nextAttempt.noProgressCalls}`,
+      `[AI] [Breaker] phase=${nextAttempt.phase} reason=${reason} noProgressCalls=${nextAttempt.noProgressCalls}`
+      + (reason === 'backend_fault' ? ` code=${fault}` : ''),
     );
+    if (reason === 'backend_fault') return { reason, message: backendFaultStopText(subject, fault, at) };
     return {
-      reason: 'no_progress',
+      reason,
       message: at
-        ? loopStopText(at, `${nextAttempt.noProgressCalls} model replies without progress on this step (limit ${MAX_TOOL_PROVIDER_CALLS})`)
+        ? loopStopText(at)
         : `${subject} made no progress after ${MAX_TOOL_PROVIDER_CALLS} model replies ${incompleteSuffix}.`,
     };
   };
@@ -1025,6 +1029,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { gate: state.gate, gateDecision: null, toolAttempt: null, phase: 'gate' };
     }
     const stopped = attemptStop(nextAttempt, 'Scope refinement', 'without reaching the consent gate');
+    if (stopped?.reason === 'backend_fault') return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     if (stopped) return keepPendingGate(stopped.message);
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'gate_refine' };
     if (res.stop === 'final') {
@@ -1197,33 +1202,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt);
-
-    /**
-     * Routes the exploration's submitted hops to synthesis with a user-visible partial-coverage
-     * note instead of discarding them; the archive render (`advanceToSynthesis`) presents them as
-     * partial coverage.
-     *
-     * @param reason - The attempt-budget or transport stop that ended the active hop (logged).
-     * @param notice - User-visible stop text naming where coverage ends; omitted, a generic
-     *   partial-coverage line is queued instead.
-     */
-    const salvageSubmittedHops = (reason: string, notice?: string): AgentStateUpdate => {
-      deps.logger?.debug(
-        `[AI] [Salvage] ${reason} after ${state.activeHopCount} submitted hop(s)`
-        + ' — synthesising partial coverage instead of discarding the exploration',
-      );
-      sess.queueClosingNotice('stopped_early', notice ? `_⚠️ ${notice}_` : stoppedEarlyNote(state.activeHopCount));
-      return { ...advanceToSynthesis(sess, engine), toolAttempt: null };
-    };
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt, 'lineage_submit_findings');
 
     if (res.stop === 'error') {
-      if (state.activeHopCount > 0 && res.providerError && isTransportProviderError(res.providerError)) {
-        deps.logger?.error('Active hop failed.', formatProviderErrorDiagnostic(res.providerError));
-        return salvageSubmittedHops('transport_failure');
-      }
       return {
-        ...failProvider(res, 'Active hop failed.'),
+        ...failActiveIncomplete(state, engine, 'provider_error', providerStopText(
+          { object: focusId.replace(/[[\]]/g, ''), completedHops: state.activeHopCount }, res.error ?? 'Active hop failed.')),
         toolAttempt: nextAttempt,
       };
     }
@@ -1233,14 +1217,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       completedHops: state.activeHopCount,
     });
     if (stopped) {
-      if (shouldSalvageActiveStop(state.activeHopCount)) {
-        deps.logger?.debug(
-          `[AI] [Stop] phase=active reason=${stopped.reason} focus=${focusId}`
-          + ` submittedHops=${state.activeHopCount} disposition=salvage — focus left undispositioned`,
-        );
-        emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'kept_undispositioned');
-        return salvageSubmittedHops(stopped.reason, stopped.message);
-      }
+      deps.logger?.debug(
+        `[AI] [Stop] phase=active reason=${stopped.reason} focus=${focusId} submittedHops=${state.activeHopCount} disposition=error`,
+      );
       emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'failed');
       return {
         ...failActiveIncomplete(state, engine, stopped.reason, stopped.message),
@@ -1708,39 +1687,39 @@ export function buildSynthesisEnvelopeMessage(envelope: ReturnType<typeof buildS
   ].join('\n');
 }
 
-/** Generic partial-coverage line for a stop that names no object (a transport failure). */
-function stoppedEarlyNote(completedHops: number): string {
-  return `_⚠️ Exploration stopped early — presenting partial coverage from ${completedHops} completed hop(s)._`;
+/**
+ * User-facing text for a run ended by a failed model request during a hop: where it stopped, the
+ * provider's message, and that nothing was shown or changed.
+ */
+function providerStopText(at: { readonly object: string; readonly completedHops: number }, cause: string): string {
+  return `The analysis stopped at \`${at.object}\`: ${cause.replace(/\.$/, '')}. `
+    + 'The run is incomplete, so no result is shown and the graph was not changed. Ask again.';
 }
 
 /**
- * The user text of a per-hop loop stop: names the object, the value against its limit, and what
- * the reader still has.
+ * User-facing text for a run ended by a backend fault: where it stopped, the fault code, and that
+ * nothing was shown or changed.
+ */
+function backendFaultStopText(subject: string, code: string, at?: { readonly object: string; readonly completedHops: number }): string {
+  const where = at ? `The analysis stopped at \`${at.object}\`` : `${subject} stopped`;
+  return `${where}: an internal error occurred (${code}). `
+    + 'The run is incomplete, so no result is shown and the graph was not changed. '
+    + 'Details are in the debug log. Ask again.';
+}
+
+/**
+ * The user text of a per-hop reply-limit stop: names the object, the reply limit, how far the run
+ * got, and that no result is shown.
  *
  * @param at - The object the hop stopped on and the hops already submitted.
- * @param cause - The counted value against its limit, e.g. `3 model replies without progress on this step (limit 3)`.
  */
-function loopStopText(at: { readonly object: string; readonly completedHops: number }, cause: string): string {
-  const shown = at.completedHops > 0
-    ? `Results from the ${at.completedHops} completed hops are shown`
-    : 'No hop was completed';
-  return `Stopped at \`${at.object}\`: ${cause}. ${shown}; ask again, or exclude this object from the scope.`;
-}
-
-/**
- * Whether a stopped active hop salvages the exploration's submitted hops instead of failing the
- * turn.
- *
- * @remarks
- * Salvage requires at least one SUBMITTED hop — `submittedHops` is the graph's `activeHopCount`,
- * which advances only on an accepted `lineage_submit_findings`; the engine's own hop counter
- * advances at focus dequeue and would salvage empty explorations.
- *
- * @param submittedHops - The graph's `activeHopCount` at the point of the stop.
- * @returns Whether the turn should render the submitted hops instead of failing outright.
- */
-function shouldSalvageActiveStop(submittedHops: number): boolean {
-  return submittedHops > 0;
+function loopStopText(at: { readonly object: string; readonly completedHops: number }): string {
+  const progress = at.completedHops > 0
+    ? `${at.completedHops} object${at.completedHops === 1 ? ' was' : 's were'} analysed before the stop`
+    : 'No object was analysed';
+  return `The analysis stopped at \`${at.object}\`: ${MAX_TOOL_PROVIDER_CALLS} model replies for this object were not accepted. `
+    + `${progress}. The run is incomplete, so no result is shown and the graph was not changed. `
+    + 'Ask again, or exclude this object from the scope.';
 }
 
 /**

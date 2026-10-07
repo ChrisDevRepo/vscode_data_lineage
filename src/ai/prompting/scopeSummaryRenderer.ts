@@ -7,7 +7,7 @@
  * the VS Code module surface. Single source of truth for the native gate markdown.
  */
 
-import type { ScopeSummary } from '../sm/smTypes';
+import type { ScopeExclusionGroup, ScopeSummary } from '../sm/smTypes';
 import type { PendingExplorationProposal } from '../session/session';
 import { CLASSIFICATION_LABEL, type ClassificationValue } from '../session/classification';
 import { escapeMarkdownText, pluralize } from '../support/text';
@@ -15,8 +15,14 @@ import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { normalizeName } from '../../engine/shared/sqlIdentifier';
 import { quoteIdentifier, schemaKey } from '../../utils/sql';
 
-/** In-scope object types the card lists before folding the rest into one `…` line. */
-const CARD_OBJECT_TYPE_LIMIT = 3;
+/** Object names the card lists per type before folding the rest into `+N more`. */
+const NAMES_PER_TYPE = 10;
+
+/** Object names the full plan lists per type, in scope or excluded, before folding the rest into `+N more`. */
+const PLAN_NAMES_PER_TYPE = 20;
+
+/** Schema names the card lists before stating the selection as a count; the full plan names them all. */
+const CARD_SCHEMA_NAMES = 10;
 
 /** Formats a count with its noun; the suffix rule itself lives in the shared `pluralize`. */
 function plural(n: number, noun: string): string {
@@ -58,6 +64,35 @@ function code(value: string): string {
   const fence = '`'.repeat(longestRun + 1);
   const pad = longestRun > 0 ? ' ' : '';
   return `${fence}${pad}${value}${pad}${fence}`;
+}
+
+/**
+ * Lists the first `cap` names as code spans and folds the rest into `+N more`.
+ *
+ * @param alreadyOmitted - Names the producer dropped before this list was built.
+ */
+function cappedNames(names: readonly string[], cap: number, alreadyOmitted = 0): string {
+  const more = Math.max(0, names.length - cap) + alreadyOmitted;
+  const shown = names.slice(0, cap).map(code).join(', ');
+  return more > 0 ? `${shown} _+${more} more_` : shown;
+}
+
+/**
+ * An object's name as the card shows it: schema-qualified when the loaded model holds more than
+ * one object of that type by that name ({@link ScopeSummary.ambiguousObjectNames}), bare otherwise.
+ */
+function objectDisplayName(summary: ScopeSummary, type: string, schema: string, name: string): string {
+  return summary.ambiguousObjectNames?.[type]?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? `${schema}.${name}` : name;
+}
+
+/** One `Types (N): names` line per object type of an excluded group, largest type first. */
+function exclusionTypeLines(summary: ScopeSummary, group: ScopeExclusionGroup, cap: number, indent: string): string[] {
+  return Object.entries(group.byType)
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .map(([type, objects]) => {
+      const names = objects.map(object => objectDisplayName(summary, type, object.schema, object.name));
+      return `${indent}- ${typeLabel(type, objects.length)} (${objects.length}): ${cappedNames(names, cap)}`;
+    });
 }
 
 /** Collapses whitespace so model-authored prose renders as one markdown paragraph. */
@@ -103,19 +138,20 @@ function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary[
 }
 
 /**
- * States the card's full schema selection in whichever wording is shortest: `All` when nothing is
- * excluded, `All except x, y` when naming the exclusions is shorter than naming the inclusions,
- * otherwise the included list. The schema set is the union already on the summary — every excluded
- * schema plus every schema carrying in-scope nodes — never a persisted project-wide list.
+ * States the schema selection from its shorter side: `All` when nothing is excluded,
+ * `All except x, y` when fewer schemas are excluded than selected, otherwise the selected list.
+ * The two sides are {@link ScopeSummary.selectedSchemas} and `activeFilters.schemas`.
+ *
+ * @param nameCap - Names listed before the line states `N of M selected` instead.
  */
-function schemasLine(summary: ScopeSummary): string {
-  const included = schemasInPlanOrder(summary);
+function schemasLine(summary: ScopeSummary, nameCap = Number.POSITIVE_INFINITY): string {
+  const selected = summary.selectedSchemas ?? schemasInPlanOrder(summary).map(([schema]) => schema);
   const excluded = summary.activeFilters.schemas;
   if (excluded.length === 0) return 'All';
-  if (excluded.length < included.length) {
-    return `All except ${excluded.map(code).join(', ')}`;
-  }
-  return included.map(([schema, entry]) => `${code(schema)} (${entry.scope})`).join(', ');
+  const exceptExcluded = excluded.length < selected.length;
+  const names = exceptExcluded ? excluded : selected;
+  if (names.length > nameCap) return `${selected.length} of ${selected.length + excluded.length} selected`;
+  return `${exceptExcluded ? 'All except ' : ''}${names.map(code).join(', ')}`;
 }
 
 /** One in-scope object type's names and node count, summed across every schema. */
@@ -137,10 +173,7 @@ function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
   for (const [schema, schemaEntry] of Object.entries(summary.bySchema)) {
     for (const [type, leaf] of Object.entries(schemaEntry.byType)) {
       const group = groups.get(type) ?? { type, scope: 0, names: [], omitted: 0 };
-      const ambiguous = summary.ambiguousObjectNames?.[type];
-      const names = leaf.nodeNames.map(name =>
-        ambiguous?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? `${schema}.${name}` : name,
-      );
+      const names = leaf.nodeNames.map(name => objectDisplayName(summary, type, schema, name));
       groups.set(type, {
         type,
         scope: group.scope + leaf.scope,
@@ -175,6 +208,66 @@ export function renderScopeSummaryMd(
   _removedSchemaFilters: readonly string[] = [],
   _removedNodeFilters: readonly string[] = [],
 ): string {
+  const readAs: string[] = [];
+  const filters = summary.activeFilters;
+  if (filters.nodeIds.length > 0) {
+    readAs.push(`- Exclude: ${filters.nodeIds.map(code).join(', ')} — removed from the graph`);
+  }
+  if (filters.passNodeIds.length > 0) {
+    readAs.push(`- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`);
+  }
+  if (filters.schemas.length > 0) {
+    readAs.push(`- Schemas excluded: ${filters.schemas.map(code).join(', ')}`);
+  }
+  if (filters.types.length > 0) {
+    readAs.push(`- Types excluded: ${filters.types.map(code).join(', ')}`);
+  }
+  return renderPlanMd(summary, readAs, revision, classification);
+}
+
+/**
+ * The `Read as` lines of the user-facing full plan: the same active filters as
+ * {@link renderScopeSummaryMd}, with excluded objects grouped by the rule that excluded them and
+ * each type capped at {@link PLAN_NAMES_PER_TYPE} names, and the schema filter stated from its shorter
+ * side with every name ({@link schemasLine}).
+ */
+function fullPlanReadAs(summary: ScopeSummary): string[] {
+  const readAs: string[] = [`- Schemas: ${schemasLine(summary)}`];
+  const filters = summary.activeFilters;
+  const exclusions = summary.exclusions;
+  if (exclusions) {
+    for (const rule of exclusions.rules) {
+      readAs.push(`- Excluded by rule ${code(rule.pattern)} — ${plural(rule.count, 'object')}`);
+      readAs.push(...exclusionTypeLines(summary, rule, PLAN_NAMES_PER_TYPE, '  '));
+    }
+    if (exclusions.named.count > 0) {
+      readAs.push(`- Excluded by name — ${plural(exclusions.named.count, 'object')}`);
+      readAs.push(...exclusionTypeLines(summary, exclusions.named, PLAN_NAMES_PER_TYPE, '  '));
+    }
+  } else if (filters.nodeIds.length > 0) {
+    readAs.push(`- Exclude: ${cappedNames(filters.nodeIds, PLAN_NAMES_PER_TYPE)} — removed from the graph`);
+  }
+  if (filters.passNodeIds.length > 0) {
+    readAs.push(`- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`);
+  }
+  if (filters.types.length > 0) {
+    readAs.push(`- Types excluded: ${filters.types.map(code).join(', ')}`);
+  }
+  return readAs;
+}
+
+/**
+ * Assembles the plan around caller-built `Read as` lines: goal, depth, counts and the in-scope tree.
+ *
+ * @param namesPerType - Names listed per type line of the tree; the rest fold into `+N more`.
+ */
+function renderPlanMd(
+  summary: ScopeSummary,
+  readAs: readonly string[],
+  revision?: number,
+  classification?: ClassificationValue,
+  namesPerType = Number.POSITIVE_INFINITY,
+): string {
   const lines: string[] = [];
   const direction = summary.direction === 'bidirectional' ? 'bidirectional' : summary.direction;
   const columns = summary.targetColumns?.length
@@ -197,20 +290,6 @@ export function renderScopeSummaryMd(
     }
   }
 
-  const readAs: string[] = [];
-  const filters = summary.activeFilters;
-  if (filters.nodeIds.length > 0) {
-    readAs.push(`- Exclude: ${filters.nodeIds.map(code).join(', ')} — removed from the graph`);
-  }
-  if (filters.passNodeIds.length > 0) {
-    readAs.push(`- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`);
-  }
-  if (filters.schemas.length > 0) {
-    readAs.push(`- Schemas excluded: ${filters.schemas.map(code).join(', ')}`);
-  }
-  if (filters.types.length > 0) {
-    readAs.push(`- Types excluded: ${filters.types.map(code).join(', ')}`);
-  }
   for (const note of summary.scopeNotes) {
     stated.push(`- Noted: "${oneParagraph(note)}"`);
   }
@@ -250,11 +329,12 @@ export function renderScopeSummaryMd(
       b[1].hops - a[1].hops || b[1].scope - a[1].scope || a[0].localeCompare(b[0]),
     );
     for (const [type, leaf] of types) {
-      const names = leaf.nodeNames.map(name => {
+      const names = leaf.nodeNames.slice(0, namesPerType).map(name => {
         const fq = sourceNodeId(schema, name);
         return passNodes.has(fq) ? `${escapeMarkdownText(name)} _(pass)_` : escapeMarkdownText(name);
       }).join(', ');
-      const omitted = leaf.omitted > 0 ? ` _(+${leaf.omitted} more)_` : '';
+      const more = leaf.omitted + Math.max(0, leaf.nodeNames.length - namesPerType);
+      const omitted = more > 0 ? ` _(+${more} more)_` : '';
       lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}): ${names}${omitted}`);
     }
   }
@@ -272,11 +352,12 @@ export function renderScopeSummaryMd(
  * `scopeNotes` are full-plan-only. There is no separate direction line: the depth line names the
  * side(s) it covers directly (`N upstream`, `N upstream · N downstream`, or `N each way` for equal
  * bidirectional sides). The scope line carries only the estimated counts (`≈N hops · ≈N nodes`),
- * direction dropped. Schemas are always stated in full, in whichever wording is shortest
- * (`schemasLine`). In-scope objects are grouped by type across every schema and capped at
- * {@link CARD_OBJECT_TYPE_LIMIT} type lines, the rest folded into one `…` line; every other list
- * (excluded schemas and objects, keep-but-skip) renders in full — excluded object types are
- * full-plan-only, since the type filter is a rule and not itself an object list. A name that
+ * direction dropped. Schemas are stated from the shorter side (`schemasLine`), as a count past
+ * {@link CARD_SCHEMA_NAMES} names, so the `Excluded` line never repeats them. In-scope objects are
+ * grouped by type across every schema, one line per type with its total, names capped at
+ * {@link NAMES_PER_TYPE}. The `Excluded` line carries the GUI exclusion rule count, the excluded
+ * object types and the count of objects excluded by name; the full plan names the excluded
+ * objects. Keep-but-skip renders in full. A name that
  * recurs in more than one schema of the loaded model is schema-qualified (`objectsByType`) so
  * dropping the schema grouping never leaves two distinct objects reading as one bare name; a
  * unique name stays bare.
@@ -299,7 +380,7 @@ export function renderScopeCardMd(
       .join(' · ');
   lines.push(`- **Depth:** ${depth}`);
   lines.push(`- **Scope:** ≈${plural(summary.hopCount, 'hop')} · ≈${plural(summary.scopeCount, 'node')}`);
-  lines.push(`- **Schemas:** ${schemasLine(summary)}`);
+  lines.push(`- **Schemas:** ${schemasLine(summary, CARD_SCHEMA_NAMES)}`);
   const columns = summary.analysisMode === 'ct' && summary.targetColumns?.length
     ? ` — columns: ${summary.targetColumns.map(code).join(', ')}`
     : '';
@@ -309,18 +390,18 @@ export function renderScopeCardMd(
   const objectGroups = objectsByType(summary);
   if (objectGroups.length > 0) {
     lines.push('- **Objects:**');
-    for (const group of objectGroups.slice(0, CARD_OBJECT_TYPE_LIMIT)) {
-      const names = group.names.map(code).join(', ');
-      const omitted = group.omitted > 0 ? ` _(+${group.omitted} more)_` : '';
-      lines.push(`  - ${typeLabel(group.type, group.scope)}: ${names}${omitted}`);
+    for (const group of objectGroups) {
+      lines.push(`  - ${typeLabel(group.type, group.scope)} (${group.scope}): ${cappedNames(group.names, NAMES_PER_TYPE, group.omitted)}`);
     }
-    if (objectGroups.length > CARD_OBJECT_TYPE_LIMIT) lines.push('  - …');
   }
 
   const filters = summary.activeFilters;
+  const exclusions = summary.exclusions;
+  const namedExcluded = exclusions ? exclusions.named.count : filters.nodeIds.length;
   const excluded = [
-    filters.schemas.length > 0 ? `schemas ${filters.schemas.map(code).join(', ')}` : '',
-    filters.nodeIds.length > 0 ? `objects ${filters.nodeIds.map(code).join(', ')}` : '',
+    exclusions && exclusions.rules.length > 0 ? plural(exclusions.rules.length, 'filter rule') : '',
+    filters.types.length > 0 ? `types ${filters.types.map(code).join(', ')}` : '',
+    namedExcluded > 0 ? `${plural(namedExcluded, 'object')} by name` : '',
   ].filter(Boolean);
   if (excluded.length > 0) lines.push(`- **Excluded:** ${excluded.join('; ')}`);
   if (filters.passNodeIds.length > 0) lines.push(`- **Keep but skip:** ${filters.passNodeIds.map(code).join(', ')}`);
@@ -329,7 +410,8 @@ export function renderScopeCardMd(
 
 /**
  * Renders the **Show full plan** reply: the discovery summary (when the proposal has one) ahead
- * of the plan, every in-scope object the stored proposal carries.
+ * of the plan, every in-scope object the stored proposal carries, and the excluded objects grouped
+ * by cause ({@link fullPlanReadAs}).
  *
  * @remarks
  * Built directly from the held proposal rather than reused from the gate's stored `detail` —
@@ -343,7 +425,7 @@ export function renderScopeCardMd(
 export function renderFullPlanMd(
   proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary' | 'discoverySummary'>,
 ): string {
-  const plan = renderScopeSummaryMd(proposal.summary, proposal.revision, proposal.classification);
+  const plan = renderPlanMd(proposal.summary, fullPlanReadAs(proposal.summary), proposal.revision, proposal.classification, PLAN_NAMES_PER_TYPE);
   return proposal.discoverySummary ? `${proposal.discoverySummary}\n\n${plan}` : plan;
 }
 

@@ -177,4 +177,25 @@ describe("tool-error-envelope", () => {
     });
   });
 
+  describe('rejectionFromZodError: a value of the wrong type under a size bound', () => {
+    const schema = z.object({ notes: z.array(z.string()).max(8).optional(), title: z.string().max(8).optional() });
+
+    it('a string sent for a bounded array states the type fault only', () => {
+      const input = { notes: 'Ignore logging-related objects' };
+      const parsed = schema.safeParse(input);
+      expect(parsed.success).toBe(false);
+      const rejection = rejectionFromZodError(parsed.error!, { code: 'invalid_tool_input', input, schema });
+      expect(rejection.reason).toContain('expected array, received string');
+      expect(rejection.reason, 'the item bound is not restated as a character bound').not.toMatch(/Too big|characters|limit 8/);
+      expect(rejection.issuePaths).toEqual(['notes']);
+    });
+
+    it('a size violation on a value of the right type is still reported', () => {
+      const input = { notes: Array.from({ length: 9 }, () => 'n'), title: 'nine char' };
+      const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_tool_input', input, schema });
+      expect(rejection.reason).toContain('9 items, limit 8');
+      expect(rejection.reason).toContain('9 chars, limit 8');
+    });
+  });
+
 });

@@ -62,15 +62,15 @@ const RejectionShape = z.object({
 }).strict();
 
 /**
- * Write-side builder for the one tool-execution failure envelope both LM lanes feed back to the
- * model when a handler throws. Owning it here keeps the graph-owned dispatch result provider-neutral.
+ * Write-side builder for the one tool-execution failure envelope both LM lanes record when a handler
+ * throws; the run ends on it. Owning it here keeps the graph-owned dispatch result provider-neutral.
  * @param toolName - Canonical tool name whose handler threw.
- * @returns Generic JSON rejection safe to project into graph retry state.
+ * @returns Generic JSON rejection safe to project into graph attempt state.
  */
 export function buildToolExecutionError(toolName: string): string {
   return JSON.stringify(makeRejection({
     code: REJECTION_CODES.toolExecutionError,
-    hint: `Correct the ${toolName} input and retry the same phase.`,
+    reason: `${toolName} failed inside the extension.`,
   }));
 }
 
@@ -162,12 +162,17 @@ type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 
 /**
  * Enriches one Zod issue's message with the measured size against the bound for
- * `too_big`/`too_small` (models cannot count characters). The received value is never echoed: the
+ * `too_big`/`too_small` (models cannot count characters), and names a structured field that
+ * arrived as text that is not valid JSON. The received value is never echoed: the
  * rejected call stays in the transcript with its arguments.
  */
 function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): string {
   if (issue.code === 'too_big' || issue.code === 'too_small') {
     return describeSizeIssue(issue, received) ?? issue.message;
+  }
+  if (issue.code === 'invalid_type' && typeof received === 'string' && /^\s*[[{]/.test(received)) {
+    const kind = received.trimStart().startsWith('[') ? 'array' : 'object';
+    return `received ${received.length} characters of text that is not valid JSON. Send it again as one complete JSON ${kind}, with line breaks inside strings written as \\n.`;
   }
   return baseIssueMessage(issue);
 }
@@ -382,7 +387,8 @@ function acceptsNullAt(schema: z.ZodType | undefined, path: readonly PropertyKey
 /**
  * Hint for `unrecognized_keys` issues: states that the key is no field and names the fields of the
  * object it sits in, so a misspelt key is renamed and an invented one dropped; the
- * call itself is the object for an issue at the root.
+ * call itself is the object for an issue at the root. A root key that a list entry of the call
+ * defines is answered with that list, so a flattened entry is moved back instead of dropped.
  *
  * @returns The object-directed hint; `undefined` when the schema is absent or does not resolve the
  * object, so the caller keeps the key-only wording.
@@ -391,10 +397,21 @@ function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
   const issues = error.issues.filter((issue) => issue.code === 'unrecognized_keys');
   if (issues.length === 0) return undefined;
   const clauses = new Map<string, { keys: Set<string>; allowed: string[] }>();
+  const homes = new Map<string, Set<string>>();
   for (const issue of issues) {
     const node = jsonSchemaNodeAt(schema, issue.path);
-    const allowed = Object.keys((node ? unwrapNullable(node) : undefined)?.properties ?? {});
+    const properties = (node ? unwrapNullable(node) : undefined)?.properties ?? {};
+    const allowed = Object.keys(properties);
     if (allowed.length === 0) return undefined;
+    if (issue.path.length === 0) {
+      for (const [list, listNode] of Object.entries(properties)) {
+        const entry = unwrapNullable(listNode).items;
+        const entryKeys = new Set([entry, ...(entry?.anyOf ?? []), ...(entry?.oneOf ?? [])].flatMap(variant => Object.keys(variant?.properties ?? {})));
+        for (const key of issue.keys) {
+          if (entryKeys.has(key)) homes.set(list, (homes.get(list) ?? new Set<string>()).add(key));
+        }
+      }
+    }
     const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '') || 'the call';
     const clause = clauses.get(where) ?? { keys: new Set<string>(), allowed };
     for (const key of issue.keys) clause.keys.add(key);
@@ -403,7 +420,9 @@ function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
   const parts = [...clauses].map(([where, { keys, allowed }]) =>
     `${[...keys].map(quoteKey).join(', ')} ${keys.size > 1 ? 'are not fields' : 'is not a field'} of ${where}; its fields are ${allowed.join(', ')}`);
   const sentence = parts.join('; ');
-  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
+  const nestedHomes = [...homes].map(([list, keys]) =>
+    ` ${[...keys].map(quoteKey).join(', ')} ${keys.size > 1 ? 'are fields' : 'is a field'} of a ${list}[] entry: send ${keys.size > 1 ? 'them' : 'it'} there.`);
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.${nestedHomes.join('')}`;
 }
 
 /**
@@ -675,7 +694,8 @@ function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecogn
  * breakdown, and when `input` is supplied a size issue names the measured size — Zod v4 issues
  * carry no input, so the enrichment happens here; a sent value is never echoed. Issues identical
  * apart from their array index (same code, message and path shape) collapse into the first, which
- * names the other indices, so one defect repeated across N entries is one line. Only STRUCTURAL
+ * names the other indices, so one defect repeated across N entries is one line. A size issue at a
+ * path that also fails its type is dropped: the bound belongs to the declared type. Only STRUCTURAL
  * bounds reach this function; a content cap is enforced and reported separately by the validator
  * or engine. A present value outside its accepted values names them in the default hint
  * ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves the
@@ -693,7 +713,9 @@ export function rejectionFromZodError(
 ): ToolRejection {
   const issuePaths: string[] = [];
   const shown = new Map<string, { issue: z.core.$ZodIssue; message: string; others: string[] }>();
+  const mistyped = new Set(error.issues.filter(issue => issue.code === 'invalid_type').map(issue => dottedPath(issue.path)));
   for (const issue of error.issues) {
+    if ((issue.code === 'too_big' || issue.code === 'too_small') && mistyped.has(dottedPath(issue.path))) continue;
     let message: string;
     if (issue.code === 'invalid_union') {
       const { line, paths } = describeInvalidUnion(issue, opts.input);

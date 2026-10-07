@@ -77,10 +77,12 @@ export const REJECTION_CODES = {
   emptyStructuredOutput: 'empty_structured_output',
   /** The provider generated text or nothing instead of the phase's required terminal tool call (`toolAttempt.ts`). */
   missingRequiredToolCall: 'missing_required_tool_call',
-  /** `submit_findings` carries a classification that no longer matches the locked exploration classification (`smBase.ts`). */
-  classificationLockViolation: 'classification_lock_violation',
-  /** A registered tool handler threw; the generic fallback envelope both LM lanes feed back to the model (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
+  /** A registered tool handler threw during dispatch; a backend fault that ends the run (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
   toolExecutionError: 'tool_execution_error',
+  /** A tool handler caught an unexpected exception; a backend fault that ends the run (`toolProvider.ts`). */
+  internalError: 'internal_error',
+  /** The exploration engine threw while applying findings and entered its error status; a backend fault that ends the run (`smBase.ts`). */
+  engineCrash: 'engine_crash',
   /** A `lineage_present_result` call failed an engine-state or content rule its served schema cannot express (`presentResult.ts`, `handlers/presentResult.ts`). */
   validation: 'validation',
   /** `submit_findings` reached an engine in a status other than `awaiting_findings` and not `complete` (`smBase.ts`). */
@@ -89,8 +91,10 @@ export const REJECTION_CODES = {
   explorationComplete: 'exploration_complete',
   /** `submit_findings.focus_node_id` is a real node other than the current hop focus (`smBase.ts`). */
   focusNodeIdMismatch: 'focus_node_id_mismatch',
-  /** A provider tool call failed its tool's input schema before dispatch (`vscodeModelPort.ts`, `toolAttempt.ts`, `toolErrorEnvelope.ts`). */
+  /** A provider tool call failed its tool's input schema before dispatch; raised by a model port that validates arguments itself (`modelPort.ts`, `toolAttempt.ts`). */
   invalidToolInput: 'invalid_tool_input',
+  /** A text value of a provider tool call carries tool-call notation (`toolCallNotation.ts`, `toolAttempt.ts`). */
+  toolCallNotation: 'tool_call_notation',
   /** A provider tool call named a tool the phase does not expose (`vscodeModelPort.ts`, `toolAttempt.ts`). */
   unknownTool: 'unknown_tool',
   /** The synthetic structured-output call was missing, duplicated or schema-invalid (`structuredOutput.ts`, `vscodeModelPort.ts`). */

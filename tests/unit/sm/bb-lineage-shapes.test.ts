@@ -75,7 +75,7 @@ describe('BB lineage: a prune inside a cycle through the origin', () => {
     expect(submit(w.engine, 'origin', { prune: ['d'] })).toMatchObject({ ok: true });
     expect(w.engine.getHopContext()).toMatchObject({ focus_node: { id: 'j' } });
     expect(submit(w.engine, 'j', { prune: ['d'] })).toMatchObject({ ok: true });
-    expect(delivered(w.engine).pruned).toContain('d');
+    expect(w.engine.toJSON().nodeStates.filter(state => state.action === 'prune').map(state => state.nodeId)).toContain('d');
     return w;
   };
 

@@ -17,12 +17,14 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   holdRejectedPresentResult,
+  requiredCtChainNodeIds,
   findTextlessNewSectionLabels,
   findStartOrderIssues,
   presentResultRepairInstruction,
   assemblePreviewSections,
   assignEvidenceIds,
   expandEvidenceRefs,
+  evidenceCoverage,
   type PresentResultViolation,
   type PresentResultInput,
   type PresentResultRepairPatch,
@@ -49,13 +51,9 @@ function findUncoveredCtChainNodes(
   slottedNodeIds: readonly string[],
   identifierCaseSensitive = false,
 ): string[] {
-  const edges = resultGraph?.columnAspect?.edges ?? [];
-  if (edges.length === 0) return [];
   const lc = (id: string): string => schemaKey(id, identifierCaseSensitive);
-  const exempt = new Set<string>(slottedNodeIds.map(lc));
-  for (const st of resultGraph?.node_states ?? []) if (st.action === 'prune') exempt.add(lc(st.nodeId));
-  const chain = new Set(edges.flatMap(e => [lc(e.from_node), lc(e.to_node), lc(e.hop_node)]));
-  const required = resolvedNodeIds.filter(id => chain.has(lc(id)) && !exempt.has(lc(id)));
+  const pruned = (resultGraph?.node_states ?? []).filter(state => state.action === 'prune').map(state => state.nodeId);
+  const required = requiredCtChainNodeIds(resultGraph?.columnAspect?.edges ?? [], resolvedNodeIds, [...slottedNodeIds, ...pruned], lc);
   if (required.length === 0) return [];
 
   const linked = new Set<string>();
@@ -158,7 +156,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (attemptWrite.kind !== 'accepted') {
         return s.logAndReturn('lineage_present_result', makeRejection({
           code: REJECTION_CODES.staleTurn,
-          hint: 'The turn no longer owns this session. Do not render this result.',
+          reason: 'The turn no longer owns this session; the result was not rendered.',
         }), rawInput);
       }
       const model = s.requireModel();
@@ -225,7 +223,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             issuePaths: ['sections'],
           }));
         }
-        presentInput = mergePresentResultRepairPatch(held, patch, authorization);
+        presentInput = mergePresentResultRepairPatch(held, patch, authorization, model.identifierCaseSensitive);
         const merged = presentInput.sections === undefined && retainableSections
           ? { success: true as const }
           : MergedSectionsSchema.safeParse({ sections: presentInput.sections });
@@ -449,6 +447,14 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             return expanded === sec.text ? sec : { ...sec, text: expanded };
           }),
         };
+        const slotChars = sess.memory.getResult().detail_slots
+          .reduce((total, slot) => total + slot.sections.reduce((sum, section) => sum + section.text.length, 0), 0);
+        const coverage = evidenceCoverage(evidenceBlocks, [renderInput.title, renderInput.intro, renderInput.closing, ...(renderInput.sections ?? []).map(sec => sec.text)].filter((text): text is string => text !== undefined));
+        s.logger.debug(
+          `[Presentation] retention — slotChars=${slotChars} sectionChars=${presentInput.sections.reduce((sum, sec) => sum + sec.text.length, 0)} ` +
+          `sections(nodes:chars)=[${presentInput.sections.map(sec => `${sec.node_ids?.length ?? 0}:${sec.text.length}`).join(', ')}] ` +
+          `fences served=${coverage.served} shown=${coverage.served - coverage.unusedIds.length} unused=[${coverage.unusedIds.join(', ')}]`,
+        );
       }
 
       s.logger.debug(`presentResult section[0] preview: ${trunc(renderInput.sections?.[0]?.text ?? '(empty)', 200)}`);
@@ -616,7 +622,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (successWrite.kind !== 'accepted') {
         return s.logAndReturn('lineage_present_result', makeRejection({
           code: REJECTION_CODES.staleTurn,
-          hint: 'The result was not committed because the turn no longer owns this session.',
+          reason: 'The turn no longer owns this session; the result was not committed.',
         }), rawInput);
       }
       // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.

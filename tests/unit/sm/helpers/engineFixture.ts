@@ -45,3 +45,22 @@ export function buildModel(spec: GraphSpec): Built {
 export function newEngine(built: Built): NavigationEngine {
   return new NavigationEngine(built.model, built.graph, () => {}, {});
 }
+
+/**
+ * Runs the remaining hops to the engine's own completion, submitting one kept finding with no
+ * column account per focus. A result is readable only after this; throws on a rejected hop.
+ */
+export function completeRun(engine: NavigationEngine): void {
+  for (let guard = 0; guard < 100; guard++) {
+    const context = engine.getHopContext();
+    if (context.done || !context.focus_node) return;
+    const focus = String(context.focus_node.id);
+    const result = engine.submitFindings({
+      focus_node_id: focus, verdict: 'analyze', summary: `Observed ${focus}`,
+      sections: [{ angle: 'technical', text: `SQL at ${focus}` }],
+      ...(engine.currentHopAnalysisMode === 'ct' ? { column_flow: [] } : {}),
+    });
+    if (!('ok' in result)) throw new Error(`hop ${focus} rejected: ${JSON.stringify(result)}`);
+  }
+  throw new Error('hop loop did not end');
+}

@@ -9,14 +9,32 @@ import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
 import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
-import { assignEvidenceIds } from '../../tools/presentResult';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import type { ColumnFlowEntry } from '../../sm/smTypes';
+import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
 import { type ToolServices, getModelNodeMap } from './toolServices';
+
+/**
+ * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
+ * `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one.
+ *
+ * @param columnFlow - The hop's submitted `column_flow`; absent yields zero counts.
+ * @returns The suffix for the `[Hop N]` log line.
+ */
+export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
+  const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);
+  const noNote = refs.filter(ref => !ref.note).length;
+  const mixed = refs.filter(ref => {
+    const rowRoles = (ref.transforms ?? []).filter(role => COLUMN_TRANSFORM_DIRECTION[role] === 'INDIRECT').length;
+    return rowRoles > 0 && rowRoles < (ref.transforms ?? []).length;
+  }).length;
+  return ` refs=${refs.length} refs_no_note=${noNote} role_mixed=${mixed}`;
+}
 
 /**
  * Validates and submits findings for the current exploration focus.
@@ -31,8 +49,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) return s.logAndReturn('lineage_submit_findings', makeRejection({
         code: REJECTION_CODES.noActiveSession,
-        hint: 'No active exploration. Call lineage_start_exploration first.',
-        detail: { next_action: 'start_exploration' },
+        reason: 'No exploration is active.',
       }), input);
 
       const focus = engine.currentFocus;
@@ -41,10 +58,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        // Unknown fields are outside this hop contract and cannot seed a repair draft.
-        const held = parsed.error.issues.some(issue => issue.code === 'unrecognized_keys')
-          ? null
-          : engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
+        const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
         if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, input);
       }
@@ -74,22 +88,9 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         return s.logAndReturn('lineage_submit_findings', result, normalizedInput);
       }
 
-      if ('done' in result && result.done && result.result) {
-        sess.storeSmResult(result.result, s.turnEpoch(sess));
-        const lmResult = {
-          status: result.result.status,
-          originNodeId: result.result.originNodeId,
-          scope: { nodes: result.result.fullNodes.length, edges: result.result.edges.length },
-          suggested_sections: result.result.suggested_sections,
-          node_states: result.result.node_states,
-          detail_slots: assignEvidenceIds(result.result.detail_slots).slots,
-        };
-        return s.logAndReturn('lineage_submit_findings', { ...result, result: lmResult }, normalizedInput);
-      }
-
       const diag = engine.getHopDiagnostics();
       const ctSuffix = diag.columnEdgeCount !== undefined
-        ? ` ct_edges=${diag.columnEdgeCount} cols=${diag.activeColumnCount} flow=${diag.columnFlowEntries}`
+        ? ` ct_edges=${diag.columnEdgeCount} cols=${diag.activeColumnCount} flow=${diag.columnFlowEntries}${columnRefSuffix(finding.column_flow)}`
         : '';
       s.logger.debug(
         `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} verdict=${diag.verdict ?? 'none'} ` +

@@ -70,8 +70,8 @@ Model input crosses three layers, in this order:
 - **Schema parse** — the tool's Zod schema, as served to the model for the hop, is
   the structural contract. The canonical receiving boundary parses each call once against
   it and answers a failure with `makeRejection` built from `z.prettifyError` (every
-  issue in one parse, a repeated issue collapsed, the expected shape shown once,
-  nothing echoed). For `submit_findings`, the serialized registry's receiving handler owns
+  issue in one parse, a repeated issue collapsed, a size bound omitted where the
+  value already fails its type, the expected shape shown once, nothing echoed). For `submit_findings`, the serialized registry's receiving handler owns
   that raw parse before normalization, held-draft merging or engine mutation;
   native and HTTP transport decoding does not perform a second parse. Direct typed
   engine calls validate the separate internal finding shape against the same hop mode.
@@ -510,6 +510,16 @@ when forwarded. A neighbor without column work still receives BB guidance. The m
 completion flag; synthesis starts when the engine reaches its terminal
 condition.
 
+Completion has one definition: the engine is `complete` when no agenda entry
+and no dispatched focus is left. A result is built only in that state;
+requesting one earlier is an engine error, not a partial result. A hop that
+uses its reply budget without an accepted submission, or whose model request
+fails, ends the turn as an error that names the object and the hops
+completed. The exploration is reset, no synthesis runs, and no AI preview or
+graph change is produced from an incomplete run. A user cancel or the internal
+step limit also ends the turn without a result; the unfinished engine stays on
+the session until the next exploration replaces it.
+
 In column trace, column evidence does not create
 separate object-retention rules. Object decisions use the shared BB path;
 column links and unresolved source-qualified questions remain evidence for the
@@ -641,7 +651,38 @@ current turn accepts the history. A read that an earlier generation already had
 accepted and the model asks for again is answered with a `duplicate_read`
 rejection naming the accepted call ID; a duplicate inside the same batch is
 reused silently. A phase stops after `MAX_TOOL_PROVIDER_CALLS` model replies in a row
-that add no accepted observation — rejected, duplicate, empty or text-only.
+that add no accepted observation — rejected, duplicate, empty or text-only. An
+active hop also stops after `MAX_TOOL_PROVIDER_CALLS` replies whose
+`lineage_submit_findings` call was rejected or missing, whether or not those
+replies carried an accepted read.
+
+A rejection is a check, not a repair: a value that fails its rule is rejected,
+never moved or rewritten to pass. The receiving-boundary normalization
+described above (identifier resolution, and decoding a structured argument
+sent as valid JSON text with `JSON.parse`) is the stated exception and is
+logged; text that is not valid JSON is rejected at its field, never completed. Each rejection of a tool call or of a missing
+call states the rule broken, the allowed form and the replies the step has
+left; the rejection the last reply answers also names the top-level fields to
+correct when the fault has a field path. A field that failed its check is not
+held, committed or served to a later hop. Every text value of every tool call
+the `@lineage` runtime dispatches is checked for tool-call notation
+(`<parameter name=…>`, `<invoke name=…>`, `</invoke>`, or a `</parameter>`
+that ends an argument) before dispatch. A call that carries it is rejected
+with code `tool_call_notation` at each offending field, naming the argument to
+send separately; the notation is never parsed or split, and no field of that
+call is held, because no schema has checked it. The read-only tools registered
+for other VS Code agents carry no such check. A backend-fault rejection closes
+its reply: later tool calls of the same reply are not executed.
+
+A stop is an error, logged with its reason. During active exploration both
+stop reasons — `no_progress` (the reply limit) and `backend_fault` — end the
+turn with a chat message naming the object, and produce no synthesis, no AI
+preview and no graph change. `backend_fault` covers rejections no model reply
+can correct (`engine_crash`, `invalid_status`, `no_active_session`,
+`stale_turn`, `internal_error`, `tool_execution_error`); the first one ends
+the run instead of being returned as a retry request. A synthesis stop renders
+no AI preview; on a reply-limit stop a held report draft is shown as chat
+text.
 
 ## BB and column-trace modes
 
@@ -777,8 +818,8 @@ single home for the five values. They align to OpenLineage's
 |---|---|---|
 | `pass_through` | DIRECT | rename, `SELECT *`, synonym, straight copy |
 | `compute` | DIRECT | formula, `CASE`, `COALESCE`, cast, concat, string and date functions |
-| `aggregate` | DIRECT | `SUM`/`COUNT`/`MIN`/`MAX`, `GROUP BY`, window functions, `PIVOT` |
-| `combine` | INDIRECT | `JOIN`, `UNION`/`EXCEPT`/`INTERSECT`, `APPLY`, `UNPIVOT` |
+| `aggregate` | DIRECT | the argument of `SUM`/`COUNT`/`MIN`/`MAX` under `GROUP BY` or a window, `PIVOT` |
+| `combine` | INDIRECT | `JOIN`, `GROUP BY` / `PARTITION BY` / `ORDER BY` key, `UNION`/`EXCEPT`/`INTERSECT`, `APPLY`, `UNPIVOT` |
 | `filter` | INDIRECT | `WHERE`, `HAVING`, a join `ON` predicate, `TOP`, `DISTINCT` |
 
 DIRECT means the upstream value reaches the output; INDIRECT means no value

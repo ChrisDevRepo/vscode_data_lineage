@@ -59,7 +59,7 @@ Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on the tabl
 
 **Related paths beyond the approved scope.** By design — deep analysis locks the schema border at confirmation. A completed result offers **Explore related objects…** for the deferred routes.
 
-**Deep analysis stops before the whole scope is covered.** An approved scope always fits `dataLineageViz.ai.maxRounds`, but provider failures or repeated replies without progress can stop a run early. The answer is marked *stopped early* and presents what was completed. Ask again, or exclude the named object from the scope.
+**Deep analysis stops before the whole scope is covered.** An approved scope always fits `dataLineageViz.ai.maxRounds`, but provider failures or repeated replies without progress can stop a run early. The run ends with an error naming the object it stopped at; no result or graph preview is shown for an incomplete run. Ask again, or exclude the named object from the scope.
 
 **Repeated graph-preview or result retries.** The extension rejects malformed tool calls and lets the model repair them. If retries persist, stop the turn and report the rejection codes and issue paths from **Output → Data Lineage Viz** at debug level.
 

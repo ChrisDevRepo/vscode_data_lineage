@@ -466,10 +466,6 @@ export type SubmitResult =
        * decision. Absent when every active column was accounted for, or in BB.
        */
       unaccounted_columns?: string[];
-      /** Set only on the supplement path when the supplemented agenda was already drained. */
-      done?: true;
-      /** Final synthesized result. Present iff `done: true`. */
-      result?: SmResult;
     }
   | ToolRejection;
 
@@ -549,6 +545,27 @@ export interface ScopeSummaryLeaf {
   omitted: number;
 }
 
+/** Excluded objects of one group: the total and every object, keyed by object type, alphabetised. */
+export interface ScopeExclusionGroup {
+  /** Objects in the group across every type. */
+  count: number;
+  /** Object type → the excluded objects of that type. */
+  byType: Record<string, Array<{ schema: string; name: string }>>;
+}
+
+/**
+ * Excluded objects split by cause.
+ *
+ * @remarks
+ * `rules` holds one entry per GUI exclusion pattern that matched at least one excluded object, in
+ * filter order; an object several patterns match counts under the first. `named` holds the
+ * excluded objects no pattern matches — the ones the question or the model named.
+ */
+export interface ScopeExclusions {
+  rules: Array<ScopeExclusionGroup & { pattern: string }>;
+  named: ScopeExclusionGroup;
+}
+
 /**
  * Snapshot of the proposed scope, computed once per `confirm_sm_start` gate emission.
  *
@@ -604,6 +621,19 @@ export interface ScopeSummary {
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
   activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
   /**
+   * Every schema of the loaded model that {@link activeFilters} does not exclude, alphabetised —
+   * with `activeFilters.schemas` the full schema set, so a renderer can state the filter from its
+   * shorter side. Absent on a summary built before this field existed; a renderer then falls back
+   * to the schemas carrying in-scope nodes.
+   */
+  selectedSchemas?: string[];
+  /**
+   * The excluded objects of {@link activeFilters} grouped by what excluded them, for the approval
+   * card and the full plan. Absent on a summary built before this rollup existed; a renderer then
+   * falls back to the flat `activeFilters.nodeIds`.
+   */
+  exclusions?: ScopeExclusions;
+  /**
    * Analysis constraints the user stated that no filter field can express, verbatim from the
    * model's reading. Echoed at the approval gate so the user can confirm the instruction landed
    * before an autonomous run begins.
@@ -636,7 +666,7 @@ interface ResultNode {
  * The final, immutable output of a completed State Machine exploration.
  */
 export interface SmResult {
-  /** Hardcoded status to 'complete'. */
+  /** Always `complete`: the engine builds a result only once its agenda is drained. */
   status: 'complete';
   /** The ID of the node where the exploration began. */
   originNodeId: string;

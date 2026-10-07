@@ -8,6 +8,7 @@ import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName, schemaKey } from '../../utils/sql';
+import { sanitizeForLog } from '../../utils/log';
 import { DirectedGraph } from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 
@@ -394,13 +395,17 @@ export class ColumnTracer {
           }
         }
         if (verbs.size === 0) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node.` });
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes.` });
           continue;
         }
         if ([...verbs].every((v) => v === 'read')) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node; every open neighbor you do not prune is visited anyway.` });
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination.` });
           continue;
         }
+      }
+      if (entry.writes_to === null && focusNode.type === 'procedure'
+        && model.edges.some(e => identifierKey(e.source) === identifierKey(focusId) && edgeApiType(e.type, focusNode.type) === 'write')) {
+        log?.('debug', `[CT] writes_to null on writer focus="${focusId}" out_col="${entry.out_col}" — no writer edge staged`);
       }
       const toCol = resolvedTarget?.attributionCol ?? entry.out_col;
       if (toNodeObj && !entry.returns_to) {
@@ -512,7 +517,7 @@ export class ColumnTracer {
 
         // Direct lineage only: a column that just joins, filters, groups or orders rows is object lineage — its node is a row-role visit and the hop's sections explain the rule.
         if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
-          rowRoleOnly.push(`${fromNode}.${cont.col}`);
+          rowRoleOnly.push(`${fromNode}.${cont.col} (${(cont.transforms ?? []).join('+')}${cont.note ? `: ${sanitizeForLog(cont.note)}` : ''})`);
           continue;
         }
 

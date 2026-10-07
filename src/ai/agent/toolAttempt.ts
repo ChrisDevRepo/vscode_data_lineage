@@ -52,6 +52,7 @@ import {
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { toolCallNotationFault } from '../support/toolCallNotation';
 import { heldSubmissionRepairHint } from '../tools/toolSchemas';
 import {
   contextBlockBytes,
@@ -375,7 +376,7 @@ export interface ToolPhaseAttemptState {
   readonly phase: InstructionPhase;
   /** Monotonic physical-call count for the logical phase or hop. */
   readonly providerCalls: number;
-  /** Model replies in a row that added no accepted observation — the count {@link MAX_TOOL_PROVIDER_CALLS} bounds. */
+  /** Model replies in a row that added no accepted observation; bounded by {@link MAX_TOOL_PROVIDER_CALLS}. */
   readonly noProgressCalls: number;
   /** Accepted non-terminal facts retained for recovery attempts. */
   readonly observations: readonly ToolAttemptObservation[];
@@ -388,8 +389,17 @@ export interface ToolPhaseAttemptState {
    * rebuilt.
    */
   readonly messages: readonly ModelMessage[];
-  /** `'no_progress'` once {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress, else null. */
-  readonly stopReason: 'no_progress' | null;
+  /**
+   * Replies of this step whose call to the step's terminal tool was rejected or missing, counted
+   * whether or not the same reply carried an accepted read. Zero when no terminal tool is tracked.
+   */
+  readonly rejectedTerminalCalls: number;
+  /**
+   * `'backend_fault'` once a rejection of that group was recorded, `'no_progress'` once
+   * {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress or without an accepted
+   * terminal call, else null.
+   */
+  readonly stopReason: 'no_progress' | 'backend_fault' | null;
 }
 
 /**
@@ -402,6 +412,7 @@ export function initialToolPhaseAttemptState(phase: InstructionPhase): ToolPhase
     phase,
     providerCalls: 0,
     noProgressCalls: 0,
+    rejectedTerminalCalls: 0,
     observations: [],
     rejections: [],
     messages: [],
@@ -427,11 +438,14 @@ function acceptedCallKey(toolName: string, input: unknown): string {
  *
  * @param state - Existing phase-local cumulative state.
  * @param attempt - Exactly one completed graph attempt.
- * @returns Updated state carrying the single no-progress stop.
+ * @param terminalTool - The step's terminal tool; a reply that leaves it rejected counts toward the
+ *   reply limit even when the same reply carried an accepted read.
+ * @returns Updated state carrying the backend-fault or no-progress stop.
  */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
   attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'observations' | 'rejections' | 'messages'>,
+  terminalTool?: string,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const noProgressCalls = attempt.observations.length === 0 ? state.noProgressCalls + attempt.providerCalls : 0;
@@ -443,15 +457,18 @@ export function recordToolAttempt(
     || attempt.stop === 'reroute'
     || attempt.stop === 'refused'
     || attempt.stop === 'phase_complete';
-  const stopReason = acceptedTerminal
-    ? null
-    : noProgressCalls >= MAX_TOOL_PROVIDER_CALLS
+  const terminalRejected = terminalTool !== undefined && attempt.rejections.some(rejection => rejection.toolName === terminalTool);
+  const rejectedTerminalCalls = acceptedTerminal ? 0 : state.rejectedTerminalCalls + (terminalRejected ? attempt.providerCalls : 0);
+  const stopReason = attempt.rejections.some(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')
+    ? 'backend_fault'
+    : !acceptedTerminal && Math.max(noProgressCalls, rejectedTerminalCalls) >= MAX_TOOL_PROVIDER_CALLS
       ? 'no_progress'
       : null;
   return {
     phase: state.phase,
     providerCalls,
     noProgressCalls,
+    rejectedTerminalCalls,
     observations,
     rejections,
     messages,
@@ -567,6 +584,12 @@ export async function renderToolAttemptContext(
 const PRESENT_RESULT_TOOL = 'lineage_present_result';
 
 /**
+ * Tools a reply carries once: each call replaces the whole answer of its phase or hop, so a second
+ * call in the same reply competes with the first for the held draft instead of adding to it.
+ */
+const ONE_CALL_PER_REPLY_TOOLS: ReadonlySet<string> = new Set([SUBMIT_FINDINGS_TOOL, PRESENT_RESULT_TOOL]);
+
+/**
  * Embeds the labels of the session's held `lineage_present_result` draft into a present_result
  * rejection's own `detail`, so a resend can key on them. A no-op for any status but `'rejected'` or
  * any tool but {@link PRESENT_RESULT_TOOL}.
@@ -600,6 +623,31 @@ function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinit
   }));
 }
 
+/** Whether an invalid call was rejected for its arguments, so the rejection carries a field-level repair. */
+function isArgumentRejection(code: string): boolean {
+  return code === REJECTION_CODES.invalidToolInput || code === REJECTION_CODES.toolCallNotation;
+}
+
+/**
+ * Applies the tool-call notation check to one provider call.
+ *
+ * @returns The call unchanged, or its invalid form naming each text value that carries notation.
+ */
+function checkToolCallNotation(call: GeneratedToolCall): GeneratedToolCall {
+  const fault = call.valid ? toolCallNotationFault(call.input) : null;
+  if (!fault) return call;
+  return {
+    valid: false,
+    callId: call.callId,
+    toolName: call.toolName,
+    input: call.input,
+    code: REJECTION_CODES.toolCallNotation,
+    reason: fault.reason,
+    hint: fault.hint,
+    issuePaths: fault.issuePaths,
+  };
+}
+
 function rejectionFromInvalid(
   call: Extract<GeneratedToolCall, { valid: false }>,
   registry: IToolRegistry<string>,
@@ -610,7 +658,7 @@ function rejectionFromInvalid(
     code: call.code,
     message: call.reason,
     correction: {
-      ...(call.code === REJECTION_CODES.invalidToolInput && call.hint !== undefined ? { hint: call.hint } : {}),
+      ...(isArgumentRejection(call.code) && call.hint !== undefined ? { hint: call.hint } : {}),
       ...(call.code === REJECTION_CODES.unknownTool ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
       ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
@@ -661,24 +709,43 @@ interface RecordedToolOutcome {
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
- * reason states the identity fault; verified object-column inventories are disclosed only on
- * the final budgeted rejection. The code, issue paths and detail stay on the paired `ToolMessage.artifact`.
+ * reason states the identity fault; verified object-column inventories and the top-level fields to
+ * correct are disclosed on the rejection the last budgeted reply answers. The last line states the replies the step has left, so
+ * the remaining budget is known before it is spent. The code, issue paths and detail stay on the
+ * paired `ToolMessage.artifact`.
  */
 function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
-  const finalRejection = (priorState?.noProgressCalls ?? 0) >= MAX_TOOL_PROVIDER_CALLS - 1;
+  const repliesLeft = repliesLeftAfter(priorState);
+  const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
   const inventories = finalRejection && Array.isArray(rejection.detail)
     ? rejection.detail.flatMap((fault: { id?: string; actual_columns?: string[] }) => fault.actual_columns
       ? [`Actual columns of ${fault.id}: ${fault.actual_columns.join(', ') || '(none)'}.`] : []) : [];
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
+  const owed = finalRejection ? [...new Set((rejection.issuePaths ?? []).map(path => path.split('.')[0]))] : [];
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,
     ...inventories,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
+    ...(owed.length > 0 ? [`Fields to correct in this reply: ${owed.join(', ')}.`] : []),
+    ...replyBudgetLine(repliesLeft),
   ].join('\n');
+}
+
+/** Replies the step has left once the reply now being answered is counted; undefined without step state. */
+function repliesLeftAfter(priorState?: ToolPhaseAttemptState): number | undefined {
+  return priorState
+    ? MAX_TOOL_PROVIDER_CALLS - 1 - Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls)
+    : undefined;
+}
+
+/** The closing line of a rejection that states the replies left; empty when none is left or unknown. */
+function replyBudgetLine(repliesLeft: number | undefined): string[] {
+  if (repliesLeft === undefined || repliesLeft < 1) return [];
+  return [repliesLeft === 1 ? 'Last reply for this step.' : `${repliesLeft} replies left for this step.`];
 }
 
 function recordToolOutcome(
@@ -861,7 +928,7 @@ type SynthesizedRejectionMessages = readonly ModelMessage[];
  * was received, so there is no call id for a tool result to answer.
  */
 function emitSynthesizedRejection(
-  input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase' | 'traceSyntheticRejection'>,
+  input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase' | 'traceSyntheticRejection' | 'priorState'>,
   rejections: ToolAttemptRejection[],
   spec: SynthesizedRejectionSpec,
 ): SynthesizedRejectionMessages {
@@ -886,7 +953,10 @@ function emitSynthesizedRejection(
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
   const hasAttemptedTurn = messageContentToText(spec.attempted.content).trim().length > 0
     || messageProviderParts(spec.attempted).length > 0;
-  const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
+  const note = [
+    `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`,
+    ...replyBudgetLine(repliesLeftAfter(input.priorState)),
+  ].join('\n');
   return hasAttemptedTurn
     ? [spec.attempted, modelUserMessage(note)]
     : [modelUserMessage(note)];
@@ -941,7 +1011,12 @@ interface ToolCallDispatchLoopResult {
  * parameters and the accumulated result, never captured only as a closure the caller cannot see.
  * Once `closedBy` closes the batch, every remaining sibling is recorded as
  * `phase_closed` without dispatch — that closure state is internal to this one
- * batch and does not survive past the return. Every call, dispatched or synthetically closed,
+ * batch and does not survive past the return. A second call of a {@link ONE_CALL_PER_REPLY_TOOLS}
+ * tool is recorded the same way, whatever became of the first, so it can neither be held as the
+ * repair draft nor answer the first call's rejection inside the same reply. A call whose text
+ * values carry tool-call notation ({@link toolCallNotationFault}) is rejected before dispatch and
+ * none of its fields is held: no schema has checked them. A backend-fault rejection closes the
+ * batch like a phase completion, so no later sibling is dispatched. Every call, dispatched or synthetically closed,
  * appends exactly one {@link ModelMessage} `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages},
  * so the caller's one leading `AIMessage` always pairs with the same number of tool results as it
  * has tool calls. A cancellation is the one exit that leaves later siblings unanswered; the caller
@@ -963,8 +1038,10 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
   let cancelled = false;
   let closedBy: { readonly callId: string; readonly toolName: string } | null = null;
   let heldObservationBytes = loop.heldObservationBytes;
+  const evaluatedOncePerReply = new Map<string, string>();
 
-  for (const call of toolCalls) {
+  for (const emitted of toolCalls) {
+    const call = checkToolCallNotation(emitted);
     if (input.signal?.aborted) {
       cancelled = true;
       break;
@@ -985,10 +1062,29 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         `closed by ${closedBy.toolName} callId ${closedBy.callId}`);
       continue;
     }
+    const evaluatedCallId = evaluatedOncePerReply.get(call.toolName);
+    if (evaluatedCallId !== undefined) {
+      const outcome = recordToolOutcome(call, {
+        status: 'phase_closed',
+        closedByCallId: evaluatedCallId,
+        rejection: makeRejection({
+          code: 'extra_call_not_evaluated',
+          reason: `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
+          hint: "Answer that call's result with one call in your next reply.",
+          detail: { evaluatedCallId },
+        }),
+      }, calls, observations, rejections, input.traceSyntheticRejection);
+      toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
+      logSyntheticRejection(input, 'extra_call_not_evaluated', call, 'extra_call_not_evaluated',
+        `evaluated callId ${evaluatedCallId}`);
+      continue;
+    }
+    if (ONE_CALL_PER_REPLY_TOOLS.has(call.toolName)) evaluatedOncePerReply.set(call.toolName, call.callId);
     if (!call.valid) {
       const rejected = rejectionFromInvalid(call, input.registry);
+      const argumentRejected = isArgumentRejection(call.code);
       const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
-      let resend: string | undefined = schemaRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
+      let resend: string | undefined = argumentRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
       if (schemaRejected && call.toolName === SUBMIT_FINDINGS_TOOL && input.holdRejectedSubmission) {
         const held = input.holdRejectedSubmission(call.input, call.issuePaths ?? []);
         if (held) resend = heldSubmissionRepairHint(held);
@@ -999,11 +1095,11 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       }
       let data = resend ? withRepairHint(rejected, resend) : rejected;
       data = withHeldDraftDetail(data, call.toolName, input.presentResultRepairDraftContext);
-      const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection);
+      const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       input.debugLog?.(
-        `[Reject] source=${call.code === REJECTION_CODES.invalidToolInput ? 'provider_prevalidation' : 'provider_generation'}`
+        `[Reject] source=${argumentRejected ? 'provider_prevalidation' : 'provider_generation'}`
         + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
         + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
         + ` callId=${safeCallId(call.callId)}`
@@ -1029,7 +1125,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
           message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
           correction: { hint: heldErrorEnvelopeDuplicateHint(reused) ?? DUPLICATE_READ_HINT },
           detail: { acceptedCallId: reused.callId },
-        }, calls, observations, rejections, input.traceSyntheticRejection);
+        }, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
         toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
         logSyntheticRejection(input, 'duplicate_read', call, REJECTION_CODES.duplicateRead,
           `repeats accepted callId ${reused.callId}`);
@@ -1068,6 +1164,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
+      if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName };
     } else {
       const observe = !controlSuccess && !terminalSuccess;
       let storedResult = resultText;

@@ -5,7 +5,6 @@
  * Keeps boundary normalization deterministic and reusable across tool handlers,
  * state-machine init, and prompt rendering.
  */
-import { parsePartialJson } from '@langchain/core/output_parsers';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
 
@@ -179,10 +178,19 @@ function declaredTypes(schema: JsonSchemaNode | undefined): Set<string> {
   return new Set(branches(schema).flatMap((node) => (node.type === undefined ? [] : [node.type].flat())));
 }
 
+/** Parses a JSON text with the platform parser; `undefined` when the text is not valid JSON. */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string, paths: string[]): unknown {
   const types = declaredTypes(schema);
   if (typeof value === 'string' && !types.has('string') && (types.has('array') || types.has('object'))) {
-    const decoded: unknown = parsePartialJson(value);
+    const decoded: unknown = parseJson(value);
     if (
       (Array.isArray(decoded) && types.has('array')) ||
       (isPlainObject(decoded) && types.has('object')) ||
@@ -218,8 +226,9 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
  * Some model servers return an array- or object-typed argument as a JSON string
  * (`"targetColumns": "[\"A\"]"`); the product cannot know which server it talks to, so the decode
  * runs once at the model boundary for every tool and model, driven by the declared schema alone.
- * The decode is LangChain's `parsePartialJson`, which accepts raw control characters inside strings
- * (a model that puts literal newlines in a stringified object) where `JSON.parse` throws.
+ * The decode is `JSON.parse`. A text that is not valid JSON — cut off before its value closes, or
+ * carrying raw line breaks inside a string — is never completed or repaired: it stays a string and
+ * fails schema validation at its field.
  * The caller logs {@link StringifiedArgumentsResult.paths}.
  *
  * @param input - Tool arguments as the provider returned them.

@@ -101,8 +101,43 @@ describe('active coordinator', () => {
   });
 });
 
+describe('backend fault', () => {
+  it.each(['internal_error', 'tool_execution_error', 'engine_crash', 'invalid_status', 'no_active_session', 'stale_turn'])(
+    'ends the run on the first %s without asking the model to retry', async code => {
+      const session = new AiSession();
+      seed(session);
+      const epoch = session.beginTurn();
+      session.storePendingExploration(proposal({ question: 'Trace Value', origin: caller, analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream', depthIntent }), epoch);
+      let submits = 0;
+      const { registry } = scriptedRegistry([
+        { name: 'lineage_start_exploration', result: GATE_RESULT },
+        { name: 'lineage_submit_findings', result: () => { submits += 1; return JSON.stringify({ code, reason: 'Synthetic backend fault.' }); } },
+      ]);
+      const submit = (id: string): ScriptedGeneration => ({ toolCalls: [validCall(id, 'lineage_submit_findings', { summary: 'Reviewed caller', verdict: 'analyze' })] });
+      const model = new ScriptedModelPort([
+        { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: caller, analysisMode: 'ct', targetColumns: ['Value'], classification: 'technical' })] },
+        submit('submit-1'), submit('submit-2'), submit('submit-3'),
+      ]);
+      const turn = gateSink();
+      const lines: string[] = [];
+      const runtime = new AgentRuntime({ threadId: `fault-${code}`, getSession: () => session, model: model as unknown as ModelPort, registry,
+        sink: turn.sink, turnEpoch: epoch, maxRounds: 10, logger: logger(lines) });
+      const running = runtime.run('/trace [d].[caller] Value');
+      const gate = await turn.nextGate();
+      expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
+      expect(await running).toBe('error');
+      expect(submits).toBe(1);
+      expect(runtime.lastFailureDetail).toMatchObject({
+        stop: 'backend_fault',
+        message: 'The analysis stopped at `d.caller`: an internal error occurred (' + code + '). The run is incomplete, so no result is shown and the graph was not changed. Details are in the debug log. Ask again.',
+      });
+      expect(session.resultGraph).toBeNull();
+      expect(lines.some(line => line.includes('reason=backend_fault') && line.includes(`code=${code}`))).toBe(true);
+    });
+});
+
 describe('follow-up reroute', () => {
-  it('starts the supplemented hops from the submitted-hop count, so a stop reports the hops actually completed', async () => {
+  it('ends a stopped supplement hop as an error that reports the hops actually completed and renders no result', async () => {
     const session = new AiSession();
     seed(session);
     const first = session.beginTurn();
@@ -123,6 +158,7 @@ describe('follow-up reroute', () => {
     session.enterCompleted(first);
 
     const second = session.beginTurn();
+    let presented = 0;
     const { registry } = scriptedRegistry([
       {
         name: 'lineage_start_exploration',
@@ -136,6 +172,7 @@ describe('follow-up reroute', () => {
       {
         name: 'lineage_present_result',
         result: () => {
+          presented += 1;
           session.commitPresentResultSuccess(second, { name: 'Result', nodeIds: [], aiMetadata: { summary: 's', description: 'd' } } as unknown as PresentationArtifact);
           return JSON.stringify({ ok: true });
         },
@@ -150,8 +187,14 @@ describe('follow-up reroute', () => {
     const lines: string[] = [];
     const runtime = new AgentRuntime({ threadId: 'follow-up', getSession: () => session, model: model as unknown as ModelPort, registry,
       sink: gateSink().sink, turnEpoch: second, maxRounds: 10, logger: logger(lines) });
-    await runtime.run('Also explore the extra view.');
+    expect(await runtime.run('Also explore the extra view.')).toBe('error');
     expect(engine.currentHop).toBe(3);
-    expect(lines).toContainEqual(expect.stringMatching(/^debug \[AI\] \[Salvage\] no_progress after 2 submitted hop\(s\)/));
+    expect(runtime.lastFailureDetail).toMatchObject({
+      stop: 'no_progress',
+      message: expect.stringMatching(/^The analysis stopped at `d\.extra`: 3 model replies for this object were not accepted\. 2 objects were analysed before the stop\. The run is incomplete, so no result is shown/),
+    });
+    expect(presented).toBe(0);
+    expect(session.resultGraph).toBeNull();
+    expect(lines.some(line => line.includes('[Salvage]'))).toBe(false);
   });
 });

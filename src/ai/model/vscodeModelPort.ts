@@ -29,6 +29,7 @@ import {
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 import { coerceStringifiedArguments } from '../support/inputNormalization';
+import { toolCallNotationFault } from '../support/toolCallNotation';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
@@ -250,6 +251,8 @@ export class VscodeModelPort implements ModelPort {
     const decoded = calls.length === 1
       ? this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema)
       : undefined;
+    const notation = toolCallNotationFault(decoded);
+    if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
     const parsed = calls.length === 1 ? input.schema.safeParse(decoded) : undefined;
     if (parsed?.success) return parsed.data;
     const emptyRequiredPayload = calls.length === 1

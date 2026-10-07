@@ -6,6 +6,7 @@ import {
   PresentResultModelSchema,
   PresentResultAuthorizableRepairSchema,
   normalizePresentSectionLabel,
+  PRESENT_RESULT_DEFINED_FIELDS,
   PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
 } from './toolSchemas';
@@ -374,7 +375,7 @@ export function presentResultRepairInstruction(
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: PresentResultRepairAuthorization['sectionTextLeaves'],
 ): string {
-  const wholeFields = resendList.filter(field => field === 'notes' || (field === 'highlight_groups' && !highlightLabelIndexes));
+  const wholeFields = resendList.filter(field => field === 'highlight_groups' && !highlightLabelIndexes);
   return [
     `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
     resendList.includes('sections') && !sectionTextLeaves
@@ -386,6 +387,7 @@ export function presentResultRepairInstruction(
     sectionTextLeaves
       ? `Repair only the rejected section text leaves: sections accepts one indexed object containing exactly the listed replacement field or fields for ${sectionTextLeaves.map(leaf => `zero-based ${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Every node_ids list, other section field and section position stays held.`
       : '',
+    resendList.includes('notes') ? `${keyedResendRule('notes', 'node_id')} {node_id: …, remove: true} drops a held note.` : '',
     wholeFields.length > 0 ? `${wholeFields.join(', ')}: a resend replaces the held list whole, so send every entry, corrected.` : '',
   ].filter(Boolean).join(' ');
 }
@@ -400,8 +402,13 @@ export function presentResultRepairInstruction(
  * @param stage - The stage the call was made in.
  * @param committed - Sections of the committed report an update call may keep text for, or `null`. A
  *   keep-text section (label, no text) whose label has no committed body is invalid, so `sections` is not held.
+ * @remarks
+ * A top-level key the tool does not define is reported by the rejection and left out of the held
+ * draft; it does not stop the call's valid fields from being held.
+ *
  * @returns The repair sentence naming the failed fields to resend; `null` when nothing was held: a draft is
- *   already held, the payload is not an object, or a failed path names no repairable field.
+ *   already held, the payload is not an object, a failed path names a defined field no repair may
+ *   send, or only undefined keys failed.
  */
 export function holdRejectedPresentResult(
   store: RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>,
@@ -412,8 +419,10 @@ export function holdRejectedPresentResult(
 ): string | null {
   if (store.get() || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
   const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
-  const failed = [...new Set(failedPaths.map(path => path.split('.')[0]))];
-  if (!failed.every(field => repairable.has(field))) return null;
+  const failedKeys = [...new Set(failedPaths.map(path => path.split('.')[0]))];
+  const undefinedKeys = new Set(failedKeys.filter(key => !PRESENT_RESULT_DEFINED_FIELDS.has(key)));
+  const failed = failedKeys.filter(key => !undefinedKeys.has(key));
+  if (failed.length === 0 || !failed.every(field => repairable.has(field))) return null;
   const highlightGroupPaths = failedPaths.filter(path => path.startsWith('highlight_groups'));
   const highlightLabelPaths = highlightGroupPaths.filter(path => /^highlight_groups\.\d+\.label$/.test(path));
   const rawHighlightGroups = (input as Record<string, unknown>).highlight_groups;
@@ -442,12 +451,12 @@ export function holdRejectedPresentResult(
     : [];
   if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
   const kept = hasLeafRepair
-    ? Object.fromEntries(Object.entries(input).filter(([key]) => (
+    ? Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && (
       (key === 'highlight_groups' && highlightLabelIndexes)
       || (key === 'sections' && sectionTextLeaves)
       || !failed.includes(key)
     )))
-    : Object.fromEntries(Object.entries(input).filter(([key]) => !failed.includes(key)));
+    : Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && !failed.includes(key)));
   if (Object.keys(kept).length === 0) return null;
   const fields = failed as PresentResultRepairField[];
   store.hold(kept as PresentResultInput, {
@@ -464,30 +473,43 @@ export function holdRejectedPresentResult(
   return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage, false, highlightLabelIndexes, sectionTextLeaves)}`;
 }
 
+type PresentNote = NonNullable<PresentResultInput['notes']>[number];
+type PresentNotePatch = Partial<PresentNote> & { remove?: boolean };
+
+/** A note's merge key: its node id without brackets, case-folded unless the model's identifiers are case-sensitive, so a bare and a bracketed id name one note. */
+function noteKey(note: Partial<PresentNote>, identifierCaseSensitive: boolean): string {
+  const bare = (note.node_id ?? '').replace(/[[\]]/g, '').trim();
+  return identifierCaseSensitive ? bare : bare.toLowerCase();
+}
+
 /**
  * Merges a strict repair patch into a held full `present_result` draft.
  *
  * @remarks
  * `sections` merge by label ({@link RepairDraftStore.mergeByKey}); a preview list, whose sections
  * each carry a `start`, is then ordered by its effective start (the held first section at B1), so a new mid-answer section never trips the
- * ascending-starts check (two sections sharing a start still do). `notes` and ordinary
- * `highlight_groups` repairs replace their lists whole. A parse rejection confined to overlong
+ * ascending-starts check (two sections sharing a start still do). `notes` merge by node id, so one
+ * missing caption is one resent entry; an ordinary `highlight_groups` repair replaces its list whole. A parse rejection confined to overlong
  * highlight labels instead authorizes `{index, label}` leaves. Likewise, a rejection confined to a
  * section's `label` or `text` authorizes only those indexed leaves. Each narrow merge preserves the
  * rest of the held list, and the normal validation/assembly path checks the restored full draft.
+ * A presentation field the rejection did not name is accepted too and replaces the held value, so
+ * a repair that also carries a field the draft never had (`notes`, `closing`) is merged, not refused.
  *
  * @param draft - The held full `present_result` draft the patch amends.
  * @param patch - The repair patch fields sent by the model.
  * @param authorization - What the rejection that held the draft authorized.
+ * @param identifierCaseSensitive - Whether the loaded model distinguishes identifiers by case; decides which note ids name one note.
  * @returns The draft with the authorized keys from `patch` merged in.
- * @throws When `patch` names a key outside the authorized fields.
+ * @throws When `patch` names a graph-edit key the rejection did not authorize.
  */
 export function mergePresentResultRepairPatch(
   draft: PresentResultInput,
   patch: PresentResultRepairPatch,
   authorization: PresentResultRepairAuthorization,
+  identifierCaseSensitive = false,
 ): PresentResultInput {
-  const allowed = new Set<string>(authorization.fields);
+  const allowed = new Set<string>([...PRESENT_RESULT_REPAIR_FIELDS, ...authorization.fields]);
   const updates: Partial<PresentResultInput> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (key === 'is_update') continue;
@@ -532,6 +554,10 @@ export function mergePresentResultRepairPatch(
       updates.sections = merged.every(section => section.start)
         ? merged.sort((a, b) => Number(a.start!.slice(1)) - Number(b.start!.slice(1)))
         : merged;
+      continue;
+    }
+    if (key === 'notes' && Array.isArray(value)) {
+      updates.notes = RepairDraftStore.mergeByKey<PresentNote>(draft.notes ?? [], value as PresentNotePatch[], note => noteKey(note, identifierCaseSensitive));
       continue;
     }
     Object.assign(updates, { [key]: value });
@@ -591,6 +617,28 @@ export interface EvidenceBlock {
   readonly nodeId: string;
   /** The captured ```sql fence closed on a line of its own — body de-indented out of its list or block-quote container, `sql S7` annotation excluded — rendered verbatim. */
   readonly raw: string;
+}
+
+/**
+ * Reports which captured SQL blocks the rendered report shows, by whitespace-insensitive match of
+ * the block body — so a block expanded from its id and one the author wrote out both count.
+ *
+ * @param blocks - The id → block lookup from {@link assignEvidenceIds}.
+ * @param renderedTexts - Report text fields after {@link expandEvidenceRefs}.
+ * @returns `served` — captured block count; `unusedIds` — ids of blocks no field shows, in id order.
+ */
+export function evidenceCoverage(
+  blocks: ReadonlyMap<string, EvidenceBlock>,
+  renderedTexts: readonly string[],
+): { readonly served: number; readonly unusedIds: string[] } {
+  const squash = (text: string): string => text.replace(/\s+/g, '');
+  const rendered = squash(renderedTexts.join('\n'));
+  const unusedIds: string[] = [];
+  for (const block of blocks.values()) {
+    const body = squash(block.raw.split('\n').slice(1, -1).join('\n'));
+    if (!rendered.includes(body)) unusedIds.push(block.id);
+  }
+  return { served: blocks.size, unusedIds };
 }
 
 /** Container prefix of a line: block-quote markers, indentation and a list marker. */
@@ -1067,6 +1115,28 @@ export function requiredDetailSlotIds(
   renderedNodeIds: ReadonlySet<string>,
 ): string[] {
   return slotNodeIds.filter(id => renderedNodeIds.has(id));
+}
+
+/**
+ * The column-chain node ids a present call must cover with a section link or a note: the chain
+ * nodes the render keeps that carry no detail slot and are not pruned. The synthesis envelope lists
+ * this set and the present handler enforces it, so the served list and the check share one source.
+ *
+ * @param edges - Validated column-flow edges of the result graph.
+ * @param renderedNodeIds - Node ids the render keeps, in render order.
+ * @param exemptNodeIds - Node ids with a detail slot or a prune state.
+ * @param keyOf - Identifier key under the model's case sensitivity.
+ */
+export function requiredCtChainNodeIds(
+  edges: ReadonlyArray<{ from_node: string; to_node: string; hop_node: string }>,
+  renderedNodeIds: readonly string[],
+  exemptNodeIds: readonly string[],
+  keyOf: (id: string) => string,
+): string[] {
+  if (edges.length === 0) return [];
+  const exempt = new Set(exemptNodeIds.map(keyOf));
+  const chain = new Set(edges.flatMap(edge => [keyOf(edge.from_node), keyOf(edge.to_node), keyOf(edge.hop_node)]));
+  return renderedNodeIds.filter(id => chain.has(keyOf(id)) && !exempt.has(keyOf(id)));
 }
 
 /**

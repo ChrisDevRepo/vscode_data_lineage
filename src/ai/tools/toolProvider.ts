@@ -65,24 +65,26 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
  * a debug trace and what the user saw can never disagree about which group a code belongs to.
  *
  * @remarks
- * Deliberately four groups, not five: there is no "scope limit" group. The two budget codes are
- * non-chargeable and never reach `rejections[]`, so a fifth group for them would be unreachable and
- * would misrepresent a budget refusal as a model correction.
+ * There is no "scope limit" group. The two budget codes are non-chargeable and never reach
+ * `rejections[]`, so a group for them would be unreachable and would misrepresent a budget refusal
+ * as a model correction.
  */
-export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'correction';
+export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'correction';
 
 /**
- * Explicit membership for the three non-fallback groups. Every rejection code NOT listed here —
+ * Explicit membership for the non-fallback groups. Every rejection code NOT listed here —
  * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
  * `correction` fallback, so an unmapped code can never surface to the user as a raw machine string.
  *
  * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
  * - `source_selection` — routing and prune-topology guards.
  * - `answer_format` — structural/schema violations of the tool envelope itself.
+ * - `backend_fault` — a backend state or exception no model reply can correct; the run ends on the
+ *   first one instead of spending the step's replies.
  *
- * Session/state codes, transport artifacts, the budget guards, and control-flow markers are
+ * Other session/state codes, transport artifacts, the budget guards, and control-flow markers are
  * deliberately absent — none says anything about the model's semantic accuracy, so they fall to
- * `correction` rather than borrowing one of the three named groups.
+ * `correction` rather than borrowing one of the named groups.
  */
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
   [REJECTION_CODES.outColNotTracked]: 'column_mapping',
@@ -100,7 +102,13 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.fieldLengthExceeded]: 'answer_format',
   [REJECTION_CODES.emptyStructuredOutput]: 'answer_format',
   [REJECTION_CODES.missingRequiredToolCall]: 'answer_format',
-  [REJECTION_CODES.classificationLockViolation]: 'answer_format',
+  [REJECTION_CODES.toolCallNotation]: 'answer_format',
+  [REJECTION_CODES.engineCrash]: 'backend_fault',
+  [REJECTION_CODES.internalError]: 'backend_fault',
+  [REJECTION_CODES.invalidStatus]: 'backend_fault',
+  [REJECTION_CODES.noActiveSession]: 'backend_fault',
+  [REJECTION_CODES.staleTurn]: 'backend_fault',
+  [REJECTION_CODES.toolExecutionError]: 'backend_fault',
 };
 
 /**
@@ -193,7 +201,8 @@ class ToolHandler implements ToolServices {
       const isGate = isConsentGateRejection(rejection.code);
       const label = isGate ? '[Gate]' : '[Reject]';
       const groupPart = isGate ? '' : ` group=${classifyRejectionCode(rejection.code)}`;
-      this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code}${hintPart}${pathPart}`);
+      const reasonPart = ` reason=${sanitizeForLog(rejection.reason)}`;
+      this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code}${reasonPart}${hintPart}${pathPart}`);
     } else {
       this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
     }
@@ -230,9 +239,8 @@ class ToolHandler implements ToolServices {
     }
     this.logger.error(`Tool ${toolName} failed unexpectedly`, err);
     return JSON.stringify(makeRejection({
-      code: 'internal_error',
-      reason: msg || undefined,
-      hint: `Unexpected internal error running ${toolName}. Retry once with the same input; if it repeats, simplify the payload.`,
+      code: REJECTION_CODES.internalError,
+      reason: msg || `Unexpected internal error running ${toolName}.`,
       detail: { tool: toolName },
     }));
   }
@@ -363,7 +371,7 @@ class ToolHandler implements ToolServices {
         edges,
       }, this.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, hint: 'The turn no longer owns this session. Do not render this scope.' }), input);
+        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the scope was not stored.' }), input);
       }
       return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
@@ -437,7 +445,7 @@ class ToolHandler implements ToolServices {
       if (!engine) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
           code: REJECTION_CODES.noActiveSession,
-          hint: 'No active exploration. Call lineage_start_exploration first.',
+          reason: 'No exploration is active.',
         }), input);
       }
 
@@ -457,7 +465,8 @@ class ToolHandler implements ToolServices {
       if (invalidIds.length > 0) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
           code: 'out_of_scope_or_not_neighbor',
-          hint: `These ids are not direct neighbors of the current focus node and/or not in the active scope: ${invalidIds.join(', ')}. This tool only inspects direct neighbors for pruning verification.`,
+          reason: `Not a direct neighbor of the current object, or outside the scope: ${invalidIds.join(', ')}.`,
+          hint: 'Send only ids listed as neighbors of the current object.',
           detail: { invalid_ids: invalidIds },
         }), input);
       }

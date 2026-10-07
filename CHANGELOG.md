@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.5] - 2026-10-07
+
+### Changed
+- The approval card stays short with large filters: exclusions show as counts and long object lists end in **+N more**.
+
+### Fixed
+- Several improvements in backend rejection handling for AI analysis.
+
+### Dependencies
+- Security updates: katex, source-map-js.
+
 ## [1.2.4] - 2026-10-06
 
 ### Fixed

@@ -8,14 +8,14 @@ import type { ColumnDef } from '../../../src/engine/types';
 
 const result = '[ct].[result]', writer = '[ct].[load]', source = '[ct].[source]';
 const column = (name: string): ColumnDef => ({ name, type: 'int', nullable: 'NULL', extra: '' });
-function start(origin: string) {
+function start(origin: string, logs: string[] = []) {
   const nodes = [
     makeNode({ id: result, schema: 'ct', name: 'result', type: 'table', columns: [column('Value')] }),
     makeNode({ id: source, schema: 'ct', name: 'source', type: 'table', columns: [column('Amount')] }),
     makeNode({ id: writer, schema: 'ct', name: 'load', type: 'procedure', bodyScript: `INSERT INTO ${result}(Value) SELECT s.Amount FROM ${source} s WHERE NOT EXISTS (SELECT 1 FROM ${result} r WHERE r.Value=s.Amount);` }),
   ];
   const edges: Array<[string, string]> = [[writer, result], [result, writer], [source, writer]];
-  const engine = new NavigationEngine(makeModel(nodes, edges, ['ct']), makeGraph(nodes, edges), () => {}, {});
+  const engine = new NavigationEngine(makeModel(nodes, edges, ['ct']), makeGraph(nodes, edges), (_level, message) => { logs.push(message); }, {});
   expect(engine.init({ origin, question: 'Trace Value upstream', analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream', depthIntent: { upstream: { levels: 'all', exactness: 'approximate' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
   engine.getHopContext();
   return engine;
@@ -48,5 +48,32 @@ describe('field-specific rejection remedies', () => {
     expect(schema.safeParse({ ...finding, sections: { technical: finding.sections[0].text }, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'Amount' }] }] }).success).toBe(false);
     expect(engine.submitFindings({ ...finding, column_flow: [{ ...entry, upstream_columns: [{ node: source, col: 'Amount' }] }] })).toHaveProperty('ok', true);
     expect(engine.columnAspect?.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Amount', to_node: result, to_col: 'Value' }));
+  });
+  it('repairs a writes_to that names a non-destination with the served required-nullable contract', () => {
+    const logs: string[] = [];
+    const engine = start(writer, logs);
+    const flow = (writes_to: { node: string; col: string } | null) => [{ out_col: 'Value', writes_to, upstream_columns: [{ node: source, col: 'Amount' }] }];
+    const finding = { focus_node_id: writer, verdict: 'analyze' as const, summary: 'Loads missing values', sections: [{ angle: 'technical' as const, text: 'Amount supplies new values.' }] };
+    const rejected = engine.submitFindings({ ...finding, column_flow: flow({ node: source, col: 'Amount' }) });
+    expect(rejected).toMatchObject({ code: 'writes_to_names_reader', issuePaths: ['column_flow.0.writes_to.node'] });
+    if (!('code' in rejected)) throw new Error('Expected writes_to rejection');
+    expect(rejected.hint).toContain('or to null when it writes no table');
+    expect(`${rejected.hint} ${rejected.reason}`).not.toMatch(/omit writes_to|defaults to the focus/i);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
+    const served = { ...finding, sections: { technical: finding.sections[0].text } };
+    expect(schema.safeParse({ ...served, column_flow: flow(null) }).success).toBe(true);
+    expect(schema.safeParse({ ...served, column_flow: flow({ node: result, col: 'Value' }) }).success).toBe(true);
+    expect(logs.filter(line => line.includes('writes_to null on writer'))).toEqual([]);
+    expect(engine.submitFindings({ ...finding, column_flow: flow({ node: result, col: 'Value' }) })).toHaveProperty('ok', true);
+    expect(logs.filter(line => line.includes('writes_to null on writer'))).toEqual([]);
+  });
+
+  it('logs a null writes_to on a procedure that has a recorded write, without staging a writer edge', () => {
+    const logs: string[] = [];
+    const engine = start(writer, logs);
+    const accepted = engine.submitFindings({ focus_node_id: writer, verdict: 'analyze' as const, summary: 'Loads missing values', sections: [{ angle: 'technical' as const, text: 'Amount supplies new values.' }], column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: source, col: 'Amount' }] }] });
+    expect(accepted).toHaveProperty('ok', true);
+    expect(logs.filter(line => line.includes('writes_to null on writer'))).toHaveLength(1);
+    expect(engine.columnAspect?.edges).not.toContainEqual(expect.objectContaining({ to_node: result }));
   });
 });
