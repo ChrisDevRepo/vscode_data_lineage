@@ -402,6 +402,10 @@ export class ColumnTracer {
           continue;
         }
       }
+      if (entry.writes_to === null && focusNode.type === 'procedure'
+        && model.edges.some(e => identifierKey(e.source) === identifierKey(focusId) && edgeApiType(e.type, focusNode.type) === 'write')) {
+        log?.('debug', `[CT] writes_to null on writer focus="${focusId}" out_col="${entry.out_col}" — no writer edge staged`);
+      }
       const toCol = resolvedTarget?.attributionCol ?? entry.out_col;
       if (toNodeObj && !entry.returns_to) {
         const toCols = new Set<string>((getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));

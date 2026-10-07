@@ -68,4 +68,12 @@ describe('field-specific rejection remedies', () => {
     expect(logs.filter(line => line.includes('writes_to null on writer'))).toEqual([]);
   });
 
+  it('logs a null writes_to on a procedure that has a recorded write, without staging a writer edge', () => {
+    const logs: string[] = [];
+    const engine = start(writer, logs);
+    const accepted = engine.submitFindings({ focus_node_id: writer, verdict: 'analyze' as const, summary: 'Loads missing values', sections: [{ angle: 'technical' as const, text: 'Amount supplies new values.' }], column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: source, col: 'Amount' }] }] });
+    expect(accepted).toHaveProperty('ok', true);
+    expect(logs.filter(line => line.includes('writes_to null on writer'))).toHaveLength(1);
+    expect(engine.columnAspect?.edges).not.toContainEqual(expect.objectContaining({ to_node: result }));
+  });
 });
