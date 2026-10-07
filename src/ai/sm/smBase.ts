@@ -1,7 +1,7 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection, HELD_CORRECTION_ORDER, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, heldSubmissionRepairHint, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -2638,7 +2638,15 @@ export class NavigationEngine implements IHopStateMachine {
     params = merged;
     const classViolation = validateSectionsAgainstClassification(params.sections,
       this.classification, archivedAngles);
-    if (classViolation) return makeRejection({ code: REJECTION_CODES.classificationLockViolation, hint: classViolation });
+    if (classViolation) {
+      const held = this.heldPartsOfCurrentFocus();
+      return makeRejection({
+        code: REJECTION_CODES.classificationLockViolation,
+        reason: classViolation,
+        ...(held ? { hint: heldSubmissionRepairHint(held) } : {}),
+        issuePaths: ['sections'],
+      });
+    }
 
     if (this.getCurrentTasks().some(task => task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(task.nodeId, task.callerContext)))) {
       return makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' });

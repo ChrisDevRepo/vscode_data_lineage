@@ -13,7 +13,7 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { buildActiveHopInstruction, buildActiveInstruction } from '../../../src/ai/agent/stagePrompts';
 import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { getAllowedLmToolNames } from '../../../src/ai/tools/toolPolicy';
-import { submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { displacedArgumentIn, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { parseAiOutputTemplatesYaml, REQUIRED_AI_TEMPLATE_KEYS } from '../../../src/configCore';
@@ -369,5 +369,69 @@ describe('native receiving-boundary execution and finite retries', () => {
     const attempt = await executeToolAttempt(model.port, activePlan(w, w.registry, controller.signal));
     expect(attempt.stop).toBe('cancelled'); expect(dispatched).toHaveBeenCalledTimes(1);
     expect(attempt.messages).toEqual([]);
+  });
+});
+
+describe('summary carrying another argument', () => {
+  const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Value' }] }];
+  const glued = 'Observed SQL.</summary>\n<parameter name="sections">{"technical":"Observed SQL detail."}';
+  const leaked = { focus_node_id: origin, verdict: 'analyze' as const, column_flow, summary: glued, questions: [{ nodeId: branch, question: 'Establish Value.' }] };
+
+  it.each([
+    ['Observed SQL.</summary>\n<parameter name="sections">{"technical":"x"}', 'sections'],
+    ['Observed SQL.</parameter>\n<parameter name="prune_neighbors">[]', 'prune_neighbors'],
+    ['Observed SQL.</parameter>\n</invoke>', ''],
+    ['Observed SQL.</summary>', ''],
+  ])('names the argument a glued summary carries: %j', (value, displaced) => {
+    expect(displacedArgumentIn(value, 'summary')).toBe(displaced);
+  });
+
+  it.each([
+    'Keeps rows where Amount < Limit and Rate > 0.',
+    'Reads the <summary> column and the parameter name of each call.',
+    'Passes Value through unchanged.',
+  ])('leaves ordinary prose alone: %s', value => {
+    expect(displacedArgumentIn(value, 'summary')).toBeNull();
+    const w = world('ct');
+    expect(JSON.parse(executeSubmitFindings({ ...finding(), column_flow, summary: value }, w.bind()))).toHaveProperty('ok', true);
+  });
+
+  it('rejects the summary at its own path with one fault statement and holds none of it', () => {
+    const w = world('ct');
+    const first = JSON.parse(executeSubmitFindings(leaked, w.bind()));
+    expect(first).toMatchObject({ code: 'invalid_input', issuePaths: ['summary'] });
+    expect(first.reason).toContain('carries another argument after its sentence');
+    expect(first.hint).toContain('End summary at its one sentence. Send the text after it as the separate `sections` argument.');
+    expect(first.hint).not.toMatch(/Held: [^.]*summary/);
+    expect(w.engine.toJSON().engineInternals.heldFinding?.finding.summary ?? '').toBe('');
+  });
+
+  it('states the same fault on a repeated call once a draft is held', () => {
+    const w = world('ct');
+    const first = JSON.parse(executeSubmitFindings(leaked, w.bind()));
+    const second = JSON.parse(executeSubmitFindings(leaked, w.bind()));
+    expect(second).toMatchObject({ code: first.code, reason: first.reason, issuePaths: first.issuePaths });
+    expect(second.code).not.toBe('classification_lock_violation');
+  });
+
+  it('names the missing sections and what is held when a retry omits them', () => {
+    const w = world('ct');
+    executeSubmitFindings(leaked, w.bind());
+    const retry = JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow, summary: 'Observed SQL.' }, w.bind()));
+    expect(retry).toMatchObject({ code: 'classification_lock_violation', issuePaths: ['sections'] });
+    expect(retry.reason).toContain('missing sections.technical');
+    expect(retry.hint).toContain('Held: questions.');
+    expect(retry.hint).not.toContain('summary,');
+    expect(retry.hint).toContain('always focus_node_id, verdict and every other required field');
+  });
+
+  it('commits a clean resend without any carried text', () => {
+    const w = world('ct');
+    executeSubmitFindings(leaked, w.bind());
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow,
+      summary: 'Observed SQL.', sections: { technical: 'Observed SQL detail.' } }, w.bind()))).toHaveProperty('ok', true);
+    const slot = w.engine.getDetailSlots().find(entry => entry.nodeId === origin);
+    expect(slot).toMatchObject({ summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL detail.' }] });
+    expect(JSON.stringify(slot)).not.toContain('<parameter');
   });
 });
