@@ -1093,6 +1093,28 @@ export function requiredDetailSlotIds(
 }
 
 /**
+ * The column-chain node ids a present call must cover with a section link or a note: the chain
+ * nodes the render keeps that carry no detail slot and are not pruned. The synthesis envelope lists
+ * this set and the present handler enforces it, so the served list and the check share one source.
+ *
+ * @param edges - Validated column-flow edges of the result graph.
+ * @param renderedNodeIds - Node ids the render keeps, in render order.
+ * @param exemptNodeIds - Node ids with a detail slot or a prune state.
+ * @param keyOf - Identifier key under the model's case sensitivity.
+ */
+export function requiredCtChainNodeIds(
+  edges: ReadonlyArray<{ from_node: string; to_node: string; hop_node: string }>,
+  renderedNodeIds: readonly string[],
+  exemptNodeIds: readonly string[],
+  keyOf: (id: string) => string,
+): string[] {
+  if (edges.length === 0) return [];
+  const exempt = new Set(exemptNodeIds.map(keyOf));
+  const chain = new Set(edges.flatMap(edge => [keyOf(edge.from_node), keyOf(edge.to_node), keyOf(edge.hop_node)]));
+  return renderedNodeIds.filter(id => chain.has(keyOf(id)) && !exempt.has(keyOf(id)));
+}
+
+/**
  * Reports which delivered `detail_slots[]` reached no rendered section.
  *
  * @remarks

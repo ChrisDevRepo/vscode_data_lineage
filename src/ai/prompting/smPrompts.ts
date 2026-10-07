@@ -9,7 +9,7 @@
 
 import { buildColumnAspectPrompt } from '../prompting/prompts';
 import { escapePromptText } from '../support/text';
-import { assignEvidenceIds, requiredDetailSlotIds } from '../tools/presentResult';
+import { assignEvidenceIds, requiredCtChainNodeIds, requiredDetailSlotIds } from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
@@ -543,6 +543,12 @@ export function buildSmCompletionEnvelope(
   const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
   const mustLink = requiredDetailSlotIds(result.detail_slots.map(slot => slot.nodeId), presented);
   const mustLinkBlock = mustLink.length > 0 ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}` : '';
+  const mustCover = requiredCtChainNodeIds(
+    result.columnAspect?.edges ?? [], presentedNodeIds,
+    [...result.detail_slots.map(slot => slot.nodeId), ...result.node_states.filter(state => state.action === 'prune').map(state => state.nodeId)],
+    id => schemaKey(id, identifierCaseSensitive),
+  );
+  const mustCoverBlock = mustCover.length > 0 ? `\nLink in \`sections[].node_ids\` or caption in \`notes[]\`: ${mustCover.join(', ')}` : '';
   const envelope: SmCompletionEnvelope = {
     ok: true,
     done: true,
@@ -555,7 +561,7 @@ export function buildSmCompletionEnvelope(
       detail_slots: assignEvidenceIds(result.detail_slots).slots,
     },
     deferred_questions: deferred,
-    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock + mustLinkBlock,
+    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock + mustLinkBlock + mustCoverBlock,
   };
   return envelope;
 }

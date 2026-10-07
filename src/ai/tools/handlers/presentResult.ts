@@ -17,6 +17,7 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   holdRejectedPresentResult,
+  requiredCtChainNodeIds,
   findTextlessNewSectionLabels,
   findStartOrderIssues,
   presentResultRepairInstruction,
@@ -49,13 +50,9 @@ function findUncoveredCtChainNodes(
   slottedNodeIds: readonly string[],
   identifierCaseSensitive = false,
 ): string[] {
-  const edges = resultGraph?.columnAspect?.edges ?? [];
-  if (edges.length === 0) return [];
   const lc = (id: string): string => schemaKey(id, identifierCaseSensitive);
-  const exempt = new Set<string>(slottedNodeIds.map(lc));
-  for (const st of resultGraph?.node_states ?? []) if (st.action === 'prune') exempt.add(lc(st.nodeId));
-  const chain = new Set(edges.flatMap(e => [lc(e.from_node), lc(e.to_node), lc(e.hop_node)]));
-  const required = resolvedNodeIds.filter(id => chain.has(lc(id)) && !exempt.has(lc(id)));
+  const pruned = (resultGraph?.node_states ?? []).filter(state => state.action === 'prune').map(state => state.nodeId);
+  const required = requiredCtChainNodeIds(resultGraph?.columnAspect?.edges ?? [], resolvedNodeIds, [...slottedNodeIds, ...pruned], lc);
   if (required.length === 0) return [];
 
   const linked = new Set<string>();
