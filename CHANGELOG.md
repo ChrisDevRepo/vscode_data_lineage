@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.5] - 2026-10-07
+
+### Changed
+- The approval card stays short with large filters: exclusions show as counts and long object lists end in **+N more**.
+
+### Fixed
+- A lineage report is no longer lost when the AI's final answer is rejected repeatedly.
+
 ## [1.2.4] - 2026-10-06
 
 ### Fixed
