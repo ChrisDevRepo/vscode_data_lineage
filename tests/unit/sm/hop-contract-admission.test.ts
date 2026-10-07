@@ -425,6 +425,30 @@ describe('summary carrying another argument', () => {
     expect(retry.hint).toContain('always focus_node_id, verdict and every other required field');
   });
 
+  it('states one fault on every reply and names the field to correct on the last one', async () => {
+    const w = world('ct');
+    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('glued', 'lineage_submit_findings', leaked)]);
+    const plan = activePlan(w);
+    let state = initialToolPhaseAttemptState('active');
+    const contents: string[] = [];
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      const attempt = await executeToolAttempt(model.port, plan, { priorState: state });
+      contents.push(String((attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage).content));
+      state = recordToolAttempt(state, attempt);
+    }
+    for (const content of contents) {
+      expect(content).toContain('carries another argument after its sentence.');
+      expect(content).toContain('Send the text after it as the separate `sections` argument.');
+      expect(content).not.toMatch(/Held:[^.]*summary/);
+    }
+    expect(contents[0]).not.toContain('Fields to correct');
+    expect(contents[0]).toMatch(/2 replies left for this step.$/);
+    expect(contents[1]).toContain('Fields to correct in this reply: summary.');
+    expect(contents[1]).toMatch(/Last reply for this step.$/);
+    expect(state.stopReason).toBe('no_progress');
+    expect(w.engine.currentFocus).toBe(origin);
+  });
+
   it('commits a clean resend without any carried text', () => {
     const w = world('ct');
     executeSubmitFindings(leaked, w.bind());

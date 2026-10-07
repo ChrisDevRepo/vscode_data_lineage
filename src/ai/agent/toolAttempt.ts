@@ -667,8 +667,8 @@ interface RecordedToolOutcome {
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
- * reason states the identity fault; verified object-column inventories are disclosed on the
- * rejection the last budgeted reply answers. The last line states the replies the step has left, so
+ * reason states the identity fault; verified object-column inventories and the top-level fields to
+ * correct are disclosed on the rejection the last budgeted reply answers. The last line states the replies the step has left, so
  * the remaining budget is known before it is spent. The code, issue paths and detail stay on the
  * paired `ToolMessage.artifact`.
  */
@@ -681,12 +681,14 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
+  const owed = finalRejection ? [...new Set((rejection.issuePaths ?? []).map(path => path.split('.')[0]))] : [];
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,
     ...inventories,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
+    ...(owed.length > 0 ? [`Fields to correct in this reply: ${owed.join(', ')}.`] : []),
     ...(repliesLeft === undefined || repliesLeft < 1 ? [] : [repliesLeft === 1 ? 'Last reply for this step.' : `${repliesLeft} replies left for this step.`]),
   ].join('\n');
 }
@@ -1030,7 +1032,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       }
       let data = resend ? withRepairHint(rejected, resend) : rejected;
       data = withHeldDraftDetail(data, call.toolName, input.presentResultRepairDraftContext);
-      const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection);
+      const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       input.debugLog?.(
