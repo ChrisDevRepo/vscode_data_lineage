@@ -43,6 +43,8 @@ function world(mode: 'bb' | 'ct' = 'bb') {
   const registry = buildAiToolRegistry(() => session, logger, () => undefined);
   return { engine, session, model, graph, bind, registry };
 }
+/** The engine snapshot with the held repair draft blanked: what a schema rejection leaves untouched. */
+const navigationState = (engine: { toJSON(): unknown }) => JSON.parse(JSON.stringify(engine.toJSON(), (key, value) => (key === 'heldFinding' ? null : value)));
 const finding = (focus = origin) => ({ focus_node_id: focus, verdict: 'analyze' as const, summary: 'Observed SQL.', sections: { technical: 'Observed SQL.' } });
 
 describe('current-hop submission contract', () => {
@@ -65,12 +67,13 @@ describe('current-hop submission contract', () => {
   });
 
   it('refuses caller context on a non-function at the advertised boundary before engine mutation', () => {
-    const w = world('ct'); const submit = vi.spyOn(w.engine, 'submitFindings'); const before = w.engine.toJSON();
+    const w = world('ct'); const submit = vi.spyOn(w.engine, 'submitFindings'); const before = navigationState(w.engine);
     const input = { ...finding(), column_flow: [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Value' }] }],
       questions: [{ nodeId: branch, question: 'Establish Value.', caller_context: { node: origin, col: 'Value' } }] };
     expect(JSON.parse(executeSubmitFindings(input, w.bind()))).toMatchObject({ code: 'invalid_input', issuePaths: ['questions.0.caller_context'] });
     expect(submit).not.toHaveBeenCalled();
-    expect(w.engine.toJSON()).toEqual(before);
+    expect(navigationState(w.engine)).toEqual(before);
+    expect(w.engine.heldFindingFocus).toBe(origin);
   });
 
   it('uses one held-draft repair directive after a schema rejection and keeps the accepted patch', () => {
@@ -83,6 +86,16 @@ describe('current-hop submission contract', () => {
     expect(rejected.hint).not.toContain('repeating the unflagged elements exactly as first sent');
     const repaired = { focus_node_id: origin, verdict: 'analyze', column_flow: [{ out_col: 'Value', upstream_columns: [] }] };
     expect(JSON.parse(executeSubmitFindings(repaired, w.bind()))).toHaveProperty('ok', true);
+    expect(w.engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: origin, summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL.' }] }));
+  });
+
+  it('holds the prose of a submission that also carries a key the hop does not define', () => {
+    const w = world('ct');
+    const column_flow = [{ out_col: 'Value', upstream_columns: [] }];
+    const rejected = JSON.parse(executeSubmitFindings({ ...finding(), column_flow, caption: 'Not a hop field.' }, w.bind()));
+    expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: ['caption'] });
+    expect(rejected.hint).toContain('Held:');
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow }, w.bind()))).toHaveProperty('ok', true);
     expect(w.engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: origin, summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL.' }] }));
   });
 
@@ -244,24 +257,25 @@ describe('native receiving-boundary execution and finite retries', () => {
   });
 
   it('parses raw BB input once at dispatch, pairs a rejection, then accepts the correction once', async () => {
-    const w = world(); const before = w.engine.toJSON(); const submit = vi.spyOn(w.engine, 'submitFindings');
+    const w = world(); const before = navigationState(w.engine); const submit = vi.spyOn(w.engine, 'submitFindings');
     const schema = submitFindingsSchemaForMode('bb', 'technical', true, w.engine.hopSubmitColumns);
     const parse = vi.spyOn(schema, 'safeParse');
+    const heldParse = vi.spyOn(submitFindingsSchemaForMode('bb', 'technical', false, w.engine.hopSubmitColumns), 'safeParse');
     let input: object = { ...finding(), column_flow: [] }; let call = 'invalid-bb';
     const model = nativePort(() => [new vscode.LanguageModelToolCallPart(call, 'lineage_submit_findings', input)]);
     const plan = activePlan(w);
     const rejected = await executeToolAttempt(model.port, plan);
     expect(parse).toHaveBeenCalledTimes(1); expect(submit).not.toHaveBeenCalled();
-    expect(w.engine.toJSON()).toEqual(before);
+    expect(navigationState(w.engine)).toEqual(before);
     const error = rejected.messages.find(message => message instanceof ToolMessage) as ToolMessage;
     expect(error).toMatchObject({ tool_call_id: 'invalid-bb', status: 'error', artifact: { code: 'invalid_input' } });
     input = finding(); call = 'corrected-bb';
     const accepted = await executeToolAttempt(model.port, plan, { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), rejected) });
-    expect(parse).toHaveBeenCalledTimes(2); expect(submit).toHaveBeenCalledTimes(1);
+    expect(parse).toHaveBeenCalledTimes(1); expect(heldParse).toHaveBeenCalledTimes(1); expect(submit).toHaveBeenCalledTimes(1);
     expect(accepted.stop).toBe('phase_complete');
     expect(accepted.messages.find(message => message instanceof ToolMessage)).toMatchObject({ tool_call_id: 'corrected-bb', status: 'success' });
     expect(model.sendRequest).toHaveBeenCalledTimes(2);
-    parse.mockRestore();
+    parse.mockRestore(); heldParse.mockRestore();
   });
 
   it.each(['text-only', 'empty'] as const)('stops %s replies at the existing limit while tasks remain undispositioned', async kind => {

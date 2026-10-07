@@ -41,10 +41,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        // Unknown fields are outside this hop contract and cannot seed a repair draft.
-        const held = parsed.error.issues.some(issue => issue.code === 'unrecognized_keys')
-          ? null
-          : engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
+        const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
         if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, input);
       }

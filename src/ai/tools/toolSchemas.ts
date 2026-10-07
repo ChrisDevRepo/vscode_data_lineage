@@ -1483,6 +1483,9 @@ export const PRESENT_RESULT_REPAIR_FIELDS = [
 /** Graph-edit fields that only a rejection of that same edit authorizes for repair. */
 const PRESENT_RESULT_GRAPH_EDIT_FIELDS = ['prune_node_ids', 'add_node_ids'] as const;
 
+/** Every top-level field `lineage_present_result` defines in any stage; a key outside it is not a field of the tool. */
+export const PRESENT_RESULT_DEFINED_FIELDS: ReadonlySet<string> = new Set(Object.keys(PresentResultModelSchema.shape));
+
 /** Presentation field that may be authorized in a held-draft repair patch. */
 export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[number] | typeof PRESENT_RESULT_GRAPH_EDIT_FIELDS[number];
 
@@ -1499,9 +1502,13 @@ export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[numbe
 const repairPatchSchemaCache = new Map<string, z.ZodType>();
 
 /**
- * Builds the strict provider/runtime patch schema for exactly the authorized held-draft fields.
+ * Builds the strict provider/runtime patch schema for a held-draft repair.
  *
  * @remarks
+ * Outside the visual preview every presentation field stays sendable and replaces the held value,
+ * so a repair carrying more than the rejection asked for is merged instead of refused; the
+ * authorized fields are the ones the patch owes. A graph-edit field is sendable only when
+ * authorized, and a preview repair accepts the authorized fields only.
  * A sole authorized field is `required` in the served schema, so a patch without it fails as a
  * missing property. Several fields `superRefine` one rule: a patch naming none of them (only
  * `is_update`, or nothing) rejects at the Zod boundary with one issue per authorized field, so
@@ -1514,7 +1521,7 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * @param highlightLabelIndexes - Highlight entries restricted to `{index, label}` leaf repair.
  * @param sectionTextLeaves - Section entries restricted to indexed `label`/`text` leaf repair.
  * @param retainable - Whether a committed report exists whose sections an omitted `sections` keeps.
- * @returns A strict schema for exactly the authorized repair transaction.
+ * @returns A strict schema owing the authorized fields and accepting every other presentation field.
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],
@@ -1532,7 +1539,8 @@ export function presentResultRepairPatchSchemaForFields(
   const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
-  const mask = Object.fromEntries([...keys, 'is_update'].map(key => [key, true]));
+  const sendable = preview ? keys : [...PRESENT_RESULT_REPAIR_FIELDS, ...keys];
+  const mask = Object.fromEntries([...sendable, 'is_update'].map(key => [key, true]));
   const picked = PresentResultAuthorizableRepairSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultAuthorizableRepairSchema.shape, true>>,
   );

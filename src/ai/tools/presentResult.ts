@@ -6,6 +6,7 @@ import {
   PresentResultModelSchema,
   PresentResultAuthorizableRepairSchema,
   normalizePresentSectionLabel,
+  PRESENT_RESULT_DEFINED_FIELDS,
   PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
 } from './toolSchemas';
@@ -400,8 +401,13 @@ export function presentResultRepairInstruction(
  * @param stage - The stage the call was made in.
  * @param committed - Sections of the committed report an update call may keep text for, or `null`. A
  *   keep-text section (label, no text) whose label has no committed body is invalid, so `sections` is not held.
+ * @remarks
+ * A top-level key the tool does not define is reported by the rejection and left out of the held
+ * draft; it does not stop the call's valid fields from being held.
+ *
  * @returns The repair sentence naming the failed fields to resend; `null` when nothing was held: a draft is
- *   already held, the payload is not an object, or a failed path names no repairable field.
+ *   already held, the payload is not an object, a failed path names a defined field no repair may
+ *   send, or only undefined keys failed.
  */
 export function holdRejectedPresentResult(
   store: RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>,
@@ -412,8 +418,10 @@ export function holdRejectedPresentResult(
 ): string | null {
   if (store.get() || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
   const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
-  const failed = [...new Set(failedPaths.map(path => path.split('.')[0]))];
-  if (!failed.every(field => repairable.has(field))) return null;
+  const failedKeys = [...new Set(failedPaths.map(path => path.split('.')[0]))];
+  const undefinedKeys = new Set(failedKeys.filter(key => !PRESENT_RESULT_DEFINED_FIELDS.has(key)));
+  const failed = failedKeys.filter(key => !undefinedKeys.has(key));
+  if (failed.length === 0 || !failed.every(field => repairable.has(field))) return null;
   const highlightGroupPaths = failedPaths.filter(path => path.startsWith('highlight_groups'));
   const highlightLabelPaths = highlightGroupPaths.filter(path => /^highlight_groups\.\d+\.label$/.test(path));
   const rawHighlightGroups = (input as Record<string, unknown>).highlight_groups;
@@ -442,12 +450,12 @@ export function holdRejectedPresentResult(
     : [];
   if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
   const kept = hasLeafRepair
-    ? Object.fromEntries(Object.entries(input).filter(([key]) => (
+    ? Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && (
       (key === 'highlight_groups' && highlightLabelIndexes)
       || (key === 'sections' && sectionTextLeaves)
       || !failed.includes(key)
     )))
-    : Object.fromEntries(Object.entries(input).filter(([key]) => !failed.includes(key)));
+    : Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && !failed.includes(key)));
   if (Object.keys(kept).length === 0) return null;
   const fields = failed as PresentResultRepairField[];
   store.hold(kept as PresentResultInput, {
@@ -475,19 +483,21 @@ export function holdRejectedPresentResult(
  * highlight labels instead authorizes `{index, label}` leaves. Likewise, a rejection confined to a
  * section's `label` or `text` authorizes only those indexed leaves. Each narrow merge preserves the
  * rest of the held list, and the normal validation/assembly path checks the restored full draft.
+ * A presentation field the rejection did not name is accepted too and replaces the held value, so
+ * a repair that also carries a field the draft never had (`notes`, `closing`) is merged, not refused.
  *
  * @param draft - The held full `present_result` draft the patch amends.
  * @param patch - The repair patch fields sent by the model.
  * @param authorization - What the rejection that held the draft authorized.
  * @returns The draft with the authorized keys from `patch` merged in.
- * @throws When `patch` names a key outside the authorized fields.
+ * @throws When `patch` names a graph-edit key the rejection did not authorize.
  */
 export function mergePresentResultRepairPatch(
   draft: PresentResultInput,
   patch: PresentResultRepairPatch,
   authorization: PresentResultRepairAuthorization,
 ): PresentResultInput {
-  const allowed = new Set<string>(authorization.fields);
+  const allowed = new Set<string>([...PRESENT_RESULT_REPAIR_FIELDS, ...authorization.fields]);
   const updates: Partial<PresentResultInput> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (key === 'is_update') continue;
