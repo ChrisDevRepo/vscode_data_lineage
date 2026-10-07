@@ -219,7 +219,7 @@ export class AgentRuntime {
       }
       this.logger?.error('[AI] LangGraph turn', err);
       if (err instanceof GraphRecursionError) {
-        return this.close('error', 'Analysis stopped: internal step limit reached. Partial results are shown; this is a defect — please report it.');
+        return this.close('error', 'Analysis stopped: internal step limit reached. The run is incomplete, so no result is shown and the graph was not changed. This is a defect — please report it.');
       }
       const msg = err instanceof Error ? err.message : String(err);
       return this.close('error', msg);

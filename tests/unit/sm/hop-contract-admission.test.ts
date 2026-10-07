@@ -400,7 +400,7 @@ describe('summary carrying another argument', () => {
     const w = world('ct');
     const first = JSON.parse(executeSubmitFindings(leaked, w.bind()));
     expect(first).toMatchObject({ code: 'invalid_input', issuePaths: ['summary'] });
-    expect(first.reason).toContain('carries another argument after its sentence');
+    expect(first.reason).toContain('contains tool-call notation');
     expect(first.hint).toContain('End summary at its one sentence. Send the text after it as the separate `sections` argument.');
     expect(first.hint).not.toMatch(/Held: [^.]*summary/);
     expect(w.engine.toJSON().engineInternals.heldFinding?.finding.summary ?? '').toBe('');
@@ -411,15 +411,14 @@ describe('summary carrying another argument', () => {
     const first = JSON.parse(executeSubmitFindings(leaked, w.bind()));
     const second = JSON.parse(executeSubmitFindings(leaked, w.bind()));
     expect(second).toMatchObject({ code: first.code, reason: first.reason, issuePaths: first.issuePaths });
-    expect(second.code).not.toBe('classification_lock_violation');
   });
 
   it('names the missing sections and what is held when a retry omits them', () => {
     const w = world('ct');
     executeSubmitFindings(leaked, w.bind());
     const retry = JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow, summary: 'Observed SQL.' }, w.bind()));
-    expect(retry).toMatchObject({ code: 'classification_lock_violation', issuePaths: ['sections'] });
-    expect(retry.reason).toContain('missing sections.technical');
+    expect(retry).toMatchObject({ code: 'invalid_input', issuePaths: ['sections'] });
+    expect(retry.reason).toMatch(/^sections: .*missing sections.technical/);
     expect(retry.hint).toContain('Held: questions.');
     expect(retry.hint).not.toContain('summary,');
     expect(retry.hint).toContain('always focus_node_id, verdict and every other required field');
@@ -437,7 +436,7 @@ describe('summary carrying another argument', () => {
       state = recordToolAttempt(state, attempt);
     }
     for (const content of contents) {
-      expect(content).toContain('carries another argument after its sentence.');
+      expect(content).toContain('a field holds its own value only.');
       expect(content).toContain('Send the text after it as the separate `sections` argument.');
       expect(content).not.toMatch(/Held:[^.]*summary/);
     }
@@ -457,5 +456,62 @@ describe('summary carrying another argument', () => {
     const slot = w.engine.getDetailSlots().find(entry => entry.nodeId === origin);
     expect(slot).toMatchObject({ summary: 'Observed SQL.', sections: [{ angle: 'technical', text: 'Observed SQL detail.' }] });
     expect(JSON.stringify(slot)).not.toContain('<parameter');
+  });
+});
+
+describe('reply limit of one hop', () => {
+  const rejected = { callId: 'submit', toolName: 'lineage_submit_findings', code: 'invalid_input', reason: 'summary: required.' };
+  const read = { callId: 'read', toolName: 'lineage_get_neighbor_columns', result: '{}', input: {} };
+  const reply = (rejections: Array<{ callId: string; toolName: string; code: string; reason: string }>, observations = [read], stop: 'continue' | 'phase_complete' = 'continue') =>
+    ({ stop, providerCalls: 1, observations, rejections, messages: [] });
+
+  it('stops after three rejected findings even when every reply carries an accepted read', () => {
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      expect(state.stopReason).toBeNull();
+      state = recordToolAttempt(state, reply([rejected]), 'lineage_submit_findings');
+    }
+    expect(state).toMatchObject({ noProgressCalls: 0, rejectedTerminalCalls: MAX_TOOL_PROVIDER_CALLS, stopReason: 'no_progress' });
+  });
+
+  it('does not count a rejected read against the finding limit', () => {
+    let state = initialToolPhaseAttemptState('active');
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      state = recordToolAttempt(state, reply([{ ...rejected, toolName: 'lineage_get_neighbor_columns' }]), 'lineage_submit_findings');
+    }
+    expect(state).toMatchObject({ rejectedTerminalCalls: 0, stopReason: null });
+  });
+
+  it('ends on a backend fault even when the same reply carries an accepted finding', () => {
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'),
+      reply([{ ...rejected, toolName: 'lineage_get_neighbor_columns', code: 'internal_error' }], [], 'phase_complete'), 'lineage_submit_findings');
+    expect(state.stopReason).toBe('backend_fault');
+  });
+
+  it('names the object sent and the current object on a focus mismatch', () => {
+    const w = world('ct');
+    const result = JSON.parse(executeSubmitFindings({ ...finding(), focus_node_id: branch, column_flow: [] }, w.bind()));
+    expect(result).toMatchObject({
+      code: 'focus_node_id_mismatch',
+      reason: `focus_node_id names \`${branch}\`; the current object is \`${origin}\`.`,
+      hint: `Resend the same call with focus_node_id \`${origin}\`.`,
+      issuePaths: ['focus_node_id'],
+    });
+  });
+
+  it('states the replies left on every text-only reply', async () => {
+    const w = world('ct');
+    const model = nativePort(() => [new vscode.LanguageModelTextPart('The view passes Value through.')]);
+    const plan = activePlan(w);
+    let state = initialToolPhaseAttemptState('active');
+    const corrections: string[] = [];
+    for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
+      const attempt = await executeToolAttempt(model.port, plan, { priorState: state });
+      corrections.push(String(attempt.messages[attempt.messages.length - 1].content));
+      state = recordToolAttempt(state, attempt, 'lineage_submit_findings');
+    }
+    expect(corrections[0]).toMatch(/No tool call was received; prose is discarded\..*\n2 replies left for this step\.$/s);
+    expect(corrections[1].endsWith('\nLast reply for this step.')).toBe(true);
+    expect(state.stopReason).toBe('no_progress');
   });
 });

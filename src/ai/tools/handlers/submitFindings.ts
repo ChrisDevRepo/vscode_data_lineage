@@ -9,7 +9,6 @@ import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
 import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
-import { assignEvidenceIds } from '../../tools/presentResult';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
@@ -87,19 +86,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
           }
         }
         return s.logAndReturn('lineage_submit_findings', result, normalizedInput);
-      }
-
-      if ('done' in result && result.done && result.result) {
-        sess.storeSmResult(result.result, s.turnEpoch(sess));
-        const lmResult = {
-          status: result.result.status,
-          originNodeId: result.result.originNodeId,
-          scope: { nodes: result.result.fullNodes.length, edges: result.result.edges.length },
-          suggested_sections: result.result.suggested_sections,
-          node_states: result.result.node_states,
-          detail_slots: assignEvidenceIds(result.result.detail_slots).slots,
-        };
-        return s.logAndReturn('lineage_submit_findings', { ...result, result: lmResult }, normalizedInput);
       }
 
       const diag = engine.getHopDiagnostics();

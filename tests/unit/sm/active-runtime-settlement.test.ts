@@ -191,7 +191,7 @@ describe('follow-up reroute', () => {
     expect(engine.currentHop).toBe(3);
     expect(runtime.lastFailureDetail).toMatchObject({
       stop: 'no_progress',
-      message: expect.stringMatching(/^The analysis stopped at `d\.extra`: 3 model replies in a row were not accepted\. 2 objects were analysed before the stop\. The run is incomplete, so no result is shown/),
+      message: expect.stringMatching(/^The analysis stopped at `d\.extra`: 3 model replies for this object were not accepted\. 2 objects were analysed before the stop\. The run is incomplete, so no result is shown/),
     });
     expect(presented).toBe(0);
     expect(session.resultGraph).toBeNull();

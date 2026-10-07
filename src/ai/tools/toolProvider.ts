@@ -65,14 +65,14 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
  * a debug trace and what the user saw can never disagree about which group a code belongs to.
  *
  * @remarks
- * Deliberately four groups, not five: there is no "scope limit" group. The two budget codes are
- * non-chargeable and never reach `rejections[]`, so a fifth group for them would be unreachable and
- * would misrepresent a budget refusal as a model correction.
+ * There is no "scope limit" group. The two budget codes are non-chargeable and never reach
+ * `rejections[]`, so a group for them would be unreachable and would misrepresent a budget refusal
+ * as a model correction.
  */
 export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'correction';
 
 /**
- * Explicit membership for the three non-fallback groups. Every rejection code NOT listed here —
+ * Explicit membership for the non-fallback groups. Every rejection code NOT listed here —
  * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
  * `correction` fallback, so an unmapped code can never surface to the user as a raw machine string.
  *
@@ -102,7 +102,6 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.fieldLengthExceeded]: 'answer_format',
   [REJECTION_CODES.emptyStructuredOutput]: 'answer_format',
   [REJECTION_CODES.missingRequiredToolCall]: 'answer_format',
-  [REJECTION_CODES.classificationLockViolation]: 'answer_format',
   [REJECTION_CODES.engineCrash]: 'backend_fault',
   [REJECTION_CODES.internalError]: 'backend_fault',
   [REJECTION_CODES.invalidStatus]: 'backend_fault',

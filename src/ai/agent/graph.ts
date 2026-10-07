@@ -427,8 +427,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     res: ToolAttemptResult,
     phaseLabel: string,
     startedAt?: number,
+    terminalTool?: string,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res);
+    const nextAttempt = recordToolAttempt(priorAttempt, res, terminalTool);
     const last = nextAttempt.rejections[nextAttempt.rejections.length - 1];
     deps.logger?.debug(
       `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`
@@ -512,8 +513,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   /**
    * The one attempt-stop policy every self-looping phase applies after {@link recordToolAttempt}:
-   * maps {@link MAX_TOOL_PROVIDER_CALLS} model replies without progress to the stuck-step stop and
-   * its failure message. Returns `null` while the phase may keep looping. Callers wrap the message
+   * maps a backend fault, or {@link MAX_TOOL_PROVIDER_CALLS} model replies without progress, to the
+   * stop and its failure message. Returns `null` while the phase may keep looping. Callers wrap the message
    * in their own `fail`-shaped update so phase-specific cleanup (repair drafts, active-hop reset)
    * stays local.
    */
@@ -525,7 +526,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   ): { reason: 'no_progress' | 'backend_fault'; message: string } | null => {
     const reason = nextAttempt.stopReason;
     if (!reason) return null;
-    const fault = nextAttempt.rejections[nextAttempt.rejections.length - 1]?.code ?? 'unknown';
+    const fault = [...nextAttempt.rejections].reverse().find(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')?.code ?? 'unknown';
     deps.logger?.debug(
       `[AI] [Breaker] phase=${nextAttempt.phase} reason=${reason} noProgressCalls=${nextAttempt.noProgressCalls}`
       + (reason === 'backend_fault' ? ` code=${fault}` : ''),
@@ -534,7 +535,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return {
       reason,
       message: at
-        ? loopStopText(at, nextAttempt.noProgressCalls)
+        ? loopStopText(at)
         : `${subject} made no progress after ${MAX_TOOL_PROVIDER_CALLS} model replies ${incompleteSuffix}.`,
     };
   };
@@ -1028,6 +1029,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { gate: state.gate, gateDecision: null, toolAttempt: null, phase: 'gate' };
     }
     const stopped = attemptStop(nextAttempt, 'Scope refinement', 'without reaching the consent gate');
+    if (stopped?.reason === 'backend_fault') return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
     if (stopped) return keepPendingGate(stopped.message);
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'gate_refine' };
     if (res.stop === 'final') {
@@ -1200,11 +1202,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt);
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt, 'lineage_submit_findings');
 
     if (res.stop === 'error') {
+      failProvider(res, 'Active hop failed.');
       return {
-        ...failProvider(res, 'Active hop failed.'),
+        ...failActiveIncomplete(state, engine, 'provider_error', providerStopText(
+          { object: focusId.replace(/[[\]]/g, ''), completedHops: state.activeHopCount }, res.error ?? 'Active hop failed.')),
         toolAttempt: nextAttempt,
       };
     }
@@ -1685,12 +1689,14 @@ export function buildSynthesisEnvelopeMessage(envelope: ReturnType<typeof buildS
 }
 
 /**
- * The user text of a per-hop loop stop: names the object, how many model replies in a row were not
- * accepted, how far the run got, and that no result is shown.
- *
- * @param at - The object the hop stopped on and the hops already submitted.
- * @param replies - Model replies in a row that were not accepted on this object.
+ * User-facing text for a run ended by a failed model request during a hop: where it stopped, the
+ * provider's message, and that nothing was shown or changed.
  */
+function providerStopText(at: { readonly object: string; readonly completedHops: number }, cause: string): string {
+  return `The analysis stopped at \`${at.object}\`: ${cause.replace(/\.$/, '')}. `
+    + 'The run is incomplete, so no result is shown and the graph was not changed. Ask again.';
+}
+
 /**
  * User-facing text for a run ended by a backend fault: where it stopped, the fault code, and that
  * nothing was shown or changed.
@@ -1702,11 +1708,17 @@ function backendFaultStopText(subject: string, code: string, at?: { readonly obj
     + 'Details are in the debug log. Ask again.';
 }
 
-function loopStopText(at: { readonly object: string; readonly completedHops: number }, replies: number): string {
+/**
+ * The user text of a per-hop reply-limit stop: names the object, the reply limit, how far the run
+ * got, and that no result is shown.
+ *
+ * @param at - The object the hop stopped on and the hops already submitted.
+ */
+function loopStopText(at: { readonly object: string; readonly completedHops: number }): string {
   const progress = at.completedHops > 0
     ? `${at.completedHops} object${at.completedHops === 1 ? ' was' : 's were'} analysed before the stop`
     : 'No object was analysed';
-  return `The analysis stopped at \`${at.object}\`: ${replies} model replies in a row were not accepted. `
+  return `The analysis stopped at \`${at.object}\`: ${MAX_TOOL_PROVIDER_CALLS} model replies for this object were not accepted. `
     + `${progress}. The run is incomplete, so no result is shown and the graph was not changed. `
     + 'Ask again, or exclude this object from the scope.';
 }

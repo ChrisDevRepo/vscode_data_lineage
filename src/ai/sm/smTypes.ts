@@ -466,10 +466,6 @@ export type SubmitResult =
        * decision. Absent when every active column was accounted for, or in BB.
        */
       unaccounted_columns?: string[];
-      /** Set only on the supplement path when the supplemented agenda was already drained. */
-      done?: true;
-      /** Final synthesized result. Present iff `done: true`. */
-      result?: SmResult;
     }
   | ToolRejection;
 

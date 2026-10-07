@@ -62,10 +62,10 @@ const RejectionShape = z.object({
 }).strict();
 
 /**
- * Write-side builder for the one tool-execution failure envelope both LM lanes feed back to the
- * model when a handler throws. Owning it here keeps the graph-owned dispatch result provider-neutral.
+ * Write-side builder for the one tool-execution failure envelope both LM lanes record when a handler
+ * throws; the run ends on it. Owning it here keeps the graph-owned dispatch result provider-neutral.
  * @param toolName - Canonical tool name whose handler threw.
- * @returns Generic JSON rejection safe to project into graph retry state.
+ * @returns Generic JSON rejection safe to project into graph attempt state.
  */
 export function buildToolExecutionError(toolName: string): string {
   return JSON.stringify(makeRejection({

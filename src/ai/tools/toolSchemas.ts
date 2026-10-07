@@ -672,6 +672,8 @@ export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { colum
 
 /** Tool-call argument notation inside a string value: the start of a named argument, or the end of one or of the call. */
 const ARGUMENT_BOUNDARY = /<parameter\s+name="([A-Za-z_]\w*)"\s*>|<\/parameter>|<\/invoke>/;
+/** The notation {@link ARGUMENT_BOUNDARY} matches, as stated in the rejection. */
+const ARGUMENT_BOUNDARY_RULE = 'contains tool-call notation (`<parameter name=…>`, `</parameter>`, `</invoke>` or its own closing tag); a field holds its own value only.';
 
 /**
  * Finds a tool-call argument boundary inside one string argument: the value was delivered with the
@@ -683,16 +685,16 @@ const ARGUMENT_BOUNDARY = /<parameter\s+name="([A-Za-z_]\w*)"\s*>|<\/parameter>|
  *   when the value carries no boundary.
  */
 export function displacedArgumentIn(value: string, field: string): string | null {
-  const named = /<parameter\s+name="([A-Za-z_]\w*)"\s*>/.exec(value);
-  if (named) return named[1];
-  return ARGUMENT_BOUNDARY.test(value) || value.includes(`</${field}>`) ? '' : null;
+  const boundary = ARGUMENT_BOUNDARY.exec(value);
+  if (!boundary) return value.includes(`</${field}>`) ? '' : null;
+  return /<parameter\s+name="([A-Za-z_]\w*)"\s*>/.exec(value)?.[1] ?? '';
 }
 
 /**
  * Enforces the fresh kept shape of one flat `submit_findings` payload.
  *
  * @remarks
- * A `summary` that still carries another argument ({@link displacedArgumentIn}) fails at its own
+ * A `summary` that contains tool-call argument notation ({@link displacedArgumentIn}) fails at its own
  * path on every call, fresh or not, so it is never held; when the argument it carries is `sections`,
  * that one issue states the fault and the missing-`sections` issue is not added beside it.
  * A kept verdict carries `sections` and `summary` (and, in CT, `column_flow`). A `reason` sent
@@ -727,7 +729,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     ctx.addIssue({
       code: 'custom',
       path: ['summary'],
-      message: 'carries another argument after its sentence.',
+      message: ARGUMENT_BOUNDARY_RULE,
       params: {
         hint: displaced
           ? `End summary at its one sentence. Send the text after it as the separate \`${displaced}\` argument.`

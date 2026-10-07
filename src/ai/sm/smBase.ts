@@ -2642,8 +2642,8 @@ export class NavigationEngine implements IHopStateMachine {
     if (classViolation) {
       const held = this.heldPartsOfCurrentFocus();
       return makeRejection({
-        code: REJECTION_CODES.classificationLockViolation,
-        reason: classViolation,
+        code: REJECTION_CODES.invalidInput,
+        reason: `sections: ${classViolation}`,
         ...(held ? { hint: heldSubmissionRepairHint(held) } : {}),
         issuePaths: ['sections'],
       });
@@ -2668,7 +2668,9 @@ export class NavigationEngine implements IHopStateMachine {
         const expected = this.currentFocusNodeId ?? '';
         return makeRejection({
           code: REJECTION_CODES.focusNodeIdMismatch,
-          hint: `submit_findings.focus_node_id must match the current focus node. Expected: ${expected}. Resubmit with the correct focus_node_id.`,
+          reason: `focus_node_id names \`${focusId}\`; the current object is \`${expected}\`.`,
+          hint: `Resend the same call with focus_node_id \`${expected}\`.`,
+          issuePaths: ['focus_node_id'],
           detail: { expected, got: focusId },
         });
       }

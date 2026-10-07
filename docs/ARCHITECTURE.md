@@ -513,10 +513,12 @@ condition.
 Completion has one definition: the engine is `complete` when no agenda entry
 and no dispatched focus is left. A result is built only in that state;
 requesting one earlier is an engine error, not a partial result. A hop that
-uses its reply budget without an accepted submission, or loses its provider
-connection, ends the turn as an error that names the object and the hops
+uses its reply budget without an accepted submission, or whose model request
+fails, ends the turn as an error that names the object and the hops
 completed. The exploration is reset, no synthesis runs, and no AI preview or
-graph change is produced from an incomplete run.
+graph change is produced from an incomplete run. A user cancel or the internal
+step limit also ends the turn without a result; the unfinished engine stays on
+the session until the next exploration replaces it.
 
 In column trace, column evidence does not create
 separate object-retention rules. Object decisions use the shared BB path;
@@ -649,16 +651,22 @@ current turn accepts the history. A read that an earlier generation already had
 accepted and the model asks for again is answered with a `duplicate_read`
 rejection naming the accepted call ID; a duplicate inside the same batch is
 reused silently. A phase stops after `MAX_TOOL_PROVIDER_CALLS` model replies in a row
-that add no accepted observation — rejected, duplicate, empty or text-only.
+that add no accepted observation — rejected, duplicate, empty or text-only. An
+active hop also stops after `MAX_TOOL_PROVIDER_CALLS` replies whose
+`lineage_submit_findings` call was rejected or missing, whether or not those
+replies carried an accepted read.
 
-A rejection is a pure check: the backend accepts or rejects a call against its
-rule and never moves, rewrites or completes a model-supplied value. Each
-rejection states the rule broken and the allowed form, and the replies the
-step has left. One fault keeps one code and one statement on every reply; the
-rejection the last reply answers also names the top-level fields to correct. A
-field that failed its check is never held, committed or served to a later hop:
-a `summary` that continues into tool-call argument notation is rejected on
-`summary`, naming the argument to send separately.
+A rejection is a check, not a repair: a value that fails its rule is rejected,
+never moved or rewritten to pass. The receiving-boundary normalization
+described above (identifier resolution, string-argument decoding) is the
+stated exception and is logged. Each rejection of a tool call or of a missing
+call states the rule broken, the allowed form and the replies the step has
+left; the rejection the last reply answers also names the top-level fields to
+correct when the fault has a field path. A field that failed its check is not
+held, committed or served to a later hop. A `submit_findings.summary` that
+contains tool-call argument notation is rejected on `summary`, naming the
+notation and the argument to send separately; other string fields carry no
+such check.
 
 A stop is an error, logged with its reason. During active exploration both
 stop reasons — `no_progress` (the reply limit) and `backend_fault` — end the
@@ -667,7 +675,8 @@ preview and no graph change. `backend_fault` covers rejections no model reply
 can correct (`engine_crash`, `invalid_status`, `no_active_session`,
 `stale_turn`, `internal_error`, `tool_execution_error`); the first one ends
 the run instead of being returned as a retry request. A synthesis stop renders
-no AI preview; a held report draft is shown as chat text only.
+no AI preview; on a reply-limit stop a held report draft is shown as chat
+text.
 
 ## BB and column-trace modes
 

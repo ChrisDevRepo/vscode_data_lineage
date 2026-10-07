@@ -375,7 +375,7 @@ export interface ToolPhaseAttemptState {
   readonly phase: InstructionPhase;
   /** Monotonic physical-call count for the logical phase or hop. */
   readonly providerCalls: number;
-  /** Model replies in a row that added no accepted observation — the count {@link MAX_TOOL_PROVIDER_CALLS} bounds. */
+  /** Model replies in a row that added no accepted observation; bounded by {@link MAX_TOOL_PROVIDER_CALLS}. */
   readonly noProgressCalls: number;
   /** Accepted non-terminal facts retained for recovery attempts. */
   readonly observations: readonly ToolAttemptObservation[];
@@ -389,8 +389,14 @@ export interface ToolPhaseAttemptState {
    */
   readonly messages: readonly ModelMessage[];
   /**
+   * Replies of this step whose call to the step's terminal tool was rejected or missing, counted
+   * whether or not the same reply carried an accepted read. Zero when no terminal tool is tracked.
+   */
+  readonly rejectedTerminalCalls: number;
+  /**
    * `'backend_fault'` once a rejection of that group was recorded, `'no_progress'` once
-   * {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress, else null.
+   * {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress or without an accepted
+   * terminal call, else null.
    */
   readonly stopReason: 'no_progress' | 'backend_fault' | null;
 }
@@ -405,6 +411,7 @@ export function initialToolPhaseAttemptState(phase: InstructionPhase): ToolPhase
     phase,
     providerCalls: 0,
     noProgressCalls: 0,
+    rejectedTerminalCalls: 0,
     observations: [],
     rejections: [],
     messages: [],
@@ -430,11 +437,14 @@ function acceptedCallKey(toolName: string, input: unknown): string {
  *
  * @param state - Existing phase-local cumulative state.
  * @param attempt - Exactly one completed graph attempt.
+ * @param terminalTool - The step's terminal tool; a reply that leaves it rejected counts toward the
+ *   reply limit even when the same reply carried an accepted read.
  * @returns Updated state carrying the backend-fault or no-progress stop.
  */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
   attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'observations' | 'rejections' | 'messages'>,
+  terminalTool?: string,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const noProgressCalls = attempt.observations.length === 0 ? state.noProgressCalls + attempt.providerCalls : 0;
@@ -446,17 +456,18 @@ export function recordToolAttempt(
     || attempt.stop === 'reroute'
     || attempt.stop === 'refused'
     || attempt.stop === 'phase_complete';
-  const stopReason = acceptedTerminal
-    ? null
-    : attempt.rejections.some(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')
-      ? 'backend_fault'
-      : noProgressCalls >= MAX_TOOL_PROVIDER_CALLS
-        ? 'no_progress'
-        : null;
+  const terminalRejected = terminalTool !== undefined && attempt.rejections.some(rejection => rejection.toolName === terminalTool);
+  const rejectedTerminalCalls = acceptedTerminal ? 0 : state.rejectedTerminalCalls + (terminalRejected ? attempt.providerCalls : 0);
+  const stopReason = attempt.rejections.some(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')
+    ? 'backend_fault'
+    : !acceptedTerminal && Math.max(noProgressCalls, rejectedTerminalCalls) >= MAX_TOOL_PROVIDER_CALLS
+      ? 'no_progress'
+      : null;
   return {
     phase: state.phase,
     providerCalls,
     noProgressCalls,
+    rejectedTerminalCalls,
     observations,
     rejections,
     messages,
@@ -678,7 +689,7 @@ interface RecordedToolOutcome {
  * paired `ToolMessage.artifact`.
  */
 function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
-  const repliesLeft = priorState ? MAX_TOOL_PROVIDER_CALLS - 1 - priorState.noProgressCalls : undefined;
+  const repliesLeft = repliesLeftAfter(priorState);
   const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
   const inventories = finalRejection && Array.isArray(rejection.detail)
     ? rejection.detail.flatMap((fault: { id?: string; actual_columns?: string[] }) => fault.actual_columns
@@ -694,8 +705,21 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
     ...(owed.length > 0 ? [`Fields to correct in this reply: ${owed.join(', ')}.`] : []),
-    ...(repliesLeft === undefined || repliesLeft < 1 ? [] : [repliesLeft === 1 ? 'Last reply for this step.' : `${repliesLeft} replies left for this step.`]),
+    ...replyBudgetLine(repliesLeft),
   ].join('\n');
+}
+
+/** Replies the step has left once the reply now being answered is counted; undefined without step state. */
+function repliesLeftAfter(priorState?: ToolPhaseAttemptState): number | undefined {
+  return priorState
+    ? MAX_TOOL_PROVIDER_CALLS - 1 - Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls)
+    : undefined;
+}
+
+/** The closing line of a rejection that states the replies left; empty when none is left or unknown. */
+function replyBudgetLine(repliesLeft: number | undefined): string[] {
+  if (repliesLeft === undefined || repliesLeft < 1) return [];
+  return [repliesLeft === 1 ? 'Last reply for this step.' : `${repliesLeft} replies left for this step.`];
 }
 
 function recordToolOutcome(
@@ -878,7 +902,7 @@ type SynthesizedRejectionMessages = readonly ModelMessage[];
  * was received, so there is no call id for a tool result to answer.
  */
 function emitSynthesizedRejection(
-  input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase' | 'traceSyntheticRejection'>,
+  input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase' | 'traceSyntheticRejection' | 'priorState'>,
   rejections: ToolAttemptRejection[],
   spec: SynthesizedRejectionSpec,
 ): SynthesizedRejectionMessages {
@@ -903,7 +927,10 @@ function emitSynthesizedRejection(
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
   const hasAttemptedTurn = messageContentToText(spec.attempted.content).trim().length > 0
     || messageProviderParts(spec.attempted).length > 0;
-  const note = `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`;
+  const note = [
+    `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`,
+    ...replyBudgetLine(repliesLeftAfter(input.priorState)),
+  ].join('\n');
   return hasAttemptedTurn
     ? [spec.attempted, modelUserMessage(note)]
     : [modelUserMessage(note)];
@@ -1067,7 +1094,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
           message: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
           correction: { hint: heldErrorEnvelopeDuplicateHint(reused) ?? DUPLICATE_READ_HINT },
           detail: { acceptedCallId: reused.callId },
-        }, calls, observations, rejections, input.traceSyntheticRejection);
+        }, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
         toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
         logSyntheticRejection(input, 'duplicate_read', call, REJECTION_CODES.duplicateRead,
           `repeats accepted callId ${reused.callId}`);

@@ -101,7 +101,7 @@ const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business'
 
 /**
  * Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the
- * one-key-per-schema-angle rule (`classification_lock_violation` — each capture bullet is
+ * one-key-per-schema-angle rule (each capture bullet is
  * labelled with the `sections` key it writes), the exact-substring quoting rule and the
  * `not established` wording, so no capture key restates them.
  *
