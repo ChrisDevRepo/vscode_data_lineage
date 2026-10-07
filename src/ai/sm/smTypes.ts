@@ -549,6 +549,27 @@ export interface ScopeSummaryLeaf {
   omitted: number;
 }
 
+/** Excluded objects of one group: the total and every object, keyed by object type, alphabetised. */
+export interface ScopeExclusionGroup {
+  /** Objects in the group across every type. */
+  count: number;
+  /** Object type → the excluded objects of that type. */
+  byType: Record<string, Array<{ schema: string; name: string }>>;
+}
+
+/**
+ * Excluded objects split by cause.
+ *
+ * @remarks
+ * `rules` holds one entry per GUI exclusion pattern that matched at least one excluded object, in
+ * filter order; an object several patterns match counts under the first. `named` holds the
+ * excluded objects no pattern matches — the ones the question or the model named.
+ */
+export interface ScopeExclusions {
+  rules: Array<ScopeExclusionGroup & { pattern: string }>;
+  named: ScopeExclusionGroup;
+}
+
 /**
  * Snapshot of the proposed scope, computed once per `confirm_sm_start` gate emission.
  *
@@ -603,6 +624,12 @@ export interface ScopeSummary {
   ambiguousObjectNames?: Record<string, readonly string[]>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
   activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
+  /**
+   * The excluded objects of {@link activeFilters} grouped by what excluded them, for the approval
+   * card and the full plan. Absent on a summary built before this rollup existed; a renderer then
+   * falls back to the flat `activeFilters.nodeIds`.
+   */
+  exclusions?: ScopeExclusions;
   /**
    * Analysis constraints the user stated that no filter field can express, verbatim from the
    * model's reading. Echoed at the approval gate so the user can confirm the instruction landed

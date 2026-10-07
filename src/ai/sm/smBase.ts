@@ -15,14 +15,14 @@ import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../suppo
 import { buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
 import { analyzeRemoval, bfsDepthMap, bfsReachable, type LogFn, type RemovalAnalysis } from '../../engine/graphGuards';
-import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
+import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
 import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
@@ -467,6 +467,8 @@ export class NavigationEngine implements IHopStateMachine {
   protected guiHiddenSchemas: Set<string> = new Set();
   /** Node ids (lower-cased) matching a GUI exclusion pattern at session start. Seeds a fresh proposal's default `excludeNodeIds` ({@link getGuiExcludedNodeIds}); never enforced on its own. */
   protected guiExcludedNodeIds: Set<string> = new Set();
+  /** Each GUI exclusion pattern that compiles, in filter order, with its own node predicate — attributes an excluded object to the rule that matched it ({@link getScopeSummary}). */
+  private readonly guiExclusionRules: Array<{ pattern: string; matches: (node: { schema: string; name: string; fullName: string }) => boolean }> = [];
   /**
    * Specific node ids (lower-cased) the user asked to keep in scope but skip analysis on.
    * The hop dispatcher detects these on dequeue and auto-emits `verdict:'passthrough'` — topology
@@ -561,6 +563,10 @@ export class NavigationEngine implements IHopStateMachine {
       for (const n of this.nodeMap.values()) {
         if (isGuiExcluded(n)) this.guiExcludedNodeIds.add(this.identifierKey(n.id));
       }
+    }
+    for (const pattern of config.activeFilter?.exclusionPatterns ?? []) {
+      const matches = compileExclusionMatcher([pattern]);
+      if (matches) this.guiExclusionRules.push({ pattern, matches });
     }
   }
 
@@ -1647,7 +1653,29 @@ export class NavigationEngine implements IHopStateMachine {
         nodeIds: Array.from(this.excludedNodeIds, canonicalNodeId).sort(),
         passNodeIds: Array.from(this.passNodeIds, canonicalNodeId).sort(),
       },
+      exclusions: this.excludedObjectsByCause(),
     };
+  }
+
+  /** Groups every excluded object under the first GUI exclusion rule matching it, or under `named` when none does. */
+  private excludedObjectsByCause(): ScopeExclusions {
+    const group = (): ScopeExclusionGroup => ({ count: 0, byType: {} });
+    const rules = this.guiExclusionRules.map(rule => ({ pattern: rule.pattern, ...group() }));
+    const named = group();
+    for (const id of this.excludedNodeIds) {
+      const node = this.nodeMap.get(resolveModelNodeId(id, this.nodeMap, this.model.identifierCaseSensitive) ?? id);
+      if (!node) continue;
+      const ruleIndex = this.guiExclusionRules.findIndex(rule => rule.matches(node));
+      const target = ruleIndex >= 0 ? rules[ruleIndex] : named;
+      target.count++;
+      (target.byType[node.type ?? 'external'] ??= []).push({ schema: node.schema, name: node.name });
+    }
+    for (const entry of [...rules, named]) {
+      for (const objects of Object.values(entry.byType)) {
+        objects.sort((a, b) => a.name.localeCompare(b.name) || a.schema.localeCompare(b.schema));
+      }
+    }
+    return { rules: rules.filter(rule => rule.count > 0), named };
   }
 
   /** Applies the shared graph removal policy with this session's scope, anchors and direction legs. */
@@ -1769,7 +1797,7 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
     if (excludeIds.resolved.length + passIds.resolved.length > 0) {
-      this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}]`);
+      this.log('debug', `[NL] excludeNodeIds resolved=[${trunc(excludeIds.resolved, LOG_TRUNC_LIST)}] passNodeIds resolved=[${trunc(passIds.resolved, LOG_TRUNC_LIST)}]`);
     }
 
     const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap, this.model.identifierCaseSensitive);

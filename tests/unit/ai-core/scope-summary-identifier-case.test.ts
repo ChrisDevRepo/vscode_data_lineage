@@ -74,7 +74,8 @@ describe('scope summary identifier comparison', () => {
       init: { ...init, excludeSchemas: ['Sales'], excludeNodeIds: ['sales.orders'] },
     });
     expect(md).not.toMatch(/Filter removed|\(asked:/);
-    expect(md).toContain('**Excluded:** schemas `sales`');
+    expect(md).toContain('**Schemas:** All except `sales`');
+    expect(md).not.toContain('**Excluded:**');
     expect(schemaFiltersRemovedByOrigin(['Sales'], summary.activeFilters.schemas, cs)).toEqual(cs ? ['Sales'] : []);
     expect(nodeFiltersRemovedByOrigin(['sales.orders'], summary.origin, summary.activeFilters.nodeIds, cs)).toEqual(cs ? [] : ['sales.orders']);
   });
@@ -116,6 +117,78 @@ describe('scope summary identifier comparison', () => {
     expect(md).toContain('`a*b[c]`');
     expect(md).toContain('`` odd`name ``');
     expect(md).not.toContain('\\');
+  });
+});
+
+describe('approval card and full plan exclusions', () => {
+  const procedures = Array.from({ length: 12 }, (_, i) => ({ schema: 'etl', name: `uspGet${String(i).padStart(2, '0')}` }));
+  const ruleIds = [...procedures.map(p => `[etl].[${p.name}]`), '[stg].[vSalesPerson_Archive]'];
+  const summary = sampleSummary({
+    bySchema: {
+      dbo: { hops: 7, scope: 7, byType: { procedure: leaf(['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7']) } },
+      mart: { hops: 0, scope: 2, byType: { table: leaf(['FactOrders', 'DimDate']) } },
+    },
+    activeFilters: { schemas: ['tmp', 'bak', 'old'], types: [], nodeIds: [...ruleIds, '[mart].[ProductModelOld]'], passNodeIds: [] },
+    exclusions: {
+      rules: [
+        { pattern: '%uspGet%', count: 12, byType: { procedure: procedures } },
+        { pattern: '%_Archive', count: 1, byType: { view: [{ schema: 'stg', name: 'vSalesPerson_Archive' }] } },
+      ],
+      named: { count: 1, byType: { table: [{ schema: 'mart', name: 'ProductModelOld' }] } },
+    },
+  });
+  const proposal = { summary, revision: 1, classification: 'technical' as const, init };
+
+  it('states rule and object counts on the card, never the rule-matched names', () => {
+    const md = renderScopeCardMd(proposal);
+    expect(md).toContain('- **Excluded:** 2 filter rules (13 objects); objects `ProductModelOld`');
+    expect(md).not.toContain('uspGet');
+    expect(md).not.toContain('`tmp`');
+  });
+
+  it('states the schema selection from its shorter side', () => {
+    expect(renderScopeCardMd(proposal)).toContain('- **Schemas:** `dbo` (7), `mart` (2)');
+    expect(renderFullPlanMd(proposal)).toContain('- Schemas: `dbo`, `mart` selected — 3 others excluded');
+  });
+
+  it('caps card object names per type and lists only types in scope', () => {
+    const md = renderScopeCardMd(proposal);
+    expect(md).toContain('  - Procedures (7): `p1`, `p2`, `p3`, `p4`, `p5` _+2 more_');
+    expect(md).toContain('  - Tables (2): `FactOrders`, `DimDate`');
+    expect(md).not.toMatch(/Views|Functions/);
+  });
+
+  it('names excluded objects in the full plan, grouped by rule then type, capped per type', () => {
+    const md = renderFullPlanMd(proposal);
+    expect(md).toContain('- Excluded by rule `%uspGet%` — 12 objects');
+    expect(md).toContain('  - Procedures (12): `uspGet00`');
+    expect(md).toContain('`uspGet09` _+2 more_');
+    expect(md).not.toContain('uspGet10');
+    expect(md).toContain('- Excluded by rule `%_Archive` — 1 object\n  - View (1): `vSalesPerson_Archive`');
+    expect(md).toContain('- Excluded by name — 1 object\n  - Table (1): `ProductModelOld`');
+  });
+
+  it('keeps every excluded id in the model-facing summary', () => {
+    const md = renderScopeSummaryMd(summary);
+    for (const id of summary.activeFilters.nodeIds) expect(md).toContain(`\`${id}\``);
+    expect(md).toContain('- Schemas excluded: `tmp`, `bak`, `old`');
+  });
+
+  it('attributes each excluded object to the first matching rule, or to named', () => {
+    const qualified = (name: string) => `[etl].[${name}]`;
+    const objects = ['Main', 'uspGet_Archive', 'uspGetBillOfMaterials', 'Legacy'].map(name => ({ fullName: qualified(name), type: 'view' as const }));
+    const model = buildModel(objects, [{ sourceName: qualified('Main'), targetName: qualified('Legacy') }], objects, undefined, true, undefined, false);
+    const engine = new NavigationEngine(model, buildGraphologyGraph(model), () => {}, {
+      activeFilter: { schemas: [], types: [], exclusionPatterns: ['%uspGet%', '%_Archive', '%nomatch%'] },
+    } as ConstructorParameters<typeof NavigationEngine>[3]);
+    expect(engine.init({
+      ...init, origin: qualified('Main'), direction: 'upstream', analysisMode: 'bb',
+      excludeNodeIds: [...engine.getGuiExcludedNodeIds(), qualified('Legacy')],
+    })).toMatchObject({ ok: true });
+    const { exclusions } = engine.getScopeSummary();
+    expect(exclusions?.rules.map(rule => [rule.pattern, rule.count])).toEqual([['%uspGet%', 2]]);
+    expect(exclusions?.rules[0].byType.view.map(object => object.name)).toEqual(['uspGet_Archive', 'uspGetBillOfMaterials']);
+    expect(exclusions?.named).toEqual({ count: 1, byType: { view: [{ schema: 'etl', name: 'Legacy' }] } });
   });
 });
 
