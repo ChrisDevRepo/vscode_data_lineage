@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import {
   assertLoopbackPortAvailable,
   assertAllPassReport,
@@ -134,7 +135,7 @@ test('isIsolatedWorkbenchPage accepts the downloaded Extension Development Host'
   const session = { workspaceName: 'dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473' };
   const page = {
     title: '[Extension Development Host] dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
-    url: 'vscode-file://vscode-app/repo/.vscode-test/vscode-darwin-arm64-1.140.0/Visual%20Studio%20Code.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html',
+    url: `vscode-file://vscode-app${pathToFileURL(resolve('/repo/.vscode-test')).pathname}/vscode-darwin-arm64-1.140.0/Visual%20Studio%20Code.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html`,
   };
 
   assert.equal(isIsolatedWorkbenchPage(page, session, '/repo/.vscode-test'), true);

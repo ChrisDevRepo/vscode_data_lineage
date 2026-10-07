@@ -22,7 +22,7 @@ vi.mock('node:worker_threads', async importOriginal => {
     ...actual,
     Worker: class extends actual.Worker {
       constructor(filename: string | URL, options?: import('node:worker_threads').WorkerOptions) {
-        super(typeof filename === 'string' && filename.endsWith('/regexSearch.worker.js') ? workerFile : filename, options);
+        super(typeof filename === 'string' && /[\\/]regexSearch\.worker\.js$/.test(filename) ? workerFile : filename, options);
       }
     },
   };

@@ -24,7 +24,7 @@ function world() {
 /** Submits every dispatched focus until the engine reports the agenda drained. */
 function drain(engine: NavigationEngine): void {
   for (let hop = engine.getHopContext(); !hop.done; hop = engine.getHopContext()) {
-    const focus = hop.focus_node!.id;
+    const focus = String(hop.focus_node!.id);
     expect(engine.submitFindings({ focus_node_id: focus, verdict: 'analyze', summary: `Reviewed ${focus}`, sections })).toMatchObject({ ok: true });
   }
 }

@@ -201,7 +201,7 @@ class ToolHandler implements ToolServices {
       const isGate = isConsentGateRejection(rejection.code);
       const label = isGate ? '[Gate]' : '[Reject]';
       const groupPart = isGate ? '' : ` group=${classifyRejectionCode(rejection.code)}`;
-      const reasonPart = ` reason=${trunc(sanitizeForLog(rejection.reason), LOG_TRUNC_REJECTION)}`;
+      const reasonPart = ` reason=${sanitizeForLog(rejection.reason)}`;
       this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code}${reasonPart}${hintPart}${pathPart}`);
     } else {
       this.logger.debug(`${toolName} → ${chars} chars: ${preview}`);
