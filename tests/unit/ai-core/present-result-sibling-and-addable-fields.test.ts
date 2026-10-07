@@ -99,6 +99,17 @@ it('merges a notes repair by node id: one missing caption is one resent entry', 
   expect(merged.notes).toEqual([{ node_id: source, caption: 'Landed hourly.' }, { node_id: 'mart.orders', caption: 'Loaded nightly.' }]);
 });
 
+it('merges notes by case only when the model folds identifier case', () => {
+  const draft = { name: 'n', summary: 's', notes: [{ node_id: '[mart].[Orders]', caption: 'Upper.' }] } as PresentResultInput;
+  const patch = { notes: [{ node_id: '[mart].[orders]', caption: 'Lower.' }] } as PresentResultRepairPatch;
+  const authorization = { fields: ['notes'] } as PresentResultRepairAuthorization;
+
+  expect(mergePresentResultRepairPatch(draft, patch, authorization).notes)
+    .toEqual([{ node_id: '[mart].[orders]', caption: 'Lower.' }]);
+  expect(mergePresentResultRepairPatch(draft, patch, authorization, true).notes)
+    .toEqual([{ node_id: '[mart].[Orders]', caption: 'Upper.' }, { node_id: '[mart].[orders]', caption: 'Lower.' }]);
+});
+
 it('names the list a flattened entry key belongs to', () => {
   const garbled = {
     name: 'Orders lineage', summary: 'Orders from stage to mart.',

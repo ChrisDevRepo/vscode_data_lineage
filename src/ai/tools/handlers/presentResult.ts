@@ -223,7 +223,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             issuePaths: ['sections'],
           }));
         }
-        presentInput = mergePresentResultRepairPatch(held, patch, authorization);
+        presentInput = mergePresentResultRepairPatch(held, patch, authorization, model.identifierCaseSensitive);
         const merged = presentInput.sections === undefined && retainableSections
           ? { success: true as const }
           : MergedSectionsSchema.safeParse({ sections: presentInput.sections });

@@ -476,9 +476,10 @@ export function holdRejectedPresentResult(
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];
 type PresentNotePatch = Partial<PresentNote> & { remove?: boolean };
 
-/** A note's merge key: its node id without brackets or case, so a bare and a bracketed id name one note. */
-function noteKey(note: Partial<PresentNote>): string {
-  return (note.node_id ?? '').replace(/[[\]]/g, '').trim().toLowerCase();
+/** A note's merge key: its node id without brackets, case-folded unless the model's identifiers are case-sensitive, so a bare and a bracketed id name one note. */
+function noteKey(note: Partial<PresentNote>, identifierCaseSensitive: boolean): string {
+  const bare = (note.node_id ?? '').replace(/[[\]]/g, '').trim();
+  return identifierCaseSensitive ? bare : bare.toLowerCase();
 }
 
 /**
@@ -498,6 +499,7 @@ function noteKey(note: Partial<PresentNote>): string {
  * @param draft - The held full `present_result` draft the patch amends.
  * @param patch - The repair patch fields sent by the model.
  * @param authorization - What the rejection that held the draft authorized.
+ * @param identifierCaseSensitive - Whether the loaded model distinguishes identifiers by case; decides which note ids name one note.
  * @returns The draft with the authorized keys from `patch` merged in.
  * @throws When `patch` names a graph-edit key the rejection did not authorize.
  */
@@ -505,6 +507,7 @@ export function mergePresentResultRepairPatch(
   draft: PresentResultInput,
   patch: PresentResultRepairPatch,
   authorization: PresentResultRepairAuthorization,
+  identifierCaseSensitive = false,
 ): PresentResultInput {
   const allowed = new Set<string>([...PRESENT_RESULT_REPAIR_FIELDS, ...authorization.fields]);
   const updates: Partial<PresentResultInput> = {};
@@ -554,7 +557,7 @@ export function mergePresentResultRepairPatch(
       continue;
     }
     if (key === 'notes' && Array.isArray(value)) {
-      updates.notes = RepairDraftStore.mergeByKey<PresentNote>(draft.notes ?? [], value as PresentNotePatch[], noteKey);
+      updates.notes = RepairDraftStore.mergeByKey<PresentNote>(draft.notes ?? [], value as PresentNotePatch[], note => noteKey(note, identifierCaseSensitive));
       continue;
     }
     Object.assign(updates, { [key]: value });
