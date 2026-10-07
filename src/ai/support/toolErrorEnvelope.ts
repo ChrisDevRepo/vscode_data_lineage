@@ -382,7 +382,8 @@ function acceptsNullAt(schema: z.ZodType | undefined, path: readonly PropertyKey
 /**
  * Hint for `unrecognized_keys` issues: states that the key is no field and names the fields of the
  * object it sits in, so a misspelt key is renamed and an invented one dropped; the
- * call itself is the object for an issue at the root.
+ * call itself is the object for an issue at the root. A root key that a list entry of the call
+ * defines is answered with that list, so a flattened entry is moved back instead of dropped.
  *
  * @returns The object-directed hint; `undefined` when the schema is absent or does not resolve the
  * object, so the caller keeps the key-only wording.
@@ -391,10 +392,21 @@ function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
   const issues = error.issues.filter((issue) => issue.code === 'unrecognized_keys');
   if (issues.length === 0) return undefined;
   const clauses = new Map<string, { keys: Set<string>; allowed: string[] }>();
+  const homes = new Map<string, Set<string>>();
   for (const issue of issues) {
     const node = jsonSchemaNodeAt(schema, issue.path);
-    const allowed = Object.keys((node ? unwrapNullable(node) : undefined)?.properties ?? {});
+    const properties = (node ? unwrapNullable(node) : undefined)?.properties ?? {};
+    const allowed = Object.keys(properties);
     if (allowed.length === 0) return undefined;
+    if (issue.path.length === 0) {
+      for (const [list, listNode] of Object.entries(properties)) {
+        const entry = unwrapNullable(listNode).items;
+        const entryKeys = new Set([entry, ...(entry?.anyOf ?? []), ...(entry?.oneOf ?? [])].flatMap(variant => Object.keys(variant?.properties ?? {})));
+        for (const key of issue.keys) {
+          if (entryKeys.has(key)) homes.set(list, (homes.get(list) ?? new Set<string>()).add(key));
+        }
+      }
+    }
     const where = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '') || 'the call';
     const clause = clauses.get(where) ?? { keys: new Set<string>(), allowed };
     for (const key of issue.keys) clause.keys.add(key);
@@ -403,7 +415,9 @@ function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
   const parts = [...clauses].map(([where, { keys, allowed }]) =>
     `${[...keys].map(quoteKey).join(', ')} ${keys.size > 1 ? 'are not fields' : 'is not a field'} of ${where}; its fields are ${allowed.join(', ')}`);
   const sentence = parts.join('; ');
-  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
+  const nestedHomes = [...homes].map(([list, keys]) =>
+    ` ${[...keys].map(quoteKey).join(', ')} ${keys.size > 1 ? 'are fields' : 'is a field'} of a ${list}[] entry: send ${keys.size > 1 ? 'them' : 'it'} there.`);
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.${nestedHomes.join('')}`;
 }
 
 /**

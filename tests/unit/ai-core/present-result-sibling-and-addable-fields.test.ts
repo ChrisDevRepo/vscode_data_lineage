@@ -98,3 +98,16 @@ it('merges a notes repair by node id: one missing caption is one resent entry', 
   const merged = mergePresentResultRepairPatch(store.get()!, parsed.data as PresentResultRepairPatch, authorization);
   expect(merged.notes).toEqual([{ node_id: source, caption: 'Landed hourly.' }, { node_id: 'mart.orders', caption: 'Loaded nightly.' }]);
 });
+
+it('names the list a flattened entry key belongs to', () => {
+  const garbled = {
+    name: 'Orders lineage', summary: 'Orders from stage to mart.',
+    highlight_groups: [{ label: 'Source', color: 'source', node_ids: [source] }],
+    sections: [{ label: 'Stage', node_ids: [source], text: 'Raw orders.' }],
+    text: 'Raw orders.',
+  };
+  const schema = presentResultSchemaForPhase('synthesis', null, false);
+  const rejection = rejectionFromZodError(schema.safeParse(garbled).error!, { code: REJECTION_CODES.invalidInput, input: garbled, schema });
+
+  expect(rejection.hint).toContain('"text" is a field of a sections[] entry: send it there.');
+});

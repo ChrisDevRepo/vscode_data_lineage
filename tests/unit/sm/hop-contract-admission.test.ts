@@ -177,7 +177,7 @@ function activePlan(w: ReturnType<typeof world>, registry = w.registry, signal?:
 }
 
 describe('native receiving-boundary execution and finite retries', () => {
-  it('discloses verified object columns only on the final budgeted identity rejection', async () => {
+  it('states the replies left and discloses verified object columns on the rejection the last reply answers', async () => {
     const w = world('ct');
     const input = { ...finding(), column_flow: [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Missing' }] }] };
     const model = nativePort(() => [new vscode.LanguageModelToolCallPart('identity', 'lineage_submit_findings', input)]);
@@ -191,11 +191,15 @@ describe('native receiving-boundary execution and finite retries', () => {
       expect(message.artifact).toMatchObject({ detail: [{ actual_columns: ['Value'] }] });
       state = recordToolAttempt(state, attempt);
     }
-    expect(contents[0]).toBe(contents[1]);
     expect(contents[0]).not.toContain('Actual columns');
+    expect(contents[0]).toMatch(/2 replies left for this step\.$/);
+    expect(contents[1]).toContain('Actual columns of [hop].[branch]: Value.');
+    expect(contents[1]).toMatch(/Last reply for this step\.$/);
     expect(contents[2]).toContain('Actual columns of [hop].[branch]: Value.');
+    expect(contents[2]).not.toContain('for this step');
     expect(contents[2]).not.toContain('follow-up');
     expect(JSON.stringify(model.sendRequest.mock.calls[1])).not.toContain('actual_columns');
+    expect(JSON.stringify(model.sendRequest.mock.calls[2])).toContain('Actual columns of [hop].[branch]: Value.');
     expect(state.stopReason).toBe('no_progress');
     expect(model.sendRequest).toHaveBeenCalledTimes(MAX_TOOL_PROVIDER_CALLS);
     expect(w.engine.currentFocus).toBe(origin);

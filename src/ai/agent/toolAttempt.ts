@@ -667,11 +667,14 @@ interface RecordedToolOutcome {
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
- * reason states the identity fault; verified object-column inventories are disclosed only on
- * the final budgeted rejection. The code, issue paths and detail stay on the paired `ToolMessage.artifact`.
+ * reason states the identity fault; verified object-column inventories are disclosed on the
+ * rejection the last budgeted reply answers. The last line states the replies the step has left, so
+ * the remaining budget is known before it is spent. The code, issue paths and detail stay on the
+ * paired `ToolMessage.artifact`.
  */
 function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
-  const finalRejection = (priorState?.noProgressCalls ?? 0) >= MAX_TOOL_PROVIDER_CALLS - 1;
+  const repliesLeft = priorState ? MAX_TOOL_PROVIDER_CALLS - 1 - priorState.noProgressCalls : undefined;
+  const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
   const inventories = finalRejection && Array.isArray(rejection.detail)
     ? rejection.detail.flatMap((fault: { id?: string; actual_columns?: string[] }) => fault.actual_columns
       ? [`Actual columns of ${fault.id}: ${fault.actual_columns.join(', ') || '(none)'}.`] : []) : [];
@@ -684,6 +687,7 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
     ...inventories,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
+    ...(repliesLeft === undefined || repliesLeft < 1 ? [] : [repliesLeft === 1 ? 'Last reply for this step.' : `${repliesLeft} replies left for this step.`]),
   ].join('\n');
 }
 
