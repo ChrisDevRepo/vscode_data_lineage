@@ -651,6 +651,24 @@ rejection naming the accepted call ID; a duplicate inside the same batch is
 reused silently. A phase stops after `MAX_TOOL_PROVIDER_CALLS` model replies in a row
 that add no accepted observation — rejected, duplicate, empty or text-only.
 
+A rejection is a pure check: the backend accepts or rejects a call against its
+rule and never moves, rewrites or completes a model-supplied value. Each
+rejection states the rule broken and the allowed form, and the replies the
+step has left. One fault keeps one code and one statement on every reply; the
+rejection the last reply answers also names the top-level fields to correct. A
+field that failed its check is never held, committed or served to a later hop:
+a `summary` that continues into tool-call argument notation is rejected on
+`summary`, naming the argument to send separately.
+
+A stop is an error, logged with its reason. During active exploration both
+stop reasons — `no_progress` (the reply limit) and `backend_fault` — end the
+turn with a chat message naming the object, and produce no synthesis, no AI
+preview and no graph change. `backend_fault` covers rejections no model reply
+can correct (`engine_crash`, `invalid_status`, `no_active_session`,
+`stale_turn`, `internal_error`, `tool_execution_error`); the first one ends
+the run instead of being returned as a retry request. A synthesis stop renders
+no AI preview; a held report draft is shown as chat text only.
+
 ## BB and column-trace modes
 
 BB is whole-object analysis. It supports focus verdicts and engine-validated

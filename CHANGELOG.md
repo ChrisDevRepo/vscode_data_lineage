@@ -7,6 +7,9 @@
 
 ### Fixed
 - A lineage report is no longer lost when the AI's final answer is rejected repeatedly.
+- An AI analysis that stops partway now ends with an error naming the object it stopped at. An AI preview is shown only for a complete analysis.
+- A rejected AI step is told which part to correct, with more detail on each further attempt. After three failed attempts on one object the analysis stops with an error.
+- An internal error ends the analysis at once instead of being retried.
 
 ### Dependencies
 - Security updates: katex, source-map-js.
