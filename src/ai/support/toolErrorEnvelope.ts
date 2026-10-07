@@ -162,12 +162,17 @@ type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 
 /**
  * Enriches one Zod issue's message with the measured size against the bound for
- * `too_big`/`too_small` (models cannot count characters). The received value is never echoed: the
+ * `too_big`/`too_small` (models cannot count characters), and names a structured field that
+ * arrived as text that is not valid JSON. The received value is never echoed: the
  * rejected call stays in the transcript with its arguments.
  */
 function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): string {
   if (issue.code === 'too_big' || issue.code === 'too_small') {
     return describeSizeIssue(issue, received) ?? issue.message;
+  }
+  if (issue.code === 'invalid_type' && typeof received === 'string' && /^\s*[[{]/.test(received)) {
+    const kind = received.trimStart().startsWith('[') ? 'array' : 'object';
+    return `received ${received.length} characters of text that is not valid JSON. Send it again as one complete JSON ${kind}, with line breaks inside strings written as \\n.`;
   }
   return baseIssueMessage(issue);
 }

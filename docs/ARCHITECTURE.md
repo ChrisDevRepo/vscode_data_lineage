@@ -658,8 +658,9 @@ replies carried an accepted read.
 
 A rejection is a check, not a repair: a value that fails its rule is rejected,
 never moved or rewritten to pass. The receiving-boundary normalization
-described above (identifier resolution, string-argument decoding) is the
-stated exception and is logged. Each rejection of a tool call or of a missing
+described above (identifier resolution, and decoding a structured argument
+sent as valid JSON text with `JSON.parse`) is the stated exception and is
+logged; text that is not valid JSON is rejected at its field, never completed. Each rejection of a tool call or of a missing
 call states the rule broken, the allowed form and the replies the step has
 left; the rejection the last reply answers also names the top-level fields to
 correct when the fault has a field path. A field that failed its check is not

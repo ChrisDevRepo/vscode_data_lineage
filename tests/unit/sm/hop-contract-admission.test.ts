@@ -515,3 +515,23 @@ describe('reply limit of one hop', () => {
     expect(state.stopReason).toBe('no_progress');
   });
 });
+
+describe('structured argument delivered as cut-off JSON text', () => {
+  it('rejects the field by name, holds the valid rest and commits the complete resend', async () => {
+    const w = world('ct');
+    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: branch, col: 'Value' }] }];
+    const cut = { focus_node_id: origin, verdict: 'analyze', column_flow, summary: 'Observed SQL.', sections: '{"technical":"Observed SQL det' };
+    const model = nativePort(() => [new vscode.LanguageModelToolCallPart('cut', 'lineage_submit_findings', cut)]);
+    const attempt = await executeToolAttempt(model.port, activePlan(w), { priorState: initialToolPhaseAttemptState('active') });
+    const content = String((attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage).content);
+    expect(content).toContain('sections');
+    expect(content).toContain('characters of text that is not valid JSON. Send it again as one complete JSON object, with line breaks inside strings written as \\n.');
+    expect(content).toContain('Held: summary');
+    expect(content).not.toContain('Observed SQL det');
+    expect(content).toMatch(/2 replies left for this step\.$/);
+    expect(w.engine.currentFocus).toBe(origin);
+    const resend = JSON.parse(executeSubmitFindings({ focus_node_id: origin, verdict: 'analyze', column_flow, sections: { technical: 'Observed SQL detail.' } }, w.bind()));
+    expect(resend).toHaveProperty('ok', true);
+    expect(JSON.stringify(w.session.memory.getResult().detail_slots)).not.toContain('Observed SQL det"');
+  });
+});
