@@ -2850,7 +2850,11 @@ export class NavigationEngine implements IHopStateMachine {
             && task.activeColumns.some(col => this.columnKey(col) === this.columnKey(q.caller_context!.col)));
           const ddl = getNodeDdl(focusId, this.nodeMap, this.store ?? undefined);
           if (!target || target.node !== focusId || !callerTask || !ddl || !this.scopeNodeIds.has(focusId)) {
-            invalidRoutes.push({ kind: 'bad_caller_context', id: nid, path: `questions.${index}.caller_context`, reason: 'caller_context must name an active real output of the current caller, which reads this loaded function.' });
+            const activeOutputs = [...new Set(this.getCurrentTasks()
+              .filter(task => task.kind === 'column_lineage' && task.nodeId === focusId)
+              .flatMap(task => task.activeColumns))];
+            invalidRoutes.push({ kind: 'bad_caller_context', id: nid, path: `questions.${index}.caller_context`,
+              reason: `caller_context must name an active real output of the current caller, which reads this loaded function.${activeOutputs.length > 0 ? ` Active outputs of \`${focusId}\`: ${activeOutputs.join(', ')}.` : ''}` });
             return;
           }
           callerContext = { ...target, callerTaskId: callerTask.id, ddlHash: functionCallerDdlHash(ddl) };

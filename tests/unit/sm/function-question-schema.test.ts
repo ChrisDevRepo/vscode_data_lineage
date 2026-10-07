@@ -55,6 +55,7 @@ describe('neighbor-specific function caller context', () => {
     const refused = engine.submitFindings({ ...finding, verdict: 'analyze', sections: [{ angle: 'technical' as const, text: finding.sections.technical }],
       questions: [{ nodeId: fn, question: 'Determine the output.', caller_context: { node: caller, col: 'Missing' } }] });
     expect(refused).toMatchObject({ code: 'route_validation_failed', issuePaths: ['questions.0.caller_context'] });
+    expect(JSON.stringify(refused)).toContain(`Active outputs of \`${caller}\`: Value.`);
     expect(engine.currentFocus).toBe(caller);
     expect(engine.columnAspect?.edges ?? []).toEqual([]);
     expect(engine.toJSON().engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);

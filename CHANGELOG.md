@@ -6,7 +6,7 @@
 - The approval card stays short with large filters: exclusions show as counts and long object lists end in **+N more**.
 
 ### Fixed
-- AI analysis reliability: an incomplete analysis ends with a clear error instead of a partial preview, and rejected AI answers get clearer correction messages.
+- Several improvements in backend rejection handling for AI analysis.
 
 ### Dependencies
 - Security updates: katex, source-map-js.
