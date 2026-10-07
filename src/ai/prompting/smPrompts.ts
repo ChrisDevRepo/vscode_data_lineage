@@ -71,7 +71,7 @@ function buildSynthesisReminder(question: string): string {
   return [
     '## Answer this question',
     `"${escapePromptText(question)}"`,
-    'Length follows the captured evidence, not the question: every kept node keeps its rules, predicates and formulas. Sections run in graph order — terminal sources, then each transform, then the origin and what reads it.',
+    'Length follows the captured evidence, not the question: every kept node keeps its rules, predicates and formulas, each with its conditions, exceptions and intermediate calculations as captured. Sections run in graph order — terminal sources, then each transform, then the origin and what reads it.',
   ].join('\n');
 }
 
