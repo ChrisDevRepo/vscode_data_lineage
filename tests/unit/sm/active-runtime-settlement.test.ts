@@ -102,7 +102,7 @@ describe('active coordinator', () => {
 });
 
 describe('follow-up reroute', () => {
-  it('starts the supplemented hops from the submitted-hop count, so a stop reports the hops actually completed', async () => {
+  it('ends a stopped supplement hop as an error that reports the hops actually completed and renders no result', async () => {
     const session = new AiSession();
     seed(session);
     const first = session.beginTurn();
@@ -123,6 +123,7 @@ describe('follow-up reroute', () => {
     session.enterCompleted(first);
 
     const second = session.beginTurn();
+    let presented = 0;
     const { registry } = scriptedRegistry([
       {
         name: 'lineage_start_exploration',
@@ -136,6 +137,7 @@ describe('follow-up reroute', () => {
       {
         name: 'lineage_present_result',
         result: () => {
+          presented += 1;
           session.commitPresentResultSuccess(second, { name: 'Result', nodeIds: [], aiMetadata: { summary: 's', description: 'd' } } as unknown as PresentationArtifact);
           return JSON.stringify({ ok: true });
         },
@@ -150,8 +152,14 @@ describe('follow-up reroute', () => {
     const lines: string[] = [];
     const runtime = new AgentRuntime({ threadId: 'follow-up', getSession: () => session, model: model as unknown as ModelPort, registry,
       sink: gateSink().sink, turnEpoch: second, maxRounds: 10, logger: logger(lines) });
-    await runtime.run('Also explore the extra view.');
+    expect(await runtime.run('Also explore the extra view.')).toBe('error');
     expect(engine.currentHop).toBe(3);
-    expect(lines).toContainEqual(expect.stringMatching(/^debug \[AI\] \[Salvage\] no_progress after 2 submitted hop\(s\)/));
+    expect(runtime.lastFailureDetail).toMatchObject({
+      stop: 'no_progress',
+      message: expect.stringMatching(/^The analysis stopped at `d\.extra`: 3 model replies in a row were not accepted\. 2 objects were analysed before the stop\. The run is incomplete, so no result is shown/),
+    });
+    expect(presented).toBe(0);
+    expect(session.resultGraph).toBeNull();
+    expect(lines.some(line => line.includes('[Salvage]'))).toBe(false);
   });
 });
