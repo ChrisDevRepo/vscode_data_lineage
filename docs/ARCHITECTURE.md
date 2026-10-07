@@ -70,8 +70,8 @@ Model input crosses three layers, in this order:
 - **Schema parse** — the tool's Zod schema, as served to the model for the hop, is
   the structural contract. The canonical receiving boundary parses each call once against
   it and answers a failure with `makeRejection` built from `z.prettifyError` (every
-  issue in one parse, a repeated issue collapsed, the expected shape shown once,
-  nothing echoed). For `submit_findings`, the serialized registry's receiving handler owns
+  issue in one parse, a repeated issue collapsed, a size bound omitted where the
+  value already fails its type, the expected shape shown once, nothing echoed). For `submit_findings`, the serialized registry's receiving handler owns
   that raw parse before normalization, held-draft merging or engine mutation;
   native and HTTP transport decoding does not perform a second parse. Direct typed
   engine calls validate the separate internal finding shape against the same hop mode.

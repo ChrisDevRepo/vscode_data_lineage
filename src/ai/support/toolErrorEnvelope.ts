@@ -694,7 +694,8 @@ function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecogn
  * breakdown, and when `input` is supplied a size issue names the measured size — Zod v4 issues
  * carry no input, so the enrichment happens here; a sent value is never echoed. Issues identical
  * apart from their array index (same code, message and path shape) collapse into the first, which
- * names the other indices, so one defect repeated across N entries is one line. Only STRUCTURAL
+ * names the other indices, so one defect repeated across N entries is one line. A size issue at a
+ * path that also fails its type is dropped: the bound belongs to the declared type. Only STRUCTURAL
  * bounds reach this function; a content cap is enforced and reported separately by the validator
  * or engine. A present value outside its accepted values names them in the default hint
  * ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves the
@@ -712,7 +713,9 @@ export function rejectionFromZodError(
 ): ToolRejection {
   const issuePaths: string[] = [];
   const shown = new Map<string, { issue: z.core.$ZodIssue; message: string; others: string[] }>();
+  const mistyped = new Set(error.issues.filter(issue => issue.code === 'invalid_type').map(issue => dottedPath(issue.path)));
   for (const issue of error.issues) {
+    if ((issue.code === 'too_big' || issue.code === 'too_small') && mistyped.has(dottedPath(issue.path))) continue;
     let message: string;
     if (issue.code === 'invalid_union') {
       const { line, paths } = describeInvalidUnion(issue, opts.input);
