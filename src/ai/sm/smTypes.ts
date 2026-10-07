@@ -670,7 +670,7 @@ interface ResultNode {
  * The final, immutable output of a completed State Machine exploration.
  */
 export interface SmResult {
-  /** Hardcoded status to 'complete'. */
+  /** Always `complete`: the engine builds a result only once its agenda is drained. */
   status: 'complete';
   /** The ID of the node where the exploration began. */
   originNodeId: string;

@@ -45,6 +45,7 @@ it('refuses a second contributor\'s other output: the writer alias is attributio
  expect(engine.columnAspect?.edges).toContainEqual(expect.objectContaining({from_node:'writer',from_col:'Discount',to_node:'saved',to_col:'Amount'}));
  expect(engine.columnAspect?.edges.some(edge=>edge.to_node==='reader')).toBe(false);
  expect(engine.submitFindings({...reader,column_flow:[]})).toMatchObject({ok:true});
+ expect(engine.getHopContext()).toMatchObject({done:true});
  expect(engine.getResult().columnAspect?.edges.some(edge=>edge.to_node==='reader'||edge.from_node==='reader')).toBe(false);
 });
 

@@ -4133,8 +4133,13 @@ export class NavigationEngine implements IHopStateMachine {
    * Packages exploration records into the final presentation topology.
    *
    * @returns Detailed analysis metrics matching the outcome format.
+   * @throws When the exploration is not `complete`: a result exists only once no agenda entry and
+   *   no focus is left, so a stopped run never yields one.
    */
   public getResult(): SmResult {
+    if (this._status !== 'complete') {
+      throw new Error(`Exploration result requested in status '${this._status}': a result exists only for a complete exploration.`);
+    }
     const mem = this.memory.getResult();
 
     const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);

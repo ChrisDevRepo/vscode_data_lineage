@@ -510,6 +510,14 @@ when forwarded. A neighbor without column work still receives BB guidance. The m
 completion flag; synthesis starts when the engine reaches its terminal
 condition.
 
+Completion has one definition: the engine is `complete` when no agenda entry
+and no dispatched focus is left. A result is built only in that state;
+requesting one earlier is an engine error, not a partial result. A hop that
+uses its reply budget without an accepted submission, or loses its provider
+connection, ends the turn as an error that names the object and the hops
+completed. The exploration is reset, no synthesis runs, and no AI preview or
+graph change is produced from an incomplete run.
+
 In column trace, column evidence does not create
 separate object-retention rules. Object decisions use the shared BB path;
 column links and unresolved source-qualified questions remain evidence for the
