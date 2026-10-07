@@ -17,18 +17,12 @@ import {
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import type { ColumnFlowEntry } from '../../sm/smTypes';
+import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
 /**
- * Validates and submits findings for the current exploration focus.
- *
- * @param input - Raw model-supplied tool input.
- * @param s - Host capabilities for the active tool session.
- * @returns The accepted-hop result, completion envelope, or structured rejection.
- */
-/**
  * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
- * `role_mixed` counts refs that pair a row role (`filter`, `combine`) with a value role.
+ * `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one.
  *
  * @param columnFlow - The hop's submitted `column_flow`; absent yields zero counts.
  * @returns The suffix for the `[Hop N]` log line.
@@ -37,12 +31,19 @@ export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefin
   const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);
   const noNote = refs.filter(ref => !ref.note).length;
   const mixed = refs.filter(ref => {
-    const rowRoles = (ref.transforms ?? []).filter(role => role === 'filter' || role === 'combine').length;
+    const rowRoles = (ref.transforms ?? []).filter(role => COLUMN_TRANSFORM_DIRECTION[role] === 'INDIRECT').length;
     return rowRoles > 0 && rowRoles < (ref.transforms ?? []).length;
   }).length;
   return ` refs=${refs.length} refs_no_note=${noNote} role_mixed=${mixed}`;
 }
 
+/**
+ * Validates and submits findings for the current exploration focus.
+ *
+ * @param input - Raw model-supplied tool input.
+ * @param s - Host capabilities for the active tool session.
+ * @returns The accepted-hop result, completion envelope, or structured rejection.
+ */
 export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
       const sess = s.getSession();

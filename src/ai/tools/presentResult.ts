@@ -636,7 +636,7 @@ export function evidenceCoverage(
   const unusedIds: string[] = [];
   for (const block of blocks.values()) {
     const body = squash(block.raw.split('\n').slice(1, -1).join('\n'));
-    if (body === '' || !rendered.includes(body)) unusedIds.push(block.id);
+    if (!rendered.includes(body)) unusedIds.push(block.id);
   }
   return { served: blocks.size, unusedIds };
 }

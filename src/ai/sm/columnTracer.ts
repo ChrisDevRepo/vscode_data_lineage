@@ -8,6 +8,7 @@ import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName, schemaKey } from '../../utils/sql';
+import { sanitizeForLog } from '../../utils/log';
 import { DirectedGraph } from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 
@@ -516,7 +517,7 @@ export class ColumnTracer {
 
         // Direct lineage only: a column that just joins, filters, groups or orders rows is object lineage — its node is a row-role visit and the hop's sections explain the rule.
         if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
-          rowRoleOnly.push(`${fromNode}.${cont.col} (${(cont.transforms ?? []).join('+')}${cont.note ? `: ${cont.note}` : ''})`);
+          rowRoleOnly.push(`${fromNode}.${cont.col} (${(cont.transforms ?? []).join('+')}${cont.note ? `: ${sanitizeForLog(cont.note)}` : ''})`);
           continue;
         }
 
