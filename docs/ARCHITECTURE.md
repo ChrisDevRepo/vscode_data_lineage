@@ -778,8 +778,8 @@ single home for the five values. They align to OpenLineage's
 | `pass_through` | DIRECT | rename, `SELECT *`, synonym, straight copy |
 | `compute` | DIRECT | formula, `CASE`, `COALESCE`, cast, concat, string and date functions |
 | `aggregate` | DIRECT | the argument of `SUM`/`COUNT`/`MIN`/`MAX` under `GROUP BY` or a window, `PIVOT` |
-| `combine` | INDIRECT | `JOIN` and its `ON` key, `GROUP BY` / `PARTITION BY` / `ORDER BY` key, `UNION`/`EXCEPT`/`INTERSECT`, `APPLY`, `UNPIVOT` |
-| `filter` | INDIRECT | `WHERE`, `HAVING` |
+| `combine` | INDIRECT | `JOIN`, `GROUP BY` / `PARTITION BY` / `ORDER BY` key, `UNION`/`EXCEPT`/`INTERSECT`, `APPLY`, `UNPIVOT` |
+| `filter` | INDIRECT | `WHERE`, `HAVING`, a join `ON` predicate, `TOP`, `DISTINCT` |
 
 DIRECT means the upstream value reaches the output; INDIRECT means no value
 crosses the edge and the node only decided which rows appear. The field is

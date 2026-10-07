@@ -554,8 +554,8 @@ const ColumnRefSchema = z.object({
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
     'pass_through: unchanged value. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
-    'combine: join, grouping, partition or ordering key. filter: column in a WHERE or HAVING predicate ' +
-    'that removes rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
+    'combine: join, grouping, partition or ordering key. filter: predicate ' +
+    'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
     'display-only sorting contributes no role.',
   ),
   note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(

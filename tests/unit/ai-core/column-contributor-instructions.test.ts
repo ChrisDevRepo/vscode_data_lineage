@@ -24,7 +24,7 @@ describe('column contributor instructions', () => {
     expect(description).toContain('aggregate: value summarised by an aggregate');
     expect(description).toContain('compute: expression input, including a CASE condition operand');
     expect(description).toContain('combine: join, grouping, partition or ordering key');
-    expect(description).toContain('filter: column in a WHERE or HAVING predicate that removes rows');
+    expect(description).toContain('filter: predicate selecting contributing rows');
     expect(description).toContain('omit when SQL does not determine it');
   });
 
