@@ -8,6 +8,9 @@
 ### Fixed
 - A lineage report is no longer lost when the AI's final answer is rejected repeatedly.
 
+### Dependencies
+- Security updates: katex, source-map-js.
+
 ## [1.2.4] - 2026-10-06
 
 ### Fixed
