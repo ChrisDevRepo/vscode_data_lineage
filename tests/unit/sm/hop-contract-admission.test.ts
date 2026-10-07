@@ -224,6 +224,25 @@ describe('native receiving-boundary execution and finite retries', () => {
     invoke.mockRestore();
   });
 
+  it('evaluates only the first submission of a reply, so a filler sibling never reaches the engine', async () => {
+    const w = world(); const submit = vi.spyOn(w.engine, 'submitFindings');
+    const garbled = { ...finding(), sections: 'not an object' };
+    const filler = { ...finding(), summary: 'placeholder', sections: { technical: 'placeholder' } };
+    const model = nativePort(() => [
+      new vscode.LanguageModelToolCallPart('garbled', 'lineage_submit_findings', garbled),
+      new vscode.LanguageModelToolCallPart('filler', 'lineage_submit_findings', filler),
+    ]);
+    const attempt = await executeToolAttempt(model.port, activePlan(w));
+    const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
+    expect(results.map(result => [result.tool_call_id, (result.artifact as { code: string }).code])).toEqual([
+      ['garbled', 'invalid_input'], ['filler', 'extra_call_not_evaluated'],
+    ]);
+    expect(String(results[1].content)).toContain('a reply carries one lineage_submit_findings call');
+    expect(submit).not.toHaveBeenCalled();
+    expect(w.engine.currentFocus).toBe(origin);
+    expect(attempt.rejections.map(rejection => rejection.callId)).toEqual(['garbled']);
+  });
+
   it('parses raw BB input once at dispatch, pairs a rejection, then accepts the correction once', async () => {
     const w = world(); const before = w.engine.toJSON(); const submit = vi.spyOn(w.engine, 'submitFindings');
     const schema = submitFindingsSchemaForMode('bb', 'technical', true, w.engine.hopSubmitColumns);

@@ -567,6 +567,12 @@ export async function renderToolAttemptContext(
 const PRESENT_RESULT_TOOL = 'lineage_present_result';
 
 /**
+ * Tools a reply carries once: each call replaces the whole answer of its phase or hop, so a second
+ * call in the same reply competes with the first for the held draft instead of adding to it.
+ */
+const ONE_CALL_PER_REPLY_TOOLS: ReadonlySet<string> = new Set([SUBMIT_FINDINGS_TOOL, PRESENT_RESULT_TOOL]);
+
+/**
  * Embeds the labels of the session's held `lineage_present_result` draft into a present_result
  * rejection's own `detail`, so a resend can key on them. A no-op for any status but `'rejected'` or
  * any tool but {@link PRESENT_RESULT_TOOL}.
@@ -941,7 +947,9 @@ interface ToolCallDispatchLoopResult {
  * parameters and the accumulated result, never captured only as a closure the caller cannot see.
  * Once `closedBy` closes the batch, every remaining sibling is recorded as
  * `phase_closed` without dispatch — that closure state is internal to this one
- * batch and does not survive past the return. Every call, dispatched or synthetically closed,
+ * batch and does not survive past the return. A second call of a {@link ONE_CALL_PER_REPLY_TOOLS}
+ * tool is recorded the same way, whatever became of the first, so it can neither be held as the
+ * repair draft nor answer the first call's rejection inside the same reply. Every call, dispatched or synthetically closed,
  * appends exactly one {@link ModelMessage} `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages},
  * so the caller's one leading `AIMessage` always pairs with the same number of tool results as it
  * has tool calls. A cancellation is the one exit that leaves later siblings unanswered; the caller
@@ -963,6 +971,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
   let cancelled = false;
   let closedBy: { readonly callId: string; readonly toolName: string } | null = null;
   let heldObservationBytes = loop.heldObservationBytes;
+  const evaluatedOncePerReply = new Map<string, string>();
 
   for (const call of toolCalls) {
     if (input.signal?.aborted) {
@@ -985,6 +994,24 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         `closed by ${closedBy.toolName} callId ${closedBy.callId}`);
       continue;
     }
+    const evaluatedCallId = evaluatedOncePerReply.get(call.toolName);
+    if (evaluatedCallId !== undefined) {
+      const outcome = recordToolOutcome(call, {
+        status: 'phase_closed',
+        closedByCallId: evaluatedCallId,
+        rejection: makeRejection({
+          code: 'extra_call_not_evaluated',
+          reason: `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
+          hint: "Answer that call's result with one call in your next reply.",
+          detail: { evaluatedCallId },
+        }),
+      }, calls, observations, rejections, input.traceSyntheticRejection);
+      toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
+      logSyntheticRejection(input, 'extra_call_not_evaluated', call, 'extra_call_not_evaluated',
+        `evaluated callId ${evaluatedCallId}`);
+      continue;
+    }
+    if (ONE_CALL_PER_REPLY_TOOLS.has(call.toolName)) evaluatedOncePerReply.set(call.toolName, call.callId);
     if (!call.valid) {
       const rejected = rejectionFromInvalid(call, input.registry);
       const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
