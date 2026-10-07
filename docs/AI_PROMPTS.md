@@ -400,11 +400,9 @@ the shared BB decisions; column evidence is not a separate reason to change that
   `COLUMN_TRANSFORM_CLASSES` in `src/engine/shared/bridgeContract.ts`, shared by
   the tool schema, the wire contract and the webview. A column trace follows
   direct lineage: `upstream_columns` asks for value inputs only, and a reference
-  classified with INDIRECT classes alone (a join, filter, grouping or partition
-  key) records no column link — its rule belongs in `sections`, and its
-  object is visited in a row role. `filter` is a `WHERE`, `HAVING` or `ON`
-  predicate that removes rows; an ordering or ranking key carries no class and
-  is stated in `sections`.
+  classified with INDIRECT classes alone (a join, filter, grouping, partition or
+  ordering key) records no column link — its rule belongs in `sections`, and its
+  object is visited in a row role.
 - Column context comes from recorded model-authored links. A retained neighbor
   without a column aspect receives the shared BB instructions. Neither a matching
   column name nor a single possible carrier establishes a write mapping.

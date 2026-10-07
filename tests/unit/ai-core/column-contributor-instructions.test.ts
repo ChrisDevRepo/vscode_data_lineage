@@ -23,9 +23,8 @@ describe('column contributor instructions', () => {
     const description = flow.shape.upstream_columns.element.shape.transforms.description!;
     expect(description).toContain('aggregate: value summarised by an aggregate');
     expect(description).toContain('compute: expression input, including a CASE condition operand');
-    expect(description).toContain('combine: join key or grouping/partition key');
-    expect(description).toContain('filter: column in a WHERE, HAVING or ON predicate that removes rows');
-    expect(description).toContain('an ordering or ranking key carries no role and is stated in sections');
+    expect(description).toContain('combine: join, grouping, partition or ordering key');
+    expect(description).toContain('filter: column in a WHERE or HAVING predicate that removes rows');
     expect(description).toContain('omit when SQL does not determine it');
   });
 
