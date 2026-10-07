@@ -394,11 +394,11 @@ export class ColumnTracer {
           }
         }
         if (verbs.size === 0) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node.` });
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes.` });
           continue;
         }
         if ([...verbs].every((v) => v === 'read')) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination. Omit writes_to (it defaults to the focus) unless this hop writes a real column on another node; every open neighbor you do not prune is visited anyway.` });
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination.` });
           continue;
         }
       }
