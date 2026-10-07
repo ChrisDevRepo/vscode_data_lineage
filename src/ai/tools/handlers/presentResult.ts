@@ -24,6 +24,7 @@ import {
   assemblePreviewSections,
   assignEvidenceIds,
   expandEvidenceRefs,
+  evidenceCoverage,
   type PresentResultViolation,
   type PresentResultInput,
   type PresentResultRepairPatch,
@@ -446,6 +447,14 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             return expanded === sec.text ? sec : { ...sec, text: expanded };
           }),
         };
+        const slotChars = sess.memory.getResult().detail_slots
+          .reduce((total, slot) => total + slot.sections.reduce((sum, section) => sum + section.text.length, 0), 0);
+        const coverage = evidenceCoverage(evidenceBlocks, (renderInput.sections ?? []).map(sec => sec.text));
+        s.logger.debug(
+          `[Presentation] retention — slotChars=${slotChars} sectionChars=${presentInput.sections.reduce((sum, sec) => sum + sec.text.length, 0)} ` +
+          `sections(nodes:chars)=[${presentInput.sections.map(sec => `${sec.node_ids?.length ?? 0}:${sec.text.length}`).join(', ')}] ` +
+          `fences served=${coverage.served} shown=${coverage.served - coverage.unusedIds.length} unused=[${coverage.unusedIds.join(', ')}]`,
+        );
       }
 
       s.logger.debug(`presentResult section[0] preview: ${trunc(renderInput.sections?.[0]?.text ?? '(empty)', 200)}`);

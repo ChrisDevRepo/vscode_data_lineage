@@ -516,7 +516,7 @@ export class ColumnTracer {
 
         // Direct lineage only: a column that just joins, filters, groups or orders rows is object lineage — its node is a row-role visit and the hop's sections explain the rule.
         if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
-          rowRoleOnly.push(`${fromNode}.${cont.col}`);
+          rowRoleOnly.push(`${fromNode}.${cont.col} (${(cont.transforms ?? []).join('+')}${cont.note ? `: ${cont.note}` : ''})`);
           continue;
         }
 

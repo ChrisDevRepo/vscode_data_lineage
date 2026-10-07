@@ -616,6 +616,28 @@ export interface EvidenceBlock {
   readonly raw: string;
 }
 
+/**
+ * Reports which captured SQL blocks the rendered report shows, by whitespace-insensitive match of
+ * the block body — so a block expanded from its id and one the author wrote out both count.
+ *
+ * @param blocks - The id → block lookup from {@link assignEvidenceIds}.
+ * @param renderedTexts - Report text fields after {@link expandEvidenceRefs}.
+ * @returns `served` — captured block count; `unusedIds` — ids of blocks no field shows, in id order.
+ */
+export function evidenceCoverage(
+  blocks: ReadonlyMap<string, EvidenceBlock>,
+  renderedTexts: readonly string[],
+): { readonly served: number; readonly unusedIds: string[] } {
+  const squash = (text: string): string => text.replace(/\s+/g, '');
+  const rendered = squash(renderedTexts.join('\n'));
+  const unusedIds: string[] = [];
+  for (const block of blocks.values()) {
+    const body = squash(block.raw.split('\n').slice(1, -1).join('\n'));
+    if (body === '' || !rendered.includes(body)) unusedIds.push(block.id);
+  }
+  return { served: blocks.size, unusedIds };
+}
+
 /** Container prefix of a line: block-quote markers, indentation and a list marker. */
 const CONTAINER_PREFIX = /^(?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?/;
 

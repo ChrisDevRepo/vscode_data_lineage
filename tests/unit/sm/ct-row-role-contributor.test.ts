@@ -28,6 +28,18 @@ describe('CT contributor with a row role only', () => {
     expect(lines.filter(line => line.includes('row role only')).join('\n')).toMatch(/IsOpen[\s\S]*StoreId/);
   });
 
+  it('logs the role and note of each column it leaves out', () => {
+    const lines: string[] = [];
+    submit([
+      { node: 'src', col: 'Amount', transforms: ['aggregate'] },
+      { node: 'src', col: 'IsOpen', transforms: ['filter'], note: 'WHERE IsOpen = 1' },
+      { node: 'src', col: 'StoreId', transforms: ['combine'] },
+    ], (_level, message) => lines.push(message));
+    const line = lines.find(entry => entry.includes('row role only')) ?? '';
+    expect(line).toContain('IsOpen (filter: WHERE IsOpen = 1)');
+    expect(line).toContain('StoreId (combine)');
+  });
+
   it('keeps a column that carries a value and also selects rows', () => {
     const res = submit([{ node: 'src', col: 'Amount', transforms: ['compute', 'filter'] }]);
     expect(res.stagedEdges.map(edge => edge.from_col)).toEqual(['Amount']);

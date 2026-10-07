@@ -16,6 +16,7 @@ import {
   type SubmitFindingsInputObject,
 } from '../../support/inputNormalization';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import type { ColumnFlowEntry } from '../../sm/smTypes';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 
 /**
@@ -25,6 +26,23 @@ import { type ToolServices, getModelNodeMap } from './toolServices';
  * @param s - Host capabilities for the active tool session.
  * @returns The accepted-hop result, completion envelope, or structured rejection.
  */
+/**
+ * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
+ * `role_mixed` counts refs that pair a row role (`filter`, `combine`) with a value role.
+ *
+ * @param columnFlow - The hop's submitted `column_flow`; absent yields zero counts.
+ * @returns The suffix for the `[Hop N]` log line.
+ */
+export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
+  const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);
+  const noNote = refs.filter(ref => !ref.note).length;
+  const mixed = refs.filter(ref => {
+    const rowRoles = (ref.transforms ?? []).filter(role => role === 'filter' || role === 'combine').length;
+    return rowRoles > 0 && rowRoles < (ref.transforms ?? []).length;
+  }).length;
+  return ` refs=${refs.length} refs_no_note=${noNote} role_mixed=${mixed}`;
+}
+
 export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
       const sess = s.getSession();
@@ -86,7 +104,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
       const diag = engine.getHopDiagnostics();
       const ctSuffix = diag.columnEdgeCount !== undefined
-        ? ` ct_edges=${diag.columnEdgeCount} cols=${diag.activeColumnCount} flow=${diag.columnFlowEntries}`
+        ? ` ct_edges=${diag.columnEdgeCount} cols=${diag.activeColumnCount} flow=${diag.columnFlowEntries}${columnRefSuffix(finding.column_flow)}`
         : '';
       s.logger.debug(
         `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} verdict=${diag.verdict ?? 'none'} ` +
