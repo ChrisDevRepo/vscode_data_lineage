@@ -581,7 +581,7 @@ const ColumnFlowEntrySchema = z.object({
     'At a bodied focus, only the real source columns whose value flows into out_col: operands of its expression, ' +
     'an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. ' +
     'A column used only to join, filter, group, partition or order rows is not a source: omit it here and state it in sections. ' +
-    'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
+    'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns; a variable assigned from a call or lookup that takes no column input has none — name it and its call in sections. ' +
     'At a bodyless focus, follow carrier-side neighbours (writers upstream, readers downstream) with the ' +
     'tracked column unchanged; [] only when out_col terminates here.',
   ),
