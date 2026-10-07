@@ -2623,10 +2623,11 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
     if (this._status !== 'awaiting_findings') {
-      const hint = this._status === 'error'
-        ? 'The engine is in an error state. Call start_exploration to begin a fresh exploration.'
-        : `Engine is in status '${this._status}'. Expected 'awaiting_findings'. Wait for a hop context, or restart via start_exploration if the session was wiped.`;
-      return makeRejection({ code: REJECTION_CODES.invalidStatus, hint, detail: { current_status: this._status } });
+      return makeRejection({
+        code: REJECTION_CODES.invalidStatus,
+        reason: `Findings arrived while the engine is in status '${this._status}', not 'awaiting_findings'.`,
+        detail: { current_status: this._status },
+      });
     }
 
     const archivedAngles = this.memory.getArchivedAngles(this.currentFocusNodeId ?? '');
@@ -3047,9 +3048,8 @@ export class NavigationEngine implements IHopStateMachine {
       this._status = 'error';
       const message = err instanceof Error ? err.message : String(err);
       return makeRejection({
-        code: 'engine_crash',
-        reason: message || undefined,
-        hint: 'The engine crashed while processing findings. Call start_exploration to restart the session.',
+        code: REJECTION_CODES.engineCrash,
+        reason: message || 'The engine failed while applying findings.',
       });
     }
   }

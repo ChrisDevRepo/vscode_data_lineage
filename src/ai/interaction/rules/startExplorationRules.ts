@@ -119,7 +119,8 @@ export function evaluateAlreadyStartedRule(
   if (!(hasLiveEngine && sameSession && !isRefining)) return null;
   return makeRejection({
     code: REJECTION_CODES.alreadyStarted,
-    hint: 'start_exploration is one-shot per turn. Use submit_findings to continue the current agenda. After complete_rejected, the unvisited neighbors are already queued at priority 3 - the next submit_findings will present one of them.',
+    reason: 'An exploration is already running in this turn.',
+    hint: 'Send lineage_submit_findings for the current object; each accepted finding serves the next queued object.',
     detail: { next_action: 'submit_findings' },
   });
 }
@@ -138,7 +139,8 @@ export function evaluateParallelStartRule(
   if (priorStartRoundId === null || priorStartRoundId !== currentRoundId) return null;
   return makeRejection({
     code: 'parallel_call_forbidden',
-    hint: 'start_exploration is strictly serial and one-shot per round. Use submit_findings for the queued neighbors - after complete_rejected they are queued at priority 3 and will be served on the next submit_findings.',
+    reason: 'lineage_start_exploration was already called in this reply.',
+    hint: 'Send lineage_submit_findings for the current object; each accepted finding serves the next queued object.',
     detail: { next_action: 'submit_findings' },
   });
 }

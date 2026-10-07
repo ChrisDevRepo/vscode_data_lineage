@@ -149,6 +149,7 @@ const REJECTION_GROUP_CHAT_TEXT: Readonly<Record<RejectionChatGroup, string>> = 
   column_mapping: 'column mapping',
   source_selection: 'source selection',
   answer_format: 'answer format',
+  backend_fault: 'internal error',
   correction: 'correction',
 };
 
@@ -521,13 +522,17 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     subject: string,
     incompleteSuffix: string,
     at?: { readonly object: string; readonly completedHops: number },
-  ): { reason: 'no_progress'; message: string } | null => {
-    if (nextAttempt.stopReason !== 'no_progress') return null;
+  ): { reason: 'no_progress' | 'backend_fault'; message: string } | null => {
+    const reason = nextAttempt.stopReason;
+    if (!reason) return null;
+    const fault = nextAttempt.rejections[nextAttempt.rejections.length - 1]?.code ?? 'unknown';
     deps.logger?.debug(
-      `[AI] [Breaker] phase=${nextAttempt.phase} reason=no_progress noProgressCalls=${nextAttempt.noProgressCalls}`,
+      `[AI] [Breaker] phase=${nextAttempt.phase} reason=${reason} noProgressCalls=${nextAttempt.noProgressCalls}`
+      + (reason === 'backend_fault' ? ` code=${fault}` : ''),
     );
+    if (reason === 'backend_fault') return { reason, message: backendFaultStopText(subject, fault, at) };
     return {
-      reason: 'no_progress',
+      reason,
       message: at
         ? loopStopText(at, nextAttempt.noProgressCalls)
         : `${subject} made no progress after ${MAX_TOOL_PROVIDER_CALLS} model replies ${incompleteSuffix}.`,
@@ -1686,6 +1691,17 @@ export function buildSynthesisEnvelopeMessage(envelope: ReturnType<typeof buildS
  * @param at - The object the hop stopped on and the hops already submitted.
  * @param replies - Model replies in a row that were not accepted on this object.
  */
+/**
+ * User-facing text for a run ended by a backend fault: where it stopped, the fault code, and that
+ * nothing was shown or changed.
+ */
+function backendFaultStopText(subject: string, code: string, at?: { readonly object: string; readonly completedHops: number }): string {
+  const where = at ? `The analysis stopped at \`${at.object}\`` : `${subject} stopped`;
+  return `${where}: an internal error occurred (${code}). `
+    + 'The run is incomplete, so no result is shown and the graph was not changed. '
+    + 'Details are in the debug log. Ask again.';
+}
+
 function loopStopText(at: { readonly object: string; readonly completedHops: number }, replies: number): string {
   const progress = at.completedHops > 0
     ? `${at.completedHops} object${at.completedHops === 1 ? ' was' : 's were'} analysed before the stop`

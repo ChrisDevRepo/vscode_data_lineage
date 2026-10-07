@@ -101,6 +101,41 @@ describe('active coordinator', () => {
   });
 });
 
+describe('backend fault', () => {
+  it.each(['internal_error', 'tool_execution_error', 'engine_crash', 'invalid_status', 'no_active_session', 'stale_turn'])(
+    'ends the run on the first %s without asking the model to retry', async code => {
+      const session = new AiSession();
+      seed(session);
+      const epoch = session.beginTurn();
+      session.storePendingExploration(proposal({ question: 'Trace Value', origin: caller, analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream', depthIntent }), epoch);
+      let submits = 0;
+      const { registry } = scriptedRegistry([
+        { name: 'lineage_start_exploration', result: GATE_RESULT },
+        { name: 'lineage_submit_findings', result: () => { submits += 1; return JSON.stringify({ code, reason: 'Synthetic backend fault.' }); } },
+      ]);
+      const submit = (id: string): ScriptedGeneration => ({ toolCalls: [validCall(id, 'lineage_submit_findings', { summary: 'Reviewed caller', verdict: 'analyze' })] });
+      const model = new ScriptedModelPort([
+        { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: caller, analysisMode: 'ct', targetColumns: ['Value'], classification: 'technical' })] },
+        submit('submit-1'), submit('submit-2'), submit('submit-3'),
+      ]);
+      const turn = gateSink();
+      const lines: string[] = [];
+      const runtime = new AgentRuntime({ threadId: `fault-${code}`, getSession: () => session, model: model as unknown as ModelPort, registry,
+        sink: turn.sink, turnEpoch: epoch, maxRounds: 10, logger: logger(lines) });
+      const running = runtime.run('/trace [d].[caller] Value');
+      const gate = await turn.nextGate();
+      expect(runtime.resumeGate(gate.gateId, { kind: 'approve', classes: [] })).toBe(true);
+      expect(await running).toBe('error');
+      expect(submits).toBe(1);
+      expect(runtime.lastFailureDetail).toMatchObject({
+        stop: 'backend_fault',
+        message: 'The analysis stopped at `d.caller`: an internal error occurred (' + code + '). The run is incomplete, so no result is shown and the graph was not changed. Details are in the debug log. Ask again.',
+      });
+      expect(session.resultGraph).toBeNull();
+      expect(lines.some(line => line.includes('reason=backend_fault') && line.includes(`code=${code}`))).toBe(true);
+    });
+});
+
 describe('follow-up reroute', () => {
   it('ends a stopped supplement hop as an error that reports the hops actually completed and renders no result', async () => {
     const session = new AiSession();

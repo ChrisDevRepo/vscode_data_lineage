@@ -1604,7 +1604,7 @@ export function presentResultRepairPatchSchemaForFields(
         const seen = new Set<number>();
         for (const [entryIndex, entry] of entries.entries()) {
           if (seen.has(entry.index)) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Highlight label index ${entry.index} is duplicated.` });
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Highlight label index ${entry.index} is duplicated. Send each index once.` });
           }
           seen.add(entry.index);
         }
@@ -1628,7 +1628,7 @@ export function presentResultRepairPatchSchemaForFields(
       sections: z.array(entrySchema).length(sectionLeaves.length).superRefine((entries, ctx) => {
         const seen = new Set<number>();
         for (const [entryIndex, entry] of entries.entries()) {
-          if (seen.has(entry.index)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Section text index ${entry.index} is duplicated.` });
+          if (seen.has(entry.index)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Section text index ${entry.index} is duplicated. Send each index once.` });
           seen.add(entry.index);
         }
       }).describe(`Correct only rejected text leaves on held sections: ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Node links, other text and order remain held.`),

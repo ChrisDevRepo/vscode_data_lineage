@@ -388,8 +388,11 @@ export interface ToolPhaseAttemptState {
    * rebuilt.
    */
   readonly messages: readonly ModelMessage[];
-  /** `'no_progress'` once {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress, else null. */
-  readonly stopReason: 'no_progress' | null;
+  /**
+   * `'backend_fault'` once a rejection of that group was recorded, `'no_progress'` once
+   * {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress, else null.
+   */
+  readonly stopReason: 'no_progress' | 'backend_fault' | null;
 }
 
 /**
@@ -427,7 +430,7 @@ function acceptedCallKey(toolName: string, input: unknown): string {
  *
  * @param state - Existing phase-local cumulative state.
  * @param attempt - Exactly one completed graph attempt.
- * @returns Updated state carrying the single no-progress stop.
+ * @returns Updated state carrying the backend-fault or no-progress stop.
  */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
@@ -445,9 +448,11 @@ export function recordToolAttempt(
     || attempt.stop === 'phase_complete';
   const stopReason = acceptedTerminal
     ? null
-    : noProgressCalls >= MAX_TOOL_PROVIDER_CALLS
-      ? 'no_progress'
-      : null;
+    : attempt.rejections.some(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')
+      ? 'backend_fault'
+      : noProgressCalls >= MAX_TOOL_PROVIDER_CALLS
+        ? 'no_progress'
+        : null;
   return {
     phase: state.phase,
     providerCalls,

@@ -50,8 +50,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) return s.logAndReturn('lineage_submit_findings', makeRejection({
         code: REJECTION_CODES.noActiveSession,
-        hint: 'No active exploration. Call lineage_start_exploration first.',
-        detail: { next_action: 'start_exploration' },
+        reason: 'No exploration is active.',
       }), input);
 
       const focus = engine.currentFocus;

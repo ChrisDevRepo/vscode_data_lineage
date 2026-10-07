@@ -70,7 +70,7 @@ const RejectionShape = z.object({
 export function buildToolExecutionError(toolName: string): string {
   return JSON.stringify(makeRejection({
     code: REJECTION_CODES.toolExecutionError,
-    hint: `Correct the ${toolName} input and retry the same phase.`,
+    reason: `${toolName} failed inside the extension.`,
   }));
 }
 

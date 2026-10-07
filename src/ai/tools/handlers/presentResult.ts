@@ -156,7 +156,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (attemptWrite.kind !== 'accepted') {
         return s.logAndReturn('lineage_present_result', makeRejection({
           code: REJECTION_CODES.staleTurn,
-          hint: 'The turn no longer owns this session. Do not render this result.',
+          reason: 'The turn no longer owns this session; the result was not rendered.',
         }), rawInput);
       }
       const model = s.requireModel();
@@ -622,7 +622,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (successWrite.kind !== 'accepted') {
         return s.logAndReturn('lineage_present_result', makeRejection({
           code: REJECTION_CODES.staleTurn,
-          hint: 'The result was not committed because the turn no longer owns this session.',
+          reason: 'The turn no longer owns this session; the result was not committed.',
         }), rawInput);
       }
       // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.

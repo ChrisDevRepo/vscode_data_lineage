@@ -79,8 +79,12 @@ export const REJECTION_CODES = {
   missingRequiredToolCall: 'missing_required_tool_call',
   /** `submit_findings` carries a classification that no longer matches the locked exploration classification (`smBase.ts`). */
   classificationLockViolation: 'classification_lock_violation',
-  /** A registered tool handler threw; the generic fallback envelope both LM lanes feed back to the model (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
+  /** A registered tool handler threw during dispatch; a backend fault that ends the run (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
   toolExecutionError: 'tool_execution_error',
+  /** A tool handler caught an unexpected exception; a backend fault that ends the run (`toolProvider.ts`). */
+  internalError: 'internal_error',
+  /** The exploration engine threw while applying findings and entered its error status; a backend fault that ends the run (`smBase.ts`). */
+  engineCrash: 'engine_crash',
   /** A `lineage_present_result` call failed an engine-state or content rule its served schema cannot express (`presentResult.ts`, `handlers/presentResult.ts`). */
   validation: 'validation',
   /** `submit_findings` reached an engine in a status other than `awaiting_findings` and not `complete` (`smBase.ts`). */

@@ -291,7 +291,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, hint: 'The proposal was not stored because this turn no longer owns the session.' }), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the proposal was not stored.' }), loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
       const proposalRevision = sess.pendingExploration!.revision;
