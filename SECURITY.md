@@ -22,7 +22,7 @@ Include:
 - The extension parses SQL object definitions but does not execute object DDL
 - `.dacpac` parsing is fully offline
 - Live database import runs configured catalog / DMV queries through the MSSQL
-  extension connection API only when the user starts an import. Built-in
+  extension or built-in connection provider only when the user starts an import. Built-in
   queries are read-only; custom DMV SQL is trusted local configuration and is
   executed as configured (with `{{SCHEMAS}}` expansion for Phase 2)
 - Table profiling runs row-count and aggregate `SELECT` queries only after an explicit profiling click
@@ -40,9 +40,9 @@ Include:
   listens on `127.0.0.1` only, requires a bearer token and refuses non-localhost
   `Host` and `Origin` headers. Its tools read the loaded lineage snapshot and
   never execute SQL; the connected client's model receives the metadata and DDL
-  they return. The token is kept in SecretStorage and, while the server runs, in
-  a user-only discovery file in the extension's global storage for the stdio
-  proxy; turning the server off deletes the token and the file
+  they return. Each endpoint start generates a token held in memory and a
+  user-only discovery file in this session's private global-storage directory
+  for the stdio proxy; stopping the endpoint removes the directory
 - AI trace logging is disabled by default. Enabling it for a session requires an
   open workspace folder and writes full model and tool diagnostics to
   `tmp/lm-trace/` inside the first workspace folder; the writer is disabled again

@@ -60,8 +60,8 @@ caller-neutral `externalInputSchema` with `scope_id` / `view_id` handles):
 `lineage_get_context`, `lineage_get_screen_state`, `lineage_search_objects`,
 `lineage_get_scope_bundle`, `lineage_get_object_detail`, `lineage_search_ddl`,
 `lineage_detect_graph_patterns`, `lineage_present_result`. While a chat turn
-runs, `lineage_present_result` is withheld. The MCP server also returns short
-server instructions (`MCP_INSTRUCTIONS` in
+runs, `lineage_present_result` calls are refused by policy. The MCP server also
+returns short server instructions (`MCP_INSTRUCTIONS` in
 [`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) for the cross-tool
 workflow; tool selection guidance stays in each `modelDescription`.
 
@@ -233,16 +233,17 @@ output while the overlay is out of date.
 
 To move a customization forward after an upgrade:
 
-1. Run **Data Lineage: Create AI Output Templates** from the Command Palette to
-   scaffold a fresh copy at the current `schemaVersion`.
+1. Rename your existing workspace-root `aiOutputTemplates.yaml`, then run
+   **Data Lineage: Create AI Output Templates** to scaffold the current version.
+   The command opens an existing file without overwriting it.
 2. Re-apply your edits to the new file, comparing against your previous copy.
    Read the updated instruction text first — the built-in wording may already
    cover what your overlay was added for.
 3. Point `dataLineageViz.ai.outputTemplateFile` at the new file and confirm on
    the next chat turn that the warning is gone from the output channel.
 
-Only `instruction` values are overlaid. The `stages:` and `example:` keys are
-inert: the loader never reads them, so editing them changes nothing and raises no
+`instruction` values and the capture recipes' optional `sections` lists are
+overlaid. The `stages:` and `example:` keys are inert: the loader never reads them, so editing them changes nothing and raises no
 warning — the scaffold copies them only so the starter file matches the shipped
 one. Keeping unmodified keys out of your file
 is the lowest-maintenance approach, because those keys then track built-in
@@ -448,8 +449,9 @@ inventory or repairs absent model-authored dependencies by inference.
 A resolved neighbor prune uses the same directed
 pruning policy as Trace View removal (`analyzeRemoval` in the engine graph
 guards). The origin and previously visited nodes are protected; only the current
-node has a self-prune exception, and disconnecting another committed visited
-node is refused atomically. An open cut takes every open node left without a directed
+node has a self-prune exception in that pure policy; `submit_findings` offers
+no focus-prune verdict. Disconnecting another committed visited node is refused
+atomically. An open cut takes every open node left without a directed
 path from the origin on an approved direction leg; surviving shared joins stay.
 It records and logs removed open nodes. Removing the last surviving diamond arm
 can then cut the shared join and its exclusive continuation. See the pruning
@@ -476,21 +478,12 @@ not partially update findings, lifecycle, or scheduling state. Rejections return
 machine-readable error, corrective hint, and relevant valid-set details; the
 model reads the reason and the hint, never a bare code.
 
-Rejection wording follows the current vendor guidance (the tool-use and
-function-calling guides of the major model vendors,
-the VS Code language-model tools guide, the MCP tools specification) and the
-2024–2026 literature on agent self-repair: feedback that names the failure
-location, the observed value and the admissible alternatives drives repair,
-while a generic "try again" triggers identical resends; correction saturates by
-the third attempt; unbounded retry loops are the main cause of agents that do
-not stop. The rules every rejection follows: name the field path and the
-measured value; list the allowed values or the shape; name the next call in
-the model's own tool vocabulary; show no bare code and no traceback; state the
-resend rule once; name an unchanged resend as such; state the replies left;
-stop after `MAX_TOOL_PROVIDER_CALLS`. A call with several faults is answered
-once: every fault is listed with its field path and the measured or received
-value, and every field gets a repair that names it (fields sharing one repair
-share one clause), so one round corrects the whole call.
+Repairable rejections name affected field paths, broken constraints, the allowed
+shape and the corrective call. Length/count limits may report measured values;
+raw payloads are not echoed. Feedback states the resend rule, identifies an
+unchanged resend and reports the replies left. The phase stops after
+`MAX_TOOL_PROVIDER_CALLS` replies without progress. Context-dependent validation
+collects known faults in one rejection; a raw schema failure precedes engine checks.
 Unresolvable external references are recorded as notices and skipped when the
 engine can safely continue. A repeated request for an object already removed
 is reported as an already-pruned no-op rather than as an analyzed or retained
@@ -701,8 +694,8 @@ closing:
 An `instruction` replaces the built-in text of its key, it does not add to it.
 Each key reaches the model only at its own stage and under its own gates.
 `business_capture` shapes what is recorded at a hop whose object has a SQL body,
-on a business or mixed question; a table hop receives `structural_summary`
-instead. The final report is written at synthesis, which may rephrase or drop a
+on a business or mixed question; the non-bodied capture recipe is
+`structural_summary` (contracted tables do not receive exploration hops). The final report is written at synthesis, which may rephrase or drop a
 captured sentence, so wording that must appear in the report belongs in a
 synthesis key. `closing` is omitted for small results; `intro` is sent on every
 synthesis.

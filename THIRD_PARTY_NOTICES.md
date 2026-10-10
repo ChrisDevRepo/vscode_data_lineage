@@ -11,6 +11,8 @@ licenses under which it was received are set out in full below.
 [microsoft/vscode](https://github.com/microsoft/vscode)
 (`src/vs/workbench/contrib/markdown/common/markedKatexExtension.ts`), itself derived from
 [marked-katex-extension](https://github.com/UziTech/marked-katex-extension).
+VS Code-internal imports are replaced with `marked`/`katex` and a local encoder;
+the namespace is flattened to module exports.
 
 ```
 MIT License

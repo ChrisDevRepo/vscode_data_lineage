@@ -14,9 +14,8 @@ implementation.
 - A built-in connection is opened for each profiling request and closed when
   it finishes. Through the SQL Server (mssql) extension, profiling opens one
   connection on first use and reuses it until the main lineage panel closes or
-  another saved project is loaded; a query error does not disconnect it. When
-  that reconnect falls back to a built-in connection whose socket later ends,
-  the next profiling request opens a new one.
+  another saved project is loaded; a query error does not disconnect it. A
+  cached session that reports closed is replaced on the next request.
 - External tables can query remote systems. They are excluded by default and
   should be enabled only when their cost and latency are understood.
 - Approximate distinct counts require a database version that supports

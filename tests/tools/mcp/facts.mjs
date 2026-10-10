@@ -7,7 +7,7 @@
  * same tools an MCP client uses, against a real Extension Development Host. These facts show what
  * the PRODUCT reports; they cannot prove the product matches the SQL — read the SQL for that.
  *
- * A host is started for the call (about 12 s) unless a detached one is running:
+ * A host is started for the call unless a detached one is running:
  *
  *   node tests/tools/mcp/facts.mjs host up       start a host that stays up (port 39372)
  *   node tests/tools/mcp/facts.mjs host status   show the running host

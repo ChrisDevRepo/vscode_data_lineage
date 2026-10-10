@@ -73,7 +73,7 @@ avoid conflicts and minimize harm.
 
 When an incident does occur, it is important to report it promptly. Report a
 possible violation privately through
-[GitHub Security Advisories](https://github.com/ChrisDevRepo/vscode_data_lineage/security/advisories/new).
+[the maintainer on LinkedIn](https://www.linkedin.com/in/christian-wagner-11aa8614b).
 
 Project maintainers take reports of violations seriously and will make every
 effort to respond in a timely manner. They will investigate all reports of code

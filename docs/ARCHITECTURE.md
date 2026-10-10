@@ -10,7 +10,7 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 ## Architectural boundaries
 
-- `@lineage` is the only AI surface. Every request uses exactly
+- Every `@lineage` request uses exactly
   `ChatRequest.model`; the extension has no provider, endpoint, credential,
   model-picker, or fallback configuration.
 - AI code operates on the loaded lineage snapshot. It cannot connect to a
@@ -91,7 +91,8 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)
   before handlers consume them.
 
-Model input crosses three layers, in this order:
+Model input crosses the following checks. Valid JSON-text structures are decoded
+at the model boundary; `submit_findings` parses its raw shape before ID normalization:
 
 - **Normalization** — helpers in
   [`src/ai/support/inputNormalization.ts`](../src/ai/support/inputNormalization.ts)
@@ -461,8 +462,9 @@ removal leaves it with no visible link to the origin (`canPruneTraceNode` in
 `src/engine/traceScope.ts`), so the trace stays connected.
 
 The origin is protected. Previously visited nodes cannot be pruned by another
-node. The current node may self-prune, but a removal that would disconnect
-another committed visited node is rejected before any state changes. The
+node. The pure policy permits the current node to self-prune; `submit_findings` offers
+no focus-prune verdict. A removal that would disconnect another committed visited
+node is rejected before any state changes. The
 renderer is not used to repair an invalid accepted removal.
 
 After a resolved neighbor vote, the cut is every open unvisited node that an

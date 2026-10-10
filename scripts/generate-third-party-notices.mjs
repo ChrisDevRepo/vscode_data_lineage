@@ -34,7 +34,7 @@ function addModulePath(rawPath) {
   if (fs.existsSync(path.join(dir, 'package.json'))) packageDirs.add(dir);
 }
 
-for (const mapFile of ['out/extension.js.map', 'out/extensionRuntime.js.map', 'out/mcpStdioProxy.js.map']) {
+for (const mapFile of ['out/extension.js.map', 'out/extensionRuntime.js.map', 'out/mcpRuntime.js.map', 'out/mcpStdioProxy.js.map']) {
   const abs = path.join(root, mapFile);
   if (!fs.existsSync(abs)) throw new Error(`${mapFile} missing — run \`npm run build\` first.`);
   const map = JSON.parse(fs.readFileSync(abs, 'utf8'));

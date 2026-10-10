@@ -121,7 +121,7 @@ export async function hostCommand(action, extra = {}) {
   return answer;
 }
 
-/** Tells the host to finish and waits for it; falls back to killing its process group. */
+/** Tells the host to finish and waits for it; falls back to killing the launcher process. */
 export async function finishHost(host) {
   writeFileSync(join(CONTROL, 'done'), '');
   const code = await Promise.race([host.exited, sleep(60_000).then(() => 'timeout')]);

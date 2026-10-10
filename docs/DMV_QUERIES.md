@@ -11,7 +11,7 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 
 ## Prerequisites
 
-- A connection saved with **Data Lineage: Add Database Connection**. Projects saved earlier with an MSSQL extension (`ms-mssql.mssql`) profile still reconnect through it (deprecated).
+- A connection available through `dataLineageViz.database.connectionProvider`: an MSSQL extension (`ms-mssql.mssql`) profile (default), or a built-in connection saved with **Data Lineage: Add Database Connection**.
 - Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on tables for profiling. Custom queries may need additional permissions.
 - Supported platforms: SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool.
 
@@ -158,6 +158,8 @@ the extension tries server metadata, then records `Unknown database platform`.
 | `engine_edition` | int | `SERVERPROPERTY('EngineEdition')` — identifies the platform family |
 | `major_version` | int | `SERVERPROPERTY('ProductMajorVersion')` — used to resolve on-prem SQL Server year |
 | `edition` | string | `SERVERPROPERTY('Edition')` — fallback label when version is unrecognised |
+| `identifier_collation` *(optional)* | string/null | Effective catalog collation of `sys.schemas.name`, used with `identifier_comparison_style` to validate identifier case policy. |
+| `identifier_comparison_style` *(optional)* | int/null | `COLLATIONPROPERTY(..., 'ComparisonStyle')` for that catalog collation; missing or conflicting evidence retains case-insensitive IDs. |
 
 **`engine_edition` mapping:**
 

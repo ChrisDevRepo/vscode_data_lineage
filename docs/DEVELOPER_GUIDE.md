@@ -349,7 +349,7 @@ MCP server is its own deferred bundle (`out/mcpRuntime.js`, entry
 imports at activation only while `dataLineageViz.mcp.enabled` is on — the same
 deferral `extension.ts` uses for `extensionRuntime.js` — so a disabled server
 loads none of its code or SDK. The stdio proxy (`out/mcpStdioProxy.js`, copied
-to global storage as `mcp-stdio-proxy.js`) relays stdio-only clients to the HTTP endpoint through the SDK client transports.
+to the session's private global-storage directory as `mcp-stdio-proxy.js`) relays stdio-only clients to the HTTP endpoint through the SDK client transports.
 
 The AI authors semantic findings and structured presentation fields. The
 engine validates all mutations, keeps the final graph connected to its

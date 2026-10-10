@@ -246,7 +246,7 @@ Standard mode can be disabled via `dataLineageViz.tableStatistics.standardModeEn
 
 ### Safety for large databases
 
-- Tables above a configurable row threshold are **sampled** instead of fully scanned.
+- Tables above the row threshold use **TABLESAMPLE** where supported; Fabric currently uses full-scan aggregates ([sampling limits](PROFILING_PATTERNS.md#sampling)).
 - **External tables** are skipped by default (they query remote data sources like S3, Blob, or other databases).
 - Each query has a configurable timeout.
 - Profiling lifecycle events are logged to the Output channel (`View → Output → Data Lineage Viz`) at INFO level; the bounded SQL preview is logged at DEBUG level.
@@ -309,7 +309,7 @@ compliance-critical claims.
 
 #### Deep analysis
 
-Triggered by `/trace`, a named-column trace, the **Start deeper hop-by-hop
+Triggered by `/trace`, the **Start deeper hop-by-hop
 analysis** follow-up, or a discovery request that exceeds the configured
 budget. It begins only after the user approves the consent gate.
 
@@ -349,7 +349,7 @@ A follow-up naming one object brings in that object, rather than its entire sche
 
 ### Disable
 
-Set `dataLineageViz.ai.enabled` to `false` to disable the `@lineage` participant and all AI tools:
+Set `dataLineageViz.ai.enabled` to `false` to disable the `@lineage` participant and VS Code language-model tools:
 nothing registers and nothing can execute, and the manifest's `when` clauses hide the participant
 and the tools from the chat and tool pickers. Reload the window after changing the setting so the
 registration follows it. The [MCP server](#mcp-server) has its own switch, `dataLineageViz.mcp.enabled`, and is off by
@@ -384,7 +384,7 @@ Controls are grouped around import/parsing, database connection, table statistic
 trace/analysis, and `@lineage`.
 
 Settings that apply only after the data source is reloaded: `maxNodes`, `excludePatterns`,
-`externalRefs.enabled`, `parseRulesFile` and `dmvQueriesFile`. `ai.enabled` applies after a window reload;
+`externalRefs.enabled` and `parseRulesFile`. `dmvQueriesFile` is read at each import. `ai.enabled` applies after a window reload;
 the other `ai.*` limits are read on every request.
 
 Customization contracts are documented separately:
@@ -424,6 +424,7 @@ Defaults and ranges below match `package.json`; the Settings UI shows the short 
 
 | Setting | Default | Detail |
 |---|---|---|
+| `database.connectionProvider` | `mssqlExtension` | Selects SQL Server extension connections or `builtIn`; see [Database connections](#database-connections). |
 | `database.connections` | `[]` | Database connections; application-scoped. See [Database connections](#database-connections). Each entry: server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption. Passwords are kept in VS Code secret storage under `dataLineageViz.database.password.<id>`. Manage entries with **Add / Edit / Remove Database Connection**; replace a password with **Update Database Password**. Hand-editing the JSON is not needed. |
 | `dmvQueryTimeout` | 120 s (10–600) | Time allowed per metadata query; raise for large databases. |
 | `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; contract in [`DMV_QUERIES.md`](DMV_QUERIES.md). The file is read at each import; no reload needed. |
@@ -438,7 +439,7 @@ Database import only; behavior and limits in [`PROFILING_PATTERNS.md`](PROFILING
 | `tableStatistics.standardModeEnabled` | on | Offers Standard mode (adds MIN/MAX, string length range, AVG, STDEV, zero and empty counts). Off leaves Quick mode, which runs lighter queries. |
 | `tableStatistics.excludeExternalTables` | on | Skips external tables, which query remote sources (S3, Blob, other databases) and can be slow and costly. |
 | `tableStatistics.queryTimeout` | 60 s (10–600) | Time allowed per profiling query. |
-| `tableStatistics.sampleThreshold` | 100000 (0–999999999) | Row count above which a table is sampled instead of fully scanned; `0` always samples. |
+| `tableStatistics.sampleThreshold` | 100000 (0–999999999) | Row count above which a table is sampled instead of fully scanned; `0` samples every nonempty table. |
 | `tableStatistics.sampleSize` | 10000 (100–1000000) | Rows sampled on large tables. |
 | `tableStatistics.useApproxDistinct` | on | Uses `APPROX_COUNT_DISTINCT` instead of exact `COUNT(DISTINCT)`: much faster, about 2% error. Requires SQL Server 2019 or later; turn off on older versions. |
 | `tableStatistics.maxColumns` | 50 (1–500) | Columns profiled per table; the rest are skipped, which keeps queries on wide tables bounded. |

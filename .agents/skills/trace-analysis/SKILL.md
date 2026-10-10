@@ -71,7 +71,7 @@ Keep all five for each run; each answers what the others cannot.
 
 Align sources by request id. Content capture (prompts, tool arguments and results) is sensitive: keep it off by default and redact before sharing. Keep a central copy of the evidence in the access-controlled trace backend, correlated by request id and run folder name, so the local files can be deleted.
 
-Fields to record per model call: operation, provider, requested and responded model, finish reason, error class if it failed, and token counts as separate non-overlapping fields (input, output, reasoning, cache read, cache write), stating whether input includes cached tokens and output includes reasoning tokens. Per tool call: tool name, call id, outcome, error class. Record a session or conversation id only when a real one exists. A retried call is one call with an attempt count.
+Fields to record per model call: operation, provider, requested and responded model, finish reason, error class if it failed, and token counts as separate non-overlapping fields (input, output, reasoning, cache read, cache write), stating whether input includes cached tokens and output includes reasoning tokens. Per tool call: tool name, call id, outcome, error class. Record a session or conversation id only when a real one exists. Record each model generation attempt separately; stage-replay samples also report their transport attempt count.
 
 ## 3. Reference dataset and cases
 
@@ -108,7 +108,7 @@ Fields to record per model call: operation, provider, requested and responded mo
 
 ## 5. Regression comparison
 
-This method is the repository's own; the severity scale, the fact ledger and the decision rule are not vendor-defined. Regression evaluations should pass nearly all of the time and run on every change.
+This method is the repository's own; the severity scale, the fact ledger and the decision rule are not vendor-defined. Run regression evaluations when the change affects AI behavior.
 
 **Pairing.** Pair by question, one baseline run against one candidate run. Correctness is judged per fact against the SQL, which needs no averaging. A metric difference between two single runs is indicative only; do not call it real from one pair.
 
@@ -135,7 +135,7 @@ An `absent` fact is at most P1, whatever severity the ledger gives its wrong for
 
 **Column-trace checks.** A column trace is judged on what each hop sent and what the report states, not only on the final facts. Apply these to every CT comparison; each needs a ledger fact, a process metric or a grader rule, never a keyword match.
 - *Rejections and repair.* The metrics give the rejections by tool and code, the replies each repair took (first, second, third or later retry, or never), whether a field was rejected twice, and for every resend its tokens and fields against the rejected reply. A repair after the first retry, an unresolved repair and a resend that carries more than the defect are findings, whatever the answer quality. Compare arms on the same measure.
-- *Run-to-run spread.* Run `node tests/tools/trace-metrics.mjs` over the repeated runs of one question (its defects and signals, rule table in `docs/testing/README.md`, cover the mechanical checks below; `--fail-on-defect` makes the defects scriptable). The value inputs of the writer hop, the active columns of the next hop and the snippets the report cites must be identical across runs. A different set is a contract defect, not noise: record it and attribute it.
+- *Run-to-run spread.* Run `node tests/tools/trace-metrics.mjs` over the repeated runs of one question (its defects and signals, rule table in `docs/testing/README.md`, cover the mechanical checks below; `--fail-on-defect` makes the defects scriptable). Compare value inputs, row roles and active columns across equivalent runs. The metrics classify differing source and row-role sets as defects; differing snippet citations are signals to check against the deciding SQL, not defects by themselves.
 - *Value-deciding predicate columns.* A column tested in a `CASE` branch of the traced value, inside a conditional aggregate, or in the `WHERE` of a count with no value argument decides the value. The ledger holds one fact per such column, as a value input. A column that is classed as a row filter, dropped, or whose supplier object is pruned is a wrong fact. A `WHERE` or `ON` that only removes rows stays a filter.
 - *Row roles.* Window partition and order keys and grouping keys change the values of neighbouring rows. The ledger holds a fact for that effect (adding or removing one row changes every other row's share, number or residual in its group), and the report must state it. The `rowRole` list of the metrics shows what the hop sent.
 - *Prose against its own SQL.* Read every condition, order, guarantee, default and interpretation in a hop section or the report against the SQL quoted beside it. A statement the SQL contradicts is wrong even when no ledger fact covers it; a reading the SQL does not show belongs under Gaps; the snippet wins over the prose.
@@ -171,30 +171,24 @@ An `absent` fact is at most P1, whatever severity the ledger gives its wrong for
 
 ## 7. Using the trace backend effectively
 
-Written for Langfuse. Vendor facts come from its public documentation, read through a summarising tool, so re-check a detail on the live page before relying on it. "Verified here" means exercised in this repository.
+The repository's optional exporter is `tests/harness/langfuseExport.ts`, invoked
+by `npm run test:ai:headless -- --langfuse`. It uses OTLP/HTTP JSON and the
+configured `LANGFUSE_*` settings; the public extension does not export traces.
 
-**Export each run once, with its final labels (verified here).** Observations are immutable events: re-exporting a run under the same trace id with a new name, tags or session does not update it, it adds a second copy of every observation, which doubles counts and token sums. To relabel, delete the trace, wait until the deletion has completed (it is asynchronous; poll until the trace has no observations), then export again from the saved local files. Set the label, session and tags on the first export.
-
-**Identify and filter runs.**
-- Give every run a session id (one per evaluation), tags (arm, commit, question label) and a trace name from the label. The runner flags are `--session`, `--tag` and `--label`.
-- Only trace metadata under the documented trace-metadata prefix is filterable. Unprefixed attributes land under a generic attributes key and cannot be filtered. Keep metadata keys alphanumeric. Tags cannot be edited in the UI after creation.
-- Send the current ingestion-version header, or OTLP data can be delayed by minutes. Record the commit under test as a tag: a baseline trace without its commit cannot be tied to a code version, so it can only be a baseline by assumption.
-
-**Make rejections countable (verified here).** The exporter writes each tool call as a `tool` observation: rejection at `WARNING` with code and field paths, thrown handler at `ERROR`, gate, refusal and not-evaluated sibling at the default level. The trace carries top-level counts (tool calls, rejections, gates, refusals, not-evaluated siblings, dispatch errors, rejection codes of `rejected` calls only). A size-refused result (`result_too_large`) stays `accepted` in the tool record; count it from the debug log. Read counts back with the metrics API v2 (verified here): view `observations`, measure `count`, grouped by `name` and `level`, filtered by `type` (`TOOL`, `GENERATION`), by `sessionId`, by `tags` (array filter) and by a trace-metadata key (object filter with a `key`). Latency percentiles (p50 and p95 verified; the API lists up to p99), token sums and grouping by `tags` work the same way. High-cardinality fields (`traceId`, `sessionId`, `userId`, observation `id`) can be filtered on but not grouped by. For per-run detail, page the observations v2 endpoint with a `traceId` filter and the field groups you need.
-
-**Record verdicts as scores.** Post reviewer verdicts to the scores API with source API, attached to the trace; the score accepts a free-form metadata object (verified here), so record the reviewer and commit there. Boolean scores read back through the metrics API on the boolean-score view, where an average is the true-rate, and a score created by mistake can be deleted by its id (verified here). Use a boolean score for pass/fail per question and numeric scores for counts such as P0 and P1 findings; give each a deterministic id (arm, question, metric) so a re-post replaces rather than duplicates, and a score config for validation. Text scores are excluded from analytics, experiments and judges. Score analytics compares two scores of the same type. Import independent reviewer verdicts instead of rebuilding them as backend judges; backend judges need a model connection and cost per assessment, and trace-level judges are deprecated in favor of observation-level ones.
-
-**Experiments and baselines.** The backend's side-by-side comparison with a chosen baseline works on dataset runs. There is no public REST endpoint to create a run; runs come from the SDK or from experiment attributes on ingested spans, and no tested recipe adopts existing traces. Until that is proven on a throwaway project, compare arms with session and tag filters plus scores, and keep the fact ledger (section 5) as the verdict. Use the same dataset version and evaluator definitions for both arms, and never treat the newer run as the baseline by default.
-
-**Attach evidence (verified here).** `--attach` uploads the event trace, debug log and, per turn, the answer, hop log, state dump and structured result through the media API, then references them from the trace metadata in the same OTLP export. Verified: all files uploaded and downloaded byte-identical; the reference survives OTLP ingestion. The event trace goes up as plain text because its own type is not in the accepted list. Not verified: how the web page renders them, whether deleting a trace deletes its media, and the Cloud size limit. Files can contain prompts and database metadata: attach only with a trusted backend and a public or synthetic dataset, and remove literal secrets first.
-
-**Which sessions to keep.** Keep one baseline session per dataset and baseline commit (tagged as such) until a newer baseline replaces it. Candidate sessions are evidence for one decision: record the conclusion in the repository documents, then delete them. Run the candidate arm on the target provider only when a comparison needs it, and tag every session with its arm and commit so a stale one is recognisable.
-
-**Retention and cleanup.** Prefer the project retention setting (it needs an owner or admin; there is a minimum window of a few days) over manual deletion; it removes traces, observations, scores and expired media on a schedule. For an explicit cleanup: list the target first (count, date range, producers), delete in small batches, expect asynchronous completion, then query again to confirm. Plans have deletion quotas and request-size limits; honor `Retry-After` on rate limits.
-
-**Reading data back.** Prefer the v2 observations and metrics APIs and OTLP for writing. The legacy trace-list endpoints and the old ingestion API are deprecated; check the current documentation for their end date before building tooling on them.
-
-**Security.** Use a dedicated private project, least-privilege roles, project-scoped keys stored as secrets and never committed, and client-side masking before export (there is no server-side masking). Put only identifiers and hashes in metadata; keep raw evidence in the backend, not the repository.
+- Set `--label`, `--session` and `--tag` before export to identify the question,
+  arm and commit. Keep the local run folder correlated with those identifiers.
+- Each tool call is a `tool` observation: rejections use `WARNING`, thrown
+  handlers use `ERROR`. Trace metadata records tool outcomes and rejection codes.
+  `result_too_large` remains an accepted tool record; inspect its result/debug log.
+- `--attach` uploads local evidence through the media API and references it in
+  trace metadata. Literal keys are redacted; database content can remain. Use
+  only an authorized private backend and public or synthetic input.
+- Keep the SQL fact ledger as the verdict. Backend counts and scores support
+  review; they do not establish answer correctness.
+- Verify the deployed backend's current API, filtering, retention and deletion
+  behavior before relying on it. This repository does not implement backend
+  administration or certify UI behavior. Do not re-export or delete evidence
+  merely to relabel it; preserve the original run and record the mapping locally.
 
 ## 8. Report
 

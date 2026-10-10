@@ -12,8 +12,7 @@ test-results/
 .vscode-test/
 
 # IDE / local
-# Keep the repository workspace settings tracked: they deliberately disable unrelated
-# MCP servers so @lineage remains the only AI tool surface while developing this solution.
+# Keep workspace settings tracked; they disable VS Code's MCP client in this workspace.
 tmp/
 PLAN*.md
 TASKLIST*
@@ -101,7 +100,7 @@ scripts/*
 # repository, so an unignored one is picked up by `vsce ls` and would ship source in the VSIX.
 .verify*/
 
-# Python venv for the analysis scripts (stdlib-only; never bundled).
+# Local Python virtual environments (never bundled).
 .venv/
 
 # The ai-disabled EDH lane's seeded user-data-dir: only the settings seed is tracked; everything

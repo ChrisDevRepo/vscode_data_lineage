@@ -66,7 +66,7 @@ metadata allows — follow column mappings or explain SQL logic.
 
 - **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered directly in chat from deterministic tools. `/search` pins this path. An explicit graph/render request is answered here too; **Show graph preview** draws it.
 - **Graph preview** — the **Show graph preview** follow-up opens a bounded transient preview in the side panel. Save it explicitly if you want a bookmark.
-- **Structured walkthrough** — `/trace`, a named-column trace, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
+- **Structured walkthrough** — `/trace`, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
 
 Only the `@lineage` chat experience requires a VS Code Language Model Chat
 provider, such as

@@ -9,7 +9,7 @@ sandbox. Host-specific setup is in the last section.
 | Tier | Commands | Needs |
 |---|---|---|
 | Deterministic | `npm ci`, `npm run typecheck`, `npm run build`, `npm test`, `npm run gate`, `npm run package` | Git, Node.js `>=20`, npm `>=10`, npm registry access. No display, database, model provider or credentials. |
-| VS Code Electron | `npm run test:edh`, `npm run test:mcp:live`, chat-UI fixture lane, `npm run test:gui:host` + `npm run test:gui:smoke` | Deterministic tier, plus a display (desktop session or virtual display), Electron runtime libraries, and download access to the pinned VS Code test build. |
+| VS Code Electron | `npm run test:edh`, `npm run test:mcp:live`, chat-UI fixture lane, `npm run test:gui:host` + `npm run test:gui:smoke` | Deterministic tier, plus a display (desktop session or virtual display), Electron runtime libraries, and download access to the configured VS Code test build (`stable` for EDH, `1.140.0` for chat UI). |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live`/`badge` lanes | `AI_TEST_*` settings and network access to that provider. `badge` also needs a recorded successful live trace under `tmp/lm-trace/`. |
 | Database | `npm run test:db:smoke` | `DB_TEST_*` settings and network access to a disposable or demo SQL Server/Azure SQL database. |
 | Tracing export | `npm run test:ai:headless -- --langfuse` | `LANGFUSE_*` settings and network access to that Langfuse host. |
@@ -71,17 +71,15 @@ own commands once their settings are present.
 
 ### Hosted cloud agent environment
 
-Verified on a hosted Linux image (Ubuntu 24.04 x86_64, root, Node.js 22,
-npm 10). The image already contains Git, Node.js, npm and `xvfb`.
+Inspect the current image for Git, Node.js, npm, a display and Electron libraries;
+hosted images and network policies vary between sessions.
 
-Environment settings (cloud environment menu → **Edit**):
+Configure the host environment:
 
-1. **Network access**: **Full**, or **Custom** keeping the default package
-   registries and adding `update.code.visualstudio.com` and
-   `vscode.download.prss.microsoft.com`. The default **Trusted** list does not
-   name these hosts, so the VS Code test build download can be refused.
-2. **Setup script** (provisions the VM image; keep it OS-level so it stays
-   under the roughly five-minute caching limit):
+1. **Network access**: allow the package registries and the VS Code download
+   hosts listed above, plus the provider/database hosts for optional tiers.
+   Respect the host's enforced policy; repository code cannot change it.
+2. **Setup script** for an Ubuntu 24.04 image:
 
    ```bash
    #!/bin/bash
@@ -95,14 +93,6 @@ Environment settings (cloud environment menu → **Edit**):
 3. **Environment variables**: add only the `AI_TEST_*`, `DB_TEST_*` or
    `LANGFUSE_*` values for the optional tiers that environment should run. Use
    disposable or demo databases and test-only provider keys.
-4. **Secrets from Azure Key Vault** (optional; an environment-level mechanism that repository tooling does not read: `KV_NAME` appears only in `.env.example` and here): instead of storing a provider
-   key in `.env` or in the environment variables, set `KV_NAME` to the vault
-   name and keep only non-secret settings such as `AI_TEST_PROVIDER`,
-   `AI_TEST_ENDPOINT` and `AI_TEST_MODEL` as variables. The session's egress
-   proxy injects the vault access credential, so the session holds no token
-   or key at rest. An empty secret setting such as `AI_TEST_API_KEY` is read
-   from the vault into the environment of the one command that needs it;
-   never write it to `.env` or any other file, shell history or output. If
-   the vault lookup fails or returns nothing, report the tier as not runnable.
-
-A changed setup script or network setting rebuilds the cached image for new sessions (it also expires after about seven days); a running session keeps its VM. Run `npm ci` in each new session, then [Verify A New Machine](#verify-a-new-machine). The VM is discarded after inactivity, so push anything worth keeping; `.vscode-test/` and `tmp/` start empty.
+Repository runners read environment variables and `.env`; they do not fetch Key
+Vault secrets. Configure secret injection in the host environment when needed.
+After changing host setup, verify the new session with the commands above.
