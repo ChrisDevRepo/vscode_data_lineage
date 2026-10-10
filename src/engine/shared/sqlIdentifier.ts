@@ -10,7 +10,7 @@ import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../u
  */
 export function normalizeName(name: string, identifierCaseSensitive = false): string {
   const parts = splitSqlName(name).map(p => schemaKey(stripBrackets(p), identifierCaseSensitive));
-  const quotePart = identifierCaseSensitive ? quoteIdentifier : (part: string): string => `[${part}]`;
+  const quotePart = quoteIdentifier;
   if (parts.length < 2) {
     return quotePart(parts[0] ?? '');
   }

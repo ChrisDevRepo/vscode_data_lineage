@@ -54,7 +54,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
-      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns);
+      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldColumnFlow);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
@@ -107,7 +107,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         const envelope = buildSmCompletionEnvelope(
           finalResult,
           sess.memory.getUserQuestion(),
-          sess.stateMachine?.deferredQuestions ?? [],
           model.identifierCaseSensitive,
         );
         return s.logAndReturn('lineage_submit_findings', envelope, normalizedInput);

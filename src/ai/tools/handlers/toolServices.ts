@@ -22,6 +22,9 @@ import type { PreviewDelivery } from '../../support/chatAnswer';
 /** The one webview message a tool handler may hand to the host for delivery. */
 export type AiViewPreviewMessage = Extract<ExtensionToWebviewMsg, { type: 'ai-view-preview' }>;
 
+/** Who dispatches a tool call: an `@lineage` chat turn, or a caller without one (`vscode.lm`, MCP). */
+export type ToolCaller = 'turn' | 'external';
+
 /** Host capabilities available to mutating lineage-tool handlers. */
 export interface ToolServices {
   /** Accessor for the active AI session — the single owner of all mutable tool state. */
@@ -41,7 +44,7 @@ export interface ToolServices {
   readonly getStoredRun?: StoredRunReader;
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */
   readonly logger: Logger;
-  /** Turn-neutral text-completion capability; absent on the external `vscode.lm` read-only registration. */
+  /** Turn-neutral text-completion capability; absent for callers without a chat turn. */
   readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
   /** Cooperative host cancellation, mirrored from the owning turn's lease. */
   readonly signal?: AbortSignal;
@@ -50,10 +53,15 @@ export interface ToolServices {
    *
    * @remarks
    * Fixed when the lease-bound registry was built, so a superseded turn's still-running dispatch
-   * keeps measuring against the caps its own model was admitted under. The external `vscode.lm`
-   * registration, which serves callers outside any turn, carries the shipped defaults.
+   * keeps measuring against the caps its own model was admitted under. Callers without a chat turn
+   * carry the user's discovery caps, or the shipped defaults.
    */
   readonly budget: TurnTokenBudget;
+  /**
+   * Who dispatches: `turn` (an `@lineage` chat turn) or `external` (a caller without a chat turn,
+   * served from the session's external view slot and never its chat state).
+   */
+  readonly caller: ToolCaller;
   /** Current turn epoch — the turn lease wins over the session field so stale-turn writes are rejectable. */
   turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, throwing the standard no-model error when none is loaded. */

@@ -1,8 +1,8 @@
 /**
- * The two webview→host handlers that hand a webview-supplied string to a VS Code API: the report
- * "Open in editor" path and the draw.io export save dialog.
+ * The webview→host handlers that hand a webview-supplied string to a VS Code API: the report
+ * "Open in editor" path, the draw.io export save dialog and the webview error log.
  *
- * Both are boundaries, so both are pinned here — the contract cap that stops an unbounded report
+ * All are boundaries, so all are pinned here — the contract cap that stops an unbounded report
  * payload reaching `openTextDocument`, the base-name reduction that stops a webview-supplied file
  * name seeding the save dialog at a path it never came from, and the fallback that keeps the report
  * readable when the built-in Markdown preview is not installed.
@@ -94,7 +94,6 @@ function fakeHost(overrides: Partial<BridgeHost> = {}): BridgeHost {
     getConfiguration: vi.fn(),
     getExtensionUri: vi.fn(),
     getGlobalState: vi.fn(),
-    getWorkspaceState: vi.fn(),
     ...overrides,
   } as BridgeHost;
 }
@@ -246,17 +245,6 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     expect(docs[0].text).toBe('# C');
   });
 
-  it('asks for the preview again when the report preview is open but hidden behind another tab', async () => {
-    const { docs, click } = arrange();
-    await click('# A');
-    openTabs.push(previewTabFor('Untitled-1', false));
-    await click('# B');
-
-    expect(executeCommand, 'a click must bring the report on screen, never do nothing visible').toHaveBeenCalledTimes(2);
-    expect(executeCommand.mock.calls[1]).toEqual(['markdown.showPreviewToSide', docs[0].uri]);
-    expect(docs).toHaveLength(1);
-  });
-
   it('closes a hidden report preview once, then asks for the preview, so the command ends with one preview', async () => {
     const { docs, click } = arrange();
     await click('# A');
@@ -307,15 +295,6 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     expect(closeTab).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledWith('markdown.showPreviewToSide', docs[0].uri);
-  });
-
-  it('ignores previews of other documents when deciding whether the report preview is open', async () => {
-    const { click } = arrange();
-    await click('# A');
-    openTabs.push(previewTabFor('notes.md'));
-    await click('# B');
-
-    expect(executeCommand).toHaveBeenCalledTimes(2);
   });
 
   it('does not take a preview of a document whose name merely ends with the report name for the report preview', async () => {
@@ -434,6 +413,7 @@ describe('ai-open-in-editor across a closed and reopened panel', () => {
       resetExploration: vi.fn(),
       columnStore: { clear: vi.fn() },
       clearDiscoveryTranscript: vi.fn(),
+      clearExternalViews: vi.fn(),
       model: null,
       graph: null,
     };

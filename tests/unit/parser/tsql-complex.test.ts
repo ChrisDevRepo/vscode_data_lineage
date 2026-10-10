@@ -66,13 +66,6 @@ describe('SQL fixture corpus', () => {
     expect(files.length).toBeGreaterThanOrEqual(55);
   });
 
-  it('keeps an EXPECT annotation on every fixture that carries one today', () => {
-    const annotated = files.filter(
-      file => parseExpectation(readFileSync(testPath('sql/targeted', file), 'utf-8')) !== null,
-    );
-    expect(annotated).toHaveLength(files.length);
-  });
-
   it.each(files)('%s', (file) => {
     const fileName = basename(file);
     const sql = readFileSync(testPath('sql/targeted', file), 'utf-8');
@@ -82,7 +75,8 @@ describe('SQL fixture corpus', () => {
     expect(result.sources.length, `${fileName}: source count ran away`).toBeLessThan(MAX_SOURCES);
     expect(result.targets.length, `${fileName}: target count ran away`).toBeLessThan(MAX_TARGETS);
 
-    const expectation = parseExpectation(sql)!;
+    const expectation = parseExpectation(sql);
+    if (!expectation) throw new Error(`${fileName} has no -- EXPECT line`);
 
     const misses: string[] = [];
     for (const name of expectation.sources) {

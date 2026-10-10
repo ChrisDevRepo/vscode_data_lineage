@@ -1,6 +1,6 @@
 /** Explicit Langfuse export through OTLP/HTTP JSON; no telemetry SDK or automatic transmission. */
 import { createHash } from 'node:crypto';
-import { joinTurns, type GenerationEntry, type JoinedTurn, type ParsedRun } from './traceModel';
+import { joinTurns, type GenerationEntry, type JoinedTurn, type ParsedRun, type ToolEntry } from './traceModel';
 import { describeError, redactSecret, verboseContent } from './exportShared';
 
 /** Resolved connection for one export call. */
@@ -18,7 +18,32 @@ export interface LangfuseConfig {
   readonly runMetadata?: {
     readonly lane?: string;
     readonly promptId?: string;
+    /** Groups every run of one evaluation into one Langfuse session. */
+    readonly sessionId?: string;
+    /** Filterable trace tags, e.g. the commit and the baseline/candidate arm. */
+    readonly tags?: readonly string[];
   };
+  /** Optional evidence files; each upload failure is reported in {@link LangfuseExportResult.errors} and never blocks the span export. */
+  readonly attachments?: LangfuseAttachments;
+}
+
+/** A local file attached to a Langfuse trace through the media API. */
+export interface LangfuseAttachment {
+  /** Key under the trace's `attachments` metadata, e.g. `debug-log`. */
+  readonly name: string;
+  /** Types the media API accepts for plain text, JSON and Markdown evidence. */
+  readonly contentType: 'text/plain' | 'application/json' | 'text/markdown';
+  readonly content: string;
+}
+
+/** Evidence files to upload with the export; explicit opt-in because they can hold prompts and database metadata. */
+export interface LangfuseAttachments {
+  /** Attached to every exported trace (e.g. the event trace and the debug log). */
+  readonly run?: readonly LangfuseAttachment[];
+  /** Attached to the trace of the turn at the same index (e.g. that turn's answer and hop log). */
+  readonly turns?: ReadonlyArray<readonly LangfuseAttachment[]>;
+  /** Literal secrets removed from every attachment before it is hashed and uploaded. */
+  readonly redact?: readonly string[];
 }
 
 /** Outcome of one export call. */
@@ -32,11 +57,15 @@ export interface LangfuseExportResult {
 }
 
 const OTEL_TRACES_PATH = '/api/public/otel/v1/traces';
+const MEDIA_PATH = '/api/public/media';
+/** Larger evidence files are skipped, not truncated: a partial trace would mislead. */
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const INGESTION_VERSION = '4';
 const INSTRUMENTATION_SCOPE = 'data-lineage-viz-harness';
 const UUID_HEX = /^[0-9a-f]{32}$/;
 
 interface OtelAnyValue {
+  readonly arrayValue?: { readonly values: readonly OtelAnyValue[] };
   readonly stringValue?: string;
   readonly intValue?: string;
   readonly boolValue?: boolean;
@@ -105,11 +134,22 @@ export async function exportRunToLangfuse(
   run: ParsedRun,
   config: LangfuseConfig,
 ): Promise<LangfuseExportResult> {
-  const spans = buildSpans(run, config.runMetadata);
-  if (spans.length === 0) return { exported: 0, errors: [], traceIds: [] };
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const attachmentErrors: string[] = [];
+  const attachmentTokens = new Map<string, Record<string, string>>();
+  if (config.attachments) {
+    const turnTraceIds = joinTurns(run).map(turnTraceId);
+    for (const [index, traceId] of turnTraceIds.entries()) {
+      const files = [...(config.attachments.run ?? []), ...(config.attachments.turns?.[index] ?? [])];
+      const { tokens, errors } = await uploadAttachments(config, fetchImpl, traceId, files);
+      if (Object.keys(tokens).length) attachmentTokens.set(traceId, tokens);
+      attachmentErrors.push(...errors);
+    }
+  }
+  const spans = buildSpans(run, config.runMetadata, attachmentTokens);
+  if (spans.length === 0) return { exported: 0, errors: attachmentErrors, traceIds: [] };
   const traceIds = [...new Set(spans.map((span) => span.traceId))];
 
-  const fetchImpl = config.fetchImpl ?? fetch;
   const url = `${config.baseUrl.replace(/\/+$/, '')}${OTEL_TRACES_PATH}`;
   const authorization = `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`, 'utf8').toString('base64')}`;
   const payload: OtelExportPayload = {
@@ -131,7 +171,7 @@ export async function exportRunToLangfuse(
       body: JSON.stringify(payload),
     });
   } catch (error) {
-    return { exported: 0, errors: [redactSecret(`Langfuse OTLP request failed: ${describeError(error)}`, config.secretKey)], traceIds };
+    return { exported: 0, errors: [...attachmentErrors, redactSecret(`Langfuse OTLP request failed: ${describeError(error)}`, config.secretKey)], traceIds };
   }
 
   const rawBody = await readResponseBody(response);
@@ -143,24 +183,28 @@ export async function exportRunToLangfuse(
       : (rawBody.trim() ? rawBody.slice(0, 200) : describeError(new Error('empty body')));
     return {
       exported: 0,
-      errors: [redactSecret(`Langfuse OTLP failed: HTTP ${response.status} ${detail}`, config.secretKey)],
+      errors: [...attachmentErrors, redactSecret(`Langfuse OTLP failed: HTTP ${response.status} ${detail}`, config.secretKey)],
       traceIds,
     };
   }
 
   if (parsedBody === undefined && rawBody.trim() !== '') {
-    return { exported: 0, errors: [redactSecret(`Langfuse OTLP response was not JSON: ${rawBody.slice(0, 200)}`, config.secretKey)], traceIds };
+    return { exported: 0, errors: [...attachmentErrors, redactSecret(`Langfuse OTLP response was not JSON: ${rawBody.slice(0, 200)}`, config.secretKey)], traceIds };
   }
 
   const { rejected, message } = parsePartialSuccess(parsedBody);
   const exported = Math.max(0, spans.length - rejected);
   const diagnostic = message ?? (rejected > 0 ? `partialSuccess rejectedSpans=${rejected}: server rejected spans without an error message` : undefined);
-  const errors = diagnostic ? [redactSecret(diagnostic, config.secretKey)] : [];
+  const errors = [...attachmentErrors, ...(diagnostic ? [redactSecret(diagnostic, config.secretKey)] : [])];
   return { exported, errors, traceIds };
 }
 
 /** Builds one complete OTEL span tree: a root per joined turn, then its generation children. */
-function buildSpans(run: ParsedRun, runMetadata: LangfuseConfig['runMetadata']): OtelSpan[] {
+function buildSpans(
+  run: ParsedRun,
+  runMetadata: LangfuseConfig['runMetadata'],
+  attachmentTokens: ReadonlyMap<string, Record<string, string>>,
+): OtelSpan[] {
   const spans: OtelSpan[] = [];
   for (const turn of joinTurns(run)) {
     // Wire records have no fingerprint: source position binds them to the owning turn.
@@ -174,13 +218,14 @@ function buildSpans(run: ParsedRun, runMetadata: LangfuseConfig['runMetadata']):
       entry.requestId === turn.requestId && entry.lineIndex >= start && entry.lineIndex <= end;
     const scopedRun: ParsedRun = { ...run, wire: run.wire.filter(inTurn) };
     const generations = run.generations.filter(inTurn);
-    const identity = JSON.stringify([turn.requestId, turn.runFingerprint]);
+    const tools = run.tools.filter(inTurn);
+    const identity = turnIdentity(turn);
     const traceId = otelTraceId(identity);
     const rootSpanId = otelSpanId(`${identity}:root`);
     const name = [runMetadata?.lane, runMetadata?.promptId].filter(Boolean).join('/') || turn.requestId;
     const { startIso, endIso } = turnBounds(turn, generations);
     const { input, output } = rootIo(scopedRun, generations);
-    const shared = traceAttributes(turn, generations, runMetadata, name);
+    const shared = traceAttributes(turn, generations, tools, runMetadata, name, attachmentTokens.get(traceId));
 
     spans.push({
       traceId,
@@ -230,6 +275,10 @@ function buildSpans(run: ParsedRun, runMetadata: LangfuseConfig['runMetadata']):
       });
     }
 
+    for (const tool of tools) {
+      spans.push(toolSpan(tool, traceId, rootSpanId, identity, shared));
+    }
+
     for (const failure of scopedRun.wire) {
       if (failure.type !== 'wire-error' || failure.requestId !== turn.requestId) continue;
       const request = scopedRun.wire.find((entry) => entry.type === 'wire-request'
@@ -259,16 +308,75 @@ function buildSpans(run: ParsedRun, runMetadata: LangfuseConfig['runMetadata']):
   return spans;
 }
 
+/**
+ * One tool dispatch as a Langfuse `tool` observation.
+ *
+ * @remarks
+ * A rejection is a `WARNING` and a thrown handler an `ERROR`, so rejections are countable in the
+ * backend. A consent `gate` stays at the default level: it is a control outcome, not a fault. Only
+ * bounded identifiers are exported (status, code, field paths); tool arguments and results are not.
+ */
+function toolSpan(
+  tool: ToolEntry,
+  traceId: string,
+  rootSpanId: string,
+  identity: string,
+  shared: readonly OtelAttribute[],
+): OtelSpan {
+  const level = tool.status === 'rejected' ? 'WARNING' : tool.status === 'dispatch_error' ? 'ERROR' : 'DEFAULT';
+  const startTime = new Date(new Date(tool.at).getTime() - tool.durationMs).toISOString();
+  return {
+    traceId,
+    spanId: otelSpanId(`${identity}:tool:${tool.seq}:${tool.lineIndex}`),
+    parentSpanId: rootSpanId,
+    name: `tool:${tool.toolName}`,
+    kind: 1,
+    startTimeUnixNano: toUnixNano(startTime),
+    endTimeUnixNano: toUnixNano(tool.at),
+    attributes: [
+      ...shared,
+      stringAttr('langfuse.observation.type', 'tool'),
+      stringAttr('langfuse.observation.level', level),
+      stringAttr('langfuse.observation.metadata.status', tool.status),
+      stringAttr('langfuse.observation.metadata.phase', tool.phase),
+      stringAttr('langfuse.observation.metadata.seq', String(tool.seq)),
+      ...(tool.rejectionCode ? [stringAttr('langfuse.observation.metadata.rejectionCode', tool.rejectionCode)] : []),
+      ...(tool.issuePaths?.length ? [stringAttr('langfuse.observation.metadata.issuePaths', tool.issuePaths.join(','))] : []),
+    ],
+    status: tool.status === 'dispatch_error' ? { code: 2, message: 'dispatch_error' } : { code: 1 },
+  };
+}
+
 function traceAttributes(
   turn: JoinedTurn,
   generations: readonly GenerationEntry[],
+  tools: readonly ToolEntry[],
   runMetadata: LangfuseConfig['runMetadata'],
   name: string,
+  attachments?: Record<string, string>,
 ): OtelAttribute[] {
   const attrs: OtelAttribute[] = [
     stringAttr('langfuse.trace.name', name),
     stringAttr('langfuse.trace.metadata.requestId', turn.requestId),
   ];
+  if (runMetadata?.sessionId) attrs.push(stringAttr('langfuse.session.id', runMetadata.sessionId));
+  if (runMetadata?.tags?.length) {
+    attrs.push({ key: 'langfuse.trace.tags', value: { arrayValue: { values: runMetadata.tags.map(tag => ({ stringValue: tag })) } } });
+  }
+  // Top-level scalar keys only: Langfuse filters on top-level metadata keys.
+  const byStatus = (status: ToolEntry['status']) => tools.filter(tool => tool.status === status).length;
+  const codes = new Map<string, number>();
+  for (const tool of tools) if (tool.rejectionCode && tool.status === 'rejected') codes.set(tool.rejectionCode, (codes.get(tool.rejectionCode) ?? 0) + 1);
+  attrs.push(
+    stringAttr('langfuse.trace.metadata.toolCalls', String(tools.length)),
+    stringAttr('langfuse.trace.metadata.rejections', String(byStatus('rejected'))),
+    stringAttr('langfuse.trace.metadata.gates', String(byStatus('gate'))),
+    stringAttr('langfuse.trace.metadata.refusals', String(byStatus('refused'))),
+    stringAttr('langfuse.trace.metadata.notEvaluated', String(byStatus('not_evaluated'))),
+    stringAttr('langfuse.trace.metadata.dispatchErrors', String(byStatus('dispatch_error'))),
+  );
+  if (attachments) attrs.push(stringAttr('langfuse.trace.metadata.attachments', JSON.stringify(attachments)));
+  if (codes.size) attrs.push(stringAttr('langfuse.trace.metadata.rejectionCodes', JSON.stringify(Object.fromEntries(codes))));
   if (runMetadata?.lane) attrs.push(stringAttr('langfuse.trace.metadata.lane', runMetadata.lane));
   if (runMetadata?.promptId) attrs.push(stringAttr('langfuse.trace.metadata.promptId', runMetadata.promptId));
   const modelId = generations[0]?.modelId;
@@ -281,6 +389,11 @@ function traceAttributes(
   return attrs;
 }
 
+/**
+ * The root span's input and output: the first captured request and the last response. A turn whose
+ * generations all failed has no response, so its input comes from the first captured request and
+ * its output is the last provider failure.
+ */
 function rootIo(run: ParsedRun, generations: readonly GenerationEntry[]): { input?: unknown; output?: unknown } {
   let input: unknown;
   let output: unknown;
@@ -288,6 +401,14 @@ function rootIo(run: ParsedRun, generations: readonly GenerationEntry[]): { inpu
     const content = verboseContent(run, generation);
     if (content.input !== undefined && input === undefined) input = content.input;
     if (content.output !== undefined) output = content.output;
+  }
+  if (input === undefined) {
+    const request = run.wire.find(entry => entry.type === 'wire-request' && entry.system !== undefined);
+    if (request?.type === 'wire-request') input = { system: request.system, messages: request.messages };
+  }
+  if (output === undefined) {
+    const failure = run.wire.filter(entry => entry.type === 'wire-error').at(-1);
+    if (failure?.type === 'wire-error') output = { error: failure.diagnostic };
   }
   return { input, output };
 }
@@ -304,6 +425,84 @@ function turnStatus(turn: JoinedTurn): { readonly code: number; readonly message
     return { code: 2, message: turn.terminal.errorCode ?? turn.terminal.reason ?? 'error' };
   }
   return { code: 1 };
+}
+
+function turnIdentity(turn: JoinedTurn): string {
+  return JSON.stringify([turn.requestId, turn.runFingerprint]);
+}
+
+function turnTraceId(turn: JoinedTurn): string {
+  return otelTraceId(turnIdentity(turn));
+}
+
+/**
+ * Uploads evidence files through the media API and returns the reference token for each.
+ *
+ * @remarks
+ * Per file: request an upload URL for the trace, `PUT` the bytes with their SHA-256, then confirm the
+ * upload. Literal secrets are removed before hashing. A file that fails or exceeds the size limit is
+ * reported and skipped; it never blocks the span export. A file already stored under the same hash
+ * comes back without an upload URL and is referenced as is.
+ */
+async function uploadAttachments(
+  config: LangfuseConfig,
+  fetchImpl: typeof fetch,
+  traceId: string,
+  files: readonly LangfuseAttachment[],
+): Promise<{ tokens: Record<string, string>; errors: string[] }> {
+  const tokens: Record<string, string> = {};
+  const errors: string[] = [];
+  const base = config.baseUrl.replace(/\/+$/, '');
+  const secrets = [config.secretKey, ...(config.attachments?.redact ?? [])].filter(Boolean);
+  const headers = {
+    'content-type': 'application/json',
+    authorization: `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`, 'utf8').toString('base64')}`,
+  };
+  for (const file of files) {
+    try {
+      const bytes = Buffer.from(secrets.reduce((text, secret) => redactSecret(text, secret), file.content), 'utf8');
+      if (bytes.length > MAX_ATTACHMENT_BYTES) {
+        errors.push(`Attachment ${file.name} skipped: ${bytes.length} bytes exceeds ${MAX_ATTACHMENT_BYTES}.`);
+        continue;
+      }
+      const sha256 = createHash('sha256').update(bytes).digest('base64');
+      const created = await fetchImpl(`${base}${MEDIA_PATH}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ traceId, field: 'metadata', contentType: file.contentType, contentLength: bytes.length, sha256Hash: sha256 }),
+      });
+      if (!created.ok) {
+        errors.push(`Attachment ${file.name} not stored: media request HTTP ${created.status}.`);
+        continue;
+      }
+      const { mediaId, uploadUrl } = await created.json() as { mediaId?: string; uploadUrl?: string | null };
+      if (!mediaId) {
+        errors.push(`Attachment ${file.name} not stored: media response had no id.`);
+        continue;
+      }
+      if (uploadUrl) {
+        const started = Date.now();
+        const uploaded = await fetchImpl(uploadUrl, {
+          method: 'PUT',
+          headers: { 'content-type': file.contentType, 'x-amz-checksum-sha256': sha256 },
+          body: bytes,
+        });
+        await fetchImpl(`${base}${MEDIA_PATH}/${mediaId}`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ uploadedAt: new Date().toISOString(), uploadHttpStatus: uploaded.status, uploadTimeMs: Date.now() - started }),
+        });
+        if (!uploaded.ok) {
+          errors.push(`Attachment ${file.name} not stored: upload HTTP ${uploaded.status}.`);
+          continue;
+        }
+      }
+      tokens[file.name] = `@@@langfuseMedia:type=${file.contentType}|id=${mediaId}|source=bytes@@@`;
+    } catch (error) {
+      errors.push(redactSecret(`Attachment ${file.name} failed: ${describeError(error)}`, config.secretKey));
+    }
+  }
+  return { tokens, errors };
 }
 
 function otelTraceId(requestId: string): string {

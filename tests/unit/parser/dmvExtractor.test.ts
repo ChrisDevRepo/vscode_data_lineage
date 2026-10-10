@@ -872,10 +872,10 @@ function testPkOrdinalFromDmv() {
     const table = model.nodes.find(n => n.type === 'table');
     expect(table?.schema).toBe('we]ird');
     expect(table?.name).toBe('t]x');
-    expect(table?.id).toBe('[we]ird].[t]x]');
+    expect(table?.id).toBe('[we]]ird].[t]]x]');
     expect(table?.columns?.map(c => c.name)).toEqual(['c]1']);
     expect(model.schemas.map(s => s.name)).toContain('we]ird');
-    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]ird].[t]x] -> [dbo].[vsrc]');
+    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]]ird].[t]]x] -> [dbo].[vsrc]');
   });
 
   it('the columns query names a CLR type through its user type', () => {

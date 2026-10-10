@@ -949,12 +949,14 @@ export function submitFindingsSchemaForMode(
   classification?: ClassificationValue,
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
+  /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held entries. */
+  heldColumnFlow = false,
 ): z.ZodType<FlatSubmitFindings> {
   const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}` : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
-  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}`;
+  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}:${mode === 'ct' && heldColumnFlow}`;
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
@@ -966,6 +968,13 @@ export function submitFindingsSchemaForMode(
       CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NeighborQuestionSchema.shape.nodeId.description ?? '') }),
     ]);
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
+  }
+  if (mode === 'ct' && heldColumnFlow) {
+    // A held retry keeps a valid flow by omission, like every other held field; the engine rejects
+    // a CT finding that ends up with no flow at all.
+    narrowed = narrowed.extend({
+      column_flow: (narrowed.shape.column_flow as z.ZodType).optional().describe(`${COLUMN_FLOW_DESCRIPTION} Omit to keep the held entries; a resent entry replaces the held entries of its out_col.`),
+    }).strict() as unknown as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
     const kept = CLASSIFICATION_KEPT_ANGLES[classification];
@@ -1037,18 +1046,58 @@ export function validateHopSubmissionShape(
 export const HELD_FINDING_CALL_ORDER =
   'Resend the full call: always focus_node_id, verdict and every other required field; the failed field(s) corrected';
 
+type HeldEntryField = keyof NonNullable<HeldSubmissionParts['entries']>;
+const HELD_ENTRY_FIELDS: readonly HeldEntryField[] = ['questions', 'prune_neighbors', 'column_flow'];
+
+/** A held entry list's label with the keys its held entries name, e.g. `questions ([dbo].[a])` or `column_flow (out_col: A, B)`. */
+function heldListLabel(field: string, held: Pick<HeldSubmissionParts, 'entries'>): string {
+  const ids = held.entries?.[field as HeldEntryField];
+  if (!ids || ids.length === 0) return field;
+  return field === 'column_flow' ? `${field} (out_col: ${ids.join(', ')})` : `${field} (${ids.join(', ')})`;
+}
+
+/** The merge rules of the held entry lists that hold at least one entry. */
+function heldEntryRules(held: Pick<HeldSubmissionParts, 'entries'>): string {
+  const listed = (field: HeldEntryField): boolean => (held.entries?.[field]?.length ?? 0) > 0;
+  return [
+    ...(listed('questions') || listed('prune_neighbors') ? [HELD_NEIGHBOR_LIST_RULE] : []),
+    ...(listed('column_flow') ? [HELD_COLUMN_FLOW_RULE] : []),
+  ].join(' ');
+}
+
+/**
+ * The resend rules for held `questions` / `prune_neighbors` / `column_flow` entries (merged in
+ * `NavigationEngine.applyHeldContent`); empty when no entry of any list is held.
+ *
+ * @param held - The held parts; only `entries` is read.
+ * @returns `Held: …` naming each held list with its entry keys, then each list's merge rule, or `''`.
+ */
+export function heldEntriesRepairLine(held: Pick<HeldSubmissionParts, 'entries'>): string {
+  const lists = HELD_ENTRY_FIELDS.filter(field => (held.entries?.[field]?.length ?? 0) > 0);
+  if (lists.length === 0) return '';
+  return `Held: ${lists.map(field => heldListLabel(field, held)).join(', ')}. ${heldEntryRules(held)}`;
+}
+
+/** How a resent `questions` / `prune_neighbors` list combines with the held entries of the same focus. */
+const HELD_NEIGHBOR_LIST_RULE = 'questions, prune_neighbors: resend only the entries you add or change; a held entry for a neighbor you do not name again is kept, a resent entry replaces the held entry for its neighbor, and naming a neighbor in one list drops its held entry from the other.';
+
+/** How a resent `column_flow` combines with the held entries of the same focus. */
+const HELD_COLUMN_FLOW_RULE = 'column_flow: resend only the entries of an out_col you add or change; held entries of an out_col you do not resend are kept, resent entries replace every held entry of their out_col, and column_flow: [] clears the held entries.';
+
 /** The shared resend rule for a finding rejection whose schema-valid content remains held. */
 export function heldSubmissionRepairHint(held: HeldSubmissionParts): string {
   const labels = [
     ...(held.sections.length > 0 ? [`sections (${held.sections.join(', ')})`] : []),
     ...(held.summary ? ['summary'] : []),
-    ...held.fields,
+    ...held.fields.map(field => heldListLabel(field, held)),
   ].join(', ');
   const omittable = [...(held.summary ? ['summary'] : []), ...held.fields];
+  const rules = heldEntryRules(held);
   return `Held: ${labels}. ${HELD_FINDING_CALL_ORDER}`
     + (omittable.length > 0 ? `; omit ${omittable.join(', ')} to keep the held ${omittable.length > 1 ? 'values' : 'value'}` : '')
     + '.'
-    + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '');
+    + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '')
+    + (rules ? ` ${rules}` : '');
 }
 
 /**
@@ -1133,18 +1182,6 @@ export function normalizePresentSectionLabel(label: string): string {
 }
 
 /**
- * Error text for a string over its hard cap: the dotted path, the measured length and the limit.
- * A model cannot count characters, so the measured length is part of the message; the engine never
- * truncates authored text.
- */
-function overLength(limit: number) {
-  return {
-    error: (issue: z.core.$ZodRawIssue) =>
-      `${(issue.path ?? []).join('.')} is over its length limit: ${String(issue.input).length} chars, limit ${limit}. Shorten it — the engine never truncates authored text.`,
-  };
-}
-
-/**
  * A refinement that also runs when the value already carries shape issues, so one parse reports
  * every defect of a call instead of hiding the cross-field ones behind the first shape failure.
  * Its `fn` reads the raw value and must tolerate a wrong type.
@@ -1157,7 +1194,9 @@ function superRefineAll<T>(fn: (value: T, ctx: z.core.$RefinementCtx<T>) => void
 function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>, ctx: z.core.$RefinementCtx): void {
   if (!Array.isArray(sections)) return;
   const seen = new Set<string>();
-  for (const [index, { label }] of sections.entries()) {
+  for (const [index, section] of sections.entries()) {
+    if (typeof section !== 'object' || section === null) continue;
+    const { label } = section;
     if (typeof label !== 'string') continue;
     const key = normalizePresentSectionLabel(label);
     if (seen.has(key)) {
@@ -1216,7 +1255,7 @@ const NoteSchema = z.object({
  * reads, so a held draft re-validates unchanged. A node ID given two different captions rejects,
  * since one of them would otherwise be lost; an identical repeat is harmless.
  */
-const NotesModelSchema = z.array(NoteSchema)
+const notesListSchema = (note: z.ZodType<z.infer<typeof NoteSchema>>) => z.array(note)
   .superRefine((notes, ctx) => {
     const captionByNode = new Map<string, string>();
     for (const [index, note] of notes.entries()) {
@@ -1232,12 +1271,13 @@ const NotesModelSchema = z.array(NoteSchema)
     }
   })
   .describe('Below-node captions, one per node.');
+const NotesModelSchema = notesListSchema(NoteSchema);
 
 /**
  * Schema for a visual highlight group, grouping nodes by a shared role or status.
  */
 const HighlightGroupSchema = z.object({
-  label: z.string().trim().min(1, 'Group label is required').max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX, overLength(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX)).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
+  label: z.string().trim().min(1, 'Group label is required').max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
   color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
@@ -1247,7 +1287,7 @@ const HighlightGroupSchema = z.object({
  * nodes it explains, and its detail body.
  */
 const PresentResultSectionSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX, overLength(PRESENT_RESULT_SECTION_LABEL_MAX)).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
+  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
   node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
   text: z.string().trim().min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
 }, {
@@ -1330,9 +1370,9 @@ function previewSchemas(blockCount: number) {
  * Schema defining the shape of the final generated presentation result.
  */
 export const PresentResultModelSchema = z.object({
-  name: z.string().max(PRESENT_RESULT_NAME_MAX, overLength(PRESENT_RESULT_NAME_MAX)).trim().min(1, 'name is required').describe('Short name for the generated lineage view — aim for ~60 chars.'),
+  name: z.string().max(PRESENT_RESULT_NAME_MAX).trim().min(1, 'name is required').describe('Short name for the generated lineage view — aim for ~60 chars.'),
   summary: z.string().trim().min(1, 'summary is required — one-line graph purpose (~120 chars)').describe('One-line summary shown with the generated view.'),
-  title: z.string().max(PRESENT_RESULT_TITLE_MAX, overLength(PRESENT_RESULT_TITLE_MAX)).optional().describe('Optional report heading.'),
+  title: z.string().max(PRESENT_RESULT_TITLE_MAX).optional().describe('Optional report heading.'),
   intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
   closing: z.string().optional().describe('Closing synthesis. Length is never a rejection axis.'),
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
@@ -1349,6 +1389,34 @@ export const PresentResultModelSchema = z.object({
   notes: NotesModelSchema.optional(),
   is_update: z.boolean().optional().describe('True only when updating an existing presentation.'),
 }).strict();
+
+/**
+ * `lineage_present_result` contract for callers without a chat turn (`vscode.lm`, MCP).
+ *
+ * @remarks
+ * Projected from {@link PresentResultModelSchema}: the same fields and checks, worded for any
+ * caller, with explicit handles in place of `is_update`. `scope_id` (returned by
+ * `lineage_get_scope_bundle`) draws that walk as a new view; `view_id` (returned by an earlier
+ * render) edits that view, so concurrent callers never draw each other's walk. The handler requires
+ * exactly one of them. The chat stage schemas are unchanged.
+ */
+export const PresentResultExternalModelSchema = PresentResultModelSchema.omit({ is_update: true }).extend({
+  scope_id: z.string().trim().min(1).optional().describe('scope_id returned by lineage_get_scope_bundle: draws that scope as a new view. Send exactly one of scope_id and view_id.'),
+  view_id: z.string().trim().min(1).optional().describe('view_id returned by an earlier lineage_present_result: edits that view, for example with prune_node_ids or add_node_ids.'),
+  sections: PresentResultModelSchema.shape.sections.describe('Report sections, at least one. Each section explains the node_ids it lists.'),
+  closing: PresentResultModelSchema.shape.closing.describe('Optional closing paragraph.'),
+  prune_node_ids: PresentResultModelSchema.shape.prune_node_ids.describe('Ids to remove from the view. The origin stays, and every remaining node must stay connected to it.'),
+  add_node_ids: PresentResultModelSchema.shape.add_node_ids.describe('Ids to add to the view; each must connect to it.'),
+  highlight_groups: z.array(HighlightGroupSchema.extend({
+    label: HighlightGroupSchema.shape.label.describe('Short legend label for the shared graph role or status.'),
+  })).min(1).describe('At least one group. For a single-object result, use color "target" on that object.'),
+  notes: notesListSchema(NoteSchema.extend({
+    caption: NoteSchema.shape.caption.describe('One-sentence caption grounded in tool results.'),
+  })).optional(),
+}).strict();
+
+/** Parsed external `lineage_present_result` input. */
+export type PresentResultExternalInput = z.infer<typeof PresentResultExternalModelSchema>;
 
 /**
  * One section of a report that is already committed: `text` and `node_ids` may each be omitted to
@@ -1408,6 +1476,7 @@ export function presentResultSchemaForPhase(
   highlightLabelIndexes?: readonly number[],
   sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
 ): z.ZodType {
+  if (phase === 'external') return PresentResultExternalModelSchema;
   if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionTextLeaves, retainable);
   if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
   const synthesis = phase === 'synthesis';

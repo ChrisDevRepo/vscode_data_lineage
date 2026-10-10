@@ -25,7 +25,7 @@ No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to expl
 
 ## Database projects
 
-Connect to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool using built-in connections or saved profiles from the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql). Built-in connections support SQL login or Microsoft Entra ID where supported by the platform; Fabric requires Entra ID.
+Connect to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool using the selected connection provider (`dataLineageViz.database.connectionProvider`): built-in connections or the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql). Built-in connections support SQL login or Microsoft Entra ID where supported by the platform; Fabric requires Entra ID.
 
 Save, reuse, and manage connections from the wizard. Passwords for built-in connections are kept in VS Code’s secure storage.
 
@@ -73,6 +73,10 @@ provider, such as
 [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
 or a compatible BYOK provider. The visual graph, search, trace, SQL preview,
 demo data, profiling, and export features work without one.
+
+## MCP server for other AI clients
+
+A local, token-protected [MCP](https://modelcontextprotocol.io) server lets MCP-capable apps on the same machine query the loaded project's lineage metadata and render an AI view. Off by default; run **Data Lineage: Toggle MCP Server**, reload, then paste **Data Lineage: Copy MCP Client Configuration** into the app. See [MCP server](docs/FEATURES.md#mcp-server).
 
 ## Features
 

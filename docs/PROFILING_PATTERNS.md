@@ -14,7 +14,9 @@ implementation.
 - A built-in connection is opened for each profiling request and closed when
   it finishes. Through the SQL Server (mssql) extension, profiling opens one
   connection on first use and reuses it until the main lineage panel closes or
-  another saved project is loaded; a query error does not disconnect it.
+  another saved project is loaded; a query error does not disconnect it. When
+  that reconnect falls back to a built-in connection whose socket later ends,
+  the next profiling request opens a new one.
 - External tables can query remote systems. They are excluded by default and
   should be enabled only when their cost and latency are understood.
 - Approximate distinct counts require a database version that supports
@@ -59,8 +61,8 @@ currently falls back to the catalog row count as the denominator.
 
 Current limitation: Fabric's generated `TOP` aggregate query limits result rows
 rather than the aggregate input. Treat those metrics as full-scan aggregates
-despite the sampling indicator. After a `TABLESAMPLE` retry, the indicator
-also retains the original sampling status even though the retry scans the full table.
+despite the sampling indicator. After a successful `TABLESAMPLE` retry, the
+statistics are reported as a full scan without a sampling indicator.
 
 ## Settings
 

@@ -84,3 +84,37 @@ describe('transient upstream error delivered inside HTTP 200 (DD-4a)', () => {
     expect(result).toMatchObject({ status: 'error', providerError: { code: 'provider_error', cause: { code: '502' } } });
   }, 15_000);
 });
+
+describe('connection-phase transport failures (DD-4a)', () => {
+  const completion = { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({
+    choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'synthetic answer' } }],
+  }) };
+  const failure = (code: string) => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
+  const turn = (fetchImpl: FetchLike, logs: string[] = []) =>
+    new OpenAiCompatiblePort({ baseUrl: 'https://provider.example/v1', apiKey: 'synthetic-secret', model: 'synthetic-model' },
+      { fetchImpl, debugLog: line => logs.push(line) })
+      .generateToolTurn({ messages: [modelUserMessage('synthetic input')], tools: [], toolChoice: 'auto', phase: 'active' });
+
+  it.each(['UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ENOTFOUND'])('retries %s and returns the following completion', async code => {
+    const fetchImpl = vi.fn<FetchLike>().mockRejectedValueOnce(failure(code)).mockResolvedValueOnce(completion);
+    const logs: string[] = [];
+    const result = await turn(fetchImpl, logs);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ status: 'completed', text: 'synthetic answer' });
+    expect(logs.join('\n')).toContain(`transport-retry attempt=1/3 code=${code}`);
+  }, 15_000);
+
+  it('does not retry a headers timeout: the request may already be generating', async () => {
+    const fetchImpl = vi.fn<FetchLike>().mockRejectedValue(failure('UND_ERR_HEADERS_TIMEOUT'));
+    const result = await turn(fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ status: 'error', providerError: { code: 'provider_error' } });
+  });
+
+  it('surfaces a persistent connect timeout after the attempt bound', async () => {
+    const fetchImpl = vi.fn<FetchLike>().mockRejectedValue(failure('UND_ERR_CONNECT_TIMEOUT'));
+    const result = await turn(fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ status: 'error', providerError: { code: 'provider_error' } });
+  }, 20_000);
+});

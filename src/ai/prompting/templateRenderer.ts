@@ -12,9 +12,10 @@ import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
  * @remarks
  * - `discover`  = inline chat first response (no SM engaged).
  * - `active`    = per-hop `sections` writing — capture rules (one key per fired `*_capture`).
- * - `synthesis` = present_result assembly — render rules. Slot bodies arrive
- *                 pre-formatted from the active-phase capture and are lifted
- *                 as written; synthesis assembles, groups, frames.
+ * - `synthesis` = present_result authoring — render rules. Slot bodies arrive
+ *                 pre-formatted from the active-phase capture; the model writes
+ *                 the section text from them (it may rephrase or drop), and the
+ *                 engine assembles, numbers and frames.
  */
 type TemplateStage = 'discover' | 'active' | 'synthesis';
 
@@ -24,15 +25,10 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * @remarks
  * Authoritative — a `stages:` field in the YAML (default or overlay) is informational only; the
  * loader never reads it (`AiOutputTemplatesConfigSchema` passes it through, only `instruction` is
- * overlaid), so a disagreeing overlay is silently routed by this map instead. `general` is
- * placement-only at synthesis — a captured ⚠️ sits once in the section it belongs to.
+ * overlaid), so a disagreeing overlay is silently routed by this map instead.
  *
- * `description` is intentionally absent — it is engine output (`orderAndAssemble` in
- * `presentResult.ts` from title + intro + sections[] + closing), not an AI-writeable field; do not
- * add it back without restoring the full AI-input plumbing in `tools.ts` and resolving the
- * conflict with engine assembly. `sections`, `business_subsection`, `technical_subsection` are
- * also absent — their lift+group+label rule lives in `buildSynthesisPrompt()` to avoid
- * duplication with the synthesis cue.
+ * No key exists for the assembled `description` (engine output of `orderAndAssemble` in
+ * `presentResult.ts`) or for section grouping and order, which `buildSynthesisPrompt()` owns.
  */
 const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
   discovery_chat:       ['discover'],
@@ -68,9 +64,9 @@ const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue
 };
 
 /**
- * CT-mode-gated keys — fire only when the approved runtime mode is CT.
- * CT requires target columns; BB must never carry them.
- * These are additive to classification-gated templates; both gates must pass.
+ * CT-mode-gated keys — fire only when the current hop is dispatched under the CT contract; a BB
+ * hop of a CT session renders without them. Additive to classification-gated templates; both gates
+ * must pass.
  */
 const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'column_trace_capture',
@@ -161,16 +157,26 @@ function bareSummaryAngleClause(classification: ClassificationValue | undefined)
  *
  * @remarks
  * Reads the `sections` each capture recipe declares, for the angles {@link CLASSIFICATION_KEPT_ANGLES}
- * keeps: one angle gives its own list, `both` the ordered union, first occurrence winning. An
- * unlocked classification keeps every angle, as the capture gates do. A label declared only by an
- * angle the mission did not fire is therefore never served.
+ * keeps: one angle gives its own list, `both` the ordered union, first occurrence winning. A label
+ * only a later angle declares is placed right after the label that precedes it in that angle's own
+ * list, so each recipe's order survives the merge. An unlocked classification keeps every angle, as
+ * the capture gates do. A label declared only by an angle the mission did not fire is therefore
+ * never served.
  */
 function activeSectionLabels(sections: AiOutputSections, classification: ClassificationValue | undefined): string {
   const angles: readonly AiSectionAngle[] = classification
     ? CLASSIFICATION_KEPT_ANGLES[classification]
     : (Object.keys(AI_SECTION_KEY_BY_ANGLE) as AiSectionAngle[]);
-  const labels = new Set(angles.flatMap(angle => sections[angle] ?? []));
-  return [...labels].map(label => `**${label}**`).join(', ');
+  const labels: string[] = [];
+  for (const angle of angles) {
+    let after = -1;
+    for (const label of sections[angle] ?? []) {
+      const at = labels.indexOf(label);
+      if (at >= 0) { after = at; continue; }
+      labels.splice(++after, 0, label);
+    }
+  }
+  return labels.map(label => `**${label}**`).join(', ');
 }
 
 /** Render scope for {@link resolveStagePrompt}: hop-invariant system block vs per-focus hop block. */

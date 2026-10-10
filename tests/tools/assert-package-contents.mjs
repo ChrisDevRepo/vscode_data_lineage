@@ -38,6 +38,8 @@ const required = [
   'out/extension.js',
   'out/extensionRuntime.js',
   'out/regexSearch.worker.js',
+  'out/mcpStdioProxy.js',
+  'out/mcpRuntime.js',
   'dist/index.html',
   'dist/assets/index.js',
   'assets/defaultParseRules.yaml',

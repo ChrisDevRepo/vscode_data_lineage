@@ -46,7 +46,7 @@ const STEPS = [
   {
     name: 'test tooling contracts',
     cmd: nodeBin,
-    args: ['--test', 'tests/tools/gui-test-host.test.mjs', 'tests/tools/chat-ui-replay-trace.test.mjs', 'tests/tools/gate-status.test.mjs'],
+    args: ['--test', 'tests/tools/gui-test-host.test.mjs', 'tests/tools/chat-ui-replay-trace.test.mjs', 'tests/tools/mcp-live.test.mjs', 'tests/tools/gate-status.test.mjs', 'tests/tools/trace-metrics.test.mjs'],
   },
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
   { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },

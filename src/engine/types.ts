@@ -25,6 +25,7 @@ export interface LineageNode {
   /**
    * Unique identifier for the node.
    * Format: `[schema].[name]` (local), `[db].[schema].[name]` (cross-DB), or `[__ext__].[hash]` (file).
+   * File hash collisions use a URL-derived suffix; ordinary file IDs retain the short hash.
    */
   id: string;
   /** SQL schema name (e.g., "dbo", "SalesLT"). Empty for virtual nodes. */
@@ -653,8 +654,6 @@ export interface OverviewConfig {
  * Host-only file paths and AI settings remain at their owning boundaries.
  */
 export interface ExtensionConfig {
-  /** Optional custom regex rules for SQL parsing. */
-  parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   /** Regex patterns, with `%` wildcard compatibility, excluded from the webview model. */
   excludePatterns: string[];
   /** Hard cap on objects admitted to the webview working graph; a selection over this limit is refused rather than truncated. */

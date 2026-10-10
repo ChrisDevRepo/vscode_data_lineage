@@ -5,33 +5,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution';
 
-const nodeMap = new Map<string, unknown>([
-  ['[ai].[saporders]', {}],
-  ['[ai].[factsalesreport]', {}],
-]);
-
-describe('resolveModelNodeId', () => {
-  it('resolves an id padded with a zero-width space', () => {
-    expect(resolveModelNodeId('[ai].[saporders]\u200b', nodeMap)).toBe('[ai].[saporders]');
-  });
-
-  it('resolves ids carrying other Unicode format characters', () => {
-    expect(resolveModelNodeId('\ufeff[ai].[saporders]\u200e', nodeMap)).toBe('[ai].[saporders]');
-  });
-
-  it('still resolves ordinary padding and case differences', () => {
-    expect(resolveModelNodeId('  [AI].[SAPOrders]  ', nodeMap)).toBe('[ai].[saporders]');
-  });
-
-  it('returns null for an id that is only invisible characters', () => {
-    expect(resolveModelNodeId('\u200b\u200b', nodeMap)).toBeNull();
-  });
-
-  it('returns null for a genuinely unknown id', () => {
-    expect(resolveModelNodeId('[ai].[missing]', nodeMap)).toBeNull();
-  });
-});
-
 describe.each([false, true])('resolveModelNodeId with identifierCaseSensitive=%s', (caseSensitive) => {
   const canonical = caseSensitive ? '[Sales].[Order.Detail]' : '[sales].[order.detail]';
   const catalog = new Map<string, unknown>([[canonical, {}]]);
@@ -55,6 +28,7 @@ describe.each([false, true])('resolveModelNodeId with identifierCaseSensitive=%s
     const simpleCatalog = new Map<string, unknown>([[id, {}]]);
     expect(resolveModelNodeId('Sales.OrderDetails', simpleCatalog, caseSensitive)).toBe(id);
     expect(resolveModelNodeId('sALES.oRDERdETAILS', simpleCatalog, caseSensitive)).toBe(caseSensitive ? null : id);
+    expect(resolveModelNodeId('  [sALES].[oRDERdETAILS]  ', simpleCatalog, caseSensitive)).toBe(caseSensitive ? null : id);
   });
 
   it.each(['', ' \t\r\n', '\u200b\ufeff', '.', '[]', '[Sales.Order.Detail', '[Sales].[Missing]', 'Order.Detail'])

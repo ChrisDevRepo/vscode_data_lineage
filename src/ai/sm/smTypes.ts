@@ -20,10 +20,8 @@ export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findi
 /** Live progress for the hop loop: completed AI hops, queued nodes, display-safe total work, and cumulative prunes. */
 export type HopProgress = { current: number; open: number; total: number; pruned: number; added: number };
 
-/**
- * Flags identifying structural boundaries encountered during graph traversal.
- */
-export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
+/** Whether a hop neighbor was already visited (`cycle`) or not (`none`). */
+export type BoundaryFlag = 'none' | 'cycle';
 
 /**
  * The focus node's self-status submitted each hop. Two states:
@@ -192,13 +190,12 @@ export interface HopNeighbor {
   edge_direction: 'upstream' | 'downstream';
   /** The type of dependency (e.g., 'SELECT', 'INSERT', 'FK'). */
   edge_type: string;
-  /** Indicates if this node is a traversal boundary. */
+  /** `cycle` when the neighbor was already visited on an earlier hop, `none` otherwise. */
   boundary: BoundaryFlag;
-  /** Human-readable explanation for the boundary flag. */
-  boundary_reason?: string;
-  /** Current state of this node within the navigation engine's agenda. */
-  scope?: 'visited' | 'agenda' | 'pruned' | 'available' | 'external';
-  /** List of columns pertinent to the current trace, if applicable. */
+  /**
+   * For a table the focus writes, every column as `name, type, nullability[, PK|UQ|CK]`, the same
+   * compact form a table focus carries. Otherwise, in a column trace, the neighbor's column names.
+   */
   cols?: string[];
   /** Depth from origin (always surfaced when a depth budget is set). */
   depth_from_origin?: number;
@@ -366,8 +363,7 @@ export type SmNodeColumnRole = 'carrier' | 'row_role_only';
  * Engine-side record only: the `lineage_submit_findings` tool returns the ack and the next focus,
  * never this array, so the model does not see it. The engine writes one debug host-log line per
  * non-accepted outcome where the hop's outcomes are finalized. Every deferred route is also recorded as a
- * {@link DeferredQuestion}, which reaches the synthesis completion envelope and post-synthesis
- * follow-up offers. An excluded target requires a new scope proposal before analysis.
+ * {@link DeferredQuestion}, which feeds the post-synthesis follow-up suggestions. An excluded target requires a new scope proposal before analysis.
  */
 export interface RouteOutcome {
   /** Node id of the route request (verbatim from submission, not lowercased). */
@@ -674,8 +670,6 @@ export interface SmResult {
   fullNodes: ResultNode[];
   /** List of edges connecting the nodes in the result set. */
   edges: Array<[string, string, string]>;
-  /** AI-suggested grouping of nodes into narrative sections. */
-  suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /** High-fidelity analysis artifacts for each visited node. */
   detail_slots: DetailSlot[];
   /** Engine-owned lifecycle state for result nodes and pruned/contracted nodes. */
@@ -691,8 +685,8 @@ export interface SmResult {
  * @remarks
  * Produced by the engine when a `submit_findings` route, or a contraction through a non-bodied
  * carrier, targets a node outside the approved border (schema, exclusion or direction) or past an
- * exact depth. Derived from typed pending leads for the synthesis evidence envelope and
- * native-chat follow-up action; the older lead reasons a saved run may hold stay readable on
+ * exact depth. Derived from typed pending leads for the post-synthesis follow-up
+ * suggestions; the older lead reasons a saved run may hold stay readable on
  * {@link PendingLead} only.
  */
 export interface DeferredQuestion {
@@ -718,8 +712,15 @@ interface InvestigationTaskBase {
   id: string;
   /** Authority that created the task. */
   source: 'mission' | 'model' | 'engine';
-  /** Question the hop must answer. */
+  /** Question the hop must answer, as authored; synthesis receives only this text. */
   question: string;
+  /**
+   * Engine-authored passthrough re-anchor sentence, set when the question was forwarded through a
+   * non-bodied node to this bodied one. Rendered after `question` in the hop's `<current_task>`
+   * only; it never reaches synthesis. Absent on older snapshots, whose `question` may already end
+   * with the sentence.
+   */
+  reAnchor?: string;
   /** Node the task applies to, when known. */
   nodeId?: string;
   /** Parent task for a routed or contracted continuation. */
@@ -778,6 +779,16 @@ export interface PendingLead {
   status: 'pending' | 'scheduled' | 'resolved' | 'dismissed';
   /** Hop at which the lead was created. */
   createdHop: number;
+}
+
+/** A neighbour a resolved AI prune removed, with the sender's own reason. */
+export interface PrunedBranch {
+  /** Removed node. */
+  nodeId: string;
+  /** Focus whose hop voted the prune. */
+  fromFocusNodeId: string;
+  /** The sender's `prune_neighbors[].reason`, verbatim. */
+  reason: string;
 }
 
 /** The border the user approved at session start — locked for the rest of the SM session. */
@@ -1085,13 +1096,17 @@ export interface InvalidRoute {
     available_routes?: string[];
 }
 
-/** Discriminated union representing the engine's current aspect mode. */
-export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
-
 /** Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section angles, whether the summary, other field names. */
 export interface HeldSubmissionParts {
   readonly sections: readonly string[];
   readonly summary: boolean;
-  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`). */
+  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
   readonly fields: readonly string[];
+  /**
+   * What identifies each held list entry, present only when a held list survives: canonical neighbor
+   * ids of `questions` / `prune_neighbors` entries, and the `out_col` (with its `returns_to` target,
+   * when one is named) of `column_flow` entries. A failed entry is never held; the valid entries of
+   * the same list are.
+   */
+  readonly entries?: { readonly questions?: readonly string[]; readonly prune_neighbors?: readonly string[]; readonly column_flow?: readonly string[] };
 }

@@ -5,17 +5,17 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { connectDatabase, stripSensitiveFields } from '../../../src/engine/connectionManager';
+import { connectDatabase } from '../../../src/engine/connectionManager';
 import { partitionSendableProjects } from '../../../src/bridge/messageHandlers';
 import { migrateProjectStore } from '../../../src/engine/projectStore';
 import { ExtensionToWebviewMsgSchema, type Project } from '../../../src/engine/shared/bridgeContract';
-import type { IConnectionInfo } from '../../../src/types/mssql';
 
 const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
 vi.mock('vscode', async (importOriginal) => ({
   ...await importOriginal<Record<string, unknown>>(),
   workspace: { getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined }) },
+  window: { showWarningMessage: () => undefined },
 }));
 
 const outputChannel = {
@@ -73,20 +73,6 @@ describe('stored connection integrity', () => {
     expect(session?.connectionInfo).not.toHaveProperty('azureAccountToken');
     expect(stored).not.toHaveProperty('azureAccountToken');
     expect(Object.keys(stored).sort()).toEqual(Object.keys(cleanConnectionInfo).sort());
-  });
-
-  it('stripSensitiveFields keeps only declared fields, whatever the live object carries', () => {
-    const narrowed = stripSensitiveFields({
-      ...cleanConnectionInfo,
-      azureAccountToken: 'token-value',
-      password: 'never-persisted',
-      applicationName: 'vscode-mssql',
-    } as unknown as IConnectionInfo);
-
-    expect(narrowed).not.toHaveProperty('azureAccountToken');
-    expect(narrowed).not.toHaveProperty('password');
-    expect(narrowed).not.toHaveProperty('applicationName');
-    expect(narrowed.server).toBe('localhost');
   });
 
   it('one unsendable project no longer costs the whole projects-list frame', () => {

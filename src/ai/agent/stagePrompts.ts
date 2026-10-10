@@ -3,11 +3,9 @@
  *
  * @remarks
  * Pure (no `deps`, no graph state, VS Code-free): these compose the worker system prompts and the
- * worker hop message from session + engine state. Split out of `graph.ts` so that file holds only
- * the LangGraph control flow, and
- * so these renderers are unit-testable in isolation (the project's pure-core pattern). All SM
- * output formatting still flows through the shared YAML `templateRenderer` / `buildSmProtocol`
- * — these builders only sequence the blocks, never inline output-format prose.
+ * worker hop message from session + engine state, so `graph.ts` holds only the LangGraph control
+ * flow. All SM output formatting flows through the shared YAML `templateRenderer` /
+ * `buildSmProtocol` — these builders only sequence the blocks, never inline output-format prose.
  */
 import type { AiSession } from '../session/session';
 import type { NavigationEngine } from '../sm/smBase';
@@ -189,7 +187,7 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
     sess.memory.getScopeNotes(),
   );
   const originalQuestion = buildOriginalQuestionBlock(sess.memory.getUserQuestion());
-  const discoverySummary = buildDiscoverySummaryBlock(engine?.getDiscoverySummary?.() ?? null);
+  const discoverySummary = buildDiscoverySummaryBlock(engine?.getDiscoverySummary() ?? null);
   const memorySections: string[] = [];
   if (missionBrief) memorySections.push('mission_brief');
   if (originalQuestion) memorySections.push('original_question');
@@ -197,17 +195,7 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
   return { blocks: [missionBrief, originalQuestion, discoverySummary], memorySections };
 }
 
-/**
- * Composes the lean per-hop worker user message: the focus task, the focus node DDL + neighbours,
- * and rolling memory. This is the only per-hop-volatile content — the stable mission/rules ride in
- * the cached system prompt ({@link buildActiveInstruction}), so the cached prefix stays byte-identical
- * across hops (prompt-cache hits on every caching lane).
- *
- * @remarks
- * Blinkered-worker scope: what to analyse, the node + its neighbours, and continuity/self-correction
- * memory (short-term summaries + `recent_rejections`, earlier hops only — the current hop's rejection
- * is already the tool result of the call it refused). No progress chrome, no user-interaction framing.
- */
+/** The per-hop worker user message plus its YAML and memory provenance. */
 interface ActiveHopInstruction {
   /** Per-focus user message shipped to the active worker. */
   readonly message: string;
@@ -220,7 +208,16 @@ interface ActiveHopInstruction {
 }
 
 /**
- * Builds the active-hop user message together with its focus-sensitive YAML provenance.
+ * Builds the lean per-hop worker user message — the focus task, the focus node DDL + neighbours,
+ * and rolling memory — together with its focus-sensitive YAML provenance.
+ *
+ * @remarks
+ * This is the only per-hop-volatile content: the stable mission/rules ride in the cached system
+ * prompt ({@link buildActiveInstruction}), so the cached prefix stays byte-identical across hops.
+ * Blinkered-worker scope: what to analyse, the node + its neighbours, and continuity/self-correction
+ * memory (short-term summaries + `recent_rejections`, earlier hops only — the current hop's rejection
+ * is already the tool result of the call it refused). No progress chrome, no user-interaction framing.
+ *
  * @param sess - Active exploration session.
  * @param engine - Navigation engine presenting the current focus.
  * @param focusId - Exact current focus id.

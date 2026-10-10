@@ -68,6 +68,21 @@ describe('lineage_start_exploration boundary', () => {
     expect(text).not.toContain('keep every other field unchanged');
   });
 
+  it('opens the approval gate for a fresh proposal whatever phase the session holds, never a hop', async () => {
+    const { session, model, graph } = ctWorld();
+    session.stateMachine = null;
+    expect(session.phase.kind).toBe('exploring');
+    const { services } = stubToolServices({ session, model, graph, turnEpoch: () => session.turnEpoch });
+    const result = JSON.parse(await executeStartExploration({
+      origin: ORIGIN, analysisMode: 'bb', classification: 'technical', question: 'What feeds it?',
+      depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
+    }, services));
+    expect(result).toMatchObject({ code: 'action_required', detail: { gate: 'confirm_sm_start', proposalRevision: 1 } });
+    expect(result).not.toHaveProperty('focus_node');
+    expect(result.hint).toBe('Tool paused — awaiting user confirmation before the first hop.');
+    expect(session.stateMachine).toBeNull();
+  });
+
   it.each(['excludeTypes', 'excludeSchemas', 'excludeNodeIds', 'passNodeIds', 'scopeNotes'])('rejects a non-string-array %s at the schema', field => {
     expect(StartExplorationInputSchema.safeParse({ origin: ORIGIN, [field]: [1] }).success).toBe(false);
     expect(StartExplorationInputSchema.safeParse({ origin: ORIGIN, [field]: 'one' }).success).toBe(false);

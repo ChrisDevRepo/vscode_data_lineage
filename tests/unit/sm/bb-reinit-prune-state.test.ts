@@ -14,7 +14,8 @@ describe('scope re-initialisation', () => {
     expect(w.engine.init({
       origin: 'origin', question: 'Trace the lineage again', direction: 'downstream', analysisMode: 'bb',
       depthIntent: { upstream: CLOSED, downstream: ALL },
-    })).toMatchObject({ ok: true, scopeSize: 3 });
+    })).toEqual({ ok: true });
+    expect(w.engine.scopeSize).toBe(3);
     expect(drain(w.engine)).toEqual(['origin', 'a', 'b']);
     expect(delivered(w.engine)).toMatchObject({ nodes: ['a', 'b', 'origin'], edges: ['a>b', 'origin>a'], pruned: [] });
   });

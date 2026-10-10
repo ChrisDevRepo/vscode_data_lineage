@@ -1,11 +1,11 @@
 /**
- * Canonical AI tool registry, handlers, and optional VS Code LM registrations.
+ * Canonical AI tool registry, handlers, and the surfaces for callers without a chat turn.
  *
  * @remarks
  * Acts as the Zod boundary between untrusted LM-supplied tool input and the engine + retrieval layer.
  * The native `@lineage` runtime dispatches through {@link buildAiToolRegistry}.
- * {@link registerAiTools} exposes the same catalog through `vscode.lm.registerTool` for external
- * VS Code compatibility.
+ * {@link createExternalToolSource} serves the `external` policy stage of the same catalog to other
+ * VS Code agents ({@link registerAiTools}) and to the localhost MCP server.
  *
  * Read-only tools remain thin wrappers around provider-neutral functions in
  * [`tools.ts`](./tools.ts). Mutating exploration and presentation tools live in
@@ -36,20 +36,21 @@ import {
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
 import { readDeclaredNumericSetting } from '../../configCore';
 import { type SerializedFilterState } from '../../engine/projectStore';
-import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../tools/toolPolicy';
-import { ToolRegistry, filterRegistry } from '../tools/registry';
-import { TOOL_DEFS, type ToolName } from '../tools/toolDefs';
+import { getAllowedLmToolNames, activeModeOf, EXTERNAL_TOOL_NAMES, type LmStage } from '../tools/toolPolicy';
+import { ToolRegistry } from '../tools/registry';
+import { TOOL_DEFS, EXTERNAL_TOOL_DEFS, type ToolContract, type ToolName } from '../tools/toolDefs';
 import { getToolInvocationLabel } from '../tools/toolLabels';
-import { readToolError, isConsentGateRejection, makeRejection, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
+import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionProse, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
-import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
+import { DEFAULT_TURN_TOKEN_BUDGET, EXTERNAL_OVER_DISCOVERY_BUDGET_HINT, type TurnTokenBudget } from '../support/tokenBudget';
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
 import { resolveModelNodeId } from '../support/inputNormalization';
+import { createSavedReferenceResolver } from '../../engine/shared/nodeIdResolution';
 import { cursorOffset } from '../support/text';
-import { getModelNodeMap, type AiViewPreviewMessage, type ToolServices } from './handlers/toolServices';
+import { getModelNodeMap, type AiViewPreviewMessage, type ToolCaller, type ToolServices } from './handlers/toolServices';
 import type { PreviewDelivery } from '../support/chatAnswer';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
@@ -79,8 +80,8 @@ export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer
  * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
  * - `source_selection` — routing and prune-topology guards.
  * - `answer_format` — structural/schema violations of the tool envelope itself.
- * - `backend_fault` — a backend state or exception no model reply can correct; the run ends on the
- *   first one instead of spending the step's replies.
+ * - `backend_fault` — a backend state or exception no model reply can correct (a closed panel
+ *   included); the run ends on the first one instead of spending the step's replies.
  *
  * Other session/state codes, transport artifacts, the budget guards, and control-flow markers are
  * deliberately absent — none says anything about the model's semantic accuracy, so they fall to
@@ -109,6 +110,7 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.noActiveSession]: 'backend_fault',
   [REJECTION_CODES.staleTurn]: 'backend_fault',
   [REJECTION_CODES.toolExecutionError]: 'backend_fault',
+  [REJECTION_CODES.noProjectLoaded]: 'backend_fault',
 };
 
 /**
@@ -156,6 +158,7 @@ class ToolHandler implements ToolServices {
     public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>,
     public readonly signal?: AbortSignal,
     public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
+    public readonly caller: ToolCaller = 'turn',
   ) {
     this.logger = Logger.create(outputChannel, 'AI');
   }
@@ -189,10 +192,12 @@ class ToolHandler implements ToolServices {
 
     if (input !== undefined) {
       const inputJson = trunc(sanitizeForLog(JSON.stringify(input)), LOG_TRUNC_JSON);
-      this.logger.debug(`Invoking ${toolName} — input: ${inputJson}`);
+      // One call site for every caller: a caller without a chat turn (`vscode.lm`, MCP) is marked, nothing else differs.
+      const callerPart = this.caller === 'external' ? ' [external]' : '';
+      this.logger.debug(`Invoking ${toolName}${callerPart} — input: ${inputJson}`);
     }
 
-    sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
+    if (this.caller === 'turn') sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
     const rejection = readToolError(data);
     if (rejection) {
       const hintPart = rejection.hint ? ` hint=${trunc(sanitizeForLog(rejection.hint), LOG_TRUNC_REJECTION)}` : '';
@@ -226,12 +231,9 @@ class ToolHandler implements ToolServices {
   public toolError(toolName: string, err: unknown): string {
     const msg = err instanceof Error ? err.message : String(err);
     const noProject = err instanceof NoProjectLoadedError;
-    if (toolName === 'present_result') {
+    if (toolName === 'present_result' && this.caller === 'turn') {
       const sess = this.getSession();
-      sess.recordPresentResultFailure(
-        this.turnEpoch(sess),
-        sanitizeForLog(`${noProject ? 'no_project_loaded' : 'internal_error'}: ${msg}`),
-      );
+      sess.recordPresentResultFailure(this.turnEpoch(sess));
     }
     if (noProject) {
       this.logger.info(`Tool ${toolName} ran with no project loaded`);
@@ -250,9 +252,8 @@ class ToolHandler implements ToolServices {
    * registry execution boundary, not just at the LM `tools[]` parameter.
    *
    * @remarks
-   * The native runtime carries the full catalog; `registerAiTools` additionally exposes only the
-   * read-only subset through `vscode.lm`, and both dispatch paths land on this check so the current
-   * phase remains authoritative even for externally addressable reads.
+   * The native runtime carries the full catalog; callers without a chat turn (`vscode.lm`, MCP) are
+   * evaluated against the `external` stage, and every dispatch path lands on this check.
    *
    * @returns Provider-neutral JSON text carrying an `off_policy` error when the
    *   tool is not allowed in the current phase, or `null` when execution is
@@ -267,9 +268,11 @@ class ToolHandler implements ToolServices {
   }
 
   /**
-   * Derives the {@link LmStage} from the session's current phase + engine state.
+   * Derives the {@link LmStage}: the `external` stage for a caller without a chat turn, otherwise
+   * the session's current phase + engine state.
    */
   private deriveLmStage(sess: AiSession): LmStage {
+    if (this.caller === 'external') return { kind: 'external', chatTurnActive: sess.chatTurnActive };
     if (sess.activeLmStage) return sess.activeLmStage;
     const phase = sess.phase.kind;
     const engine = sess.stateMachine;
@@ -297,10 +300,15 @@ class ToolHandler implements ToolServices {
       if (!parsed.ok) return this.logAndReturn('lineage_get_screen_state', parsed.error, input);
       const sess = this.getSession();
       const model = this.requireModel();
-      const getDdl = (id: string) => sess.columnStore.getDdl(id);
+      const legacyIds = createSavedReferenceResolver(model);
+      const currentIds = createSavedReferenceResolver(model, 2);
+      const savedId = (id: string, version?: 2) => (version === 2 ? currentIds : legacyIds).nodeId(id);
+      const getDdl = (id: string, version?: 2) => {
+        const resolved = savedId(id, version);
+        return resolved === null ? undefined : sess.columnStore.getDdl(resolved);
+      };
       const { ids, filter, cursor } = parsed.data;
       if (ids || filter) {
-        const nodeMap = getModelNodeMap(model);
         return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
@@ -309,7 +317,7 @@ class ToolHandler implements ToolServices {
           ids,
           filter,
           getDdl,
-          isInModel: id => nodeMap.has(id),
+          isInModel: (id, version) => savedId(id, version) !== null,
           onIdNormalized: (raw, canonical) => this.logger.debug(`[AI] get_screen_state id resolved raw=${sanitizeForLog(raw)} resolved=${sanitizeForLog(canonical)}`),
           hasPendingProposal: sess.pendingExploration !== null,
         }), input);
@@ -350,9 +358,14 @@ class ToolHandler implements ToolServices {
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
+      const stage = this.deriveLmStage(sess).kind;
+      if (stage === 'external' && readToolError(bundle)?.code === REJECTION_CODES.overDiscoveryBudget) {
+        // The chat escalates an oversized scope to an approved exploration; an external caller narrows it.
+        return this.logAndReturn('lineage_get_scope_bundle', { ...bundle, hint: EXTERNAL_OVER_DISCOVERY_BUDGET_HINT }, input);
+      }
       if (
         !Array.isArray(bundle.nodes) || !Array.isArray(bundle.edges) || typeof bundle.origin !== 'string'
-        || this.deriveLmStage(sess).kind !== 'discover'
+        || (stage !== 'discover' && stage !== 'external')
       ) {
         return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
       }
@@ -363,10 +376,15 @@ class ToolHandler implements ToolServices {
       });
       const edges = bundle.edges.filter((edge): edge is [string, string, string] =>
         Array.isArray(edge) && edge.length === 3 && edge.every(value => typeof value === 'string'));
+      const direction = (bundle.direction as 'upstream' | 'downstream' | 'bidirectional') ?? 'bidirectional';
+      if (stage === 'external') {
+        const scopeId = sess.storeExternalScope({ origin: bundle.origin, direction, nodeIds, edges });
+        return this.logAndReturn('lineage_get_scope_bundle', { ...bundle, scope_id: scopeId }, input);
+      }
       const stored = sess.storeDiscoveryScope({
         turnEpoch: this.turnEpoch(sess),
         origin: bundle.origin,
-        direction: (bundle.direction as 'upstream' | 'downstream' | 'bidirectional') ?? 'bidirectional',
+        direction,
         nodeIds,
         edges,
       }, this.turnEpoch(sess));
@@ -483,25 +501,59 @@ type LineageToolOutput = string;
 /** Executes one catalog tool from its raw model payload. */
 type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolOutput>;
 
+/** Runs state-changing dispatches one at a time, in arrival order. */
+export type EffectSerializer = <T>(run: () => Promise<T>) => Promise<T>;
+
+/**
+ * Creates an {@link EffectSerializer}: each run starts after the previous one settled.
+ *
+ * @returns A serializer owning its own queue.
+ */
+export function createEffectSerializer(): EffectSerializer {
+  let queue: Promise<void> = Promise.resolve();
+  return async <T>(run: () => Promise<T>): Promise<T> => {
+    let release!: () => void;
+    const previous = queue;
+    queue = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  };
+}
+
+/** Optional host seam of {@link buildAiToolRegistry}. */
+export interface AiToolHost {
+  /** Resolves the AI run behind an applied bookmark. */
+  readonly getStoredRun?: StoredRunReader;
+  /** Text-completion capability `start_exploration` uses for the discovery-handoff memo. */
+  readonly model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
+  /** Cooperative cancellation of the dispatch. */
+  readonly signal?: AbortSignal;
+  /** Caps of the owning turn, so a superseded turn's dispatch keeps measuring against its own model. */
+  readonly budget?: TurnTokenBudget;
+  /** Who dispatches; `external` evaluates the `external` stage and uses the external view slot. Default `turn`. */
+  readonly caller?: ToolCaller;
+  /** Serializer shared by registries whose effects must not interleave; default one per registry. */
+  readonly serialize?: EffectSerializer;
+}
+
 /**
  * Builds the shared lineage {@link ToolRegistry} — the single authoritative dispatch surface
  * for the AI tool catalog.
  *
  * @remarks
- * The native runtime calls this directly and never touches `vscode.lm.registerTool`.
- * {@link registerAiTools} reuses it when exposing externally invokable contributed tools.
- *
- * The registry is the sole dispatch entry point (`invoke`), keeping names, handlers, ordering,
- * authorization, and labels consistent.
+ * The native runtime calls this with a turn lease; {@link createExternalToolSource} calls it for
+ * callers without a chat turn. The registry is the sole dispatch entry point (`invoke`), keeping
+ * names, handlers, ordering, authorization, and labels consistent.
  *
  * @param getSession - Factory for the active AI session.
  * @param outputChannel - Log channel for tracing tool activity.
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
- * @param host - Optional host seam; `getStoredRun` resolves the AI run behind an applied bookmark,
- * `model`/`signal` supply the text-completion capability `start_exploration` uses to compose the
- * discovery-handoff memo shown at the bottom of the approval card, and `budget` carries the owning
- * turn's caps so a superseded turn's dispatch keeps measuring against its own model.
+ * @param host - Optional host seam, see {@link AiToolHost}.
  * @returns A ready-to-dispatch canonical registry.
  */
 export function buildAiToolRegistry(
@@ -509,9 +561,9 @@ export function buildAiToolRegistry(
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
   turnLease?: TurnLease,
-  host?: { getStoredRun?: StoredRunReader; model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>; signal?: AbortSignal; budget?: TurnTokenBudget },
+  host?: AiToolHost,
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal ?? turnLease?.signal, host?.budget);
+  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal ?? turnLease?.signal, host?.budget, host?.caller);
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
@@ -528,13 +580,15 @@ export function buildAiToolRegistry(
   } satisfies Record<ToolName, ToolExecutor>;
 
   const registry = new ToolRegistry<LineageToolOutput>();
-  let effectQueue: Promise<void> = Promise.resolve();
+  const serialize = host?.serialize ?? createEffectSerializer();
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
     registry.register({
       ...def,
       execute: async (input: unknown) => {
+        handler.signal?.throwIfAborted();
         const invoke = async (): Promise<LineageToolOutput> => {
+          handler.signal?.throwIfAborted();
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
@@ -542,73 +596,89 @@ export function buildAiToolRegistry(
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           return result;
         };
-        if (def.effect === 'read') return invoke();
-
-        let release!: () => void;
-        const previous = effectQueue;
-        effectQueue = new Promise<void>((resolve) => { release = resolve; });
-        await previous;
-        try {
-          return await invoke();
-        } finally {
-          release();
-        }
+        return def.effect === 'read' ? invoke() : serialize(invoke);
       },
     });
   }
   return registry;
 }
 
-/**
- * The externally addressable subset of the catalog: read-only tools.
- *
- * @remarks
- * A `vscode.lm` registration is invokable by **any** extension or chat participant, with no
- * `@lineage` turn behind it; the read tools are safe there since they only answer questions about
- * an already-loaded snapshot. Every other effect class commits session lifecycle state that only
- * the owning turn may advance, so exposing them externally would let a third party drive the
- * exploration state machine out from under the participant.
- */
-const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(
-  TOOL_DEFS.filter(def => def.effect === 'read').map(def => def.name),
-);
+/** The core tools a caller without a chat turn reaches, and their dispatch. */
+export interface ExternalToolSource {
+  /** Catalog entries in the `external` stage, in catalog order. */
+  readonly tools: readonly ToolContract[];
+  /**
+   * Dispatches one call through the canonical registry as an `external` caller.
+   *
+   * @returns The tool's JSON text — a result or a rejection envelope.
+   * @throws When `name` is not an external tool or the caller's signal is aborted.
+   */
+  invoke(name: string, input: unknown, signal: AbortSignal): Promise<string>;
+}
 
 /**
- * Registers the **read-only** lineage tools with `vscode.lm` for external VS Code callers.
+ * Creates the single tool source shared by every surface without a chat turn: the `vscode.lm`
+ * registration and the MCP server.
  *
  * @remarks
- * Calls {@link buildAiToolRegistry} and exposes the {@link EXTERNAL_TOOL_NAMES} subset through
- * `vscode.lm.registerTool`, using the shared {@link filterRegistry} read-only view rather than a
- * second hand-maintained list. Native `@lineage` dispatch keeps the full catalog and does not use
- * these registrations. `package.json` contributes exactly this subset — a contributed entry with no
- * `registerTool` binding is a broken tool, not merely an unused one, so the manifest and this
- * filter must move together.
+ * The tool set is the `external` stage of the core tool policy ({@link EXTERNAL_TOOL_NAMES}), so a
+ * catalog tool reaches every external surface by being allowed there, and hop-by-hop tools never
+ * do. Each call builds a registry bound to its own cancellation signal; one serializer orders the
+ * state-changing calls of every surface. Already aborted calls never enter the queue; calls aborted
+ * while queued are rejected before their handler runs.
  *
  * @param getSession - Factory for the active AI session.
- * @param outputChannel - Log channel for tracing tool activity.
+ * @param outputChannel - Log channel.
  * @param getPanel - Accessor for the active webview panel.
- * @param host - Optional host seam forwarded to the shared registry builder.
- * @returns Disposables for the registered `vscode.lm` tool bindings.
+ * @param host - Optional stored-run reader; `readBudget`, read at each call (the user's discovery
+ *   caps; the shipped defaults without it); and the `serialize` queue shared with the chat
+ *   registries, so a render never interleaves with a chat turn's commits.
+ * @returns The external tool source.
  */
-export function registerAiTools(
+export function createExternalToolSource(
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
   getPanel: () => vscode.WebviewPanel | undefined,
-  host?: { getStoredRun?: StoredRunReader },
-): vscode.Disposable[] {
-  const external = filterRegistry(
-    buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, host),
-    EXTERNAL_TOOL_NAMES,
-  );
+  host?: Pick<AiToolHost, 'getStoredRun' | 'serialize'> & { readonly readBudget?: () => TurnTokenBudget },
+): ExternalToolSource {
+  const serialize = host?.serialize ?? createEffectSerializer();
+  return {
+    tools: EXTERNAL_TOOL_DEFS,
+    invoke: async (name, input, signal) => {
+      if (!EXTERNAL_TOOL_NAMES.has(name)) throw new Error(`No external lineage tool "${name}"`);
+      const registry = buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, {
+        getStoredRun: host?.getStoredRun, signal, caller: 'external', serialize, budget: host?.readBudget?.(),
+      });
+      return registry.invoke(name, input);
+    },
+  };
+}
 
-  return external.getTools().map((tool) =>
+/**
+ * Registers the external lineage tools with `vscode.lm` for other VS Code agents.
+ *
+ * @remarks
+ * `package.json` contributes exactly {@link ExternalToolSource.tools} (generated by
+ * `scripts/generate-tool-manifest.mjs`) — a contributed entry with no `registerTool` binding is a
+ * broken tool, not merely an unused one. Native `@lineage` dispatch keeps the full catalog and does
+ * not use these registrations. A rejection is thrown as an `Error` whose message is the reason and
+ * the hint, the way the VS Code tools guide asks ("throw an error with a message that makes sense
+ * to the LLM"); the host shows it to the calling model as the tool's failure, and a result is a
+ * success with the tool's JSON text.
+ *
+ * @param source - The shared external tool source.
+ * @returns Disposables for the registered `vscode.lm` tool bindings.
+ */
+export function registerAiTools(source: ExternalToolSource): vscode.Disposable[] {
+  return source.tools.map((tool) =>
     vscode.lm.registerTool(tool.name, {
       prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel(tool.name, options.input) }; },
       async invoke(options, token) {
         const abort = tokenToAbortSignal(token);
         try {
-          const requestRegistry = buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, { ...host, signal: abort.signal });
-          const text = await requestRegistry.invoke(tool.name, options.input);
+          const text = await source.invoke(tool.name, options.input, abort.signal);
+          const rejection = readToolErrorText(text);
+          if (rejection) throw new Error(rejectionProse(rejection));
           return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
         } finally {
           abort.dispose();

@@ -63,10 +63,6 @@ describe('traceNodeWithLevels — siblings and shortcuts', () => {
     expect([...traced.nodeIds].sort()).toEqual(['C1', 'C2', 'P1', 'P2', 'X']);
   });
 
-  it('excludes the grandparent, which sits at depth 2', () => {
-    expect(traceNodeWithLevels(graph(), 'X', 1, 1).nodeIds.has('GP')).toBe(false);
-  });
-
   it('includes every edge between traced nodes, the P1→C1 shortcut included', () => {
     const traced = traceNodeWithLevels(graph(), 'X', 1, 1);
     expect([...traced.edgeIds].sort()).toEqual(['P1→C1', 'P1→X', 'P2→X', 'X→C1', 'X→C2']);
@@ -178,7 +174,7 @@ describe('traceNodeWithLevels — virtual external nodes', () => {
 });
 
 
-describe('traceNodeWithLevels — Synapse dacpac', () => {
+describe('traceNodeWithLevels — SDK-style AdventureWorks dacpac', () => {
   it('never returns an edge whose endpoint is outside the traced node set', async () => {
     const model = await extractDacpac(readFileSync(testPath('AdventureWorks_sdk-style.dacpac')));
     const { graph } = buildGraph(model);

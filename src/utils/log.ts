@@ -6,6 +6,7 @@
  * asynchronous boundaries of the extension, bridge, and engine.
  */
 import type { LogOutputChannel } from 'vscode';
+import { redactSecrets } from './redact';
 
 /**
  * Canonical categories used to tag extension log entries.
@@ -21,10 +22,11 @@ export type LogCategory =
   | 'Detail'
   | 'Bridge'
   | 'Filter'
-  | 'Storage';
+  | 'Storage'
+  | 'MCP';
 
 function normalizeLogMessage(msg: string): string {
-  return sanitizeForLog(msg);
+  return sanitizeForLog(redactSecrets(msg));
 }
 
 /** Removes stale manual category tags before the structured logger adds the canonical one. */
@@ -140,7 +142,8 @@ export const LOG_TRUNC_REJECTION = 1_000;
  *
  * Circular references and bigint values are represented explicitly. Objects whose
  * property access or serialization throws degrade to a stable marker so diagnostic
- * formatting can never suppress the user-facing operation it accompanies.
+ * formatting can never suppress the user-facing operation it accompanies. Credential-shaped
+ * text is removed before either the per-string or complete preview length limit is applied.
  */
 export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): string {
   try {
@@ -148,7 +151,7 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
     const serialized = JSON.stringify(value, (_key, candidate: unknown) => {
       if (typeof candidate === 'bigint') return `${candidate.toString()}n`;
       if (typeof candidate === 'string') {
-        return trunc(candidate, Math.max(32, Math.floor(max / 2)));
+        return trunc(redactSecrets(candidate), Math.max(32, Math.floor(max / 2)));
       }
       if (candidate && typeof candidate === 'object') {
         if (seen.has(candidate)) return '[Circular]';
@@ -156,12 +159,12 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
       }
       return candidate;
     });
-    if (serialized !== undefined) return trunc(sanitizeForLog(serialized), max);
+    if (serialized !== undefined) return trunc(normalizeLogMessage(serialized), max);
   } catch {
   }
 
   try {
-    return trunc(sanitizeForLog(String(value)), max);
+    return trunc(normalizeLogMessage(String(value)), max);
   } catch {
     return '[Unserializable]';
   }
@@ -173,7 +176,7 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
  * @param max - The maximum length (for string) or items (for array).
  * @returns The truncated value with overflow count.
  */
-export function trunc(val: string | any[], max: number): string {
+export function trunc(val: string | unknown[], max: number): string {
   if (Array.isArray(val)) {
     if (val.length <= max) return val.join(', ');
     return `${val.slice(0, max).join(', ')} \u2026 [+${val.length - max} more]`;

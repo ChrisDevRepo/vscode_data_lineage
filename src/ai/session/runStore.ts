@@ -20,6 +20,8 @@ import type { PresentationArtifact } from './types';
 export interface StoredAiRun {
   /** Fail-closed contract version of this record. */
   readonly schemaVersion: 1;
+  /** Absent on legacy records; current saves preserve literal identifier delimiters and URL identity. */
+  readonly nodeIdEncodingVersion?: 2;
   /** Identifier of the run that authored the presented view. */
   readonly runId: string;
   /** ISO timestamp of the save that produced this record. */
@@ -73,6 +75,7 @@ type RunStoreReader = {
  */
 const StoredAiRunSchema = z.object({
   schemaVersion: z.literal(1),
+  nodeIdEncodingVersion: z.literal(2).optional(),
   runId: z.string().min(1),
   savedAt: z.string(),
   origin: z.string().nullable().catch(null),
@@ -140,6 +143,7 @@ export function buildStoredRun(
   const ddlHashes: Record<string, string> = Object.fromEntries(scopeNodeIds.map(id => [id, hashDdl(getDdl(id))]));
   return {
     schemaVersion: 1,
+    nodeIdEncodingVersion: 2,
     runId,
     savedAt: new Date().toISOString(),
     origin: checkpoint.engineInternals?.initSnapshot?.origin ?? null,
@@ -164,6 +168,7 @@ export function buildLiveRun(artifact: PresentationArtifact | null): StoredAiRun
   if (!artifact?.runId || !checkpoint) return undefined;
   return {
     schemaVersion: 1,
+    nodeIdEncodingVersion: 2,
     runId: artifact.runId,
     savedAt: new Date().toISOString(),
     origin: checkpoint.engineInternals?.initSnapshot?.origin ?? null,

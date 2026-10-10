@@ -258,7 +258,7 @@ class BuiltInSession implements DbSession {
     const result = await this.executeSimpleQuery(sql);
     const row = result.rows[0];
     const cell = (name: string): string => {
-      const at = result.columnInfo.findIndex((c) => c.columnName === name);
+      const at = result.columnInfo.findIndex((c) => c.columnName.toLowerCase() === name);
       return at >= 0 && row && !row[at].isNull ? row[at].displayValue : '';
     };
     const engineEditionId = Number.parseInt(cell('engine_edition'), 10) || 0;
@@ -270,6 +270,10 @@ class BuiltInSession implements DbSession {
       isCloud: CLOUD_ENGINE_EDITIONS.has(engineEditionId),
       serverEdition: cell('edition'),
     };
+  }
+
+  isOpen(): boolean {
+    return !this.closed && !this.failure;
   }
 
   async dispose(): Promise<void> {

@@ -49,6 +49,14 @@ export function isConsentGateRejection(code: string): boolean {
 }
 
 /**
+ * Whether a rejection-shaped result is an admission refusal: the request ends with the reason shown
+ * to the user, so it is a control outcome like a consent gate, not a correction the model owes.
+ */
+export function isAdmissionRefusal(code: string): boolean {
+  return code === REJECTION_CODES.overActiveScopeBudget;
+}
+
+/**
  * Zod view of the {@link makeRejection} shape, parsed once at the read boundary. Strict: the emitter
  * writes exactly these keys, so a success payload carrying any other key is never read as a rejection.
  */
@@ -116,6 +124,44 @@ export function readToolError(data: unknown): ToolRejection | null {
   return { ...rest, ...(detail !== undefined ? { detail } : {}) };
 }
 
+/**
+ * Reader over a tool's JSON text: the rejection it carries, or `null` for a result or text that is
+ * not JSON.
+ *
+ * @param text - Untrusted tool result text.
+ * @returns The rejection as {@link readToolError} returns it, or `null`.
+ */
+export function readToolErrorText(text: string): ToolRejection | null {
+  try {
+    return readToolError(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The reason line a reader meets for one rejection: the reason, unless it is only the code and a
+ * hint states the fault, so no reader meets a bare machine code.
+ *
+ * @param rejection - The rejection as {@link readToolError} returned it.
+ * @returns The reason as a one-entry list, or an empty list when the hint replaces it.
+ */
+export function rejectionReasonLines(rejection: ToolRejection): string[] {
+  return rejection.reason === rejection.code && rejection.hint !== undefined ? [] : [rejection.reason];
+}
+
+/**
+ * The text a model reads for one rejection outside the chat transcript (an MCP tool execution
+ * error, a thrown `vscode.lm` tool error): the reason ({@link rejectionReasonLines}) and the hint,
+ * each on its own line.
+ *
+ * @param rejection - The rejection as {@link readToolError} returned it.
+ * @returns The lines joined; never empty, since a rejection always carries a reason.
+ */
+export function rejectionProse(rejection: ToolRejection): string {
+  return [...rejectionReasonLines(rejection), ...(rejection.hint !== undefined ? [rejection.hint] : [])].join('\n');
+}
+
 /** Longest one dotted-path segment: an identifier, or an index. */
 const MAX_PATH_SEGMENT_CHARS = 100;
 /** One dotted-path segment: an identifier of at most {@link MAX_PATH_SEGMENT_CHARS} chars, or an index. */
@@ -156,7 +202,7 @@ export function makeRejection(input: {
 /**
  * Narrowed view of a Zod v4 `invalid_union` issue. Its `errors` field holds one sub-issue array per
  * union branch — the raw material {@link describeInvalidUnion} expands into a per-branch required-
- * field breakdown. (Zod v4 renamed the v3 `unionErrors: ZodError[]` shape to `errors: $ZodIssue[][]`.)
+ * field breakdown.
  */
 type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 
@@ -497,7 +543,7 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
  * @remarks
  * Every applicable link, in this order: a refinement's own hint, an unrecognized key (removal is
  * unambiguous), a field absent outright (addition), a present value of the wrong JSON type, a present
- * value outside its enum, and an array outside its size bound. The links are schema-derived, so any caller composing its own reject
+ * value outside its enum, and a list or text outside its size bound. The links are schema-derived, so any caller composing its own reject
  * envelope gets the same repair intelligence {@link rejectionFromZodError} already gives. A hint
  * states the fault and the field repair only; the resend rule is appended once, last, by the caller.
  *
@@ -510,6 +556,7 @@ function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
  */
 export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   const hints = [
+    emptyArgumentsHint(error, input),
     issueOwnedRepairHint(error),
     unrecognizedKeyRepairHint(error, schema),
     missingFieldRepairHint(error, input, schema),
@@ -518,6 +565,20 @@ export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z
     sizeBoundRepairHint(error),
   ].filter((hint): hint is string => hint !== undefined);
   return hints.length > 0 ? [...new Set(hints)].join(' ') : undefined;
+}
+
+/**
+ * Diagnosis for a call that arrived with no arguments at all: the VS Code host hands an extension
+ * `{}` when the model's argument text could not be read (a call cut off at the output limit, for
+ * one), so the model is told that the whole call was lost, not that it chose to omit fields.
+ *
+ * @returns The diagnosis when `input` is an empty object and the schema reported a missing field;
+ * `undefined` otherwise.
+ */
+function emptyArgumentsHint(error: z.ZodError, input: unknown): string | undefined {
+  if (input === null || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length > 0) return undefined;
+  const missing = error.issues.some((issue) => issue.code === 'invalid_type' && issue.path.length > 0);
+  return missing ? 'The call arrived with no arguments at all, as happens when its text was cut off; send the complete call again in one reply.' : undefined;
 }
 
 /** Whether `issue` is a present value outside its accepted values, the issue kind {@link invalidValueRepairHint} states. */
@@ -571,41 +632,65 @@ function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
   return clauses.size > 0 ? [...clauses].join(' ') : undefined;
 }
 
+/** The fields of one clause, quoted and joined, so a repair always names what it applies to. */
+function quotedPaths(paths: Iterable<string>): string {
+  return [...paths].map((path) => `"${path}"`).join(', ');
+}
+
 /**
- * Repair hint for a present value of the wrong JSON type (an array sent as its stringified form).
+ * Repair hint for every present value of the wrong JSON type (an array sent as its stringified
+ * form, a number sent as text). One clause per expected shape, naming every field it applies to,
+ * so a call with several such faults gets a repair for each.
  *
- * @returns The type-directed hint naming the first such path, expected and received types;
- * `undefined` when no `invalid_type` issue has a present value.
+ * @returns The type-directed clauses; `undefined` when no `invalid_type` issue has a present value.
  */
 function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   if (input === undefined) return undefined;
+  const clauses = new Map<string, Set<string>>();
   for (const issue of error.issues) {
     if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
     const value = resolveAtPath(input, issue.path);
     if (value === undefined) continue;
     const nullNote = acceptsNullAt(schema, issue.path) ? ', or null when it does not apply' : '';
     const node = jsonSchemaNodeAt(schema, issue.path);
-    const example = issue.expected === 'object' && node ? JSON.stringify(exampleOf(node)) : undefined;
-    return `Send the ${issue.expected} directly${example ? `, shaped like ${example}` : ''}${nullNote}.`;
+    const example = issue.expected === 'object' && node ? `, shaped like ${JSON.stringify(exampleOf(node))}` : '';
+    const article = /^[aeiou]/i.test(issue.expected) ? 'an' : 'a';
+    const shape = `as ${article} ${issue.expected}${example}${nullNote}`;
+    clauses.set(shape, (clauses.get(shape) ?? new Set()).add(issue.path.join('.')));
   }
-  return undefined;
+  if (clauses.size === 0) return undefined;
+  return [...clauses].map(([shape, paths]) => `Send ${quotedPaths(paths)} ${shape}.`).join(' ');
 }
 
 /**
- * Repair action for an array outside its served size bound; the count and the bound ride on the
- * issue line.
+ * Repair action for every value outside its served size bound; the measured size and the bound
+ * ride on the issue line. A list is merged or extended; a text is shortened or filled, never cut by
+ * the engine. One clause per action, naming every field it applies to.
  *
- * @returns The action for the first `too_big` / `too_small` array issue; `undefined` when none is
- * present.
+ * @returns The actions for the `too_big` / `too_small` array and string issues; `undefined` when
+ * none is present.
  */
 function sizeBoundRepairHint(error: z.ZodError): string | undefined {
+  const clauses = new Map<string, Set<string>>();
   for (const issue of error.issues) {
     if (issue.code !== 'too_big' && issue.code !== 'too_small') continue;
-    if (issue.origin !== 'array' && issue.origin !== 'set') continue;
-    const path = issue.path.join('.');
-    return issue.code === 'too_big' ? `Merge or drop the surplus in "${path}".` : `Add the missing items to "${path}".`;
+    let action: [lead: string, tail: string] | undefined;
+    if (issue.origin === 'array' || issue.origin === 'set') {
+      action = issue.code === 'too_big' ? ['Merge or drop the surplus in', '.'] : ['Add the missing items to', '.'];
+    } else if (issue.origin === 'string') {
+      action = issue.code === 'too_big'
+        ? ['Shorten', ` to at most ${issue.maximum} characters; the engine never truncates authored text.`]
+        : ['Send', ` with at least ${issue.minimum} character${issue.minimum === 1 ? '' : 's'}.`];
+    }
+    if (!action) continue;
+    const key = JSON.stringify(action);
+    clauses.set(key, (clauses.get(key) ?? new Set()).add(issue.path.join('.')));
   }
-  return undefined;
+  if (clauses.size === 0) return undefined;
+  return [...clauses].map(([key, paths]) => {
+    const [lead, tail] = JSON.parse(key) as [string, string];
+    return `${lead} ${quotedPaths(paths)}${tail}`;
+  }).join(' ');
 }
 
 /**
@@ -657,17 +742,17 @@ function resolveAtPath(input: unknown, path: readonly PropertyKey[]): unknown {
 }
 
 /** Measured size of the received value in the unit the model reasons about; `undefined` when unmeasurable. */
-function measuredSize(value: unknown): string | undefined {
-  if (typeof value === 'string') return `${value.length} chars`;
-  if (Array.isArray(value)) return `${value.length} items`;
-  if (typeof value === 'number') return `${value}`;
+function measuredSize(value: unknown): { readonly amount: number; readonly text: string } | undefined {
+  if (typeof value === 'string') return { amount: value.length, text: `${value.length} chars` };
+  if (Array.isArray(value)) return { amount: value.length, text: `${value.length} items` };
+  if (typeof value === 'number') return { amount: value, text: `${value}` };
   return undefined;
 }
 
 /**
  * Composes one reason line for a size violation from the issue's own metadata plus the received
  * value: measured size and the bound. Falls back to the stock Zod message when the received value
- * is unmeasurable.
+ * is unmeasurable or meets the bound before a schema transform.
  */
 function describeSizeIssue(
   issue: Extract<z.core.$ZodIssue, { code: 'too_big' | 'too_small' }>,
@@ -675,8 +760,17 @@ function describeSizeIssue(
 ): string | undefined {
   const size = measuredSize(received);
   if (size === undefined) return undefined;
-  const bound = issue.code === 'too_big' ? `limit ${issue.maximum}` : `minimum ${issue.minimum}`;
-  return `${size}, ${bound}`;
+  const inclusive = issue.inclusive ?? true;
+  const limit = Number(issue.code === 'too_big' ? issue.maximum : issue.minimum);
+  const fails = issue.code === 'too_big'
+    ? (inclusive ? size.amount > limit : size.amount >= limit)
+    : (inclusive ? size.amount < limit : size.amount <= limit);
+  // A raw value inside the bound failed after a schema transform (a trimmed blank text): its measure would contradict the bound.
+  if (!fails) return undefined;
+  const bound = issue.code === 'too_big'
+    ? (inclusive ? `limit ${issue.maximum}` : `less than ${issue.maximum}`)
+    : (inclusive ? `minimum ${issue.minimum}` : `more than ${issue.minimum}`);
+  return `${size.text}, ${bound}`;
 }
 
 /** One dotted path per offending key; a key over {@link KEY_ECHO_MAX_CHARS} yields its container's path, never the key. */

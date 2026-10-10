@@ -24,6 +24,10 @@ const killSwitchUserData = fileURLToPath(
   new URL('./tests/fixtures/kill-switch-user-data', import.meta.url),
 );
 
+// Prepared per run by tests/tools/mcp-live.mjs (a throwaway copy, so runtime toggles never touch a tracked fixture).
+const mcpLiveUserData = process.env.MCP_LIVE_USER_DATA
+  ?? fileURLToPath(new URL('./tmp/mcp-live/user-data', import.meta.url));
+
 export default defineConfig([
   {
     ...shared,
@@ -39,6 +43,14 @@ export default defineConfig([
     // No provider fixture and a seeded user-data-dir: the lane proves the ai.enabled=false branch
     // as a real user reaches it — settings on disk before activation, not flipped at runtime.
     launchArgs: ['--disable-extensions', `--user-data-dir=${killSwitchUserData}`],
+  },
+  {
+    ...shared,
+    label: 'mcp-live',
+    files: 'out/test/tests/integration/mcp-live.test.js',
+    // Keeps the host alive with the MCP server on so tests/tools/mcp-live.mjs can drive it from outside.
+    // Debug level so the lane's log can be checked for the MCP actions the external client performs.
+    launchArgs: ['--disable-extensions', `--user-data-dir=${mcpLiveUserData}`, '--log=debug'],
   },
   {
     ...shared,

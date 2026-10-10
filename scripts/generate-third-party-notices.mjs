@@ -3,8 +3,8 @@
  *
  * Usage: `npm run build && node scripts/generate-third-party-notices.mjs`
  *
- * The package set is read from what the bundlers actually emit: the sourcemaps of the two
- * esbuild extension bundles (`out/*.js.map`) and the module list of a Vite webview build
+ * The package set is read from what the bundlers actually emit: the sourcemaps of the esbuild
+ * extension and MCP stdio proxy bundles (`out/*.js.map`) and the module list of a Vite webview build
  * (in memory, `write: false`). Dev tooling that never reaches a shipped bundle is not listed.
  * Everything above the `BEGIN GENERATED` marker (the vendored-code section) is kept.
  */
@@ -28,10 +28,13 @@ function addModulePath(rawPath) {
   if (idx < 0) return;
   const parts = absPath.slice(idx + marker.length).split(path.sep);
   const name = parts[0].startsWith('@') ? `${parts[0]}/${parts[1]}` : parts[0];
-  packageDirs.add(path.join(absPath.slice(0, idx + marker.length), name));
+  const dir = path.join(absPath.slice(0, idx + marker.length), name);
+  // A sourcemap may name a path inside a package's own source tree (`@scope/src/...`); only a
+  // directory with a package.json is a package.
+  if (fs.existsSync(path.join(dir, 'package.json'))) packageDirs.add(dir);
 }
 
-for (const mapFile of ['out/extension.js.map', 'out/extensionRuntime.js.map']) {
+for (const mapFile of ['out/extension.js.map', 'out/extensionRuntime.js.map', 'out/mcpStdioProxy.js.map']) {
   const abs = path.join(root, mapFile);
   if (!fs.existsSync(abs)) throw new Error(`${mapFile} missing — run \`npm run build\` first.`);
   const map = JSON.parse(fs.readFileSync(abs, 'utf8'));

@@ -4,8 +4,7 @@
  *
  * This module provides the infrastructure for:
  * - Loading and validating DMV (Dynamic Management View) queries from built-in or custom sources.
- * - Opening a {@link DbSession} through the provider the `dataLineageViz.database.connectionProvider`
- *   setting selects: the SQL Server (mssql) extension or the built-in connection.
+ * - Opening a {@link DbSession} through the configured built-in or mssql-extension provider.
  * - Executing queries with automated timeout handling and placeholder expansion.
  */
 
@@ -19,10 +18,7 @@ import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { notifyInfo, notifyWarning } from '../utils/notifications';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
 import { DbConnectionError, getConnectionProvider, type ConnectionErrorTarget, type ConnectionProviderId, type DbSession } from './db/dbSession';
-import {
-  MssqlApiError, createMssqlSession, isMssqlExtensionAvailable,
-  promptForMssqlConnection, reconnectMssqlConnection,
-} from './db/mssqlExtensionProvider';
+import { MssqlApiError, createMssqlSession, isMssqlExtensionAvailable, promptForMssqlConnection, reconnectMssqlConnection } from './db/mssqlExtensionProvider';
 import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
 import { describeConnection, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
@@ -359,9 +355,10 @@ function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnec
   const same = (a?: string, b?: string) => !a || !b || a.toLowerCase() === b.toLowerCase();
   const kind = storedAuthKind(stored.authenticationType);
   const host = parseServerInput(stored.server) ?? { server: stored.server };
-  const port = stored.port ?? host.port;
+  const defaultPort = host.server.includes('\\') ? undefined : 1433;
+  const port = stored.port ?? host.port ?? defaultPort;
   const matches = connections.filter((c) => c.server.toLowerCase() === host.server.toLowerCase()
-    && (!c.port || !port || c.port === port)
+    && (c.port ?? defaultPort) === port
     && (!kind || c.authenticationType === kind)
     && same(c.user, stored.user));
   return matches.find((c) => same(c.database, stored.database) && !!c.database) ?? matches[0];
@@ -547,7 +544,7 @@ export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnecti
  *
  * @remarks
  * Built-in connections are sockets this extension owns and are closed. A connection opened through
- * the mssql extension stays with that extension, as before provider selection existed.
+ * the mssql extension stays with that extension.
  */
 export async function releaseSession(session: DbSession): Promise<void> {
   if (session.provider === 'builtIn') await session.dispose();

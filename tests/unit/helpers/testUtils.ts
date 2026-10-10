@@ -45,13 +45,6 @@ export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   return extractDacpac(buffer);
 }
 
-/** Loads the public demo DACPAC the Extension Development Host opens via `openDemo`. */
-export async function loadDemoModel(): Promise<DatabaseModel> {
-  loadParseRules();
-  const buffer = readFileSync(rootPath('assets/demo.dacpac'));
-  return extractDacpac(buffer);
-}
-
 // ─── Parse Rules Loading ────────────────────────────────────────────────────
 
 /** Load parse rules from assets/defaultParseRules.yaml (single source of truth) */

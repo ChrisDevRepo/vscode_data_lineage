@@ -9,7 +9,7 @@ sandbox. Host-specific setup is in the last section.
 | Tier | Commands | Needs |
 |---|---|---|
 | Deterministic | `npm ci`, `npm run typecheck`, `npm run build`, `npm test`, `npm run gate`, `npm run package` | Git, Node.js `>=20`, npm `>=10`, npm registry access. No display, database, model provider or credentials. |
-| VS Code Electron | `npm run test:edh`, chat-UI fixture lane, `npm run test:gui:host` + `npm run test:gui:smoke` | Deterministic tier, plus a display (desktop session or virtual display), Electron runtime libraries, and download access to the pinned VS Code test build. |
+| VS Code Electron | `npm run test:edh`, `npm run test:mcp:live`, chat-UI fixture lane, `npm run test:gui:host` + `npm run test:gui:smoke` | Deterministic tier, plus a display (desktop session or virtual display), Electron runtime libraries, and download access to the pinned VS Code test build. |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live`/`badge` lanes | `AI_TEST_*` settings and network access to that provider. `badge` also needs a recorded successful live trace under `tmp/lm-trace/`. |
 | Database | `npm run test:db:smoke` | `DB_TEST_*` settings and network access to a disposable or demo SQL Server/Azure SQL database. |
 | Tracing export | `npm run test:ai:headless -- --langfuse` | `LANGFUSE_*` settings and network access to that Langfuse host. |
@@ -69,9 +69,9 @@ own commands once their settings are present.
 
 ## Host-Specific Setup
 
-### Claude Code cloud environment
+### Hosted cloud agent environment
 
-Verified on the Anthropic-hosted image (Ubuntu 24.04 x86_64, root, Node.js 22,
+Verified on a hosted Linux image (Ubuntu 24.04 x86_64, root, Node.js 22,
 npm 10). The image already contains Git, Node.js, npm and `xvfb`.
 
 Environment settings (cloud environment menu → **Edit**):
@@ -95,7 +95,7 @@ Environment settings (cloud environment menu → **Edit**):
 3. **Environment variables**: add only the `AI_TEST_*`, `DB_TEST_*` or
    `LANGFUSE_*` values for the optional tiers that environment should run. Use
    disposable or demo databases and test-only provider keys.
-4. **Secrets from Azure Key Vault** (optional): instead of storing a provider
+4. **Secrets from Azure Key Vault** (optional; an environment-level mechanism that repository tooling does not read: `KV_NAME` appears only in `.env.example` and here): instead of storing a provider
    key in `.env` or in the environment variables, set `KV_NAME` to the vault
    name and keep only non-secret settings such as `AI_TEST_PROVIDER`,
    `AI_TEST_ENDPOINT` and `AI_TEST_MODEL` as variables. The session's egress
@@ -105,11 +105,4 @@ Environment settings (cloud environment menu → **Edit**):
    never write it to `.env` or any other file, shell history or output. If
    the vault lookup fails or returns nothing, report the tier as not runnable.
 
-Rebuilding: a changed setup script or network setting rebuilds the cached image
-for new sessions; the cache also expires after about seven days. A session that
-is already running keeps its VM, so start a new session after changing the
-environment. The repository's dependencies are not part of the image: run
-`npm ci` in each new session, then the commands in
-[Verify A New Machine](#verify-a-new-machine). The session's VM is discarded
-after inactivity, so commit and push anything worth keeping, and expect
-`.vscode-test/` and `tmp/` (including recorded traces) to start empty.
+A changed setup script or network setting rebuilds the cached image for new sessions (it also expires after about seven days); a running session keeps its VM. Run `npm ci` in each new session, then [Verify A New Machine](#verify-a-new-machine). The VM is discarded after inactivity, so push anything worth keeping; `.vscode-test/` and `tmp/` start empty.

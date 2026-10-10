@@ -110,9 +110,7 @@ interface ToolbarProps {
   canStartNewScopedMode?: boolean;
   /** Whether Object View / Schema View can be toggled from the current view. */
   canSwitchGraphMode?: boolean;
-  /** Whether the graph is showing schema clusters only. */
-  isOverview?: boolean;
-  /** Explicit Object View / Schema View state. */
+  /** Object View / Schema View state; defaults to Object View. */
   graphMode?: GraphMode;
   /** Callback to switch between Object View and Schema View. */
   onGraphModeChange?: (mode: GraphMode) => void;
@@ -238,8 +236,7 @@ export const Toolbar = memo(function Toolbar({
   isModeLocked = false,
   canStartNewScopedMode = !isModeLocked,
   canSwitchGraphMode = !isModeLocked,
-  isOverview = false,
-  graphMode,
+  graphMode = 'full',
   onGraphModeChange,
   isExpandedSchemaViewActive = false,
   onResetExpandedSchemaView,
@@ -256,6 +253,7 @@ export const Toolbar = memo(function Toolbar({
   schemaViewSoftDisabled = false,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const isOverview = graphMode === 'overview';
   const [confirmingBack, setConfirmingBack] = useState(false);
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const analysis = useDropdown();
@@ -273,7 +271,7 @@ export const Toolbar = memo(function Toolbar({
   useKeyboardShortcut(SHORTCUT_KEYS.openHelp, () => setIsHelpOpen(true));
   useKeyboardShortcut(SHORTCUT_KEYS.toggleSchemaView, () => {
     if (!onGraphModeChange || !canSwitchGraphMode || schemaViewSoftDisabled) return;
-    onGraphModeChange(currentGraphMode === 'overview' ? 'full' : 'overview');
+    onGraphModeChange(isOverview ? 'full' : 'overview');
   });
   useKeyboardShortcut(SHORTCUT_KEYS.hideExpandedSchemaClusters, () => {
     if (isExpandedSchemaViewActive && onToggleExpandedSchemaClusters) onToggleExpandedSchemaClusters();
@@ -281,7 +279,6 @@ export const Toolbar = memo(function Toolbar({
 
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
-  const currentGraphMode = graphMode ?? (isOverview ? 'overview' : 'full');
   const graphModeDisabledReason = schemaViewSoftDisabled
     ? `Schema View is optimised for larger databases (threshold: ${overviewThreshold} objects)`
     : !onGraphModeChange
@@ -295,7 +292,7 @@ export const Toolbar = memo(function Toolbar({
         expandedSchemaStatusText(expandedSchemaCount),
         showExpandedSchemaClusters ? 'Schema clusters visible' : 'Schema clusters hidden',
       ]
-    : currentGraphMode === 'overview'
+    : isOverview
       ? ['View: Schema View', 'Graph is shown as schema clusters. Double-click a schema cluster to expand it.']
       : ['View: Object View', 'Graph is shown as individual object nodes.'];
 
@@ -360,12 +357,12 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
         <Tooltip content={graphModeDisabledReason ?? 'Schema View (S)'}>
           <Button
-            onClick={() => onGraphModeChange?.(currentGraphMode === 'overview' ? 'full' : 'overview')}
+            onClick={() => onGraphModeChange?.(isOverview ? 'full' : 'overview')}
             variant="icon"
-            className={currentGraphMode === 'overview' ? 'ln-btn-icon-active' : ''}
+            className={isOverview ? 'ln-btn-icon-active' : ''}
             disabled={!onGraphModeChange || !canSwitchGraphMode || schemaViewSoftDisabled}
             aria-label="Schema View"
-            aria-pressed={currentGraphMode === 'overview'}
+            aria-pressed={isOverview}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 7.5h15v5.25h-15V7.5ZM7.5 15.75h3.75M12.75 15.75h3.75M9.375 12.75v3M14.625 12.75v3" />
@@ -509,7 +506,7 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
 
         {/* Compact Expanded Schema View controls — persistent in Schema View so the expand/collapse action is always reachable. */}
-        {currentGraphMode === 'overview' && (onExpandAllSchemas || onResetExpandedSchemaView) && (
+        {isOverview && (onExpandAllSchemas || onResetExpandedSchemaView) && (
           <>
             <div className="w-px h-6 ln-divider" />
             {isExpandedSchemaViewActive && onToggleExpandedSchemaClusters && (

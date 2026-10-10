@@ -1,8 +1,8 @@
 /**
  * Lanes for the graph surface above the tracked fixture size.
  *
- * Nothing above ~150 objects had ever been executed: the largest fixture is 148 nodes, while
- * `maxNodes` admits 2000 and `renderLimit` renders up to 1500. These cover the build, the
+ * The largest tracked fixture is 148 nodes, while `maxNodes` admits 2000 and `renderLimit` renders
+ * up to 1500. These cover the build, the
  * object-limit refusal, the render-limit boundary, and — for the scoped surface, which returns
  * before the limit check — how many nodes an unbounded trace can actually put on the canvas.
  *

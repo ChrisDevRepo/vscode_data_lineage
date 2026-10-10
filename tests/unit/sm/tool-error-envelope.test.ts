@@ -198,4 +198,32 @@ describe("tool-error-envelope", () => {
     });
   });
 
+  describe('rejectionFromZodError: a string or number outside its bound', () => {
+    const schema = z.object({
+      name: z.string().max(8).trim().min(1, 'name is required'),
+      revision: z.number().int().positive().optional(),
+    });
+    const reject = (input: unknown) => rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema });
+
+    it('a string over its cap states the measured length and the shorten action once', () => {
+      const rejection = reject({ name: 'x'.repeat(20) });
+      expect(rejection.reason).toContain('20 chars, limit 8');
+      expect(rejection.hint).toContain('Shorten "name" to at most 8 characters; the engine never truncates authored text.');
+      expect(rejection.hint!.match(/Shorten/g)).toHaveLength(1);
+    });
+
+    it('a blank string keeps the schema message instead of a raw length that meets the bound', () => {
+      const rejection = reject({ name: '   ' });
+      expect(rejection.reason).toContain('name is required');
+      expect(rejection.reason).not.toMatch(/3 chars/);
+      expect(rejection.hint).toContain('Send "name" with at least 1 character.');
+    });
+
+    it('an exclusive bound is stated as exclusive', () => {
+      const rejection = reject({ name: 'ok', revision: 0 });
+      expect(rejection.reason).toContain('0, more than 0');
+      expect(rejection.reason).not.toContain('minimum 0');
+    });
+  });
+
 });

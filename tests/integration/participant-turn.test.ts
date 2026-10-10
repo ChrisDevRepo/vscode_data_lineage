@@ -61,10 +61,19 @@ suite('Participant turn — public API, no CDP', () => {
     const deadline = Date.now() + 60_000;
     let lastProbe = '';
     while (Date.now() < deadline) {
-      const result = await vscode.lm.invokeTool('lineage_search_objects', {
+      // A rejection reaches a vscode.lm caller as a thrown error; only the no-project one means "not yet".
+      const result = await Promise.resolve(vscode.lm.invokeTool('lineage_search_objects', {
         input: { query: 'Sales' },
         toolInvocationToken: undefined,
+      })).catch((error: unknown) => {
+        if (error instanceof Error && /no project is loaded/i.test(error.message)) return null;
+        throw error;
       });
+      if (!result) {
+        lastProbe = 'no project loaded';
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
       lastProbe = result.content
         .map((part) => (part as { value?: unknown }).value ?? '')
         .join('');

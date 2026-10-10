@@ -2,7 +2,8 @@
  * Graph-owned execution of one provider generation and its ordered tool-call batch.
  *
  * @remarks
- * This module deliberately contains no retry loop. It translates one immutable instruction plan,
+ * This module deliberately contains no retry loop; the graph owns the single connection-level
+ * retry (`runToolAttempt` in `graph.ts`). It translates one immutable instruction plan,
  * asks the model port for one side-effect-free generation, dispatches valid calls through the canonical
  * registry, and returns compact typed evidence. LangGraph decides whether to advance, retry, gate,
  * reroute, or terminate and stores only accepted observations, the append-only provider-native
@@ -18,7 +19,7 @@
  * identity and input hashes — read by dispatch, never rendered to the model.
  */
 import { createHash } from 'node:crypto';
-import { AIMessage, trimMessages } from '@langchain/core/messages';
+import { AIMessage, ToolMessage, trimMessages } from '@langchain/core/messages';
 import {
   messageContentToText,
   messageProviderParts,
@@ -28,7 +29,6 @@ import {
 } from '../model/modelPort';
 import { assertToolPairingWellFormed } from '../model/messageWellFormed';
 import type { TurnEventSink } from '../runtime/turnEventSink';
-import type { HeldSubmissionParts } from '../sm/smTypes';
 import {
   escapePromptText,
   formatProviderErrorDiagnostic,
@@ -47,13 +47,13 @@ import {
   DUPLICATE_CALL_ID_REPAIR_HINT,
   INVALID_TOOL_INPUT_REPAIR_HINT,
   makeRejection,
-  readToolError,
+  readToolErrorText,
+  rejectionReasonLines,
   type ToolRejection,
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { toolCallNotationFault } from '../support/toolCallNotation';
-import { heldSubmissionRepairHint } from '../tools/toolSchemas';
 import {
   contextBlockBytes,
   estimateTokens,
@@ -64,6 +64,7 @@ import type { IToolRegistry } from '../tools/registry';
 import type { ConverseInstructionPlan, InstructionPhase } from './instructionPlan';
 import { classifyRejectionCode } from '../tools/toolProvider';
 import { sanitizeForLog } from '../../utils/log';
+import { InternalInvariantError } from '../support/internalInvariant';
 import { isCancellationOutcome } from '../support/cancellation';
 import { safeIdentifier } from '../support/logIdentifier';
 
@@ -83,13 +84,9 @@ const DUPLICATE_READ_HINT = 'You already ran this call this hop; its result is i
  * @returns The restatement hint, or `undefined` when the held body is not an error envelope.
  */
 function heldErrorEnvelopeDuplicateHint(held: ToolAttemptObservation): string | undefined {
-  try {
-    const rejection = readToolError(JSON.parse(held.result));
-    if (!rejection) return undefined;
-    return `The held result for callId ${held.callId} is an error envelope (${rejection.code}): ${rejection.hint ?? rejection.reason}`;
-  } catch {
-    return undefined;
-  }
+  const rejection = readToolErrorText(held.result);
+  if (!rejection) return undefined;
+  return `The held result for callId ${held.callId} is an error envelope (${rejection.code}): ${rejection.hint ?? rejection.reason}`;
 }
 
 /**
@@ -118,8 +115,9 @@ function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number,
 
 /**
  * Model replies in a row without progress allowed in one logical phase/hop — the one stuck-step
- * stop; an attempt that adds an accepted observation restarts the count. A reply makes progress when it adds an accepted observation or ends the phase; empty, text-only,
- * duplicate and rejected replies do not.
+ * stop; an attempt that stores an accepted observation restarts the count. A reply makes progress
+ * when it stores an accepted result or ends the phase; empty, text-only, duplicate and rejected
+ * replies do not, and neither does a read whose result was refused storage for size.
  */
 export const MAX_TOOL_PROVIDER_CALLS = 3;
 
@@ -183,7 +181,15 @@ interface ToolAttemptRejection {
   readonly issuePaths?: string[];
   /** Offending entry ids the rejection names (`detail.entry_ids`). */
   readonly entryIds?: readonly string[];
+  /** Identity of the rejected call (tool and canonical input); a later call with the same key is an unchanged resend. */
+  readonly inputKey?: string;
 }
+
+/**
+ * Hint added to a rejection of a call identical to one this step already rejected: an unchanged
+ * resend is named as such, so the model acts on the named fields instead of repeating the call.
+ */
+export const IDENTICAL_RESEND_HINT = 'This call repeats, unchanged, a call this step already rejected; change the named field(s) before you send it again.';
 
 type ToolOutcomeIdentity = Pick<GeneratedToolCall, 'callId' | 'toolName'>;
 type ToolOutcomeData =
@@ -198,6 +204,7 @@ type ToolOutcomeData =
       readonly entryIds?: readonly string[];
     };
     readonly detail?: unknown;
+    readonly inputKey?: string;
   }
   | {
     readonly status: 'phase_closed';
@@ -220,6 +227,8 @@ export interface ToolAttemptObservation {
   readonly input: unknown;
   /** Private identity used to reuse an equivalent accepted read without dispatching it again. */
   readonly acceptedCallKey?: string;
+  /** Set when the body was refused storage for size: the observation holds no evidence and adds no progress. */
+  readonly refused?: true;
 }
 
 /** Ordered disposition of one provider-emitted call. */
@@ -259,13 +268,9 @@ export interface ToolAttemptResult {
   readonly error?: string;
   /** Secret-sanitized diagnostic retained for tracing and logs. */
   readonly providerError?: ProviderErrorDiagnostic;
+  /** Set when a failed generation had already streamed reply text to the chat; such a reply is never retried. */
+  readonly replyStreamed?: true;
 }
-
-/** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` when nothing was held. */
-export type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
-
-/** Holds the valid fields of a rejected `lineage_present_result` payload; returns the repair sentence, or `null` when nothing was held. */
-export type HoldRejectedPresentResult = (input: unknown, issuePaths: readonly string[]) => string | null;
 
 const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
 
@@ -277,7 +282,7 @@ export interface HeldDraftRepairContent {
   readonly sections: ReadonlyArray<{ readonly label: string; readonly start?: string }>;
 }
 
-/** Provider-neutral ingredients for one graph- or smoke-owned generation and dispatch batch. */
+/** Provider-neutral ingredients for one graph-owned generation and dispatch batch. */
 interface ToolGenerationAttemptInput {
   /** Fresh graph-compiled message projection for this attempt. */
   readonly messages: readonly ModelMessage[];
@@ -293,7 +298,7 @@ interface ToolGenerationAttemptInput {
   readonly phase: string;
   /** Derived instruction provenance attached to model-call evidence. */
   readonly instructionContext?: InstructionContext;
-  readonly priorObservations?: readonly ToolAttemptObservation[];
+  /** Cumulative state of the phase or hop; its observations seed read reuse and the evidence share. */
   readonly priorState?: ToolPhaseAttemptState;
   /** Recognizes a successful registry result that opens consent. */
   readonly detectGate?: (toolName: string, resultText: string) => unknown | null;
@@ -317,10 +322,6 @@ interface ToolGenerationAttemptInput {
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
   /** See {@link ToolAttemptExecutionOptions.presentResultRepairDraftContext}. */
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
-  /** See {@link ToolAttemptExecutionOptions.holdRejectedSubmission}. */
-  readonly holdRejectedSubmission?: HoldRejectedSubmission;
-  /** See {@link ToolAttemptExecutionOptions.holdRejectedPresentResult}. */
-  readonly holdRejectedPresentResult?: HoldRejectedPresentResult;
 }
 
 /**
@@ -329,12 +330,19 @@ interface ToolGenerationAttemptInput {
  * @remarks
  * Registry-dispatched rejections are captured by the observability decorator wrapping
  * `IToolRegistry.invoke`. A rejection raised here never reaches that decorator, so without this
- * hook the only failures the model was actually charged for would be invisible to a trace consumer.
- * Enumerated code and tool name only — the reason prose stays on
+ * hook those rejections, and the siblings closed without evaluation, would be invisible to a trace
+ * consumer.
+ * Tool name, enumerated code, charge status and issue paths only — the reason prose stays on
  * {@link ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
  * observability import.
  */
-export type SyntheticRejectionTrace = (rejection: { toolName: string; code: string }) => void;
+export type SyntheticRejectionTrace = (rejection: {
+  readonly toolName: string;
+  readonly code: string;
+  /** `rejected` is charged against the reply budget; `not_evaluated` is a sibling closed without evaluation, never charged. */
+  readonly status: 'rejected' | 'not_evaluated';
+  readonly issuePaths?: readonly string[];
+}) => void;
 
 /** Optional graph-owned state and diagnostics supplied when executing a compiled plan. */
 interface ToolAttemptExecutionOptions {
@@ -357,17 +365,6 @@ interface ToolAttemptExecutionOptions {
    * draft is held, in which case a present_result rejection carries no `held_draft` detail.
    */
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
-  /**
-   * Holds the valid parts of a schema-rejected `lineage_submit_findings` call in the session's held
-   * finding draft and names them, so the full resend keeps them by a keep value instead of their
-   * content. Returns `null` when nothing is held.
-   */
-  readonly holdRejectedSubmission?: HoldRejectedSubmission;
-  /**
-   * Holds the valid fields of a schema-rejected `lineage_present_result` call in the session's held
-   * draft and returns the repair sentence for the rejection hint, or `null` when nothing was held.
-   */
-  readonly holdRejectedPresentResult?: HoldRejectedPresentResult;
 }
 
 /** Serializable cumulative attempt state for one graph-owned logical phase or active hop. */
@@ -376,7 +373,7 @@ export interface ToolPhaseAttemptState {
   readonly phase: InstructionPhase;
   /** Monotonic physical-call count for the logical phase or hop. */
   readonly providerCalls: number;
-  /** Model replies in a row that added no accepted observation; bounded by {@link MAX_TOOL_PROVIDER_CALLS}. */
+  /** Model replies in a row that stored no accepted observation; bounded by {@link MAX_TOOL_PROVIDER_CALLS}. */
   readonly noProgressCalls: number;
   /** Accepted non-terminal facts retained for recovery attempts. */
   readonly observations: readonly ToolAttemptObservation[];
@@ -448,7 +445,8 @@ export function recordToolAttempt(
   terminalTool?: string,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
-  const noProgressCalls = attempt.observations.length === 0 ? state.noProgressCalls + attempt.providerCalls : 0;
+  const stored = attempt.observations.some(observation => !observation.refused);
+  const noProgressCalls = stored ? 0 : state.noProgressCalls + attempt.providerCalls;
   const observations = [...state.observations, ...attempt.observations];
   const rejections = [...state.rejections, ...attempt.rejections];
   const messages = [...state.messages, ...attempt.messages];
@@ -615,6 +613,22 @@ function withRepairHint(data: ToolOutcomeData, sentence: string): ToolOutcomeDat
   return { ...data, correction: { ...data.correction, hint: hint ? `${hint} ${sentence}` : sentence } };
 }
 
+/**
+ * Stamps a rejection with the call's identity and, when an earlier attempt of this step rejected
+ * the identical call, names the resend as unchanged.
+ */
+function withResendIdentity(
+  data: ToolOutcomeData,
+  call: ToolOutcomeIdentity & { readonly input?: unknown },
+  priorState: ToolPhaseAttemptState | undefined,
+): ToolOutcomeData {
+  if (data.status !== 'rejected') return data;
+  const inputKey = acceptedCallKey(call.toolName, call.input);
+  const repeated = priorState?.rejections.some(rejection => rejection.inputKey === inputKey) ?? false;
+  const named = repeated ? withRepairHint(data, IDENTICAL_RESEND_HINT) : data;
+  return named.status === 'rejected' ? { ...named, inputKey } : named;
+}
+
 function modelToolDefinitions(registry: IToolRegistry<string>): ModelToolDefinition[] {
   return registry.getTools().map((tool) => ({
     name: tool.name,
@@ -670,25 +684,21 @@ function rejectionFromInvalid(
 }
 
 function rejectionFromResult(resultText: string): ToolOutcomeData | null {
-  try {
-    const rejection = readToolError(JSON.parse(resultText));
-    if (!rejection) return null;
-    return {
-      status: 'rejected',
-      code: rejection.code,
-      message: rejection.reason,
-      ...(rejection.detail !== undefined
-        ? { detail: boundStructuredValue(rejection.detail, MAX_REJECTION_DETAIL_BYTES) }
-        : {}),
-      correction: {
-        ...(rejection.hint ? { hint: rejection.hint } : {}),
-        ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
-        ...(rejection.entryIds ? { entryIds: rejection.entryIds } : {}),
-      },
-    };
-  } catch {
-    return null;
-  }
+  const rejection = readToolErrorText(resultText);
+  if (!rejection) return null;
+  return {
+    status: 'rejected',
+    code: rejection.code,
+    message: rejection.reason,
+    ...(rejection.detail !== undefined
+      ? { detail: boundStructuredValue(rejection.detail, MAX_REJECTION_DETAIL_BYTES) }
+      : {}),
+    correction: {
+      ...(rejection.hint ? { hint: rejection.hint } : {}),
+      ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
+      ...(rejection.entryIds ? { entryIds: rejection.entryIds } : {}),
+    },
+  };
 }
 
 /** Result recorded for one dispatched or synthesized call, ready to become its paired {@link ModelMessage}. */
@@ -712,7 +722,8 @@ interface RecordedToolOutcome {
  * reason states the identity fault; verified object-column inventories and the top-level fields to
  * correct are disclosed on the rejection the last budgeted reply answers. The last line states the replies the step has left, so
  * the remaining budget is known before it is spent. The code, issue paths and detail stay on the
- * paired `ToolMessage.artifact`.
+ * paired `ToolMessage.artifact`; the reason line follows {@link rejectionReasonLines}, so the model
+ * never reads a bare machine code as the message.
  */
 function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
   const repliesLeft = repliesLeftAfter(priorState);
@@ -726,7 +737,7 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
   const owed = finalRejection ? [...new Set((rejection.issuePaths ?? []).map(path => path.split('.')[0]))] : [];
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
-    rejection.reason,
+    ...rejectionReasonLines(rejection),
     ...inventories,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
@@ -754,7 +765,7 @@ function recordToolOutcome(
   calls: ToolAttemptCall[],
   observations: ToolAttemptObservation[],
   rejections: ToolAttemptRejection[],
-  trace?: (rejection: { toolName: string; code: string }) => void,
+  trace?: SyntheticRejectionTrace,
   priorState?: ToolPhaseAttemptState,
 ): RecordedToolOutcome {
   const outcome = { callId: call.callId, toolName: call.toolName, ...data } as ToolOutcome;
@@ -767,10 +778,11 @@ function recordToolOutcome(
         result: outcome.detail.result,
         input: outcome.detail.input,
         ...(outcome.detail.acceptedCallKey ? { acceptedCallKey: outcome.detail.acceptedCallKey } : {}),
+        ...(outcome.detail.refused ? { refused: true } : {}),
       });
     }
     if (outcome.detail.refused) {
-      const refusal = readToolError(JSON.parse(outcome.detail.result));
+      const refusal = readToolErrorText(outcome.detail.result);
       if (refusal) return { resultText: rejectionText(refusal), status: 'error', artifact: refusal };
     }
     return { resultText: renderObservationResultContent(outcome.detail.result), status: 'success' };
@@ -785,14 +797,20 @@ function recordToolOutcome(
       ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
       ...(outcome.correction.issuePaths ? { issuePaths: outcome.correction.issuePaths } : {}),
       ...(outcome.correction.entryIds ? { entryIds: outcome.correction.entryIds } : {}),
+      ...(outcome.inputKey ? { inputKey: outcome.inputKey } : {}),
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
     rejections.push(rejection);
-    trace?.({ toolName: outcome.toolName, code: outcome.code });
+    trace?.({
+      toolName: outcome.toolName,
+      code: outcome.code,
+      status: 'rejected',
+      ...(rejection.issuePaths?.length ? { issuePaths: rejection.issuePaths } : {}),
+    });
     return { resultText: rejectionText(rejection, priorState), status: 'error', rejection, artifact: rejection };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
-  trace?.({ toolName: outcome.toolName, code: outcome.rejection.code });
+  trace?.({ toolName: outcome.toolName, code: outcome.rejection.code, status: 'not_evaluated' });
   return { resultText: rejectionText(outcome.rejection), status: 'error', artifact: outcome.rejection };
 }
 
@@ -886,9 +904,6 @@ export async function executeToolAttempt(
     debugLog: options.debugLog,
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
-    holdRejectedSubmission: options.holdRejectedSubmission,
-    holdRejectedPresentResult: options.holdRejectedPresentResult,
-    priorObservations: priorState?.observations,
     priorState,
   });
 }
@@ -950,7 +965,7 @@ function emitSynthesizedRejection(
     + ` reason=${sanitizeForLog(rejection.reason)}`
     + ' issuePaths=none',
   );
-  input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code });
+  input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code, status: 'rejected' });
   const hasAttemptedTurn = messageContentToText(spec.attempted.content).trim().length > 0
     || messageProviderParts(spec.attempted).length > 0;
   const note = [
@@ -969,15 +984,17 @@ interface ToolCallDispatchLoopInput {
   /** One provider generation's ordered tool calls, dispatched in this same order. */
   readonly toolCalls: readonly GeneratedToolCall[];
   /**
-   * Earlier entries win on a duplicate key, mirroring the `[...priorObservations, ...observations].find(...)`
-   * scan order: earlier-attempt observations seed first, then this batch's own accepted reads fold in
-   * as they are recorded, and a key already present is never overwritten.
+   * Earlier entries win on a duplicate key: earlier-attempt observations seed first, then this
+   * batch's own accepted reads fold in as they are recorded, and a key already present is never
+   * overwritten.
    */
   readonly reusableObservations: Map<string, ToolAttemptObservation>;
   /**
-   * Keys already answered by an earlier generation: a resend of one of these is the model asking
-   * again for a result it holds, and is answered with a `duplicate_read` envelope instead of a
-   * silent replay it cannot see. Same-batch siblings stay silently reused.
+   * Keys answered by an earlier generation whose result is still in this request's transcript: a
+   * resend of one of these is the model asking again for a result it can read, and is answered with
+   * a `duplicate_read` envelope instead of a silent replay it cannot see. A key whose result was
+   * trimmed out of the transcript is absent, so its resend is answered with the held result again,
+   * like a same-batch sibling.
    */
   readonly priorObservationKeys: ReadonlySet<string>;
   /**
@@ -1007,9 +1024,8 @@ interface ToolCallDispatchLoopResult {
  * gate, reroute or phase completion makes every later sibling moot.
  *
  * @remarks
- * A pure move of {@link executeToolGenerationAttempt}'s per-call loop: the reusable-observation map and the prior-observation-key set are threaded through as explicit
- * parameters and the accumulated result, never captured only as a closure the caller cannot see.
- * Once `closedBy` closes the batch, every remaining sibling is recorded as
+ * The reusable-observation map and the prior-observation-key set are explicit inputs, and every
+ * outcome is returned in the accumulated result. Once `closedBy` closes the batch, every remaining sibling is recorded as
  * `phase_closed` without dispatch — that closure state is internal to this one
  * batch and does not survive past the return. A second call of a {@link ONE_CALL_PER_REPLY_TOOLS}
  * tool is recorded the same way, whatever became of the first, so it can neither be held as the
@@ -1020,7 +1036,8 @@ interface ToolCallDispatchLoopResult {
  * appends exactly one {@link ModelMessage} `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages},
  * so the caller's one leading `AIMessage` always pairs with the same number of tool results as it
  * has tool calls. A cancellation is the one exit that leaves later siblings unanswered; the caller
- * then appends no message group at all.
+ * then appends no message group at all. Held repair drafts are the handlers' alone: a call rejected
+ * before dispatch holds nothing, because no schema has checked it.
  *
  * @returns The batch's calls, observations, rejections, tool-result messages and terminal-control
  *   signals; never a provider transcript.
@@ -1083,17 +1100,12 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     if (!call.valid) {
       const rejected = rejectionFromInvalid(call, input.registry);
       const argumentRejected = isArgumentRejection(call.code);
-      const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
-      let resend: string | undefined = argumentRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
-      if (schemaRejected && call.toolName === SUBMIT_FINDINGS_TOOL && input.holdRejectedSubmission) {
-        const held = input.holdRejectedSubmission(call.input, call.issuePaths ?? []);
-        if (held) resend = heldSubmissionRepairHint(held);
-      } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
-        const repair = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []);
-        if (repair) resend = repair;
-        else if (input.presentResultRepairDraftContext?.()) resend = undefined;
-      }
+      // The resend rule presumes fields to keep; a call that had no readable fields gets its reason only.
+      const resend = argumentRejected && (call.code === REJECTION_CODES.toolCallNotation || (call.issuePaths?.length ?? 0) > 0)
+        ? INVALID_TOOL_INPUT_REPAIR_HINT
+        : undefined;
       let data = resend ? withRepairHint(rejected, resend) : rejected;
+      data = withResendIdentity(data, call, input.priorState);
       data = withHeldDraftDetail(data, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       const rejection = outcome.rejection!;
@@ -1161,7 +1173,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     );
 
     if (resultRejection) {
-      const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
+      const data = withHeldDraftDetail(withResendIdentity(resultRejection, call, input.priorState), call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName };
@@ -1236,6 +1248,7 @@ async function executeToolGenerationAttempt(
 ): Promise<ToolAttemptResult> {
   const beforeCalls = model.modelCalls;
   const streamText = input.proseGate !== 'buffer-until-tool';
+  let replyStreamed = false;
   assertToolPairingWellFormed(input.messages);
   const generated = await model.generateToolTurn({
     messages: input.messages,
@@ -1245,11 +1258,16 @@ async function executeToolGenerationAttempt(
     signal: input.signal,
     phase: input.phase,
     instructionContext: input.instructionContext,
-    ...(streamText ? { onTextDelta: (text: string) => input.sink.stream(text) } : {}),
+    ...(streamText ? {
+      onTextDelta: (text: string) => {
+        if (text.length > 0) replyStreamed = true;
+        input.sink.stream(text);
+      },
+    } : {}),
   });
   const providerCalls = model.modelCalls - beforeCalls;
   if (providerCalls > 1) {
-    throw new Error(`Single-generation model-port contract violated: ${providerCalls} provider calls in one graph attempt.`);
+    throw new InternalInvariantError(`Single-generation model-port contract violated: ${providerCalls} provider calls in one graph attempt.`);
   }
   if (generated.status === 'cancelled') {
     return { stop: 'cancelled', providerCalls, calls: [], observations: [], rejections: [], messages: [], text: '' };
@@ -1265,10 +1283,11 @@ async function executeToolGenerationAttempt(
       text: '',
       error: generated.error,
       providerError: generated.providerError,
+      ...(replyStreamed ? { replyStreamed: true as const } : {}),
     };
   }
   if (providerCalls !== 1) {
-    throw new Error(`Single-generation model-port contract violated: completed generation recorded ${providerCalls} provider calls.`);
+    throw new InternalInvariantError(`Single-generation model-port contract violated: completed generation recorded ${providerCalls} provider calls.`);
   }
 
   const missingRequiredTool = input.requiredTerminalTool !== undefined
@@ -1279,13 +1298,14 @@ async function executeToolGenerationAttempt(
 
   const reusableObservations = new Map<string, ToolAttemptObservation>();
   const priorObservationKeys = new Set<string>();
+  const deliveredCallIds = new Set(input.messages.flatMap(message => message instanceof ToolMessage ? [message.tool_call_id] : []));
   let heldObservationBytes = 0;
-  for (const observation of input.priorObservations ?? []) {
+  for (const observation of input.priorState?.observations ?? []) {
     heldObservationBytes += Buffer.byteLength(observation.result);
     const key = observation.acceptedCallKey;
     if (key === undefined || reusableObservations.has(key)) continue;
     reusableObservations.set(key, observation);
-    priorObservationKeys.add(key);
+    if (deliveredCallIds.has(observation.callId)) priorObservationKeys.add(key);
   }
 
   const batch = await dispatchToolCallBatch({
@@ -1310,7 +1330,7 @@ async function executeToolGenerationAttempt(
       emptyCode: REJECTION_CODES.emptyGeneration,
       nonEmptyCode: REJECTION_CODES.missingRequiredToolCall,
       emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
-      nonEmptyReason: 'No tool call was received; prose is discarded.',
+      nonEmptyReason: 'No tool call was received; the reply\'s text was not delivered.',
       hint: `Call \`${input.requiredTerminalTool}\` now, with its content as arguments.`,
       attempted: generated.message,
     });

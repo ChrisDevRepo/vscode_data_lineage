@@ -14,7 +14,7 @@ import { Logger } from './log';
  * Migrates legacy workspace-state connection metadata into the project store.
  *
  * The migration supports DACPAC and database connections, removes the legacy keys after
- * processing, and is safe to call when no legacy state exists.
+ * saving a valid connection, and is safe to call when no legacy state exists.
  *
  * @param onProjectsDropped - Receives the drop report when persisted records fail validation.
  *   This path rewrites global state, so anything validation discards here is lost permanently —
@@ -53,20 +53,19 @@ export async function migrateFromWorkspaceState(
     }
   }
 
-  if (connection) {
-    const name = generateProjectName(connection);
-    const project = createProject(name, connection);
-    const rawStore = context.globalState.get(PROJECT_STORE_KEY);
-    const store = migrateProjectStore(rawStore, (report) => {
-      logger.warn(
-        `Legacy migration rewrote the project store without ${report.dropped} unreadable record(s) — fields: ${report.issuePaths.join(', ') || 'unknown'}`,
-      );
-      onProjectsDropped?.(report);
-    });
-    const updated = updateProject(store, project);
-    await context.globalState.update(PROJECT_STORE_KEY, updated);
-    logger.info(`Migrated legacy connection to project "${name}"`);
-  }
+  if (!connection) return;
+  const name = generateProjectName(connection);
+  const project = createProject(name, connection);
+  const rawStore = context.globalState.get(PROJECT_STORE_KEY);
+  const store = migrateProjectStore(rawStore, (report) => {
+    logger.warn(
+      `Legacy migration skipped ${report.dropped} unreadable project(s) and ${report.droppedViews ?? 0} unreadable view(s) — fields: ${report.issuePaths.join(', ') || 'unknown'}`,
+    );
+    onProjectsDropped?.(report);
+  });
+  const updated = updateProject(store, project);
+  await context.globalState.update(PROJECT_STORE_KEY, updated);
+  logger.info(`Migrated legacy connection to project "${name}"`);
 
   await Promise.all([
     context.workspaceState.update('lastSourceType', undefined),

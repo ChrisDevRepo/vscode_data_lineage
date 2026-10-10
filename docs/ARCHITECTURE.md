@@ -41,13 +41,44 @@ Prompt and template behavior: [`AI_PROMPTS.md`](AI_PROMPTS.md).
   in the output templates. See [`AI_PROMPTS.md`](AI_PROMPTS.md).
 - Model tools pass through the local canonical registry, phase policy, and
   strict Zod dispatcher. Production does not route its own calls through
-  `vscode.lm.invokeTool`. `package.json` `languageModelTools` is the
-  read-effect subset of
-  [`src/ai/tools/toolDefs.ts`](../src/ai/tools/toolDefs.ts); mutating tools
-  (`lineage_get_scope_bundle`, `lineage_start_exploration`,
-  `lineage_submit_findings`, `lineage_present_result`) stay on the participant
-  dispatcher and are never `vscode.lm.registerTool`. Phase availability is
+  `vscode.lm.invokeTool`. Phase availability is
   [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
+- **Callers without a chat turn.** Other VS Code agents (`vscode.lm`) and MCP
+  clients (the localhost server in [`src/ai/mcp/`](../src/ai/mcp/)) reach the
+  same catalog, registry and handlers through one `createExternalToolSource` in
+  [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts).
+  - *Tool set:* the `external` stage of the tool policy (`EXTERNAL_TOOL_NAMES`):
+    the discovery reads, `lineage_get_scope_bundle` and `lineage_present_result`
+    (reads only while a chat turn runs). The hop tools
+    (`lineage_start_exploration`, `lineage_submit_findings`,
+    `lineage_get_neighbor_columns`) are chat-only. `package.json`
+    `languageModelTools` is generated from the same set; the MCP server is a
+    transport adapter with no tool logic.
+  - *Isolation:* external calls never write the chat's discovery scope, report,
+    phase, per-turn flags, held repair draft or hop log. Walks and views are
+    kept by opaque handle (newest 20 of each, cleared when the model changes):
+    `lineage_get_scope_bundle` returns a `scope_id`; `lineage_present_result`
+    draws exactly one `scope_id` as a new view, or edits one `view_id`
+    (`prune_node_ids`, `add_node_ids`), and returns the `view_id`. One effect
+    queue orders the state-changing calls of chat turns and external callers;
+    external rendering is refused while a chat turn runs.
+    Each caller's cancellation signal is checked before queue admission and when
+    its handler starts. A render checks cancellation before posting its preview
+    and after delivery settles, before retaining or amending the view; a preview
+    already posted cannot be withdrawn by a later cancellation.
+  - *Input contract:* projected from the chat's (`PresentResultExternalModelSchema`,
+    the catalog's `externalInputSchema`) with caller-neutral wording; the chat
+    stage schemas are unchanged. A rejected external render holds no draft; the
+    hint asks for the whole payload again.
+  - *Rejections:* over MCP a tool execution error (`isError: true`) whose text is
+    the reason and hint and whose `structuredContent` is the envelope (an unknown
+    tool or malformed request is a JSON-RPC error); over `vscode.lm` a thrown
+    `Error` with the same text.
+  - *Transport:* `dataLineageViz.mcp.enabled` is a kill switch — the MCP bundle
+    loads at activation only while it is on. Each endpoint start owns an in-memory
+    bearer token and publishes it only in its session-private discovery file.
+    The server binds `127.0.0.1`, validates `Host` and `Origin`, and rejects an
+    occupied port without takeover; it is not an OAuth resource server and has no remote binding.
 - **Model bridge.** `vscode.lm` has no system role, so
   [`toVscodeMessage`](../src/ai/model/vscodeLangChainBridge.ts) sends a
   `SystemMessage` to the model as a User turn. Tool choice is projected across
@@ -67,26 +98,24 @@ Model input crosses three layers, in this order:
   coerce a tool argument into its declared shape and resolve a model-written
   object reference against the loaded snapshot. Every rewrite is logged as
   `[Normalize] tool=… field=… from=… to=…`.
-- **Schema parse** — the tool's Zod schema, as served to the model for the hop, is
-  the structural contract. The canonical receiving boundary parses each call once against
-  it and answers a failure with `makeRejection` built from `z.prettifyError` (every
-  issue in one parse, a repeated issue collapsed, a size bound omitted where the
-  value already fails its type, the expected shape shown once, nothing echoed). For `submit_findings`, the serialized registry's receiving handler owns
+- **Schema parse** — the tool's Zod schema, as served to the model for the hop,
+  is the structural contract. The receiving boundary parses each call once and
+  answers a failure with `makeRejection` built from `z.prettifyError` (every
+  issue in one parse, repeats collapsed, the expected shape shown once, nothing
+  echoed). For `submit_findings` the serialized registry's receiving handler owns
   that raw parse before normalization, held-draft merging or engine mutation;
-  native and HTTP transport decoding does not perform a second parse. Direct typed
-  engine calls validate the separate internal finding shape against the same hop mode.
-  The `submit_findings` content caps are advertised
-  in the JSON schema but enforced in `NavigationEngine` (§Result and
-  presentation ownership), because an over-length field is a field-scoped content
-  error the engine rejects against its held draft with a repairable classification.
+  transports do not parse again. Direct typed engine calls validate the internal
+  finding shape against the same hop mode. The `submit_findings` content caps are
+  advertised in the JSON schema but enforced in `NavigationEngine` (§Result and
+  presentation ownership) as repairable, field-scoped rejections against the held
+  draft.
 - **Policy rejection** — phase- and state-dependent checks a schema cannot
-  express ([`src/ai/interaction/`](../src/ai/interaction/)), returned through
-  one shared error envelope. A code belongs in
+  express ([`src/ai/interaction/`](../src/ai/interaction/)), returned through one
+  shared error envelope. A code belongs in
   [`src/ai/support/rejectionCodes.ts`](../src/ai/support/rejectionCodes.ts) when
-  its wire `error` literal reaches the model on a second surface. Prose that
-  teaches a refusal without naming its code is not an emission site; a code
-  emitted only from `ROUTE_REJECTION_CODE` in `smRouteValidation.ts` stays
-  owned by that map.
+  its wire `error` literal reaches the model on a second surface; a code emitted
+  only from `ROUTE_REJECTION_CODE` in `smRouteValidation.ts` stays owned by that
+  map.
 
 Each receiving boundary owns its input shape. Do not apply the model's sections-object
 schema to the engine's sections-array contract or add a duplicate parser downstream.
@@ -94,29 +123,17 @@ schema to the engine's sections-array contract or add a duplicate parser downstr
 ## Component map
 
 ```mermaid
-flowchart LR
-    subgraph VSC[VS Code]
-        CHAT[Chat surface]
-        WV[React webview]
-    end
-
-    subgraph HOST[Extension host]
-        PART[Participant]
-        RUNTIME[LineageRuntime]
-        GRAPH[Outer LangGraph]
-        MODEL[Selected-model bridge]
-        TOOLS[Canonical tool registry]
-        NAV[NavigationEngine]
-        PANEL[Panel provider]
-    end
-
-    CHAT -->|request.model + request| PART
+flowchart TD
+    CHAT[Chat surface] -->|request.model + request| PART[Participant]
     PART -->|events and result| CHAT
-    PART --> RUNTIME --> GRAPH
-    GRAPH -->|one generation attempt| MODEL --> CHAT
-    GRAPH -->|phase-valid calls| TOOLS --> NAV
-    NAV -->|result graph| PANEL
-    PANEL <-->|validated messages| WV
+    PART --> RUNTIME[LineageRuntime]
+    RUNTIME --> GRAPH[Outer LangGraph]
+    GRAPH -->|one generation attempt| MODEL[Model bridge]
+    MODEL -->|vscode.lm| CHAT
+    GRAPH -->|phase-valid calls| TOOLS[Tool registry]
+    TOOLS --> NAV[NavigationEngine]
+    NAV -->|result graph| PANEL[Panel provider]
+    PANEL <-->|validated messages| WV[React webview]
 ```
 
 | Owner | Primary source | Responsibility |
@@ -138,47 +155,9 @@ flowchart LR
 
 ## Database connection providers
 
-Live ingestion opens one `DbSession` ([`src/engine/db/dbSession.ts`](../src/engine/db/dbSession.ts)) per
-operation through `connectDatabase` in [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
-The setting `dataLineageViz.database.connectionProvider` selects the implementation; the DMV and profiling
-code sees only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, `dispose`).
-
-- **`mssqlExtension`** (default) — [`mssqlExtensionProvider.ts`](../src/engine/db/mssqlExtensionProvider.ts) wraps the
-  mssql extension's connection API (legacy `connect` or saved profiles with connection sharing). Import sessions
-  stay with that extension and are not closed by this one (`releaseSession` is a no-op for them). The one
-  exception is the table-statistics session: negotiated once and reused for the panel's lifetime, it is
-  disconnected when the panel closes or another project loads.
-- **`builtIn`** — [`builtInProvider.ts`](../src/engine/db/builtInProvider.ts) opens a `tedious` connection loaded by
-  dynamic import and bundled by esbuild. It serializes requests, cancels on the wire when `dataLineageViz.dmvQueryTimeout`
-  elapses, returns the first result set, and is closed after the operation. Its `getServerInfo` runs the YAML
-  `platform-info` query from the panel's DMV query cache (reloaded by each import and when
-  `dataLineageViz.dmvQueriesFile` names another file), so platform detection does not retry it as a fallback. With this provider nothing looks up,
-  activates or calls the mssql extension, and `extensionDependencies` stays empty.
-- **Connection store** — [`connectionSettings.ts`](../src/engine/db/connectionSettings.ts) reads the application-scoped
-  array `dataLineageViz.database.connections` tolerantly and validates every write; the item schema has no password
-  property. Upserts and deletes rewrite the list one at a time through a module-level queue, so concurrent saves
-  never drop an entry. Passwords live in `SecretStorage` under `dataLineageViz.database.password.<id>`. Entra connections request a
-  `microsoft` session for `https://database.windows.net//.default` (plus `VSCODE_TENANT:<tenant>`) and pass the token to
-  the driver.
-- **Commands and wizard** — [`connectionCommands.ts`](../src/engine/db/connectionCommands.ts) registers add, edit,
-  remove and update-password; `addDatabaseConnection` also accepts a Zod-validated `{connection, password?}` argument
-  and then runs without prompts, except the certificate-trust confirmation when the argument turns trust on.
-  Update-password accepts only SQL login connections, whether picked or named by id; an Entra ID id is refused with a
-  warning and nothing is stored.
-- **Errors** — [`connectionErrors.ts`](../src/engine/db/connectionErrors.ts) is the one owner of connection failure
-  presentation for both providers. The message is `<connection name>: <original driver text>` with secrets redacted;
-  actions are chosen by error number, code or text pattern and are never retried automatically.
-- **Persistence** — `StoredConnectionInfoSchema` carries optional `provider` and `connectionId`; a record without
-  `provider` reads as `mssqlExtension`. When a stored record names a different provider than the setting, the setting
-  wins and one info message says so.
-- **Identifier comparison** — `DatabaseModel.identifierCaseSensitive` is enabled only by checked source catalog metadata. Database imports probe the effective collation of `sys.schemas.name`; data/column or server collation does not establish identifier comparison. DACPAC imports read the model's explicit case comparator and catalog-collation options, including Azure's separate catalog setting. Missing or ambiguous metadata retains the existing CI normalization and IDs. Verified CS imports retain exact object/schema/column identities through catalog, dependencies, AI routing, checkpoints and the webview. Existing CI bookmarks keep their IDs; an old checkpoint cannot reinterpret a previously collapsed object as a new CS identity.
-  Canonical IDs are comparison keys: CI folds casing, CS preserves casing, and both compare keys exactly. Object and column display names come from source metadata when available. Snapshots record their comparison policy; legacy snapshots without the flag remain CI. Historical recall uses the saved policy independently of the current model.
-  In a DACPAC ZIP, the inputs are in `model.xml`: `DataSchemaModel/@CollationCaseSensitive` and the `SqlDatabaseOptions` properties `CatalogCollation` and `Containment`. Repeated or conflicting options cannot enable CS. For live imports, the DMV platform query returns the catalog column's collation and `ComparisonStyle`; extraction validates that single metadata record before enabling CS.
-- **Dependency scanning** — The configured `maxNodes` governs model admission. SQL extraction has no per-rule match-count cutoff: every match contributes to dependency resolution. Validated rules must be global; the shared collector advances correctly after zero-width matches, including Unicode input, rather than dropping references after an arbitrary count.
-- **Webview** — `mssql-status` carries `provider`; while `mssqlExtension` is active the wizard shows an inline retirement
-  notice whose button posts `use-builtin-connection`, and the host sets the setting to `builtIn` globally.
-
-`src/ai` never imports these modules; the AI surface cannot open a connection.
+`src/ai` never imports the database connection modules; the AI surface cannot
+open a connection. Provider, connection-store and identifier-comparison
+contracts: [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md#database-connection-providers).
 
 ## Conversation lifecycle
 
@@ -245,10 +224,7 @@ offers for the last walk; one that reads the catalog without walking a scope
 drops the preview offer, so a preview never pairs an old scope with a new
 answer.
 
-Only a mechanical trigger opens SM entry: the `/trace` command, the user's
-SM-offer pill, or the discovery budget guard. Every free-text request, including
-one the detector classifies as `column_trace`, runs discovery first. When the
-scope exceeds the discovery budget on either metric — the node cap or the token
+When the scope exceeds the discovery budget on either metric — the node cap or the token
 budget — `lineage_get_scope_bundle` returns the bare `over_discovery_budget`
 rejection with the `scope_proposal` it measured. Graph dispatch treats that
 result as a reroute terminal: discovery is cut, the turn is handed to SM entry
@@ -316,14 +292,13 @@ The card summarizes engine-owned scope facts. **Show full plan** displays
 all in-scope objects, discovery context, and the source of each rule without a
 model call. The model cannot rewrite the card's scope facts.
 
-The native chat command buttons remain **Approve & Proceed**, **Change scope** and
-**Cancel**. A pending card releases the raising request so typed input reaches a new
-participant turn. Change scope focuses an unsent input; revision happens only after
-the user's text is submitted. Approve and Cancel show only their short action labels
-in native chat. The host retains and validates the clicked gate and revision before
-deterministic routing; backend instructions are not submitted as visible user text.
-Duplicate, malformed and stale clicks cannot approve another revision. Typed approval,
-scope changes and cancellation continue through the AI gate-reply classifier.
+A pending card releases the raising request so typed input reaches a new
+participant turn. Change scope focuses an unsent input; revision happens only
+after the user's text is submitted. The host validates the clicked gate and
+revision before deterministic routing, and backend instructions are never
+submitted as visible user text. Duplicate, malformed and stale clicks cannot
+approve another revision. Typed approval, scope changes and cancellation go
+through the AI gate-reply classifier.
 
 Depth is a required per-side shape in
 [`explorationDepthContract.ts`](../src/engine/shared/explorationDepthContract.ts).
@@ -351,8 +326,8 @@ purpose (seed BFS, routing, supplement, column-trace contraction).
 Its schema border is the exclusion set fixed at `init`: every schema the GUI
 selection hides is excluded by default, except the origin's own schema and any
 schema the proposal stopped excluding. Naming an origin in a hidden or
-excluded schema removes that schema from the exclusion set — the card lists it
-under "Filter removed" — so the schema's other objects are admitted under the
+excluded schema removes that schema from the exclusion set — the card states
+the effective filters — so the schema's other objects are admitted under the
 remaining borders. Naming an origin also drops its own id from
 `excludeNodeIds`. A type exclusion is copied through unchanged.
 
@@ -421,15 +396,25 @@ that hop is asked, never whether it happens. In CT, what a kept neighbor carries
 hop's `column_flow` — the columns `upstream_columns` names on it (and, on the
 downstream side, the explicit model-authored write mapping); a kept neighbor named
 in none is visited row-role-only. A node's inbox — every
-note on its incoming edges — is rendered as one templated block built only from
-recorded facts: the sender, the carrier, the columns, and the sender's verbatim
-question. The backend writes no summary, paraphrase, or question of its own
-into it. A note never causes a second visit. A prune of a visited, resolved-
+note on its incoming edges — is rendered in its `<current_task>` block: each
+sender's verbatim question as a `<sub_question>`, without the sender's id (a
+function hop's `hop_context` names its callers), and in CT the traced columns
+plus, on an upstream hop, `<lineage_questions>` continuation lines naming the
+source and destination columns. The backend adds text of its own: a generated
+`<sub_question>` for a neighbor the sender's `column_flow` carries to but did
+not name in `questions` (upstream it names the first carried column;
+downstream it lists every forwarded ref), a re-anchor sentence when a
+question passes through a non-bodied object to its bodied writer or reader
+(stored on the task beside the authored question, rendered on the line after
+it, and never archived as an incoming question for synthesis), and a note when a CT hop reaches a function with no carried columns and no
+declared columns. The sender's sections, prune reasons and the `transforms` and `note`
+of its column links are not rendered; its one-line summary appears only while
+it is among the last three in `<short_term_memory>`. A note never causes a
+second visit. A prune of a visited, resolved-
 removed, or queued neighbor is a no-op stated to the model in the next hop's
 `recent_rejections`. Naming the same resolved neighbor in `questions` and
 `prune_neighbors` rejects the complete submission before commit: the model must
-choose pruning or investigation. Older checkpoints with a pruned-question
-follow-up remain readable in saved records but are no longer offered. New
+choose pruning or investigation. New
 follow-up leads name relevant work beyond the approved schema, exclusion,
 direction or depth; an in-scope terminal passthrough creates no follow-up. A question on a
 queued neighbor joins that neighbor's inbox for its one visit; a question on a
@@ -493,11 +478,10 @@ every retained object has a directed path to the origin on an approved leg, or
 was added by a completed follow-up and is linked to the trace. A visited object
 is never removed by another object.
 
-For A → B ↔ C → D, with A/B already visited, C self-prune removes C and an
-exclusive unvisited D. If another surviving path reaches D, only C leaves.
-For A → B → C → D → E and B → X → D, pruning C retains D/E through X; pruning
-X later cuts D/E when that final arm leaves. An already removed arm does not
-provide support. A cut is logged (`[Cut] hop=N via=X dropped=[…]`) and recorded
+Example: for A → B → C → D → E and B → X → D, pruning C retains D/E through X;
+pruning X later cuts D/E. An already removed arm provides no support, and a
+self-pruned C removes an unvisited D only when no other surviving path reaches
+it. A cut is logged (`[Cut] hop=N via=X dropped=[…]`) and recorded
 as node state `bb_prune_neighbor` with the removing node.
 
 Tables and other non-bodied nodes are never visited: with no SQL body to read,
@@ -506,9 +490,7 @@ its bodied writers or readers (bipartite contraction), and readiness is
 computed on that contracted graph. Reader/writer relationships determine
 structural routing; they do not establish column attribution. Recorded column
 links and source-qualified unresolved questions retain their source identity
-when forwarded. A neighbor without column work still receives BB guidance. The model is never the owner of a
-completion flag; synthesis starts when the engine reaches its terminal
-condition.
+when forwarded. A neighbor without column work still receives BB guidance.
 
 Completion has one definition: the engine is `complete` when no agenda entry
 and no dispatched focus is left. A result is built only in that state;
@@ -520,32 +502,34 @@ graph change is produced from an incomplete run. A user cancel or the internal
 step limit also ends the turn without a result; the unfinished engine stays on
 the session until the next exploration replaces it.
 
-In column trace, column evidence does not create
-separate object-retention rules. Object decisions use the shared BB path;
-column links and unresolved source-qualified questions remain evidence for the
-model to interpret (§BB and column-trace modes). A retained branch with no carried
-column work is BB. Historical edges cannot reactivate CT across that gap; an
-independent live CT contribution to a shared object still survives. The same
-current-hop contract selects tools, findings schema, active instructions and
-pending lineage questions. Whole-run CT evidence remains available for synthesis.
-On an ordinary non-origin hop, an empty accepted `column_flow` ends forward
-column continuation; object neighbors remain subject to the shared BB retention
-and pruning rules. Initial source carry and explicitly bound scalar caller outputs
-retain their qualified context rather than acquiring an inferred replacement.
+In column trace, column evidence creates no separate object-retention rules:
+object decisions use the shared BB path (§BB and column-trace modes), and column
+links and unresolved source-qualified questions remain evidence for the model.
+A retained branch with no carried column work is BB; historical edges cannot
+reactivate CT across that gap, while an independent live CT contribution to a
+shared object survives. On an ordinary non-origin hop, an empty accepted
+`column_flow` ends forward column continuation. Initial source carry and
+explicitly bound scalar caller outputs keep their qualified context rather than
+acquiring an inferred replacement. Whole-run CT evidence remains available for
+synthesis.
 
 ### Synthesis and completed follow-ups
 
 Synthesis receives a fresh completion envelope containing the findings
-archive, node lifecycle, deferred questions, and CT provenance when present.
+archive (each slot with the sub-questions its hop received and the asking
+hop), the render id set, engine flow facts, and CT provenance when present.
+Section, depth and order rules live in the synthesis system prompt; the
+envelope carries engine facts and the coverage rules tied to its id lists.
 The AI authors structured presentation fields; the engine validates them,
 assembles the Markdown, derives badges, and commits the result graph.
 Contracted in-scope objects remain part of that graph and are labeled as
 retained supporting objects. New deferred follow-up work is relevant to the
 approved question and crosses a `schema`, `depth`, `direction`, or `excluded`
-boundary; the live engine records only those four lead reasons. Legacy
-`budget`, `contracted` and pruned lead reasons remain readable in saved
-records and are never offered. Eligible questions reach the completion
-envelope; an excluded target is offered with a new scope approval requirement.
+boundary. A resolved AI neighbor prune also records a `pruned_by_ai` lead
+carrying the sender's own reason; a vote that leaves the node in the graph
+dismisses it. Deferred questions and pruned branches
+feed the completed chat's follow-up suggestions and its open leads, not the
+report; an excluded target is offered with a new scope approval requirement.
 
 Completed follow-ups can update presentation, supplement the existing
 exploration with explicit nodes, begin a fresh exploration, or answer
@@ -571,31 +555,25 @@ the pruned connectors on its shortest path to the retained trace, in one action;
 an object with no path to the start even through pruned objects is refused.
 
 A follow-up that exhausts its correction budget still delivers the answer it
-already wrote, with a plain statement that the graph did not change — the
-mirror of synthesis's held-draft render: when synthesis's breaker trips with a
-held, repairable `lineage_present_result` draft, or the panel/preview dispatch
-fails after a committed result, the held draft's own intro, sections and
-closing render straight into the chat stream through the existing assembler,
-followed by one plain line that the AI preview could not be rendered; the
-cause is in the debug log and a warning toast is raised once, from the
-participant.
+already wrote, with a plain statement that the graph did not change. The same
+holds when synthesis's breaker trips with a held, repairable
+`lineage_present_result` draft, or when preview dispatch fails after a committed
+result: the held draft's intro, sections and closing render into the chat stream
+through the existing assembler, followed by one line that the AI preview could not
+be rendered; the cause is in the debug log and the participant raises one warning
+toast.
 
-A committed result's preview delivery is one of three named outcomes:
-`delivered` (the webview accepted the post), `no_panel` (no panel is open;
-delivery is deferred to the "Show in Graph" button and is not a failure) and
-`post_failed` (the post was refused or threw; the session is marked
-render-degraded by name). The outcome is recorded only after the turn's
-commit is accepted, and the latest present of a turn decides it: a delivered
-or deferred present clears a mark left by an earlier failed post. The chat
-text at the terminal follows the outcome.
-When delivered, the preview is on screen and chat carries the authored summary
-only. When the post failed, chat carries the summary followed by the whole
-assembled description (intro, sections, closing; object links as plain
-names), once, then the same
-failed-render line and toast; a result with no sections falls back to its
-summary, intro and closing. With no panel, chat carries the summary, intro and
-closing and the button stays. Nothing is cut and chat is never empty while the
-result carries authored text.
+A committed result's preview delivery has three named outcomes, recorded only
+after the turn's commit is accepted (the latest present of a turn decides, so a
+delivered or deferred present clears an earlier failed-post mark):
+
+| Outcome | Meaning | Chat carries |
+|---|---|---|
+| `delivered` | the webview accepted the post | the authored summary only |
+| `no_panel` | no panel open; deferred to the "Show in Graph" button, not a failure | summary, intro and closing |
+| `post_failed` | the post was refused or threw; session marked render-degraded | summary, the whole assembled description (object links as plain names), the failed-render line and the toast; a result with no sections falls back to summary, intro and closing |
+
+Nothing is cut and chat is never empty while the result carries authored text.
 
 ## Memory and state ownership
 
@@ -643,44 +621,71 @@ required terminal tool never streams model prose to the chat: a text-only
 finish there is a rejected attempt (`missing_required_tool_call`).
 
 Within one tool phase a rejection is answered by the rejected call's own tool
-result (code, reason, hint); only a generation that produced no tool call is
-followed by a user-role correction. A replayed assistant turn carries the
-provider's own stream parts (thinking parts and their signatures) verbatim
-ahead of its text and calls, so a provider that validates signatures on the
-current turn accepts the history. A read that an earlier generation already had
-accepted and the model asks for again is answered with a `duplicate_read`
-rejection naming the accepted call ID; a duplicate inside the same batch is
-reused silently. A phase stops after `MAX_TOOL_PROVIDER_CALLS` model replies in a row
-that add no accepted observation — rejected, duplicate, empty or text-only. An
-active hop also stops after `MAX_TOOL_PROVIDER_CALLS` replies whose
-`lineage_submit_findings` call was rejected or missing, whether or not those
-replies carried an accepted read.
+result (code, reason, hint); only a generation with no tool call is followed by
+a user-role correction. A replayed assistant turn carries the provider's own
+stream parts (thinking parts and signatures) verbatim ahead of its text and
+calls, so providers that validate signatures accept the history.
 
-A rejection is a check, not a repair: a value that fails its rule is rejected,
-never moved or rewritten to pass. The receiving-boundary normalization
-described above (identifier resolution, and decoding a structured argument
-sent as valid JSON text with `JSON.parse`) is the stated exception and is
-logged; text that is not valid JSON is rejected at its field, never completed. Each rejection of a tool call or of a missing
-call states the rule broken, the allowed form and the replies the step has
-left; the rejection the last reply answers also names the top-level fields to
-correct when the fault has a field path. A field that failed its check is not
-held, committed or served to a later hop. Every text value of every tool call
-the `@lineage` runtime dispatches is checked for tool-call notation
-(`<parameter name=…>`, `<invoke name=…>`, `</invoke>`, or a `</parameter>`
-that ends an argument) before dispatch. A call that carries it is rejected
-with code `tool_call_notation` at each offending field, naming the argument to
-send separately; the notation is never parsed or split, and no field of that
-call is held, because no schema has checked it. The read-only tools registered
-for other VS Code agents carry no such check. A backend-fault rejection closes
-its reply: later tool calls of the same reply are not executed.
+- *Duplicates:* a read an earlier generation already had accepted is answered with
+  `duplicate_read` naming the accepted call ID while that result is still in the
+  request's transcript; once trimming has dropped it, the held result is returned
+  again. A duplicate inside the same batch is reused silently.
+- *Reply limit:* a phase stops after `MAX_TOOL_PROVIDER_CALLS` consecutive replies
+  that store no accepted observation — rejected, duplicate, empty, text-only, or
+  a read refused storage for size (`result_too_large`, answered with a narrowing
+  hint). A discovery phase that stops this way is salvaged with one text-only
+  answer only when it holds an observation that is not such a refusal. An active
+  hop also stops after `MAX_TOOL_PROVIDER_CALLS` replies whose
+  `lineage_submit_findings` call was rejected or missing, accepted reads
+  notwithstanding.
+- *A rejection is a check, not a repair:* a value that fails its rule is rejected,
+  never moved or rewritten to pass. The stated exception is the logged
+  receiving-boundary normalization (identifier resolution; decoding a structured
+  argument sent as valid JSON text); text that is not valid JSON is rejected at
+  its field. Arguments that are not a JSON object are rejected
+  (`invalid_tool_input`) and replayed as `{}` so the tool result pairs (VS Code
+  already hands `{}` for a call cut off at the output limit; the schema rejection
+  then states the whole call was lost).
+- *Rejection text* states the rule broken, the allowed form and the replies the
+  step has left; the rejection the last reply answers also names the top-level
+  fields to correct when the fault has a field path. The model reads reason and
+  hint, never a bare code. A call identical to one this step already rejected
+  (same tool, same input after key ordering) is rejected again with the same text
+  plus an unchanged-resend line. A failed field is never held, committed or
+  served to a later hop; held repair drafts belong to the handlers, and a call
+  rejected before dispatch holds nothing.
+- *Tool-call notation:* every text value of every call the `@lineage` runtime
+  dispatches is checked for tool-call notation (`<parameter name=…>`,
+  `<invoke name=…>`, `</invoke>`, an argument-ending `</parameter>`). A hit is
+  rejected with `tool_call_notation` at each field, naming the argument to send
+  separately; the notation is never parsed or split and no field of that call is
+  held. Callers without a chat turn (`vscode.lm`, MCP) carry no such check.
+- A backend-fault rejection closes its reply: later calls of the same reply are
+  not executed.
+
+A generation that ends in a connection-level interruption before any reply
+(a reset, a timeout, an unreachable host, classified on the error code alone, or on an
+allowlisted `net::ERR_*` token when the host's network stack attaches no code)
+is retried once after a short wait; the retry's generation is the reply the
+step is charged for, and a second interruption or any provider verdict ends the
+turn as a provider error, recorded with the stop reason `provider_error` in
+every phase. The forced structured generations (the entry classification and the
+typed reply to a held proposal) follow the same contract: the port throws its
+`provider_error`, `no_permission`, `blocked` or `model_not_found` code, the graph
+retries one interruption and otherwise ends the turn with the plain-words provider
+text; an exception that is not a port provider failure is never reclassified. A broken runtime invariant (a transcript that lost
+its tool pairing, a port that recorded two provider calls for one attempt)
+ends the turn with the stable internal-error text; its developer message is
+logged, never shown.
 
 A stop is an error, logged with its reason. During active exploration both
 stop reasons — `no_progress` (the reply limit) and `backend_fault` — end the
 turn with a chat message naming the object, and produce no synthesis, no AI
 preview and no graph change. `backend_fault` covers rejections no model reply
 can correct (`engine_crash`, `invalid_status`, `no_active_session`,
-`stale_turn`, `internal_error`, `tool_execution_error`); the first one ends
-the run instead of being returned as a retry request. A synthesis stop renders
+`stale_turn`, `internal_error`, `tool_execution_error`, and
+`no_project_loaded`, whose stop text tells the user to open the project); the
+first one ends the run instead of being returned as a retry request. A synthesis stop renders
 no AI preview; on a reply-limit stop a held report draft is shown as chat
 text.
 
@@ -760,8 +765,15 @@ An empty `upstream_columns` in one entry does not end every other incoming
 column task in a nonempty partial finding. The origin can seed its
 requested output, including an explicit terminal write. Object traversal
 continues under the shared BB decisions.
-When a hop maps only some incoming columns, the remaining source-qualified
-column tasks stay unresolved and continue alongside the recorded outputs.
+When a hop maps only some incoming columns, the hop's column tasks are still
+resolved at commit. Downstream, an unmapped incoming column that still flows
+is forwarded to the consumers alongside the recorded outputs. Upstream, only
+`upstream_columns` refs attached to the requested outputs continue. In either
+direction, an incoming column missing from a nonempty `column_flow` is logged
+(`[Admit] guard=ct_completeness`) and, except on the final hop, returned as
+`unaccounted_columns` on the hop acknowledgement. The model does not read it
+because an accepted submission ends the hop; it is kept only in the debug log
+and the session hop log, and reaches neither a later hop nor synthesis.
 Mapped inputs are replaced by their outputs; an explicit terminal declaration
 ends that input's continuation.
 
@@ -778,6 +790,9 @@ continuation that reaches it stays a source-qualified unresolved question and
 its neighbors receive the shared BB visit. A column task without qualified
 endpoints is an engine invariant violation: its dispatch stops the run with the
 engine's error status, never a BB visit and never a continuation by a guess.
+A function hop whose caller SQL or task provenance changes after dispatch stops
+the same way on its first submission; the model is never asked to retry a
+condition no reply can repair.
 
 The backend owns routing, scope, lifecycle, and validation of recorded object
 and column references. It stores model-authored links and passes recorded
@@ -789,19 +804,17 @@ AI interprets their column semantics. Those relationships alone do not prove
 a column mapping. Missing evidence remains unresolved.
 
 Generated column continuations are derived from accepted, model-authored
-`column_flow` edges, not from an exhaustive scan of SQL or every metadata
-column. They name the upstream object and its own column, group output column names
-for that source, and are attached to the corresponding queued hop. Qualified
-destination identities remain in the edge records and caller context; the
-generated prose is not a complete inventory of those destinations. They do not
-invent a missing edge. The active task renders these continuations alongside
-AI-authored neighbor subquestions and the hop's resolved active columns.
-AI subquestions are supplemental checks and must be self-contained at their
-receiving focus; mentioning an origin output does not prove that a same-named
-column belongs to a neighbor. Qualified caller outputs and caller SQL remain
-separate binding evidence. The present renderer preserves both question sets
-but does not label either PRIMARY; documentation must not promise precedence
-or automatic completeness that is absent from the rendered instruction.
+`column_flow` edges, not from an exhaustive scan of SQL or metadata columns. They
+name the upstream object and its own column, group output column names per
+source, and attach to the queued hop; qualified destination identities stay in
+the edge records and caller context, and a continuation never invents a missing
+edge. The active task renders them beside AI-authored neighbor subquestions and
+the hop's resolved active columns. Subquestions are supplemental checks and must
+be self-contained at the receiving focus; mentioning an origin output does not
+prove that a same-named column belongs to a neighbor. Qualified caller outputs
+and caller SQL remain separate binding evidence. The renderer preserves both
+question sets without labelling either PRIMARY; do not promise precedence or
+automatic completeness it does not render.
 
 Object detail and hop context use shared object detail sections, including
 CTE evidence. A CTE is local SQL evidence for its owning object; it has no
@@ -891,18 +904,6 @@ functions keep their real output columns and ordinary column-routing contract.
 An unavailable or ambiguous SQL binding remains unresolved, including remote,
 opaque, or unloaded function bodies. This repair must preserve existing declared
 bindings and the scalar rule against synthetic return or parameter columns.
-Validation establishes caller identity and routing, not completeness of the
-model's SQL analysis. A delivered graph can retain every submitted contributor
-while still omitting a value input or row-selection dependency from the SQL.
-
-The frozen Fireworks comparison produced a SQL-correct caller declaration in
-the candidate; the control fabricated a function endpoint. The local comparison
-remained incomplete, and the OpenRouter comparison changed provider routing,
-so it cannot establish instruction causality. Offline replay with the recorded
-inputs retained every submitted edge through delivery, reusing an existing
-native function response rather than producing a new live completion. That
-response omitted the latest-rate `ValidFrom` selector, so this evidence does
-not establish complete SQL lineage.
 
 Checkpoints with scalar return carry or qualified task targets use
 `snapshotVersion: 2`; ordinary records remain version 1. The current decoder
@@ -917,31 +918,16 @@ expose the same structural neighbors and routing eligibility. A neighbor that
 only shapes rows is still explored under BB; column state does not narrow
 approved scope or silently end a write-sink branch.
 
-Operational sinks are described according to the answer's classification: a
-business answer can fold a run-audit sink into a short mention, a technical
-answer explains its mechanics, and `both` combines them. That presentation
-choice does not change retention.
+Operational sinks (run-audit and similar) are presented per the answer's
+classification — folded into a short mention for business, explained for
+technical, both for `both` — without changing retention.
 
 Graph parity and column-chain connectivity are separate verification concerns.
 Identical object decisions must yield identical BB and CT node sets, including
-column-less branches and write-only sinks. Column evidence must remain tied to
-its declared source and the traced origin. Independently generated model
-decisions are not proof of engine parity; deterministic comparisons must hold
-scope and object decisions fixed. Independent live runs may make different
-relevance choices; exact graph equality is a measured result, not a guarantee
-about model nondeterminism.
-
-The webview renders the result through engine-owned node types
-(`CustomNodeData`, `ColumnTraceNodeData` in
-[`src/engine/types.ts`](../src/engine/types.ts)); components import them, never
-the reverse. Display mode is derived once in
-[`src/engine/graphDisplayMode.ts`](../src/engine/graphDisplayMode.ts): a scoped
-surface (trace, path, or AI result) outranks Schema View, which outranks
-Object View. Expanded Schema View is schema-membership only
-([`src/engine/schemaProjection.ts`](../src/engine/schemaProjection.ts)) — it
-never becomes a lineage cone. Column Detail is a second rendering of the same
-approved scope ([`src/engine/columnTraceView.ts`](../src/engine/columnTraceView.ts)),
-not a parallel BFS.
+column-less branches and write-only sinks; column evidence stays tied to its
+declared source and the traced origin. Deterministic parity comparisons hold
+scope and object decisions fixed; independent live runs may make different
+relevance choices, so exact equality there is a measurement, not a guarantee.
 
 ## Result and presentation ownership
 
@@ -959,45 +945,50 @@ graph. A completed-phase `add_node_ids` or `prune_node_ids` edit commits its
 resolved node ids and edges to the result graph with the render, whether or
 not `is_update` is set, so the next render starts from the view the user saw.
 
-A `present_result` bound — a name, title, section label or highlight label's length,
-a blank required field, a repeated section label — is one Zod declaration on the
-model schema. The JSON schema the model reads states it as a typed constraint
-(`maxLength`, `maxItems`, `minLength`), and the `present_result` handler parses the
-raw call once against that same stage schema, rejecting a violation before
-normalization, held-draft merging or any session write. A repair's merged
-held-draft sections are then checked once against the shared section bound
-(`MergedSectionsSchema`). `validatePresentResult`
-keeps only what a schema cannot express: node-id resolution against the result
-graph and highlight, section and note coverage. Highlight labels are trimmed, must be nonempty, and have a
-60-character hard limit for GUI readability, with a soft authoring target of
-about 40 characters. An overlong label is rejected for shortening rather than
-truncated. A presentation needs at least one highlight group; group count has
-no upper bound. Color, node-ID and object-shape validation remain in the schema.
-`submit_findings` advertises its caps without parsing them:
-`badge_label` and `column_flow[].upstream_columns[].note` are checked in
-`NavigationEngine` ahead of every mutation as a repairable single-field
-rejection against a held finding draft. The retry resends the full call
-(`sections: {}` and `summary: ""` keep the held values) and names only the
-section angle it changes: `RepairDraftStore.mergeByKey` keeps every other held
-angle and an empty summary keeps the held one. Nothing is silently truncated on either path;
-engine-authored prose is fitted to the cap where it is written, never submitted
-over it.
+A `present_result` bound (a name, title, section label or highlight label length,
+a blank required field, a repeated section label) is one Zod declaration on the
+model schema, served as a typed constraint (`maxLength`, `maxItems`, `minLength`).
+The handler parses the raw call once against that stage schema, rejecting before
+normalization, held-draft merging or any session write; a repair's merged sections
+are then checked once (`MergedSectionsSchema`). `validatePresentResult` keeps only
+what a schema cannot express: node-id resolution against the result graph, and
+highlight, section and note coverage. Highlight labels are trimmed and nonempty
+with a 60-character hard limit (authoring target about 40); an overlong label is
+rejected for shortening, never truncated. A presentation needs at least one
+highlight group, with no upper bound.
 
-A held `present_result` repair merges `sections` by label through
-`RepairDraftStore.mergeByKey`: a resent section replaces the held section with
-that label, a new label appends, `{label, remove: true}` drops one, and every
-unnamed held section is kept as authored. A resent section may omit its
-stage's body field (`text`; `start` in the preview) or `node_ids` to keep the held
-values, and the hint names only the field the stage's schema accepts. The rejection shows the model the
-held section labels (with the start block of a preview section) and nothing the
-rejected call already carries. Structural repairs resend `notes` and
-`highlight_groups` as whole lists. A rejection confined to highlight labels
-instead authorizes `highlight_groups` objects with a zero-based `index` and
-replacement `label`. A rejection confined to section labels or text authorizes
-`sections` objects with an `index` and only the listed replacement fields.
-These indexed repairs preserve colors, node IDs, other text and array order.
-The assembled full report is validated before commit. A held draft is cleared
-only on success or turn reset, never by a failed retry.
+`submit_findings` advertises its caps without parsing them: `badge_label` and
+`column_flow[].upstream_columns[].note` are checked in `NavigationEngine` ahead of
+every mutation as a repairable rejection against a held finding draft. The focus
+id is checked before any held merge; a missing locked section angle, an over-cap
+field and every column, route or prune fault of one submission are reported in one
+rejection. Nothing is silently truncated; engine-authored prose is fitted to the
+cap where it is written.
+
+Held-draft repair merges through `RepairDraftStore.mergeByKey`; a held draft is
+cleared only on success or turn reset, never by a failed retry:
+
+- *`submit_findings`:* the retry resends the envelope and the corrected field
+  (`sections: {}`, `summary: ""` and an omitted `column_flow` keep the held
+  values) and names only the section angle it changes; other held angles are
+  kept. A failed `questions` or `prune_neighbors` entry is dropped while its valid
+  siblings stay held and merge with the retry by neighbor id. A failed
+  `column_flow` entry is dropped with every entry of its `out_col`, whatever its
+  `returns_to`; a resent entry replaces the held entries of its out_col,
+  `column_flow: []` clears the held flow, and resent entries lead the merged flow
+  so a path `column_flow.<i>` names the entry the model sent. A list whose every
+  entry failed is not held.
+- *`present_result`:* sections merge by label — a resent section replaces the held
+  one, a new label appends, `{label, remove: true}` drops one, unnamed held
+  sections are kept. A resent section may omit its body field (`text`; `start` in
+  the preview) or `node_ids` to keep the held values. The rejection shows the held
+  section labels (with a preview section's start block) and nothing the rejected
+  call already carries. Structural repairs resend `notes` and `highlight_groups`
+  whole; a rejection confined to highlight labels authorizes `highlight_groups`
+  objects with a zero-based `index` and replacement `label`, and one confined to
+  section labels or text authorizes `sections` objects with an `index` and only the
+  listed fields. Indexed repairs preserve colors, node IDs, other text and order.
+  The assembled full report is validated before commit.
 
 Every captured SQL fence served to synthesis carries an evidence id in its
 info string (```` ```sql S7 ````). Section text may reuse a block by writing
@@ -1006,7 +997,9 @@ same position and indentation, before validation, assembly and persistence,
 so committed text never depends on ids. A fence that carries an id and a body
 keeps the model's body; a reference to SQL the section already shows renders
 once; an unknown id is a repairable `sections` rejection. References are
-optional — SQL written out is never rejected.
+optional — SQL written out is never rejected. Ids number the detail slots of
+the completed run's render bound, stored with the result, so a later graph
+edit never renumbers them.
 
 Large model messages follow one pattern: content the engine already holds is
 referenced by id and assembled by the engine, never retyped by the model —
@@ -1037,8 +1030,15 @@ flags fail closed before graph/model invocation. The bundle gate checks that
 the real client is not shipped.
 
 Each model-port operation makes exactly one `vscode.lm.sendRequest` call. The
-extension does not add a transport retry, model fallback, or duplicate retry
-UI: VS Code owns Stop/cancellation and the native whole-request Retry action.
+graph retries a tool-phase or structured generation once, and only after a connection-level
+interruption classified on the error code (see the stop contract above);
+the retry is a second port operation, and the step is charged for it once. The
+extension adds no other transport retry, no model fallback, and no duplicate
+retry UI: VS Code owns Stop/cancellation and the native whole-request Retry
+action. A generation that had already streamed reply text to the chat is not
+retried, so a mid-reply reset never shows a reply twice; every tool phase
+currently buffers prose until a tool call, so its failed generations stream
+nothing.
 No generation is cut by the extension: the provider's own limits and the
 user's Stop end a call, however long a reasoning phase runs. Provider failures settle once
 through `ChatResult.errorDetails`; graph loops remain limited to semantic

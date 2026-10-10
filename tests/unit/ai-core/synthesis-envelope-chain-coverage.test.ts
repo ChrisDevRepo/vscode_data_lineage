@@ -25,10 +25,10 @@ function result(over: Partial<SmResult> = {}): SmResult {
   } as SmResult;
 }
 
-it('lists a kept chain object without a detail slot, and neither a slotted nor a pruned one', () => {
-  const reminder = buildSmCompletionEnvelope(result(), 'Where does Amount come from?', []).synthesis_reminder;
+it('lists a kept chain object without a detail slot, and neither a slotted nor a pruned one, and no slot id list', () => {
+  const reminder = buildSmCompletionEnvelope(result(), 'Where does Amount come from?').synthesis_reminder;
 
-  expect(reminder).toContain(`Link in \`sections[].node_ids\`: ${view}`);
+  expect(reminder).not.toContain(`Link in \`sections[].node_ids\`: ${view}`);
   expect(reminder.split('\n').at(-1)).toBe(`Link in \`sections[].node_ids\` or caption in \`notes[]\`: ${table}`);
 });
 
@@ -36,5 +36,5 @@ it('serves no coverage line when every chain object has a detail slot', () => {
   const slotted = result();
   slotted.detail_slots.push({ ...slotted.detail_slots[0]!, nodeId: table, schema: 'stage', type: 'table' });
 
-  expect(buildSmCompletionEnvelope(slotted, 'Where does Amount come from?', []).synthesis_reminder).not.toContain('or caption in');
+  expect(buildSmCompletionEnvelope(slotted, 'Where does Amount come from?').synthesis_reminder).not.toContain('or caption in');
 });

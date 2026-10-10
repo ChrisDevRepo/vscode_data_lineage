@@ -1,5 +1,6 @@
 import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type Graph from 'graphology';
+import { randomBytes } from 'node:crypto';
 import {
   modelAssistantMessage,
   modelUserMessage,
@@ -10,7 +11,7 @@ import { getGlobalSingleton } from '../../utils/globalSingleton';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { ColumnStore } from '../../engine/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
-import { type ResultGraph, type AiOutputTemplates, type AiOutputSections, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS } from '../session/types';
+import { type ResultGraph, type AiOutputTemplates, type AiOutputSections, type PresentationArtifact, type DiscoveryScopeArtifact, type ExternalScope, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS } from '../session/types';
 import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
@@ -20,7 +21,7 @@ import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import type { PresentResultInput, PresentResultRepairAuthorization } from '../tools/presentResult';
-import type { LmStage } from '../tools/toolPolicy';
+import type { ChatLmStage } from '../tools/toolPolicy';
 
 /** Reviewable exploration proposal. It has no active engine authority until approval. */
 export interface PendingExplorationProposal {
@@ -128,6 +129,20 @@ function renderDiscoveryTranscript(turns: readonly DiscoveryTranscriptTurn[]): s
   return JSON.stringify(turns.flat());
 }
 
+/** External scope walks and views kept per session; older handles are forgotten first. */
+const EXTERNAL_HANDLE_LIMIT = 20;
+
+/** Stores `value` under `key` as the newest entry, dropping the oldest beyond {@link EXTERNAL_HANDLE_LIMIT}. */
+function keepNewest<V>(entries: Map<string, V>, key: string, value: V): string {
+  entries.delete(key);
+  entries.set(key, value);
+  for (const oldest of entries.keys()) {
+    if (entries.size <= EXTERNAL_HANDLE_LIMIT) break;
+    entries.delete(oldest);
+  }
+  return key;
+}
+
 /**
  * Encapsulates the state and lifecycle of a single AI-driven lineage investigation.
  *
@@ -207,8 +222,20 @@ export class AiSession {
   public discoveryScopeArtifact: DiscoveryScopeArtifact | null = null;
   /** Latest validated presentation, retained for graph replay without another model call. */
   public presentationArtifact: PresentationArtifact | null = null;
+  /**
+   * Scope walks and rendered views of callers without a chat turn (`vscode.lm`, MCP), by handle.
+   *
+   * @remarks
+   * Separate from the chat's discovery scope, report, phase and per-turn flags, so an external walk
+   * or render never changes them. `lineage_get_scope_bundle` returns a `scope_id` and
+   * `lineage_present_result` a `view_id`; a render names the one it draws, so concurrent callers
+   * never draw each other's walk. The newest {@link EXTERNAL_HANDLE_LIMIT} of each are kept. Cleared
+   * when the loaded model changes ({@link clearExternalViews}); a new chat leaves them alone.
+   */
+  private readonly _externalScopes = new Map<string, ExternalScope>();
+  private readonly _externalViews = new Map<string, ResultGraph>();
   /** Exact LangGraph tool stage; the dispatcher must not infer this from the broader session phase. */
-  public activeLmStage: LmStage | null = null;
+  public activeLmStage: ChatLmStage | null = null;
   /**
    * Last `present_result` description string — consumed by `dataLineageViz.aiCreateView`
    * when re-posting the AI preview to the webview so the narrative survives panel reveal.
@@ -245,10 +272,6 @@ export class AiSession {
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
-  /** Last `present_result` failure reason captured this turn. */
-  private _presentResultLastFailureReasonThisTurn: string | null = null;
-  /** Last `present_result` failure reason captured in the current turn; `null` when none failed. */
-  public get presentResultLastFailureReasonThisTurn(): string | null { return this._presentResultLastFailureReasonThisTurn; }
   /** Held full `present_result` draft for narrow patch-only synthesis repair. */
   public readonly presentResultRepairDraft = new RepairDraftStore<
     PresentResultInput,
@@ -380,8 +403,8 @@ export class AiSession {
    * Mission-type classification inferred at end of discovery.
    *
    * @remarks
-   * Drives which subsections fire at synthesis. `business` omits the Technical
-   * subsection; `technical` renders technical content only; `both` renders both.
+   * Selects the business capture, technical capture, or both angles; synthesis merges
+   * their findings. Unspecified user intent is classified as business at proposal time.
    * `undefined` means classification has not yet been resolved for this session.
    */
   public classification?: ClassificationValue;
@@ -392,12 +415,7 @@ export class AiSession {
 
   /** Sequential log of tool calls and results for the current exploration. */
   public hopLog: HopLogEntry[] = [];
-  /**
-   * Per-wipe detail for this turn — the memory-leak waste basis the analytics layer needs.
-   * Each entry records WHY a wipe fired and how many threaded messages it discarded, so a
-   * regression in the sliding-wipe model (history growing instead of being replaced) is visible
-   * per-wipe in telemetry, not just as an aggregate count.
-   */
+  /** Per-wipe detail for this turn: why each wipe fired and how many threaded messages it discarded. */
   private _memoryWipeEventsThisTurn: MemoryWipeEvent[] = [];
   /** Read-only per-wipe memory diagnostics recorded in the current turn. */
   public get memoryWipeEventsThisTurn(): ReadonlyArray<MemoryWipeEvent> { return this._memoryWipeEventsThisTurn; }
@@ -456,7 +474,25 @@ export class AiSession {
    */
   public beginTurn(): number {
     this._turnEpoch += 1;
+    this._openTurnEpoch = this._turnEpoch;
     return this._turnEpoch;
+  }
+
+  /** Epoch of the chat turn still running, or `null` between turns. */
+  private _openTurnEpoch: number | null = null;
+
+  /** Whether a chat turn is running; external callers may then only read. */
+  public get chatTurnActive(): boolean {
+    return this._openTurnEpoch !== null;
+  }
+
+  /**
+   * Closes the chat turn opened by {@link beginTurn}.
+   *
+   * @param token - The epoch the closing turn captured; a superseded turn's close is a no-op.
+   */
+  public endTurn(token: number): void {
+    if (this._openTurnEpoch === token) this._openTurnEpoch = null;
   }
 
   /**
@@ -506,7 +542,6 @@ export class AiSession {
     this._presentResultAutoDispatched = false;
     this._presentResultAttemptCountThisTurn = 0;
     this._presentResultFailureCountThisTurn = 0;
-    this._presentResultLastFailureReasonThisTurn = null;
     this.presentResultRepairDraft.clear();
     this._synthesisRenderDegradedReason = null;
   }
@@ -576,7 +611,7 @@ export class AiSession {
   }
 
   /** Enters the exact tool-policy stage for one model call. */
-  public enterLmStage(stage: LmStage, token: number): SessionWriteOutcome {
+  public enterLmStage(stage: ChatLmStage, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'enterLmStage');
     if (guard.kind === 'accepted') this.activeLmStage = stage;
     return guard;
@@ -587,6 +622,41 @@ export class AiSession {
     const guard = this.guardTurnWrite(token, 'leaveLmStage');
     if (guard.kind === 'accepted') this.activeLmStage = null;
     return guard;
+  }
+
+  /**
+   * Keeps an external scope walk.
+   *
+   * @returns The opaque `scope_id` a render names to draw it.
+   */
+  public storeExternalScope(scope: ExternalScope): string {
+    return keepNewest(this._externalScopes, `scope-${randomBytes(4).toString('hex')}`, scope);
+  }
+
+  /** The external scope walk behind a `scope_id`, if it is still kept. */
+  public externalScope(scopeId: string): ExternalScope | undefined {
+    return this._externalScopes.get(scopeId);
+  }
+
+  /**
+   * Commits a view an external `lineage_present_result` rendered.
+   *
+   * @param viewId - The view an update edited; omitted for a new view.
+   * @returns The view's opaque `view_id`.
+   */
+  public commitExternalView(graph: ResultGraph, viewId?: string): string {
+    return keepNewest(this._externalViews, viewId ?? `view-${randomBytes(4).toString('hex')}`, graph);
+  }
+
+  /** The committed external view behind a `view_id`, if it is still kept. */
+  public externalView(viewId: string): ResultGraph | undefined {
+    return this._externalViews.get(viewId);
+  }
+
+  /** Drops every external scope walk and view, e.g. when the loaded model changes. */
+  public clearExternalViews(): void {
+    this._externalScopes.clear();
+    this._externalViews.clear();
   }
 
   /** Stores one canonical scope artifact if the producing turn still owns the session. */
@@ -988,12 +1058,11 @@ export class AiSession {
     return guard;
   }
 
-  /** Records one failed `present_result` invocation and its reason, if the calling turn still owns the session. */
-  public recordPresentResultFailure(token: number, reason: string): SessionWriteOutcome {
+  /** Counts one failed `present_result` invocation, if the calling turn still owns the session. */
+  public recordPresentResultFailure(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'recordPresentResultFailure');
     if (guard.kind !== 'accepted') return guard;
     this._presentResultFailureCountThisTurn += 1;
-    this._presentResultLastFailureReasonThisTurn = reason;
     return guard;
   }
 
@@ -1033,11 +1102,11 @@ export class AiSession {
     const prior = this.resultGraph;
     this.resultGraph = {
       nodeIds: fullResult.fullNodes.map(n => n.id),
+      evidenceNodeIds: fullResult.fullNodes.map(n => n.id),
       edges: fullResult.edges,
       source: sourceMode,
       originNodeId: fullResult.originNodeId,
       notes: prior?.notes,
-      suggested_sections: fullResult.suggested_sections,
       node_states: fullResult.node_states,
       description: prior?.description,
       summary: prior?.summary,
@@ -1093,12 +1162,10 @@ export class AiSession {
   }
 
   /**
-   * Records one per-turn memory wipe and updates its matching aggregate counter, guarded by the
-   * turn epoch.
+   * Records one per-turn memory wipe, guarded by the turn epoch.
    *
    * @remarks
-   * Feeds the analytics layer's per-wipe waste basis (see {@link memoryWipeEventsThisTurn}); a
-   * superseded "zombie" turn must not append to the event log a newer turn now owns, so the push
+   * A superseded "zombie" turn must not append to the event log a newer turn now owns, so the push
    * lands only while {@link token} still matches the live {@link turnEpoch}.
    *
    * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.

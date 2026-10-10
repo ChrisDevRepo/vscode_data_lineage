@@ -14,30 +14,7 @@ export class HarnessShimError extends Error {
   }
 }
 
-/** One notification production code raised during the run. */
-export interface RecordedNotification {
-  readonly severity: 'error' | 'warning' | 'information';
-  readonly message: string;
-}
-
-/** Every notification raised during the run, in order — a run-summary input, not a UI surface. */
-export const recordedNotifications: RecordedNotification[] = [];
-
 let logSink: (line: string) => void = () => {};
-let injectedSettings: ReadonlyMap<string, string> = new Map();
-
-/**
- * Injects setting values for {@link getConfiguration} to answer with instead of the caller's default.
- *
- * @remarks
- * Opt-in per key: a key absent from `settings` still falls through to the caller's default verbatim,
- * so an A/B run that injects nothing behaves byte-identically to today's shim.
- * @param settings - Values keyed by the full dotted `section.key`, e.g.
- * `dataLineageViz.ai.outputTemplateFile`.
- */
-export function setShimSettings(settings: ReadonlyMap<string, string>): void {
-  injectedSettings = new Map(settings);
-}
 
 /**
  * Routes shim-observed activity (notifications, ad-hoc output channels) into the run's `host.log`.
@@ -54,10 +31,7 @@ export function setShimLogSink(sink: (line: string) => void): void {
 export function getConfiguration(section?: string): Record<string, unknown> {
   const qualify = (key: string): string => (section ? `${section}.${key}` : key);
   return {
-    get: (key: string, defaultValue?: unknown): unknown => {
-      const qualified = qualify(key);
-      return injectedSettings.has(qualified) ? injectedSettings.get(qualified) : defaultValue;
-    },
+    get: (_key: string, defaultValue?: unknown): unknown => defaultValue,
     has: (): boolean => false,
     inspect: (): undefined => undefined,
     update: (key: string): never => {
@@ -88,9 +62,8 @@ class HarnessUri {
   }
 }
 
-function record(severity: RecordedNotification['severity']) {
+function record(severity: 'error' | 'warning' | 'information') {
   return (message: string): Promise<undefined> => {
-    recordedNotifications.push({ severity, message });
     logSink(`[shim] ${severity}: ${message}`);
     return Promise.resolve(undefined);
   };
@@ -126,9 +99,7 @@ const implemented: Record<string, unknown> = {
   // and therefore the loud-failure guarantee — intact through TypeScript's interop helper.
   __esModule: true,
   HarnessShimError,
-  recordedNotifications,
   setShimLogSink,
-  setShimSettings,
   Uri: HarnessUri,
   workspace: {
     getConfiguration,
@@ -149,8 +120,8 @@ const implemented: Record<string, unknown> = {
  * @remarks
  * Assigned over `module.exports` rather than declared with `export =` so this file can keep its own
  * named exports for harness callers while still handing `require('vscode')` a proxy. Plain named
- * exports alone would answer `undefined` for every unimplemented member, which is exactly the silent
- * gap Phase 0 exists to eliminate.
+ * exports alone would answer `undefined` for every unimplemented member, the silent gap this
+ * fail-closed proxy eliminates.
  */
 module.exports = new Proxy(implemented, {
   get: (target, property): unknown => {

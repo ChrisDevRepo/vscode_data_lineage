@@ -9,7 +9,7 @@ vi.mock('vscode', async importOriginal => {
 });
 
 import * as vscode from 'vscode';
-import { registerAiTools } from '../../../src/ai/tools/toolProvider';
+import { createExternalToolSource, registerAiTools } from '../../../src/ai/tools/toolProvider';
 import { AiSession } from '../../../src/ai/session/session';
 import type { DatabaseModel } from '../../../src/engine/types';
 
@@ -18,7 +18,7 @@ it('stops a registered search on its VS Code token without recording a model rej
   session.model = { nodes: [{ id: 'dbo.v', name: 'v', schema: 'dbo', type: 'view', bodyScript: 'a'.repeat(50_000) }], edges: [] } as unknown as DatabaseModel;
   const error = vi.fn();
   const channel = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error } as unknown as VSCode.LogOutputChannel;
-  const disposables = registerAiTools(() => session, channel, () => undefined);
+  const disposables = registerAiTools(createExternalToolSource(() => session, channel, () => undefined));
   const token = new vscode.CancellationTokenSource();
   const invocation = bindings.get('lineage_search_ddl')!.invoke!({ input: { query: '(a+)+x' }, toolInvocationToken: undefined }, token.token);
   const timer = setTimeout(() => token.cancel(), 100);

@@ -86,8 +86,14 @@ describe('aiPreviewDisplayFilter', () => {
   it('returns the selection unchanged when the filter carries no allowlist', () => {
     const selection = userSelection();
     expect(aiPreviewDisplayFilter(selection, true, modelSchemas)).toBe(selection);
+  });
+
+  it('keeps an explicitly empty AI scope while deriving its display filter', () => {
     const empty = userSelection({ allowlistNodeIds: new Set() });
-    expect(aiPreviewDisplayFilter(empty, true, modelSchemas)).toBe(empty);
+    const display = aiPreviewDisplayFilter(empty, true, modelSchemas);
+    expect([...display.schemas].sort()).toEqual([...modelSchemas].sort());
+    expect(display.allowlistNodeIds).toBe(empty.allowlistNodeIds);
+    expect(display.hideIsolated).toBe(false);
   });
 });
 
@@ -202,13 +208,10 @@ describe('traceSizeByDepth — BFS-only node count, no layout', () => {
     );
   }
 
-  it('matches traceNodeWithLevels node count for the given depths', () => {
-    expect(traceSizeByDepth(fanOut(), 'A', 0, 2)).toBe(4); // A, B, C, E (E is within 2 hops too)
-  });
-
   it('grows with downstream depth and includes the origin at depth zero', () => {
     expect(traceSizeByDepth(fanOut(), 'A', 0, 0)).toBe(1);
     expect(traceSizeByDepth(fanOut(), 'A', 0, 1)).toBe(3); // A, B, E
+    expect(traceSizeByDepth(fanOut(), 'A', 0, 2)).toBe(4); // A, B, C, E
     expect(traceSizeByDepth(fanOut(), 'A', 0, 3)).toBe(5); // A, B, C, D, E
   });
 

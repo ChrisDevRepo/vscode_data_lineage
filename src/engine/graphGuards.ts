@@ -3,10 +3,10 @@
  *
  * @remarks
  * Pure graph algorithms: accept graph + sets as parameters, no SM- or view-specific coupling.
- * Single source of truth for add/prune rules:
- * - Prune validation (orphan guard, cascade guard, disconnect guard)
- * - Node reference validation (reject hallucinated names)
- * - Bridge node injection (reconnect orphan noted nodes in result graph)
+ * Single source of truth for:
+ * - Shortest-path lookup in either direction
+ * - Undirected reachability under a removal set
+ * - Prune analysis (directed support before and after a removal, protected anchors)
  * - Direct-neighbor lookup (add must target an adjacent node)
  *
  * All BFS operations are O(V+E) — fast even for 10K+ node graphs.
@@ -214,42 +214,4 @@ export function directNeighborIds(
     if (side === 'out' && edge.source === nodeId) ids.push(edge.target);
   }
   return Array.from(new Set(ids));
-}
-
-/**
- * Generates a depth map for a directed graph starting from an origin node.
- *
- * @remarks
- * Depth is the minimum hop distance from the origin, used to sort nodes into stages/tiers
- * for report generation and visualization layout.
- *
- * @param edges - A flat list of directed edges [source, target, type].
- * @param originNodeId - The root node from which to calculate depths (depth 0).
- * @returns A map of node IDs to their respective depth. Unreachable nodes are excluded.
- */
-export function bfsDepthMap(
-  edges: ReadonlyArray<readonly [string, string, string]>,
-  originNodeId: string,
-): Map<string, number> {
-  const adj = new Map<string, string[]>();
-  for (const [s, t] of edges) {
-    let targets = adj.get(s);
-    if (!targets) { targets = []; adj.set(s, targets); }
-    targets.push(t);
-  }
-
-  const depth = new Map<string, number>();
-  depth.set(originNodeId, 0);
-  const queue = [originNodeId];
-  let idx = 0;
-  while (idx < queue.length) {
-    const id = queue[idx++];
-    const d = depth.get(id)!;
-    for (const nid of adj.get(id) ?? []) {
-      if (depth.has(nid)) continue;
-      depth.set(nid, d + 1);
-      queue.push(nid);
-    }
-  }
-  return depth;
 }

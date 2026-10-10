@@ -11,6 +11,7 @@ import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './b
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { registerConnectionCommands } from './engine/db/connectionCommands';
 import { loadDmvQueries } from './engine/connectionManager';
+import { DEFAULT_MCP_ENABLED } from './configCore';
 
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
@@ -30,6 +31,12 @@ export function registerCommands(
 
   return [
     ...registerConnectionCommands(context, outputChannel, () => loadDmvQueries(outputChannel, context.extensionUri)),
+    // The MCP bundle is not loaded while the server is off, so its kill switch is flipped here; a
+    // loaded controller applies the change at once, otherwise the configuration listener asks for the reload.
+    vscode.commands.registerCommand('dataLineageViz.toggleMcpServer', async () => {
+      const config = vscode.workspace.getConfiguration('dataLineageViz');
+      await config.update('mcp.enabled', !config.get<boolean>('mcp.enabled', DEFAULT_MCP_ENABLED), vscode.ConfigurationTarget.Global);
+    }),
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 

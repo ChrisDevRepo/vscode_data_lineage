@@ -124,8 +124,8 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
  *
  * @remarks
  * Composed exactly like every other stage — {@link buildHostStageSystemPrompt} — rather than
- * appending a directive of its own. Building the block here instead is what let the preview stage
- * drift out of the shared presentation contract while still being judged by it.
+ * appending a directive of its own, so the preview stage receives the same presentation contract
+ * it is validated by.
  */
 export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string {
   return buildHostStageSystemPrompt('visual_preview', ctx);
@@ -159,7 +159,13 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
   return [base, directive].join('\n\n');
 }
 
-/** Builds the system prompt for a same-turn revision of an already resolved proposal. */
+/**
+ * Builds the system prompt for a same-turn revision of an already resolved proposal.
+ *
+ * @remarks
+ * The patch contract — the revision to send, omitted fields keeping their reviewed values and the
+ * mission-brief exception — has one home, the trailing {@link buildGateRefinePrompt} message.
+ */
 export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
   const base = buildGeneralSystemPrompt(ctx);
   const directive = [
@@ -168,7 +174,6 @@ export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
     'The current proposal, revision, and requested edit are supplied in the trailing user message.',
     'Reuse canonical IDs already present there. Do not search for or re-resolve the unchanged origin.',
     'Use `lineage_search_objects` only when the requested edit needs resolution, such as a typo, ambiguous name, name pattern, or newly named object.',
-    'Call `lineage_start_exploration` with the current proposalRevision and only fields changed by the edit; an omitted field keeps the reviewed value, except mission_brief as the trailing message states.',
     'A successful patch re-emits the consent gate. That is expected control flow, not an error to retry around.',
   ].join('\n');
   return [base, directive].join('\n\n');

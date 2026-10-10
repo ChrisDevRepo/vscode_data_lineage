@@ -12,9 +12,10 @@
  * vscode-free; the snapshot carries roles and tail-truncated call ids only, never message content.
  */
 import { AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
+import { InternalInvariantError } from '../support/internalInvariant';
 
 /** Thrown when a message array would be rejected by the provider for a tool-pairing mismatch. */
-class MessageEnvelopeInvariantError extends Error {
+class MessageEnvelopeInvariantError extends InternalInvariantError {
   constructor(public readonly reason: string, public readonly snapshot: string) {
     super(`Message envelope invariant violated: ${reason} | snapshot=${snapshot}`);
     this.name = 'MessageEnvelopeInvariantError';

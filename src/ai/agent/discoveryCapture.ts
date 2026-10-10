@@ -24,9 +24,8 @@ const OBJECT_DETAIL_TOOL = 'lineage_get_object_detail';
  * @remarks
  * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
  * returns it for an oversized stored-run recall. Only an oversized *scope* request carries the
- * routing meaning: the user asked for a neighbourhood that has to be walked hop-by-hop. Matching on
- * the envelope alone turned "what did this run prune?" into a fresh exploration approval gate
- * instead of the recall rejection the model already reads.
+ * routing meaning: the user asked for a neighbourhood that has to be walked hop-by-hop. Any other
+ * tool's over-budget envelope stays a rejection the model reads, never an exploration approval gate.
  */
 const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 

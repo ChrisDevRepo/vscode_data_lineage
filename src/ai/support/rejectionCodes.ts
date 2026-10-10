@@ -11,9 +11,9 @@ export const REJECTION_CODES = {
   offPolicy: 'off_policy',
   /** `start_exploration` while the session's exploration is already live (one-shot per turn). */
   alreadyStarted: 'already_started',
-  /** Provider/SDK emitted the same tool-call id twice in one generation — a transport artifact, never charged to the model's semantic budget. */
+  /** Provider/SDK emitted the same tool-call id twice in one generation — a transport artifact outside the chat retry groups; a reply carrying only it still stores nothing, so it counts toward the reply limit. */
   duplicateCallId: 'duplicate_call_id',
-  /** Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport artifact, never charged to the model's semantic budget. */
+  /** Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport artifact outside the chat retry groups; the reply stores nothing, so it counts toward the reply limit. */
   emptyGeneration: 'empty_generation',
   /** A read call identical (after key canonicalization) to one accepted in an earlier attempt of the same phase; its result is already in the observations. Never charged. */
   duplicateRead: 'duplicate_read',
@@ -25,7 +25,7 @@ export const REJECTION_CODES = {
   invalidInput: 'invalid_input',
   /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
   notFound: 'not_found',
-  /** `supplement` was requested without a prior exploration in `complete` status to extend. */
+  /** `supplement` was requested without a prior exploration in `complete` status to extend; the next call is a fresh proposal, never a resend. */
   supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
   /** `supplement` named no node to extend; the repair is to answer, never to resend an empty list. */
   supplementEmpty: 'supplement_empty',
@@ -51,9 +51,9 @@ export const REJECTION_CODES = {
   ctFieldForbiddenInBb: 'ct_field_forbidden_in_bb',
   /** A tool requiring a live exploration session (`stateMachine`) was called with none active. */
   noActiveSession: 'no_active_session',
-  /** A tool ran with no model/graph loaded — the panel closed mid-turn, or no project was ever opened. */
+  /** A tool ran with no model/graph loaded — the panel closed mid-turn, or no project was ever opened. A backend fault: the run ends; a caller without a chat turn is told to open the project. */
   noProjectLoaded: 'no_project_loaded',
-  /** `proposalRevision` no longer matches the pending approval gate under refine. */
+  /** `proposalRevision` no longer matches the pending approval gate under refine; the next call copies the revision the gate shows, never a resend. */
   staleProposalRevision: 'stale_proposal_revision',
   /** Prune/column/question structural fault whose kind carries no specific code, or ≥2 distinct kinds in one submission (`ROUTE_REJECTION_CODE` fallback, `smRouteValidation.ts`). */
   routeValidationFailed: 'route_validation_failed',
@@ -87,7 +87,7 @@ export const REJECTION_CODES = {
   validation: 'validation',
   /** `submit_findings` reached an engine in a status other than `awaiting_findings` and not `complete` (`smBase.ts`). */
   invalidStatus: 'invalid_status',
-  /** `submit_findings` reached an engine whose exploration is already `complete` (`smBase.ts`). */
+  /** `submit_findings` reached an engine whose exploration is already `complete` (`smBase.ts`); the next call is `lineage_present_result`, never a resend. */
   explorationComplete: 'exploration_complete',
   /** `submit_findings.focus_node_id` is a real node other than the current hop focus (`smBase.ts`). */
   focusNodeIdMismatch: 'focus_node_id_mismatch',

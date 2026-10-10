@@ -18,6 +18,9 @@ export interface DiscoveryScopeArtifact {
   readonly edges: readonly [string, string, string][];
 }
 
+/** A scope walked by a caller without a chat turn; no turn owns it, so it carries no epoch. */
+export type ExternalScope = Omit<DiscoveryScopeArtifact, 'turnEpoch'>;
+
 /** Validated presentation committed by either a bounded preview or SM synthesis. */
 export interface PresentationArtifact {
   /** Display name of the presented view. */
@@ -48,10 +51,14 @@ export interface ResultGraph {
   source: string;
   /** The starting node ID of the exploration; used for topological sorting. */
   originNodeId?: string;
+  /**
+   * The completed run's render bound, fixed when the result is stored: the node set whose detail
+   * slots the completion envelope numbered evidence ids over. Graph edits never change it, so a
+   * later `present_result` resolves `S<n>` against the same numbering the model was served.
+   */
+  evidenceNodeIds?: readonly string[];
   /** AI-authored node captions from the latest `present_result.notes[]`. */
   notes?: Array<{ nodeId: string; summary: string }>;
-  /** AI-suggested grouping of nodes into narrative sections. */
-  suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /** Engine-owned lifecycle state for nodes; detail slots are content only. */
   node_states?: SmNodeState[];
   /** Engine-assembled markdown body from `present_result` (engine output, not AI input) — carries the full synthesized description, not just topology. */
@@ -113,16 +120,17 @@ export interface AiOutputTemplates {
    * Business-angle capture rules — fired at ACTIVE phase. Governs the body
    * of the section the AI submits with `angle: 'business'` per hop: meaning,
    * formulas, column renames, ⚠️ invariants, question-relevance evidence.
-   * The section body arrives at synthesis already formatted and is lifted
-   * verbatim into a peer entry of `present_result.sections[]`.
+   * The section body reaches synthesis in the completion envelope; the synthesis
+   * model writes `present_result.sections[].text` from it and may rephrase or drop it.
    */
   business_capture: string;
   /**
    * Technical-angle capture rules — fired at ACTIVE phase. Governs the body
    * of the section the AI submits with `angle: 'technical'` per hop:
    * verbatim SQL snippets, loading pattern, join types, antipatterns,
-   * distribution hints, DDL annotations. The section body arrives at
-   * synthesis already formatted and is lifted verbatim.
+   * distribution hints, DDL annotations. The section body reaches synthesis in the
+   * completion envelope; the synthesis model writes the report text from it, and only a
+   * ```sql fence cited by evidence id is expanded verbatim by the engine.
    */
   technical_capture: string;
   /**
@@ -136,7 +144,7 @@ export interface AiOutputTemplates {
   /**
    * Cross-section depth floor at SYNTHESIS. Conditional rendering directives
    * (column-rename tables, LaTeX formulas, code-fenced source guards, numbered
-   * state transitions) lifted across every section when the underlying capture
+   * state transitions) applied across every section when the underlying capture
    * material supports them. Always-on at synthesis; conditional-by-content.
    */
   general: string;

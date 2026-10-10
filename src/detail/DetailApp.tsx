@@ -59,12 +59,10 @@ window.addEventListener('error', (event) => {
  */
 export function DetailApp() {
   const vscodeApi  = useRef(_vscodeApi);
-  const nodeIdRef  = useRef<string | undefined>(undefined);
+  const nodeRef    = useRef<LineageNode | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
   const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('ddl');
-
-  nodeIdRef.current = detail?.node?.id;
 
   useEffect(() => {
     function handler(e: MessageEvent) {
@@ -81,19 +79,22 @@ export function DetailApp() {
       const msg = frame.data;
 
       if (msg.type === 'detail-update') {
-        setStatsState(prev => nodeIdRef.current !== msg.node?.id ? { phase: 'idle' } : prev);
+        if (nodeRef.current?.id !== msg.node.id) setStatsState({ phase: 'idle' });
+        nodeRef.current = msg.node;
         setDetail({
           node:      msg.node,
           findQuery: msg.findQuery,
           config:    msg.config ?? DEFAULT_DETAIL_CONFIG,
         });
       } else if (msg.type === 'detail-clear') {
+        nodeRef.current = undefined;
         setStatsState({ phase: 'idle' });
         setDetail(null);
-      } else if (msg.type === 'table-stats-result') {
-        setStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
-      } else if (msg.type === 'table-stats-error') {
-        setStatsState({ phase: 'error', message: msg.message });
+      } else if ((msg.type === 'table-stats-result' || msg.type === 'table-stats-error')
+        && msg.schema === nodeRef.current?.schema && msg.objectName === nodeRef.current?.name) {
+        setStatsState(msg.type === 'table-stats-result'
+          ? { phase: 'result', stats: msg.stats, mode: msg.mode }
+          : { phase: 'error', message: msg.message });
       }
     }
     window.addEventListener('message', handler);

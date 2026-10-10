@@ -6,7 +6,7 @@ SQL-body dependencies are extracted by a multi-pass regex engine driven by metad
 
 1. Command Palette → **Data Lineage: Create Parse Rules** copies the built-in YAML into your workspace.
 2. Set `dataLineageViz.parseRulesFile` to the path of the copy (search "dataLineageViz" in VS Code Settings).
-3. Edit, add, or disable rules. Invalid entries are skipped and logged; the extension shows a warning whenever any rule is skipped, not only when none remain valid.
+3. Edit, add, or disable rules. Invalid entries are skipped and logged; the extension shows a warning whenever any rule is skipped, not only when none remain valid. A custom file with no valid enabled rule falls back to the built-in rules, with a warning.
 4. Reload the model. Run `npm run test:parser` and review the resulting dependency edges against the affected SQL.
 
 ## Parsing pipeline
@@ -19,9 +19,13 @@ out of `INSERT`, `UPDATE` and `MERGE` so the target follows the keyword,
 removes the column list and `WITH` options of `CREATE [EXTERNAL] TABLE ... AS SELECT`
 so the name stands directly before `AS`,
 applies YAML rules in priority order, normalises captures, and resolves
-references against the loaded catalog. Bracketed identifiers and escaped
-brackets are preserved.
-File and URL rules inspect raw SQL because their values occur in string literals.
+references against the loaded catalog. Identifiers round-trip through their own
+delimiter escapes (`]]` in brackets, `""` in double quotes); canonical bracket
+IDs preserve literal delimiters under both CI and CS comparison.
+Before custom preprocessing, the parser also captures physical mutation facts
+for catalog-backed direction. DELETE/TRUNCATE remain separate from data-producing
+targets. File and URL rules inspect raw SQL because their values occur in string
+literals; matches inside comments are excluded.
 
 ## Rule schema
 
@@ -90,7 +94,7 @@ applied. Native DACPAC or DMV metadata may still supply dependencies.
 | `OPENDATASOURCE(...)...` | nothing is captured, including the four-part table name | Where the SQL dialect supports this syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | neither table is captured | partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list whose member is followed by `TABLESAMPLE`, or that continues with a comma after a `JOIN ... ON` condition or an `APPLY` | the list ends at that member, so tables after it are lost (table-variable members are not tables) | legacy bodies on any platform |
-| `DELETE` / `TRUNCATE TABLE` | no write is captured; the table named after `FROM` is read as a source, and `DELETE dbo.T` without `FROM` names nothing | by design: model building marks catalog-backed delete-only writes |
+| `DELETE` / `TRUNCATE TABLE` | no data-producing target is captured; parser mutation facts mark catalog-backed delete-only writes | by design: removal does not supply column values |
 | `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d` | `dbo.T` is read as a source; the delete-only write is not marked because the statement names only the CTE | any platform with CTEs |
 | Schema-less `EXEC uspA`, `FROM T`, `db..T` | not captured; only schema-qualified names resolve | by design: the parser does not choose a schema |
 | `EXEC db.schema.proc` / `EXEC server.db.schema.proc` | the cross-database call is not captured; the parse result has cross-database reads and writes but no cross-database call | SQL Server, Azure SQL Managed Instance |
@@ -124,19 +128,20 @@ Data Warehouse and Synapse Dedicated SQL Pool.
 | Synapse serverless SQL pool syntax, such as `OPENROWSET(...) AS r` with `r.filepath()` | not covered | not a supported platform |
 | Babelfish syntax, such as `pg_catalog.varchar` | not covered | not a supported platform |
 
-## XML fallback direction
+## Catalog dependency direction
 
-When the regex set misses a dependency that the dacpac XML or DMV catalog *does* report, the extension still emits the edge — direction inferred from the referenced object's type:
+The DACPAC XML or DMV catalog can supply dependencies absent from the configured
+captures. The graph builder binds those references to catalog objects; SQL
+classification comes only from the parser, with no second scan of the body.
 
 | Referenced type | Inferred edge | Rationale |
 |-----------------|---------------|-----------|
 | `procedure` | exec | An SP referencing another SP via metadata almost always `EXEC`s it. |
 | `function` | source | An SP referencing a function via metadata almost always reads from it. |
-| `table` / `external table` | source or target | The stored-procedure body is checked for a matching write verb; otherwise the reference is treated as a read. |
+| `table` / `external table` | source or target | Matching parser mutation facts determine write or delete-only direction; otherwise the reference is a read. |
 | `view` | source | Metadata-only view references are treated as reads. |
 
-Metadata fallback supplements the YAML, but it does not make static parsing
-complete. Unresolved schema-qualified references are included in DEBUG
+Catalog binding does not make static parsing complete. Unresolved schema-qualified references are included in DEBUG
 diagnostics and omitted from the graph.
 
 ## How to verify a rule change

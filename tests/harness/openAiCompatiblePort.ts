@@ -17,6 +17,8 @@ import {
   isPortCancellation,
   messageContentToText,
   modelToolCallMessage,
+  TOOL_ARGUMENTS_EMPTY_REASON,
+  TOOL_ARGUMENTS_NOT_OBJECT_REASON,
 } from '../../src/ai/model/modelPort';
 import {
   systemPromptHash,
@@ -27,6 +29,7 @@ import {
 import { toModelJsonSchema } from '../../src/ai/tools/jsonSchema';
 import {
   formatProviderErrorDiagnostic,
+  redactProviderSecrets,
   sanitizeProviderError,
   sanitizeProviderErrorDiagnostic,
 } from '../../src/ai/support/text';
@@ -80,9 +83,13 @@ export interface HttpRequestInit {
  * finished, surfacing as `UND_ERR_HEADERS_TIMEOUT`). When the `undici` package is resolvable
  * (transitively present via tooling dependencies), the port uses undici's own `fetch` with an
  * `Agent` whose `headersTimeout` and `bodyTimeout` equal the lane deadline, so the ONLY deadline
- * is the port's. Without undici, global `fetch` is kept and the 300 s header cap applies — the
+ * for a response is the port's. The TCP/TLS connect phase gets its own {@link CONNECT_TIMEOUT_MS}
+ * (undici's default is 10 s, too short for a congested egress path; a timeout there sends nothing). Without undici, global `fetch` is kept and the 300 s header cap applies — the
  * warning names it.
  */
+/** Connect-phase deadline (TCP + TLS) for the undici transport, capped by the lane deadline. */
+const CONNECT_TIMEOUT_MS = 30_000;
+
 function resolveTransport(
   timeoutMs: number,
   debugLog: ((message: string) => void) | undefined,
@@ -93,9 +100,13 @@ function resolveTransport(
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const undici = require('undici') as {
       fetch: (url: string, init: HttpRequestInit) => Promise<HttpResponseLike>;
-      Agent: new (options: { headersTimeout: number; bodyTimeout: number }) => unknown;
+      Agent: new (options: { headersTimeout: number; bodyTimeout: number; connect: { timeout: number } }) => unknown;
     };
-    const agent = new undici.Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+    const agent = new undici.Agent({
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
+      connect: { timeout: Math.min(timeoutMs, CONNECT_TIMEOUT_MS) },
+    });
     return {
       fetchImpl: (url, init) => undici.fetch(url, { ...init, dispatcher: agent }),
       dispatcher: agent,
@@ -199,15 +210,16 @@ export interface OpenAiRequestTuning {
    * @remarks
    * DeepSeek-family models reason by default, and with `stream: false` the time-to-first-byte is
    * the full reasoning duration (deepseek-ai/DeepSeek-V3#1464 measured 31.8s → 2.7s for the same
-   * call once thinking was disabled). The cancelled T6 run spent 150–182s per late hop generating
+   * call once thinking was disabled). A cancelled long trace run spent 150–182s per late hop generating
    * up to ~2,000 reasoning tokens per call; this field attacks exactly that.
    *
-   * Measured on 2026-08-07 (T6, deepseek-v4-flash): `{ enabled: false }` cut per-generation
+   * Measured on a long trace with deepseek-v4-flash: `{ enabled: false }` cut per-generation
    * latency ~10x but cost the model its ability to repair strict-schema rejections — two runs in
    * a row burned the 3-failure semantic budget re-sending the same over-length `badge_label`.
    * `{ effort: 'low' }` is the compromise: bounded thinking kept for self-correction.
+   * The effort label is provider-specific and sent verbatim.
    */
-  readonly reasoning?: { readonly enabled: false } | { readonly effort: 'low' | 'medium' | 'high' };
+  readonly reasoning?: { readonly enabled: false } | { readonly effort: string };
   /**
    * Which request-body dialect carries {@link OpenAiRequestTuning.reasoning}.
    *
@@ -242,6 +254,12 @@ export interface OpenRouterProviderRouting {
 export interface OpenAiCompatiblePortConfig {
   /** API root including the version prefix, e.g. `https://api.fireworks.ai/inference/v1`. */
   readonly baseUrl: string;
+  /**
+   * Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint
+   * that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query.
+   * The traced `provider-raw` URL is this value, so a trace names the endpoint actually called.
+   */
+  readonly chatCompletionsUrl?: string;
   readonly model: string;
   /** Sent as `Authorization: Bearer …`; never logged, traced, or included in an error. */
   readonly apiKey: string;
@@ -320,7 +338,34 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
  */
 const TRANSIENT_TRANSPORT_ERROR_CODES = new Set([
   'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET',
+  // Connect-phase failures: no request reached the provider, so a retry cannot repeat a generation.
+  'UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ENOTFOUND',
 ]);
+/**
+ * Response headers a failed request's verbose trace keeps: rate-limit state and the provider's
+ * request id, which a provider's support needs to find the request. None carries a credential.
+ */
+const DIAGNOSTIC_RESPONSE_HEADERS = [
+  'retry-after',
+  'x-request-id',
+  'request-id',
+  'x-ratelimit-limit-requests',
+  'x-ratelimit-remaining-requests',
+  'x-ratelimit-reset-requests',
+  'x-ratelimit-limit-tokens',
+  'x-ratelimit-remaining-tokens',
+  'x-ratelimit-reset-tokens',
+] as const;
+
+function diagnosticHeaders(response: { readonly headers?: { get(name: string): string | null } }): { diagnosticHeaders?: Record<string, string> } {
+  const found: Record<string, string> = {};
+  for (const name of DIAGNOSTIC_RESPONSE_HEADERS) {
+    const value = response.headers?.get(name);
+    if (value) found[name] = redactProviderSecrets(value);
+  }
+  return Object.keys(found).length > 0 ? { diagnosticHeaders: found } : {};
+}
+
 /** HTTP statuses retried under DD-4a; 429 honors `Retry-After` like every other entry here. */
 const TRANSIENT_TRANSPORT_HTTP_STATUSES = new Set([429, 502, 503, 504]);
 /** Total attempts including the first, bounded per row early-stop (INSTRUMENT-BATCH-M8). */
@@ -600,9 +645,7 @@ export class OpenAiCompatiblePort implements ModelPort {
             toolName: part.toolName,
             input: part.rawArguments,
             code: 'invalid_tool_input',
-            reason: part.argumentsIssue === 'empty'
-              ? 'Tool arguments were empty; send the required fields as a JSON object.'
-              : 'Tool arguments were not a JSON object.',
+            reason: part.argumentsIssue === 'empty' ? TOOL_ARGUMENTS_EMPTY_REASON : TOOL_ARGUMENTS_NOT_OBJECT_REASON,
           };
         } else {
           let effectiveInput: unknown = part.input;
@@ -787,7 +830,7 @@ export class OpenAiCompatiblePort implements ModelPort {
       });
     });
 
-    const url = `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const url = this.config.chatCompletionsUrl ?? `${this.config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
     const messages = projectMessages(
       system,
       history,
@@ -837,13 +880,14 @@ export class OpenAiCompatiblePort implements ModelPort {
           url,
           status: received.status,
           ...(received.contentType ? { contentType: received.contentType } : {}),
-          // Malformed successful responses need their full body for diagnosis, with credentials
-          // redacted. Parsed success bodies stay verbatim; HTTP error diagnostics stay sanitized.
+          ...(received.diagnosticHeaders ? { headers: received.diagnosticHeaders } : {}),
+          // Malformed successful responses and HTTP error bodies are kept whole for diagnosis, with
+          // credentials, opaque tokens and URLs redacted. Parsed success bodies stay verbatim.
           body: received.ok
             ? (received.body !== undefined
                 ? received.body
                 : received.raw.replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]'))
-            : sanitizeProviderError(received.raw),
+            : redactProviderSecrets(received.raw),
         });
       }
       if (!received.ok) throw httpError(received.status, received.statusText, received.raw);
@@ -942,8 +986,10 @@ export class OpenAiCompatiblePort implements ModelPort {
     ok: boolean;
     status: number;
     statusText: string;
-    /** Response media type only; request and other response headers are never traced. */
+    /** Response media type only; request headers are never traced. */
     contentType?: string;
+    /** {@link DIAGNOSTIC_RESPONSE_HEADERS} present on a non-2xx response; absent when none is. */
+    diagnosticHeaders?: Readonly<Record<string, string>>;
     raw: string;
     /** The decoded body, or `undefined` when it was not JSON. */
     body: unknown;
@@ -1011,6 +1057,7 @@ export class OpenAiCompatiblePort implements ModelPort {
               statusText: response!.statusText,
               ...(response!.headers?.get('content-type')
                 ? { contentType: response!.headers.get('content-type')! } : {}),
+              ...(!response!.ok ? diagnosticHeaders(response!) : {}),
               raw,
               body,
             };

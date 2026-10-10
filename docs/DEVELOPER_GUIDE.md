@@ -130,19 +130,24 @@ live import derives one from the server.
   built-in provider's server-info lookup (table statistics) and drops it when
   `dataLineageViz.dmvQueriesFile` names another file.
 - **Connection providers** — [`src/engine/db/`](../src/engine/db/). `connectDatabase`
-  returns a `DbSession` from either the mssql extension or the built-in `tedious`
-  provider, selected by `dataLineageViz.database.connectionProvider`; saved
-  built-in connections live in `dataLineageViz.database.connections` with
-  passwords in `SecretStorage`. Connection errors are presented only by
-  `connectionErrors.ts`. Tests: [`tests/unit/engine/db/`](../tests/unit/engine/db/);
-  the `builtIn` tests assert the mssql extension is never touched. Runtime
-  contract: [`ARCHITECTURE.md`](ARCHITECTURE.md) §Database connection providers.
+  returns a `DbSession` through `dataLineageViz.database.connectionProvider`:
+  `mssqlExtension` (default) or `builtIn`. Saved built-in connections live in
+  `dataLineageViz.database.connections` with passwords in `SecretStorage`.
+  Connection errors are presented by `connectionErrors.ts`. Tests:
+  [`tests/unit/engine/db/`](../tests/unit/engine/db/); the `builtIn` tests assert
+  the mssql extension is never touched. Contract: [Database connection providers](#database-connection-providers).
 - **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).
   On read, unrecognized fields are dropped; a project is discarded only when a
-  required field is missing or of the wrong type. On write,
+  required field is missing or of the wrong type. Invalid optional saved views
+  are skipped individually, preserving their project and other views. A saved
+  scope with an empty object list stays empty; an absent list is unrestricted.
+  Legacy workspace connection keys are removed only after a valid connection
+  has been saved to the project store. On write,
   `StoredConnectionInfoSchema` ([`bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)) stays `.strict()` so undeclared connection
   fields (including credentials) never enter the store. Any change to
-  `Project` or `FilterProfile` needs a migration in `migrateProjectStore()`.
+  `Project` or `FilterProfile` needs a reviewed compatibility path. Optional
+  `nodeIdEncodingVersion: 2` marks explicit current saves; legacy views reconcile
+  in memory when opened and their archived records remain unchanged.
 - **AI run records** — [`src/ai/session/runStore.ts`](../src/ai/session/runStore.ts).
   One record per AI-authored bookmark, held in `globalState` under
   `dataLineageViz.aiRun.<bookmarkId>`. `present_result` stamps the run ID onto
@@ -158,6 +163,75 @@ live import derives one from the server.
   completed run, and `lineage_get_screen_state` answers `no_run_memory` only when
   neither exists. The record is never truncated for size.
   `lineage_get_screen_state` is the only reader.
+
+## Database connection providers
+
+Live ingestion opens one `DbSession` ([`src/engine/db/dbSession.ts`](../src/engine/db/dbSession.ts)) per
+operation through `connectDatabase` in [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
+`dataLineageViz.database.connectionProvider` selects `mssqlExtension` (default) or `builtIn`. The DMV and profiling code sees
+only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, `isOpen`, `dispose`).
+
+- **`builtIn`** — [`builtInProvider.ts`](../src/engine/db/builtInProvider.ts) opens a `tedious` connection loaded by
+  dynamic import and bundled by esbuild. It serializes requests, cancels on the wire when `dataLineageViz.dmvQueryTimeout`
+  elapses, returns the first result set, and is closed after the operation. Its `getServerInfo` runs the YAML
+  `platform-info` query from the panel's DMV query cache (reloaded by each import and when
+  `dataLineageViz.dmvQueriesFile` names another file), so platform detection does not retry it as a fallback. With this provider nothing looks up,
+  activates or calls the mssql extension, and `extensionDependencies` stays empty.
+- **`mssqlExtension`** — [`mssqlExtensionProvider.ts`](../src/engine/db/mssqlExtensionProvider.ts)
+  opens or reconnects a connection through the SQL Server extension's public API.
+  Legacy `connect` and modern saved profiles with connection sharing are supported.
+  Import sessions remain owned by that extension (`releaseSession` is a no-op).
+  Table-statistics requests reuse the panel's adapter; a kept adapter that reports
+  `isOpen() === false` is released and negotiated again. Built-in statistics
+  requests own and release their socket for each request.
+
+- **Connection store** — [`connectionSettings.ts`](../src/engine/db/connectionSettings.ts) reads the application-scoped
+  array `dataLineageViz.database.connections` tolerantly and validates every write; the item schema has no password
+  property. Upserts and deletes rewrite the list one at a time through a module-level queue, so concurrent saves
+  never drop an entry. Passwords live in `SecretStorage` under `dataLineageViz.database.password.<id>`. Entra connections sign in through
+  `@microsoft/vscode-azext-azureauth` ([`entraSignIn.ts`](../src/engine/db/entraSignIn.ts)) for the Azure SQL resource of the
+  cloud VS Code is configured for (`sqlResource()`: public, US Government, China, or a custom cloud's SQL suffix) and pass the
+  token to the driver.
+- **Commands and wizard** — [`connectionCommands.ts`](../src/engine/db/connectionCommands.ts) registers add, edit,
+  remove and update-password; `addDatabaseConnection` also accepts a Zod-validated `{connection, password?}` argument
+  and then runs without prompts, except the certificate-trust confirmation when the argument turns trust on.
+  Update-password accepts only SQL login connections, whether picked or named by id; an Entra ID id is refused with a
+  warning and nothing is stored.
+- **Errors** — [`connectionErrors.ts`](../src/engine/db/connectionErrors.ts) is the one owner of connection failure
+  presentation for both providers. The message is `<connection name>: <original driver text>` with secrets redacted;
+  actions are chosen by error number, code or text pattern and are never retried automatically.
+- **Connection persistence** — `StoredConnectionInfoSchema` carries optional `provider` and `connectionId`; a record without
+  `provider` reads as `mssqlExtension`. A legacy record that matches a saved built-in connection (same server and
+  port, sign-in type and user) opens that connection silently; the project then stores the built-in record.
+- **Identifier comparison** — `DatabaseModel.identifierCaseSensitive` is enabled
+  only by checked source catalog metadata. Live imports probe the effective
+  collation of `sys.schemas.name` (the DMV platform query returns the catalog
+  column's collation and `ComparisonStyle`; extraction validates that single
+  record); data/column or server collation never decides. DACPAC imports read
+  `model.xml`: `DataSchemaModel/@CollationCaseSensitive` and the
+  `SqlDatabaseOptions` properties `CatalogCollation` and `Containment`; repeated
+  or conflicting options cannot enable CS. Missing or ambiguous metadata keeps
+  the CI normalization and IDs. Canonical IDs are comparison keys: CI folds
+  casing, CS preserves it, both compare exactly; display names come from source
+  metadata. Verified CS imports keep exact identities through catalog,
+  dependencies, AI routing, checkpoints and the webview. Snapshots record their
+  policy (legacy snapshots without the flag are CI), historical recall uses the
+  saved policy, ordinary CI bookmarks keep their IDs, and an old checkpoint
+  cannot reinterpret a collapsed object as a new CS identity.
+  Literal delimiters now quote correctly. Legacy saved references recover only
+  a unique current owner; ambiguous references are reported and omitted from the
+  restored view. Historical checkpoint IDs/text stay unchanged, while current
+  presence and DDL-hash checks use that same ownership decision. File IDs use
+  SHA-256 of the exact URL's UTF-16 code units and remain stable when other files
+  are added or removed. Old short and URL-encoded file IDs resolve only to a
+  unique owner, including saves marked with encoding version 2; ambiguous IDs
+  are reported rather than guessed. An ID already owned by a catalog object
+  causes import rejection rather than changing the file ID or merging objects.
+- **Dependency scanning** — `maxNodes` governs model admission. SQL extraction has
+  no per-rule match-count cutoff; validated rules must be global and the shared
+  collector advances past zero-width matches (including Unicode input).
+- **Webview** — the wizard's connect button is always enabled; a saved project that still uses an mssql extension
+  connection shows an **! Old connection** badge on the start screen.
 
 ## SQL parsing pipeline
 
@@ -194,14 +268,38 @@ before handlers consume them. Main-panel routing starts in
 [`src/panelProvider.ts`](../src/panelProvider.ts); detail-panel handlers live
 under [`src/bridge/`](../src/bridge/).
 
+Each panel owns its active import cancellation token. Starting another import or
+closing the panel cancels it; the host checks it after reads, extraction and queries
+before installing a model or refreshing saved-project fields. Cancel closes this
+extension's built-in query session; Microsoft-owned sessions remain with Microsoft.
+The payload-free `cancel-load` request receives a distinct `load-cancelled` reply;
+the loader waits for all outstanding UI cancellation replies before accepting a
+fresh `load-started` acknowledgement. Native progress cancellation keeps its
+`db-cancelled` notification. This discards queued cancelled replies while preserving
+fresh UI and command loads.
+
+**Result rendering.** The webview renders the result through engine-owned node types
+(`CustomNodeData`, `ColumnTraceNodeData` in
+[`src/engine/types.ts`](../src/engine/types.ts)); components import them, never
+the reverse. Display mode is derived once in
+[`src/engine/graphDisplayMode.ts`](../src/engine/graphDisplayMode.ts): a scoped
+surface (trace, path, or AI result) outranks Schema View, which outranks
+Object View. Expanded Schema View is schema-membership only
+([`src/engine/schemaProjection.ts`](../src/engine/schemaProjection.ts)) — it
+never becomes a lineage cone. Column Detail is a second rendering of the same
+approved scope ([`src/engine/columnTraceView.ts`](../src/engine/columnTraceView.ts)),
+not a parallel BFS.
+
 Use the helpers in [`src/utils/log.ts`](../src/utils/log.ts) for extension
 logging. User-facing errors and warnings must go through the notification
 helpers (`notifyError`, `notifyWarning`, `notifyInfo` in
 [`src/utils/notifications.ts`](../src/utils/notifications.ts)) rather than raw
 output-channel calls; each logs the full detail at the matching level before it
-shows the toast, with credential-shaped context removed by `redactSecrets`
+shows the toast, with credential-shaped text removed from the toast and context by `redactSecrets`
 ([`src/utils/redact.ts`](../src/utils/redact.ts)). Database, schema and object
-identifiers belong in debug lines; info lines carry counts, modes and timing.
+identifiers belong in debug lines; info lines carry counts, modes and timing. The
+logger redacts every message and caught error stack before output, and serialized
+diagnostic previews redact credentials before applying their length limits.
 Webview errors funnel through the bridge `'error'` message.
 
 `src/engine/` code never names `window` directly: a layout or build diagnostic
@@ -239,6 +337,20 @@ planning in
 calls go through the canonical registry, phase policy, and strict Zod
 dispatcher under [`src/ai/tools/`](../src/ai/tools/).
 
+Callers without a chat turn — other VS Code agents through `vscode.lm` and MCP
+clients through the localhost server in [`src/ai/mcp/`](../src/ai/mcp/) — use
+the same registry as `external` callers (`createExternalToolSource`). Add a
+tool to them by allowing it in the `external` stage of `toolPolicy.ts`, then
+run `npm run generate:tool-manifest`; the MCP server needs no change. A rejection
+reaches MCP clients as an `isError` result whose text is the reason and the hint and
+whose `structuredContent` is the envelope. The
+MCP server is its own deferred bundle (`out/mcpRuntime.js`, entry
+[`src/mcpRuntime.ts`](../src/mcpRuntime.ts)), which `extensionRuntime.ts`
+imports at activation only while `dataLineageViz.mcp.enabled` is on — the same
+deferral `extension.ts` uses for `extensionRuntime.js` — so a disabled server
+loads none of its code or SDK. The stdio proxy (`out/mcpStdioProxy.js`, copied
+to global storage as `mcp-stdio-proxy.js`) relays stdio-only clients to the HTTP endpoint through the SDK client transports.
+
 The AI authors semantic findings and structured presentation fields. The
 engine validates all mutations, keeps the final graph connected to its
 origin, and assembles the rendered description from structured result parts.
@@ -258,6 +370,7 @@ configuration, and [`EDH_TESTING.md`](EDH_TESTING.md) for VS Code host lanes.
 | `npm run test:runtime` | Agent-runtime and state-machine tests with a stubbed VS Code API. |
 | `npm run typecheck:tests` | Unit-test TypeScript checking. |
 | `npm run test:edh` | Smoke lanes in a real VS Code host. |
+| `npm run test:mcp:live` | MCP server and stdio proxy against a real VS Code host. |
 
 For AI changes, review answers against the loaded SQL and graph as well as
 running the deterministic checks. See [Testing](testing/README.md) for the

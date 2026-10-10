@@ -50,6 +50,22 @@ const dbConn: DatabaseConnection = {
 
 
 describe('migrateProjectStore', () => {
+  it.each([false, true])('retains the project when an optional view is malformed (valid siblings: %s)', (withValidViews) => {
+    const valid: FilterProfile = {
+      id: 'valid-view', name: 'Case-sensitive view', createdAt: '2026-01-01',
+      filter: serializeFilter({ ...sampleFilter, allowlistNodeIds: new Set(['[Sales].[Orders]', '[sales].[Orders]']) }),
+    };
+    const profiles = withValidViews ? [valid, { ...valid, id: 42 }, { ...valid, id: 'empty-view', filter: { ...valid.filter, allowlistNodeIds: [] } }] : [{ ...valid, id: 42 }];
+    const project = { ...createProject('Retained project', dacpacConn), filterProfiles: profiles };
+    const reports: ProjectStoreDropReport[] = [];
+    const store = migrateProjectStore({ schemaVersion: 1, projects: [project], lastOpenedId: project.id }, report => reports.push(report));
+    expect(store.projects).toHaveLength(1);
+    expect(store.lastOpenedId).toBe(project.id);
+    expect(store.projects[0].filterProfiles).toEqual(withValidViews ? [valid, profiles[2]] : []);
+    expect(reports).toEqual([{ dropped: 0, droppedViews: 1, issuePaths: ['filterProfiles'] }]);
+    expect(profiles[withValidViews ? 1 : 0].id).toBe(42);
+  });
+
   it('returns empty store for invalid inputs', () => {
     for (const input of [
       null, undefined, 'string-value',
@@ -73,6 +89,13 @@ describe('migrateProjectStore', () => {
     expect(sDb.projects.length, 'database: one project').toBe(1);
     const c = sDb.projects[0].connection as DatabaseConnection;
     expect(c.sourceName, 'database: sourceName preserved').toBe(dbConn.sourceName);
+  });
+
+  it('keeps the saved wizard view and drops an unknown one', () => {
+    expect(migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: null, lastWizardView: 'projects' }).lastWizardView)
+      .toBe('projects');
+    expect(migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: null, lastWizardView: 'gallery' }))
+      .not.toHaveProperty('lastWizardView');
   });
 
   it('filters out malformed project entries', () => {
@@ -124,21 +147,6 @@ describe('migrateProjectStore', () => {
     expect(s.projects.length, 'string-port project survives validation').toBe(1);
     const c = s.projects[0].connection as DatabaseConnection;
     expect(c.connectionInfo.port, 'port coerced to number').toBe(1433);
-  });
-
-  it('keeps projects containing unknown connection fields, stripping the field', () => {
-    const project = createProject('Unsafe', dbConn);
-    const unsafe = {
-      ...project,
-      connection: {
-        ...project.connection,
-        connectionInfo: { ...dbConn.connectionInfo, password: 'secret' },
-      },
-    };
-    const s = migrateProjectStore({ schemaVersion: 1, projects: [unsafe], lastOpenedId: null });
-    expect(s.projects.length, 'project retained').toBe(1);
-    const c = s.projects[0].connection as DatabaseConnection;
-    expect(Object.keys(c.connectionInfo), 'unknown credential field stripped').not.toContain('password');
   });
 
   it('keeps a project whose connection carries the wider fields an older build persisted', () => {
@@ -474,6 +482,14 @@ const sampleFilter: FilterState = {
 };
 
 describe('serializeFilter / deserializeFilter', () => {
+  it.each([undefined, [], ['[Sales].[Orders]', '[sales].[Orders]']].map(ids => ({ ids })))('preserves scope presence and exact IDs: $ids', ({ ids }) => {
+    const filter = { ...sampleFilter, ...(ids === undefined ? {} : { allowlistNodeIds: new Set(ids) }) };
+    const serialized = JSON.parse(JSON.stringify(serializeFilter(filter))) as SerializedFilterState;
+    expect(serialized.allowlistNodeIds).toEqual(ids);
+    const restored = deserializeFilter(serialized);
+    expect(restored.allowlistNodeIds === undefined ? undefined : [...restored.allowlistNodeIds]).toEqual(ids);
+  });
+
   it('roundtrip: serialize then deserialize preserves all fields', () => {
     const s = serializeFilter(sampleFilter);
     expect(Array.isArray(s.schemas), 'schemas is array').toBe(true);

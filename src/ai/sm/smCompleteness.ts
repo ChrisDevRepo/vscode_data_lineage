@@ -7,8 +7,11 @@
  * can never be reported unaccounted here. An unaccounted tracked column is never a rejection: the
  * engine only verifies that a recorded column_flow link joins two real columns; where a chain
  * starts or ends, whether new columns join, and whether the columns are complete is the AI's
- * decision. The unaccounted set is surfaced back
- * to the model as plain data (`unaccounted_columns` on the hop acknowledgement), never enforced.
+ * decision. The unaccounted set is logged and returned as plain data (`unaccounted_columns` on the
+ * hop acknowledgement, except on the final hop, whose acknowledgement is the completion envelope),
+ * never enforced. An accepted submission ends the hop, so the model does not read that
+ * acknowledgement; the set reaches only the debug log and the session hop log, neither a later hop
+ * nor synthesis.
  */
 
 import { normalizeColName } from '../../utils/sql';

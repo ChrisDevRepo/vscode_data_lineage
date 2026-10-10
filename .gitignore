@@ -62,15 +62,18 @@ codex.md
 !.agents/skills/trace-debug/
 !.agents/skills/prompt-playground/
 !.agents/skills/prompt-change/
+!.agents/skills/trace-analysis/
 !.agents/skills/testing/SKILL.md
 !.agents/skills/trace-debug/SKILL.md
 !.agents/skills/prompt-playground/SKILL.md
 !.agents/skills/prompt-change/SKILL.md
+!.agents/skills/trace-analysis/SKILL.md
 .agents/skills/*/*
 !.agents/skills/testing/SKILL.md
 !.agents/skills/trace-debug/SKILL.md
 !.agents/skills/prompt-playground/SKILL.md
 !.agents/skills/prompt-change/SKILL.md
+!.agents/skills/trace-analysis/SKILL.md
 .muse/
 
 # Public vendor-neutral agent entry point.

@@ -1,5 +1,5 @@
 import type { ObjectType, ColumnDef } from '../engine/types';
-import { SQL_CODE, sqlCommentMask } from '../engine/shared/sqlSpans';
+import { SQL_CODE, SQL_LITERAL, sqlCommentMask } from '../engine/shared/sqlSpans';
 
 /** Node fields required by catalog, DDL, and column search. */
 export interface SearchableNode {
@@ -543,6 +543,7 @@ const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|C
  * since it guards an expression, not a statement. An `IF`/`WHILE` without `BEGIN…END` governs
  * exactly the next live line and is then spent. Text inside a comment or a string/bracketed literal
  * is never scanned for a keyword, so a literal containing the word "BEGIN" cannot open a block.
+ * Reported predicates preserve the original literal and identifier text.
  */
 function deriveEnclosingPredicates(
   lines: string[],
@@ -564,7 +565,16 @@ function deriveEnclosingPredicates(
     const isLive = trimmed.length > 0;
 
     const ifWhile = IF_WHILE_LINE_RE.exec(trimmed);
-    const ownPredicate = ifWhile ? trimmed.replace(/\bBEGIN\b\s*$/i, '').trim() : undefined;
+    let ownPredicate: string | undefined;
+    if (ifWhile) {
+      const end = /\bBEGIN\b\s*$/i.exec(live)?.index ?? line.length;
+      let sourcePredicate = '';
+      for (let c = 0; c < end; c++) {
+        const span = commentMask[base + c];
+        sourcePredicate += span === SQL_CODE || span === SQL_LITERAL ? line[c] : ' ';
+      }
+      ownPredicate = sourcePredicate.trim();
+    }
     let ownConsumed = false;
     let pendingConsumed = false;
 

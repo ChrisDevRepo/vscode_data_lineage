@@ -38,7 +38,7 @@ interface ParsedDependencies {
   sources: string[];
   /**
    * Schema-qualified names of objects written to (e.g., `[dbo].[Table]`).
-   * Captured from INSERT, UPDATE, DELETE, and MERGE statements.
+   * Captured from configured data-producing target rules; DELETE/TRUNCATE remain separate mutations.
    */
   targets: string[];
   /**
@@ -56,6 +56,8 @@ interface ParsedDependencies {
    * Tracked for cross-DB lineage analysis.
    */
   crossDbTargets: string[];
+  /** Physical mutations on decoded, qualified components; catalog binding decides identity. */
+  mutations: Array<{ parts: string[]; kind: 'write' | 'delete' }>;
 }
 
 /**
@@ -111,44 +113,27 @@ interface ParseRule {
 }
 
 /**
- * Configuration wrapper for loading multiple parse rules.
- */
-export interface ParseRulesConfig {
-  /** An array of parse rules to load into the engine. */
-  rules: ParseRule[];
-}
-
-/**
  * Raw, unvalidated configuration wrapper accepted by {@link loadRules}.
  *
  * @remarks
  * `loadRules` IS the per-rule validator, so its input is deliberately loose: YAML-shaped
- * candidates go in, invalid entries are skipped with diagnostics — callers never need to
- * pre-assert the strict {@link ParseRulesConfig} shape (which remains assignable here).
+ * candidates go in, invalid entries are skipped with diagnostics.
  */
 export interface RawParseRulesConfig {
   /** Candidate rules; each entry stays `unknown` until `validateRule` accepts it. */
   readonly rules?: readonly unknown[];
 }
 
-/**
- * Result of attempting to load and validate a set of parse rules.
- *
- * @remarks
- * Provides telemetry on how many rules were successfully loaded and
- * details on any validation failures.
- */
+/** Result of loading and validating a set of parse rules. */
 interface LoadRulesResult {
-  /** The number of rules successfully validated and loaded. */
+  /** The number of rules validated and now active. */
   loaded: number;
   /** Names of rules that failed validation and were skipped. */
   skipped: string[];
   /** Detailed error messages for the rules that failed validation. */
   errors: string[];
-  /** True if the engine fell back to default rules due to critical errors. */
-  usedDefaults: boolean;
-  /** Counts of loaded rules grouped by their category for monitoring. */
-  categoryCounts: Record<string, number>;
+  /** True when the primary configuration held no valid rule and the fallback rules are active instead. */
+  usedFallback: boolean;
 }
 
 /** Active parsing rules, replaced atomically by {@link loadRules}. */
@@ -205,59 +190,53 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
  *
  * @remarks
  * Rules are sorted by priority to guarantee execution order regardless of source-file order.
+ * When `config` yields no valid rule, `fallback` is loaded in its place and its diagnostics are
+ * appended; without a fallback no rule stays active.
  *
  * @param config - The configuration object containing the rules to load.
+ * @param fallback - Rules to activate when `config` holds no valid rule (the built-in file for a custom one).
  * @returns A summary of the load operation, including success counts and any validation errors.
  */
-export function loadRules(config: RawParseRulesConfig): LoadRulesResult {
-  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false, categoryCounts: {} };
+export function loadRules(config: RawParseRulesConfig, fallback?: RawParseRulesConfig): LoadRulesResult {
+  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedFallback: false };
+  const validRules: ParseRule[] = [];
 
   if (!config?.rules || !Array.isArray(config.rules)) {
     result.errors.push('YAML missing "rules" array');
-    result.usedDefaults = true;
-    resetRules();
-    return result;
-  }
+  } else {
+    for (let i = 0; i < config.rules.length; i++) {
+      const raw = config.rules[i];
 
-  const validRules: ParseRule[] = [];
-  for (let i = 0; i < config.rules.length; i++) {
-    const raw = config.rules[i];
+      if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
 
-    if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
-
-    const check = validateRule(raw, i);
-    if (check.valid) {
-      validRules.push({ ...(raw as ParseRule) });
-    } else {
-      result.skipped.push(check.name);
-      result.errors.push(check.error);
+      const check = validateRule(raw, i);
+      if (check.valid) {
+        validRules.push({ ...(raw as ParseRule) });
+      } else {
+        result.skipped.push(check.name);
+        result.errors.push(check.error);
+      }
     }
+    if (validRules.length === 0) result.errors.push('No valid rules found');
   }
 
   if (validRules.length === 0) {
-    result.errors.push('No valid rules found');
-    result.usedDefaults = true;
-    resetRules();
-    return result;
+    if (!fallback) {
+      activeRules = [];
+      return result;
+    }
+    const replacement = loadRules(fallback);
+    return {
+      loaded: replacement.loaded,
+      skipped: [...result.skipped, ...replacement.skipped],
+      errors: [...result.errors, ...replacement.errors],
+      usedFallback: replacement.loaded > 0,
+    };
   }
 
   activeRules = validRules.sort((a, b) => a.priority - b.priority);
   result.loaded = validRules.length;
-  for (const r of validRules) {
-    result.categoryCounts[r.category] = (result.categoryCounts[r.category] || 0) + 1;
-  }
   return result;
-}
-
-/**
- * Clears all active parsing rules from memory.
- *
- * @remarks
- * Used during teardown or when switching project configurations. The extension host is
- * responsible for providing a new configuration after resetting.
- */
-function resetRules(): void {
-  activeRules = [];
 }
 
 /** Index of the `)` closing the `(` at `open`, skipping quoted spans; `-1` when unbalanced. */
@@ -682,21 +661,25 @@ function normalizeAnsiCommaJoins(sql: string): string {
 }
 
 /**
- * Removes every block comment, nested ones included, leaving line comments and literals in place.
+ * Masks every block comment, nested ones included, leaving line comments and literals in place.
  *
  * @param sql - Raw SQL text.
- * @returns SQL with all block comments removed.
+ * @returns SQL with block comments replaced by same-length whitespace, preserving line breaks.
  */
 function removeBlockComments(sql: string): string {
   const mask = sqlCommentMask(sql);
   let out = '';
-  let start = -1;
-  for (let i = 0; i <= sql.length; i++) {
-    const keep = i < sql.length && mask[i] !== SQL_BLOCK_COMMENT;
-    if (keep && start < 0) start = i;
-    else if (!keep && start >= 0) { out += sql.substring(start, i); start = -1; }
+  let start = 0;
+  for (let i = 0; i < sql.length; i++) {
+    if (mask[i] !== SQL_BLOCK_COMMENT) continue;
+    out += sql.slice(start, i);
+    let end = i + 1;
+    while (end < sql.length && mask[end] === SQL_BLOCK_COMMENT) end++;
+    out += sql.slice(i, end).replace(/[^\r\n]/g, ' ');
+    start = end;
+    i = end - 1;
   }
-  return out;
+  return out + sql.slice(start);
 }
 
 /** Distance from a masked character to its original: the masks lie in Supplementary Private Use Area-A. */
@@ -777,6 +760,7 @@ export function parseSqlBody(
   clean = normalizeAnsiCommaJoins(clean);
 
   clean = substituteCteUpdateAliases(clean, identifierCaseSensitive);
+  const mutations = collectMutations(clean, identifierCaseSensitive);
 
   for (const rule of activeRules) {
     if (rule.category === 'preprocessing' && rule.name !== 'clean_sql' && rule.replacement !== undefined) {
@@ -795,7 +779,7 @@ export function parseSqlBody(
   let aliasScan: AliasScan | undefined;
 
   for (const rule of activeRules) {
-    if (rule.category === 'preprocessing') continue;
+    if (rule.category === 'preprocessing' || rule.category === 'external_ref') continue;
 
     const regex = new RegExp(rule.pattern, rule.flags);
 
@@ -839,6 +823,7 @@ export function parseSqlBody(
     execCalls: Array.from(execCalls),
     crossDbSources: Array.from(crossDbSources),
     crossDbTargets: Array.from(crossDbTargets),
+    mutations,
   };
 }
 
@@ -888,15 +873,20 @@ const UNRESOLVED_BINDING = '\0';
  * other count of bindings leaves the alias unresolved.
  */
 function resolveUpdateAliasTarget(sql: string, scan: AliasScan, match: RegExpExecArray, identifierCaseSensitive: boolean): string | null {
-  if (match.index > scan.unclosedFrom) return null;
-  const codeMask = scan.mask;
-  // Read from the matched text, not a capture group: a custom rule file may capture something else.
+  // Read from the matched text: custom rule captures retain their existing contract.
   const alias = match[0].match(new RegExp(`^UPDATE(?:\\s+|\\s*(?=\\[))(${ANY_IDENT.source})(?:\\s+|(?<=\\])\\s*)SET\\b`, 'iu'))?.[1];
-  if (!alias) return null;
+  return alias ? resolveAliasTarget(sql, scan, match.index, 'UPDATE'.length, alias, identifierCaseSensitive) : null;
+}
+
+/** Resolves one statement-local UPDATE/DELETE target; direct names remain raw until metadata binding. */
+function resolveAliasTarget(sql: string, scan: AliasScan, start: number, keywordLength: number, alias: string, identifierCaseSensitive: boolean, allowDirect = false): string | null {
+  if (start > scan.unclosedFrom) return null;
+  const codeMask = scan.mask;
   const aliasKey = normalizeColName(alias, identifierCaseSensitive);
-  const { depth0Spans, closed } = scanStatement(sql, codeMask, match.index, 'UPDATE'.length);
-  if (!closed) scan.unclosedFrom = match.index;
-  const bindings = new RegExp(`\\b(?:FROM|JOIN)(?:\\s+|\\s*(?=\\[))(${QUALIFIED_NAME.source})(?:(?:\\s+(?:AS\\s+)?|(?<=\\])\\s*(?=\\[))(${ANY_IDENT.source}))?`, 'giu');
+  const { depth0Spans, closed } = scanStatement(sql, codeMask, start, keywordLength);
+  if (!closed) scan.unclosedFrom = start;
+  const bindingName = allowDirect ? `(?:${QUALIFIED_NAME.source}|${ANY_IDENT.source})` : QUALIFIED_NAME.source;
+  const bindings = new RegExp(`\\b(?:FROM|JOIN)(?:\\s+|\\s*(?=\\[))(${bindingName})(?:(?:\\s+(?:AS\\s+)?|(?<=\\])\\s*(?=\\[))(${ANY_IDENT.source}))?`, 'giu');
   const targets = new Set<string>();
   for (const [from, to] of depth0Spans) {
     if (from >= to) continue;
@@ -917,7 +907,58 @@ function resolveUpdateAliasTarget(sql: string, scan: AliasScan, match: RegExpExe
     targets.add(singleQueryTable(sql, codeMask, to + 1, close) ?? UNRESOLVED_BINDING);
   }
   const [target, ...others] = targets;
-  return target !== undefined && others.length === 0 && target !== UNRESOLVED_BINDING ? target : null;
+  if (target === undefined) return allowDirect ? alias : null;
+  return others.length === 0 && target !== UNRESOLVED_BINDING ? target : null;
+}
+
+/** Captures physical mutation facts on the existing cleansed surface, before custom rewrites. */
+function collectMutations(sql: string, identifierCaseSensitive: boolean): ParsedDependencies['mutations'] {
+  const scan: AliasScan = { mask: sqlCommentMask(sql, { markLiterals: true }), unclosedFrom: Infinity };
+  const mutations = new Map<string, ParsedDependencies['mutations'][number]>();
+  const completeName = new RegExp(`^(?:${QUALIFIED_NAME.source}|${ANY_IDENT.source})$`, 'u');
+  const cteScopes: Array<{ from: number; to: number; names: Set<string> }> = [];
+  for (const withMatch of sql.matchAll(/\bWITH\b/giu)) {
+    if (scan.mask[withMatch.index!] !== SQL_CODE) continue;
+    const list = readCteList(sql, scan.mask, withMatch.index!);
+    if (!list) continue;
+    const from = skip(sql, '\\s*', list.end);
+    const statement = /^(?:UPDATE|DELETE|INSERT|MERGE)\b/iu.exec(sql.slice(from));
+    if (!statement) continue;
+    cteScopes.push({ from, to: scanStatement(sql, scan.mask, from, statement[0].length).end,
+      names: new Set(list.definitions.map(item => normalizeColName(item.name, identifierCaseSensitive))) });
+  }
+  const clause = /(?<![\p{L}\p{Nd}_@$#.])(?:THEN\s+DELETE|UPDATE|INSERT|MERGE|DELETE|TRUNCATE\s+TABLE|INTO)\b/giu;
+  for (const match of sql.matchAll(clause)) {
+    if (scan.mask[match.index!] !== SQL_CODE || /^THEN\b/iu.test(match[0])) continue;
+    let at = skip(sql, '(?:\\s+|\\s*(?=\\[))', match.index! + match[0].length);
+    if (at < 0) continue;
+    const top = skip(sql, 'TOP\\s*(?=\\()', at);
+    if (top >= 0) {
+      const close = closingParen(sql, scan.mask, top);
+      if (close < 0) continue;
+      at = skip(sql, '\\s*(?:PERCENT\\s*)?', close + 1);
+    }
+    const qualifier = skip(sql, '(?:INTO|FROM)(?:\\s+|\\s*(?=\\[))', at);
+    if (qualifier >= 0) at = qualifier;
+    TABLE_NAME_RE.lastIndex = at;
+    const name = TABLE_NAME_RE.exec(sql)?.[0];
+    if (!name || !completeName.test(name) || KEYWORDS_RE.test(name)) continue;
+    if (sql[skip(sql, '\\s*', at + name.length)] === '.') continue;
+    let reference = name;
+    if (/^(?:UPDATE|DELETE)$/iu.test(match[0]) && splitSqlName(name).length === 1) {
+      const resolved = resolveAliasTarget(sql, scan, match.index!, match[0].length, name, identifierCaseSensitive, true);
+      if (resolved === null) continue;
+      reference = resolved;
+    }
+    const parts = splitSqlName(reference).map(part => unmaskIdentifier(stripBrackets(part)));
+    if (!parts.at(-1) || (parts.length === 1 && parts[0].startsWith('@')) || isTempObject(parts)) continue;
+    if (parts.length === 1 && cteScopes.some(scope => match.index! >= scope.from && match.index! < scope.to
+      && scope.names.has(normalizeColName(reference, identifierCaseSensitive)))) continue;
+    const kind = /^(?:DELETE|TRUNCATE)/iu.test(match[0]) ? 'delete' : 'write';
+    const mutation = { parts, kind } as ParsedDependencies['mutations'][number];
+    mutations.set(JSON.stringify([parts, kind]), mutation);
+  }
+  return [...mutations.values()];
 }
 
 /** Whether the object part of a name is a local or global temp table (`dbo.#t`, `tempdb.dbo.##g`), which is never a lineage node. */
@@ -944,7 +985,7 @@ function normalizeCaptured(raw: string, identifierCaseSensitive: boolean): strin
   const schema = parts[0];
   const obj = parts[1];
   if (!schema || !obj) return null;
-  const canonical = identifierCaseSensitive ? `${quoteIdentifier(schema)}.${quoteIdentifier(obj)}` : `[${schema}].[${obj}]`;
+  const canonical = `${quoteIdentifier(schema)}.${quoteIdentifier(obj)}`;
   return schemaKey(canonical, identifierCaseSensitive);
 }
 
@@ -990,11 +1031,12 @@ function normalizeCrossDb(raw: string, identifierCaseSensitive: boolean): string
 export function extractExternalRefs(rawSql: string): ExternalRef[] {
   const seen = new Set<string>();
   const results: ExternalRef[] = [];
+  const mask = sqlCommentMask(rawSql);
   const extRules = activeRules.filter(r => r.category === 'external_ref');
 
   for (const rule of extRules) {
     const urls = new Set<string>();
-    collectMatchesWith(rawSql, new RegExp(rule.pattern, rule.flags), urls, raw => raw);
+    collectMatchesWith(rawSql, new RegExp(rule.pattern, rule.flags), urls, (raw, match) => mask[match.index] === SQL_CODE ? raw : null);
     for (const url of urls) {
       if (seen.has(url)) continue;
       seen.add(url);

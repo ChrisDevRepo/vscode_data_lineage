@@ -5,7 +5,6 @@ import {
   type IToolRegistry,
   type RegisteredTool,
 } from '../../src/ai/tools/registry';
-import { TurnEventSink, type TurnEvent } from '../../src/ai/runtime/turnEventSink';
 import type {
   CompleteTextInput,
   GeneratedToolCall,
@@ -67,8 +66,6 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
   public readonly identity: ModelIdentity = SCRIPTED_IDENTITY;
   /** Every request received, in call order. */
   public readonly requests: ToolGenerationInput[] = [];
-  /** Every `completeText` request received, in call order. */
-  public readonly textRequests: CompleteTextInput[] = [];
   private calls = 0;
   private textCalls = 0;
 
@@ -80,12 +77,17 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     private readonly script: readonly ScriptedGeneration[],
     /** Queued replies for `completeText` — the discovery-summary compose round, not tool-turn generation. */
     private readonly textScript: readonly string[] = [],
-    /** Queued parsed payloads for `generateStructured` — structured classification calls. */
+    /** Queued parsed payloads for `generateStructured` — structured classification calls; an `Error` entry is thrown instead of parsed. */
     structuredScript: readonly unknown[] = [],
     /** Budget this scripted turn runs under; the shipped defaults unless a case sizes them. */
     public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
   ) {
     this.structuredScript = structuredScript;
+  }
+
+  /** Structured generations requested so far, failed ones included. */
+  public get structuredCallCount(): number {
+    return this.structuredCalls;
   }
 
   /** {@inheritDoc SingleGenerationModelPort.modelCalls} */
@@ -99,8 +101,7 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
   }
 
   /** Replays the next queued text-only reply, standing in for `ModelPort.completeText`. */
-  public async completeText(input: CompleteTextInput): Promise<string> {
-    this.textRequests.push(input);
+  public async completeText(_input: CompleteTextInput): Promise<string> {
     const reply = this.textScript[this.textCalls];
     this.textCalls += 1;
     if (reply === undefined) {
@@ -116,6 +117,8 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     if (reply === undefined) {
       throw new Error(`ScriptedModelPort: no structured reply scripted for call #${this.structuredCalls}`);
     }
+    // A scripted Error is thrown as the model port would: the provider failed instead of answering.
+    if (reply instanceof Error) throw reply;
     const parsed = input.schema.safeParse(reply);
     if (!parsed.success) {
       throw new StructuredOutputError(
@@ -186,9 +189,6 @@ export function invalidCall(
   code: InvalidGeneratedToolCall['code'],
   reason: string,
   issuePaths?: readonly string[],
-  input?: unknown,
-  hint?: string,
-  unrecognizedKeys?: readonly string[],
 ): InvalidGeneratedToolCall {
   return {
     valid: false,
@@ -197,9 +197,6 @@ export function invalidCall(
     code,
     reason,
     ...(issuePaths ? { issuePaths } : {}),
-    ...(unrecognizedKeys ? { unrecognizedKeys } : {}),
-    ...(input !== undefined ? { input } : {}),
-    ...(hint !== undefined ? { hint } : {}),
   };
 }
 
@@ -251,10 +248,4 @@ export function scriptedRegistry(tools: readonly ScriptedTool[]): {
     registry.register(registered);
   }
   return { registry, invocations };
-}
-
-/** Builds a real turn sink plus the ordered event log it produced. */
-export function collectingSink(): { sink: TurnEventSink; events: TurnEvent[] } {
-  const events: TurnEvent[] = [];
-  return { sink: new TurnEventSink((event) => { events.push(event); }), events };
 }

@@ -19,11 +19,39 @@ On Linux without a desktop session, prefix each command with `xvfb-run -a`; see 
 | Lane | What it verifies |
 |---|---|
 | `bare-environment` | The extension activates when optional host integrations are absent. |
-| `tools` | Contributed read-only language-model tools register and respond through the VS Code API. |
+| `tools` | The external language-model tools (reads, scope walk, AI view render by `scope_id` and its prune by `view_id`) register and answer through `vscode.lm.invokeTool`; the MCP kill switch is off by default and no MCP code is loaded. |
 | `participant-turn` | The `@lineage` participant handles an empty-data case and completes a turn through the public chat API. A fixture provider supplies fixed responses to exercise API wiring and turn lifecycle. |
 | `kill-switch` | Disabling the AI feature before activation leaves the non-AI extension surface available. |
+| `mcp-live` | Keeps a real host alive with the MCP server seeded on before activation and the public AdventureWorks AI fixture loaded, so an external MCP client can test it from outside; the host also checks that the deferred MCP bundle registered `dataLineageViz.copyMcpConfig`. The `tools` lane checks the off side: no MCP code is loaded. Driven only by `npm run test:mcp:live`; see [MCP server deep test](#mcp-server-deep-test-live-host). |
 
 The fixture provider does not perform inference and does not test answer correctness, prompt quality, or provider behavior. Use an explicitly configured real-model smoke check for those purposes; the public demo DACPAC is the appropriate data source.
+
+## MCP server deep test (live host)
+
+`npm run test:mcp:live` compiles the integration tests, starts the `mcp-live` lane in an isolated, throwaway user-data directory (`tmp/mcp-live/`, ignored) with `dataLineageViz.mcp.enabled` on, and drives the running server from a separate Node process (`tests/tools/mcp-live.mjs`) with the official MCP client SDK, as an external client would. On Linux without a desktop it starts `xvfb-run` itself. The first run downloads the VS Code test build. Options: `--port N` (default 39372) and `--only TEXT` (run matching cases). The profile stays in `tmp/mcp-live/` (ignored) for inspection, including the extension log the log case reads. Under `npm run test:edh` the `mcp-live` suite skips itself, because there is no external client to wait for.
+
+The host test loads the demo and then the AdventureWorks AI fixture, publishes `ready.json`, and stays up serving a small command channel (toggle the setting, change the port, load the demo or the fixture) until the orchestrator finishes or a 15-minute bound passes. It asserts nothing about MCP itself.
+
+`ready.json` identifies this session's private discovery and proxy paths. The session owns its token and endpoint; an occupied port is an error, with no automatic takeover. Copy client configuration again after reloading the window. The stdio proxy returns an error for a failed request without replaying it; a later request may reconnect to this session's restarted endpoint.
+
+| Area | Cases |
+|---|---|
+| Discovery and identity | Private (0600) local discovery file; server name; exactly the eight external tools, each with the right read-only hint; hop tools not exposed. |
+| Transport guards | No, wrong, equal-length-wrong and Basic credentials get 401 with a bearer challenge; foreign `Host` or `Origin` get 403; unknown path 404; oversized body 413; malformed JSON-RPC, unknown method and unknown tool are refused and the server keeps serving. |
+| Tool contracts on the fixture | Project facts (148 nodes, 170 edges, 32 objects in `ai`); search, detail and DDL search return the known lineage; hubs include `Person.Person`; `not_found`, `invalid_input` and `over_discovery_budget` name the fault and the action. |
+| Hand-off | A scope bundle renders as a view (`scope_id`), the view is edited by `view_id`, and bad or conflicting handles are refused. |
+| Concurrency and cancellation | 20 parallel calls from two clients each get their own answer; an aborted call leaves the server responsive. |
+| Stdio proxy | The proxy, started with the host's Electron binary, relays the same tools. |
+| Debug log | The VS Code extension log shows the MCP lifecycle, every tool call in the shared `[AI] Invoking …` format marked `[external]`, rejections as `[AI] [Reject] …`, and transport refusals as `Refused request (401/403/404)`, and never a token. |
+| Lifecycle | Reloading the project invalidates old handles; turning the setting off stops the server, removes the discovery file and revokes the token, and turning it on issues a new token; changing the port moves the server. |
+
+Single sources of truth: the expected tool list is the generated manifest in `package.json`, and the expected project facts are `tests/fixtures/graph-baseline-aw.json`. Host lifecycle and client helpers live in `tests/tools/mcp/` and are shared with the facts toolbelt below.
+
+### Facts toolbelt
+
+`node tests/tools/mcp/facts.mjs <command>` asks the running product for facts about the loaded AdventureWorks AI project over MCP, so ground truth does not need an ad-hoc extractor bundle or a regex script: `counts`, `find <text>`, `object <id>` (what it reads and what reads or writes it), `ddl <text>`, `hubs`, `bundle <id> [up] [down]` (scope size), `verify-baseline` (counts and patterns against the graph baseline), `tools` and `call <tool> '<json>'`. Add `--json` for raw output. A host starts for the call (about 12 s); `host up` keeps one running between calls (`host status`, `host down`). These are facts about what the product reports; they cannot show that the product matches the SQL, so read the SQL for that.
+
+Exit codes: 0 all cases passed, 1 a case failed, 4 a prerequisite or the host failed (see the host log in `tmp/mcp-live/host.log`). The result is written to `tmp/mcp-live/report.json`. No model is involved: a pass says nothing about answer quality. Failure meanings for the host itself are in [Test Environments](testing/ENVIRONMENTS.md).
 
 ## Electron And UI Automation
 
@@ -59,9 +87,7 @@ The live lane clicks the actual next-question badge and checks short question bu
 
 The `--label column` lane (also part of `--label live`) sends `@lineage /trace [ai].[PriceMaster].[ListPrice] — trace this column back to its original sources.` through the same input path, approves the plan, then opens the report with the real **Show full description** follow-up. It reads the rendered DOM: the Column Chain lists the value input `CostPrice` and has no source row from `[ai].[CurrencyConfig]`, which `spRefreshPrices` only joins and filters on; that object is still named in the report. Rendering must not break: no literal code fence in the text, no ordered list restarting above 1, and every SQL fence of the assembled description on its own line. Assertions are structural and model-agnostic; the report and a screenshot go to `tmp/chat-ui/live/column-report.txt` and `column-trace.png`.
 
-Formula verification runs separately through headless production AI with the same public DACPAC, model and original question. Inspect the generated Markdown and fresh NDJSON for contextual prose around substantive formula groups, or short explanatory descriptions alongside formulas in tables, and the absence of formula-only headings or subsections. This establishes generated-content behavior; it does not establish rendered webview layout. These are dataset-specific acceptance observations; one run is not a universal latency or model-quality guarantee.
-
-Check capture memory before synthesis and assess factual correctness separately from layout. A contextual formula still fails acceptance if its deciding SQL is missing or its explanation contradicts the SQL. For window-based duplicate removal, distinguish partition keys from ordering columns and describe the surviving grain after removal; a formatted equation alone cannot establish that grain. Preserve failed captures in ignored local artifacts and do not report a model-quality pass from deterministic renderer tests.
+Formula verification runs separately through headless production AI with the same DACPAC, model and question: inspect the generated Markdown and NDJSON for contextual prose around formulas and no formula-only headings. A formula still fails if its deciding SQL is missing or the explanation contradicts it; for window-based duplicate removal, distinguish partition keys from ordering columns and state the surviving grain. This does not establish rendered layout or general model quality. Keep failed captures in ignored local artifacts.
 
 The input helper pastes through VS Code's public clipboard API into the real editor and presses Enter. It asserts the exact input before submission. This avoids CDP's incomplete support for Chromium EditContext whitespace; it does not invoke a participant handler or a hidden submit API. Production keeps the platform's normal editor settings.
 

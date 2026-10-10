@@ -123,7 +123,6 @@ export const PathFinderBar = memo(function PathFinderBar({
                 onSelect={(node) => handleSelect(node.id)}
                 onHover={setSelectedIndex}
                 dropdownRef={mergedDropdownRef}
-                portal
                 style={floatingStyles}
               />
             </FloatingPortal>

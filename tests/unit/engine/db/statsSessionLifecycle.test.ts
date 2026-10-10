@@ -1,13 +1,13 @@
 /**
  * Pins the table-statistics connection lifetime: a built-in connection is opened per request and
- * closed afterwards; an mssql-extension connection is negotiated once and reused; a DACPAC model never
- * reaches a database.
+ * closed afterwards; a selected mssql-extension connection is negotiated once and
+ * reused; a DACPAC model never reaches a database.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../../src/bridge/host';
 
 const connectDatabase = vi.fn();
-let provider = 'builtIn';
+let legacyMssql = false;
 let detailPanelListener: ((message: unknown) => Promise<void>) | undefined;
 
 vi.mock('vscode', async (importOriginal) => {
@@ -17,7 +17,7 @@ vi.mock('vscode', async (importOriginal) => {
     Uri: { joinPath: (...parts: unknown[]) => parts.join('/') },
     ViewColumn: { Beside: -2 },
     workspace: {
-      getConfiguration: () => ({ get: (key: string) => (key === 'connectionProvider' ? provider : undefined) }),
+      getConfiguration: () => ({ get: () => undefined }),
     },
     window: {
       createWebviewPanel: () => ({
@@ -42,6 +42,11 @@ vi.mock('vscode', async (importOriginal) => {
 vi.mock('../../../../src/engine/connectionManager', async (importOriginal) => ({
   ...await importOriginal<Record<string, unknown>>(),
   connectDatabase: (...args: unknown[]) => connectDatabase(...args),
+}));
+
+vi.mock('../../../../src/engine/db/dbSession', async (importOriginal) => ({
+  ...await importOriginal<Record<string, unknown>>(),
+  getConnectionProvider: () => legacyMssql ? 'mssqlExtension' : 'builtIn',
 }));
 
 const { createMessageHandlers } = await import('../../../../src/bridge/messageHandlers');
@@ -93,7 +98,7 @@ describe('table statistics connection lifetime', () => {
   beforeEach(() => connectDatabase.mockReset());
 
   it('opens and closes a built-in connection for every request', async () => {
-    provider = 'builtIn';
+    legacyMssql = false;
     const sessions = [fakeSession('builtIn'), fakeSession('builtIn')];
     connectDatabase.mockResolvedValueOnce(sessions[0]).mockResolvedValueOnce(sessions[1]);
 
@@ -105,7 +110,7 @@ describe('table statistics connection lifetime', () => {
   });
 
   it('reuses one mssql-extension connection across requests', async () => {
-    provider = 'mssqlExtension';
+    legacyMssql = true;
     const session = fakeSession('mssqlExtension');
     connectDatabase.mockResolvedValue(session);
 
@@ -116,7 +121,7 @@ describe('table statistics connection lifetime', () => {
   });
 
   it('disconnects the reused mssql-extension connection when the panel closes', async () => {
-    provider = 'mssqlExtension';
+    legacyMssql = true;
     const session = fakeSession('mssqlExtension');
     connectDatabase.mockResolvedValue(session);
 
@@ -134,7 +139,7 @@ describe('table statistics connection lifetime', () => {
     }],
     ['profiling switched off', { 'tableStatistics.enabled': false }, (session: ReturnType<typeof fakeSession>) => session],
   ] as const)('%s logs the object name at debug only', async (_case, settings, prepare) => {
-    provider = 'builtIn';
+    legacyMssql = false;
     connectDatabase.mockImplementation(async () => prepare(fakeSession('builtIn')));
     const channel = makeOutputChannel();
 
@@ -147,7 +152,7 @@ describe('table statistics connection lifetime', () => {
   });
 
   it('a request from a detail panel while a DACPAC model is loaded never connects', async () => {
-    provider = 'builtIn';
+    legacyMssql = false;
 
     await requestStatsTwice(false);
 

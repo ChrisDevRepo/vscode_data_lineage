@@ -11,7 +11,7 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 
 ## Prerequisites
 
-- A connection: the built-in connection, or a profile in the MSSQL extension (`ms-mssql.mssql`) — see `dataLineageViz.database.connectionProvider`.
+- A connection saved with **Data Lineage: Add Database Connection**. Projects saved earlier with an MSSQL extension (`ms-mssql.mssql`) profile still reconnect through it (deprecated).
 - Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on tables for profiling. Custom queries may need additional permissions.
 - Supported platforms: SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool.
 
@@ -34,7 +34,7 @@ Nothing runs automatically in the background. The standard import path uses:
 |-------|---------|------|
 | Phase 1 | `schema-preview` | Runs first to populate the schema-selection wizard. |
 | Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the extension uses authoritative MSSQL server metadata; if neither source is available, the model records `Unknown database platform` without failing the import. A built-in connection has no other source, so it records `Unknown database platform` directly instead of sending the query again. |
-| Built-in connection | `platform-info` | A built-in connection (`dataLineageViz.database.connectionProvider` = `builtIn`) reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. The database name is typed, not listed. |
+| Built-in connection | `platform-info` | A built-in connection reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. The database name is typed, not listed. |
 | Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
 | Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
 

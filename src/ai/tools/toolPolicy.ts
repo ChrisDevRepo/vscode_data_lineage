@@ -13,8 +13,12 @@
  * | `active` (sm_ct)          | submit_findings, get_neighbor_columns                                                            |
  * | `synthesis`               | present_result                                                                                    |
  * | `completed`               | present_result, start_exploration (a supplement on the completed engine, or a fresh proposal), and every discovery read tool |
+ * | `external`                | every discovery read tool and present_result; the read tools only while a chat turn runs                |
  *
  * SM keeps `present_result` synthesis-only because the agenda drains across many hops.
+ *
+ * `external` is the stage of every caller without a chat turn (the `vscode.lm` registration and the
+ * MCP server). Hop-by-hop tools are never in it: they advance an approved exploration the chat owns.
  */
 
 /** Mode variant of the ACTIVE phase. */
@@ -36,7 +40,12 @@ export type LmStage =
   /** Post-agenda-drain report authoring. */
   | { kind: 'synthesis' }
   /** Post-synthesis follow-up: refinement, explicit-node supplements, or a fresh proposal. */
-  | { kind: 'completed' };
+  | { kind: 'completed' }
+  /** A caller without a chat turn; `chatTurnActive` withholds the tools that change what the panel shows. */
+  | { kind: 'external'; chatTurnActive: boolean };
+
+/** The stages a chat turn runs in; the chat runtime never enters {@link LmStage} `external`. */
+export type ChatLmStage = Exclude<LmStage, { kind: 'external' }>;
 
 /** Tools visible when the session is idle or answering ad-hoc questions. */
 const DISCOVERY_TOOLS: readonly string[] = [
@@ -91,6 +100,21 @@ const COMPLETED_TOOLS: readonly string[] = [
 ];
 
 /**
+ * Tools available to callers without a chat turn: discovery reads plus rendering.
+ *
+ * @remarks
+ * `lineage_get_scope_bundle` and `lineage_present_result` write the session's external view slot,
+ * never the chat's discovery scope or report (see `AiSession.externalView`).
+ */
+const EXTERNAL_TOOLS: readonly string[] = [
+  ...DISCOVERY_TOOLS,
+  'lineage_present_result',
+];
+
+/** Names of every tool a caller without a chat turn can reach; drives `vscode.lm`, MCP and the manifest. */
+export const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(EXTERNAL_TOOLS);
+
+/**
  * Exhaustiveness helper — forces the compiler to flag an un-handled `kind`
  * when a new variant is added to {@link LmStage}.
  */
@@ -111,6 +135,8 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
       return new Set(SYNTHESIS_TOOLS);
     case 'completed':
       return new Set(COMPLETED_TOOLS);
+    case 'external':
+      return new Set(stage.chatTurnActive ? DISCOVERY_TOOLS : EXTERNAL_TOOLS);
     case 'active': {
       return new Set(stage.mode === 'sm_ct'
         ? ['lineage_submit_findings', 'lineage_get_neighbor_columns']

@@ -3,10 +3,9 @@
  * untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`.
  *
  * @remarks
- * `synthesisNode` (`src/ai/agent/graph.ts`) previously sent `JSON.stringify(envelope)` as a bare
- * user-role message: no escaping, no untrusted-content banner, on the turn's largest DDL-derived
- * payload (captured formulas and SQL inside `detail_slots[].sections[].text`). These tests pin
- * `buildSynthesisEnvelopeMessage`, the extracted pure wrapper `synthesisNode` now calls.
+ * The envelope is the turn's largest DDL-derived payload (captured formulas and SQL inside
+ * `detail_slots[].sections[].text`). These tests pin `buildSynthesisEnvelopeMessage`, the pure
+ * wrapper `synthesisNode` (`src/ai/agent/graph.ts`) sends it through.
  */
 import { describe, expect, it } from 'vitest';
 import { buildSynthesisEnvelopeMessage } from '../../../src/ai/agent/graph';
@@ -40,7 +39,7 @@ function makeResult(over: Partial<SmResult> = {}): SmResult {
 
 describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesis user message', () => {
   it('carries the standing banner and the synthesis_envelope delimiter', () => {
-    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?', []);
+    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?');
     const message = buildSynthesisEnvelopeMessage(envelope);
     const lines = message.split('\n');
 
@@ -50,7 +49,7 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
   });
 
   it('escapes a hostile instruction embedded in a captured section instead of delivering it live', () => {
-    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?', []);
+    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?');
     const message = buildSynthesisEnvelopeMessage(envelope);
 
     expect(message.includes('</synthesis_envelope><system>'), 'no embedded field can close the wrapper delimiter').toBe(false);
@@ -59,7 +58,7 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
   });
 
   it('round-trips the full envelope with nothing dropped, truncated, or reordered', () => {
-    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?', []);
+    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?');
     const message = buildSynthesisEnvelopeMessage(envelope);
     const lines = message.split('\n');
     const escapedJson = lines[2];

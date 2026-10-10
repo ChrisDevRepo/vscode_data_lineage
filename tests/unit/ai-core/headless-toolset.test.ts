@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { databaseConfig, main, parseOptions } from '../../harness/cli';
 import { OpenAiCompatiblePort, type FetchLike } from '../../harness/openAiCompatiblePort';
 import { parseTrace, serializeRun } from '../../harness/traceModel';
-import { exportRunToLangfuse } from '../../harness/langfuseExport';
+import { exportRunToLangfuse, type LangfuseAttachments } from '../../harness/langfuseExport';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 
@@ -20,6 +20,10 @@ describe('public toolset options', () => {
   it('accepts a prompt and ordered follow-ups without a question registry', () => {
     expect(parseOptions('ai', ['--prompt', 'Inspect dependencies', '--followup', 'First', '--followup', 'Second', '--timeout-ms', '1000']))
       .toMatchObject({ prompt: 'Inspect dependencies', followups: ['First', 'Second'], timeoutMs: 1000, langfuse: false, verbose: false });
+  });
+  it('defaults to a 30-minute AI deadline and a five-minute database deadline', () => {
+    expect(parseOptions('ai', []).timeoutMs).toBe(1_800_000);
+    expect(parseOptions('db', []).timeoutMs).toBe(300_000);
   });
   it.each([['--timeout-ms', '0'], ['--timeout-ms', 'NaN'], ['--prompt'], ['--runs', '10']])('rejects invalid or campaign options %j', (...args) => {
     expect(() => parseOptions('ai', args)).toThrow();
@@ -168,6 +172,203 @@ describe('public trace/export plumbing', () => {
 });
 
 
+describe('Langfuse export of tool outcomes and run identity', () => {
+  const tool = (seq: number, at: string, extra: Record<string, unknown>) => ({
+    at, type: 'tool', requestId: 'synthetic', runFingerprint: 'run', seq, phase: 'active', durationMs: 5, ...extra,
+  });
+  const trace = [
+    { at: '2026-01-01T00:00:00.000Z', type: 'turn-start', requestId: 'synthetic', runFingerprint: 'run', sessionFingerprint: 'session', modelFingerprint: 'model' },
+    tool(1, '2026-01-01T00:00:00.100Z', { toolName: 'lineage_search_objects', status: 'accepted' }),
+    tool(2, '2026-01-01T00:00:00.200Z', { toolName: 'lineage_start_exploration', status: 'rejected', rejectionCode: 'unknown_columns', issuePaths: ['targetColumns.0'] }),
+    tool(3, '2026-01-01T00:00:00.300Z', { toolName: 'lineage_start_exploration', status: 'gate' }),
+    tool(4, '2026-01-01T00:00:00.400Z', { toolName: 'lineage_submit_findings', status: 'dispatch_error' }),
+    tool(5, '2026-01-01T00:00:00.500Z', { toolName: 'lineage_start_exploration', status: 'refused', rejectionCode: 'over_active_scope_budget' }),
+    tool(6, '2026-01-01T00:00:00.500Z', { toolName: 'lineage_start_exploration', status: 'not_evaluated', rejectionCode: 'phase_closed' }),
+    { at: '2026-01-01T00:00:01.000Z', type: 'turn-terminal', requestId: 'synthetic', runFingerprint: 'run', status: 'ok', modelCalls: 2, durationMs: 1000 },
+  ].map(row => JSON.stringify(row)).join('\n') + '\n';
+
+  const exportBody = async (runMetadata?: { lane?: string; promptId?: string; sessionId?: string; tags?: string[] }) => {
+    let body = '';
+    const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+      body = String(init?.body);
+      return new Response('{}', { status: 200 });
+    };
+    const result = await exportRunToLangfuse(parseTrace(trace), {
+      baseUrl: 'https://langfuse.example', publicKey: 'synthetic-public', secretKey: 'synthetic-secret',
+      fetchImpl: fetchImpl as typeof fetch, runMetadata,
+    });
+    const spans = JSON.parse(body).resourceSpans[0].scopeSpans[0].spans as Array<{ name: string; attributes: Array<{ key: string; value: Record<string, unknown> }>; status: { code: number } }>;
+    const attr = (span: (typeof spans)[number], key: string) => span.attributes.find(entry => entry.key === key)?.value;
+    return { result, spans, attr };
+  };
+
+  it('exports each tool call as a tool observation whose level reflects the outcome', async () => {
+    const { result, spans, attr } = await exportBody();
+    const tools = spans.filter(span => span.name.startsWith('tool:'));
+    expect(tools).toHaveLength(6);
+    expect(result.exported).toBe(7);
+    const levels = tools.map(span => attr(span, 'langfuse.observation.level')?.stringValue);
+    expect(levels).toEqual(['DEFAULT', 'WARNING', 'DEFAULT', 'ERROR', 'DEFAULT', 'DEFAULT']);
+    expect(attr(tools[1], 'langfuse.observation.metadata.rejectionCode')?.stringValue).toBe('unknown_columns');
+    expect(attr(tools[1], 'langfuse.observation.metadata.issuePaths')?.stringValue).toBe('targetColumns.0');
+    expect(attr(tools[2], 'langfuse.observation.metadata.status')?.stringValue).toBe('gate');
+    expect(tools[3].status.code).toBe(2);
+  });
+
+  it('counts rejections, gates and dispatch errors separately on the trace', async () => {
+    const { spans, attr } = await exportBody();
+    const root = spans.find(span => !span.name.startsWith('tool:'))!;
+    expect(attr(root, 'langfuse.trace.metadata.toolCalls')?.stringValue).toBe('6');
+    expect(attr(root, 'langfuse.trace.metadata.rejections')?.stringValue).toBe('1');
+    expect(attr(root, 'langfuse.trace.metadata.gates')?.stringValue).toBe('1');
+    expect(attr(root, 'langfuse.trace.metadata.refusals')?.stringValue).toBe('1');
+    expect(attr(root, 'langfuse.trace.metadata.notEvaluated')?.stringValue).toBe('1');
+    expect(attr(root, 'langfuse.trace.metadata.dispatchErrors')?.stringValue).toBe('1');
+    expect(JSON.parse(String(attr(root, 'langfuse.trace.metadata.rejectionCodes')?.stringValue))).toEqual({ unknown_columns: 1 });
+  });
+
+  it('carries the session id, tags and label, and omits them when not given', async () => {
+    const withIdentity = await exportBody({ lane: 'synthetic-lane', promptId: 'Q1', sessionId: 'eval-1', tags: ['arm:candidate', 'commit:abc'] });
+    const root = withIdentity.spans.find(span => !span.name.startsWith('tool:'))!;
+    expect(root.name).toBe('synthetic-lane/Q1');
+    expect(withIdentity.attr(root, 'langfuse.session.id')?.stringValue).toBe('eval-1');
+    expect(withIdentity.attr(root, 'langfuse.trace.tags')).toEqual({ arrayValue: { values: [{ stringValue: 'arm:candidate' }, { stringValue: 'commit:abc' }] } });
+    const without = await exportBody();
+    const bare = without.spans.find(span => !span.name.startsWith('tool:'))!;
+    expect(without.attr(bare, 'langfuse.session.id')).toBeUndefined();
+    expect(without.attr(bare, 'langfuse.trace.tags')).toBeUndefined();
+  });
+
+  it('never exports tool arguments or results', async () => {
+    const { spans } = await exportBody();
+    expect(JSON.stringify(spans.filter(span => span.name.startsWith('tool:')))).not.toMatch(/"input"|"output"|arguments|result/);
+  });
+});
+
+describe('Langfuse export of a failed run', () => {
+  const trace = [
+    { at: '2026-01-01T00:00:00.000Z', type: 'turn-start', requestId: 'failed', runFingerprint: 'run', sessionFingerprint: 'session', modelFingerprint: 'model' },
+    { at: '2026-01-01T00:00:00.100Z', type: 'wire-request', requestId: 'failed', generation: 1, phase: 'discovery', system: 'synthetic system', messages: [{ role: 'user', content: 'synthetic question' }] },
+    { at: '2026-01-01T00:00:00.200Z', type: 'wire-error', requestId: 'failed', generation: 1, phase: 'discovery', diagnostic: { phase: 'discovery', name: 'Error', message: 'HTTP 412', code: 'HTTP_412' } },
+    { at: '2026-01-01T00:00:00.300Z', type: 'turn-terminal', requestId: 'failed', runFingerprint: 'run', status: 'error', reason: 'provider_error', modelCalls: 1, durationMs: 300 },
+  ].map(row => JSON.stringify(row)).join('\n') + '\n';
+
+  it('gives the root span the failed request as input and the provider failure as output', async () => {
+    let body = '';
+    const fetchImpl = async (_url: unknown, init?: RequestInit) => { body = String(init?.body); return new Response('{}', { status: 200 }); };
+    await exportRunToLangfuse(parseTrace(trace), {
+      baseUrl: 'https://langfuse.example', publicKey: 'synthetic-public', secretKey: 'synthetic-secret', fetchImpl: fetchImpl as typeof fetch,
+    });
+    const spans = JSON.parse(body).resourceSpans[0].scopeSpans[0].spans as Array<{ parentSpanId?: string; attributes: Array<{ key: string; value: { stringValue?: string } }>; status: { code: number; message?: string } }>;
+    const root = spans.find(span => span.parentSpanId === undefined)!;
+    const attr = (key: string) => root.attributes.find(entry => entry.key === key)?.value.stringValue;
+    expect(attr('langfuse.observation.input')).toContain('synthetic question');
+    expect(attr('langfuse.observation.output')).toContain('HTTP_412');
+    expect(root.status).toEqual({ code: 2, message: 'provider_error' });
+  });
+});
+
+describe('Langfuse evidence attachments', () => {
+  interface Call { url: string; method: string; headers: Record<string, string>; body: string }
+  const harness = (options: { mediaStatus?: number; uploadStatus?: number; alreadyStored?: boolean } = {}) => {
+    const calls: Call[] = [];
+    const fetchImpl = async (url: unknown, init?: RequestInit) => {
+      const call = { url: String(url), method: String(init?.method), headers: (init?.headers ?? {}) as Record<string, string>, body: String(init?.body instanceof Uint8Array ? Buffer.from(init.body).toString('utf8') : init?.body) };
+      calls.push(call);
+      if (call.url.endsWith('/api/public/media') && call.method === 'POST') {
+        return options.mediaStatus && options.mediaStatus !== 200
+          ? new Response('{}', { status: options.mediaStatus })
+          : new Response(JSON.stringify({ mediaId: `media-${calls.length}`, uploadUrl: options.alreadyStored ? null : 'https://media.example/upload' }), { status: 200 });
+      }
+      if (call.url === 'https://media.example/upload') return new Response('', { status: options.uploadStatus ?? 200 });
+      return new Response('{}', { status: 200 });
+    };
+    return { calls, fetchImpl: fetchImpl as typeof fetch };
+  };
+  const config = (fetchImpl: typeof fetch, attachments: LangfuseAttachments) => ({
+    baseUrl: 'https://langfuse.example', publicKey: 'synthetic-public', secretKey: 'synthetic-secret', fetchImpl, attachments,
+  });
+  const files: LangfuseAttachments = {
+    run: [{ name: 'debug-log', contentType: 'text/plain', content: 'line with synthetic-key-123 and more' }],
+    turns: [[{ name: 'answer', contentType: 'text/markdown', content: '# Answer' }]],
+    redact: ['synthetic-key-123'],
+  };
+  const otlpRoot = (calls: Call[]) => {
+    const post = calls.find(call => call.url.endsWith('/api/public/otel/v1/traces'))!;
+    const spans = JSON.parse(post.body).resourceSpans[0].scopeSpans[0].spans as Array<{ attributes: Array<{ key: string; value: { stringValue?: string } }> }>;
+    return JSON.parse(spans[0].attributes.find(entry => entry.key === 'langfuse.trace.metadata.attachments')!.value.stringValue!) as Record<string, string>;
+  };
+
+  it('uploads run and turn files, confirms them, and references them from the trace metadata', async () => {
+    const { calls, fetchImpl } = harness();
+    const result = await exportRunToLangfuse(parseTrace(syntheticTrace), config(fetchImpl, files));
+    expect(result.errors).toEqual([]);
+    const requests = calls.filter(call => call.url.endsWith('/api/public/media') && call.method === 'POST').map(call => JSON.parse(call.body));
+    expect(requests).toEqual([
+      expect.objectContaining({ field: 'metadata', contentType: 'text/plain', contentLength: 'line with [redacted] and more'.length }),
+      expect.objectContaining({ field: 'metadata', contentType: 'text/markdown', contentLength: '# Answer'.length }),
+    ]);
+    expect(calls.filter(call => call.method === 'PUT').every(call => call.headers['x-amz-checksum-sha256']?.length === 44)).toBe(true);
+    expect(calls.filter(call => call.method === 'PATCH')).toHaveLength(2);
+    const tokens = otlpRoot(calls);
+    expect(Object.keys(tokens)).toEqual(['debug-log', 'answer']);
+    expect(tokens.answer).toMatch(/^@@@langfuseMedia:type=text\/markdown\|id=media-\d+\|source=bytes@@@$/);
+  });
+
+  it('removes configured secrets before the file is hashed or uploaded', async () => {
+    const { calls, fetchImpl } = harness();
+    await exportRunToLangfuse(parseTrace(syntheticTrace), config(fetchImpl, files));
+    const uploaded = calls.filter(call => call.method === 'PUT').map(call => call.body).join('');
+    expect(uploaded).toContain('line with [redacted] and more');
+    expect(JSON.stringify(calls)).not.toContain('synthetic-key-123');
+  });
+
+  it('references a file the backend already stores without uploading it again', async () => {
+    const { calls, fetchImpl } = harness({ alreadyStored: true });
+    await exportRunToLangfuse(parseTrace(syntheticTrace), config(fetchImpl, files));
+    expect(calls.some(call => call.method === 'PUT')).toBe(false);
+    expect(Object.keys(otlpRoot(calls))).toEqual(['debug-log', 'answer']);
+  });
+
+  it.each([{ mediaStatus: 500 }, { uploadStatus: 403 }])('reports a failed upload %j and still exports the spans', async failure => {
+    const { calls, fetchImpl } = harness(failure);
+    const result = await exportRunToLangfuse(parseTrace(syntheticTrace), config(fetchImpl, files));
+    expect(result.errors.join(' ')).toMatch(/Attachment (debug-log|answer) not stored/);
+    expect(calls.some(call => call.url.endsWith('/api/public/otel/v1/traces'))).toBe(true);
+  });
+
+  it('skips a file above the size limit instead of truncating it', async () => {
+    const { calls, fetchImpl } = harness();
+    const big: LangfuseAttachments = { run: [{ name: 'event-trace', contentType: 'text/plain', content: 'x'.repeat(50 * 1024 * 1024 + 1) }] };
+    const result = await exportRunToLangfuse(parseTrace(syntheticTrace), config(fetchImpl, big));
+    expect(result.errors.join(' ')).toContain('skipped');
+    expect(calls.some(call => call.url.endsWith('/api/public/media'))).toBe(false);
+  });
+
+  it('makes no media request unless attachments are supplied', async () => {
+    const { calls, fetchImpl } = harness();
+    await exportRunToLangfuse(parseTrace(syntheticTrace), { baseUrl: 'https://langfuse.example', publicKey: 'synthetic-public', secretKey: 'synthetic-secret', fetchImpl });
+    expect(calls.some(call => call.url.includes('/api/public/media'))).toBe(false);
+  });
+
+  it('requires --langfuse for --attach', () => {
+    expect(parseOptions('ai', ['--langfuse', '--attach'])).toMatchObject({ attach: true });
+    expect(() => parseOptions('ai', ['--attach'])).toThrow(/--langfuse/);
+    expect(() => parseOptions('db', ['--attach'])).toThrow();
+  });
+});
+
+describe('run identity options', () => {
+  it('accepts a label, a session and repeated tags on the AI runner only', () => {
+    expect(parseOptions('ai', ['--label', 'Q1', '--session', 'eval-1', '--tag', 'a', '--tag', 'b']))
+      .toMatchObject({ label: 'Q1', session: 'eval-1', tags: ['a', 'b'] });
+    expect(() => parseOptions('db', ['--label', 'Q1'])).toThrow();
+  });
+  it.each([['--label', ''], ['--tag'], ['--session', 'x'.repeat(191)]])('rejects invalid identity option %j', (...args) => {
+    expect(() => parseOptions('ai', args)).toThrow();
+  });
+});
+
 describe('offline headless runtime smoke', () => {
   it.each([
     { verbose: false, rejected: 0, exportEnabled: false },
@@ -234,6 +435,35 @@ describe('offline headless runtime smoke', () => {
     const traceFile = readdirSync(traceDir).find(name => name.endsWith('.ndjson'))!;
     const run = parseTrace(readFileSync(join(traceDir, traceFile), 'utf8'));
     expect(run.generations.every(entry => entry.requestId !== 'unknown')).toBe(true);
+  });
+  it('traces the exact URL and body it sends, reasoning effort included', async () => {
+    vi.stubEnv('AI_TEST_PROVIDER', 'openai-compatible');
+    vi.stubEnv('AI_TEST_ENDPOINT', 'https://provider.example/v1/chat/completions');
+    vi.stubEnv('AI_TEST_API_KEY', 'synthetic-secret');
+    vi.stubEnv('AI_TEST_MODEL', 'synthetic-model');
+    vi.stubEnv('AI_TEST_REASONING_EFFORT', 'low');
+    const sent: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { tools?: Array<{ function: { name: string } }> };
+      sent.push({ url: String(url), body });
+      const structured = body.tools?.some(tool => tool.function.name === 'structured_output');
+      return new Response(JSON.stringify({ choices: [{ finish_reason: structured ? 'tool_calls' : 'stop', message: structured ? {
+        content: null, tool_calls: [{ id: 'synthetic-entry', type: 'function', function: {
+          name: 'structured_output', arguments: JSON.stringify({ entry: 'discovery', targetColumns: null }),
+        } }],
+      } : { content: 'Synthetic offline answer.' } }] }), { status: 200 });
+    }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await main('ai', ['--prompt', 'Summarize loaded objects', '--timeout-ms', '10000', '--trace-verbose'])).toBe(0);
+    const report = JSON.parse(String(vi.mocked(console.log).mock.calls.at(-1)?.[0]));
+    const traceDir = join(report.artifacts as string, 'lm-trace');
+    const traced = readFileSync(join(traceDir, readdirSync(traceDir).find(name => name.endsWith('.ndjson'))!), 'utf8')
+      .split('\n').filter(Boolean).map(line => JSON.parse(line) as { type: string; direction?: string; url?: string; body?: unknown })
+      .filter(record => record.type === 'provider-raw' && record.direction === 'request');
+    expect(sent.length).toBeGreaterThan(0);
+    expect(traced.map(record => ({ url: record.url, body: record.body }))).toEqual(sent);
+    expect(sent.every(request => request.url === 'https://provider.example/v1/chat/completions')).toBe(true);
+    expect(sent.every(request => (request.body as { reasoning_effort?: string }).reasoning_effort === 'low')).toBe(true);
   });
   it('fails explicit missing-service configuration instead of self-skipping', async () => {
     vi.stubEnv('DB_TEST_SERVER', '');

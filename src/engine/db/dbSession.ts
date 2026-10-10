@@ -39,6 +39,11 @@ export interface DbSession {
   executeSimpleQuery(sql: string, options?: DbQueryOptions): Promise<SimpleExecuteResult>;
   /** Reads server version and edition metadata. */
   getServerInfo(): Promise<IServerInfo>;
+  /**
+   * Whether the session can still run a query; `false` once its connection ended or failed. A
+   * provider whose host owns the connection's lifetime reports `true`.
+   */
+  isOpen(): boolean;
   /** Releases what this extension opened; safe to call more than once. */
   dispose(): Promise<void>;
 }

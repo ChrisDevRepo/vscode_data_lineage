@@ -21,8 +21,13 @@ the source of truth for exact wording and provider-visible shapes.
 - [`src/ai/tools/presentResult.ts`](../src/ai/tools/presentResult.ts) validates
   and deterministically assembles the final presentation.
 - [`src/ai/tools/toolDefs.ts`](../src/ai/tools/toolDefs.ts) is the single tool
-  catalog. `package.json` `languageModelTools` is the generated read-effect
-  subset; chat commands stay in `package.json`.
+  catalog. `package.json` `languageModelTools` is the generated `external`
+  stage subset, served to `vscode.lm` callers and MCP clients alike; chat
+  commands stay in `package.json`. A tool's `modelDescription` is shared by
+  every surface, so it names no chat-only stage, approval or `@lineage`
+  concept; field wording that only fits the chat stays in the chat stage
+  schemas, and an `externalInputSchema` carries the caller-neutral contract
+  (a unit test rejects chat-only wording in everything served externally).
 
 YAML is a customization layer, not the whole prompt. Phase instructions and
 mechanical enforcement remain code-owned.
@@ -46,27 +51,30 @@ schema parsing; `submit_findings` content caps are enforced by
 
 ## Tool catalog
 
-Two surfaces consume `TOOL_DEFS`. A name that exists on one does not imply it
-exists on the other.
+Every surface consumes `TOOL_DEFS` through the same registry and handlers.
 
-**Registered with `vscode.lm`** (`effect: 'read'` only — Copilot agent mode and
-`#lineage_*` references): `lineage_get_context`, `lineage_get_screen_state`,
-`lineage_search_objects`, `lineage_get_object_detail`, `lineage_search_ddl`,
-`lineage_detect_graph_patterns`, `lineage_get_neighbor_columns`.
+**External** (the `external` stage of the tool policy — `vscode.lm` for Copilot
+agent mode and `#lineage_*` references, and the localhost MCP server; served
+as `EXTERNAL_TOOL_DEFS`, where `lineage_present_result` takes its
+caller-neutral `externalInputSchema` with `scope_id` / `view_id` handles):
+`lineage_get_context`, `lineage_get_screen_state`, `lineage_search_objects`,
+`lineage_get_scope_bundle`, `lineage_get_object_detail`, `lineage_search_ddl`,
+`lineage_detect_graph_patterns`, `lineage_present_result`. While a chat turn
+runs, `lineage_present_result` is withheld. The MCP server also returns short
+server instructions (`MCP_INSTRUCTIONS` in
+[`src/ai/mcp/mcpServer.ts`](../src/ai/mcp/mcpServer.ts)) for the cross-tool
+workflow; tool selection guidance stays in each `modelDescription`.
 
-**Participant-internal** (in-process dispatcher only; never
-`vscode.lm.registerTool`): `lineage_get_scope_bundle` (discovery `scope_store`),
-`lineage_start_exploration` (consent gate), `lineage_submit_findings` (hop
-commit), `lineage_present_result` (presentation commit).
+**Chat-only** (hop-by-hop): `lineage_start_exploration` (consent gate),
+`lineage_submit_findings` (hop commit), `lineage_get_neighbor_columns`.
 
 Phase availability is [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts).
-Active exploration exposes `lineage_submit_findings` and
-`lineage_get_neighbor_columns` together; neighbor-column inspection is for
-opaque focus DDL (`SELECT *`, dynamic SQL, ambiguous joins), not a second
-catalog search.
+An active hop exposes `lineage_submit_findings`; a CT hop adds
+`lineage_get_neighbor_columns`, which is for opaque focus DDL (`SELECT *`,
+dynamic SQL, ambiguous joins), not a second catalog search.
 
 `compileInstructionPlan` uses Required tool mode when only the terminal tool
-is exposed (synthesis and preview), and Auto for the two-tool active hop.
+is exposed (synthesis, preview and a BB hop), and Auto for the two-tool CT hop.
 The graph independently enforces `requiredTerminalTool` and retries a
 text-only generation when a tool call is required.
 
@@ -138,7 +146,10 @@ bridge sends it to the exact `ChatRequest.model` selected by VS Code.
   is node-proportional and non-cumulative: a large focus-node DDL raises one
   hop's message and is gone the next.
 - Synthesis starts from a fresh completion envelope containing the archived
-  findings plus engine-owned lifecycle and column-provenance state.
+  findings, the render id set, engine flow facts and column-provenance state.
+  Each archived slot keeps every authored sub-question its hop was dispatched with and,
+  where the task ledger records it, the asking hop. Depth and order rules live once, in the synthesis prompt;
+  each captured formula reaches synthesis once, as the hop wrote it.
 
 `NavigationEngine`, not prompt prose, owns agenda, gates, routing validation,
 pruning, closure, and termination. Persisted node actions are `analyze`,
@@ -167,9 +178,17 @@ business and
 technical capture on non-bodied focus nodes and renders on its own, with no
 header. On a bodied focus the capture recipe opens with an engine-owned header
 that an overlay cannot replace: a `sections` object keyed by angle, SQL quoted
-only as an exact substring of the focus DDL, and the `not established from the
-available SQL` wording. The business, technical and structural-callout keys
-carry only their numbered items and the ⚠️ rule, never a copy of that header.
+only as an exact substring of the focus DDL, the `not established from the
+available SQL` wording, the JSON-string encoding of the section text, and the
+calculation rule (each calculation explained once in its rule or step, LaTeX
+delimiters, definitions never read as measured results). The business and
+technical keys carry only their own recipe items and `structural_callouts` carries
+the ⚠️ evidence rule, sent once per bodied hop; none copies that header. Each recipe's Error handling item carries the
+caught-failure rule (a value a failed statement would have set keeps its earlier
+value through later statements and the written table's column constraints, which
+a written table neighbor carries in `cols`), where the hop writes that claim
+rather than among the optional ⚠️ rules. Like Grain, it is sent once per active
+angle.
 The closing instruction may be
 omitted for small results. Empty template values are skipped. Templates are
 self-contained: instructions do not depend on positional references such as
@@ -252,7 +271,8 @@ own tool:
 - **The exploration scope** — the node set fixed at the approval gate and owned by
   `NavigationEngine` for the rest of the run. `lineage_submit_findings`,
   `lineage_present_result`, and `lineage_get_neighbor_columns` operate inside
-  it; nothing widens it silently — a follow-up that names an object is the
+  it (an external `lineage_present_result` renders its own scope walk instead);
+  nothing widens it silently — a follow-up that names an object is the
   consent that admits exactly that object, never its schema, and the schema
   classes approved on the `confirm_sm_start` card are the consent that admits a
   schema.
@@ -453,7 +473,24 @@ schema with a hint to fold its content into the kept angle, so a business-only
 answer cannot carry technical sections. Neighbor,
 column, and prune checks run before commit. A rejected submission does
 not partially update findings, lifecycle, or scheduling state. Rejections return a
-machine-readable error, corrective hint, and relevant valid-set details.
+machine-readable error, corrective hint, and relevant valid-set details; the
+model reads the reason and the hint, never a bare code.
+
+Rejection wording follows the current vendor guidance (the tool-use and
+function-calling guides of the major model vendors,
+the VS Code language-model tools guide, the MCP tools specification) and the
+2024–2026 literature on agent self-repair: feedback that names the failure
+location, the observed value and the admissible alternatives drives repair,
+while a generic "try again" triggers identical resends; correction saturates by
+the third attempt; unbounded retry loops are the main cause of agents that do
+not stop. The rules every rejection follows: name the field path and the
+measured value; list the allowed values or the shape; name the next call in
+the model's own tool vocabulary; show no bare code and no traceback; state the
+resend rule once; name an unchanged resend as such; state the replies left;
+stop after `MAX_TOOL_PROVIDER_CALLS`. A call with several faults is answered
+once: every fault is listed with its field path and the measured or received
+value, and every field gets a repair that names it (fields sharing one repair
+share one clause), so one round corrects the whole call.
 Unresolvable external references are recorded as notices and skipped when the
 engine can safely continue. A repeated request for an object already removed
 is reported as an already-pruned no-op rather than as an analyzed or retained
@@ -467,19 +504,19 @@ preview only groups the cached discovery answer into sections by block reference
 and adds labels, node links, captions, and highlight groups. The engine owns validation, section
 numbering, badge derivation, object links, markdown assembly, and graph closure.
 
-Both stages are validated by the same rules, so both receive the same
-presentation contract. The linking, captioning, and highlight-selection rules are
+Every stage that calls the tool is validated by the same rules, so each
+receives the same presentation contract. The linking, captioning, and highlight-selection rules are
 authored once and composed into every stage that calls the tool through the
 shared phase dispatcher; only genuinely stage-specific material — the archive
 evidence surfaces for synthesis, the answer-block reference contract for preview, the
 depth and heading rules that license only the text-authoring stages — lives with
 its stage. A stage that reaches the tool without that contract is a stage judged
-by rules it was never given. The contract also states the enforced mechanical
-checks upfront — unique section labels, trimmed nonempty highlight legend labels
-with a 60-character readability limit (soft target: about 40 characters), at
-least one highlight group without an upper count limit, and the held-draft repair
-convention — so a model learns
-each rule before its first call rather than from a rejection. The CT coverage rule
+by rules it was never given. The served tool schema carries the mechanical
+bounds before the first call — at least one section and one highlight group
+(no upper count limit), and trimmed nonempty highlight legend labels of at most
+60 characters (soft target in the `highlights` template: about 40). Duplicate
+section labels and the held-draft repair convention are stated by the rejection
+that reports them. The CT coverage rule
 (every Column Trace Chain node in scope without a detail slot appears in a
 section's node ids or a note; a highlight group does not cover it) is stated in
 the synthesis prompt and checked by the present-result handler, which rejects a
@@ -488,8 +525,21 @@ carries the facts the prompt reasons from.
 
 Validation is structural and field-scoped, and completes before commit.
 Markdown and math formatting do not reject a call: unparseable math renders
-as source text. A held `submit_findings` retry resends the full call, retaining
-unchanged section angles. A held `present_result` repair resends authorized
+as source text. A held `submit_findings` retry resends `focus_node_id`, `verdict`
+and the corrected field only: held `sections` angles, `summary`, `column_flow`,
+`badge_label`, `prune_neighbors` and `questions` are kept by omission, and a
+resent `sections` names only the angle it changes. A rejection fails the
+narrowest part it names: one section angle, or one `questions` /
+`prune_neighbors` entry, whose valid siblings stay held and merge with the retry
+by the neighbor they name, so the retry resends only the corrected entry; a
+resent entry replaces the held entry for its neighbor, and naming a neighbor in
+one list drops its held entry from the other. A failed `column_flow` entry
+fails its `out_col`: the other out_cols stay held, the retry resends only the
+entries of the out_col it corrects (they replace the held entries of that
+out_col), and `column_flow: []` clears the held flow. The rejection hint states
+this rule and names the held out_cols; the served CT schema's `column_flow`
+description, while a flow is held, says a resent entry replaces the held
+entries of its out_col. A held `present_result` repair resends authorized
 corrected fields: sections merge by label, unnamed sections stay, and
 `{label, remove: true}` removes one. Structural repairs replace notes and
 highlights as whole lists. A rejection confined to highlight labels permits
@@ -517,9 +567,8 @@ change analysis mode, author relationships, store memory or create follow-ups.
 
 For a new render, sections and highlights are required. A node can belong to at
 most one final section; highlighted nodes must be explained by a section or
-note. Nodes may remain visible without a badge or highlight. In CT mode,
-every Column Trace Chain node without a detail slot must appear in a section or
-a note; the present-result handler rejects a render that omits one.
+note. Nodes may remain visible without a badge or highlight. The CT coverage
+rule above applies in CT mode.
 
 There is no AI-writeable assembled `description` field. The engine builds the
 rendered document from title and numbered section bodies. For preview, the host
@@ -544,20 +593,19 @@ completed exploration archive.
 
 [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts) is the canonical
 phase/tool map. Discovery answers from snapshot tools and does not publish a
-`NavigationEngine`; `lineage_get_scope_bundle` still stores discovery evidence
-and is therefore participant-internal, not a `vscode.lm` tool. Visual preview,
+`NavigationEngine`; `lineage_get_scope_bundle` stores discovery evidence for a
+chat turn, and callers without one (`vscode.lm`, MCP) store their walk in
+`AiSession.externalView` instead. Visual preview,
 SM entry, active submission, synthesis, and completed follow-ups each receive
 only their phase-valid tools; completed follow-ups keep every discovery read
 tool so they can walk the graph beyond the report. Production dispatch is direct through the local
 registry and does not call `vscode.lm.invokeTool`.
 
-The next-question badge uses one tool-free generation from the original question, short captured summaries and deferred leads, without replaying historical reports. It requests short question bullets followed by an invitation to choose one for deeper analysis.
+The next-question badge uses one tool-free generation from the original question, short captured summaries, deferred leads and pruned branches with their AI prune reasons, without replaying historical reports. It requests short question bullets followed by an invitation to choose one for deeper analysis.
 
 Business, technical and both classifications share a coherent narrative structure; classification changes emphasis, not the report's structure. Capture places the SQL-supported rule or transformation, substantive formula, meaning of its terms and consequences together in detail memory before synthesis. Formula blocks belong on separate lines within that explanation; short formulas may sit inline in explanatory sentences or in a table with a short contextual description. Never create a formula-only heading or subsection. Simple mappings do not need duplicate equations. Final synthesis organizes and merges this grounded material without inventing missing facts or context.
 
 DDL and DML support explanations of declared calculations and SQL behavior. They do not supply observed statistics, row counts, elapsed time or performance. Capture and synthesis must preserve that distinction: explain a formula only from its supplied definition, and require matching data or runtime evidence before asserting a measured result.
-
-Historical mechanisms explain why detached inventories were possible. Commit `59790b99b` (2026-09-23) introduced an assembler fallback that appended missing equations under **Captured formulas**, without contextual prose; `854ccc8c7` removed it on 2026-09-30. Commit `25d893e33` (2026-10-03) introduced a mandatory **Formulas** synthesis subsection, strengthened by `949ac3011` later that day; the current contract removes that subsection. These source changes are confirmed. Attribution of a particular older response remains an inference without a matched historical trace using the same question, model and scope. Current acceptance results must be recorded separately from this history.
 
 After a preview is accepted by the active graph webview, chat emits only a short
 confirmation and does not add a redundant **Show in Graph** action. If automatic
@@ -604,13 +652,15 @@ directly according to the phase policy.
 - The shared synthesis template orders applicable bold labels consistently and
   uses real Markdown lists for steps. Empty or inapplicable labels are omitted.
   A short SQL witness may accompany a factual explanation without creating a
-  second statement of the same fact. Synthesis preserves captured supported
-  warnings and resolves local gaps against the complete archive.
+  second statement of the same fact. Synthesis carries each linked node's
+  captured rules, predicates, formulas, row-dropping steps and input roles
+  (value, filter-only or display-only), preserves captured supported warnings
+  and resolves local gaps against the complete archive.
 - CT chain ownership is a TypeScript synthesis instruction, not a customizable
   template rule. The backend inserts the Column Chain after the intro, grouping
   validated source rows by output column and preserving each capture hop and recorded contributor role. The
   model explains SQL semantics in the shared sections instead of reconstructing
-  that chain or adding a mapping inventory; detailed Steps explain bindings and transformations. BB remains concise while retaining important formulas, rules and supported warnings. A capture hop is evidence provenance, not an extra storage step.
+  that chain or adding a mapping inventory; detailed Steps explain bindings and transformations. Both modes follow the asked output's calculation chain across nodes, including intermediate CTE and derived-column results, and group sections by what best answers the question. A capture hop is evidence provenance, not an extra storage step.
 
 ## SQL witness contract
 
@@ -661,8 +711,12 @@ A section label has one home: the capture recipe that writes it. `business_captu
 and `technical_capture` take an optional `sections` list, the ordered bold labels the
 recipe writes. At synthesis the built-in `general` instruction names them through the
 `{{sections}}` placeholder, and the report receives the labels of the active angle
-only: business, technical, or both as the ordered union (first occurrence wins). A
-label declared only by `technical_capture` therefore never reaches a business answer.
+only: business, technical, or both as the ordered union (first occurrence wins; a
+label only the technical recipe declares sits after its predecessor in that recipe).
+A label declared only by `technical_capture` therefore never reaches a business
+answer. The built-in **Loading** label is declared by both recipes: the business
+recipe states whether target rows are replaced, extended or removed, the
+technical recipe names the load pattern.
 A `sections` list replaces the built-in list of its recipe, so copy the built-in list
 and insert the label where it belongs:
 

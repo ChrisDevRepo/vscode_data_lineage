@@ -181,7 +181,7 @@ export function aiPreviewDisplayFilter(
   aiPreviewActive: boolean,
   modelSchemas: Iterable<string>,
 ): FilterState {
-  if (!aiPreviewActive || !filter.allowlistNodeIds || filter.allowlistNodeIds.size === 0) return filter;
+  if (!aiPreviewActive || !filter.allowlistNodeIds) return filter;
   return {
     ...filter,
     schemas: new Set(modelSchemas),

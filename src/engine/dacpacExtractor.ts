@@ -28,7 +28,7 @@ import {
   DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
-import { applyExclusionFilter } from './modelFilters';
+export { filterBySchemas, applyExclusionPatterns } from './modelFilters';
 import { quoteIdentifier, stripBrackets, schemaKey, normalizeColName, splitSqlName } from '../utils/sql';
 import { trunc } from '../utils/log';
 
@@ -236,52 +236,6 @@ function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCase
 }
 
 /**
- * Filters an existing DatabaseModel in memory to include only objects from specific schemas.
- *
- * @remarks
- * Retains every matching object and every external reference it touches — this never truncates.
- * Callers that must honor `dataLineageViz.maxNodes` check the result with
- * {@link checkObjectLimit} before loading or rendering it.
- *
- * @param selectedSchemas - Set of schema names to retain.
- * @returns A new DatabaseModel instance containing the filtered subset.
- */
-export function filterBySchemas(
-  model: DatabaseModel,
-  selectedSchemas: Set<string>,
-): DatabaseModel {
-  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, model.identifierCaseSensitive)));
-  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(schemaKey(n.schema, model.identifierCaseSensitive)));
-  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
-
-  const connectedVirtualIds = new Set<string>();
-  for (const e of model.edges) {
-    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
-    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
-  }
-  const virtualNodes = model.nodes.filter((n) =>
-    n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
-  );
-  const filtered = [...schemaNodes, ...virtualNodes];
-  const nodeIds = new Set(filtered.map((n) => n.id));
-
-  const edges = model.edges.filter(
-    (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
-  );
-
-  return {
-    nodes: filtered,
-    edges,
-    schemas: model.schemas.filter((s) => lowerSelected.has(schemaKey(s.name, model.identifierCaseSensitive))),
-    catalog: model.catalog,
-    neighborIndex: model.neighborIndex,
-    parseStats: model.parseStats,
-    warnings: model.warnings,
-    identifierCaseSensitive: model.identifierCaseSensitive,
-  };
-}
-
-/**
  * Extracts a lightweight catalog of all tracked objects from XML elements.
  *
  * @param elements - The source XML elements.
@@ -350,9 +304,9 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string; 
 
   let doc: any;
   try {
-    doc = parser.parse(xml);
-  } catch {
-    throw new Error('Failed to parse model.xml — the file may be corrupted');
+    doc = parser.parse(xml, true);
+  } catch (err) {
+    throw Object.assign(new Error('Failed to parse model.xml — the file may be corrupted'), { cause: err });
   }
   const model = doc?.DataSchemaModel?.Model;
   if (!model) throw new Error('Invalid model.xml: missing DataSchemaModel/Model');
@@ -438,10 +392,6 @@ function extractObjects(elements: XmlElement[], constraintElements: XmlElement[]
     const { schema, objectName } = parseName(name);
     const bodyScript = getBodyScript(el, type, schema, objectName);
 
-    const COLUMN_BEARING_DACPAC_TYPES = new Set([
-      'SqlTable', 'SqlExternalTable', 'SqlView',
-      'SqlInlineTableValuedFunction', 'SqlMultiStatementTableValuedFunction',
-    ]);
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
     if (COLUMN_BEARING_DACPAC_TYPES.has(type)) {
@@ -464,6 +414,12 @@ function extractObjects(elements: XmlElement[], constraintElements: XmlElement[]
   resolveComputedColumnTypes(objects, computedSources, identifierCaseSensitive);
   return objects;
 }
+
+/** DACPAC element types whose `Columns` relationship lists result or table columns. */
+const COLUMN_BEARING_DACPAC_TYPES = new Set([
+  'SqlTable', 'SqlExternalTable', 'SqlView',
+  'SqlInlineTableValuedFunction', 'SqlMultiStatementTableValuedFunction',
+]);
 
 /** A computed-column expression that is one column reference, bracketed or not, under optional parentheses. */
 const BARE_COLUMN_REFERENCE = /^\s*(?:\[((?:[^\]]|\]\])+)\]|([A-Za-z_@#][\w@#$]*))\s*$/;
@@ -916,6 +872,12 @@ const CDATA_PROP = '__cdata';
 /** The five entities predefined by XML 1.0 §4.6. */
 const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
 
+/** XML 1.0 `Char` production: a reference to any other code point is not well-formed text. */
+function isXmlChar(cp: number): boolean {
+  return cp === 0x9 || cp === 0xA || cp === 0xD
+    || (cp >= 0x20 && cp <= 0xD7FF) || (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
+}
+
 /**
  * Decodes XML character references and the five predefined entities in attribute or text content.
  *
@@ -925,12 +887,6 @@ const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>'
  * @param raw - Entity-encoded text as read from model.xml.
  * @returns The decoded text.
  */
-/** XML 1.0 `Char` production: a reference to any other code point is not well-formed text. */
-function isXmlChar(cp: number): boolean {
-  return cp === 0x9 || cp === 0xA || cp === 0xD
-    || (cp >= 0x20 && cp <= 0xD7FF) || (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
-}
-
 function decodeXmlText(raw: string): string {
   return raw.replace(/&(?:#x([0-9A-Fa-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/g, (_, hex, dec, name) => {
     if (name) return PREDEFINED_ENTITIES[name];
@@ -990,71 +946,4 @@ function isObjectLevelRef(name: string): boolean {
 function asArray<T>(val: T | T[] | undefined | null): T[] {
   if (val == null) return [];
   return Array.isArray(val) ? val : [val];
-}
-
-/**
- * Removes nodes from a DatabaseModel that match specified exclusion patterns, and records
- * the removed objects on the parse statistics of the surviving objects that referenced them.
- *
- * @remarks
- * Node and edge exclusion is delegated to {@link applyExclusionFilter} so the load-time and
- * graph-time paths cannot diverge; only the parse-stat annotation is specific to this entry
- * point. Invalid patterns are skipped and reported, matching that function's contract.
- *
- * @param model - The DatabaseModel to filter.
- * @param patterns - Array of regex pattern strings.
- * @param onWarning - Callback receiving a formatted message for each invalid regex pattern.
- * @returns A new DatabaseModel with matching nodes and edges removed.
- */
-export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
-  const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
-    onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
-  });
-  if (filtered === model) return model;
-
-  const { nodes } = filtered;
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const excludedNodes = model.nodes.filter((n) => !nodeIds.has(n.id));
-
-  const excludedIds = new Set(excludedNodes.map((n) => n.id));
-  const excludedNameById = new Map(excludedNodes.map((n) => [n.id, `${n.schema}.${n.name}`]));
-  let parseStats = model.parseStats;
-  if (parseStats && excludedIds.size > 0) {
-    const allEdges = model.edges;
-
-    const nameToIdMap = new Map<string, string>();
-    for (const n of nodes) nameToIdMap.set(schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive), n.id);
-    for (const n of excludedNodes) {
-      const key = schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive);
-      if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
-    }
-
-    const adjacency = new Map<string, string[]>();
-    for (const e of allEdges) {
-      if (excludedIds.has(e.target)) {
-        let arr = adjacency.get(e.source);
-        if (!arr) { arr = []; adjacency.set(e.source, arr); }
-        arr.push(e.target);
-      }
-      if (excludedIds.has(e.source)) {
-        let arr = adjacency.get(e.target);
-        if (!arr) { arr = []; adjacency.set(e.target, arr); }
-        arr.push(e.source);
-      }
-    }
-
-    parseStats = {
-      ...parseStats,
-      spDetails: parseStats.spDetails.map((sp) => {
-        const spId = nameToIdMap.get(schemaKey(sp.name, model.identifierCaseSensitive));
-        if (!spId) return sp;
-        const neighbors = adjacency.get(spId);
-        if (!neighbors) return sp;
-        const lost = neighbors.map(id => excludedNameById.get(id)!).filter(Boolean);
-        return lost.length > 0 ? { ...sp, excluded: lost } : sp;
-      }),
-    };
-  }
-
-  return { ...filtered, parseStats };
 }

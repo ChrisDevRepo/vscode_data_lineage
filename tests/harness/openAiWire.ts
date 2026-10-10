@@ -125,7 +125,7 @@ function projectMessage(
       role: 'assistant',
       // Tool-only turns send `null`: some servers reject `''` there. An empty turn with no
       // tool_calls must send a string — Azure 400s `expected a string, got null` on
-      // `messages[n].content` otherwise (m22-head T7, empty_generation retry).
+      // `messages[n].content` otherwise (an empty_generation retry).
       content: text || (calls.length > 0 ? null : ''),
       ...(calls.length > 0 ? { tool_calls: calls } : {}),
       ...(reasoning ? { reasoning_content: reasoning } : {}),

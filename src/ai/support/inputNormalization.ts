@@ -46,7 +46,7 @@ export interface SubmitFindingsNormalizationResult {
  *
  * @param raws - An array of raw node id strings.
  * @param nodeMap - The map of canonical nodes to check against.
- * @param identifierCaseSensitive - Proven source policy; missing/false retains legacy case-insensitive lookup.
+ * @param identifierCaseSensitive - Proven source policy; missing/false resolves case-insensitively.
  * @returns An object containing resolved and unresolved node id arrays.
  */
 export function resolveModelNodeIds(

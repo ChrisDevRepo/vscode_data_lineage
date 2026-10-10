@@ -107,6 +107,8 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
+  const loadCancelledRef = useRef(false);
+  const pendingCancelsRef = useRef(0);
   /**
    * Status auto-clear policy: transient info messages (progress, connecting, loading) clear 6 s
    * after loading ends; success messages carry the load summary, and warnings and errors need the
@@ -177,32 +179,42 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return; // Handled at App.tsx level
       }
 
-      if (msg.type === 'last-dacpac-gone') {
-        setIsLoading(false);
-        setLoadingContext(null);
-        setStatus({ text: 'Project file is no longer available.', type: 'error' });
-        return;
-      }
-
       if (msg.type === 'mssql-status') {
         setMssqlAvailable(msg.available);
         setConnectionProvider(msg.provider ?? null);
         return;
       }
 
-      if (msg.type === 'db-progress') {
+      if (msg.type === 'load-started') {
+        if (pendingCancelsRef.current === 0) loadCancelledRef.current = false;
+        return;
+      }
+
+      if (msg.type === 'load-cancelled') {
+        if (pendingCancelsRef.current > 0) pendingCancelsRef.current--;
+        return;
+      }
+
+      if (msg.type === 'last-dacpac-gone' && !loadCancelledRef.current) {
+        setIsLoading(false);
+        setLoadingContext(null);
+        setStatus({ text: 'Project file is no longer available.', type: 'error' });
+        return;
+      }
+
+      if (msg.type === 'db-progress' && !loadCancelledRef.current) {
         setStatus({ text: `${msg.label} (${msg.step}/${msg.total})`, type: 'info' });
         return;
       }
 
-      if (msg.type === 'db-cancelled') {
+      if (msg.type === 'db-cancelled' && !loadCancelledRef.current) {
         setIsLoading(false);
         setLoadingContext(null);
         setStatus(null);
         return;
       }
 
-      if (msg.type === 'dacpac-schema-preview') {
+      if (msg.type === 'dacpac-schema-preview' && !loadCancelledRef.current) {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
         setModel(null);  // clear stale model so visualize() routes to dacpac path
@@ -213,7 +225,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      if (msg.type === 'dacpac-model') {
+      if (msg.type === 'dacpac-model' && !loadCancelledRef.current) {
         isDemoRef.current = msg.isDemo === true;
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
@@ -229,7 +241,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      if (msg.type === 'db-schema-preview') {
+      if (msg.type === 'db-schema-preview' && !loadCancelledRef.current) {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
         applySchemaPreview(msg.preview, name);
@@ -238,7 +250,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      if (msg.type === 'db-model') {
+      if (msg.type === 'db-model' && !loadCancelledRef.current) {
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
         applyModel(msg.model as DatabaseModel, name);
@@ -248,7 +260,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
 
-      if (msg.type === 'db-error') {
+      if (msg.type === 'db-error' && !loadCancelledRef.current) {
         setStatus({ text: msg.message, type: 'error' });
         setIsLoading(false);
         setLoadingContext(null);
@@ -283,6 +295,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const resetToStart = useCallback(() => {
+    loadCancelledRef.current = true;
     setModel(null);
     setSchemaPreview(null);
     setSelectedSchemas(new Set());
@@ -324,10 +337,10 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi]);
 
   const cancelLoading = useCallback(() => {
-    setIsLoading(false);
-    setLoadingContext(null);
-    setStatus(null);
-  }, []);
+    resetToStart();
+    pendingCancelsRef.current++;
+    vscodeApi.postMessage({ type: 'cancel-load' });
+  }, [resetToStart, vscodeApi]);
 
   const clearAutoVisualize = useCallback(() => {
     setPendingAutoVisualize(false);

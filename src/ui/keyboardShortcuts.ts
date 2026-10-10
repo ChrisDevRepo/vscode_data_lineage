@@ -1,7 +1,10 @@
 /**
- * Stable IDs for documented keyboard shortcuts.
+ * Stable IDs of the keyboard shortcuts documented in the Help panel. Each carries a concrete key
+ * binding in {@link SHORTCUT_KEYS} and reaches the document, either as an always-active app-level
+ * shortcut or, for `aiSectionPrevious` / `aiSectionNext`, as the AI report pane's own local handler
+ * while it has focus.
  */
-export type KeyboardShortcutId =
+export type AppShortcutId =
   | 'quickJump'
   | 'fitView'
   | 'openHelp'
@@ -24,33 +27,11 @@ export const ESC_PRIORITY = {
 } as const;
 
 /**
- * Subset of {@link KeyboardShortcutId} documented in the Help panel and carrying a concrete key
- * binding in {@link SHORTCUT_KEYS} — every one of them reaches the document, either as an
- * always-active app-level shortcut or, for `aiSectionPrevious` / `aiSectionNext`, as the AI
- * report pane's own local handler while it has focus.
+ * Key bindings of the documented shortcuts.
  *
  * @remarks
- * Binding {@link SHORTCUT_KEYS} to `Record<AppShortcutId, string | string[]>` turns any drift
- * between the runtime key map and the documented ids into a compile error.
- */
-export type AppShortcutId = Extract<
-  KeyboardShortcutId,
-  | 'quickJump'
-  | 'fitView'
-  | 'openHelp'
-  | 'excludeHighlightedNode'
-  | 'exitMode'
-  | 'toggleSchemaView'
-  | 'hideExpandedSchemaClusters'
-  | 'aiSectionPrevious'
-  | 'aiSectionNext'
->;
-
-/**
- * Display strings for the supported keyboard shortcuts.
- *
- * @remarks
- * `useKeyboardShortcut` matches case-insensitively — list each letter key once;
+ * Typed to `Record<AppShortcutId, …>`, so drift between the key map and the documented ids is a
+ * compile error. `useKeyboardShortcut` matches case-insensitively — list each letter key once;
  * never add upper/lowercase duplicates.
  */
 export const SHORTCUT_KEYS: Record<AppShortcutId, string | string[]> = {
@@ -96,10 +77,8 @@ function isChoiceInput(target: EventTarget): boolean {
  * or any `contenteditable` element).
  *
  * @remarks
- * Shared by {@link useKeyboardShortcut} and the app-level shortcut handlers so
- * bare-key shortcuts never fire while the user is typing. A checkbox or radio is
- * not typing. Single source of truth for the guard — keep both consumers on this
- * function rather than re-checking element types inline.
+ * The default guard of `useKeyboardShortcut`, so bare-key shortcuts never fire while the user is
+ * typing. A checkbox or radio is not typing.
  *
  * @param target - The `KeyboardEvent.target` to classify.
  * @returns `true` when the target accepts text input and shortcuts must be suppressed.

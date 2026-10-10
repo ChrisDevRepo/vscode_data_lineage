@@ -69,12 +69,13 @@ interface ResultRowProps {
 const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   procedure: 'Procedures',
   view: 'Views',
+  function: 'Functions',
   table: 'Tables',
   external: 'External Tables',
 };
 
 /** Set of object types that typically contain a SQL body script. */
-const BODY_TYPES = new Set<ObjectType>(['procedure', 'view']);
+const BODY_TYPES = new Set<ObjectType>(['procedure', 'view', 'function']);
 
 /**
  * Body matches this panel renders for one term.
@@ -167,7 +168,7 @@ function ResultRow({ result, term, onResultClick, dimmed = false, clustered = fa
  * and column metadata.
  *
  * @remarks
- * Searches within stored procedure / view body scripts and column names. Results from nodes
+ * Searches within procedure, view and function body scripts and column names. Results from nodes
  * outside the active graph filter are rendered dimmed with a "Not in Current Filter" separator
  * when `visibleNodeIds` is supplied — consistent with Quick Jump behavior.
  *

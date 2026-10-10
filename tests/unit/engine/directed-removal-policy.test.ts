@@ -63,10 +63,6 @@ describe('shared directed removal policy', () => {
     expect(result.cutIds).toEqual([]);
   });
 
-  it('permits the visited current node’s self-prune exception', () => {
-    expect(removal(chain, { visited: new Set(['A', 'B', 'C']) }).rejection).toBeUndefined();
-  });
-
   it('has no visited-node exception when currentNodeId is absent', () => {
     expect(removal(chain, { currentNodeId: undefined, visited: new Set(['A', 'B', 'C']) }).rejection).toBe('visited');
   });

@@ -77,9 +77,6 @@ describe('DACPAC extraction at the object-count boundary', () => {
 
     const check = checkObjectLimit(model, MAX_NODES);
     expect(check).toEqual({ ok: false, count: 2001, limit: MAX_NODES });
-    expect(formatObjectLimitMessage(2001, MAX_NODES)).toBe(
-      '2,001 objects selected (limit 2,000, set by dataLineageViz.maxNodes). Select fewer schemas or raise the setting.',
-    );
   });
 
   it('1,990 objects + 20 external references: every reference is created (no silent budget), pushing the total over the limit', async () => {

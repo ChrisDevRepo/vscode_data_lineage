@@ -1,8 +1,6 @@
 /**
- * Hand-written engine-level reproductions of engine defects found during a pre-release sweep
- * (local revision 03d9f7386). Every repro is now repaired and runs as a plain regression `it`;
- * pin a newly found, still-open defect as `it.fails` and flip it to `it` once its owner is fixed.
- * Synthetic graphs, named nodes, explicit action sequences; no generator involved.
+ * Engine-level lineage invariants as regression scenarios: synthetic graphs, named nodes and
+ * explicit action sequences; no generator involved.
  */
 import { describe, expect, it } from 'vitest';
 import type { DepthIntent } from '../../../src/ai/sm/smTypes';
@@ -11,7 +9,7 @@ import { buildModel, newEngine, type Built } from './helpers/engineFixture';
 
 type Kind = 'table' | 'view' | 'procedure' | 'function';
 const node = (id: string, type: Kind, columns: string[] = []) => ({ id, type, columns });
-const edge = (source: string, target: string) => ({ source, target, type: 'exec' as const });
+const edge = (source: string, target: string, type: 'body' | 'exec' = 'exec') => ({ source, target, type });
 const side = (levels: number | 'all', exactness: 'exact' | 'approximate' = 'approximate') => ({ levels, exactness });
 const BOTH: DepthIntent = { upstream: side('all'), downstream: side('all') };
 
@@ -91,7 +89,9 @@ describe('lineage invariant repros (03d9f7386)', () => {
   // N5 uniform:2634403074 — the carried column list folds spellings by the model's identifier policy.
   const carriedOnF5 = (caseSensitive: boolean): string[] => {
     const depth: DepthIntent = { upstream: side(0, 'exact'), downstream: side(1, 'exact') };
-    const { engine } = start([node('dbo.F2', 'function', ['c', 'e', 'E']), node('dbo.F3', 'function', ['e']), node('dbo.F5', 'function', ['e'])], [edge('dbo.F3', 'dbo.F5'), edge('dbo.F3', 'dbo.F2')], 'dbo.F3', depth, { analysisMode: 'ct', targetColumns: ['e'] }, caseSensitive);
+    // writes_to requires a procedure's real body write to a table; EXEC only invokes the next
+    // procedure. CI metadata has one e column, while CS metadata may declare both e and E.
+    const { engine } = start([node('dbo.F2', 'table', caseSensitive ? ['c', 'e', 'E'] : ['c', 'e']), node('dbo.F3', 'procedure'), node('dbo.F5', 'procedure')], [edge('dbo.F3', 'dbo.F5'), edge('dbo.F3', 'dbo.F2', 'body')], 'dbo.F3', depth, { analysisMode: 'ct', targetColumns: ['e'] }, caseSensitive);
     const write = (col: string) => ({ out_col: 'e', writes_to: { node: 'dbo.F2', col }, upstream_columns: [{ node: 'dbo.F3', col: 'e' }] });
     hop(engine, 'dbo.F3', { questions: [{ nodeId: 'dbo.F5', question: 'check' }], column_flow: [write('c'), write('E')] });
     return engine._agenda.entries.find((e: { nodeId: string }) => e.nodeId === 'dbo.F5').activeColumns;

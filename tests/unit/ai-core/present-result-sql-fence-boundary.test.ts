@@ -34,6 +34,7 @@ function seedSession(): AiSession {
   const session = new AiSession();
   const resultGraph: ResultGraph = {
     nodeIds: [ORIGIN],
+    evidenceNodeIds: [ORIGIN],
     edges: [],
     source: 'graph',
     originNodeId: ORIGIN,
@@ -89,6 +90,7 @@ describe('presentation SQL-reference fence boundary', () => {
     const result = JSON.parse(await executePresentResult(input, services(session, epoch)));
     expect(result.code).toBe('validation');
     expect(String(result.reason)).toContain('Unclosed SQL fence');
+    expect(String(result.reason)).toContain('a bare triple-backtick line right after it');
     expect(session.presentationArtifact).toBeFalsy();
     expect(session.presentResultRepairDraft.get()?.sections?.[0]?.text).toBe(malformed.trim());
   });
@@ -180,6 +182,18 @@ describe('presentation SQL-reference fence boundary', () => {
     }
   });
 
+  it('resolves a reference by the completion numbering after a later edit removed an earlier slot node', async () => {
+    const session = new AiSession();
+    const PRUNED = '[dbo].[Staging]';
+    // Completion served two slots, S1 on PRUNED and S2 on ORIGIN; a follow-up then pruned PRUNED from the view.
+    session.memory.storeDetail(node(PRUNED, 'Staging', 'table'), [{ angle: 'technical', text: 'Stages.\n```sql\nSELECT 1 AS staged\n```' }], 'Stages.');
+    session.memory.storeDetail(node(ORIGIN, 'Orders', 'table'), [{ angle: 'technical', text: `Loads orders.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` }], 'Loads orders.');
+    session.resultGraph = { nodeIds: [ORIGIN], evidenceNodeIds: [PRUNED, ORIGIN], edges: [], source: 'graph', originNodeId: ORIGIN };
+    expect((await run(session, basePayload({ intro: '```sql S2\n```' }))).success).toBe(true);
+    expect(description(session)).toContain(CAPTURED_SQL);
+    expect(description(session)).not.toContain('SELECT 1 AS staged');
+  });
+
   it('rejects a closed unknown reference and leaves non-SQL markdown prose untouched', async () => {
     const session = seedSession();
     expect((await run(session, basePayload({intro:'```sql S9\n```'}))).code).toBe('validation');
@@ -193,6 +207,17 @@ describe('evidence reference placement on its own line', () => {
   const SQL = 'SELECT SUM(Amount) FROM Demo.Sales';
   const blocks = new Map([['S1', { id: 'S1', nodeId: ORIGIN, raw: `\`\`\`sql\n${SQL}\n\`\`\`` }]]);
   const fence = (indent: string): string => `${indent}\`\`\`sql\n${indent}${SQL}\n${indent}\`\`\``;
+
+  it.each([
+    ["SELECT 'a b' AS Label;", "SELECT 'a  b' AS Label;"],
+    ["SELECT 1 -- keep the next expression\n+ 2;", "SELECT 1 -- keep the next expression + 2;"],
+  ])('preserves semantically distinct captured SQL when whitespace differs', (writtenSql, capturedSql) => {
+    const captured = new Map([['S1', { id: 'S1', nodeId: ORIGIN, raw: `\`\`\`sql\n${capturedSql}\n\`\`\`` }]]);
+    const result = expandEvidenceRefs(`\`\`\`sql\n${writtenSql}\n\`\`\`\n\nDifferent behavior:\n\`\`\`sql S1\n\`\`\``, captured);
+    expect(result.text).toContain(writtenSql);
+    expect(result.text).toContain(`Different behavior:\n\`\`\`sql\n${capturedSql}\n\`\`\``);
+    expect(result.normalized).toEqual([]);
+  });
 
   it('keeps a mid-line reference in an ordered list item inside the item and the later steps numbered', () => {
     const written = '1. Country denominator: $$S=\\sum x$$ (```sql S1\n```)\n2. Second step.\n3. Third step.';

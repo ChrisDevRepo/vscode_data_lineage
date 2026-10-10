@@ -10,13 +10,14 @@
  *
  * Two rules shape the output:
  *
- * 1. **Read-only subset.** A `vscode.lm` registration is invokable by any extension in the window,
- *    so `registerAiTools` binds only `effect: 'read'` tools. A contributed entry with no
- *    `registerTool` binding is a broken tool, not an unused one — the manifest therefore carries
- *    exactly the tools that get bound.
- * 2. **Presentation fields are manifest-owned.** `toolReferenceName`, `displayName`,
- *    `canBeReferencedInPrompt`, `icon`, and `when` exist only in the manifest; they are carried over
- *    from the current entry (in its existing key order) so regeneration is a no-op diff.
+ * 1. **External subset.** `registerAiTools` binds exactly `EXTERNAL_TOOL_DEFS` — the tools the core policy allows callers
+ *    without a chat turn (`EXTERNAL_TOOL_NAMES` in `toolPolicy.ts`, shared with the MCP server). A
+ *    contributed entry with no `registerTool` binding is a broken tool, not an unused one — the
+ *    manifest therefore carries exactly the tools that get bound.
+ * 2. **Presentation fields are manifest-owned**, except `displayName`, which is the catalog `title`.
+ *    `toolReferenceName`, `canBeReferencedInPrompt`, `icon`, and `when` exist only in the manifest;
+ *    they are carried over from the current entry (in its existing key order) so regeneration is a
+ *    no-op diff.
  *
  * Usage:
  *   node scripts/generate-tool-manifest.mjs           # rewrite package.json in place
@@ -33,7 +34,7 @@ const packageJsonPath = join(repoRoot, 'package.json');
 const check = process.argv.includes('--check');
 
 /** Manifest keys this script owns; everything else on an entry is preserved verbatim. */
-const CATALOG_OWNED_KEYS = ['name', 'userDescription', 'modelDescription', 'tags', 'inputSchema'];
+const CATALOG_OWNED_KEYS = ['name', 'displayName', 'userDescription', 'modelDescription', 'tags', 'inputSchema'];
 
 /** Key order used for a tool that has no manifest entry yet. */
 const NEW_ENTRY_KEY_ORDER = [
@@ -58,6 +59,7 @@ async function loadCatalog() {
         contents: [
           "export { TOOL_DEFS } from './src/ai/tools/toolDefs';",
           "export { toModelJsonSchema } from './src/ai/tools/jsonSchema';",
+          "export { EXTERNAL_TOOL_DEFS } from './src/ai/tools/toolDefs';",
         ].join('\n'),
         resolveDir: repoRoot,
         sourcefile: 'generate-tool-manifest-entry.ts',
@@ -75,15 +77,6 @@ async function loadCatalog() {
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
-}
-
-/** Title-cases a catalog name for a tool that has no manifest entry to inherit a display name from. */
-function deriveDisplayName(name) {
-  return name
-    .replace(/^lineage_/, '')
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
 }
 
 /**
@@ -123,6 +116,7 @@ function findArrayValueRange(source, key) {
 function buildEntry(contract, existing, toModelJsonSchema) {
   const generated = {
     name: contract.name,
+    displayName: contract.title,
     userDescription: contract.userDescription,
     modelDescription: contract.modelDescription,
     tags: contract.tags ? [...contract.tags] : undefined,
@@ -133,7 +127,6 @@ function buildEntry(contract, existing, toModelJsonSchema) {
     const fresh = {
       ...generated,
       toolReferenceName: contract.name,
-      displayName: deriveDisplayName(contract.name),
       canBeReferencedInPrompt: true,
       when: 'dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled',
     };
@@ -166,20 +159,20 @@ function renderBlock(entries, eol) {
     .join(eol);
 }
 
-const { TOOL_DEFS, toModelJsonSchema } = await loadCatalog();
+const { toModelJsonSchema, EXTERNAL_TOOL_DEFS } = await loadCatalog();
 const source = readFileSync(packageJsonPath, 'utf8');
 const eol = source.includes('\r\n') ? '\r\n' : '\n';
 const existingEntries = JSON.parse(source).contributes?.languageModelTools ?? [];
 
-const readOnlyDefs = TOOL_DEFS.filter(def => def.effect === 'read');
-const entries = readOnlyDefs.map(def =>
+const externalDefs = EXTERNAL_TOOL_DEFS;
+const entries = externalDefs.map(def =>
   buildEntry(def, existingEntries.find(entry => entry.name === def.name), toModelJsonSchema));
 
-const created = readOnlyDefs
+const created = externalDefs
   .filter(def => !existingEntries.some(entry => entry.name === def.name))
   .map(def => def.name);
 const dropped = existingEntries
-  .filter(entry => !readOnlyDefs.some(def => def.name === entry.name))
+  .filter(entry => !externalDefs.some(def => def.name === entry.name))
   .map(entry => entry.name);
 
 const { start, end } = findArrayValueRange(source, 'languageModelTools');
@@ -187,12 +180,12 @@ const updated = `${source.slice(0, start)}${renderBlock(entries, eol)}${source.s
 
 if (check) {
   if (updated === source) {
-    process.stdout.write(`languageModelTools is in sync with the catalog (${entries.length} read-only tools).\n`);
+    process.stdout.write(`languageModelTools is in sync with the catalog (${entries.length} external tools).\n`);
     process.exit(0);
   }
   process.stderr.write(
     'package.json contributes.languageModelTools is stale.\n'
-    + `  expected ${entries.length} read-only tools: ${readOnlyDefs.map(def => def.name).join(', ')}\n`
+    + `  expected ${entries.length} external tools: ${externalDefs.map(def => def.name).join(', ')}\n`
     + (dropped.length ? `  entries to remove: ${dropped.join(', ')}\n` : '')
     + (created.length ? `  entries to add: ${created.join(', ')}\n` : '')
     + '  run: npm run generate:tool-manifest\n',
@@ -201,12 +194,12 @@ if (check) {
 }
 
 if (updated === source) {
-  process.stdout.write(`languageModelTools already up to date (${entries.length} read-only tools).\n`);
+  process.stdout.write(`languageModelTools already up to date (${entries.length} external tools).\n`);
 } else {
   writeFileSync(packageJsonPath, updated);
   process.stdout.write(
-    `Regenerated languageModelTools — ${entries.length} read-only tools.\n`
+    `Regenerated languageModelTools — ${entries.length} external tools.\n`
     + (dropped.length ? `  removed: ${dropped.join(', ')}\n` : '')
-    + (created.length ? `  added (review displayName/icon/when): ${created.join(', ')}\n` : ''),
+    + (created.length ? `  added (review icon/when): ${created.join(', ')}\n` : ''),
   );
 }

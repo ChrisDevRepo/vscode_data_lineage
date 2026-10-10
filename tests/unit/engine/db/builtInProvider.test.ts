@@ -236,6 +236,21 @@ describe('openBuiltInSession — results', () => {
     expect(fake.executed.at(-1)).toBe(yamlSql('platform-info'));
   });
 
+  it.each([
+    ['ENGINE_EDITION', 'MAJOR_VERSION', 'EDITION'],
+    ['Engine_Edition', 'Major_Version', 'Edition'],
+  ])('reads server-info aliases case-insensitively: %s', async (engine, major, edition) => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    const session = (await openBuiltInSession(sqlLogin, env))!;
+    script([col(engine, 'Int'), col(major, 'Int'), col(edition, 'NVarChar')], [[11, 16, 'Fabric']]);
+
+    await expect(session.getServerInfo()).resolves.toEqual({
+      serverMajorVersion: 16, serverMinorVersion: 0, serverVersion: '', engineEditionId: 11,
+      isCloud: true, serverEdition: 'Fabric',
+    });
+    await session.dispose();
+  });
+
   it('refuses server info when the YAML has no platform-info query, sending nothing', async () => {
     const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
     const session = (await openBuiltInSession(sqlLogin, { ...env, loadQueries: async () => [] }))!;

@@ -178,7 +178,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                       >
                         {/* Fixed-width icon slot for vertical alignment */}
                         <span className="w-3 shrink-0 flex items-center justify-center">
-                          {(profile.filter.allowlistNodeIds?.length ?? 0) > 0 ? (
+                          {profile.filter.allowlistNodeIds !== undefined ? (
                             <Tooltip content="Advanced bookmark">
                               <svg
                                 xmlns="http://www.w3.org/2000/svg"

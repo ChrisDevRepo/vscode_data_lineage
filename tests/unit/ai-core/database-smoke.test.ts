@@ -32,7 +32,7 @@ beforeEach(() => {
   dispose.mockClear(); query.mockClear();
   vi.mocked(openBuiltInSession).mockResolvedValue({
     provider: 'builtIn', connectionInfo: { server: 'localhost', database: 'SyntheticDb' },
-    executeSimpleQuery: query, getServerInfo: vi.fn(), dispose,
+    executeSimpleQuery: query, getServerInfo: vi.fn(), isOpen: () => true, dispose,
   });
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });

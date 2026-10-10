@@ -50,15 +50,17 @@ const sharedConfig = {
   },
 };
 
+/** Keeps the deferred bundles (`extensionRuntime.js`, `mcpRuntime.js`) out of the bundles that import them at runtime. */
 const deferredRuntimePlugin = {
   name: 'deferred-extension-runtime',
   setup(build) {
-    build.onResolve({ filter: /^\.\/extensionRuntime\.js$/ }, ({ path }) => ({ path, external: true }));
+    build.onResolve({ filter: /^\.\/(?:extensionRuntime|mcpRuntime)\.js$/ }, ({ path }) => ({ path, external: true }));
   },
 };
 
 const configs = [
   { ...sharedConfig, entryPoints: ['./src/ai/support/regexSearch.worker.ts'], outfile: 'out/regexSearch.worker.js' },
+  { ...sharedConfig, entryPoints: ['./src/ai/mcp/stdioProxy.ts'], outfile: 'out/mcpStdioProxy.js' },
   {
     ...sharedConfig,
     entryPoints: ['./src/extension.ts'],
@@ -70,6 +72,13 @@ const configs = [
     ...sharedConfig,
     entryPoints: ['./src/extensionRuntime.ts'],
     outfile: 'out/extensionRuntime.js',
+    external: ['vscode'],
+    plugins: [deferredRuntimePlugin],
+  },
+  {
+    ...sharedConfig,
+    entryPoints: ['./src/mcpRuntime.ts'],
+    outfile: 'out/mcpRuntime.js',
     external: ['vscode'],
   },
 ];

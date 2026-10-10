@@ -236,6 +236,27 @@ describe('connectDatabase — builtIn', () => {
     expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-docker' }), env, { database: 'AdventureWorks' });
   });
 
+  it.each([
+    { server: 'localhost', storedPort: undefined, wrongPort: 1444, correctPort: undefined },
+    { server: 'localhost', storedPort: 1444, wrongPort: undefined, correctPort: 1444 },
+    { server: 'localhost\\reporting', storedPort: undefined, wrongPort: 1433, correctPort: undefined },
+  ])('never treats an unspecified port as a wildcard: %j', async ({ server, storedPort, wrongPort, correctPort }) => {
+    host.settings['dataLineageViz.database.connections'] = [
+      { ...local, id: 'wrong', server, port: wrongPort },
+      { ...local, id: 'correct', server, port: correctPort },
+    ];
+    await connectDatabase(env, { server, port: storedPort, database: 'AdventureWorks', user: 'sa', authenticationType: 'SqlLogin' });
+    expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'correct' }), env, expect.anything());
+    expect(host.showQuickPick).not.toHaveBeenCalled();
+  });
+
+  it.each([[undefined, 1433], [1433, undefined]])('matches an omitted default port to1433 (stored %s, saved %s)', async (storedPort, savedPort) => {
+    host.settings['dataLineageViz.database.connections'] = [{ ...local, port: savedPort }];
+    await connectDatabase(env, { server: 'localhost', port: storedPort, database: 'AdventureWorks', user: 'sa', authenticationType: 'SqlLogin' });
+    expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: local.id }), env, expect.anything());
+    expect(host.showQuickPick).not.toHaveBeenCalled();
+  });
+
   it('the sign-in type must match: an mssql Entra record maps to the Entra connection on the same server', async () => {
     const entraLocal = { id: 'id-entra', name: 'Entra', server: 'localhost', authenticationType: 'entraId' };
     host.settings['dataLineageViz.database.connections'] = [local, entraLocal];
@@ -431,5 +452,29 @@ describe('migration from the mssql extension to the built-in connection', () => 
     expect(host.showInformationMessage).not.toHaveBeenCalled();
     expect(host.getExtension.mock.calls.filter(([id]) => id === MSSQL_ID)).toHaveLength(0);
     expect(second?.connectionInfo).toMatchObject({ connectionId: 'id-added' });
+  });
+});
+
+
+describe('mssql picker public API compatibility', () => {
+  it('uses saved profiles when newer mssql versions no longer export a native picker', async () => {
+    const sharingConnect = vi.fn().mockResolvedValue('uri://shared');
+    host.settings['mssql.connections'] = [{ id: 'profile-id', server: 'localhost', database: 'Sales', user: 'reader', authenticationType: 'SqlLogin' }];
+    host.getExtension.mockReturnValue({ isActive: true, packageJSON: { version: '1.50.0' }, exports: { connectionSharing: { connect: sharingConnect } } });
+    host.showQuickPick.mockImplementation(async (items: Array<{ profile: unknown }>) => items[0]);
+    const session = await connectDatabase(env);
+    expect(sharingConnect).toHaveBeenCalledWith('datahelper-chwagner.data-lineage-viz', 'profile-id', 'Sales');
+    expect(session?.connectionInfo).toMatchObject({ server: 'localhost', database: 'Sales', user: 'reader' });
+    expect(session?.isOpen()).toBe(true);
+    expect(host.openBuiltInSession).not.toHaveBeenCalled();
+  });
+
+  it('cancels a newer saved-profile picker without connecting', async () => {
+    const sharingConnect = vi.fn();
+    host.settings['mssql.connections'] = [{ id: 'profile-id', server: 'localhost', database: 'Sales' }];
+    host.getExtension.mockReturnValue({ isActive: true, exports: { connectionSharing: { connect: sharingConnect } } });
+    host.showQuickPick.mockResolvedValue(undefined);
+    await expect(connectDatabase(env)).resolves.toBeUndefined();
+    expect(sharingConnect).not.toHaveBeenCalled();
   });
 });

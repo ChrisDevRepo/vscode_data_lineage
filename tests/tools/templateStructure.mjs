@@ -37,9 +37,6 @@ export function templateStructure(text) {
   return structure;
 }
 
-/** Canonical JSON of {@link templateStructure}, byte-comparable across revisions. */
-export const structureFingerprint = (text) => JSON.stringify(templateStructure(text));
-
 /**
  * Human-readable list of structural differences, one line per changed template or field.
  *

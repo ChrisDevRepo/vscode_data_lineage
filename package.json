@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse Dedicated SQL Pool databases",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -121,6 +121,16 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "dataLineageViz.toggleMcpServer",
+        "title": "Data Lineage: Toggle MCP Server",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "dataLineageViz.copyMcpConfig",
+        "title": "Data Lineage: Copy MCP Client Configuration",
+        "icon": "$(copy)"
+      },
+      {
         "command": "dataLineageViz.aiCreateView",
         "title": "Data Lineage: Show AI Trace in Graph",
         "icon": "$(type-hierarchy-sub)"
@@ -167,6 +177,12 @@
     ],
     "keybindings": [],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "dataLineageViz.copyMcpConfig",
+          "when": "dataLineageViz.mcpLoaded"
+        }
+      ],
       "view/title": [
         {
           "command": "dataLineageViz.open",
@@ -539,12 +555,31 @@
         }
       },
       {
+        "title": "MCP Server",
+        "properties": {
+          "dataLineageViz.mcp.enabled": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "markdownDescription": "Serve the lineage tools to MCP clients on `127.0.0.1`. Bearer-token protected; tools read the project loaded in the Data Lineage panel and never execute SQL. A kill switch: while off, none of the MCP code loads; turning it on takes effect after a window reload, and turning it off stops the server at once and revokes its token. Use *Data Lineage: Copy MCP Client Configuration* to connect a client."
+          },
+          "dataLineageViz.mcp.port": {
+            "type": "integer",
+            "default": 39217,
+            "minimum": 1024,
+            "maximum": 65535,
+            "scope": "machine",
+            "markdownDescription": "Local TCP port of the MCP server. One VS Code window can serve a port at a time."
+          }
+        }
+      },
+      {
         "title": "AI Assistant",
         "properties": {
           "dataLineageViz.ai.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Enable the @lineage chat participant and AI lineage tools. Disable for users who do not use VS Code Copilot or want to remove AI features entirely."
+            "description": "Enable the @lineage chat participant and its VS Code language-model tools. Disable for users who do not use VS Code Copilot or want to remove them. The MCP server has its own switch, dataLineageViz.mcp.enabled (off by default)."
           },
           "dataLineageViz.ai.maxRounds": {
             "type": "integer",
@@ -696,6 +731,252 @@
         }
       },
       {
+        "name": "lineage_get_scope_bundle",
+        "toolReferenceName": "lineage_get_scope_bundle",
+        "displayName": "Get Lineage Scope",
+        "userDescription": "Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.",
+        "modelDescription": "Graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (writes INTO it) and `out` (reads FROM it); every node carries `uh`/`dh`, its hop distance upstream/downstream from the origin on the side(s) it was reached (the origin is 0 on both; a node reached on both sides carries both) — read this instead of re-deriving reach from edge order. `edges` are positional [source, target, type]. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "lineage",
+          "lineage-research"
+        ],
+        "icon": "$(type-hierarchy)",
+        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Canonical object ID at the center of the requested lineage scope."
+            },
+            "upstream_depth": {
+              "description": "Upstream levels: a positive integer, \"all\" for the whole chain, or 0 to exclude upstream. Use the smallest depth that answers the question: 1 for direct neighbours; \"all\" only for a whole-chain or path question.",
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "const": "all"
+                }
+              ]
+            },
+            "downstream_depth": {
+              "description": "Downstream levels: a positive integer, \"all\" for the whole chain, or 0 to exclude downstream. Use the smallest depth that answers the question: 1 for direct neighbours; \"all\" only for a whole-chain or path question.",
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "const": "all"
+                }
+              ]
+            },
+            "include_ddl": {
+              "description": "Whether to include SQL bodies for nodes in the returned scope.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "origin",
+            "upstream_depth",
+            "downstream_depth"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lineage_present_result",
+        "toolReferenceName": "lineage_present_result",
+        "displayName": "Present Lineage View",
+        "userDescription": "Generate a report and visualization for the current lineage scope.",
+        "modelDescription": "Renders a lineage view in the Data Lineage panel: required report sections, node badges, notes, and graph role/color highlights such as source/transform/target. A follow-up render may also prune or add nodes. Returns success with the view name and node count; a rejection names the field to correct. Use this for presentation-only changes.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "lineage-presentation"
+        ],
+        "icon": "$(sparkle)",
+        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 90,
+              "description": "Short name for the generated lineage view — aim for ~60 chars."
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "description": "One-line summary shown with the generated view."
+            },
+            "title": {
+              "description": "Optional report heading.",
+              "type": "string",
+              "maxLength": 120
+            },
+            "intro": {
+              "description": "Optional grounded introduction to the final report.",
+              "type": "string"
+            },
+            "closing": {
+              "description": "Optional closing paragraph.",
+              "type": "string"
+            },
+            "prune_node_ids": {
+              "description": "Ids to remove from the view. The origin stays, and every remaining node must stay connected to it.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "add_node_ids": {
+              "description": "Ids to add to the view; each must connect to it.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "layout_direction": {
+              "description": "Graph layout: left-to-right or top-to-bottom.",
+              "type": "string",
+              "enum": [
+                "LR",
+                "TB"
+              ]
+            },
+            "highlight_groups": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60,
+                    "description": "Short legend label for the shared graph role or status."
+                  },
+                  "color": {
+                    "type": "string",
+                    "enum": [
+                      "source",
+                      "transform",
+                      "target",
+                      "good",
+                      "warn",
+                      "fail"
+                    ],
+                    "description": "Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer's values. `good` / `warn` / `fail`: diagnostic status. One scheme per result."
+                  },
+                  "node_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "Node IDs that share this graph role or status."
+                  }
+                },
+                "required": [
+                  "label",
+                  "color",
+                  "node_ids"
+                ],
+                "additionalProperties": false
+              },
+              "description": "At least one group. For a single-object result, use color \"target\" on that object."
+            },
+            "sections": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 90,
+                    "description": "What the section's nodes share, as heading and badge (30 chars). No object names."
+                  },
+                  "node_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": "Nodes this section documents; put each node in one section. Empty array when it documents none."
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Required detail body for this section label."
+                  }
+                },
+                "required": [
+                  "label",
+                  "node_ids",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Report sections, at least one. Each section explains the node_ids it lists."
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "node_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Node ID the caption sits below."
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "One-sentence caption grounded in tool results."
+                  }
+                },
+                "required": [
+                  "node_id",
+                  "caption"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Below-node captions, one per node."
+            },
+            "scope_id": {
+              "description": "scope_id returned by lineage_get_scope_bundle: draws that scope as a new view. Send exactly one of scope_id and view_id.",
+              "type": "string",
+              "minLength": 1
+            },
+            "view_id": {
+              "description": "view_id returned by an earlier lineage_present_result: edits that view, for example with prune_node_ids or add_node_ids.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "name",
+            "summary",
+            "highlight_groups",
+            "sections"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
         "name": "lineage_get_object_detail",
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
@@ -810,37 +1091,6 @@
         }
       },
       {
-        "name": "lineage_get_neighbor_columns",
-        "toolReferenceName": "lineage_get_neighbor_columns",
-        "displayName": "Get Neighbor Columns",
-        "userDescription": "Inspect a neighbor's columns for pruning decisions during an approved deep analysis.",
-        "modelDescription": "Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "lineage"
-        ],
-        "icon": "$(symbol-field)",
-        "when": "dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "ids": {
-              "minItems": 1,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "description": "Neighbor ids, not the focus."
-            }
-          },
-          "required": [
-            "ids"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
         "name": "lineage_get_screen_state",
         "toolReferenceName": "lineageView",
         "displayName": "Get Screen State",
@@ -905,6 +1155,7 @@
     "pretest:integration": "npm run build && tsc -p tsconfig.integration.json",
     "pretest:edh": "npm run pretest:integration",
     "test:edh": "vscode-test",
+    "test:mcp:live": "npm run pretest:integration && node tests/tools/mcp-live.mjs",
     "test:bare-environment": "vscode-test --label bare-environment",
     "test:tools": "vscode-test --label tools",
     "test:participant-turn": "vscode-test --label participant-turn",
@@ -924,6 +1175,9 @@
     "@langchain/core": "1.2.3",
     "@langchain/langgraph": "1.4.10",
     "@microsoft/vscode-azext-azureauth": "5.1.1",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "12.11.6",
     "comlink": "4.4.2",

@@ -114,10 +114,8 @@ export function buildModelFromDmv(
     const c = { table: 0, view: 0, procedure: 0, function: 0 } as Record<string, number>;
     for (const o of objects) if (o.type in c) c[o.type]++;
     const colCount = results.columns.rowCount;
-    const fkCount = results.constraints?.rows.filter(r => {
-      const idx = results.constraints!.columnInfo.findIndex(ci => ci.columnName.toLowerCase() === 'constraint_type');
-      return idx >= 0 && r[idx]?.displayValue === 'FK';
-    }).length ?? 0;
+    const constraintCols = results.constraints ? buildColumnIndex(results.constraints) : undefined;
+    const fkCount = results.constraints?.rows.filter(r => cellValue(r, constraintCols!, 'constraint_type') === 'FK').length ?? 0;
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
   const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);

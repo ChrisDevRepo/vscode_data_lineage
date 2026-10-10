@@ -17,7 +17,6 @@ const env = vi.hoisted(() => ({
   configListeners: new Set<(e: { affectsConfiguration: (key: string) => boolean }) => void>(),
   showWarningMessage: vi.fn(),
   detailListener: undefined as ((message: unknown) => Promise<void>) | undefined,
-  panelDisposed: undefined as (() => void) | undefined,
 }));
 
 vi.mock('vscode', async (importOriginal) => {
@@ -34,8 +33,8 @@ vi.mock('vscode', async (importOriginal) => {
       workspaceFolders: [{ uri: { fsPath: resolvePath('/workspace') } }],
       getConfiguration: () => ({
         get: (key: string, fallback: unknown) => {
-          if (key === 'dmvQueriesFile') return env.setting;
           if (key === 'connectionProvider') return 'builtIn';
+          if (key === 'dmvQueriesFile') return env.setting;
           return fallback;
         },
         inspect: () => ({ globalValue: env.setting }),
@@ -60,7 +59,7 @@ vi.mock('vscode', async (importOriginal) => {
       createWebviewPanel: () => ({
         title: '',
         reveal: vi.fn(),
-        onDidDispose: (listener: () => void) => { env.panelDisposed = listener; return { dispose: () => {} }; },
+        onDidDispose: () => ({ dispose: () => {} }),
         webview: {
           html: '',
           cspSource: 'vscode-resource:',
@@ -99,7 +98,6 @@ beforeEach(() => {
   env.configListeners.clear();
   env.showWarningMessage.mockReset();
   env.detailListener = undefined;
-  env.panelDisposed = undefined;
   connectDatabase.mockReset();
 });
 

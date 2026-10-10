@@ -1,6 +1,7 @@
 import { RemoveMessage } from '@langchain/core/messages';
 import { END, REMOVE_ALL_MESSAGES, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
 import {
+  ModelPortError,
   modelAssistantMessage,
   modelUserMessage,
   type ModelMessage,
@@ -14,7 +15,7 @@ import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
 import { PendingGateSchema } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
-import { activeModeOf, type LmStage } from '../tools/toolPolicy';
+import { activeModeOf, type ChatLmStage } from '../tools/toolPolicy';
 import {
   StartExplorationCompletedProviderInputSchema,
   StartExplorationFreshProviderInputSchema,
@@ -42,9 +43,10 @@ import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolPro
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
-import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
+import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, sanitizeDescriptionForChat, type ProviderErrorDiagnostic } from '../support/text';
+import { describeProviderErrorForUser, escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type ProviderErrorDiagnostic } from '../support/text';
+import { InternalInvariantError } from '../support/internalInvariant';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -61,6 +63,7 @@ import {
   type ConversePlanDraft,
   type ConverseInstructionPlan,
   type InstructionPhase,
+  type StructuredInstructionPlan,
 } from './instructionPlan';
 import {
   executeToolAttempt,
@@ -86,9 +89,8 @@ import {
  * Count of one-time phase nodes that each self-loop up to {@link MAX_TOOL_PROVIDER_CALLS} times.
  *
  * @remarks
- * Under the single-generation redesign every phase node re-enters itself (via its `routeAfter*`
- * conditional edge, while `toolAttempt.phase` still matches) for one provider generation per LangGraph
- * step — so a single logical phase costs up to {@link MAX_TOOL_PROVIDER_CALLS} graph transitions, not
+ * Every phase node re-enters itself (via its `routeAfter*` conditional edge, while
+ * `toolAttempt.phase` still matches) for one provider generation per LangGraph step — so a single logical phase costs up to {@link MAX_TOOL_PROVIDER_CALLS} graph transitions, not
  * one. These are the seven self-looping nodes that run at most once per turn: `detect_entry`,
  * `discovery`, `visual_preview`, `sm_entry`, `gate_refine`, `synthesis`, `follow_up`. The active
  * coordinator/worker loop is counted separately (it scales with `maxRounds`). No single turn traverses
@@ -231,6 +233,8 @@ export interface AgentGraphDeps {
   readonly turnEpoch: number;
   /** Optional logger for active-loop diagnostics (host wires it to the AI channel); off when undefined. */
   readonly logger?: Logger;
+  /** Wait before the one retry of a generation a transport interruption ended; the shipped default unless a test shortens it. */
+  readonly transportRetryDelayMs?: number;
   /**
    * Optional sink for rejections the attempt executor raises without dispatching a tool.
    *
@@ -323,12 +327,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * The one provider-failure exit every phase funnels through.
+   * The provider-failure exit of every phase except the active hop, which records the same stop
+   * reason through its own incomplete-run path.
    *
    * @remarks
    * The model port cannot log at error level — it takes only an optional debug callback — so the
    * turn-ending diagnostic it sanitized is emitted here, where the {@link Logger} lives. A failed
-   * generation leaves the turn with no result, which `logging.md` puts at ERROR.
+   * generation leaves the turn with no result, which `logging.md` puts at ERROR. The stop reason is
+   * `provider_error` in every phase, the same reason the active worker records.
    *
    * @param res - The failed attempt, read for its user text and sanitized provider diagnostic.
    * @param fallbackMessage - Phase-specific text used when the port supplied none; also the log op.
@@ -342,7 +348,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       fallbackMessage,
       res.providerError ? formatProviderErrorDiagnostic(res.providerError) : message,
     );
-    return fail(message);
+    return { ...fail(message), activeStop: 'provider_error' };
   };
 
   /**
@@ -366,14 +372,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * @param statusText - The phase's own status line to re-emit; defaults to the phase progress label.
    */
   const emitRepairProgress = (
-    phaseLabel: string,
-    subject: string,
+    phaseLabel: InstructionPhase,
     priorAttempt: ToolPhaseAttemptState,
     nextAttempt: ToolPhaseAttemptState,
     statusText?: string,
   ): void => {
     if (nextAttempt.rejections.length <= priorAttempt.rejections.length) return;
-    const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel as InstructionPhase] ?? subject}…`;
+    const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel]}…`;
     const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
     deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.noProgressCalls} — ${rejectionCauseLabel(nextAttempt)})`);
   };
@@ -470,7 +475,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /** Makes the active LangGraph stage explicit at the dispatcher boundary for one model call. */
-  const withLmStage = async <T>(stage: LmStage, run: () => Promise<T>): Promise<T> => {
+  const withLmStage = async <T>(stage: ChatLmStage, run: () => Promise<T>): Promise<T> => {
     observeWrite(deps.getSession().enterLmStage(stage, deps.turnEpoch));
     try {
       return await run();
@@ -479,33 +484,82 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
   };
 
+  /** Logs a connection-level interruption, waits the transport-retry delay and runs the one retry. */
+  const retryAfterTransportWait = async <R>(phase: string, failure: ProviderErrorDiagnostic, attempt: () => Promise<R>): Promise<R> => {
+    deps.logger?.debug(`[AI] transport-retry phase=${phase} ${formatProviderErrorDiagnostic(failure)}`);
+    await abortableDelay(deps.transportRetryDelayMs ?? TRANSPORT_RETRY_DELAY_MS, deps.signal);
+    return attempt();
+  };
+
   /**
-   * Executes one compiled tool plan — a single physical attempt, with no retry of any kind.
-   * Whatever it returns, including a transport failure, is final; the calling node decides its
-   * disposition.
+   * Executes one compiled tool plan: one physical attempt, plus one more only when the first ended
+   * in a connection-level interruption before any reply (a reset, a timeout, an unreachable host),
+   * which no tool dispatch and no model reply preceded. Any other failure, and a second
+   * interruption, is final; the calling node decides its disposition. The retry's own generation is
+   * the one the step is charged for.
    *
    * @remarks
    * `presentResultRepairDraftContext` shows the held section labels through {@link heldSectionsForRepair};
    * the rejected call the model sent already carries every body.
    */
-  const runToolAttempt = (
+  const runToolAttempt = async (
     plan: ConverseInstructionPlan,
     priorState: ToolPhaseAttemptState,
-  ) => executeToolAttempt(deps.model, plan, {
-    priorState,
-    debugLog: message => deps.logger?.debug(message),
-    traceSyntheticRejection: deps.traceSyntheticRejection,
-    presentResultRepairDraftContext: () => {
-      const held = deps.getSession().presentResultRepairDraft.get();
-      return held ? { sections: heldSectionsForRepair(held.sections) } : null;
-    },
-    holdRejectedPresentResult: (input, issuePaths) => {
-      const sess = deps.getSession();
-      if (sess.activeLmStage?.kind === 'visual_preview') return null;
-      return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
-    },
-    holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
-  });
+  ): Promise<ToolAttemptResult> => {
+    const attempt = () => executeToolAttempt(deps.model, plan, {
+      priorState,
+      debugLog: message => deps.logger?.debug(message),
+      traceSyntheticRejection: deps.traceSyntheticRejection,
+      presentResultRepairDraftContext: () => {
+        const held = deps.getSession().presentResultRepairDraft.get();
+        return held ? { sections: heldSectionsForRepair(held.sections) } : null;
+      },
+    });
+    const first = await attempt();
+    if (first.stop !== 'error' || !first.providerError || !isTransportProviderError(first.providerError) || deps.signal?.aborted) return first;
+    if (first.replyStreamed) {
+      deps.logger?.debug(`[AI] transport-retry skipped phase=${plan.frame.phase} reason=reply_streamed ${formatProviderErrorDiagnostic(first.providerError)}`);
+      return first;
+    }
+    return retryAfterTransportWait(plan.frame.phase, first.providerError, attempt);
+  };
+
+  /**
+   * Runs one forced structured-output generation under the provider-failure contract of the tool
+   * phases: a connection-level interruption is retried once after a short wait, and a failed
+   * request is returned as a provider failure for {@link failProvider}, never thrown.
+   *
+   * @remarks
+   * The structured operations throw instead of returning an error result, so the failure is
+   * recognised on the port's provider codes (`provider_error`, `no_permission`, `blocked`,
+   * `model_not_found`) and classified from its cause chain, as the tool phases classify it. A
+   * {@link StructuredOutputError} (the model answered, wrongly) and a cancellation propagate
+   * unchanged; they have their own handling at the call site. A structured generation streams no
+   * reply text, so a retry can never repeat visible prose.
+   *
+   * @param plan - The compiled structured plan.
+   * @param onAttempt - Called before each physical attempt, so a caller that charges provider calls
+   *   counts only the last one, as {@link runToolAttempt} does.
+   * @returns The parsed value, or the sanitized failure of the last attempt.
+   */
+  const runStructuredPlan = async <T>(plan: StructuredInstructionPlan<T>, onAttempt?: () => void): Promise<
+    | { readonly ok: true; readonly value: T }
+    | { readonly ok: false; readonly error: string; readonly providerError: ProviderErrorDiagnostic }
+  > => {
+    const attempt = async () => {
+      onAttempt?.();
+      try {
+        return { ok: true as const, value: await executeInstructionPlan(deps.model, plan) };
+      } catch (error) {
+        if (!(error instanceof ModelPortError) || !PROVIDER_FAILURE_PORT_CODES.has(error.code)) throw error;
+        const providerError = sanitizeProviderErrorDiagnostic(error, plan.frame.phase);
+        return { ok: false as const, error: describeProviderErrorForUser(providerError), providerError };
+      }
+    };
+    const first = await attempt();
+    if (first.ok || !isTransportProviderError(first.providerError) || deps.signal?.aborted) return first;
+    return retryAfterTransportWait(plan.frame.phase, first.providerError, attempt);
+  };
 
   /** Returns the cumulative attempt state for one phase, or a fresh state when the phase changed. */
   const attemptStateFor = (state: AgentStateType, phase: InstructionPhase): ToolPhaseAttemptState =>
@@ -545,7 +599,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   const executeStandardPhaseAttempt = async (
     priorAttempt: ToolPhaseAttemptState,
-    phaseLabel: string,
+    phaseLabel: InstructionPhase,
     draft: StandardPhaseDraft,
     failure: StandardPhaseFailure,
   ) => {
@@ -569,7 +623,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const nextAttempt = recordAttempt(priorAttempt, result, phaseLabel, startedAt);
     const terminal = attemptFailure(result, nextAttempt, ...failure);
-    if (!terminal && result.stop === 'continue') emitRepairProgress(phaseLabel, failure[1], priorAttempt, nextAttempt);
+    if (!terminal && result.stop === 'continue') emitRepairProgress(phaseLabel, priorAttempt, nextAttempt);
     return terminal ? { terminal, nextAttempt } : { result, nextAttempt };
   };
 
@@ -662,7 +716,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (held && state.toolAttempt?.phase !== 'detect_entry') {
       let action: 'approve' | 'change' | 'cancel' | 'other';
       try {
-        const classified = await executeInstructionPlan(deps.model, compileInstructionPlan({
+        const classified = await runStructuredPlan(compileInstructionPlan({
           kind: 'structured',
           phase: 'detect_entry',
           contract: { id: 'gate_reply', schema: GateReplySchema },
@@ -671,7 +725,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           system: buildGateReplySystemPrompt(),
           signal: deps.signal,
         }));
-        action = classified.action;
+        if (!classified.ok) return { ...failProvider(classified, 'Typed reply classification failed'), ctx, messages };
+        action = classified.value.action;
       } catch (error) {
         if (!(error instanceof StructuredOutputError)) throw error;
         deps.logger?.debug(
@@ -718,7 +773,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         stop: 'continue', providerCalls: 0, observations: [], rejections: [], messages: [],
       });
       const stopped = attemptStop(exhaustedAttempt, 'Entry detection', 'without a valid route');
-      if (!stopped) throw new Error('Entry-detection graph-attempt guard failed to select a stop reason.');
+      if (!stopped) throw new InternalInvariantError('Entry-detection graph-attempt guard failed to select a stop reason.');
       return { ...failStopped(stopped, exhaustedAttempt), ctx, messages, toolAttempt: exhaustedAttempt };
     }
     const base = state.messages.length > 0
@@ -727,10 +782,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const detectorMessages = priorAttempt.providerCalls > 0
       ? [...base, ...await renderToolAttemptContext(priorAttempt, deps.model, message => deps.logger?.debug(message))]
       : base;
-    const callsBefore = deps.model.modelCalls;
+    let callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
     try {
-      entry = await executeInstructionPlan(deps.model, compileInstructionPlan({
+      const detected = await runStructuredPlan(compileInstructionPlan({
         kind: 'structured',
         phase: 'detect_entry',
         contract: { id: 'entry_detection', schema: EntryDetectionSchema },
@@ -738,12 +793,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         messages: detectorMessages,
         system: buildEntryDetectorSystemPrompt(ctx),
         signal: deps.signal,
-      }));
+      }), () => { callsBefore = deps.model.modelCalls; });
+      if (!detected.ok) return { ...failProvider(detected, 'Entry detection failed'), ctx, messages };
+      entry = detected.value;
     } catch (error) {
       if (!(error instanceof StructuredOutputError)) throw error;
       const providerCalls = deps.model.modelCalls - callsBefore;
       if (providerCalls < 1) {
-        throw new Error('Structured-generation model-port contract violated: rejected output recorded no provider call.');
+        throw new InternalInvariantError('Structured-generation model-port contract violated: rejected output recorded no provider call.');
       }
       const entryDetectionHint = error.hint ?? 'Return exactly one object matching the entry-detection schema.';
       const nextAttempt = recordToolAttempt(priorAttempt, {
@@ -814,7 +871,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     let res: ToolAttemptResult;
     let nextAttempt: ToolPhaseAttemptState;
     if (attempt.terminal) {
-      const salvaged = attempt.nextAttempt.stopReason === 'no_progress' && attempt.nextAttempt.observations.length > 0
+      const salvaged = attempt.nextAttempt.stopReason === 'no_progress' && attempt.nextAttempt.observations.some(observation => !observation.refused)
         ? await trySalvageDiscoveryAnswer(attempt.nextAttempt, draft)
         : null;
       if (!salvaged) return attempt.terminal;
@@ -939,7 +996,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { outcome: 'ok', messages: [modelAssistantMessage(res.text)], toolAttempt: null, phase: 'done' };
     }
     if (res.stop !== 'continue') return fail('Exploration did not reach the consent gate.');
-    emitRepairProgress('sm_entry', 'Exploration entry', priorAttempt, nextAttempt);
+    emitRepairProgress('sm_entry', priorAttempt, nextAttempt);
     return { toolAttempt: nextAttempt, phase: 'sm_entry' };
   };
 
@@ -1190,6 +1247,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       proseGate: 'buffer-until-tool',
       freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
       hopColumns: () => engine.hopSubmitColumns,
+      heldColumnFlow: () => engine.heldColumnFlow,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, input, isError) => {
         if (toolName === 'lineage_submit_findings' && !isError) {
@@ -1212,6 +1270,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       };
     }
     if (deps.signal?.aborted) return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
+    // The engine stopped itself on an invariant this hop's submission hit: settle its own reason,
+    // as the coordinator does, ahead of the generic backend-fault stop of the same reply.
+    if (engine.status === 'error') {
+      return {
+        ...failActiveIncomplete(state, engine, 'engine_error', engine.errorReason ?? 'Exploration engine entered an error state.'),
+        toolAttempt: nextAttempt,
+      };
+    }
     const stopped = attemptStop(nextAttempt, 'Exploration active hop', 'without submitting findings', {
       object: focusId.replace(/[[\]]/g, ''),
       completedHops: state.activeHopCount,
@@ -1227,7 +1293,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       };
     }
     if (!submitted) {
-      emitRepairProgress('active', `Hop ${progress.current}`, priorAttempt, nextAttempt, hopHeader);
+      emitRepairProgress('active', priorAttempt, nextAttempt, hopHeader);
       return {
         toolAttempt: nextAttempt,
         phase: 'active_worker',
@@ -1269,10 +1335,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   ): AgentStateUpdate => {
     const sess = deps.getSession();
     const hopCount = engine.currentHop;
-    const hopLog = sess.hopLog;
-    sess.resetExploration();
-    observeWrite(sess.setHopCount(deps.turnEpoch, hopCount));
-    sess.hopLog = hopLog;
+    if (observeWrite(sess.setHopCount(deps.turnEpoch, hopCount)).kind === 'accepted') {
+      const hopLog = sess.hopLog;
+      sess.resetExploration();
+      observeWrite(sess.setHopCount(deps.turnEpoch, hopCount));
+      sess.hopLog = hopLog;
+    }
     deps.logger?.error(message, `phase=active reason=${stop} hop=${hopCount}`);
     return {
       outcome: 'error',
@@ -1302,7 +1370,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const envelope = buildSmCompletionEnvelope(
       result,
       sess.memory.getUserQuestion(),
-      engine.deferredQuestions,
       engine.identifierCaseSensitive,
     );
     const envelopeJson = JSON.stringify(envelope);
@@ -1323,7 +1390,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       facts: explorationFacts(engine.currentAnalysisMode, engine.currentTargetColumns ?? undefined, {
         classification,
         templateKeys: synthesisInstruction.templateKeys,
-        memorySections: [...synthesisInstruction.memorySections, 'detail_slots', 'node_states', 'deferred_questions'],
+        memorySections: [...synthesisInstruction.memorySections, 'detail_slots'],
       }),
       messages,
       system: synthesisInstruction.system,
@@ -1696,15 +1763,36 @@ function providerStopText(at: { readonly object: string; readonly completedHops:
     + 'The run is incomplete, so no result is shown and the graph was not changed. Ask again.';
 }
 
+/** Wait before the one retry of a generation a transport interruption ended. */
+const TRANSPORT_RETRY_DELAY_MS = 1_000;
+
+/** Port error codes that mean the provider request failed, as opposed to a cancellation or a port-contract fault. */
+const PROVIDER_FAILURE_PORT_CODES: ReadonlySet<string> = new Set(['provider_error', 'no_permission', 'blocked', 'model_not_found']);
+
+/** Resolves after `ms`, or at once when `signal` aborts first. */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal?.addEventListener('abort', finish, { once: true });
+  });
+}
+
 /**
- * User-facing text for a run ended by a backend fault: where it stopped, the fault code, and that
- * nothing was shown or changed.
+ * User-facing text for a run ended by a backend fault: where it stopped, the cause, and that
+ * nothing was shown or changed. A missing project names the user's action instead of an internal error.
  */
 function backendFaultStopText(subject: string, code: string, at?: { readonly object: string; readonly completedHops: number }): string {
   const where = at ? `The analysis stopped at \`${at.object}\`` : `${subject} stopped`;
-  return `${where}: an internal error occurred (${code}). `
+  const noProject = code === REJECTION_CODES.noProjectLoaded;
+  return `${where}: ${noProject ? 'no project is loaded in the Data Lineage panel' : `an internal error occurred (${code})`}. `
     + 'The run is incomplete, so no result is shown and the graph was not changed. '
-    + 'Details are in the debug log. Ask again.';
+    + (noProject ? 'Open the project and ask again.' : 'Details are in the debug log. Ask again.');
 }
 
 /**

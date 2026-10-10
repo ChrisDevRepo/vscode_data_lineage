@@ -36,6 +36,13 @@ Include:
   model receives the user's prompt, native `@lineage` chat history, and lineage
   metadata or DDL returned by local snapshot tools. The AI runtime cannot
   connect to a database, execute SQL, start an import, or start profiling
+- The MCP server (`dataLineageViz.mcp.enabled`) is off by default. When on, it
+  listens on `127.0.0.1` only, requires a bearer token and refuses non-localhost
+  `Host` and `Origin` headers. Its tools read the loaded lineage snapshot and
+  never execute SQL; the connected client's model receives the metadata and DDL
+  they return. The token is kept in SecretStorage and, while the server runs, in
+  a user-only discovery file in the extension's global storage for the stdio
+  proxy; turning the server off deletes the token and the file
 - AI trace logging is disabled by default. Enabling it for a session requires an
   open workspace folder and writes full model and tool diagnostics to
   `tmp/lm-trace/` inside the first workspace folder; the writer is disabled again

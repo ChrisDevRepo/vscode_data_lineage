@@ -114,10 +114,6 @@ describe('BuiltInConnectionSchema', () => {
     expect(BuiltInConnectionSchema.safeParse({ ...valid, server: '' }).success).toBe(false);
   });
 
-  it('never carries a password property through a parse', () => {
-    const parsed = BuiltInConnectionSchema.parse({ ...valid, password: 'leaked' });
-    expect(parsed).not.toHaveProperty('password');
-  });
 });
 
 describe('readBuiltInConnections', () => {

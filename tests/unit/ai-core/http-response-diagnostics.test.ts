@@ -51,3 +51,37 @@ describe('malformed successful HTTP diagnostics', () => {
     expect(records.some((record) => record.type === 'provider-raw')).toBe(false);
   });
 });
+
+describe('failed HTTP response diagnostics', () => {
+  async function failed(status: number, body: string, headers: Record<string, string>) {
+    const records: WireRecord[] = [];
+    const port = new OpenAiCompatiblePort(
+      { baseUrl: 'https://provider.invalid/v1', model: 'test-model', apiKey: 'canned-secret', laneId: 'test' },
+      { traceVerbose: true, requestId: 'test-request', wireLog: (record) => records.push(record),
+        fetchImpl: async () => ({ ok: false, status, statusText: 'Precondition Failed', text: async () => body,
+          headers: { get: (name) => headers[name] ?? null } }) },
+    );
+    const result = await port.generateToolTurn({ messages: [], tools: [], phase: 'active' });
+    const response = records.find((record) => record.type === 'provider-raw' && record.direction === 'response');
+    return { result, response };
+  }
+
+  it('keeps the whole redacted error body and only the allowlisted response headers', async () => {
+    const body = `{"error":"precondition ${'detail '.repeat(100)} canned-secret Bearer echoed-token END"}`;
+    const { result, response } = await failed(412, body, {
+      'content-type': 'application/json', 'x-request-id': 'req-1', 'retry-after': '3', 'set-cookie': 'session=private',
+    });
+    expect(result.status).toBe('error');
+    expect(response).toMatchObject({ status: 412, headers: { 'x-request-id': 'req-1', 'retry-after': '3' } });
+    const text = JSON.stringify(response);
+    expect(text).toContain('END');
+    expect(text).not.toContain('canned-secret');
+    expect(text).not.toContain('echoed-token');
+    expect(text).not.toContain('session=private');
+  });
+
+  it('omits the header map when no allowlisted header is present', async () => {
+    const { response } = await failed(500, 'boom', { 'content-type': 'text/plain' });
+    expect(response).not.toHaveProperty('headers');
+  });
+});

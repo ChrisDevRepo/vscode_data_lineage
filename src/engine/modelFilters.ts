@@ -9,7 +9,7 @@
  */
 
 import { DatabaseModel } from './types';
-import { compileExclusionMatcher } from '../utils/sql';
+import { compileExclusionMatcher, schemaKey } from '../utils/sql';
 
 export { applyIsolationFilter } from './shared/modelFilters';
 
@@ -87,13 +87,122 @@ export function applyExclusionFilter(
  * Filters the model to include only nodes explicitly present in the provided allowlist.
  *
  * @param model - The database model to filter.
- * @param allowlist - A set of node IDs to retain.
+ * @param allowlist - IDs to retain; absent leaves the model unscoped and empty retains no objects.
  * @returns A filtered DatabaseModel instance.
  */
 export function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
-  if (!allowlist || allowlist.size === 0) return model;
+  if (!allowlist) return model;
   const nodes = model.nodes.filter((n) => allowlist.has(n.id));
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
   return { ...model, nodes, edges };
+}
+
+/**
+ * Filters an existing DatabaseModel in memory to include only objects from specific schemas.
+ *
+ * @remarks
+ * Retains every matching object and every external reference it touches — this never truncates.
+ * Callers that must honor `dataLineageViz.maxNodes` check the result with
+ * {@link checkObjectLimit} before loading or rendering it.
+ *
+ * @param selectedSchemas - Set of schema names to retain.
+ * @returns A new DatabaseModel instance containing the filtered subset.
+ */
+export function filterBySchemas(
+  model: DatabaseModel,
+  selectedSchemas: Set<string>,
+): DatabaseModel {
+  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, model.identifierCaseSensitive)));
+  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(schemaKey(n.schema, model.identifierCaseSensitive)));
+  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
+
+  const connectedVirtualIds = new Set<string>();
+  for (const e of model.edges) {
+    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
+    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
+  }
+  const virtualNodes = model.nodes.filter((n) =>
+    n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
+  );
+  const filtered = [...schemaNodes, ...virtualNodes];
+  const nodeIds = new Set(filtered.map((n) => n.id));
+
+  const edges = model.edges.filter(
+    (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
+  );
+
+  return {
+    ...model,
+    nodes: filtered,
+    edges,
+    schemas: model.schemas.filter((s) => lowerSelected.has(schemaKey(s.name, model.identifierCaseSensitive))),
+  };
+}
+
+/**
+ * Removes nodes from a DatabaseModel that match specified exclusion patterns, and records
+ * the removed objects on the parse statistics of the surviving objects that referenced them.
+ *
+ * @remarks
+ * Node and edge exclusion is delegated to {@link applyExclusionFilter} so the load-time and
+ * graph-time paths cannot diverge; only the parse-stat annotation is specific to this entry
+ * point. Invalid patterns are skipped and reported, matching that function's contract.
+ *
+ * @param model - The DatabaseModel to filter.
+ * @param patterns - Array of regex pattern strings.
+ * @param onWarning - Callback receiving a formatted message for each invalid regex pattern.
+ * @returns A new DatabaseModel with matching nodes and edges removed.
+ */
+export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
+  const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
+    onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
+  });
+  if (filtered === model) return model;
+
+  const { nodes } = filtered;
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const excludedNodes = model.nodes.filter((n) => !nodeIds.has(n.id));
+
+  const excludedIds = new Set(excludedNodes.map((n) => n.id));
+  const excludedNameById = new Map(excludedNodes.map((n) => [n.id, `${n.schema}.${n.name}`]));
+  let parseStats = model.parseStats;
+  if (parseStats && excludedIds.size > 0) {
+    const allEdges = model.edges;
+
+    const nameToIdMap = new Map<string, string>();
+    for (const n of nodes) nameToIdMap.set(schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive), n.id);
+    for (const n of excludedNodes) {
+      const key = schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive);
+      if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
+    }
+
+    const adjacency = new Map<string, string[]>();
+    for (const e of allEdges) {
+      if (excludedIds.has(e.target)) {
+        let arr = adjacency.get(e.source);
+        if (!arr) { arr = []; adjacency.set(e.source, arr); }
+        arr.push(e.target);
+      }
+      if (excludedIds.has(e.source)) {
+        let arr = adjacency.get(e.target);
+        if (!arr) { arr = []; adjacency.set(e.target, arr); }
+        arr.push(e.source);
+      }
+    }
+
+    parseStats = {
+      ...parseStats,
+      spDetails: parseStats.spDetails.map((sp) => {
+        const spId = nameToIdMap.get(schemaKey(sp.name, model.identifierCaseSensitive));
+        if (!spId) return sp;
+        const neighbors = adjacency.get(spId);
+        if (!neighbors) return sp;
+        const lost = neighbors.map(id => excludedNameById.get(id)!).filter(Boolean);
+        return lost.length > 0 ? { ...sp, excluded: lost } : sp;
+      }),
+    };
+  }
+
+  return { ...filtered, parseStats };
 }

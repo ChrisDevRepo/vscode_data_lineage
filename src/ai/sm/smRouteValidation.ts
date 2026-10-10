@@ -128,31 +128,52 @@ function routeErrorLine(error: InvalidRoute): string {
  * `detail` carries the same facts as data.
  *
  * @param errors - Field-resolved validation failures accumulated before commit; at least one.
+ * @param heldEntries - Engine-owned sentence naming the held neighbor-list entries
+ *   (`heldEntriesRepairLine`), appended after the held-correction order; omitted when none is held.
  * @returns A stable structured rejection without a second repair protocol.
  */
-export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejection {
+export function buildRouteValidationRejection(errors: InvalidRoute[], heldEntries = ''): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
-  const hint = [
+  const hint = [routeRejectionDirectives(errors), HELD_CORRECTION_ORDER, heldEntries].filter(Boolean).join(' ');
+  return makeRejection({
+    code,
+    reason: routeRejectionReason(errors),
+    hint,
+    detail: routeRejectionDetail(errors),
+    issuePaths: errors.flatMap(e => (e.path ? [e.path] : [])),
+  });
+}
+
+/**
+ * The verb-led corrective orders for a set of route/column failures, one per distinct kind, without
+ * the held-correction order; shared by {@link buildRouteValidationRejection} and a finding rejection
+ * that also reports other faults of the same submission.
+ */
+export function routeRejectionDirectives(errors: readonly InvalidRoute[]): string {
+  const distinctKinds = [...new Set(errors.map(e => e.kind))];
+  return [
     ...distinctKinds.filter(kind => kind !== 'untracked_out_col'
       || errors.some(error => error.kind === kind && error.path?.endsWith('.out_col')))
       .map(kind => ROUTE_REJECTION_DIRECTIVE[kind]),
     errors.some(error => error.kind === 'untracked_out_col' && error.path?.endsWith('.upstream_columns')) ? DETACHED_LINK_DIRECTIVE : '',
-    HELD_CORRECTION_ORDER,
   ].filter(Boolean).join(' ');
-  return makeRejection({
-    code,
-    reason: errors.map(routeErrorLine).join('\n'),
-    hint,
-    detail: errors.map(e => ({
-      id: e.id,
-      ...(e.path ? { path: e.path } : {}),
-      reason: e.reason,
-      ...(e.available_columns ? { available_columns: e.available_columns } : {}),
-      ...(e.actual_columns ? { actual_columns: e.actual_columns } : {}),
-      ...(e.available_routes ? { available_routes: e.available_routes } : {}),
-    })),
-    issuePaths: errors.flatMap(e => (e.path ? [e.path] : [])),
-  });
+}
+
+/** One reason line per route/column failure: its path, what was wrong and any valid routes. */
+export function routeRejectionReason(errors: readonly InvalidRoute[]): string {
+  return errors.map(routeErrorLine).join('\n');
+}
+
+/** The route/column failures as rejection `detail` data. */
+export function routeRejectionDetail(errors: readonly InvalidRoute[]): Array<Record<string, unknown>> {
+  return errors.map(e => ({
+    id: e.id,
+    ...(e.path ? { path: e.path } : {}),
+    reason: e.reason,
+    ...(e.available_columns ? { available_columns: e.available_columns } : {}),
+    ...(e.actual_columns ? { actual_columns: e.actual_columns } : {}),
+    ...(e.available_routes ? { available_routes: e.available_routes } : {}),
+  }));
 }
 

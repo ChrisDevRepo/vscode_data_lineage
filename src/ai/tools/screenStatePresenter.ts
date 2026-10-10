@@ -36,7 +36,7 @@ export interface ScreenStateInput {
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
   readonly getStoredRun?: StoredRunReader;
   /** Resolver for an object's current DDL text; drives the staleness comparison. */
-  readonly getDdl?: (id: string) => string | undefined;
+  readonly getDdl?: (id: string, nodeIdEncodingVersion?: 2) => string | undefined;
   /** Zero-based offset of the id-list page to serve; `0` (default) is the first page. */
   readonly offset?: number;
 }
@@ -56,9 +56,9 @@ export interface RunRecallInput {
   /** One class of the stored run to list; mutually exclusive with {@link RunRecallInput.ids}. */
   readonly filter?: 'pruned' | 'open_leads' | 'stale';
   /** Resolver for an object's current DDL text. */
-  readonly getDdl?: (id: string) => string | undefined;
+  readonly getDdl?: (id: string, nodeIdEncodingVersion?: 2) => string | undefined;
   /** Predicate telling whether an id still exists in the loaded model. */
-  readonly isInModel?: (id: string) => boolean;
+  readonly isInModel?: (id: string, nodeIdEncodingVersion?: 2) => boolean;
   /** Debug sink for identifier normalization under the selected historical run's policy. */
   readonly onIdNormalized?: (raw: string, canonical: string) => void;
   /** Whether the session holds an exploration proposal awaiting approval or refinement. */
@@ -165,12 +165,12 @@ function storedHashes(run: StoredAiRun): Record<string, string> {
   return hashes ? (hashes as Record<string, string>) : {};
 }
 
-function staleIds(run: StoredAiRun, getDdl: ((id: string) => string | undefined) | undefined): string[] {
+function staleIds(run: StoredAiRun, getDdl: ScreenStateInput['getDdl']): string[] {
   const hashes = storedHashes(run);
   return Object.keys(hashes).filter(id => {
     const stored = hashes[id];
     if (typeof stored !== 'string' || stored === UNKNOWN_DDL_HASH) return false;
-    return hashDdl(getDdl?.(id)) !== stored;
+    return hashDdl(getDdl?.(id, run.nodeIdEncodingVersion)) !== stored;
   });
 }
 
@@ -378,7 +378,7 @@ function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unkn
       summary: optionalString(slot?.summary),
       section: sections.length > 0 ? sections : undefined,
       stale: stale.has(id),
-      in_current_model: input.isInModel ? input.isInModel(id) : undefined,
+      in_current_model: input.isInModel ? input.isInModel(id, run.nodeIdEncodingVersion) : undefined,
     });
   });
 }

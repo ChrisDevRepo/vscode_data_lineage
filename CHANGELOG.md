@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.6] - 2026-10-08
+
+### Added
+- Local MCP server for external AI apps to query the loaded project's lineage metadata, separate from `@lineage`. Off by default (`dataLineageViz.mcp.enabled`).
+
+### Changed
+- Other VS Code agents (`#lineage_*` tools) can walk a scope and render an AI view in the panel.
+- A connection-level interruption during an AI generation is retried once before the turn ends as a provider error.
+
+### Fixed
+- Rejected AI tool calls are corrected in one retry: valid parts are kept and only the faulty fields are resent.
+- Oversized reads and a project closed mid-run end the run at once instead of looping.
+- A tool call with non-object arguments is rejected at that call instead of ending the generation.
+
+### Removed
+- Chat tool reference `#lineage_get_neighbor_columns`; neighbor-column inspection stays in `@lineage` deep analysis.
+- Setting `dataLineageViz.database.connectionProvider` and the wizard's **Use Built-in Connection** switch. Every new database connection is built-in; a project saved with a SQL Server (mssql) extension connection still reconnects through it, with a deprecation warning.
+
+### Dependencies
+- New for the MCP server: @modelcontextprotocol/server, @modelcontextprotocol/node, @modelcontextprotocol/client.
+
 ## [1.2.5] - 2026-10-07
 
 ### Changed

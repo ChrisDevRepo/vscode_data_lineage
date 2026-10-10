@@ -24,7 +24,7 @@ OrdersWithLimit AS (
     FROM BaseOrders AS b          -- references CTE, not a real table
     WHERE b.[TotalAmount] > 100
 )
-UPDATE OrdersWithLimit            -- alias of alias: chain not resolved
+UPDATE OrdersWithLimit            -- alias of alias: resolved through the chain
 SET    [Status] = N'APPROVED'
 WHERE  [TotalAmount] BETWEEN 100 AND 10000;
 

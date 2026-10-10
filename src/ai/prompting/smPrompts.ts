@@ -7,34 +7,36 @@
  * for GPT/Gemini, while XML tags protect high-risk dynamic data for precision in reasoning models.
  */
 
-import { buildColumnAspectPrompt } from '../prompting/prompts';
+import { buildColumnAspectPrompt } from './prompts';
 import { escapePromptText } from '../support/text';
-import { assignEvidenceIds, requiredCtChainNodeIds, requiredDetailSlotIds } from '../tools/presentResult';
-import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
+import { assignEvidenceIds, requiredCtChainNodeIds } from '../tools/presentResult';
+import type { ColumnEdge, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
 /**
- * Re-anchor suffix appended when a passthrough-inherited sub-question lands on a bodied focus.
+ * Re-anchor sentence for a passthrough-inherited sub-question that lands on a bodied focus.
  *
  * @remarks
- * `enqueueHop` forwards the authored question verbatim; this suffix is the one addition, naming
- * the passthrough provenance and re-anchoring the question onto the new focus. The column clause
- * is gated on the branch: one carrying none of the traced columns has no column to ground an
- * answer in, and asking it for one is the dead-end instruction.
+ * `enqueueHop` forwards the authored question verbatim and stores this sentence beside it on the
+ * investigation task (`InvestigationTask.reAnchor`), never inside the question: the receiving hop's
+ * `<current_task>` renders it on the line after the question, and synthesis receives the authored
+ * question only. It names the passthrough provenance and re-anchors the question onto the new
+ * focus. The column clause is gated on the branch: one carrying none of the traced columns has no
+ * column to ground an answer in, and asking it for one is the dead-end instruction.
  *
  * @param passthroughId - The non-bodied node the question was inherited through.
  * @param focusId - The bodied neighbor the question re-anchors onto.
  * @param mode - The mode of the BRANCH this question is forwarded on, not of the session: the
  *   column clause is answerable only where a traced column is actually carried, and a CT session
  *   reaches branches that carry none.
- * @param questioned - Whether the forwarded question has text. When it has none, the suffix is the
- *   whole sub-question, so it names the original question instead of pointing at a question that
- *   is not there, and carries no leading newline.
- * @returns The suffix to append to the forwarded question (leading newline included when questioned).
+ * @param questioned - Whether the forwarded question has text. When it has none, the sentence is
+ *   the whole sub-question, so it names the original question instead of pointing at a question
+ *   that is not there.
+ * @returns The re-anchor sentence, without a leading newline.
  */
 export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct', questioned = true): string {
   const anchor = questioned ? `re-anchor this question to ${focusId}` : `continue the original question at ${focusId}`;
-  const reAnchor = `${questioned ? '\n' : ''}(Inherited through passthrough ${passthroughId}; ${anchor}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.`;
+  const reAnchor = `(Inherited through passthrough ${passthroughId}; ${anchor}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.`;
   return mode === 'ct' ? `${reAnchor} Ground that in the traced column.)` : `${reAnchor})`;
 }
 
@@ -61,9 +63,9 @@ export function buildSmProtocol({ targetColumns }: { targetColumns?: string[] })
  *
  * @remarks
  * Anchored on the user question at the highest-attention slot (long-context models attend most
- * strongly to the window edges), with the one rule that belongs beside the evidence: depth follows
- * what was captured. The field skeleton lives once, in the synthesis system block and the
- * `lineage_present_result` describes; the engine facts appended after this anchor are the content.
+ * strongly to the window edges). Depth, order and the field skeleton live once, in the synthesis
+ * system block and the `lineage_present_result` describes; the engine facts appended after this
+ * anchor are the content.
  *
  * @param question - The user's original question, re-injected to anchor synthesis on intent.
  */
@@ -71,7 +73,6 @@ function buildSynthesisReminder(question: string): string {
   return [
     '## Answer this question',
     `"${escapePromptText(question)}"`,
-    'Length follows the captured evidence, not the question: every kept node keeps its rules, predicates and formulas. Sections run in graph order — terminal sources, then each transform, then the origin and what reads it.',
   ].join('\n');
 }
 
@@ -190,10 +191,9 @@ function buildDirectionLines(
  *
  * @param groups - Mechanically computed flow-role buckets.
  * @param presented - Ids the render carries; a bucket member outside it is dropped from the line.
- *   `null` from a caller that holds no render set, which then bounds nothing.
  */
-function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string> | null): string[] {
-  const linkable = (ids: readonly string[]): string[] => presented ? ids.filter(id => presented.has(id)) : [...ids];
+function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string>): string[] {
+  const linkable = (ids: readonly string[]): string[] => ids.filter(id => presented.has(id));
   return [
     `- highlight_groups.target (the queried origin): ${linkable(groups.target).join(', ')}`,
     `- highlight_groups.source candidates (terminal origins this trace reached): ${linkable(groups.source).join(', ') || '(none)'}`,
@@ -206,72 +206,53 @@ function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ fr
 }
 
 /**
- * One renderer for the flow-role heading plus direction lines. BB synthesis is exactly this
- * block. CT reuses the same highlight and direction helpers (and {@link asFlowEdges}) rather
- * than cloning the buckets; it assembles them around the column-chain rider.
+ * BB-mode counterpart to {@link buildCtSynthesisBlock}: grounds the `highlight_groups` buckets in the
+ * traced node edges so BB source-bucketing is a transcription, not a guess. Both modes share the
+ * highlight and direction helpers, so they bucket identically.
+ *
+ * @param originNodeId - The queried origin (the `target` node).
+ * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
+ * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates.
  */
-function renderFlowRoleAndDirection(
+function buildBbSynthesisBlock(
   originNodeId: string,
-  flowEdges: ReadonlyArray<{ from: string; to: string }>,
-  presentedNodeIds: ReadonlySet<string> | null,
-  hopNodes?: ReadonlySet<string>,
+  edges: ReadonlyArray<[string, string, string]>,
+  presentedNodeIds: ReadonlySet<string>,
 ): string {
-  const groups = computeFlowRoleGroups(originNodeId, flowEdges, hopNodes);
+  const flowEdges = asFlowEdges(edges);
   return [
     '## Flow roles',
-    ...buildFlowRoleHighlightLines(groups, presentedNodeIds),
+    ...buildFlowRoleHighlightLines(computeFlowRoleGroups(originNodeId, flowEdges), presentedNodeIds),
     '',
     ...buildDirectionLines(originNodeId, computeDirectionGroups(originNodeId, flowEdges)),
   ].join('\n');
 }
 
 /**
- * BB-mode counterpart to {@link buildCtSynthesisBlock}: grounds the `highlight_groups` buckets in the
- * traced node edges so BB source-bucketing is a transcription, not a guess (matches CT's fidelity).
- *
- * @param originNodeId - The queried origin (the `target` node).
- * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
- * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates; omitted by
- *   a caller that holds no render set, which then bounds nothing.
- */
-export function buildBbSynthesisBlock(
-  originNodeId: string,
-  edges: ReadonlyArray<[string, string, string]>,
-  presentedNodeIds: ReadonlySet<string> | null = null,
-): string {
-  return renderFlowRoleAndDirection(originNodeId, asFlowEdges(edges), presentedNodeIds);
-}
-
-/**
  * Renders the CT-specific synthesis evidence block from validated column edges.
  *
  * @remarks
- * Appended to the synthesis reminder when CT was active and edges were recorded. Presents the
- * directed graph in a flat edge list so the AI can structure `present_result` around the actual
- * traced path rather than free-form prose. Off-trace nodes excluded by the scope
- * filter are not listed here.
+ * Appended to the synthesis reminder when CT was active and at least one edge was recorded; a CT
+ * run with none renders the BB block instead. Presents the directed graph in a flat edge list so
+ * the AI can structure `present_result` around the actual traced path rather than free-form prose.
+ * Off-trace nodes excluded by the scope filter are not listed here.
  *
  * @param originNodeId - The queried origin node that should be treated as the answer target.
- * @param edges - Validated column-flow edges accumulated by the engine.
- * @param nodeEdges - Node-level flow edges used to distinguish written intermediates from base feeds.
- * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates;
- *   omitted by a caller that holds no render set, which then bounds nothing. The recorded edge list
- *   itself is never bounded — the trace is the evidence, and an endpoint outside the render is
- *   stated in prose.
+ * @param edges - Validated column-flow edges accumulated by the engine; non-empty.
+ * @param nodeEdges - Node-level flow edges used to distinguish written intermediates from base
+ *   feeds; when empty, direction is read from the column edges instead.
+ * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates.
+ *   The recorded edge list itself is never bounded — the trace is the evidence, and an endpoint
+ *   outside the render is stated in prose.
  * @returns Markdown instructions/evidence for the final `lineage_present_result` turn.
  */
-export function buildCtSynthesisBlock(
+function buildCtSynthesisBlock(
   originNodeId: string,
-  edges: ColumnEdge[],
-  nodeEdges: ReadonlyArray<[string, string, string]> = [],
-  presentedNodeIds: ReadonlySet<string> | null = null,
+  edges: readonly ColumnEdge[],
+  nodeEdges: ReadonlyArray<[string, string, string]>,
+  presentedNodeIds: ReadonlySet<string>,
 ): string {
   const lines = ['## Column Trace Chain'];
-  if (edges.length === 0) {
-    lines.push('No edges recorded — verify column_flow was submitted at each hop.');
-    lines.push('Structure present_result as a zero-trace answer: explain that no column-flow edge was proven, link the origin/result node in sections[], and include highlight_groups.target for that origin/result node.');
-    return lines.join('\n');
-  }
   for (const e of edges) {
     const metadata = [
       ...(e.transforms?.length ? [`transforms: ${e.transforms.join(', ')}`] : []),
@@ -307,8 +288,8 @@ interface NodeFlowFacts {
 }
 
 /**
- * The single producer of per-node writer/reader flow facts for synthesis passthrough grounding
- * ({@link buildPassthroughFlowFacts}) so every caller reads byte-identical, deterministically-sorted
+ * The single producer of per-node writer/reader flow facts for synthesis grounding
+ * ({@link buildAnalyzedFlowFacts} and {@link buildPassthroughFlowFacts}) so every caller reads byte-identical, deterministically-sorted
  * facts (no per-caller re-derivation).
  *
  * @remarks
@@ -341,21 +322,23 @@ function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, id
 }
 
 /**
- * Renders one node's flow facts as the shared `written by …; read by …` fragment. An absent entry
- * or empty list renders `(none)` — the byte-exact form the passthrough digest and note captions share.
+ * Renders one node's flow facts as the shared `inputs: …; outputs: …` fragment: data flows from each
+ * input into the node and from the node into each output, whatever the object types (a procedure's
+ * inputs are what it reads, its outputs what it writes). An absent entry or empty list renders
+ * `(none)` — the byte-exact form the analyzed-node and passthrough digests share.
  */
 function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
   const list = (arr: string[] | undefined): string => (arr && arr.length > 0 ? arr.join(', ') : '(none)');
-  return `written by ${list(facts?.writtenBy)}; read by ${list(facts?.readBy)}`;
+  return `inputs: ${list(facts?.writtenBy)}; outputs: ${list(facts?.readBy)}`;
 }
 
 /**
- * Renders engine flow facts for KEPT (non-pruned) nodes that received no detail slot — the terse
- * `node_states` entry is their only trace in the archive, so without grounded graph facts the
- * model has nothing to state about them and drops them from sections/highlights/notes.
+ * Renders engine flow facts for KEPT (non-pruned) nodes that received no detail slot — the
+ * envelope carries no other entry for them, so without grounded graph facts the model has nothing
+ * to state about them and drops them from sections/highlights/notes.
  *
  * @remarks
- * Facts only, derived from {@link SmResult.edges} (`written by`/`read by`), `fullNodes` (type) and
+ * Facts only, derived from {@link SmResult.edges} (`inputs`/`outputs`), `fullNodes` (type) and
  * `node_states` (action). `fullNodes` already excludes pruned nodes; the explicit `prune` filter
  * here is belt-and-suspenders. A CT dependency carrying no traced value is kept and unslotted, so
  * it surfaces here too. A qualifying node with no `node_states` entry was never dispositioned —
@@ -365,9 +348,9 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  *
  * @param result - Completed SM result: `fullNodes` the rendered kept set, `detail_slots` the
  * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
- * @returns A markdown bullet list of writer/reader facts, or an empty string when every kept node is slotted.
+ * @returns A markdown bullet list of input/output facts, or an empty string when every kept node is slotted.
  */
-export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
+function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const slottedIds = new Set(result.detail_slots.map(s => lc(s.nodeId)));
   const prunedIds = new Set(result.node_states.filter(s => s.action === 'prune').map(s => lc(s.nodeId)));
@@ -402,80 +385,20 @@ export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensit
 
 
 /**
- * One captured artifact in a detail slot: a `$$ … $$` block, a fenced block, or an inline
- * backticked span — matched left to right, so a delimiter nested inside an outer one is part of
- * that outer artifact and never a second entry. Group order is the render order: math, fence,
- * inline; whichever group matched names the form the hop captured.
- */
-const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
-
-/** An identifier immediately followed by `(` — the lexical mark of a call, hence of a computed value. */
-const CALL_TOKEN = /\w\(/;
-
-/** A whole DML/DDL statement: it performs an action, whatever it calls along the way. */
-const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|create|alter|drop|declare|select|with|if|begin|end)\b/i;
-
-/** The opening word of a filter condition — it decides which rows survive, whatever it is nested in. */
-const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
-
-
-/**
- * Enumerates the value computations and filter conditions the hops captured — `$$ … $$` blocks plus
- * the SQL that computes a value or filters rows — each keyed by the node whose detail slot holds it,
- * in the same self-check shape {@link buildPassthroughFlowFacts} uses for kept node ids.
+ * Renders engine flow facts for every analyzed node the render keeps, so synthesis reads the
+ * directed edges between hops instead of inferring them from slot prose.
  *
- * @remarks
- * Every other mandatory-carry class at synthesis is enumerated as a checklist; formulas and
- * predicates otherwise reach the model only inside slot prose it must re-scan. Only delimited
- * artifacts are read — a formula the hop writer left in plain prose is not enumerated. Within a
- * delimited artifact, content decides what is enumerable: a fenced line or inline span qualifies when it
- * carries a {@link CALL_TOKEN} or opens with a {@link PREDICATE_START} keyword and is not a whole
- * {@link STATEMENT_START} statement; a fenced block is read line by line since one body mixes both
- * classes. Enumeration only — sorted by capture order and de-duplicated per node for byte-stable
- * output; which blocks belong in the answer stays the model's judgement.
- *
- * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
- * @returns A markdown checklist, or an empty string when no hop captured a formula.
+ * @param result - Completed SM result: `detail_slots` the analyzed nodes, `edges` the node-level flow.
+ * @param presented - Ids the render carries; a slot outside it is not listed.
+ * @returns A markdown bullet list, or an empty string when no analyzed node is rendered.
  */
-function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = false): string {
-  const seen = new Set<string>();
-  const lines: string[] = [];
-  const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
-  const isEnumerable = (artifact: string): boolean =>
-    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
-  for (const slot of result.detail_slots) {
-    const nodeId = schemaKey(slot.nodeId, identifierCaseSensitive);
-    const push = (formula: string, rendered: string): void => {
-      const key = `${nodeId}\u0000${formula}`;
-      if (formula.length === 0 || seen.has(key)) return;
-      seen.add(key);
-      lines.push(`- ${nodeId} — ${rendered}`);
-    };
-    for (const section of slot.sections) {
-      for (const match of section.text.matchAll(CAPTURED_ARTIFACT)) {
-        const [, math, fenced, inline] = match;
-        if (math !== undefined) {
-          const formula = collapse(math);
-          push(formula, `$$ ${formula} $$`);
-          continue;
-        }
-        if (fenced !== undefined) {
-          for (const line of fenced.split('\n')) {
-            const formula = collapse(line);
-            if (isEnumerable(formula)) push(formula, `\`\`\` ${formula} \`\`\``);
-          }
-          continue;
-        }
-        const formula = collapse(inline);
-        if (isEnumerable(formula)) push(formula, `\`${formula}\``);
-      }
-    }
-  }
-  if (lines.length === 0) return '';
-  return [
-    'Captured formulas and predicates (hop evidence) — each reappears in the text of the section that links its node:',
-    ...lines,
-  ].join('\n');
+function buildAnalyzedFlowFacts(result: SmResult, presented: ReadonlySet<string>, identifierCaseSensitive = false): string {
+  const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
+  const flowFacts = computeNodeFlowFacts(result.edges, identifierCaseSensitive);
+  const lines = result.detail_slots
+    .filter(slot => presented.has(slot.nodeId))
+    .map(slot => `- ${lc(slot.nodeId)} — ${slot.type}: ${renderFlowFactsFragment(flowFacts.get(lc(slot.nodeId)))}`);
+  return lines.length > 0 ? ['Analyzed nodes (engine flow facts):', ...lines].join('\n') : '';
 }
 
 /**
@@ -484,24 +407,22 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
  *
  * @remarks
  * Single source of truth for the synthesis evidence surface; both the `lineage_submit_findings`
- * completion branch and the host-graph synthesis node call this builder. {@link synthesis_reminder}
- * carries the user-question anchor plus the rendered flow-role block (BB from node edges, CT from
- * column edges plus the Column Trace Chain) — the only place the model is told which nodes are
- * terminal sources. It also carries the {@link buildPassthroughFlowFacts} digest
- * for kept nodes with no detail slot, which otherwise have no semantic content to document.
+ * completion branch and the host-graph synthesis node call this builder. It carries the archived
+ * hop findings, the id set `present_result` accepts and {@link synthesis_reminder}: the
+ * user-question anchor plus the rendered flow-role block (BB from node edges, CT from column edges
+ * plus the Column Trace Chain), the inputs and outputs of every analyzed node
+ * ({@link buildAnalyzedFlowFacts}) and the {@link buildPassthroughFlowFacts} digest for kept nodes
+ * with no detail slot. Section, depth and order rules live in the synthesis system prompt; the reminder
+ * carries engine facts and the coverage rules tied to its own id lists.
  */
 interface SmCompletionEnvelope {
   readonly ok: true;
   readonly done: true;
   readonly result: {
-    readonly status: SmResult['status'];
     readonly originNodeId: string;
-    readonly scope: { readonly nodes: number; readonly edges: number; readonly node_ids: readonly string[] };
-    readonly suggested_sections: SmResult['suggested_sections'];
-    readonly node_states: SmResult['node_states'];
+    readonly scope: { readonly node_ids: readonly string[] };
     readonly detail_slots: SmResult['detail_slots'];
   };
-  readonly deferred_questions: ReadonlyArray<DeferredQuestion>;
   readonly synthesis_reminder: string;
 }
 
@@ -511,9 +432,9 @@ interface SmCompletionEnvelope {
  * @remarks
  * The CT chain block ({@link buildCtSynthesisBlock}) is appended only when column edges were
  * recorded. `result.fullNodes` is the render bound and therefore the id set `present_result`
- * accepts: it is stated as `scope.node_ids`, and `node_states[]` plus the enumerated highlight
- * candidates are filtered to it. An id the render dropped or the depth border cut still reaches
- * the model through the recorded evidence, in prose, never in a `node_ids` field.
+ * accepts: it is stated as `scope.node_ids`, and the enumerated highlight candidates are filtered
+ * to it. An id the render dropped or the depth border cut still reaches the model through the
+ * recorded evidence, in prose, never in a `node_ids` field.
  *
  * `detail_slots` is delivered with a citation id appended to every fenced code block's own fence
  * info string ({@link assignEvidenceIds}, e.g. `sql S7`), numbered by detail-slot order then block
@@ -522,12 +443,10 @@ interface SmCompletionEnvelope {
  *
  * @param result - The completed `engine.getResult()` archive (full `detail_slots` across all hops).
  * @param userQuestion - The verbatim mission question anchoring the synthesis reminder.
- * @param deferred - The engine's deferred follow-up leads (`DeferredQuestion.reason` names why each was not visited).
  */
 export function buildSmCompletionEnvelope(
   result: SmResult,
   userQuestion: string,
-  deferred: ReadonlyArray<DeferredQuestion>,
   identifierCaseSensitive = false,
 ): SmCompletionEnvelope {
   const presentedNodeIds = result.fullNodes.map(node => node.id);
@@ -537,31 +456,24 @@ export function buildSmCompletionEnvelope(
     : result.edges.length > 0
       ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
       : '';
+  const analyzedFacts = buildAnalyzedFlowFacts(result, presented, identifierCaseSensitive);
+  const analyzedBlock = analyzedFacts ? '\n' + analyzedFacts : '';
   const passthroughFacts = buildPassthroughFlowFacts(result, identifierCaseSensitive);
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
-  const formulaFacts = buildCapturedFormulaFacts(result, identifierCaseSensitive);
-  const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
-  const mustLink = requiredDetailSlotIds(result.detail_slots.map(slot => slot.nodeId), presented);
-  const mustLinkBlock = mustLink.length > 0 ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}` : '';
   const mustCover = requiredCtChainNodeIds(
     result.columnAspect?.edges ?? [], presentedNodeIds,
     [...result.detail_slots.map(slot => slot.nodeId), ...result.node_states.filter(state => state.action === 'prune').map(state => state.nodeId)],
     id => schemaKey(id, identifierCaseSensitive),
   );
   const mustCoverBlock = mustCover.length > 0 ? `\nLink in \`sections[].node_ids\` or caption in \`notes[]\`: ${mustCover.join(', ')}` : '';
-  const envelope: SmCompletionEnvelope = {
+  return {
     ok: true,
     done: true,
     result: {
-      status: result.status,
       originNodeId: result.originNodeId,
-      scope: { nodes: presentedNodeIds.length, edges: result.edges.length, node_ids: presentedNodeIds },
-      suggested_sections: result.suggested_sections,
-      node_states: result.node_states.filter(state => presented.has(state.nodeId)),
+      scope: { node_ids: presentedNodeIds },
       detail_slots: assignEvidenceIds(result.detail_slots).slots,
     },
-    deferred_questions: deferred,
-    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + passthroughBlock + formulaBlock + mustLinkBlock + mustCoverBlock,
+    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + analyzedBlock + passthroughBlock + mustCoverBlock,
   };
-  return envelope;
 }

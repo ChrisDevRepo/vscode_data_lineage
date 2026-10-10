@@ -196,11 +196,11 @@ interface SavedMssqlProfile extends Partial<IConnectionInfo> {
 }
 
 /**
- * Whether the mssql exports still carry `connect` (and, when `withPicker`, `promptForConnection`).
+ * Whether the mssql exports carry `connect` and, for a picker call, `promptForConnection`.
  *
  * @remarks
  * mssql v1.46.0 dropped both from its public exports and kept them only on an internal API for its
- * own features; v1.45.1 and earlier export them. The saved-profile path replaces them on v1.46+.
+ * own features; v1.45.1 and earlier export them. The saved-profile path replaces it on v1.46+.
  */
 function hasLegacyConnectApi(api: IExtension, withPicker = false): boolean {
   return typeof api.connect === 'function'
@@ -327,7 +327,7 @@ async function promptForSavedProfile(
  *
  * @remarks
  * The persisted `connectionInfo` carries no `provider`, so records written for this provider stay
- * readable by builds that predate provider selection. `dispose` disconnects the URI; callers
+ * readable by builds that predate the built-in provider. `dispose` disconnects the URI; callers
  * dispose only connections they opened for the panel's lifetime.
  *
  * @param connection - The opened connection.
@@ -348,6 +348,8 @@ export function createMssqlSession(
     async getServerInfo() {
       return (await getConnectionSharingApi()).getServerInfo(connectionUri);
     },
+    // The mssql extension owns the connection behind the URI and reconnects it itself.
+    isOpen: () => true,
     async dispose() {
       await (await getConnectionSharingApi()).disconnect(connectionUri);
     },

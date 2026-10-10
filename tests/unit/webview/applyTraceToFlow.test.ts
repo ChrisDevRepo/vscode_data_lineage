@@ -3,9 +3,8 @@
  * Covers `applyTraceToFlow` — the projection from a BFS trace onto the rendered flow.
  *
  * Lives under webview/ because it is reached only from `useInteractiveTrace`, whose React Flow
- * inputs it consumes. Nothing named this export before, so the
- * whole projection — filtering, bidirectional-edge aliasing, highlight assignment and
- * re-layout — shipped on a green suite. A defect here renders a correct trace wrongly.
+ * inputs it consumes: filtering, bidirectional-edge aliasing, highlight assignment and re-layout.
+ * A defect here renders a correct trace wrongly.
  */
 
 import type { Edge as FlowEdge, Node as FlowNode } from '@xyflow/react';

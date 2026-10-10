@@ -2,10 +2,8 @@
  * Bridge protocol-envelope contract.
  *
  * Proves the two halves of the version tripwire independently: the host's single send choke point
- * stamps every outgoing frame, and a receive site rejects a frame whose version disagrees. The
- * receive-site checks are three lines of inline logic at four call sites, so they are exercised here
- * through the same predicate shape rather than by booting React — what must not regress is the
- * decision (stamped-and-equal passes, anything else is rejected), not the JSX around it.
+ * stamps every outgoing frame, and `validateBridgeFrame` — the one check every webview receive site
+ * routes through — rejects a frame whose version is missing or disagrees.
  */
 import { readFileSync } from 'node:fs';
 
@@ -66,41 +64,10 @@ describe('bridge protocol envelope', () => {
 
   it('stamps detail frames without disturbing their payload fields', async () => {
     const { sent, panel } = fakePanel();
-    await postToDetail(panel as never, { type: 'table-stats-error', message: 'boom' }, silentLogger);
+    await postToDetail(panel as never, { type: 'table-stats-error', schema: 'dbo', objectName: 'Orders', message: 'boom' }, silentLogger);
 
     const parsed = ExtensionToDetailMsgSchema.safeParse(sent[0]);
-    expect(parsed.success && parsed.data).toEqual({ type: 'table-stats-error', message: 'boom' });
-  });
-
-  /** The webview-side rule: host always stamps, so absent or different is a rejection. */
-  const webviewAccepts = (frame: unknown) =>
-    (frame as BridgeEnvelope | undefined)?.protocolVersion === BRIDGE_PROTOCOL_VERSION;
-
-  /** The host-side rule: webview→host frames are unstamped, so only a wrong version is a skew. */
-  const hostAccepts = (frame: unknown) => {
-    const v = (frame as BridgeEnvelope | undefined)?.protocolVersion;
-    return v === undefined || v === BRIDGE_PROTOCOL_VERSION;
-  };
-
-  it('rejects a mismatched version at a webview receive site', async () => {
-    const { sent, panel } = fakePanel();
-    await postToWebview(panel as never, { type: 'detail-closed' }, silentLogger);
-
-    expect(webviewAccepts(sent[0])).toBe(true);
-    expect(webviewAccepts({ type: 'detail-closed', protocolVersion: BRIDGE_PROTOCOL_VERSION + 1 })).toBe(false);
-    expect(webviewAccepts({ type: 'detail-closed' })).toBe(false);
-  });
-
-  it('rejects only a mismatched version at a host receive site', () => {
-    expect(hostAccepts({ type: 'ready' })).toBe(true);
-    expect(hostAccepts({ type: 'ready', protocolVersion: BRIDGE_PROTOCOL_VERSION })).toBe(true);
-    expect(hostAccepts({ type: 'ready', protocolVersion: BRIDGE_PROTOCOL_VERSION + 1 })).toBe(false);
-    expect(hostAccepts({ type: 'ready', protocolVersion: 'v1' })).toBe(false);
-  });
-
-  it('keeps the protocol version a positive integer so comparisons stay exact', () => {
-    expect(Number.isInteger(BRIDGE_PROTOCOL_VERSION)).toBe(true);
-    expect(BRIDGE_PROTOCOL_VERSION).toBeGreaterThan(0);
+    expect(parsed.success && parsed.data).toEqual({ type: 'table-stats-error', schema: 'dbo', objectName: 'Orders', message: 'boom' });
   });
 
   it('validateBridgeFrame accepts a stamped frame and names the reason for a rejected one', () => {
@@ -108,6 +75,8 @@ describe('bridge protocol envelope', () => {
     expect(ok.ok).toBe(true);
     const skew = validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'detail-closed', protocolVersion: BRIDGE_PROTOCOL_VERSION + 1 });
     expect(skew).toMatchObject({ ok: false, reason: 'version', msgType: 'detail-closed' });
+    const unstamped = validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'detail-closed' });
+    expect(unstamped, 'the host always stamps, so a missing version is a skew').toMatchObject({ ok: false, reason: 'version' });
     expect(validateBridgeFrame(ExtensionToWebviewMsgSchema, { type: 'not-a-message' })).toMatchObject({ ok: false, reason: 'parse' });
   });
 

@@ -6,8 +6,8 @@ import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { rootPath } from '../helpers/testUtils';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
-import { DEFAULT_AI_ENABLED } from '../../../src/configCore';
 import { DEFAULT_CONNECTION_PROVIDER } from '../../../src/engine/db/dbSession';
+import { DEFAULT_AI_ENABLED, DEFAULT_MCP_ENABLED, DEFAULT_MCP_PORT } from '../../../src/configCore';
 import { DEFAULT_MAX_ROUNDS } from '../../../src/ai/core/agentCore';
 import {
   DEFAULT_DISCOVERY_NODE_CAP,
@@ -48,14 +48,16 @@ const runtimeDefaults: Record<string, unknown> = {
   'dataLineageViz.renderLimit': DEFAULT_CONFIG.renderLimit,
   'dataLineageViz.parseRulesFile': '',
   'dataLineageViz.dmvQueriesFile': '',
-  'dataLineageViz.database.connectionProvider': DEFAULT_CONNECTION_PROVIDER,
   'dataLineageViz.database.connections': [],
+  'dataLineageViz.database.connectionProvider': DEFAULT_CONNECTION_PROVIDER,
   'dataLineageViz.ai.enabled': DEFAULT_AI_ENABLED,
   'dataLineageViz.ai.maxRounds': DEFAULT_MAX_ROUNDS,
   'dataLineageViz.ai.maxTraceColumns': DEFAULT_MAX_TRACE_COLUMNS,
   'dataLineageViz.ai.discoveryNodeCap': DEFAULT_DISCOVERY_NODE_CAP,
   'dataLineageViz.ai.discoveryTokenBudget': DEFAULT_DISCOVERY_TOKEN_BUDGET,
   'dataLineageViz.ai.outputTemplateFile': '',
+  'dataLineageViz.mcp.enabled': DEFAULT_MCP_ENABLED,
+  'dataLineageViz.mcp.port': DEFAULT_MCP_PORT,
 };
 
 function manifestSettings(): Record<string, Setting> {

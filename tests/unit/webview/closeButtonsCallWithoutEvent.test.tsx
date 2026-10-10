@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * Pins that mode close buttons call their close callback with no arguments: a forwarded click event
- * reached `endTrace` as its `onComplete`, and `setTimeout` evaluated it as a string under the CSP.
+ * Pins that mode close buttons call their close callback with no arguments, so a click event is
+ * never forwarded into a callback parameter of the mode-exit handler behind it.
  */
 import { act, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';

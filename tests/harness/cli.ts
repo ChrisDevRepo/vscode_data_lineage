@@ -1,6 +1,6 @@
 /** Optional service runners; no question registry, scoring, campaign scheduling, or default service calls. */
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import { z } from 'zod';
@@ -11,7 +11,7 @@ import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
 import { loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/connectionManager';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
-import { exportRunToLangfuse, resolveLangfuseConfig } from './langfuseExport';
+import { exportRunToLangfuse, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
 import { OpenAiCompatiblePort, type FetchLike } from './openAiCompatiblePort';
 import { runHarnessTurn } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
@@ -22,6 +22,7 @@ const DEFAULT_PROMPT = 'Summarize the loaded database and its main dependencies.
 const HELP = `Optional testing toolset (no scoring):
   npm run test:ai:headless -- [--dacpac FILE] [--prompt TEXT] [--followup TEXT ...]
                             [--timeout-ms N] [--langfuse] [--trace-verbose]
+                            [--label ID] [--session ID] [--tag TEXT ...] [--attach]
   npm run test:db:smoke -- [--timeout-ms N]
 AI uses AI_TEST_* provider profiles. DB uses DB_TEST_SERVER, DB_TEST_DATABASE,
 DB_TEST_USER, DB_TEST_PASSWORD, optional DB_TEST_PORT, DB_TEST_ENCRYPT and
@@ -30,22 +31,62 @@ LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY. All services require explicit setup
 Artifacts are written only under ignored test-results/headless. AI gates are
 simulated approvals; this runner does not test interactive VS Code consent.`;
 
+/** Database smoke deadline. */
+const DEFAULT_DB_TIMEOUT_MS = 300_000;
+/**
+ * Whole-run AI deadline; it is also each model request's deadline. A `/trace` turn makes 12–17
+ * sequential non-streamed model calls and measured 7–14 minutes on a hosted provider, so the
+ * database-smoke default would abort a healthy run.
+ */
+const DEFAULT_AI_TIMEOUT_MS = 1_800_000;
+
+/**
+ * Reads the run's evidence files for upload to the trace backend; missing files are skipped.
+ *
+ * @remarks
+ * Run-level: the event trace and the debug log. Per turn: the answer, the hop log, the state dump and
+ * the structured result. These can hold prompts and database metadata, so uploading is an explicit
+ * `--attach` opt-in; nothing here is written to a tracked path.
+ */
+function collectAttachments(runDir: string, tracePath: string, turnCount: number, redact: readonly string[]): LangfuseAttachments {
+  const read = (name: string, contentType: LangfuseAttachment['contentType'], path: string): LangfuseAttachment[] =>
+    existsSync(path) ? [{ name, contentType, content: readFileSync(path, 'utf8') }] : [];
+  return {
+    redact,
+    run: [...read('event-trace', 'text/plain', tracePath), ...read('debug-log', 'text/plain', join(runDir, 'host.log'))],
+    turns: Array.from({ length: turnCount }, (_, index) => {
+      const dir = join(runDir, `turn-${index + 1}`);
+      return [
+        ...read('answer', 'text/markdown', join(dir, 'answer.md')),
+        ...read('hop-log', 'application/json', join(dir, 'hop-log.json')),
+        ...read('state-dump', 'application/json', join(dir, 'sm-state.json')),
+        ...read('result', 'application/json', join(dir, 'present-result.json')),
+      ];
+    }),
+  };
+}
+
 /** Parses bounded runner options; rejects unknown flags before any service call. */
 export function parseOptions(kind: string, args: readonly string[]) {
   let dacpac = repoPath('assets', 'demo.dacpac');
   let prompt = DEFAULT_PROMPT;
-  let timeoutMs = 300_000;
+  let timeoutMs = kind === 'ai' ? DEFAULT_AI_TIMEOUT_MS : DEFAULT_DB_TIMEOUT_MS;
   let langfuse = false;
   let verbose = false;
+  let attach = false;
   const followups: string[] = [];
+  const tags: string[] = [];
+  let label: string | undefined;
+  let session: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
-    if (kind === 'ai' && ['--langfuse', '--trace-verbose'].includes(flag)) {
+    if (kind === 'ai' && ['--langfuse', '--trace-verbose', '--attach'].includes(flag)) {
       if (flag === '--langfuse') langfuse = true;
+      else if (flag === '--attach') attach = true;
       else verbose = true;
       continue;
     }
-    if (!(flag === '--timeout-ms' || kind === 'ai' && ['--dacpac', '--prompt', '--followup'].includes(flag))) {
+    if (!(flag === '--timeout-ms' || kind === 'ai' && ['--dacpac', '--prompt', '--followup', '--label', '--session', '--tag'].includes(flag))) {
       throw new Error(`Unknown option ${flag}. Use --help.`);
     }
     const value = args[++i];
@@ -54,8 +95,12 @@ export function parseOptions(kind: string, args: readonly string[]) {
     if (flag === '--dacpac') dacpac = resolve(value);
     if (flag === '--prompt') prompt = value;
     if (flag === '--followup') followups.push(value);
+    if (flag === '--label') label = z.string().trim().min(1).max(100).parse(value);
+    if (flag === '--session') session = z.string().trim().min(1).max(190).parse(value);
+    if (flag === '--tag') tags.push(z.string().trim().min(1).max(100).parse(value));
   }
-  return { dacpac, prompt, followups, timeoutMs, langfuse, verbose };
+  if (attach && !langfuse) throw new Error('--attach requires --langfuse.');
+  return { dacpac, prompt, followups, timeoutMs, langfuse, verbose, label, session, tags, attach };
 }
 
 /** Resolves SQL-login configuration without provisioning a database or persisting credentials. */
@@ -170,9 +215,11 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
         providerEndpoint: (endpoint: string, provider: string, model: string) => string;
       };
       const endpoint = providerEndpoint(process.env.AI_TEST_ENDPOINT!, provider!.provider, provider!.model);
-      const fetchImpl: FetchLike = (_url, init) => fetch(endpoint, {
-        ...init, body: process.env.AI_TEST_REASONING_EFFORT
-          ? JSON.stringify({ ...JSON.parse(init.body), reasoning_effort: process.env.AI_TEST_REASONING_EFFORT }) : init.body,
+      const reasoningEffort = process.env.AI_TEST_REASONING_EFFORT;
+      // The port builds the whole body and URL, so its `provider-raw` record is what is sent; only
+      // the Azure credential header, which is never traced, is swapped here.
+      const fetchImpl: FetchLike = (url, init) => fetch(url, {
+        ...init,
         headers: provider!.provider === 'azure'
           ? { 'content-type': 'application/json', 'api-key': process.env.AI_TEST_API_KEY! }
           : init.headers,
@@ -183,8 +230,9 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       for (const [index, prompt] of [options.prompt, ...options.followups].entries()) {
         const requestId = randomUUID();
         const port = new OpenAiCompatiblePort({
-          baseUrl: process.env.AI_TEST_ENDPOINT!, apiKey: process.env.AI_TEST_API_KEY!,
+          baseUrl: process.env.AI_TEST_ENDPOINT!, chatCompletionsUrl: endpoint, apiKey: process.env.AI_TEST_API_KEY!,
           model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.timeoutMs,
+          ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),
         }, { requestId, budget, fetchImpl, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
         const turn = await runHarnessTurn({ session, model: port, requestId, prompt, runDir: join(runDir, `turn-${index + 1}`), logger, signal: controller.signal, traceWriter });
         turns.push({ outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls });
@@ -198,7 +246,10 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
         const exportTimeout = setTimeout(() => exportController.abort(), 30_000);
         try {
           const exported = await exportRunToLangfuse(parseTrace(readFileSync(tracePath, 'utf8')), {
-            ...langfuse, fetchImpl: (url, init) => fetch(url, { ...init, signal: exportController.signal }),
+            ...langfuse,
+            runMetadata: { lane: provider!.provider, promptId: options.label, sessionId: options.session, tags: options.tags },
+            attachments: options.attach ? collectAttachments(runDir, tracePath, turns.length, [process.env.AI_TEST_API_KEY!]) : undefined,
+            fetchImpl: (url, init) => fetch(url, { ...init, signal: exportController.signal }),
           });
           result.export = exported.errors.length ? 'error' : 'ok';
           writeFileSync(join(runDir, 'langfuse.json'), JSON.stringify(exported, null, 2) + '\n');

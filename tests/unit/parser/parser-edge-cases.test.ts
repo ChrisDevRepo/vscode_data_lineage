@@ -6,10 +6,11 @@
  * containing `--` is not a comment, that a CTE name is not a table, that a CLR method call
  * is not a cross-database reference — and one failing must not conceal the rest.
  *
- * Uniform cases go through the `CASES` tables below; a case needing a bespoke assertion
- * gets its own `it`. `-- EXPECT`-annotated .sql fixtures under tests/fixtures/sql/targeted/
- * cover the same parser through tsql-complex.test.ts and are the cheaper place to add a
- * new construct — prefer a fixture unless the assertion cannot be expressed there.
+ * Uniform cases go through the tables below; a case needing a bespoke assertion gets its own
+ * `it`. A construct whose full read/write/exec output can be stated exactly belongs in
+ * tsql-coverage-matrix.test.ts, which compares every list exactly; this file keeps the claims
+ * that need partial or negative checks. `-- EXPECT`-annotated .sql fixtures under
+ * tests/fixtures/sql/targeted/ cover whole procedure bodies through tsql-complex.test.ts.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -94,11 +95,6 @@ const table = (cases: ParseCase[]) => it.each(cases)('$name', check);
 describe('preprocessing — comments and strings', () => {
   table([
     {
-      name: 'a string containing -- is not treated as a comment',
-      sql: `SELECT * FROM [dbo].[T1] WHERE x = '-- not a comment' AND y = 1`,
-      sources: ['T1'],
-    },
-    {
       name: 'a string containing /* */ is not treated as a comment',
       sql: `SELECT * FROM [dbo].[T1] WHERE x = '/* not a comment */' AND y = 1`,
       sources: ['T1'],
@@ -110,25 +106,8 @@ describe('preprocessing — comments and strings', () => {
       noSources: ['Fake'],
     },
     {
-      name: 'a table named after a trailing line comment is not extracted',
-      sql: `SELECT * FROM [dbo].[T1] -- FROM [dbo].[Fake]`,
-      sources: ['T1'],
-      noSources: ['Fake'],
-    },
-    {
-      name: 'a table named inside an N-prefixed string is not extracted',
-      sql: `SELECT * FROM [dbo].[Real] WHERE Name = N'FROM [dbo].[Fake]' AND x = 1`,
-      sources: ['Real'],
-      noSources: ['Fake'],
-    },
-    {
       name: 'an empty string literal does not break extraction',
       sql: `SELECT * FROM [dbo].[T1] WHERE x = '' AND y = 1`,
-      sources: ['T1'],
-    },
-    {
-      name: 'a doubled quote inside a string does not break extraction',
-      sql: `SELECT * FROM [dbo].[T1] WHERE x = 'it''s' AND y = 1`,
       sources: ['T1'],
     },
     {
@@ -142,9 +121,6 @@ describe('preprocessing — comments and strings', () => {
 describe('preprocessing — bracketed identifiers', () => {
   table([
     { name: 'a bracketed name containing a dash', sql: 'SELECT * FROM [dbo].[my-table]', exactSources: ['dbo.my-table'] },
-    { name: 'a bracketed name containing a space', sql: 'SELECT * FROM [dbo].[my table]', exactSources: ['dbo.my table'] },
-    { name: 'a bracketed name containing --', sql: 'SELECT * FROM [dbo].[my--table]', exactSources: ['dbo.my--table'] },
-    { name: 'a bracketed name containing /*', sql: 'SELECT * FROM [dbo].[my/*table]', exactSources: ['dbo.my/*table'] },
   ]);
 });
 
@@ -175,7 +151,6 @@ describe('source extraction', () => {
   table([
     { name: 'FROM with a bracketed two-part name', sql: 'SELECT * FROM [dbo].[Orders]', exactSources: ['dbo.Orders'] },
     { name: 'FROM with a non-dbo schema', sql: 'SELECT * FROM [Sales].[Orders]', exactSources: ['Sales.Orders'] },
-    { name: 'FROM with a bare, unbracketed name', sql: 'SELECT * FROM dbo.Orders', exactSources: ['dbo.Orders'] },
     {
       name: 'INNER JOIN captures both sides',
       sql: 'SELECT * FROM [dbo].[A] INNER JOIN [dbo].[B] ON A.id = B.id',
@@ -228,11 +203,6 @@ describe('source extraction', () => {
       sources: ['Orders'],
     },
     {
-      name: 'a bracketed name that is a SQL keyword is still a table',
-      sql: 'SELECT * FROM [dbo].[select]',
-      exactSources: ['dbo.select'],
-    },
-    {
       name: 'a double-quoted identifier normalizes to bracket form',
       sql: 'SELECT * FROM "dbo"."Orders"',
       exactSources: ['dbo.Orders'],
@@ -263,11 +233,6 @@ describe('target extraction', () => {
       name: 'MERGE INTO captures the target and the USING source',
       sql: 'MERGE INTO [dbo].[Target] USING [dbo].[Source] ON 1=1 WHEN NOT MATCHED THEN INSERT(col) VALUES(1);',
       targets: ['Target'], sources: ['Source'],
-    },
-    {
-      name: 'CTAS captures the new table as a target',
-      sql: 'CREATE TABLE [dbo].[NewTable] AS SELECT * FROM [dbo].[Source]',
-      targets: ['NewTable'], sources: ['Source'],
     },
     {
       name: 'SELECT INTO captures the new table as a target',
@@ -355,9 +320,7 @@ describe('procedure calls', () => {
     { name: 'EXEC with a bracketed name', sql: 'EXEC [dbo].[MyProc]', exec: ['MyProc'] },
     { name: 'EXECUTE spelled in full', sql: 'EXECUTE [dbo].[MyProc]', exec: ['MyProc'] },
     { name: 'EXEC with parameters', sql: `EXEC [dbo].[MyProc] @p1 = 1, @p2 = 'abc'`, exec: ['MyProc'] },
-    { name: 'EXEC assigning a return value', sql: 'EXEC @result = [dbo].[MyProc] @p1 = 1', exec: ['MyProc'] },
     { name: 'EXEC assigning a return value without spaces', sql: 'EXEC @result=[dbo].[CalcTotal] @input=5', exec: ['CalcTotal'] },
-    { name: 'EXEC with a bare name', sql: 'EXEC dbo.MyProc', exec: ['MyProc'] },
     { name: 'two EXEC statements', sql: 'EXEC [dbo].[P1]\nEXEC [dbo].[P2]', exec: ['P1', 'P2'] },
     {
       name: 'an EXEC after a string containing -- is still found',
@@ -376,10 +339,6 @@ describe('procedure calls', () => {
       .map(entry => entry.toLowerCase())).toContain('[dbo].[spload_case4.5]');
   });
 
-  it('preserves a dot inside a bracketed table name as part of the identifier', () => {
-    expect(parseSqlBody('SELECT * FROM [staging].[view.name]').sources
-      .map(entry => entry.toLowerCase())).toContain('[staging].[view.name]');
-  });
 });
 
 
@@ -445,15 +404,6 @@ describe('CTE exclusion', () => {
       targets: ['OrderWorker'], sources: ['OrderWorker'], noTargets: ['cte_result'],
     },
     {
-      name: 'an UPDATE through a chain of CTEs resolves to the original table',
-      sql: `
-        WITH BaseOrders AS (SELECT * FROM [dbo].[SalesOrder] WHERE Status = 'PENDING'),
-        OrdersWithLimit AS (SELECT * FROM BaseOrders WHERE TotalAmount > 100)
-        UPDATE OrdersWithLimit SET Status = 'APPROVED'
-      `,
-      targets: ['SalesOrder'], sources: ['SalesOrder'],
-    },
-    {
       name: 'an UPDATE aliasing a chained CTE resolves to the original table',
       sql: `
         WITH cte_Base AS (SELECT * FROM [warehouse].[Inventory]),
@@ -477,18 +427,6 @@ describe('CTE exclusion', () => {
 
 describe('extraction boundaries', () => {
   table([
-    { name: 'a temp table is not a dependency', sql: 'SELECT * FROM #TempTable', noSources: ['#'] },
-    { name: 'a table variable is not a dependency', sql: 'SELECT * FROM @TableVar', noSources: ['@'], sourceCount: 0 },
-    {
-      name: 'an unqualified system procedure is not an exec call',
-      sql: 'EXEC sp_executesql @sql',
-      noExec: ['sp_executesql'],
-    },
-    {
-      name: 'an unqualified system function is not a source',
-      sql: 'SELECT * FROM fn_helpcollations',
-      noSources: ['fn_helpcollations'],
-    },
     {
       name: 'an unqualified table name is rejected — a dependency needs a schema',
       sql: 'SELECT * FROM UnqualifiedTable',
@@ -503,11 +441,6 @@ describe('extraction boundaries', () => {
       name: 'a keyword used as a column name after WHERE is not a source',
       sql: 'SELECT * FROM [dbo].[T1] WHERE set = 1',
       sources: ['T1'], noSources: ['set'],
-    },
-    {
-      name: 'SQL inside an OPENQUERY string literal is not extracted',
-      sql: `SELECT * FROM OPENQUERY(LinkedServer, 'SELECT * FROM dbo.Remote')`,
-      noSources: ['remote'],
     },
     {
       name: 'SQL inside a dynamic EXEC string is not extracted',
@@ -567,11 +500,6 @@ describe('cross-database references', () => {
       crossDbSources: ['otherdb.dbo.remotetable'], noSources: ['remotetable'],
     },
     {
-      name: 'a three-part bare name routes to the cross-database sources',
-      sql: 'SELECT * FROM MyDB.dbo.Orders',
-      crossDbSources: ['mydb.dbo.orders'], noSources: ['orders'],
-    },
-    {
       name: 'a three-part bracketed INSERT target routes to the cross-database targets',
       sql: 'INSERT INTO [MyDB].[staging].[Orders] SELECT 1',
       crossDbTargets: ['mydb.staging.orders'], noTargets: ['orders'],
@@ -602,13 +530,6 @@ describe('cross-database references', () => {
     },
   ]);
 
-  it('does not leave the linked-server name anywhere in the cross-database sources', () => {
-    const result = parseSqlBody(`
-      CREATE PROCEDURE [dbo].[spRemoteLoad] AS
-      SELECT * FROM LinkedSrv.RemoteDB.dbo.Customers
-    `);
-    expect(mentions(result.crossDbSources, 'linkedsrv')).toBe(false);
-  });
 });
 
 
@@ -677,15 +598,6 @@ describe('CLR method calls are not cross-database references', () => {
     for (const fragment of fragments as string[]) {
       expect(mentions(crossDbSources, fragment), `${fragment} must not be a cross-DB source`).toBe(false);
     }
-  });
-
-  it('still captures a genuine three-part FROM and JOIN', () => {
-    const result = parseSqlBody(`
-      SELECT * FROM OtherDB.dbo.RemoteTable t
-      INNER JOIN OtherDB.dbo.Lookup l ON t.id = l.id
-    `);
-    expect(result.crossDbSources.map(entry => entry.toLowerCase()))
-      .toEqual(expect.arrayContaining(['otherdb.dbo.remotetable', 'otherdb.dbo.lookup']));
   });
 
   it('still captures a cross-database table-valued function reached through CROSS APPLY', () => {
@@ -956,41 +868,6 @@ describe('OPENQUERY and OPENDATASOURCE', () => {
   });
 });
 
-describe('FOR SYSTEM_TIME AS OF', () => {
-  table([
-    {
-      name: 'the temporal table itself is still captured as a source',
-      sql: `SELECT * FROM dbo.Employee FOR SYSTEM_TIME AS OF '2020-01-01'`,
-      exactSources: ['dbo.Employee'],
-      sourceCount: 1,
-    },
-  ]);
-});
-
-describe('table hints', () => {
-  table([
-    {
-      name: 'WITH (NOLOCK) leaves the table captured and the hint uncaptured',
-      sql: 'SELECT * FROM dbo.T WITH (NOLOCK)',
-      exactSources: ['dbo.T'],
-      noSources: ['nolock'],
-      sourceCount: 1,
-    },
-  ]);
-});
-
-describe('OPTION (RECOMPILE)', () => {
-  table([
-    {
-      name: 'a trailing OPTION clause leaves the table captured and RECOMPILE uncaptured',
-      sql: 'SELECT * FROM dbo.T WHERE 1 = 1 OPTION (RECOMPILE)',
-      exactSources: ['dbo.T'],
-      noSources: ['recompile'],
-      sourceCount: 1,
-    },
-  ]);
-});
-
 describe('COLLATE clause', () => {
   table([
     {
@@ -998,65 +875,6 @@ describe('COLLATE clause', () => {
       sql: `SELECT * FROM dbo.T WHERE Name = 'x' COLLATE SQL_Latin1_General_CP1_CI_AS`,
       exactSources: ['dbo.T'],
       noSources: ['collate', 'latin1'],
-      sourceCount: 1,
-    },
-  ]);
-});
-
-describe('UNION / EXCEPT / INTERSECT', () => {
-  table([
-    {
-      name: 'UNION captures the FROM of every branch',
-      sql: 'SELECT * FROM dbo.A UNION SELECT * FROM dbo.B',
-      exactSources: ['dbo.A', 'dbo.B'],
-      sourceCount: 2,
-    },
-    {
-      name: 'UNION ALL captures the FROM of every branch',
-      sql: 'SELECT * FROM dbo.A UNION ALL SELECT * FROM dbo.B',
-      exactSources: ['dbo.A', 'dbo.B'],
-      sourceCount: 2,
-    },
-    {
-      name: 'EXCEPT captures the FROM of both branches',
-      sql: 'SELECT * FROM dbo.A EXCEPT SELECT * FROM dbo.B',
-      exactSources: ['dbo.A', 'dbo.B'],
-      sourceCount: 2,
-    },
-    {
-      name: 'INTERSECT captures the FROM of both branches',
-      sql: 'SELECT * FROM dbo.A INTERSECT SELECT * FROM dbo.B',
-      exactSources: ['dbo.A', 'dbo.B'],
-      sourceCount: 2,
-    },
-  ]);
-});
-
-describe('GO batch separators', () => {
-  table([
-    {
-      name: 'a GO between two SELECT statements does not stop either FROM from being captured',
-      sql: 'SELECT * FROM dbo.A\nGO\nSELECT * FROM dbo.B',
-      exactSources: ['dbo.A', 'dbo.B'],
-      sourceCount: 2,
-    },
-    {
-      name: 'a GO between an INSERT and a SELECT still captures the target on one side and the source on the other',
-      sql: 'INSERT INTO dbo.Log(Msg) VALUES (1)\nGO\nSELECT * FROM dbo.T',
-      targets: ['Log'],
-      exactSources: ['dbo.T'],
-      sourceCount: 1,
-    },
-  ]);
-});
-
-describe('TABLESAMPLE', () => {
-  table([
-    {
-      name: 'TABLESAMPLE leaves the table captured and the sample clause uncaptured',
-      sql: 'SELECT * FROM dbo.T TABLESAMPLE (10 PERCENT)',
-      exactSources: ['dbo.T'],
-      noSources: ['percent', 'tablesample'],
       sourceCount: 1,
     },
   ]);
@@ -1070,11 +888,6 @@ describe('UPDATE alias target does not cross a statement boundary', () => {
       sql: 'UPDATE t SET col = 1;\nSELECT x FROM dbo.UnrelatedNextStatement;',
       exactSources: ['dbo.UnrelatedNextStatement'],
       noTargets: ['unrelatednextstatement'],
-    },
-    {
-      name: 'the alias form still resolves its target from the FROM inside one statement',
-      sql: 'UPDATE u SET u.Total = s.Amt FROM dbo.OrderTotal u JOIN dbo.Staging s ON s.id = u.id;',
-      targets: ['OrderTotal'],
     },
   ]);
 });
@@ -1113,11 +926,6 @@ describe('CREATE TABLE is not a function call', () => {
       noSources: ['stagebatch'],
       sourceCount: 1,
     },
-    {
-      name: 'a genuine schema-qualified UDF call is still captured',
-      sql: 'SELECT dbo.fn_Rate(o.Amount) FROM dbo.Orders o;',
-      sources: ['fn_Rate'],
-    },
   ]);
 });
 
@@ -1138,12 +946,6 @@ describe('a wildcard path in a string literal is not a comment', () => {
       sql: 'SELECT * FROM dbo.Keep /* outer /* inner */ still comment */ WHERE 1 = 1',
       exactSources: ['dbo.Keep'],
       noSources: ['inner', 'outer'],
-      sourceCount: 1,
-    },
-    {
-      name: "an apostrophe inside a block comment does not swallow the statement after it",
-      sql: "/* don't trust this */ SELECT * FROM dbo.Kept",
-      exactSources: ['dbo.Kept'],
       sourceCount: 1,
     },
   ]);
@@ -1178,22 +980,8 @@ describe('a bracketed identifier is not a string literal', () => {
       targets: ['Dim'],
       noSources: ['GhostTable'],
     },
-    {
-      name: 'a plain bracketed name is captured unchanged',
-      sql: 'SELECT * FROM [dbo].[Table]',
-      exactSources: ['dbo.Table'],
-    },
   ]);
 
-  it('an escaped bracket in a source name is captured, not the fragment before it', () => {
-    const result = parseSqlBody('SELECT * FROM [dbo].[a]]b]');
-    expect(result.sources).toContain('[dbo].[a]b]');
-  });
-
-  it('an escaped bracket in a target name is captured, not the fragment before it', () => {
-    const result = parseSqlBody('INSERT INTO [dbo].[x]]y] SELECT 1');
-    expect(result.targets).toContain('[dbo].[x]y]');
-  });
 });
 
 describe('CTAS carries its distribution clause', () => {

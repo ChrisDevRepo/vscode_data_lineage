@@ -37,6 +37,13 @@ export function evaluateToolPhaseRule(
   allowed: ReadonlySet<string>,
 ): InteractionRuleResult {
   if (allowed.has(toolName)) return null;
+  if (stage.kind === 'external') {
+    return makeRejection({
+      code: REJECTION_CODES.offPolicy,
+      reason: `${toolName} is unavailable while an @lineage chat turn runs; it owns the Data Lineage panel until it finishes.`,
+      hint: `Retry ${toolName} after the chat turn. Available now: ${[...allowed].join(', ')}.`,
+    });
+  }
   const stageLabel = stage.kind === 'active' ? `active(${stage.mode})` : stage.kind;
   return makeRejection({
     code: REJECTION_CODES.offPolicy,

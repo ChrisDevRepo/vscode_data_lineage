@@ -16,7 +16,7 @@ import { contributes } from '../package.json';
  * @remarks
  * The top level carries an optional `schemaVersion` scalar alongside one entry per template
  * key. Custom overlays are hand-authored YAML, so a string like `"1"` must still parse — but the
- * `extension.ts` gate compares it with strict `!==` against a numeric contract version, so the
+ * `extensionRuntime.ts` gate compares it with strict `!==` against a numeric contract version, so the
  * field is coerced to a number (`"1"` → `1`) rather than a `number | string` union that would
  * always fail that comparison and silently disable the overlay. Every OTHER top-level key must be
  * a template object (`{ instruction?: string, ...extra }`) — `catchall` enforces that while
@@ -42,8 +42,7 @@ const RawParseRulesYamlSchema = z.object({
 /**
  * Parsed shape of the parse-rules YAML — deliberately raw (`rules` entries stay untyped):
  * `sqlBodyParser.loadRules` is the per-rule validator, so this wrapper proves only the
- * file structure, never rule contents. Named "raw" to avoid colliding with the strict
- * `ParseRulesConfig` in `sqlBodyParser.ts`.
+ * file structure, never rule contents.
  */
 export type RawParseRulesYaml = z.infer<typeof RawParseRulesYamlSchema>;
 
@@ -161,6 +160,15 @@ export function clampDeclaredNumericSetting(key: string, value: number | undefin
  * `src/ai/**` so reading the kill switch never pulls a module from the AI tree onto the activation path.
  */
 export const DEFAULT_AI_ENABLED = true;
+
+/** Runtime default of `dataLineageViz.mcp.enabled`: the localhost MCP server is opt-in. */
+export const DEFAULT_MCP_ENABLED = false;
+
+/** Runtime default of `dataLineageViz.mcp.port`. */
+export const DEFAULT_MCP_PORT = 39217;
+
+/** Discovery file name inside each session's private MCP directory. */
+export const MCP_DISCOVERY_FILE = 'mcp-server.json';
 
 /** The manifest `default` of a numeric `dataLineageViz.*` setting; throws for an undeclared key. */
 function declaredNumericDefault(key: string): number {

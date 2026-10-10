@@ -2,15 +2,17 @@
  * Shared AI prompt builders — surface-neutral.
  *
  * @remarks
- * The only consumer is `hostPrompts.ts`, which composes {@link buildGeneralSystemPrompt} and
- * {@link buildPhasePrompt} into the per-stage system prompts the LangGraph runtime uses for both
- * chat surfaces. Kept surface-neutral (no `vscode` import) so it stays a pure string builder.
- * Navigation-mode prompts live in `smPrompts.ts` (Universal Markdown blocks).
+ * `hostPrompts.ts` composes {@link buildGeneralSystemPrompt} and {@link buildPhasePrompt} into the
+ * per-stage system prompts; the remaining builders render the delimited context blocks, the
+ * host-owned trigger prompts and the one-shot compose and gate-reply prompts the agent graph sends.
+ * Kept surface-neutral (no `vscode` import) so it stays a pure string builder. Synthesis evidence
+ * and the column-aspect protocol live in `smPrompts.ts`.
  */
 
 import { escapePromptText } from '../support/text';
 import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
 import type { InvestigationTask } from '../sm/smTypes';
+import { taskPromptText } from '../sm/taskLedger';
 
 /**
  * Phase key used by the TS prompt protocol builders.
@@ -33,7 +35,7 @@ export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis'
  * about what the stage is allowed to do with the text — not about where it sits in the lifecycle.
  * `discover` and `active` never call the tool and therefore have no member here.
  */
-export type PresentationStage = 'preview' | 'synthesis' | 'completed';
+type PresentationStage = 'preview' | 'synthesis' | 'completed';
 
 /**
  * Grounding values injected into the base system prompt.
@@ -166,8 +168,7 @@ const CHAT_MARKDOWN_FORMAT = [
  * states only the task (when to answer directly and when to call a read tool), the one lineage call
  * that answers a dependency question, and the applied-bookmark rule, which selects the evidence
  * source before the kind of ask picks a tool: a question about a bookmarked graph is a read of a
- * run already stored, and answering it with a scope walk is what turned "what do I see here" into a
- * fresh approval gate. Chat format has one
+ * run already stored, not a fresh scope walk. Chat format has one
  * home, the YAML `discovery_chat` template. The `over_discovery_budget` guard is deliberately
  * unmentioned — `lineage_get_scope_bundle` is the only place it can fire, that call site always
  * wires the mechanical `detectReroute` detector (`detectOverBudgetFromResult`,
@@ -201,6 +202,7 @@ function buildActivePhasePrompt(): string {
   return [
     '# Active hop',
     'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
+    'Answer each `<sub_question>` from the focus\'s own evidence in the section it belongs to, or state that this hop cannot answer it.',
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
     'Deliver one `lineage_submit_findings` call:',
@@ -231,15 +233,12 @@ function buildActivePhasePrompt(): string {
  * from the served answer blocks, so a compress-or-drop rule there would contradict the stage. The
  * heading rule ships to the two stages that author section text.
  *
+ * @param mode - Which stage receives the contract; selects the depth line.
  * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`; omitted by
- *   stages whose own block names it. First parameter because existing callers pass it positionally.
- * @param mode - Which stage receives the contract; selects the depth line. Defaults to `'synthesis'`.
+ *   stages whose own block names it.
  * @returns The shared highlight rule plus the stage's depth and heading lines.
  */
-export function buildPresentationDetailContract(
-  evidence?: string,
-  mode: PresentationStage = 'synthesis',
-): string {
+function buildPresentationDetailContract(mode: PresentationStage, evidence?: string): string {
   const headingRule =
     '- Inside a section body use bold labels, never `#` headings; the engine owns the title, the section headings and the object headers.';
   const depthRules = mode === 'preview'
@@ -252,7 +251,7 @@ export function buildPresentationDetailContract(
         headingRule,
       ]
       : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. A short SQL witness may accompany its explanation.',
+        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas, row-dropping steps (filters, inner joins, dedup) and ⚠️ callouts at the captured depth, and the role each captured input plays (value, filter-only or display-only); it follows the asked output\'s calculation chain across nodes, including intermediate CTE and derived-column results. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. A short SQL witness may accompany its explanation.',
         '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
         '- Describe declared SQL behavior; do not infer runtime execution counts or execution order without matching runtime evidence.',
         '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
@@ -286,7 +285,7 @@ function buildVisualPreviewPrompt(): string {
     'Divide `answer_blocks` into consecutive sections: each `sections[]` entry gives a label, its canonical `node_ids`, and the `start` block it begins at; a section runs to the block before the next start, the last to the end, and starts ascend from B1.',
     'Choose cut points so each section answers one part of the user\'s question.',
     '',
-    buildPresentationDetailContract('The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section starts.', 'preview'),
+    buildPresentationDetailContract('preview', 'The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section starts.'),
   ].join('\n');
 }
 
@@ -308,7 +307,7 @@ function buildVisualPreviewPrompt(): string {
 function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
   const evidence =
-    'Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node\'s verdict and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas' +
+    'Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `synthesis_reminder` — engine facts: flow roles, edge direction and each node\'s inputs and outputs' +
     (isCt ? ', plus the Column Trace Chain.' : '.');
   return [
     '## Task: write the report beside the graph',
@@ -316,7 +315,7 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     '',
     evidence,
     '',
-    '- `sections[]`: the answer, grouped by what best answers the question (`suggested_sections` is a starting point) — regroup freely, but carry every id from every starting-point section along; none may go missing in the reshaping. Link the nodes each section documents, raw source and target tables included.',
+    '- `sections[]`: the answer, grouped by what best answers the question. Link the nodes each section documents, raw source and target tables included.',
     '- `highlight_groups[]`, `notes[]`, `summary`, `title`, `intro`, `closing`: follow their named output-template instructions.',
     '- Every node with a `detail_slots[]` entry appears in a section (`sections[].node_ids`); a highlight group or a note does not cover it.',
     ...(isCt
@@ -326,13 +325,11 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
       ]
       : ['- Keep the explanation concise while preserving important formulas, rules and supported warnings.']),
     '- Id fields take only ids from `result.scope.node_ids`; name any other object in section text.',
-    '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
     '- DDL and DML establish definitions and SQL behavior, not observed statistics, row counts, elapsed time or performance. Explain a calculation only from its supplied defining expression; do not turn its formula or captured prose into a measured result without matching data or runtime evidence.',
     '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences. Preserve substantive calculations even when a SQL witness is also present; where a captured formula and its captured SQL differ, correct the formula to the SQL. Embed formulas in the rule or transformation they explain: introduce block formulas on their own lines and explain their terms and result, or use a table with inline formulas and short descriptions of their meaning. Keep the final formula contextual too. Do not create a separate Formulas subsection or repeat simple mappings as equations and tables.',
-    '- Each captured SQL fence in `detail_slots[]` shows an id on its opening line (```sql S7). To reuse that SQL unchanged, write only the opening line with its id and close the fence with no body; the engine inserts the captured SQL at that spot. Writing SQL out yourself is always allowed.',
-    '- Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
+    '- Each captured SQL fence in `detail_slots[]` shows an id on its opening line (```sql S7). To reuse that SQL unchanged, write two lines with nothing between them: the opening line with its id, then a bare closing ``` line; the engine inserts the captured SQL at that spot. Writing SQL out yourself is always allowed.',
     '',
-    buildPresentationDetailContract(undefined, 'synthesis'),
+    buildPresentationDetailContract('synthesis'),
   ].join('\n');
 }
 
@@ -352,8 +349,8 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
  * approves it.
  *
  * Receives {@link buildPresentationDetailContract} like every other stage that authors a
- * `present_result` payload: linking, labels, colors, and `is_update` are the same rules
- * `validatePresentResult` enforces. Depth is not — follow-up has no archive in the window, so the
+ * `present_result` payload: the highlight-explanation rule is the one `validatePresentResult`
+ * enforces in every stage. Depth is not shared — follow-up has no archive in the window, so the
  * completed depth does not lift captured warnings, formulas, or predicates.
  *
  * @returns A string containing the follow-up-phase protocol.
@@ -403,7 +400,7 @@ function buildFollowUpPrompt(): string {
     '',
     CHAT_MARKDOWN_FORMAT,
     '',
-    buildPresentationDetailContract(undefined, 'completed'),
+    buildPresentationDetailContract('completed'),
   ].join('\n');
 }
 
@@ -619,7 +616,7 @@ export function buildDiscoverySummaryComposePrompt(
 ): string {
   return [
     'Compose a 2–4 sentence discovery summary for this pending SM exploration proposal; it will ride in every hop\'s stable prefix as `<discovery_summary>`.',
-    'Reply with text only this turn. Output the memo as a single paragraph, 2–4 sentences total.',
+    'Reply with text only this turn: the memo as a single paragraph.',
     '',
     '## Composition contract',
     '',
@@ -717,8 +714,8 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
  *
  * Scope notes ride here for the same reason: they are fixed at approval, so the block stays
  * byte-identical across hops and the cached prefix still holds. They are also the only surviving
- * copy of an instruction that maps to no filter — the conversation turn that carried it is removed
- * by the sliding-memory wipe after the first hop.
+ * copy of an instruction that maps to no filter — the conversation turn that carried it is dropped
+ * when the active thread is reseeded at approval.
  *
  * @param brief - The AI-composed mission statement; may be empty before the first `start_exploration`.
  * @param question - The user's original question, used as fallback text when `brief` is absent.
@@ -768,21 +765,24 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * questions are always this focus's own, carried on its AgendaEntry, never a
  * different node's.
  *
+ * A task forwarded through a passthrough renders its stored re-anchor sentence on the line after
+ * its question, inside the same `<sub_question>`.
+ *
  * @param currentTasks - Structured tasks assigned to the active node.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.
  * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
- * @returns Structured `<current_task>` XML block; a task with a blank question renders no element,
+ * @returns Structured `<current_task>` XML block; a task with neither question nor re-anchor renders no element,
  *   and the result is an empty string when no element would render.
  */
 export function buildCurrentTaskBlock(
-  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question'>>,
+  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'reAnchor'>>,
   columnTraceColumns?: string[],
   columnLineageQuestions?: string[],
 ): string {
   if (currentTasks.length === 0) return '';
   const lines = ['<current_task>'];
   for (const task of currentTasks) {
-    const question = task.question.trim();
+    const question = taskPromptText(task).trim();
     if (!question) continue;
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
     lines.push(`  <${tag}>${escapePromptText(question)}</${tag}>`);
@@ -827,7 +827,7 @@ export function buildMemoryBlock(
   recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [],
 ): string {
   const stmText = stm.length > 0
-    ? stm.map(s => `- ${s.nodeId}: ${s.summary}`).join('\n')
+    ? stm.map(s => `- ${escapePromptText(s.nodeId)}: ${escapePromptText(s.summary)}`).join('\n')
     : 'No nodes visited yet.';
   const blocks = [
     '<short_term_memory>',
@@ -837,7 +837,7 @@ export function buildMemoryBlock(
   if (recentRejections.length > 0) {
     blocks.push(
       '<recent_rejections>',
-      ...recentRejections.map(r => `- ${r.nodeId} (hop ${r.atHop}): ${r.reason}`),
+      ...recentRejections.map(r => `- ${escapePromptText(r.nodeId)} (hop ${r.atHop}): ${escapePromptText(r.reason)}`),
       '</recent_rejections>',
     );
   }

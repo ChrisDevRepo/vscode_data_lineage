@@ -45,6 +45,9 @@ function makeLoader(schemas: SchemaInfo[]): DacpacLoaderState {
   };
   return {
     model: null,
+    mssqlAvailable: true,
+    connectionProvider: 'builtIn',
+    switchToBuiltInConnection: () => {},
     schemaPreview: preview,
     selectedSchemas: new Set(schemas.map(s => s.name)),
     isLoading: false,
@@ -52,9 +55,6 @@ function makeLoader(schemas: SchemaInfo[]): DacpacLoaderState {
     fileName: 'synthetic.dacpac',
     filePath: '/tmp/synthetic.dacpac',
     status: null,
-    mssqlAvailable: null,
-    connectionProvider: null,
-    switchToBuiltInConnection: () => {},
     pendingAutoVisualize: false,
     pendingVisualize: false,
     isDemo: false,

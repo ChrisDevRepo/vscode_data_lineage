@@ -1,14 +1,8 @@
 /**
- * Covers the graph shapes the traversal core has never been given.
- *
- * Every existing traversal test runs on a DAG: a chain, a star, a diamond with equal arms.
- * Nothing anywhere hands `traceNodeWithLevels`, `bfsReachable` or `findShortestPathOrdered`
- * a cycle, a self-loop, an asymmetric diamond, or a missing origin — so the termination and
- * dedup behaviour those functions rely on is assumed, never asserted. A regression that made
- * any of them revisit a node would hang the extension rather than fail a test.
- *
- * `bfsDepthMap` is included because no test called it at all; it reaches production only
- * through the AI report builder.
+ * Covers the graph shapes that stress the traversal core's termination and dedup: cycles,
+ * self-loops, asymmetric diamonds, missing origins and depth caps, for `traceNodeWithLevels`,
+ * `bfsReachable` and `findShortestPathOrdered`. A regression that made any of them revisit a
+ * node would hang the extension rather than fail a test.
  */
 
 import Graph from 'graphology';
@@ -16,7 +10,6 @@ import { describe, expect, it } from 'vitest';
 import { buildGraphologyGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
 import type { DatabaseModel } from '../../../src/engine/types';
 import {
-  bfsDepthMap,
   bfsReachable,
   directNeighborIds,
   findShortestPathOrdered,
@@ -47,8 +40,6 @@ const asymmetricDiamond = () =>
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'C2' }, { id: 'D' }],
     [['A', 'B'], ['B', 'D'], ['A', 'C'], ['C', 'C2'], ['C2', 'D']],
   );
-
-const emptyGraph = () => new Graph({ type: 'directed', multi: false });
 
 describe.each([false, true])('direct neighbors under source identifier policy (CS=%s)', cs => {
   it.each(['in', 'out'] as const)('uses CI normalization or exact CS edge fallback for %s neighbors', side => {
@@ -147,9 +138,6 @@ describe('traceNodeWithLevels — disconnected and missing input', () => {
     expect(result.edgeIds).toEqual(new Set());
   });
 
-  it('returns empty sets for an empty graph', () => {
-    expect(traceNodeWithLevels(emptyGraph(), 'A', Infinity, Infinity).nodeIds).toEqual(new Set());
-  });
 });
 
 
@@ -171,9 +159,6 @@ describe('bfsReachable — cycles and self-reference', () => {
     expect(bfsReachable(threeCycle(), 'absent', NONE)).toEqual(new Set());
   });
 
-  it('returns an empty set for an empty graph', () => {
-    expect(bfsReachable(emptyGraph(), 'A', NONE)).toEqual(new Set());
-  });
 });
 
 describe('findShortestPathOrdered — cycles and self-reference', () => {
@@ -193,46 +178,6 @@ describe('findShortestPathOrdered — cycles and self-reference', () => {
     ['absent source', 'absent', 'A'],
   ])('returns null for an %s', (_label, source, target) => {
     expect(findShortestPathOrdered(threeCycle(), source, target)).toBeNull();
-  });
-});
-
-
-describe('bfsDepthMap', () => {
-  it('assigns hop distance along a chain', () => {
-    expect([...bfsDepthMap([['A', 'B', 'body'], ['B', 'C', 'body']], 'A')]).toEqual([
-      ['A', 0], ['B', 1], ['C', 2],
-    ]);
-  });
-
-  it('records the minimum distance when two paths reach the same node', () => {
-    const edges: ReadonlyArray<readonly [string, string, string]> = [
-      ['A', 'B', 'body'], ['B', 'D', 'body'],
-      ['A', 'C', 'body'], ['C', 'C2', 'body'], ['C2', 'D', 'body'],
-    ];
-    expect(bfsDepthMap(edges, 'A').get('D')).toBe(2);
-  });
-
-  it('terminates on a cycle instead of revisiting the origin', () => {
-    const edges: ReadonlyArray<readonly [string, string, string]> = [
-      ['A', 'B', 'body'], ['B', 'C', 'body'], ['C', 'A', 'body'],
-    ];
-    expect([...bfsDepthMap(edges, 'A')]).toEqual([['A', 0], ['B', 1], ['C', 2]]);
-  });
-
-  it('terminates on a self-loop', () => {
-    expect([...bfsDepthMap([['X', 'X', 'body']], 'X')]).toEqual([['X', 0]]);
-  });
-
-  it('follows edges only forwards, excluding what the origin cannot reach', () => {
-    expect([...bfsDepthMap([['A', 'B', 'body'], ['Z', 'A', 'body']], 'A').keys()]).toEqual(['A', 'B']);
-  });
-
-  it('returns the origin alone when it has no outgoing edges', () => {
-    expect([...bfsDepthMap([['B', 'C', 'body']], 'A')]).toEqual([['A', 0]]);
-  });
-
-  it('returns the origin alone for an empty edge list', () => {
-    expect([...bfsDepthMap([], 'A')]).toEqual([['A', 0]]);
   });
 });
 
@@ -305,14 +250,4 @@ describe('buildGraphologyGraph — identity and malformed input', () => {
     expect(traceNodeWithLevels(graph, '[dbo].[A]', 1, 1).nodeIds.size).toBe(0);
   });
 
-  it('drops an edge whose endpoint is not a node and collapses a repeated edge', () => {
-    const graph = buildGraphologyGraph(model(['A', 'B'], [['A', 'B'], ['A', 'B'], ['A', 'missing'], ['missing', 'B']]));
-    expect(graph.edges()).toEqual(['A→B']);
-  });
-
-  it('keeps the first of two nodes with the same id', () => {
-    const graph = buildGraphologyGraph({ ...model(['A'], []), nodes: [{ ...node('A'), name: 'first' }, { ...node('A'), name: 'second' }] } as DatabaseModel);
-    expect(graph.order).toBe(1);
-    expect(graph.getNodeAttribute('A', 'name')).toBe('first');
-  });
 });

@@ -115,7 +115,7 @@ describe('GraphCanvas object-space artifacts while the column view is on stage',
     const onSaveAiBookmark = vi.fn();
     await mountColumnView({ onSaveAiBookmark });
     saveBookmarkWithPositions();
-    expect(onSaveAiBookmark).toHaveBeenCalledWith('Saved', true, objectPositions);
+    expect(onSaveAiBookmark).toHaveBeenCalledWith('Saved', objectPositions);
   });
 
   it('saves a trace bookmark with the object positions of the traced nodes', async () => {
@@ -126,7 +126,7 @@ describe('GraphCanvas object-space artifacts while the column view is on stage',
       trace: { ...canvasProps(flowNodes, built.flowEdges, schemas).trace, mode: 'applied', selectedNodeId: edge.source, baseNodeIds: traced, tracedNodeIds: traced },
     });
     saveBookmarkWithPositions();
-    expect(onSaveTraceBookmark).toHaveBeenCalledWith('Saved', [...traced], 'trace', {
+    expect(onSaveTraceBookmark).toHaveBeenCalledWith('Saved', [...traced], {
       [edge.source]: objectPositions[edge.source],
       [edge.target]: objectPositions[edge.target],
     });

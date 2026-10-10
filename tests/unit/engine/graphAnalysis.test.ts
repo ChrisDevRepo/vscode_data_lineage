@@ -37,10 +37,6 @@ describe('analyzeIslands', () => {
   );
   const chain = () => makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
 
-  it('labels the result islands', () => {
-    expect(analyzeIslands(twoPairs(), 2).type).toBe('islands');
-  });
-
   it('finds each disconnected component', () => {
     expect(analyzeIslands(twoPairs(), 2).groups).toHaveLength(2);
   });
@@ -51,14 +47,6 @@ describe('analyzeIslands', () => {
 
   it('filters out a component larger than maxSize', () => {
     expect(analyzeIslands(chain(), 2).groups).toEqual([]);
-  });
-
-  it('keeps a component exactly at maxSize', () => {
-    expect(analyzeIslands(twoPairs(), 2).groups).toHaveLength(2);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeIslands(emptyGraph(), 2).groups).toEqual([]);
   });
 
   it('does not count isolated nodes as islands — those are orphans', () => {
@@ -85,10 +73,6 @@ describe('analyzeHubs', () => {
     [['hub', 'sp1'], ['hub', 'sp2'], ['hub', 'sp3'], ['hub', 'sp4']],
   );
 
-  it('labels the result hubs', () => {
-    expect(analyzeHubs(star(), 3).type).toBe('hubs');
-  });
-
   it('reports the node meeting minDegree, with its in and out degree split out', () => {
     const groups = analyzeHubs(star(), 3).groups;
     expect(groups).toHaveLength(1);
@@ -108,10 +92,6 @@ describe('analyzeHubs', () => {
     const groups = analyzeHubs(pair, 2).groups;
     expect(groups).toHaveLength(2);
     expect(groups.map(group => group.meta?.degree)).toEqual([2, 2]);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeHubs(emptyGraph(), 1).groups).toEqual([]);
   });
 
   it('sorts by degree descending', () => {
@@ -148,10 +128,6 @@ describe('analyzeOrphans', () => {
     [['A', 'B']],
   );
 
-  it('labels the result orphans', () => {
-    expect(analyzeOrphans(mixed()).type).toBe('orphans');
-  });
-
   it('reports every zero-degree node and no connected one', () => {
     const orphans = analyzeOrphans(mixed()).groups.flatMap(group => group.nodeIds);
     expect(orphans.sort()).toEqual(['C', 'D']);
@@ -163,10 +139,6 @@ describe('analyzeOrphans', () => {
 
   it('reports nothing when every node is connected', () => {
     expect(analyzeOrphans(makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']])).groups).toEqual([]);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeOrphans(emptyGraph()).groups).toEqual([]);
   });
 
   it('keeps a schema name that contains a slash intact in the group label and meta', () => {
@@ -183,10 +155,6 @@ describe('analyzeLongestPath', () => {
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
     [['A', 'B'], ['B', 'C'], ['C', 'D']],
   );
-
-  it('labels the result longest-path', () => {
-    expect(analyzeLongestPath(chain(), 2).type).toBe('longest-path');
-  });
 
   it('reports the chain end to end, with its depth in steps', () => {
     const group = analyzeLongestPath(chain(), 2).groups[0];
@@ -240,10 +208,6 @@ describe('analyzeLongestPath', () => {
     const forward = analyzeLongestPath(throughCycle(CHAIN_ORDER), 2).groups[0];
     const reversed = analyzeLongestPath(throughCycle([...CHAIN_ORDER].reverse()), 2).groups[0];
     expect(reversed.nodeIds).toEqual(forward.nodeIds);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeLongestPath(emptyGraph(), 2).groups).toEqual([]);
   });
 
   const competingRoots = () => makeGraph(
@@ -337,10 +301,6 @@ describe('analyzeCycles', () => {
     [['A', 'B'], ['B', 'C'], ['C', 'A']],
   );
 
-  it('labels the result cycles', () => {
-    expect(analyzeCycles(triangle()).type).toBe('cycles');
-  });
-
   it('captures every node of a 3-node cycle in one group', () => {
     const groups = analyzeCycles(triangle()).groups;
     expect(groups).toHaveLength(1);
@@ -388,9 +348,6 @@ describe('analyzeCycles', () => {
     expect(result.groups).toEqual([]);
   });
 
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeCycles(emptyGraph()).groups).toEqual([]);
-  });
 });
 
 

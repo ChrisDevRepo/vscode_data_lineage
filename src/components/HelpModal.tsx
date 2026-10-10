@@ -238,7 +238,7 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           title="Import"
         />
         <p className="text-sm ln-text-muted mb-2">
-          Requires the <strong>MSSQL extension</strong> and <code>VIEW DEFINITION</code> permission on the database.
+          Use a built-in database connection with <code>VIEW DEFINITION</code> permission on the database.
         </p>
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-lg p-3 ln-help-analysis-card">

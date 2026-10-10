@@ -16,12 +16,11 @@ loading and settings actions.
 
 ## Database connections
 
-A live database is read through the provider set in `dataLineageViz.database.connectionProvider`:
+Choose the connection provider with `dataLineageViz.database.connectionProvider`: `mssqlExtension` (default) uses the SQL Server extension, and `builtIn` uses connections saved by Data Lineage. Built-in connections support SQL login or Microsoft Entra ID; passwords stay in VS Code secret storage. Entra sign-in uses VS Code's Microsoft account picker and supports MFA; the selected account and tenant are saved with the connection. Built-in Windows authentication is not supported.
 
-- **`mssqlExtension`** (default) — uses a profile saved in the MSSQL extension. The wizard warns about its retiring connection API and offers **Use Built-in Connection**.
-- **`builtIn`** — uses connections saved by Data Lineage, with SQL login or Microsoft Entra ID. Passwords stay in VS Code secret storage. Entra sign-in uses VS Code's Microsoft account picker and supports MFA; the selected account and tenant are saved with the connection. Windows authentication is not supported.
+Manage connections through **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password** in the Command Palette. Enter the database name directly; a database-scoped login may not be able to list databases.
 
-Manage built-in connections through **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password** in the Command Palette. Enter the database name directly; a database-scoped login may not be able to list databases. Saved projects using the MSSQL extension show an **! Old connection** badge with migration advice.
+Projects reconnect through the selected provider. A project saved with the other provider displays an explanation before opening the selected provider's connection picker. If the MSSQL extension is unavailable, the import screen offers switching to the built-in provider.
 
 Import queries are documented in [`DMV_QUERIES.md`](DMV_QUERIES.md). For connection errors, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
 
@@ -336,11 +335,10 @@ A follow-up naming one object brings in that object, rather than its entire sche
 
 ### Tips
 
-- **Column-level questions are best-effort.** The AI traces column mappings, joins, and formulas from the loaded metadata. Always verify against the database for compliance-critical claims.
-- **Ask for a graph preview.** Try *"show me the lineage for `dbo.udfLeadingZeros` in the app"*. The preview is transient; save it explicitly if you want a bookmark.
-- **The assistant is context-aware.** It knows what filters are active and which schemas are visible. Ask *"what's filtered out?"*.
-- **It also sees the screen.** With a trace, a graph analysis, or a bookmark applied, ask *"explain this"*, *"what am I looking at?"*, or — for an AI bookmark — *"what did you find about X?"*, *"which objects did you drop and why?"*, *"has anything changed since?"*. Type `#lineageView` in the chat input to attach the screen explicitly; the lineage tools appear in the `#` picker once a model is loaded.
-- **Customise output.** Command Palette → **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). See [`AI_PROMPTS.md`](AI_PROMPTS.md) for what each key controls.
+- Ask for a graph preview, for example *"show me the lineage for `dbo.udfLeadingZeros` in the app"*. The preview is transient; save it to keep a bookmark.
+- With a trace, graph analysis or bookmark applied, the assistant sees the screen; type `#lineageView` to attach it explicitly.
+- The graph is a normal editor tab: drag, split or **Move Editor into New Window**. Chat docks via **View: Move Chat**; the AI report header has a dock menu (left, bottom, right).
+- **Data Lineage: Create AI Output Templates** scaffolds [`aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml); see [`AI_PROMPTS.md`](AI_PROMPTS.md).
 
 ### Requirements
 
@@ -354,7 +352,26 @@ A follow-up naming one object brings in that object, rather than its entire sche
 Set `dataLineageViz.ai.enabled` to `false` to disable the `@lineage` participant and all AI tools:
 nothing registers and nothing can execute, and the manifest's `when` clauses hide the participant
 and the tools from the chat and tool pickers. Reload the window after changing the setting so the
-registration follows it.
+registration follows it. The [MCP server](#mcp-server) has its own switch, `dataLineageViz.mcp.enabled`, and is off by
+default.
+
+---
+
+## MCP server
+
+A local [Model Context Protocol](https://modelcontextprotocol.io) server lets external AI apps on the same machine query the loaded project's lineage metadata. It is separate from `@lineage`. Off by default; `dataLineageViz.mcp.enabled` is a kill switch (while off, no MCP code loads).
+
+1. Run **Data Lineage: Toggle MCP Server** (or set `dataLineageViz.mcp.enabled`) and reload the window when asked. The server listens on `http://127.0.0.1:39217/mcp` (`mcp.port`) while the extension is active. Turning it off stops the server at once and revokes its token.
+2. Open a project in the Data Lineage panel; the tools answer about the loaded model.
+3. Run **Data Lineage: Copy MCP Client Configuration** and paste the result into the app's MCP settings: `mcpServers` JSON with URL and `Authorization` header (HTTP), or a command that runs the bundled stdio proxy with VS Code's own runtime (stdio; no token in the configuration).
+
+**Tools:** object search, object detail with DDL, scope (BFS) with optional DDL, DDL search, graph patterns, context and screen state, and **present_result**. A scope call returns a `scope_id`; `present_result` with it draws the scope and returns a `view_id`; a later `present_result` with the `view_id` edits the view with `prune_node_ids` and `add_node_ids`. There is no approval card or hop-by-hop analysis; those stay in `@lineage`. Scope sizes follow `ai.discoveryNodeCap` and `ai.discoveryTokenBudget`. **present_result** is refused while a `@lineage` turn runs.
+
+A rejected call is a tool execution error whose text says what to send instead; `structuredContent` carries `{code, reason, hint, issuePaths}`. The `#lineage_*` tools other VS Code agents call report rejections the same way.
+
+**Security:** `127.0.0.1` only; every request needs the bearer token (wrong token: `401` challenge); non-localhost `Host` or `Origin` is refused. Each endpoint start generates a session-owned token kept in memory. The stdio proxy reads it from a user-only discovery file in the session's private storage directory. Turning the server off or closing the session stops the endpoint; closing the session removes its private directory. Copy client configuration again after a window reload or endpoint restart. The tools read loaded metadata only and never execute SQL.
+
+**Single session:** this window owns its endpoint and client configuration. An occupied port reports a startup error; there is no automatic takeover. **Remote windows** (SSH, WSL, Dev Container): the server runs on the remote host, only HTTP configurations are offered.
 
 ---
 
@@ -407,8 +424,7 @@ Defaults and ranges below match `package.json`; the Settings UI shows the short 
 
 | Setting | Default | Detail |
 |---|---|---|
-| `database.connectionProvider` | `mssqlExtension` | Where live connections come from; application-scoped. See [Database connections](#database-connections). |
-| `database.connections` | `[]` | Connections of the `builtIn` provider: server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption. Passwords are kept in VS Code secret storage under `dataLineageViz.database.password.<id>`. Manage entries with **Add / Edit / Remove Database Connection**; replace a password with **Update Database Password**. Hand-editing the JSON is not needed. |
+| `database.connections` | `[]` | Database connections; application-scoped. See [Database connections](#database-connections). Each entry: server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption. Passwords are kept in VS Code secret storage under `dataLineageViz.database.password.<id>`. Manage entries with **Add / Edit / Remove Database Connection**; replace a password with **Update Database Password**. Hand-editing the JSON is not needed. |
 | `dmvQueryTimeout` | 120 s (10–600) | Time allowed per metadata query; raise for large databases. |
 | `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; contract in [`DMV_QUERIES.md`](DMV_QUERIES.md). The file is read at each import; no reload needed. |
 
@@ -456,3 +472,10 @@ Database import only; behavior and limits in [`PROFILING_PATTERNS.md`](PROFILING
 | `ai.outputTemplateFile` | empty | Custom output templates YAML controlling summary, description, badges, highlights and notes; empty uses the built-in templates. Scaffold with **Data Lineage: Create AI Output Templates**; keys in [`AI_PROMPTS.md`](AI_PROMPTS.md). |
 
 The `ai.*` limits are read on every request.
+
+#### MCP server
+
+| Setting | Default | Detail |
+|---|---|---|
+| `mcp.enabled` | off | Kill switch for the MCP server on `127.0.0.1`; see [MCP server](#mcp-server). While off, no MCP code loads; turning it on applies after a window reload. Machine scope: a workspace cannot turn it on. |
+| `mcp.port` | 39217 (1024–65535) | Local port of the MCP server. |

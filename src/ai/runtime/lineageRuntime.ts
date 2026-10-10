@@ -15,7 +15,8 @@ import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
 import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
-import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import { readToolError, isAdmissionRefusal, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
@@ -129,6 +130,21 @@ export class LineageRuntime {
     }
 
     const turnEpoch = session.beginTurn();
+    try {
+      return await this.runTurn(input, session, requestKey, turnEpoch);
+    } finally {
+      // Closed on every exit, a failed setup included, so a turn that ended never blocks external callers.
+      session.endTurn(turnEpoch);
+    }
+  }
+
+  /** Runs the turn {@link run} opened, from per-turn state reset to its terminal result. */
+  private async runTurn(
+    input: LineageRuntimeRunInput,
+    session: AiSession,
+    requestKey: string,
+    turnEpoch: number,
+  ): Promise<LineageRuntimeResult> {
     session.beginTurnState();
     session.modelName = input.model.identity.name;
     const lease: TurnLease = Object.freeze({
@@ -163,7 +179,7 @@ export class LineageRuntime {
         })
       : registry;
     const traceSyntheticRejection = traceWriter
-      ? (rejection: { toolName: string; code: string }): void => {
+      ? (rejection: Parameters<SyntheticRejectionTrace>[0]): void => {
           void traceWriter.write({
             type: 'tool',
             requestId: input.request.id,
@@ -171,8 +187,9 @@ export class LineageRuntime {
             seq: ++toolSequence,
             phase,
             toolName: rejection.toolName,
-            status: 'rejected',
+            status: rejection.status,
             rejectionCode: rejection.code,
+            ...(rejection.issuePaths?.length ? { issuePaths: rejection.issuePaths } : {}),
             durationMs: 0,
           }).catch(() => {});
         }
@@ -304,10 +321,11 @@ function instrumentRegistry(
         const issuePaths = rejection?.issuePaths ?? [];
         void instrumentation.writer.write({
           ...base,
-          status: rejection
-            ? (isConsentGateRejection(rejection.code) ? 'gate' : 'rejected')
-            : 'accepted',
-          ...(rejection ? { rejectionCode: rejection.code } : {}),
+          status: !rejection
+            ? 'accepted'
+            : isConsentGateRejection(rejection.code) ? 'gate'
+              : isAdmissionRefusal(rejection.code) ? 'refused' : 'rejected',
+          ...(rejection && !isConsentGateRejection(rejection.code) ? { rejectionCode: rejection.code } : {}),
           ...(issuePaths.length > 0 ? { issuePaths } : {}),
           durationMs: elapsedMs(startedAt),
         }).catch(() => {});

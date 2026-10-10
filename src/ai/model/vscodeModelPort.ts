@@ -12,7 +12,9 @@ import {
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
+  TOOL_ARGUMENTS_NOT_OBJECT_REASON,
   cancelledToolTurnResult,
+  modelToolCallMessage,
   errorToolTurnResult,
   isHostCancellationError,
   isPortCancellation,
@@ -152,7 +154,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const { message, toolCalls: emittedCalls, nonTextChars } = await this.collectGeneration(
+      const { message, emitted: emittedCalls, nonTextChars } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -166,8 +168,13 @@ export class VscodeModelPort implements ModelPort {
       const content: ToolGenerationContent[] = text ? [{ type: 'text', text }] : [];
       const toolCalls: GeneratedToolCall[] = [];
       const callIds = new Set<string>();
+      /** The calls as the transcript replays them; `{}` stands in for arguments that were no object. */
+      const replayed: Array<{ callId: string; toolName: string; input: unknown }> = [];
+      let rebuilt = false;
 
-      for (const { id: callId, name: toolName, args } of emittedCalls) {
+      for (const emittedCall of emittedCalls) {
+        const { id: callId, name: toolName } = emittedCall;
+        const args = 'args' in emittedCall ? emittedCall.args : emittedCall.malformedArgs;
         const duplicate = callIds.has(callId);
         callIds.add(callId);
         const definition = definitionsByName.get(toolName);
@@ -190,10 +197,22 @@ export class VscodeModelPort implements ModelPort {
             code: REJECTION_CODES.unknownTool,
             reason: 'Tool is not available in this phase.',
           };
+        } else if ('malformedArgs' in emittedCall) {
+          // Charged to the call and answered by its own tool result, so the next reply can correct it.
+          rebuilt = true;
+          call = {
+            valid: false,
+            callId,
+            toolName,
+            input: emittedCall.malformedArgs,
+            code: REJECTION_CODES.invalidToolInput,
+            reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON,
+          };
         } else {
           const decodedArgs = this.decodeStringifiedArguments(toolName, args, toModelJsonSchema(definition.inputSchema));
           call = { valid: true, callId, toolName, input: decodedArgs };
         }
+        replayed.push({ callId, toolName, input: 'malformedArgs' in emittedCall ? {} : args });
         toolCalls.push(call);
         content.push({ type: 'tool-call', call });
       }
@@ -214,7 +233,9 @@ export class VscodeModelPort implements ModelPort {
       );
       return {
         status: 'completed',
-        message,
+        // A call whose arguments were no object is replayed with `{}`: the transcript needs an object
+        // and the model sent none; its rejection carries the truth.
+        message: rebuilt ? modelToolCallMessage(replayed, text, providerParts) : message,
         content,
         text,
         toolCalls,
@@ -248,6 +269,9 @@ export class VscodeModelPort implements ModelPort {
       (bridge) => bridge.bindStructuredOutputTool(outputSchema, STRUCTURED_OUTPUT_TOOL),
     );
     const calls = (message.tool_calls ?? []).filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
+    if (calls.length === 0 && (message.invalid_tool_calls ?? []).some((call) => call.name === STRUCTURED_OUTPUT_TOOL)) {
+      throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`);
+    }
     const decoded = calls.length === 1
       ? this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema)
       : undefined;
@@ -319,8 +343,8 @@ export class VscodeModelPort implements ModelPort {
     buildRunnable?: (bridge: VscodeLangChainBridge) => VscodeBridgeRunnable,
   ): Promise<{
     message: AIMessageChunk;
-    /** The message's tool calls, each verified to carry a call ID. */
-    toolCalls: readonly IdentifiedToolCall[];
+    /** The message's tool calls in emission order, each verified to carry a call ID. */
+    emitted: readonly EmittedToolCall[];
     nonTextChars: number;
   }> {
     const cancellation = bindCancellation(signal);
@@ -376,26 +400,14 @@ export class VscodeModelPort implements ModelPort {
         if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
       }
       if (signal?.aborted) throw cancelledError();
-      if ((message.invalid_tool_calls?.length ?? 0) > 0) {
-        throw new ModelPortError(
-          'unsupported_response',
-          'Language model returned non-object tool input.',
-        );
-      }
-      const toolCalls = message.tool_calls ?? [];
-      if (!toolCalls.every(hasCallId)) {
-        throw new ModelPortError(
-          'unsupported_response',
-          'Language model returned an incomplete tool call.',
-        );
-      }
+      const emitted = emittedToolCalls(message);
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
         finishReason: (message.tool_calls?.length ?? 0) > 0 ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
       });
-      return { message, toolCalls, nonTextChars };
+      return { message, emitted, nonTextChars };
     } catch (error) {
       if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(error)) {
         emitWire({
@@ -410,11 +422,41 @@ export class VscodeModelPort implements ModelPort {
   }
 }
 
-/** A LangChain tool call whose provider call ID is present. */
-type IdentifiedToolCall = ToolCall & { readonly id: string };
+/** One provider tool call: its parsed object arguments, or the JSON text LangChain could not read as an object. */
+export type EmittedToolCall = { readonly id: string; readonly name: string } & (
+  | { readonly args: Record<string, unknown> }
+  | { readonly malformedArgs: string }
+);
 
-function hasCallId(call: ToolCall): call is IdentifiedToolCall {
-  return typeof call.id === 'string' && call.id.length > 0;
+/**
+ * The generation's tool calls in emission order, pairing LangChain's parsed `tool_calls` and its
+ * `invalid_tool_calls` (arguments that were no JSON object) back onto the bridge's one chunk per
+ * call.
+ *
+ * @throws {@link ModelPortError} `unsupported_response` when a call carries no id: nothing can
+ *   answer it, so the generation is incomplete as a whole.
+ */
+export function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
+  const valid: ToolCall[] = [...(message.tool_calls ?? [])];
+  const invalid = [...(message.invalid_tool_calls ?? [])];
+  const incomplete = (): ModelPortError => new ModelPortError('unsupported_response', 'Language model returned an incomplete tool call.');
+  if (invalid.some((call) => !call.id)) throw incomplete();
+  const take = <T extends { id?: string }>(list: T[], id: string | undefined): T | undefined => {
+    const at = list.findIndex((call) => call.id === id);
+    return at < 0 ? undefined : list.splice(at, 1)[0];
+  };
+  const toEmitted = (id: string | undefined): EmittedToolCall => {
+    if (!id) throw incomplete();
+    const parsed = take(valid, id);
+    if (parsed) return { id, name: parsed.name, args: parsed.args };
+    const malformed = take(invalid, id);
+    if (malformed) return { id, name: malformed.name ?? '', malformedArgs: malformed.args ?? '' };
+    throw incomplete();
+  };
+  const chunks = [...(message.tool_call_chunks ?? [])].sort((left, right) => Number(left.index ?? 0) - Number(right.index ?? 0));
+  if (chunks.length === valid.length + invalid.length) return chunks.map((chunk) => toEmitted(chunk.id));
+  const ids = [...valid, ...invalid].map((call) => call.id);
+  return ids.map(toEmitted);
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {

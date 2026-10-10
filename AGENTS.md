@@ -8,6 +8,7 @@ Vendor-agnostic instructions for coding agents working on Data Lineage Viz. Read
 - TypeScript `^5.7`; VS Code extension host, esbuild `^0.28`, Vite `^6.4`.
 - React/React DOM `19.3`; webview uses React Flow (`@xyflow/react` `12.11`).
 - Graph: graphology `0.26`; validation: Zod `4.6`; tests: Vitest `4.1`, Mocha `11.8`, `@vscode/test-electron` `3.1`.
+- MCP server: `@modelcontextprotocol/server`, `/node` and `/client` `2.x` (Streamable HTTP on `127.0.0.1`, stdio proxy).
 - Sources are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse Dedicated SQL Pool. No application-owned database schema or migration command.
 
 ## Quickstart
@@ -51,6 +52,7 @@ docs/             product architecture, developer and testing documentation
 - Before changing SQL parsing, graph traversal, or runtime contracts, read `docs/ARCHITECTURE.md` and the relevant `docs/` contract.
 - For database connection behavior, read `docs/DEVELOPER_GUIDE.md` database sections and `.agents/skills/testing/SKILL.md`.
 - For a trace, state dump, NDJSON conversation, or Langfuse observation, read `.agents/skills/trace-debug/SKILL.md`.
+- To evaluate a set of recorded AI runs, compare a branch with a baseline, or grade answers against the SQL, read `.agents/skills/trace-analysis/SKILL.md`; use `trace-debug` for a single turn.
 - For function column-lineage routing or follow-ups, read the column-provenance contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Preserve the caller SQL, qualified requested output and function definition across investigation and retry; parameters are binding context, not invented graph columns. Keep ordinary view routing unchanged.
 - For CT/BB routing, read the shared readiness and continuation contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Structural readiness precedes mode ranking; qualified arriving tasks select mode. Do not recover continuation from historical edges, column names or prose.
 - Before comparing prompt variants, read `.agents/skills/prompt-playground/SKILL.md`.
@@ -64,8 +66,11 @@ docs/             product architecture, developer and testing documentation
 - Fix behavior in the layer that owns the contract. Keep `src/engine/` independent of `src/components/`; `src/engine/shared/bridgeContract.ts` owns webview IPC validation.
 - Validate untrusted inputs at their boundary with the existing schema and error handling. Preserve input identity where the API contract requires it.
 - Use public APIs from VS Code and installed libraries. Do not add fixture-specific behavior to production paths.
-- Add focused tests for changed behavior, including failure and malformed-input paths. Test files end in `.test.ts` or `.test.tsx`.
+- Add focused tests for changed behavior, including failure and malformed-input paths. Vitest and integration test files end in `.test.ts` or `.test.tsx`; tests of `tests/tools` end in `.test.mjs`.
 - TypeScript uses ESM imports/exports. Exported APIs need contract-focused TSDoc. Keep comments actionable and current.
+- A technical defect is fixed at its root cause in the layer that owns the contract, with a test that fails before the fix. No hack, workaround, retry-until-green, weakened or skipped test, or fixture-specific path. A fix that cannot be made cleanly is not pushed.
+- A defect that loses or discards work is a blocker and is solved before anything else is pushed: a rejected call that is never resent, a run that does not finish, a branch dropped without a trace, a result that differs between repeated runs of one question. The defects reported by `tests/tools/trace-metrics.mjs` are such faults; its signals are not, and are verified by reasoning on the question; see `.agents/skills/trace-analysis/SKILL.md`.
+- Documents are part of the change: before a push, check that every changed behavior, command, path and count named in a `.md` file is true, and remove statements that are no longer.
 - Never include credentials, customer database content, raw conversations, or generated test artifacts in tracked files.
 - Do not change `package.json` or lockfile versions unless the user asks.
 

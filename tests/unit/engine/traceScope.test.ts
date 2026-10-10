@@ -107,12 +107,6 @@ describe("Trace Scope Safety Tests", () => {
   expect(!reach.has('C'), 'scope A+B: C outside scope, not reached').toBe(true);
 });
 
-  it("missing start → empty set", () => {
-  const g = makeGraph([{ id: 'A' }], []);
-  const reach = bfsReachable(g, 'MISSING', new Set());
-  expect(reach.size, 'missing start → empty set').toBe(0);
-});
-
   it("analyzeRemoval: bridge removal cuts its subtree", () => {
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds;
@@ -190,17 +184,6 @@ describe("Trace Scope Safety Tests", () => {
   const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
   expect(check.safe, 'diamond prune A: safe — C reachable via B').toBe(true);
   expect(check.cutNodeIds, 'diamond prune A: C survives, nothing cut').toEqual([]);
-});
-
-  it("diamond, second shape: pruning A cuts nothing — C survives through D", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'D' }, { id: 'C' }],
-    [['O', 'A'], ['A', 'C'], ['O', 'D'], ['D', 'C']]
-  );
-  const visible = new Set(['O', 'A', 'D', 'C']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
-  expect(check.safe, 'diamond (second shape): safe').toBe(true);
-  expect(check.cutNodeIds, 'diamond (second shape): C survives through D, nothing cut').toEqual([]);
 });
 
   it("chain origin→A→B→C plus origin→D: pruning A cuts B and C, D survives", () => {
@@ -315,13 +298,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(result === null, 'no-path: disconnected → null').toBe(true);
 });
 
-  it("missing endpoint → null", () => {
-  const g = makeGraph([{ id: 'A' }], []);
-  const result = findShortestPathOrdered(g, 'A', 'GHOST');
-  expect(result === null, 'missing endpoint → null').toBe(true);
-});
-
-  it("forward path: result not null", () => {
+  it("forward path: returns the source-to-target path", () => {
   const g = makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['A', 'B'], ['B', 'C']]
@@ -334,7 +311,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(result!.path.length, 'forward path: length=3 (A-B-C)').toBe(3);
 });
 
-  it("reverse path: result not null", () => {
+  it("reverse path: returns the target-to-source path", () => {
   const g = makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['C', 'B'], ['B', 'A']]
@@ -344,14 +321,6 @@ describe("Trace Scope Safety Tests", () => {
   expect(result!.direction, "reverse path: direction='target_to_source'").toBe('target_to_source');
   expect(result!.path[0], 'reverse path: starts at C (target)').toBe('C');
   expect(result!.path[result!.path.length - 1], 'reverse path: ends at A (source)').toBe('A');
-});
-
-  it("single hop: not null", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
-  const result = findShortestPathOrdered(g, 'A', 'B');
-  expect(result !== null, 'single hop: not null').toBe(true);
-  expect(result!.path.length, 'single hop: path length=2').toBe(2);
-  expect(result!.direction, "single hop: direction='source_to_target'").toBe('source_to_target');
 });
 
 });

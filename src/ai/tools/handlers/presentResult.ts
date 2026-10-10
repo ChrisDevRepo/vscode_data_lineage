@@ -31,18 +31,21 @@ import {
   type PresentResultStage,
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
+  type EvidenceBlock,
 } from '../../tools/presentResult';
-import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
+import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase, type PresentResultExternalInput } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
-import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
-import { type ToolServices, getModelNodeMap } from './toolServices';
+import { evaluateExternalRenderHandleRule, evaluatePresentResultPreconditionsRule, type ExternalRenderHandle } from '../../interaction/rules/presentResultRules';
+import { type ToolCaller, type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
+import type { PreviewDelivery } from '../../support/chatAnswer';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import { isCancellationOutcome } from '../../support/cancellation';
 
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
@@ -146,50 +149,81 @@ function captureCheckpoint(sess: AiSession, logger: ToolServices['logger']): Pre
   }
 }
 
+/** Model name shown on a view an external caller rendered; the caller's model is not known. */
+const EXTERNAL_MODEL_NAME = 'External AI client';
+
+/**
+ * What one `present_result` call reads and writes, resolved once from its caller.
+ *
+ * @remarks
+ * A chat call renders the turn's discovery scope or the exploration result under the run's memory:
+ * held repair drafts, captured SQL evidence, detail-slot and column-chain coverage, the engine scope
+ * and the per-turn bookkeeping. An external call (no chat turn) renders a kept scope walk or view by
+ * handle and reads or writes none of that.
+ */
+interface PresentationTarget {
+  /** Stage the call is validated and worded for. */
+  readonly stage: PresentResultStage;
+  /** The chat run's held repair drafts; `null` keeps nothing between calls. */
+  readonly drafts: AiSession['presentResultRepairDraft'] | null;
+  /** The chat run's memory constrains the render: captured evidence, slot and chain coverage, engine scope. */
+  readonly runMemory: boolean;
+  /** Per-turn attempt, failure and success bookkeeping is recorded. */
+  readonly turnBookkeeping: boolean;
+}
+
+/** Resolves the {@link PresentationTarget} of one call. */
+function presentationTarget(caller: ToolCaller, sess: AiSession): PresentationTarget {
+  if (caller === 'external') return { stage: 'external', drafts: null, runMemory: false, turnBookkeeping: false };
+  const stage: PresentResultStage = sess.activeLmStage?.kind === 'visual_preview'
+    ? 'visual_preview'
+    : sess.phase.kind === 'completed' ? 'completed' : 'synthesis';
+  return { stage, drafts: sess.presentResultRepairDraft, runMemory: true, turnBookkeeping: true };
+}
+
 /** Builds and persists the final lineage presentation for the active turn. */
 export async function executePresentResult(input: unknown, s: ToolServices): Promise<string> {
     try {
       const sess = s.getSession();
       const rawInput = input;
       const turnEpoch = s.turnEpoch(sess);
-      const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
-      if (attemptWrite.kind !== 'accepted') {
-        return s.logAndReturn('lineage_present_result', makeRejection({
-          code: REJECTION_CODES.staleTurn,
-          reason: 'The turn no longer owns this session; the result was not rendered.',
-        }), rawInput);
+      const target = presentationTarget(s.caller, sess);
+      const { drafts } = target;
+      if (target.turnBookkeeping) {
+        const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
+        if (attemptWrite.kind !== 'accepted') {
+          return s.logAndReturn('lineage_present_result', makeRejection({
+            code: REJECTION_CODES.staleTurn,
+            reason: 'The turn no longer owns this session; the result was not rendered.',
+          }), rawInput);
+        }
       }
       const model = s.requireModel();
-      const isVisualPreview = sess.activeLmStage?.kind === 'visual_preview';
+      const isVisualPreview = target.stage === 'visual_preview';
       const previewNarrative = isVisualPreview && sess.lastDiscoveryAnswer
         ? discoveryPreviewNarrative(sess.lastDiscoveryAnswer)
         : null;
 
       const reject = (rejection: ToolRejection): string => {
-        sess.recordPresentResultFailure(
-          turnEpoch,
-          sanitizeForLog(rejection.hint ? `${rejection.reason} (${rejection.hint})` : rejection.reason),
-        );
+        if (target.turnBookkeeping) sess.recordPresentResultFailure(turnEpoch);
         return s.logAndReturn('lineage_present_result', rejection, rawInput);
       };
 
-      const presentResultStage: PresentResultStage = isVisualPreview
-        ? 'visual_preview'
-        : sess.phase.kind === 'completed'
-        ? 'completed'
-        : 'synthesis';
-      const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
-      const schema = presentResultSchemaForPhase(
-        presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
-        previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
-        sess.presentResultRepairSectionTextLeaves ?? undefined,
-      );
+      const presentResultStage = target.stage;
+      const retainableSections = target.runMemory && !isVisualPreview ? sess.retainableReportSections() : null;
+      const schema = drafts
+        ? presentResultSchemaForPhase(
+          presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
+          previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
+          sess.presentResultRepairSectionTextLeaves ?? undefined,
+        )
+        : presentResultSchemaForPhase(presentResultStage);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const repair = isVisualPreview ? null : holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
-        const authorization = sess.presentResultRepairDraft.getAuthorization();
-        const held = sess.presentResultRepairDraft.get();
+        const repair = isVisualPreview || !drafts ? null : holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
+        const authorization = drafts?.getAuthorization() ?? null;
+        const held = drafts?.get() ?? null;
         if (held && authorization) rejection.hint = [
           zodFieldRepairHint(parsed.error, input, schema),
           repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
@@ -197,12 +231,20 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ].filter(Boolean).join(' ');
         return reject(rejection);
       }
-      input = parsed.data;
+      // An external render names what it draws by handle; the rest is the shared render contract.
+      let externalHandle: ExternalRenderHandle | null = null;
+      if (presentResultStage === 'external') {
+        const { scope_id: scopeId, view_id: viewId, ...render } = parsed.data as PresentResultExternalInput;
+        externalHandle = { scopeId, viewId };
+        input = render;
+      } else {
+        input = parsed.data;
+      }
 
-      const held = sess.presentResultRepairDraft.get();
-      const authorization = sess.presentResultRepairDraft.getAuthorization();
+      const held = drafts?.get() ?? null;
+      const authorization = drafts?.getAuthorization() ?? null;
       let presentInput: PresentResultInput;
-      if (held && authorization) {
+      if (drafts && held && authorization) {
         const patch = input as PresentResultRepairPatch;
         const textlessNewLabels = authorization.sectionTextLeaves
           ? []
@@ -234,7 +276,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           const sectionTextLeaves = sectionsHeld
             ? sectionTextLeavesFromIssues(merged.error.issues)
             : undefined;
-          sess.presentResultRepairDraft.hold(presentInput, { fields, ...(sectionTextLeaves ? { sectionTextLeaves } : {}) });
+          drafts.hold(presentInput, { fields, ...(sectionTextLeaves ? { sectionTextLeaves } : {}) });
           return reject(rejectionFromZodError(merged.error, {
             code: REJECTION_CODES.validation,
             hint: presentResultRepairInstruction(fields, presentResultStage, sectionsHeld, undefined, sectionTextLeaves),
@@ -256,15 +298,15 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
-        if (!held) return reject(rejection);
-        sess.presentResultRepairDraft.hold(presentInput, { fields: [field] });
+        if (!drafts || !held) return reject(rejection);
+        drafts.hold(presentInput, { fields: [field] });
         return reject({ ...rejection, hint: `${rejection.hint} ${presentResultRepairInstruction([field], presentResultStage)}` });
       };
 
       if (previewNarrative) {
         const partition = findStartOrderIssues(presentInput.sections ?? []);
         if (partition.length > 0) {
-          sess.presentResultRepairDraft.hold(presentInput, { fields: ['sections'] });
+          drafts?.hold(presentInput, { fields: ['sections'] });
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: partition.map(issue => issue.message).join('\n'),
@@ -274,7 +316,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         }
       }
 
-      const isAmendment = !isVisualPreview && sess.phase.kind === 'completed' && presentInput.is_update === true;
+      // A completed chat run and an external view accept graph edits; a preview or synthesis render does not.
+      const graphEditable = presentResultStage === 'external' || presentResultStage === 'completed';
+      const isAmendment = externalHandle
+        ? externalHandle.viewId !== undefined
+        : graphEditable && presentInput.is_update === true;
 
       const previewScope = isVisualPreview && sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
         ? sess.discoveryScopeArtifact
@@ -285,16 +331,27 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         source: 'discovery_preview',
         originNodeId: previewScope.origin,
       } : null;
-      const resultGraph = previewGraph ?? sess.resultGraph;
-      if (!resultGraph) {
-        return reject(evaluatePresentResultPreconditionsRule(false)!);
+      let resultGraph: ResultGraph;
+      if (externalHandle) {
+        const scope = externalHandle.scopeId === undefined ? undefined : sess.externalScope(externalHandle.scopeId);
+        const view = externalHandle.viewId === undefined ? undefined : sess.externalView(externalHandle.viewId);
+        const violation = evaluateExternalRenderHandleRule(externalHandle, scope !== undefined, view !== undefined);
+        if (violation) return reject(violation);
+        // Copies: a rejected render leaves the kept scope and view untouched.
+        resultGraph = view
+          ? { ...view, nodeIds: [...view.nodeIds], edges: [...view.edges] }
+          : { nodeIds: [...scope!.nodeIds], edges: [...scope!.edges], source: 'external_scope', originNodeId: scope!.origin };
+      } else {
+        const chatGraph = previewGraph ?? sess.resultGraph;
+        if (!chatGraph) return reject(evaluatePresentResultPreconditionsRule(false)!);
+        resultGraph = chatGraph;
       }
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
       const graphSource = resultGraph.source;
       const modelNodeMap = getModelNodeMap(model);
-      // A completed-phase graph edit changes the rendered view, so its ids and edges commit with it.
+      // A graph edit changes the rendered view, so its ids and edges commit with it.
       let graphEdited = false;
 
       const canonicalNodeId = (id: string, field: string): string => {
@@ -328,7 +385,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         }));
       }
 
-      if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.add_node_ids?.length) {
+      if (graphEditable && presentInput.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
         const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (addResolution.unresolved.length > 0) {
@@ -340,7 +397,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           }));
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
-        const scopeSnapshot = sess.stateMachine?.toJSON() ?? null;
+        const scopeSnapshot = target.runMemory ? sess.stateMachine?.toJSON() ?? null : null;
         const outOfScope = scopeSnapshot
           ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
           : [];
@@ -360,7 +417,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         graphEdited = true;
       }
 
-      if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
+      if (graphEditable && presentInput.prune_node_ids?.length) {
         const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (pruneResolution.unresolved.length > 0) {
           return rejectGraphEdit('prune_node_ids', makeRejection({
@@ -418,14 +475,19 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
         : presentInput;
       if (!isVisualPreview && presentInput.sections?.length) {
-        const { blocks: evidenceBlocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
+        // Every caller's SQL fences are checked; only a chat run has captured evidence to expand.
+        // Number fences over the slots the completion envelope served: the render bound stored with the result.
+        const servedIds = new Set(sess.resultGraph?.evidenceNodeIds ?? []);
+        const evidenceBlocks = target.runMemory
+          ? assignEvidenceIds(sess.memory.getResult().detail_slots.filter(slot => servedIds.has(slot.nodeId))).blocks
+          : new Map<string, EvidenceBlock>();
         const expand = (text: string, fieldLabel: string, fieldPath = fieldLabel): string => {
           const expanded = expandEvidenceRefs(text, evidenceBlocks);
           unknownEvidenceIds.push(...expanded.unknownIds);
           if (expanded.malformedRefs.length > 0) {
             malformedEvidence.push({
               field: fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing',
-              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. Close each block with a bare triple-backtick marker; another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
+              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. A reused block is two lines, its opening line with the id and a bare triple-backtick line right after it; a block with written SQL closes with a bare triple-backtick line after the SQL. Another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
               repairFields: [fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing'],
               paths: [fieldPath],
             });
@@ -447,8 +509,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             return expanded === sec.text ? sec : { ...sec, text: expanded };
           }),
         };
-        const slotChars = sess.memory.getResult().detail_slots
-          .reduce((total, slot) => total + slot.sections.reduce((sum, section) => sum + section.text.length, 0), 0);
+        const slotChars = target.runMemory ? sess.memory.getResult().detail_slots
+          .reduce((total, slot) => total + slot.sections.reduce((sum, section) => sum + section.text.length, 0), 0) : 0;
         const coverage = evidenceCoverage(evidenceBlocks, [renderInput.title, renderInput.intro, renderInput.closing, ...(renderInput.sections ?? []).map(sec => sec.text)].filter((text): text is string => text !== undefined));
         s.logger.debug(
           `[Presentation] retention — slotChars=${slotChars} sectionChars=${presentInput.sections.reduce((sum, sec) => sum + sec.text.length, 0)} ` +
@@ -465,7 +527,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       const renderedNodeIds = new Set(resolvedNodeIds);
-      const unrenderedSlotIds = findUnrenderedDetailSlotIds(
+      const unrenderedSlotIds = !target.runMemory ? [] : findUnrenderedDetailSlotIds(
         requiredDetailSlotIds(sess.memory.notedNodeIds, renderedNodeIds),
         renderInput,
       );
@@ -503,7 +565,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       s.logger.debug(`[Presentation] Output assembled title="${trunc(presentInput.title ?? '(none)', 60)}"`);
 
       const externalViolations: PresentResultViolation[] = [...malformedEvidence];
-      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
+      const uncoveredCtNodes = !target.runMemory ? [] : findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
       if (uncoveredCtNodes.length > 0) {
         externalViolations.push({
           field: 'sections',
@@ -531,9 +593,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (unknownEvidenceIds.length > 0) {
         externalViolations.push({
           field: 'sections',
-          messages: [
-            `Evidence id(s) ${quoteIds([...new Set(unknownEvidenceIds)])} name no captured SQL block. `
-            + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.',
+          messages: [target.runMemory
+            ? `Evidence id(s) ${quoteIds([...new Set(unknownEvidenceIds)])} name no captured SQL block. `
+              + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.'
+            : `SQL fence label(s) ${quoteIds([...new Set(unknownEvidenceIds)])} name no SQL block; write the SQL inside the fence.`,
           ],
           repairFields: ['sections'],
           paths: ['sections'],
@@ -544,6 +607,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let smSnapshot: SmState | null | undefined;
       const nodeIdState: PresentNodeIdStateLookup = (nodeId): PresentNodeIdState => {
         if (!modelNodeMap.has(nodeId)) return 'not_in_model';
+        if (!target.runMemory) return 'outside_view';
         if (smSnapshot === undefined) smSnapshot = sess.stateMachine?.toJSON() ?? null;
         if (!smSnapshot) return 'out_of_scope';
         if (smSnapshot.removedSet.includes(nodeId)) return 'pruned';
@@ -554,17 +618,18 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const validation = validatePresentResult(renderInput, resolvedNodeIds, assembledBadges, assembledDescription, externalViolations, presentResultStage, nodeIdState);
 
       if (!validation.success) {
-        if (validation.repairable) {
+        if (drafts && validation.repairable) {
           const scopedHint = malformedEvidence.length > 0
-            ? holdRejectedPresentResult(sess.presentResultRepairDraft, presentInput, validation.rejection.issuePaths ?? [], presentResultStage)
+            ? holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage)
             : null;
           if (scopedHint) validation.rejection.hint = scopedHint;
-          else sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
+          else drafts.hold(presentInput, { fields: validation.repairFields });
         }
         return reject(validation.rejection);
       }
 
-      const runId = sess.explorationRunId ?? sess.id;
+      // A chat render belongs to its run; an external view has no run record to pair with.
+      const runId = target.runMemory ? sess.explorationRunId ?? sess.id : undefined;
       const renderedNotes = isAmendment
         ? mergeAmendedNotes(resultGraph.notes, validation.notes, validation.node_ids)
         : validation.notes.map(n => ({ nodeId: n.node_id, text: n.caption }));
@@ -572,8 +637,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         summary: validation.summary,
         description: validation.description,
         createdAt: new Date().toISOString(),
-        modelName: sess.modelName ?? 'unknown',
-        runId,
+        modelName: target.runMemory ? sess.modelName ?? 'unknown' : EXTERNAL_MODEL_NAME,
+        ...(runId ? { runId } : {}),
         highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
         badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
         notes: renderedNotes,
@@ -593,6 +658,53 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states, model.identifierCaseSensitive),
         } : {}),
       };
+      let autoDispatched = false;
+      let previewFailure: 'preview_post_failed' | 'preview_dispatch' | null = null;
+      let delivery: PreviewDelivery | 'dispatch_failed' = 'dispatch_failed';
+      s.signal?.throwIfAborted();
+      try {
+        delivery = await s.deliverPreview(
+          { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
+        );
+        s.signal?.throwIfAborted();
+        autoDispatched = delivery === 'delivered';
+        if (delivery === 'post_failed') {
+          s.logger.warn('AI preview post failed');
+          previewFailure = 'preview_post_failed';
+        }
+      } catch (error) {
+        if (isCancellationOutcome(error, s.signal)) throw error;
+        s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
+        previewFailure = 'preview_dispatch';
+      }
+
+      /** Writes the accepted render into the graph it was drawn from. */
+      const commitToGraph = (): void => {
+        if (isAmendment || graphEdited) {
+          resultGraph.nodeIds = resolvedNodeIds;
+          resultGraph.edges = resolvedEdges;
+        }
+        resultGraph.notes = renderedNotes.map(n => ({ nodeId: n.nodeId, summary: n.text }));
+        {
+          resultGraph.description = validation.description ?? undefined;
+          resultGraph.summary = validation.summary ?? undefined;
+          resultGraph.title = renderInput.title ?? undefined;
+          resultGraph.intro = renderInput.intro ?? undefined;
+          resultGraph.closing = renderInput.closing ?? undefined;
+          if (Array.isArray(renderInput.sections)) {
+            resultGraph.sections = renderInput.sections.map(sec => ({ label: sec.label, node_ids: sec.node_ids, text: sec.text }));
+            resultGraph.sectionsRunId = target.runMemory ? sess.explorationRunId ?? undefined : undefined;
+          }
+        }
+      };
+
+      if (externalHandle) {
+        commitToGraph();
+        const viewId = sess.commitExternalView(resultGraph, externalHandle.viewId);
+        s.logger.info(`AI view rendered for an external caller — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} delivery=${delivery}`);
+        return s.logAndReturn('lineage_present_result', { success: true, view_id: viewId, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource, delivery }, rawInput);
+      }
+
       const checkpoint = captureCheckpoint(sess, s.logger);
       const artifact: PresentationArtifact = {
         name: validation.name,
@@ -600,23 +712,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         aiMetadata,
         ...(checkpoint ? { runId, checkpoint } : {}),
       };
-
-      let autoDispatched = false;
-      let previewFailure: 'preview_post_failed' | 'preview_dispatch' | null = null;
-      try {
-        const delivery = await s.deliverPreview(
-          { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
-        );
-        autoDispatched = delivery === 'delivered';
-        if (delivery === 'post_failed') {
-          s.logger.warn('AI preview post failed');
-          previewFailure = 'preview_post_failed';
-        }
-      } catch (error) {
-        s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
-        previewFailure = 'preview_dispatch';
-      }
-
       const repeatedSuccess = sess.presentResultCalledThisTurn;
       const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
       if (successWrite.kind !== 'accepted') {
@@ -628,22 +723,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.
       if (previewFailure) sess.markSynthesisRenderDegraded(previewFailure);
       else sess.clearPreviewDeliveryDegraded();
-      if (isAmendment || graphEdited) {
-        resultGraph.nodeIds = resolvedNodeIds;
-        resultGraph.edges = resolvedEdges;
-      }
-      resultGraph.notes = renderedNotes.map(n => ({ nodeId: n.nodeId, summary: n.text }));
-      {
-        resultGraph.description = validation.description ?? undefined;
-        resultGraph.summary = validation.summary ?? undefined;
-        resultGraph.title = renderInput.title ?? undefined;
-        resultGraph.intro = renderInput.intro ?? undefined;
-        resultGraph.closing = renderInput.closing ?? undefined;
-        if (Array.isArray(renderInput.sections)) {
-          resultGraph.sections = renderInput.sections.map(sec => ({ label: sec.label, node_ids: sec.node_ids, text: sec.text }));
-          resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
-        }
-      }
+      commitToGraph();
       if (previewGraph) sess.resultGraph = resultGraph;
       if (repeatedSuccess) {
         s.logger.debug(`[Presentation] repeated present_result in one turn (success #${sess.presentResultAttemptCountThisTurn}) — single-shot guard may have regressed`);
@@ -652,7 +732,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       s.logger.debug(`AI view name="${trunc(validation.name, 60)}"`);
       s.logger.info(`AI view displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('lineage_present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
-    } catch (err) { return s.toolError('present_result', err); }
+    } catch (err) {
+      if (isCancellationOutcome(err, s.signal)) throw err;
+      return s.toolError('present_result', err);
+    }
 }
 
 /**

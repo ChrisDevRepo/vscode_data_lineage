@@ -208,12 +208,9 @@ const DatabaseModelSchema = z.object({
  * @remarks
  * Pinned to {@link ExtensionConfig} so a parsed message keeps its field types instead of degrading
  * to `any`. `Partial` is the honest shape: the host is the sole producer, so a mismatch here is a
- * host refactor bug that must fail at the boundary. `parseRules` alone stays structural.
+ * host refactor bug that must fail at the boundary.
  */
 const ExtensionConfigSchema: z.ZodType<Partial<ExtensionConfig>> = z.object({
-  parseRules: z.custom<NonNullable<ExtensionConfig['parseRules']>>(
-    (v) => typeof v === 'object' && v !== null && Array.isArray((v as { rules?: unknown }).rules),
-  ).optional(),
   excludePatterns: z.array(z.string()).optional(),
   maxNodes: z.number().optional(),
   dmvQueryTimeout: z.number().optional(),
@@ -428,6 +425,8 @@ const ExpandedSchemaViewSchema = z.object({
  */
 const FilterProfileSchema = z.object({
   id: z.string(),
+  /** Absent on legacy views; current encoding preserves literal identifier delimiters and URL identity. */
+  nodeIdEncodingVersion: z.literal(2).optional(),
   name: z.string(),
   createdAt: z.string(),
   filter: SerializedFilterStateSchema,
@@ -580,11 +579,14 @@ const FilterProfileReadSchema = z.object({
   expandedSchemaView: z.object(ExpandedSchemaViewSchema.shape).optional(),
 });
 
-/** Persisted-record counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. */
+/** Persisted-record counterpart of {@link ProjectSchema}; invalid optional views are skipped individually. */
 export const ProjectReadSchema = z.object({
   ...ProjectSchema.shape,
   connection: ProjectConnectionReadSchema,
-  filterProfiles: z.array(FilterProfileReadSchema).optional(),
+  filterProfiles: z.array(z.unknown()).transform(profiles => profiles.flatMap(profile => {
+    const parsed = FilterProfileReadSchema.safeParse(profile);
+    return parsed.success ? [parsed.data] : [];
+  })).optional(),
 });
 
 /**
@@ -741,11 +743,13 @@ export const UiStateSnapshotSchema = z.looseObject({
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional() }),
   z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
-  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
+  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.enum(['main', 'projects']).optional() }),
   z.object({ type: z.literal('detail-closed') }),
   z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional() }),
   z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
   z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string() }),
+  z.object({ type: z.literal('load-started') }),
+  z.object({ type: z.literal('load-cancelled') }),
   z.object({ type: z.literal('db-cancelled') }),
   z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string() }),
   z.object({ type: z.literal('last-dacpac-gone') }),
@@ -801,6 +805,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('show-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
+  z.object({ type: z.literal('cancel-load') }),
   z.object({ type: z.literal('open-dacpac') }),
   z.object({ type: z.literal('load-project'), id: z.string() }),
   z.object({ type: z.literal('save-project'), project: ProjectSchema }),
@@ -873,8 +878,8 @@ export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExten
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: z.any() }),
   z.object({ type: z.literal('detail-clear') }),
-  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
-  z.object({ type: z.literal('table-stats-error'), message: z.string() }),
+  z.object({ type: z.literal('table-stats-result'), schema: z.string(), objectName: z.string(), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
+  z.object({ type: z.literal('table-stats-error'), schema: z.string(), objectName: z.string(), message: z.string() }),
 ]);
 
 /** Messages sent from the extension host to the detail-panel webview. */

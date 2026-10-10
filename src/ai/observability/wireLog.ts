@@ -149,6 +149,8 @@ export type WireEvent =
       readonly status?: number;
       /** Response media type, without exposing the response's other headers. */
       readonly contentType?: string;
+      /** Allowlisted diagnostic headers of a failed response (rate limit, request id); never request headers. */
+      readonly headers?: Readonly<Record<string, string>>;
       readonly body: unknown;
     };
 

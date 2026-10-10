@@ -8,18 +8,25 @@ import { Logger } from './utils/log';
 import { notifyError, notifyWarning } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
-import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
+import { buildAiToolRegistry, createEffectSerializer, createExternalToolSource, registerAiTools } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
 import { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { migrateFromWorkspaceState } from './utils/migration';
 import { loadRules } from './engine/sqlBodyParser';
-import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
+import { DEFAULT_AI_ENABLED, DEFAULT_MCP_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
+import { turnTokenBudgetFromSettings } from './ai/support/tokenBudget';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import { buildExtensionConfig } from './bridge/messageHandlers';
 
 declare const __BUILD_TIMESTAMP__: string;
+
+/** Settings that load or drop a whole feature bundle at activation; a change applies on reload. */
+const KILL_SWITCHES = [
+  { key: 'dataLineageViz.ai.enabled', label: 'AI features', fallback: DEFAULT_AI_ENABLED },
+  { key: 'dataLineageViz.mcp.enabled', label: 'MCP server', fallback: DEFAULT_MCP_ENABLED },
+] as const;
 
 let outputChannel: vscode.LogOutputChannel;
 let activeTraceWriter: AiTraceWriter | undefined;
@@ -44,21 +51,24 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
   const projectLogger = Logger.create(outputChannel, 'Project');
   let droppedProjectsReported = false;
-  const reportDroppedProjects = ({ dropped, issuePaths }: ProjectStoreDropReport): void => {
-    if (dropped <= 0) return;
+  const reportDroppedProjects = ({ dropped, droppedViews = 0, issuePaths }: ProjectStoreDropReport): void => {
+    if (dropped <= 0 && droppedViews <= 0) return;
     if (droppedProjectsReported) {
       projectLogger.debug(
-        `Project store validation — dropped=${dropped} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
+        `Project store validation — dropped=${dropped} views=${droppedViews} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
       );
       return;
     }
     droppedProjectsReported = true;
-    const noun = dropped === 1 ? 'project' : 'projects';
+    const skipped = [
+      dropped > 0 ? `${dropped} saved ${dropped === 1 ? 'project' : 'projects'}` : '',
+      droppedViews > 0 ? `${droppedViews} saved ${droppedViews === 1 ? 'view' : 'views'}` : '',
+    ].filter(Boolean).join(' and ');
     notifyWarning(
       projectLogger,
       'Project store validation',
-      `Data Lineage: ${dropped} saved ${noun} could not be read and ${dropped === 1 ? 'was' : 'were'} skipped. See the Data Lineage Viz output channel for details.`,
-      { droppedProjects: dropped, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
+      `Data Lineage: ${skipped} could not be read. Those entries were skipped. See the Data Lineage Viz output channel for details.`,
+      { droppedProjects: dropped, droppedViews, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
     );
   };
 
@@ -116,6 +126,23 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
   let lineageRuntime: LineageRuntime | undefined;
   let participant: LineageParticipant | undefined;
+  const runStoreLogger = Logger.create(outputChannel, 'AI');
+  const aiToolHost = {
+    getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
+    // One queue orders the state-changing tool calls of chat turns, `vscode.lm` and MCP alike.
+    serialize: createEffectSerializer(),
+  };
+  const externalTools = createExternalToolSource(getSession, outputChannel, getActivePanel, {
+    ...aiToolHost,
+    readBudget: () => turnTokenBudgetFromSettings(vscode.workspace.getConfiguration('dataLineageViz')),
+  });
+
+  // Kill switch: the MCP bundle and its SDK load only while the setting is on at activation.
+  const mcpLoaded = vscode.workspace.getConfiguration('dataLineageViz.mcp').get<boolean>('enabled', DEFAULT_MCP_ENABLED);
+  if (mcpLoaded) {
+    const { registerMcpServer } = await import('./mcpRuntime.js');
+    context.subscriptions.push(registerMcpServer(context, outputChannel, externalTools));
+  }
 
   try {
     if (aiEnabled && missingAiApis.length > 0) {
@@ -124,13 +151,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         + 'Lineage visualisation, parsing and the graph are unaffected.',
       );
     } else if (aiEnabled) {
-    const runStoreLogger = Logger.create(outputChannel, 'AI');
-    const aiToolHost = {
-      getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
-    };
-    context.subscriptions.push(
-      ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
-    );
+    context.subscriptions.push(...registerAiTools(externalTools));
 
     lineageRuntime = new LineageRuntime({
       getSession,
@@ -193,12 +214,14 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       if (!e.affectsConfiguration('dataLineageViz')) return;
       configLogger.debug('Settings changed — dataLineageViz.*');
 
-      if (e.affectsConfiguration('dataLineageViz.ai.enabled')) {
-        const nowEnabled = vscode.workspace
-          .getConfiguration('dataLineageViz.ai')
-          .get<boolean>('enabled', DEFAULT_AI_ENABLED);
-        const msg = `AI features ${nowEnabled ? 'enabled' : 'disabled'}. Reload the window to apply.`;
-        configLogger.info(`Config changed — dataLineageViz.ai.enabled=${nowEnabled}; notification="${msg}"`);
+      // Kill switches load or drop whole bundles at activation, so a change applies on reload.
+      for (const { key, label, fallback } of KILL_SWITCHES) {
+        if (!e.affectsConfiguration(key)) continue;
+        const nowEnabled = vscode.workspace.getConfiguration().get<boolean>(key, fallback);
+        // A loaded MCP controller applies both directions at once; with none loaded, off has nothing to stop.
+        if (key === 'dataLineageViz.mcp.enabled' && (mcpLoaded || !nowEnabled)) continue;
+        const msg = `${label} ${nowEnabled ? 'enabled' : 'disabled'}. Reload the window to apply.`;
+        configLogger.info(`Config changed — ${key}=${nowEnabled}; notification="${msg}"`);
         const pick = await vscode.window.showInformationMessage(msg, 'Reload Window');
         if (pick === 'Reload Window') {
           void vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -258,15 +281,12 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 }
 
 /**
- * Extension Deactivation Lifecycle.
+ * Extension deactivation: closes the AI trace writer so buffered trace records are flushed.
  *
  * @remarks
- * No explicit cleanup is required — every disposable from {@link activateRuntime}
- * (output channel, command registrations, tree provider, chat participant,
- * config-change listener, AI tools) is pushed onto `context.subscriptions`
- * and torn down by VS Code automatically. Panel-specific resources such as
- * database connections are released through each panel's own `onDidDispose`
- * handler, again outside this function's responsibility.
+ * Every other disposable from {@link activateRuntime} is on `context.subscriptions` and torn down
+ * by VS Code; panel resources such as database connections are released by each panel's
+ * `onDidDispose` handler.
  */
 export async function deactivate(): Promise<void> {
   const traceWriter = activeTraceWriter;
@@ -433,6 +453,7 @@ async function loadParseRules(
     );
   }
 
+  const builtIn = config;
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
   const customPath = cfg.get<string>('parseRulesFile', '');
   if (customPath) {
@@ -472,27 +493,32 @@ async function loadParseRules(
     return;
   }
 
-  const result = loadRules(config);
+  const result = loadRules(config, source === 'custom' ? builtIn ?? undefined : undefined);
+  const appliedFrom = result.usedFallback ? 'built-in (fallback)' : source;
   const sess = getSession();
-  if (result.usedDefaults) {
+  if (result.usedFallback) {
     sess.parseRulesLabel = 'built-in rules (fallback)';
+  } else if (result.loaded === 0) {
+    sess.parseRulesLabel = 'none (no valid rules)';
   } else {
     sess.parseRulesLabel = source === 'custom' ? `custom (${path.basename(customPath)})` : 'built-in rules';
   }
 
   for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
-  logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
-  if (result.skipped.length > 0) {
-    const allSkipped = result.loaded === 0;
+  logger.info(`Applied parse rules: ${result.loaded} loaded from ${appliedFrom}, ${result.skipped.length} skipped`);
+  if (result.skipped.length > 0 || result.loaded === 0 || result.usedFallback) {
+    const userMessage = result.loaded === 0
+      ? 'Data Lineage: Parse rules config invalid — check Output channel.'
+      : result.usedFallback
+        ? 'Data Lineage: the custom parse rules file has no valid rule — extraction uses the built-in rules. Check Output channel.'
+        : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`;
     notifyWarning(
       logger,
       'Apply parse rules',
-      allSkipped
-        ? 'Data Lineage: Parse rules config invalid — check Output channel.'
-        : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`,
+      userMessage,
       {
-        source,
-        reason: allSkipped ? 'no valid rules in config' : 'invalid rules skipped',
+        source: appliedFrom,
+        reason: result.loaded === 0 || result.usedFallback ? 'no valid rules in config' : 'invalid rules skipped',
         skipped: result.skipped.length,
         loaded: result.loaded,
       },

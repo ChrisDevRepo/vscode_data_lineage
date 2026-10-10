@@ -4,10 +4,10 @@ import { Logger, safeStringifyForLog } from './utils/log';
 import { notifyError } from './utils/notifications';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
-import { createBridgeHost, type BridgeHost } from './bridge/host';
-import { summarizeZodError } from './bridge/host';
+import { createBridgeHost, summarizeZodError, type BridgeHost } from './bridge/host';
+import { buildWebviewCsp } from './utils/cspBuilder';
+import { type ProjectStore } from './engine/projectStore';
 import { createMessageHandlers, PROJECT_STORE_KEY, type ReportDocumentRef } from './bridge/messageHandlers';
-import { getConnectionAvailability } from './engine/connectionManager';
 import {
   BRIDGE_PROTOCOL_VERSION,
   MainPanelToExtensionMsgSchema,
@@ -41,8 +41,8 @@ export function openPanel(
   title: string,
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
-  loadProjectStore: (context: vscode.ExtensionContext) => any,
-  saveProjectStore: (context: vscode.ExtensionContext, store: any) => Promise<void>,
+  loadProjectStore: (context: vscode.ExtensionContext) => ProjectStore,
+  saveProjectStore: (context: vscode.ExtensionContext, store: ProjectStore) => Promise<void>,
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
   loadDemo = false
 ) {
@@ -105,6 +105,7 @@ export function openPanel(
     sess.graph = null;
     sess.columnStore.clear();
     sess.clearDiscoveryTranscript();
+    sess.clearExternalViews();
     void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
@@ -122,19 +123,6 @@ export function openPanel(
   );
 
   activeTriggerDemo = triggerDemoLoad;
-
-  let connectionStatus = getConnectionAvailability();
-  const repostConnectionStatus = (reason: string) => {
-    const status = getConnectionAvailability();
-    if (status.available === connectionStatus.available && status.provider === connectionStatus.provider) return;
-    connectionStatus = status;
-    bridgeLogger.info(`Database connection status changed (${reason}): provider=${status.provider} available=${status.available} — re-posting mssql-status.`);
-    void host.postMessage({ type: 'mssql-status', ...status });
-  };
-  vscode.extensions.onDidChange(() => repostConnectionStatus('extensions changed'), undefined, panelDisposables);
-  vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration('dataLineageViz.database.connectionProvider')) repostConnectionStatus('setting changed');
-  }, undefined, panelDisposables);
 
   panel.onDidDispose(() => {
     cleanup().catch(err => bridgeLogger.warn(`Cleanup failed — next session may reuse stale state: ${err}`));
@@ -193,8 +181,6 @@ async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
   bridgeLogger.info('Open Wizard confirmed — replacing the existing panel.');
   return true;
 }
-
-import { buildWebviewCsp } from './utils/cspBuilder';
 
 /**
  * Generates the root HTML for the lineage webview.

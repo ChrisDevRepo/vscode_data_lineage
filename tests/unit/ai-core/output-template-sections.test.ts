@@ -40,7 +40,7 @@ describe('section labels: one home per recipe', () => {
   });
 
   it.each(['business', 'technical', 'both', undefined] as const)(
-    'serves the built-in label sentence unchanged for classification %s', classification => {
+    'serves the built-in label sentence for classification %s', classification => {
       expect(synthesis(builtInSections, classification)).toContain(BUILT_IN_SENTENCE);
       expect(synthesis(builtInSections, classification)).not.toContain(SECTIONS_PLACEHOLDER);
     });
@@ -51,9 +51,9 @@ describe('section labels: one home per recipe', () => {
     expect(labelList(synthesis(withTechnicalOnlyLabel, 'business'))).not.toContain('Operational checks');
   });
 
-  it('serves the ordered union for both, first occurrence winning', () => {
+  it('serves the ordered union for both, first occurrence winning and each recipe order kept', () => {
     const sections: AiOutputSections = { business: ['Purpose', 'Steps', 'Gaps'], technical: ['Purpose', 'Mechanics', 'Steps'] };
-    expect(labelList(synthesis(sections, 'both'))).toBe('**Purpose**, **Steps**, **Gaps**, **Mechanics**');
+    expect(labelList(synthesis(sections, 'both'))).toBe('**Purpose**, **Mechanics**, **Steps**, **Gaps**');
     expect(labelList(synthesis(sections, 'business'))).toBe('**Purpose**, **Steps**, **Gaps**');
     expect(labelList(synthesis(sections, 'technical'))).toBe('**Purpose**, **Mechanics**, **Steps**');
   });
@@ -122,10 +122,6 @@ describe('readAiOutputSections', () => {
   });
 });
 
-describe('the section labels are a required argument', () => {
-  it('a render without `sections` does not type-check, so the placeholder is never served an empty list by omission', () => {
-    // @ts-expect-error -- `sections` is required; typecheck:tests fails this line if the argument becomes optional again
-    const render = () => resolveStagePrompt(builtInTemplates, 'synthesis', 'both', 5, false, { scope: 'stable' });
-    expect(render).toBeTypeOf('function');
-  });
-});
+// Static contract check: keep the call unexecuted; the tests typecheck fails if sections becomes optional.
+// @ts-expect-error -- sections is required
+void (() => resolveStagePrompt(builtInTemplates, 'synthesis', 'both', 5, false, { scope: 'stable' }));

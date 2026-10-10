@@ -18,7 +18,7 @@ beforeAll(() => { loadParseRules(); });
 type Expect = { s?: string[]; t?: string[]; x?: string[]; xs?: string[]; xt?: string[] };
 
 /** Splits at the first dot only, so a dotted object name such as `[a.b]` stays one part. */
-const key = (name: string) => `[${name.toLowerCase().replace('.', '].[')}]`;
+const key = (name: string) => `[${name.toLowerCase().replace(/]/g, ']]').replace('.', '].[')}]`;
 const sorted = (list: string[]) => [...list].sort();
 
 function expectParsed(sql: string, want: Expect): void {
@@ -288,23 +288,31 @@ describe('the ANSI-89 comma-list scan is linear in the size of the body', () => 
   const MAX_SECONDS = 20;
   const RUNS = 3;
 
-  /** Fastest of a few runs, in seconds, so a scheduling pause does not decide the ratio. */
-  const seconds = (sql: string): number => Math.min(...Array.from({ length: RUNS }, () => {
-    const start = performance.now();
-    parseSqlBody(sql);
-    return (performance.now() - start) / 1000;
-  }));
+  /**
+   * Fastest of a few rounds per input, in seconds. Each round times every input once, so CPU
+   * contention from parallel test files lands on all sizes alike instead of deciding one ratio.
+   */
+  const fastestSeconds = (sqls: string[]): number[] => {
+    const best = sqls.map(() => Number.POSITIVE_INFINITY);
+    for (let round = 0; round < RUNS; round++) {
+      sqls.forEach((sql, i) => {
+        const start = performance.now();
+        parseSqlBody(sql);
+        best[i] = Math.min(best[i], (performance.now() - start) / 1000);
+      });
+    }
+    return best;
+  };
 
   const body = (unit: string, kb: number) => unit.repeat(Math.ceil(kb * 1024 / unit.length));
   const inputs: Array<[string, (kb: number) => string]> = [
     ['repeated FETCH NEXT FROM c', kb => body('FETCH NEXT FROM c INTO @x\n', kb)],
     ['repeated unbalanced [', kb => body('[ x ', kb)],
-    ['repeated unbalanced [', kb => body('[ x ', kb)],
     ['one long comma list', kb => 'SELECT * FROM dbo.A a' + body(', dbo.B b WITH (NOLOCK), dbo.fn(1, 2) f, (SELECT 1 x) d', kb)],
   ];
 
   it.each(inputs)('%s', (_name, build) => {
-    const times = SIZES_KB.map(kb => seconds(build(kb)));
+    const times = fastestSeconds(SIZES_KB.map(kb => build(kb)));
     expect(Math.max(...times)).toBeLessThan(MAX_SECONDS);
     times.slice(1).forEach((time, i) => {
       // a floor keeps a sub-millisecond baseline from turning timer noise into a ratio

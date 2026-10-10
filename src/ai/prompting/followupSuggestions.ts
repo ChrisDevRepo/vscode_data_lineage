@@ -10,5 +10,6 @@ export function expandNextQuestionSuggestions(session: AiSession): string {
     `Finding: ${JSON.stringify(session.lastPresentResultSummary)}.`,
     `Analyzed objects: ${JSON.stringify(session.memory.getResult().detail_slots.map(slot => ({ nodeId: slot.nodeId, summary: slot.summary })))}.`,
     `Deferred follow-up questions: ${JSON.stringify(session.stateMachine?.deferredQuestions ?? [])}.`,
+    `Pruned branches: ${JSON.stringify(session.stateMachine?.prunedBranches ?? [])}.`,
   ].join('\n');
 }

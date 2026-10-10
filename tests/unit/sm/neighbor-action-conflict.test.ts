@@ -47,7 +47,7 @@ describe('neighbor action conflicts', () => {
       prune_neighbors: [{ id: caseSensitive ? 'dbo.writer' : 'dbo.WRITER', reason: 'Off the answer' }],
       questions: [{ nodeId: '[dbo].[writer]', question: 'Analyze the writer load.' }],
     });
-    expect(result).toMatchObject({ code: 'route_validation_failed', issuePaths: ['questions.0.nodeId', 'prune_neighbors'],
+    expect(result).toMatchObject({ code: 'route_validation_failed', issuePaths: ['questions.0.nodeId', 'prune_neighbors.0.id'],
       detail: [expect.objectContaining({ id: '[dbo].[writer]', path: 'questions.0.nodeId' })] });
     expect(committedState(engine)).toEqual(before);
     const repaired = engine.applyHeldContent({ ...kept, prune_neighbors: [] });
