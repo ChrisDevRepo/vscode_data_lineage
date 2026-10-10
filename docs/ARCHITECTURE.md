@@ -648,14 +648,17 @@ calls, so providers that validate signatures accept the history.
   (`invalid_tool_input`) and replayed as `{}` so the tool result pairs (VS Code
   already hands `{}` for a call cut off at the output limit; the schema rejection
   then states the whole call was lost).
-- *Rejection text* states the rule broken, the allowed form and the replies the
-  step has left; the rejection the last reply answers also names the top-level
-  fields to correct when the fault has a field path. The model reads reason and
-  hint, never a bare code. A call identical to one this step already rejected
-  (same tool, same input after key ordering) is rejected again with the same text
-  plus an unchanged-resend line. A failed field is never held, committed or
-  served to a later hop; held repair drafts belong to the handlers, and a call
-  rejected before dispatch holds nothing.
+- *Rejection text* states the rule broken, the allowed form and, when the
+  rejection is repairable, the replies the step has left. A backend fault
+  states no reply budget; the run ends on it. A sibling that was not executed
+  because an earlier call in the same reply closed the phase says not to retry
+  it and states no reply budget. The rejection the last reply answers also
+  names the top-level fields to correct when the fault has a field path. The
+  model reads reason and hint, never a bare code. A call identical to one this
+  step already rejected (same tool, same input after key ordering) is rejected
+  again with the same text plus an unchanged-resend line. A failed field is
+  never held, committed or served to a later hop; held repair drafts belong to
+  the handlers, and a call rejected before dispatch holds nothing.
 - *Tool-call notation:* every text value of every call the `@lineage` runtime
   dispatches is checked for tool-call notation (`<parameter name=…>`,
   `<invoke name=…>`, `</invoke>`, an argument-ending `</parameter>`). A hit is

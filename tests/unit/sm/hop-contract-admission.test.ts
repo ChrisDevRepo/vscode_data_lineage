@@ -280,12 +280,14 @@ describe('native receiving-boundary execution and finite retries', () => {
       new vscode.LanguageModelToolCallPart('garbled', 'lineage_submit_findings', garbled),
       new vscode.LanguageModelToolCallPart('filler', 'lineage_submit_findings', filler),
     ]);
-    const attempt = await executeToolAttempt(model.port, activePlan(w));
+    const attempt = await executeToolAttempt(model.port, activePlan(w), { priorState: initialToolPhaseAttemptState('active') });
     const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
     expect(results.map(result => [result.tool_call_id, (result.artifact as { code: string }).code])).toEqual([
       ['garbled', 'invalid_input'], ['filler', 'extra_call_not_evaluated'],
     ]);
+    expect(String(results[0].content)).toMatch(/2 replies left for this step\.$/);
     expect(String(results[1].content)).toContain('a reply carries one lineage_submit_findings call');
+    expect(String(results[1].content)).toMatch(/2 replies left for this step\.$/);
     expect(submit).not.toHaveBeenCalled();
     expect(w.engine.currentFocus).toBe(origin);
     expect(attempt.rejections.map(rejection => rejection.callId)).toEqual(['garbled']);
@@ -526,10 +528,13 @@ describe('backend fault inside a reply', () => {
       new vscode.LanguageModelToolCallPart('read', 'lineage_get_neighbor_columns', { ids: [branch] }),
       new vscode.LanguageModelToolCallPart('submit', 'lineage_submit_findings', finding()),
     ]);
-    const attempt = await executeToolAttempt(model.port, activePlan(w));
+    const attempt = await executeToolAttempt(model.port, activePlan(w), { priorState: initialToolPhaseAttemptState('active') });
     const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(results.map(item => (item.artifact as { code: string }).code)).toEqual(['internal_error', 'phase_closed']);
+    expect(String(results[0].content)).not.toMatch(/replies left|Last reply/);
+    expect(String(results[1].content)).toContain('Do not retry it.');
+    expect(String(results[1].content)).not.toMatch(/replies left|Last reply/);
     expect(recordToolAttempt(initialToolPhaseAttemptState('active'), attempt, 'lineage_submit_findings').stopReason).toBe('backend_fault');
   });
 });

@@ -720,13 +720,16 @@ interface RecordedToolOutcome {
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
  * reason states the identity fault; verified object-column inventories and the top-level fields to
- * correct are disclosed on the rejection the last budgeted reply answers. The last line states the replies the step has left, so
- * the remaining budget is known before it is spent. The code, issue paths and detail stay on the
- * paired `ToolMessage.artifact`; the reason line follows {@link rejectionReasonLines}, so the model
+ * correct are disclosed on the rejection the last budgeted reply answers. A repairable
+ * rejection's last line states the replies the step has left. A backend fault states
+ * none: the run ends, and a reply budget would be a retry request. The code, issue
+ * paths and detail stay on the paired `ToolMessage.artifact`; the reason line follows {@link rejectionReasonLines}, so the model
  * never reads a bare machine code as the message.
  */
 function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
-  const repliesLeft = repliesLeftAfter(priorState);
+  const repliesLeft = classifyRejectionCode(rejection.code) === 'backend_fault'
+    ? undefined
+    : repliesLeftAfter(priorState);
   const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
   const inventories = finalRejection && Array.isArray(rejection.detail)
     ? rejection.detail.flatMap((fault: { id?: string; actual_columns?: string[] }) => fault.actual_columns
@@ -811,7 +814,7 @@ function recordToolOutcome(
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
   trace?.({ toolName: outcome.toolName, code: outcome.rejection.code, status: 'not_evaluated' });
-  return { resultText: rejectionText(outcome.rejection), status: 'error', artifact: outcome.rejection };
+  return { resultText: rejectionText(outcome.rejection, priorState), status: 'error', artifact: outcome.rejection };
 }
 
 /** Bounds and normalizes a provider-controlled call id for single-line log surfaces. */
@@ -1106,7 +1109,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
           hint: "Answer that call's result with one call in your next reply.",
           detail: { evaluatedCallId },
         }),
-      }, calls, observations, rejections, input.traceSyntheticRejection);
+      }, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       logSyntheticRejection(input, 'extra_call_not_evaluated', call, 'extra_call_not_evaluated',
         `evaluated callId ${evaluatedCallId}`);

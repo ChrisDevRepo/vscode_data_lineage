@@ -11,15 +11,17 @@ sandbox. Host-specific setup is in the last section.
 | Deterministic | `npm ci`, `npm run typecheck`, `npm run build`, `npm test`, `npm run gate`, `npm run package` | Git, Node.js `>=20`, npm `>=10`, npm registry access. No display, database, model provider or credentials. |
 | VS Code Electron | `npm run test:edh`, `npm run test:mcp:live`, chat-UI fixture lane, `npm run test:gui:host` + `npm run test:gui:smoke` | Deterministic tier, plus a display (desktop session or virtual display), Electron runtime libraries, and download access to the configured VS Code test build (`stable` for EDH, `1.140.0` for chat UI). |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live`/`badge` lanes | `AI_TEST_*` settings and network access to that provider. `badge` also needs a recorded successful live trace under `tmp/lm-trace/`. |
-| Database | `npm run test:db:smoke` | `DB_TEST_*` settings and network access to a disposable or demo database across the Microsoft SQL family. |
+| Database | `npm run test:db:smoke` | `DB_TEST_*` SQL-login settings and network access to a disposable or demo database that accepts that login (SQL Server, Azure SQL, or Synapse Dedicated SQL Pool). |
 | Tracing export | `npm run test:ai:headless -- --langfuse` | `LANGFUSE_*` settings and network access to that Langfuse host. |
 
 Settings come from an ignored `.env` (template: [`.env.example`](../../.env.example))
 or from process environment variables, so a host can inject them as secrets.
 
 Not covered by any automated tier, and done on a developer workstation:
-interactive F5 debugging and visual UX review, private-network databases,
-Windows/macOS-specific desktop behavior, and representative performance timings.
+interactive F5 debugging and visual UX review, Microsoft Entra ID sign-in,
+mssql-extension connection profiles, the VS Code account's own chat models,
+private-network databases, Windows/macOS-specific desktop behavior, and
+representative performance timings.
 Never copy customer database content or real conversations onto a shared or hosted machine.
 
 ## Network Hosts
