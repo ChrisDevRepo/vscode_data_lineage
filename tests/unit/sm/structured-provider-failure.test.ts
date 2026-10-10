@@ -4,9 +4,10 @@
  * with the `provider_error` stop reason and the same user text; a provider verdict is never retried.
  * Scripted replies exercise graph wiring only; they say nothing about inference.
  */
+import { HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
-import { ModelPortError, type ModelPort } from '../../../src/ai/model/modelPort';
+import { messageContentToText, ModelPortError, type GenerateStructuredInput, type ModelPort } from '../../../src/ai/model/modelPort';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { AiSession } from '../../../src/ai/session/session';
 import type { LineageNode } from '../../../src/engine/types';
@@ -35,6 +36,16 @@ function providerFailure(message: string, causeCode: string): ModelPortError {
 class CountingStructuredPort extends ScriptedModelPort {
   public override get modelCalls(): number {
     return super.modelCalls + this.structuredCallCount;
+  }
+}
+
+/** Keeps each structured request so a test can read the correction the next classification sees. */
+class RecordingStructuredPort extends CountingStructuredPort {
+  public readonly structuredRequests: Array<GenerateStructuredInput<unknown>> = [];
+
+  public override async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<T> {
+    this.structuredRequests.push(input);
+    return super.generateStructured(input);
   }
 }
 
@@ -68,6 +79,37 @@ describe('structured generation provider failure (entry classification)', () => 
     expect(await w.runtime.run('Show me the objects')).toBe('ok');
     expect(w.model.structuredCallCount).toBe(4);
     expect(w.lines.some(line => line.includes('phase=detect_entry providerCalls=1 noProgressCalls=1'))).toBe(true);
+  });
+
+  it('states the replies left on a schema-invalid entry classification, without a tool result', async () => {
+    const invalid = { entry: 'not-an-entry' };
+    const session = new AiSession();
+    seed(session);
+    const epoch = session.beginTurn();
+    const { registry } = scriptedRegistry([]);
+    const model = new RecordingStructuredPort([{ text: 'Done.' }], [], [invalid, invalid, route]);
+    const runtime = new AgentRuntime({
+      threadId: 'structured-entry-repair', getSession: () => session, model: model as unknown as ModelPort, registry,
+      sink: new TurnEventSink(() => {}), turnEpoch: epoch, maxRounds: 10, transportRetryDelayMs: 0,
+    });
+
+    expect(await runtime.run('Show me the objects')).toBe('ok');
+
+    const corrections = (requestIndex: number): string[] => model.structuredRequests[requestIndex]!.messages
+      .filter((message): message is HumanMessage => message instanceof HumanMessage)
+      .map(message => messageContentToText(message.content))
+      .filter(text => text.startsWith('Correction for entry_detection:'));
+    const hasToolResult = (requestIndex: number): boolean =>
+      model.structuredRequests[requestIndex]!.messages.some(message => message instanceof ToolMessage);
+
+    expect(corrections(0)).toEqual([]);
+    expect(hasToolResult(1)).toBe(false);
+    expect(corrections(1)).toHaveLength(1);
+    expect(corrections(1)[0]).toContain('Return exactly one object matching the entry-detection schema.');
+    expect(corrections(1)[0]).toMatch(/2 replies left for this step\.$/);
+    expect(corrections(1)[0]).not.toContain('invalid_structured_output');
+    expect(hasToolResult(2)).toBe(false);
+    expect(corrections(2).at(-1)).toMatch(/Last reply for this step\.$/);
   });
 
   it('a second interruption ends the turn as provider_error with the interruption text', async () => {

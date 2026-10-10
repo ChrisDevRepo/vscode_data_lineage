@@ -11,18 +11,16 @@ sandbox. Host-specific setup is in the last section.
 | Deterministic | `npm ci`, `npm run typecheck`, `npm run build`, `npm test`, `npm run gate`, `npm run package` | Git, Node.js `>=20`, npm `>=10`, npm registry access. No display, database, model provider or credentials. |
 | VS Code Electron | `npm run test:edh`, `npm run test:mcp:live`, chat-UI fixture lane, `npm run test:gui:host` + `npm run test:gui:smoke` | Deterministic tier, plus a display (desktop session or virtual display), Electron runtime libraries, and download access to the configured VS Code test build (`stable` for EDH, `1.140.0` for chat UI). |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live`/`badge` lanes | `AI_TEST_*` settings and network access to that provider. `badge` also needs a recorded successful live trace under `tmp/lm-trace/`. |
-| Database | `npm run test:db:smoke` | `DB_TEST_*` settings and network access to a disposable or demo SQL Server/Azure SQL database. |
+| Database | `npm run test:db:smoke` | `DB_TEST_*` settings and network access to a disposable or demo database across the Microsoft SQL family. |
 | Tracing export | `npm run test:ai:headless -- --langfuse` | `LANGFUSE_*` settings and network access to that Langfuse host. |
 
 Settings come from an ignored `.env` (template: [`.env.example`](../../.env.example))
 or from process environment variables, so a host can inject them as secrets.
 
 Not covered by any automated tier, and done on a developer workstation:
-interactive F5 debugging and visual UX review, Microsoft Entra ID sign-in and
-mssql-extension connection profiles, the VS Code account's own chat models,
-private-network databases, Windows/macOS-specific behavior and representative
-performance timings. Never copy customer database content or real
-conversations onto a shared or hosted machine.
+interactive F5 debugging and visual UX review, private-network databases,
+Windows/macOS-specific desktop behavior, and representative performance timings.
+Never copy customer database content or real conversations onto a shared or hosted machine.
 
 ## Network Hosts
 
@@ -35,21 +33,22 @@ conversations onto a shared or hosted machine.
 
 Allowlists that match exact hosts must name the VS Code hosts individually; a
 `visualstudio.com` or `microsoft.com` entry without a wildcard does not cover them.
+If downloading through `@vscode/test-electron` is restricted or times out, the test build
+archive can be downloaded directly or linked from a system installation into
+`.vscode-test/vscode-<platform>-<arch>-<version>/` stamped with an empty `is-complete` file.
 
-## Linux Without A Desktop Session
+## Platform Setup & Graphical Sessions
 
-- Install a virtual display and Electron's runtime libraries. On Ubuntu 24.04:
+### Windows & macOS (Desktop Sessions)
+- **Windows**: Run integration lanes directly in PowerShell or cmd (`npm run test:edh`, `npm run test:tools`). No virtual display wrapper is required. In WSL2 without a GUI server, treat as headless Linux below.
+- **macOS**: Run integration lanes directly in Terminal (`npm run test:edh`, `npm run test:tools`). No virtual display wrapper is required.
 
-  ```sh
-  apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 \
-    libsecret-1-0 libxkbfile1 libatk-bridge2.0-0t64
-  ```
-
-- Prefix every Electron and Playwright command with `xvfb-run -a`, for example
-  `xvfb-run -a npm run test:edh`.
-- Keep the clone path short. VS Code places its profile socket under the test
-  profile directory, and fails with `listen EINVAL` when that socket path
-  exceeds 107 characters.
+### Linux (Desktop Sessions vs Headless/CI)
+- **Desktop session** (GNOME, KDE, X11, Wayland): Run directly (`npm run test:edh`).
+- **Headless / Container / CI / WSL**:
+  - Install a virtual display (`xvfb`) and Electron's runtime dependencies (e.g. on Ubuntu/Debian: `apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 libsecret-1-0 libxkbfile1 libatk-bridge2.0-0t64`).
+  - Prefix every Electron, VS Code test, and Playwright command with `xvfb-run -a` (e.g., `xvfb-run -a npm run test:edh`).
+  - Keep the clone path short: VS Code places its profile socket under the test profile directory, and fails with `listen EINVAL` when that socket path exceeds 107 characters.
 
 ## Verify A New Machine
 

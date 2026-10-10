@@ -783,7 +783,7 @@ function recordToolOutcome(
     }
     if (outcome.detail.refused) {
       const refusal = readToolErrorText(outcome.detail.result);
-      if (refusal) return { resultText: rejectionText(refusal), status: 'error', artifact: refusal };
+      if (refusal) return { resultText: rejectionText(refusal, priorState), status: 'error', artifact: refusal };
     }
     return { resultText: renderObservationResultContent(outcome.detail.result), status: 'success' };
   }
@@ -934,6 +934,25 @@ interface SynthesizedRejectionSpec {
 type SynthesizedRejectionMessages = readonly ModelMessage[];
 
 /**
+ * The user-role correction for a generation that left no tool call to answer.
+ *
+ * The text names the fault and the repair, then the replies the step has left. A missing hint or
+ * step state leaves that part out. The caller sends it as one user message: the transcript has no
+ * call id a tool result could pair with.
+ */
+export function noCallCorrectionText(
+  toolName: string,
+  reason: string,
+  hint: string | undefined,
+  priorState?: ToolPhaseAttemptState,
+): string {
+  return [
+    `Correction for ${toolName}: ${reason}${hint ? ` ${hint}` : ''}`,
+    ...replyBudgetLine(repliesLeftAfter(priorState)),
+  ].join('\n');
+}
+
+/**
  * Builds, records, logs, and traces one synthesized (no-call) rejection.
  *
  * @remarks
@@ -968,10 +987,7 @@ function emitSynthesizedRejection(
   input.traceSyntheticRejection?.({ toolName: rejection.toolName, code: rejection.code, status: 'rejected' });
   const hasAttemptedTurn = messageContentToText(spec.attempted.content).trim().length > 0
     || messageProviderParts(spec.attempted).length > 0;
-  const note = [
-    `Correction for ${rejection.toolName}: ${rejection.reason}${rejection.hint ? ` ${rejection.hint}` : ''}`,
-    ...replyBudgetLine(repliesLeftAfter(input.priorState)),
-  ].join('\n');
+  const note = noCallCorrectionText(rejection.toolName, rejection.reason, rejection.hint, input.priorState);
   return hasAttemptedTurn
     ? [spec.attempted, modelUserMessage(note)]
     : [modelUserMessage(note)];
@@ -1206,7 +1222,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
           input: call.input,
           ...(observe && reusableKey ? { acceptedCallKey: reusableKey } : {}),
         },
-      }, calls, observations, rejections);
+      }, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       if (observe && reusableKey && !reusableObservations.has(reusableKey)) {
         reusableObservations.set(reusableKey, observations[observations.length - 1]);

@@ -69,6 +69,7 @@ import {
   executeToolAttempt,
   initialToolPhaseAttemptState,
   MAX_TOOL_PROVIDER_CALLS,
+  noCallCorrectionText,
   recordToolAttempt,
   renderToolAttemptContext,
   type SyntheticRejectionTrace,
@@ -815,7 +816,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           hint: entryDetectionHint,
         }],
         messages: [
-          modelUserMessage(`Correction for entry_detection: ${error.reason} ${entryDetectionHint}`),
+          modelUserMessage(noCallCorrectionText('entry_detection', error.reason, entryDetectionHint, priorAttempt)),
         ],
       });
       deps.logger?.debug(

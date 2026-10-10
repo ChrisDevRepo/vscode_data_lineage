@@ -3,6 +3,7 @@
  * progress, so a run of oversize reads ends the phase on the reply limit, and the discovery
  * salvage never asks for an answer when every held observation is such a refusal.
  */
+import { ToolMessage } from '@langchain/core/messages';
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
@@ -39,6 +40,39 @@ describe('oversize discovery reads', () => {
     expect(invocations).toHaveLength(MAX_TOOL_PROVIDER_CALLS);
     expect(model.modelCalls, 'no salvage generation over refused observations').toBe(MAX_TOOL_PROVIDER_CALLS);
     expect(outcome).not.toBe('ok');
+  });
+
+  it('states the narrowing repair and the replies left, and hides the machine code', async () => {
+    const session = new AiSession();
+    const epoch = session.beginTurn();
+    const { registry } = scriptedRegistry([{ name: 'lineage_search_objects', result: OVERSIZE }]);
+    const reads = Array.from({ length: MAX_TOOL_PROVIDER_CALLS }, (_, i) => ({
+      toolCalls: [validCall(`read-${i}`, 'lineage_search_objects', { query: `Origin${i}` })],
+    }));
+    const model = new ScriptedModelPort(reads, [], [{ entry: 'discovery', targetColumns: null }]);
+    const runtime = new AgentRuntime({
+      threadId: 'oversize-read-repair-text',
+      getSession: () => session,
+      model: model as unknown as ModelPort,
+      registry,
+      sink: new TurnEventSink(() => {}),
+      turnEpoch: epoch,
+      maxRounds: 20,
+    });
+
+    await runtime.run('What feeds Origin?');
+
+    const toolText = (requestIndex: number): string => model.requests[requestIndex]!.messages
+      .filter((message): message is ToolMessage => message instanceof ToolMessage)
+      .map(message => String(message.content))
+      .join('\n');
+    const first = toolText(1);
+    const second = toolText(2);
+    expect(first).toContain('Narrow the request');
+    expect(first).not.toContain('result_too_large');
+    expect(first).toMatch(/2 replies left for this step\.$/);
+    expect(second).toMatch(/Last reply for this step\.$/);
+    expect(second).not.toContain('result_too_large');
   });
 });
 

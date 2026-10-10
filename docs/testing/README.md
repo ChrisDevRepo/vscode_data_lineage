@@ -48,6 +48,26 @@ Machine prerequisites for each tier: [Test Environments](ENVIRONMENTS.md).
 | UI performance | Use the same EDH/CDP setup with a fixed public demo dataset and a named device/runtime. | Manual measurement: record warm/cold state, dataset size, repetitions, median and p95. Results describe that setup only; do not use one-machine timings as general thresholds. |
 | Real-model Electron smoke | Configure `AI_TEST_PROVIDER`, `AI_TEST_ENDPOINT`, `AI_TEST_API_KEY`, `AI_TEST_MODEL`, and optionally `AI_TEST_REASONING_EFFORT`; run `npm run test:ai:smoke`. Provider profiles cover Azure OpenAI, Fireworks, OpenRouter and OpenAI-compatible APIs. | Calls a real model through a `vscode.LanguageModelChatProvider` adapter and the `@lineage` participant against the public demo DACPAC. It checks that the turn completes and returns text; review answer correctness and completeness against SQL/graph yourself. This smoke is opt-in and may incur provider cost. |
 
+### Database Sources And Authentication Modes
+
+Data Lineage Viz supports live metadata ingestion, dependency extraction, and lineage visualization across the entire Microsoft SQL family:
+- **SQL Server 2016+** (on-premises, VMs, Docker containers)
+- **Azure SQL Database** and **Azure SQL Managed Instance**
+- **Microsoft Fabric Data Warehouse** and **SQL Database in Fabric**
+- **Azure Synapse Dedicated SQL Pool**
+
+Both primary authentication models are supported:
+
+- **SQL Server Authentication (`sqlLogin`)**:
+  - Supported across SQL Server, Azure SQL Database, and Synapse Dedicated SQL Pool.
+  - Authenticates using username and password stored in the VS Code secret store (`SecretStorage`).
+  - Headless test execution: `npm run test:db:smoke` exercises connection, DMV extraction, and graph construction with configured credentials. For Azure SQL, use standard SQL logins (e.g. `user` or `user@server`), ensure client IP firewall allowlisting, and enable TLS (`DB_TEST_ENCRYPT=true`).
+- **Microsoft Entra ID / Azure Active Directory (`entraId`)**:
+  - Supported across all cloud Microsoft SQL family sources: Azure SQL Database, Azure SQL Managed Instance, Fabric Data Warehouse, and Synapse Dedicated SQL Pool.
+  - Authenticates via Microsoft Entra ID tokens using VS Code's Microsoft account integration (`@microsoft/vscode-azext-azureauth`), supporting multi-tenant directory resolution and cloud-specific endpoints (Commercial, US Government, China).
+- **MSSQL Extension Provider (`mssqlExtension`)**:
+  - Reuses saved connection profiles, credentials, and active sessions from Microsoft's SQL Server extension (`ms-mssql.mssql`) for any supported Microsoft family database.
+
 ## Optional Headless AI And Langfuse
 
 ```sh
