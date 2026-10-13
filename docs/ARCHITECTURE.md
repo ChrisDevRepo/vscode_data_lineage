@@ -16,7 +16,9 @@ flowchart LR
     AGENT -->|result graph| VIEW
 ```
 
-The **lineage engine** is deterministic. It loads objects, SQL bodies and dependencies from a DACPAC or a live database, finds table and procedure references with configurable regex rules, and builds one directed graph. The graph is object-level: it records which object reads, writes or calls which, not which column feeds which. A React webview draws it.
+The **lineage engine** is deterministic. It loads objects, SQL bodies and dependencies from a DACPAC or a live database and builds one directed graph. The graph is object-level: it records which object reads, writes or calls which, not which column feeds which. A React webview draws it.
+
+Edges come from two sources combined. The catalog or DACPAC lists which objects reference which, but not whether a procedure reads, writes or calls them. Configurable regex [parse rules](PARSE_RULES.md) read the SQL bodies to supply that direction: stored procedures get their reads, writes and calls from the rules, and views and functions use them to add references the metadata misses. A catalog dependency no rule captured is still drawn, with a default direction.
 
 The **lineage agent** runs inside VS Code chat with the model the user selected. It works only on the loaded lineage model: it never connects to a database or runs SQL. Its result is a highlighted subgraph with a written explanation.
 
