@@ -36,7 +36,7 @@ The core is a deterministic lineage engine and a graph view. Search, tracing, pa
 
 **`@lineage`.** Sends the question, recent chat and the SQL or metadata it reads to the chat model selected in VS Code. Setting: `dataLineageViz.ai.enabled`.
 
-The extension connects only to the database and, for Entra ID authentication, Microsoft sign-in. Logs are local; AI trace files are written only when enabled.
+The extension connects only to the database, with SQL login or Microsoft Entra ID; Entra ID sign-in also contacts Microsoft. Logs are local; AI trace files are written only when enabled.
 
 ## Code map
 

@@ -33,7 +33,7 @@ Allow time for a fix to be released before disclosing the issue publicly.
 - **Database import:** runs the catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) when you start an import. The built-in queries are read-only; custom DMV SQL runs as written.
 - **Table statistics:** runs row-count and aggregate `SELECT` queries on a table when you request them (`dataLineageViz.tableStatistics.enabled`).
 - **`@lineage` (optional):** sends the question, recent chat and the SQL or metadata it reads to the chat model selected in VS Code. It cannot connect to a database or run SQL (`dataLineageViz.ai.enabled`).
-- The extension connects only to your database and, if you use it, Microsoft Entra ID sign-in.
+- The extension connects only to your database, with SQL login or Microsoft Entra ID; Entra ID sign-in also contacts Microsoft.
 - Logs are local. AI trace files (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`) are written only when you run their commands. They contain SQL; check them before sharing.
 - Custom YAML files run as trusted configuration; load only files you have reviewed. Untrusted workspaces ignore them.
 - **Trust Server Certificate** turns off certificate checks for that connection.
