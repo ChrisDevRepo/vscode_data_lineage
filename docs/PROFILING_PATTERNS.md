@@ -50,6 +50,8 @@ Per profiled column `[c]`:
 | Standard | Date and time | `MIN([c])`, `MAX([c])` |
 | Standard | `char`, `nchar`, `varchar`, `nvarchar` | `MIN(LEN([c]))`, `MAX(LEN([c]))`, and an empty count: `DATALENGTH([c]) = 0` for `varchar`/`nvarchar`, `[c] = ''` for `char`/`nchar` |
 
+Completeness and uniqueness are computed by the extension from these counts and the row count; no further statement is sent.
+
 For `float` columns, `AVG` and `STDEV` are wrapped in a `CASE` that returns NULL when `MAX(ABS([c]))` exceeds the float range.
 
 Not profiled: computed columns; `binary`, `varbinary`, `image`, `text`, `ntext`, `xml`, `geography`, `geometry`, `hierarchyid`, `sql_variant`, `timestamp`/`rowversion`, `sysname` and other unlisted types; columns beyond `dataLineageViz.tableStatistics.maxColumns` (default 50). `bit` and `uniqueidentifier` get only the distinct and null counts. Standard mode is unavailable when `dataLineageViz.tableStatistics.standardModeEnabled` is `false`.

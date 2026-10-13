@@ -45,7 +45,19 @@ Table statistics use the same connection settings with different statements; see
 | Returns | One row: `engine_edition`, `major_version`, `edition`, `identifier_collation`, `identifier_comparison_style` |
 | Used for | Platform label, case sensitivity of names, and the sampling method of table statistics |
 
-If it is missing, fails or returns nothing, the import continues with `Unknown database platform`.
+Platform label by `engine_edition`:
+
+| Value | Platform |
+|---|---|
+| 5 | Azure SQL Database |
+| 6 | Synapse Dedicated Pool |
+| 8 | Azure SQL Managed Instance |
+| 9 | Azure SQL Edge |
+| 11 | Fabric Data Warehouse |
+| 12 | SQL Database in Fabric |
+| Other | `SQL Server <year>` from `major_version` (2000–2025); an unknown version falls back to `edition`, then to `Unknown database platform` |
+
+If the query is missing, fails, or returns no row or not the three required columns, the import continues with `Unknown database platform`.
 
 ### `all-objects`
 
@@ -80,6 +92,8 @@ If it is missing, fails or returns nothing, the import continues with `Unknown d
 | Filter | Parent table in `{{SCHEMAS}}`; unique constraints only (`type = 'UQ'`); check constraints defined on a column (`parent_column_id <> 0`) |
 | Returns | One row per constraint column: `schema_name`, `table_name`, `constraint_type` (`FK`, `UQ`, `CK`), `constraint_name`, `column_name`, `column_ordinal`; for `FK` also `ref_schema`, `ref_table`, `ref_column`, `on_delete` |
 
+Most CHECK constraints are table-level (`parent_column_id = 0`), even when they reference one column; those are not returned. Only a CHECK written inline in a column definition is. Primary keys come from `columns` (`pk_ordinal`).
+
 ### `dependencies`
 
 | | |
@@ -87,6 +101,8 @@ If it is missing, fails or returns nothing, the import continues with `Unknown d
 | Reads | `sys.sql_expression_dependencies`, `sys.objects`, `sys.schemas`, `sys.columns` |
 | Filter | Schema-qualified references only (`referenced_schema_name` and `referenced_entity_name` not NULL); `referenced_class = 1`; referencing object not `is_ms_shipped`; referencing or referenced schema in `{{SCHEMAS}}` |
 | Returns | One row per reference: `referencing_schema`, `referencing_name`, `referenced_schema`, `referenced_name`, `referenced_database`, `referenced_server`, `referencing_column`, `referenced_column`, `referenced_type` |
+
+`referencing_column` binds a referenced object, such as a scalar function, to the output column that calls it. SQL Server can report a reference with `referencing_minor_id = 0`; such a row does not say which output column calls the function, so no column binding is made. Which column dependencies SQL Server records also differs for schema-bound and non-schema-bound objects; see [`sys.sql_expression_dependencies`](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
 
 ## Known limitations
 
