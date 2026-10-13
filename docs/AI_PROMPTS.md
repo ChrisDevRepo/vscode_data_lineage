@@ -43,7 +43,7 @@ Your file must declare the same `schemaVersion` as [`assets/aiOutputTemplates.ya
 
 ## How prompts are built
 
-`@lineage` runs in stages (discovery, gate, one hop per object, synthesis), each with its own prompt and tools. Stage prompts state the task, tool schemas own field contracts, and templates own presentation; a rule belongs in exactly one. See [Column trace](ARCHITECTURE.md#column-trace) and [Scope, readiness, and continuation](ARCHITECTURE.md#scope-readiness-and-continuation).
+`@lineage` runs in stages (discovery, gate, one hop per object, synthesis), each with its own prompt and tools. Stage prompts state the task, tool schemas own field contracts, and templates own presentation; a rule belongs in exactly one. See [Exploration](ARCHITECTURE.md#exploration) and [Column trace](ARCHITECTURE.md#column-trace).
 
 One tool catalog serves every caller; seven read-only tools are also exposed to Copilot agent mode through the generated `languageModelTools` manifest in `package.json`.
 

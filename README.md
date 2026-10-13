@@ -64,12 +64,12 @@ It answers in chat, draws a **graph preview** you can save as a bookmark, or, wi
 
 ## Security and privacy
 
-- Connects only to your database. A `.dacpac` needs no connection at all.
-- Built-in database queries are read-only and run only when you start an import or profiling.
+- **Lineage:** a `.dacpac` is read locally and sends nothing. A database import runs only the read-only catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md), when you start it.
+- **Table statistics:** row-count and aggregate queries on one table, only when you request them. Turn off with `dataLineageViz.tableStatistics.enabled`.
+- **Optional AI:** only if you use `@lineage`, your question and the SQL it reads go to the AI chat model you picked in VS Code. It cannot run SQL. Turn off with `dataLineageViz.ai.enabled`.
 - Logs stay on your machine.
-- AI is optional. Only if you use `@lineage` do your question and the SQL it reads go to the AI chat model you picked in VS Code. It cannot run SQL.
 
-Details: [`SECURITY.md`](SECURITY.md).
+Details: [`SECURITY.md`](SECURITY.md) and [Data flow and privacy](docs/ARCHITECTURE.md#data-flow-and-privacy).
 
 ## Limitations
 
