@@ -19,9 +19,9 @@ Each entry in `rules:`:
 
 | Field | Required | Purpose |
 |---|---|---|
-| `name` | Yes | Identifier shown in logs. |
+| `name` | Yes | Stable identifier shown in logs and errors. |
 | `enabled` | No | `false` skips the rule. Default: enabled. |
-| `priority` | Yes | Number. Lower runs first. |
+| `priority` | Yes | Number. Lower runs first. Rule order is by priority only. |
 | `category` | Yes | `preprocessing`, `source`, `target`, `exec` or `external_ref`. |
 | `pattern` | Yes | Regex (JavaScript syntax) that must not match an empty string. Group 1 is the object reference; for `external_ref`, the path or URL. |
 | `flags` | Yes | Must include `g`. Usually `gi`. |
@@ -56,6 +56,7 @@ Guidance:
 - Add rules rather than editing built-in ones, and give them priorities after the shipped ones unless an earlier pass is intended.
 - Use non-capturing groups `(?:...)` except for group 1.
 - For dialect-specific syntax (Synapse `LABEL`, Fabric), add a sibling rule guarded by the dialect's keyword instead of changing a generic rule.
+- A capture that does not resolve to a loaded object adds no edge.
 
 ## How SQL is read
 
@@ -131,7 +132,7 @@ When the rules miss a dependency that the `.dacpac` or catalog does report, the 
 |---|---|---|
 | Procedure | Call | A procedure referencing another procedure through metadata almost always `EXEC`s it. |
 | Function | Read | A procedure referencing a function through metadata almost always reads from it. |
-| Table / external table | Read or write | The procedure body is checked for a matching write verb; otherwise the reference is a read. |
+| Table / external table | Read or write | The procedure body is checked for a captured write of that table; a table that is only deleted from or truncated becomes a delete-only write; otherwise the reference is a read. |
 | View | Read | Metadata-only view references are treated as reads. |
 
 The fallback supplements the rules; it does not make static parsing complete. Unresolved schema-qualified references are listed in Debug diagnostics and left out of the graph.
@@ -140,8 +141,12 @@ The fallback supplements the rules; it does not make static parsing complete. Un
 
 | Situation | Result |
 |---|---|
-| Invalid rule | Skipped and logged; a warning gives the count. |
-| File unreadable or no valid enabled rule | Built-in rules and a warning. |
+| Invalid rule | Skipped and logged; a warning gives the count whenever any rule is skipped, and the remaining rules run. |
+| `enabled: false` | Skipped without a warning. |
+| Custom file unreadable, invalid YAML or no `rules` list | Built-in rules and a warning. |
+| Custom file with no valid enabled rule | Built-in rules and a warning. |
+| Path cannot be resolved | Built-in rules; logged in the Output channel. |
+| Built-in file cannot be read | An error; SQL-body parsing is degraded. |
 
 ## Check a rule change
 

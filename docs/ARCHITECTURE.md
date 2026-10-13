@@ -18,17 +18,15 @@ The core is a deterministic lineage engine and a graph view. Search, tracing, pa
 
 ## Lineage engine
 
-**Ingestion.** A DACPAC is read locally. A live database is read with the catalog (DMV) queries in [`DMV_QUERIES.md`](DMV_QUERIES.md): first a schema preview, then objects, columns, constraints and dependencies for the schemas you select. Both paths produce the same model.
+**Ingestion.** Input is a DACPAC file or a live database. A live database is read with the catalog (DMV) queries in [`DMV_QUERIES.md`](DMV_QUERIES.md): first a schema preview, then objects, columns, constraints and dependencies for the schemas you select. Both paths produce the same model.
 
 **Edges.** Edges come from two sources combined. The catalog or DACPAC lists which objects reference which, but not whether a procedure reads, writes or calls them. Configurable regex [parse rules](PARSE_RULES.md) read the SQL bodies to supply that direction: stored procedures get their reads, writes and calls from the rules, and views and functions use them to add references the metadata misses. A catalog dependency no rule captured is still drawn, with a default direction.
 
-**Graph.** The result is one directed, object-level graph: which object reads, writes or calls which, not which column feeds which. Tracing, path finding and pattern analysis run on it locally, and a React webview draws it.
+**Graph.** The result is one directed, object-level graph: which object reads, writes or calls which, not which column feeds which. Tracing, path finding and pattern analysis run on it, and a React webview draws it.
 
 **Table statistics.** Profiling is separate from lineage. It runs only when you request it, on its own connection; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 
 ## Data access
-
-**DACPAC.** Read locally; no connection is made.
 
 **Database import.** Runs the read-only catalog queries in [`DMV_QUERIES.md`](DMV_QUERIES.md) when you start an import.
 
@@ -36,7 +34,7 @@ The core is a deterministic lineage engine and a graph view. Search, tracing, pa
 
 **`@lineage`.** Sends the question, recent chat and the SQL or metadata it reads to the chat model selected in VS Code. Setting: `dataLineageViz.ai.enabled`.
 
-The extension connects only to the database, with SQL login or Microsoft Entra ID; Entra ID sign-in also contacts Microsoft. Logs are local; AI trace files are written only when enabled.
+Database connections use SQL login or Microsoft Entra ID. AI trace files are written only when enabled.
 
 ## Code map
 
