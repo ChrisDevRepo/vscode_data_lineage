@@ -55,7 +55,7 @@ Layering rules:
 
 ## AI runtime
 
-The `@lineage` participant and tool catalog are described in [`ARCHITECTURE.md`](ARCHITECTURE.md); prompts and templates in [`AI_PROMPTS.md`](AI_PROMPTS.md). After changing the tool catalog, run `npm run generate:tool-manifest`. During development `@lineage` was tested with several models and providers, such as Azure OpenAI, Fireworks, OpenRouter and local OpenAI-compatible servers; this is not a list of supported models.
+The `@lineage` participant and tool catalog are described in [`ARCHITECTURE.md`](ARCHITECTURE.md); prompts and templates in [`AI_PROMPTS.md`](AI_PROMPTS.md). After changing the tool catalog, run `npm run generate:tool-manifest`. During development `@lineage` was tested with several models, such as Claude, ChatGPT, DeepSeek Flash, Gemini Flash and GLM Flash, through providers such as Azure OpenAI, Fireworks, OpenRouter and local OpenAI-compatible servers; this is not a list of supported models.
 
 ## Testing
 
