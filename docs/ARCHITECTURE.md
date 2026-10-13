@@ -16,7 +16,7 @@ flowchart LR
     AGENT -->|result graph| VIEW
 ```
 
-The **lineage engine** is deterministic. It loads objects, SQL bodies and dependencies from a DACPAC or a live database, finds table and procedure references with configurable regex rules, and builds one directed graph. A React webview draws it.
+The **lineage engine** is deterministic. It loads objects, SQL bodies and dependencies from a DACPAC or a live database, finds table and procedure references with configurable regex rules, and builds one directed graph. The graph is object-level: it records which object reads, writes or calls which, not which column feeds which. A React webview draws it.
 
 The **lineage agent** runs inside VS Code chat with the model the user selected. It works only on the loaded lineage model: it never connects to a database or runs SQL. Its result is a highlighted subgraph with a written explanation.
 
@@ -55,7 +55,9 @@ A small question is answered directly in **discovery** with read-only tools. A q
 
 The design splits the work: the model reads SQL and explains it, and the `NavigationEngine` owns everything structural (which objects are in scope, the visiting order, validation and when the run is done).
 
-Each step is a **hop**: one model call on one object (a procedure, view or function; a table only when it is the starting object or named in a follow-up). The model sees that object's SQL and its neighbors' column lists, records its findings, and leaves each unvisited neighbor a note to skip it or a question to check. The engine visits every object once, removes a neighbor only when every hop that reaches it agrees, and never cuts a visited object off from the starting object. A rejected answer goes back to the model with the reason; if a hop never produces a valid answer, the run stops with an error.
+Each step is a **hop**: one model call on one object (a procedure, view or function; a table only when it is the starting object or named in a follow-up). The model sees that object's SQL and its neighbors' column lists, records its findings, and leaves each unvisited neighbor a note to skip it or a question to check. The engine visits every object once, removes a neighbor only when every hop that reaches it agrees, and keeps every visited object connected to the starting object.
+
+Findings are committed atomically: the engine checks every neighbor, column and skip decision first and rejects a failing answer with the reason instead of repairing it. A hop has three replies to produce a valid answer; after that, or on an internal fault, the run stops with an error naming the object and shows no result.
 
 Exploration runs in one of two modes, chosen at the gate:
 
@@ -64,11 +66,23 @@ Exploration runs in one of two modes, chosen at the gate:
 
 ### Column trace
 
-In CT each hop also returns, per traced column, the source columns its value comes from, tagged as copied, computed, aggregated, or used only to shape rows (join, grouping, ordering or filter). Only value sources become column links. Every column is checked against the loaded metadata. Procedures report the table column they write; a scalar function is traced through the caller column that uses it.
+Column lineage comes only from the language model. The engine traces objects; in CT the model reads each object's SQL and reports which source columns feed each traced column, and the engine checks every column it names against the loaded metadata. Column links are therefore AI findings, to be checked against the SQL.
+
+In CT each hop also returns, per traced column, the source columns its value comes from, tagged as copied, computed, aggregated, or used only to shape rows (join, grouping, ordering or filter). Only value sources become column links. Procedures report the table column they write; a scalar function is traced through the caller column that uses it.
 
 ### Scope, readiness, and continuation
 
 The approved scope fixes schemas, object types, exclusions and any exact depth; within that border a run can reach objects beyond the initial set. An object is visited only after the objects that send it notes are done; objects in a cycle are scheduled together. Column work is visited first. A hop runs in CT only when column work reaches it; anything unresolved is reported as an open lead.
+
+### Large graphs and memory
+
+The graph is never sent to the model whole. Discovery reads at most `dataLineageViz.ai.discoveryNodeCap` objects within `dataLineageViz.ai.discoveryTokenBudget` tokens; a larger question becomes an exploration of at most `dataLineageViz.ai.maxRounds` hops.
+
+Each hop uses sliding memory. A fixed prefix carries the question, the approved scope and the discovery summary; the hop message adds only the current object, its neighbors' columns, the tasks arriving from earlier hops, the last three hop summaries and recent rejections. After each accepted hop the conversation restarts from one continuation message, so the prompt stays the same size however many objects a run visits. Findings go to an archive the engine keeps, and synthesis reads that archive once to write the answer.
+
+### Results
+
+The model writes the summary, sections and highlights; the engine resolves object ids, assembles the report and keeps the result graph connected to the starting object. Content the engine already holds, such as SQL snippets, is referenced by id instead of retyped by the model.
 
 ## Design boundaries
 
@@ -80,4 +94,4 @@ The approved scope fixes schemas, object types, exclusions and any exact depth; 
 
 ## History, privacy, and no-egress boundary
 
-The extension has no telemetry and adds no network destination for AI. The selected model receives the question, recent chat text, and the metadata or SQL the tools return. Opt-in local traces can contain SQL and object names; review them before sharing.
+The extension has no telemetry and adds no network destination for AI. The selected model receives the question, recent chat text, and the metadata or SQL the tools return. Across chat turns only question and answer text is replayed; tool results are not stored in VS Code's chat history, and a later turn reads facts again through the tools. Opt-in local traces can contain SQL and object names; review them before sharing.

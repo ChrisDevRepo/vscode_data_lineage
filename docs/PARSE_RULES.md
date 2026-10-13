@@ -67,6 +67,24 @@ Only schema-qualified captures that match a loaded object become edges. Temp tab
 
 ## Limits
 
-Not captured: schema-less names (`EXEC uspA`, `FROM T`), cross-database `EXEC`, and `ALTER TABLE ... SWITCH`. `DELETE` and `TRUNCATE` mark a delete-only write, not a data source. Triggers, synonyms, CLR objects, sequences and types are not loaded. When no rule captures a catalog dependency, it is drawn as `exec` for a procedure, read for a function or view, and read or write for a table depending on the body.
+Only tables, views, functions, stored procedures and external objects are loaded. Catalog or `.dacpac` dependencies can still supply an edge the rules miss.
+
+| Construct | Result |
+|---|---|
+| Schema-less names (`EXEC uspA`, `FROM T`, `db..T`) | Not captured; the parser does not choose a schema. |
+| Cross-database `EXEC db.schema.proc` | Call not captured; cross-database reads and writes are. |
+| Four-part name `server.db.schema.object` | Read as the cross-database `db.schema.object`; the server is dropped. |
+| `OPENDATASOURCE(...)`, `ALTER TABLE ... SWITCH`, `READTEXT` / `WRITETEXT` / `UPDATETEXT` | Nothing captured. |
+| `FREETEXTTABLE` / `CONTAINSTABLE`, `VECTOR_SEARCH(TABLE = ...)`, `PREDICT(DATA = ...)` | That table is not read; other tables in the statement are. |
+| `DELETE` / `TRUNCATE` | Marked as a delete-only write, not a data source. `DELETE` through a CTE is not marked. |
+| Comma-list join after a member with `TABLESAMPLE`, or after `JOIN ... ON` or `APPLY` | Tables after that point are lost. |
+| `UPDATE alias` where the alias joins several tables | The write is not captured. |
+| `alias.method(...)` on xml, spatial or hierarchyid columns | Read as a two-part name; an edge only if such an object exists. |
+| Numbered procedures `EXEC dbo.p;2` | Read as a call to `dbo.p`. |
+| JSON and XML functions, SQL Graph syntax, types, variables | Ignored; the tables around them are read as usual. |
+| Triggers, synonyms, CLR objects, extended procedures, sequences, user-defined types | Not loaded; references through them are lost. |
+| Encrypted or unreadable procedure bodies | Node without edges, with a warning. |
+
+When no rule captures a catalog dependency, it is drawn as `exec` for a procedure, read for a function or view, and read or write for a table depending on the body.
 
 In a clone of this repository, `npm run test:parser` checks expected edges per construct in `tests/cases/parser/exact-edges.yaml`.

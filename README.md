@@ -78,9 +78,11 @@ The graph comes from database metadata only. Not covered:
 - **External pipelines** (ADF, SSIS, Spark, Dataflow): their target tables appear as leaves.
 - **Other databases or servers**: shown as external nodes, not explored.
 - **Dynamic SQL** (`EXEC(@sql)`, `sp_executesql`).
-- **References without a schema**: may not resolve.
-- **Triggers, synonyms, CLR modules, sequences and user-defined types**: not loaded, and references through them are lost.
+- **References without a schema**: ambiguous; catalog metadata resolves some, the rest may not resolve.
+- **Triggers, synonyms, CLR modules, extended stored procedures, sequences and user-defined types**: not loaded, and references through them are lost.
 - **Encrypted or unviewable procedures**: shown without dependencies, with a warning.
+- **Features that are not database objects** (JSON, XML, vector, `PREDICT`, SQL Graph syntax, column methods, variables): ignored; the tables around them are read as usual.
+- **Column-level lineage**: the graph is object-level. Column traces come from `@lineage` and its language model; check them against the SQL.
 
 Synapse serverless SQL pool is not supported. Parse details: [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md).
 

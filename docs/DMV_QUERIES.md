@@ -60,7 +60,7 @@ Column names match case-insensitively; extra columns are ignored. Only `platform
 | `constraints` | `schema_name`, `table_name`, `constraint_type` (`FK`, `UQ`, `CK`), `constraint_name`, `column_name`; FK only: `ref_schema`, `ref_table`, `ref_column`, `on_delete` |
 | `dependencies` | `referencing_schema`, `referencing_name`, `referenced_schema`, `referenced_name`; optional `referenced_database`, `referenced_server`, `referencing_column`, `referenced_column`, `referenced_type` |
 
-`type_code` uses `sys.objects.type` codes (`U`, `V`, `P`, `FN`, `IF`, `TF`), plus `ET` for external tables. Without `referencing_column` and `referenced_column`, lineage stays object-level; without `referenced_database` and `referenced_server`, cross-database references are not recognized. Columns appear in result row order, so keep the `ORDER BY`.
+`type_code` uses `sys.objects.type` codes (`U`, `V`, `P`, `FN`, `IF`, `TF`), plus `ET` for external tables. `referencing_column` and `referenced_column` let a column trace bind a scalar function to the column that calls it; without `referenced_database` and `referenced_server`, cross-database references are not recognized. Columns appear in result row order, so keep the `ORDER BY`.
 
 ## Example: exclude a schema
 
