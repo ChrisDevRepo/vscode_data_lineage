@@ -66,8 +66,8 @@ It answers in chat, draws a **graph preview** you can save as a bookmark, or, wi
 
 - Connects only to your database. A `.dacpac` needs no connection at all.
 - Built-in database queries are read-only and run only when you start an import or profiling.
-- `@lineage` is optional. It sends your question and the SQL it reads to the model you picked in VS Code chat. It cannot run SQL.
 - Logs stay on your machine.
+- AI is optional. Only if you use `@lineage` do your question and the SQL it reads go to the AI chat model you picked in VS Code. It cannot run SQL.
 
 Details: [`SECURITY.md`](SECURITY.md).
 

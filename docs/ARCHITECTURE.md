@@ -22,7 +22,7 @@ Edges come from two sources combined. The catalog or DACPAC lists which objects 
 
 The **lineage agent** runs inside VS Code chat with the model the user selected. It works only on the loaded lineage model: it never connects to a database or runs SQL. Its result is a highlighted subgraph with a written explanation.
 
-The agent is optional: everything else works without a model, and a DACPAC needs no network. `@lineage` uses only the model picked in VS Code chat, which can be a local model such as Ollama through Copilot bring-your-own-key (BYOK).
+The agent is optional and not the core: the graph, search, tracing and analysis work without AI, and a DACPAC needs no network. `@lineage` uses only the AI chat model picked in VS Code, which can be a local one such as Ollama through Copilot bring-your-own-key (BYOK).
 
 ## Code map
 
@@ -98,4 +98,4 @@ The model writes the summary, sections and highlights; the engine resolves objec
 
 ## Privacy
 
-The model receives the question, recent chat and the SQL or metadata the tools return. Only question and answer text carries over between chat turns; a later turn reads facts again through the tools. Logs stay local; AI trace files are written only when you turn them on.
+AI is involved only when you use `@lineage`. Then the AI chat model receives the question, recent chat and the SQL or metadata the tools return. Only question and answer text carries over between chat turns; a later turn reads facts again through the tools. Logs stay local; AI trace files are written only when you turn them on.

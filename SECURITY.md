@@ -32,7 +32,7 @@ Allow time for a fix to be released before disclosing the issue publicly.
 - `.dacpac` files are read locally; the SQL in them is never run.
 - The extension connects only to your database and, if you use it, Microsoft Entra ID sign-in.
 - Built-in database queries are read-only and run only when you start an import or profiling. Custom DMV SQL runs as you wrote it.
-- `@lineage` sends your question, recent chat and the SQL or metadata it reads to the model you picked in VS Code chat. It cannot connect to a database or run SQL.
+- AI is optional. Only if you use `@lineage` do your question, recent chat and the SQL or metadata it reads go to the AI chat model you picked in VS Code. It cannot connect to a database or run SQL.
 - Logs stay local. AI trace files (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`) are written only when you run their commands. They contain SQL; check them before sharing.
 - Custom YAML files run as trusted configuration; load only files you have reviewed. Untrusted workspaces ignore them.
 - **Trust Server Certificate** turns off certificate checks for that connection.
