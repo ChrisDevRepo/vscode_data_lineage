@@ -109,7 +109,7 @@ Large tables are sampled where supported; Fabric always scans in full ([sampling
 
 ## `@lineage` AI
 
-Type `@lineage` in VS Code Chat to ask about the loaded graph in plain language. It uses exactly the model you picked for the chat (GitHub Copilot or any compatible provider, including BYOK). Your question and the DDL and columns of the objects in scope are sent to that model's provider.
+Type `@lineage` in VS Code Chat to ask about the loaded graph in plain language. It uses exactly the model you picked for the chat (GitHub Copilot or any compatible provider, including BYOK). Your question and the DDL and columns of the objects in scope are passed to that model through VS Code; VS Code, Copilot and the provider handle them under their own terms.
 
 ### How it answers
 

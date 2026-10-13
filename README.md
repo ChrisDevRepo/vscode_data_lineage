@@ -64,9 +64,10 @@ It answers in chat, draws a **graph preview** you can save as a bookmark, or, wi
 
 ## Security and privacy
 
-- No telemetry. With a `.dacpac` and no AI the extension runs fully offline. The only network connections are your database, Entra ID sign-in and, for `@lineage`, your chosen language model, which can be a local model through a Copilot BYOK provider such as Ollama.
+- This extension has no telemetry, and with a `.dacpac` and no AI it makes no network connections. Its own connections are only your database and Entra ID sign-in.
+- `@lineage` passes requests to the model you picked through VS Code's language model API. VS Code, Copilot and the model provider handle those requests under their own terms. A BYOK provider such as Ollama can run the model locally, but VS Code and Copilot may still use the network.
 - Live imports and profiling run read-only queries only when you start them.
-- `@lineage` sends your prompt, its chat history and the returned metadata or DDL to the selected model. It cannot connect to a database or run SQL.
+- `@lineage` passes your prompt, its chat history and the returned metadata or DDL to the selected model. It cannot connect to a database or run SQL.
 - Custom YAML files are trusted; custom DMV SQL runs as written.
 
 Details: [`SECURITY.md`](SECURITY.md).

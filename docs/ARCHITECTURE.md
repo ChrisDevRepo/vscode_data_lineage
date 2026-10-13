@@ -22,7 +22,7 @@ Edges come from two sources combined. The catalog or DACPAC lists which objects 
 
 The **lineage agent** runs inside VS Code chat with the model the user selected. It works only on the loaded lineage model: it never connects to a database or runs SQL. Its result is a highlighted subgraph with a written explanation.
 
-The agent is optional. The graph, search, tracing and analysis work without any model, and with a DACPAC the extension runs fully offline. `@lineage` reaches only the model picked in VS Code chat; with a Copilot bring-your-own-key (BYOK) provider such as Ollama, that model can run locally, so the whole tool stays offline.
+The agent is optional. The graph, search, tracing and analysis work without any model, and with a DACPAC the extension makes no network connections. `@lineage` reaches only the model picked in VS Code chat, through VS Code's language model API. With a Copilot bring-your-own-key (BYOK) provider such as Ollama the model can run locally; VS Code and Copilot may still use the network under their own policies.
 
 ## Code map
 
@@ -98,4 +98,4 @@ The model writes the summary, sections and highlights; the engine resolves objec
 
 ## History, privacy, and no-egress boundary
 
-The extension has no telemetry and adds no network destination for AI. The selected model receives the question, recent chat text, and the metadata or SQL the tools return. Across chat turns only question and answer text is replayed; tool results are not stored in VS Code's chat history, and a later turn reads facts again through the tools. Opt-in local traces can contain SQL and object names; review them before sharing.
+The extension has no telemetry and adds no network destination for AI: model requests go through VS Code's language model API, and VS Code, Copilot and the selected provider handle them under their own terms. The selected model receives the question, recent chat text, and the metadata or SQL the tools return. Across chat turns only question and answer text is replayed; the extension writes no tool results into chat result metadata, and a later turn reads facts again through the tools. Opt-in local traces can contain SQL and object names; review them before sharing.
