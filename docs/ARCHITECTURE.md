@@ -26,16 +26,17 @@ The core is a deterministic lineage engine and a graph view. Search, tracing, pa
 
 **Table statistics.** Profiling is separate from lineage. It runs only when you request it, on its own connection; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 
-## Data flow and privacy
+## Data access
 
-| Feature | What leaves your machine | Turn it off |
-|---|---|---|
-| Lineage from a DACPAC | Nothing | — |
-| Lineage from a database | The read-only catalog queries in [`DMV_QUERIES.md`](DMV_QUERIES.md), run when you start an import | Use a DACPAC instead |
-| Table statistics | Row-count and aggregate `SELECT` queries on the chosen table, run when you request them | `dataLineageViz.tableStatistics.enabled` |
-| `@lineage` (optional AI) | Your question, recent chat and the SQL or metadata it reads, sent to the AI chat model you picked in VS Code | `dataLineageViz.ai.enabled` |
+**DACPAC.** Read locally; no connection is made.
 
-The extension connects only to your database and, if you use it, Microsoft Entra ID sign-in. Logs stay local; AI trace files are written only when you turn them on.
+**Database import.** Runs the read-only catalog queries in [`DMV_QUERIES.md`](DMV_QUERIES.md) when you start an import.
+
+**Table statistics.** Runs row-count and aggregate queries on a table when you request them. Setting: `dataLineageViz.tableStatistics.enabled`.
+
+**`@lineage`.** Sends the question, recent chat and the SQL or metadata it reads to the chat model selected in VS Code. Setting: `dataLineageViz.ai.enabled`.
+
+The extension connects only to the database and, for Entra ID authentication, Microsoft sign-in. Logs are local; AI trace files are written only when enabled.
 
 ## Code map
 

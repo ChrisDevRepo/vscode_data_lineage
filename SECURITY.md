@@ -29,11 +29,12 @@ Allow time for a fix to be released before disclosing the issue publicly.
 
 ## Security notes
 
-- **Lineage:** `.dacpac` files are read locally; the SQL in them is never run. A database import runs only the catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md), when you start it. The built-in queries are read-only; custom DMV SQL runs as you wrote it.
-- **Table statistics:** row-count and aggregate `SELECT` queries, only when you request them. Turn off with `dataLineageViz.tableStatistics.enabled`.
-- **Optional AI:** only if you use `@lineage`, your question, recent chat and the SQL or metadata it reads go to the AI chat model you picked in VS Code. It cannot connect to a database or run SQL. Turn off with `dataLineageViz.ai.enabled`.
+- **DACPAC:** read locally; the SQL in it is never run.
+- **Database import:** runs the catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) when you start an import. The built-in queries are read-only; custom DMV SQL runs as written.
+- **Table statistics:** runs row-count and aggregate `SELECT` queries on a table when you request them (`dataLineageViz.tableStatistics.enabled`).
+- **`@lineage` (optional):** sends the question, recent chat and the SQL or metadata it reads to the chat model selected in VS Code. It cannot connect to a database or run SQL (`dataLineageViz.ai.enabled`).
 - The extension connects only to your database and, if you use it, Microsoft Entra ID sign-in.
-- Logs stay local. AI trace files (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`) are written only when you run their commands. They contain SQL; check them before sharing.
+- Logs are local. AI trace files (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`) are written only when you run their commands. They contain SQL; check them before sharing.
 - Custom YAML files run as trusted configuration; load only files you have reviewed. Untrusted workspaces ignore them.
 - **Trust Server Certificate** turns off certificate checks for that connection.
 - Use a read-only database login.
