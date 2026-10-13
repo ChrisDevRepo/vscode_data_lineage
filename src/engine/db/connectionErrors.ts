@@ -3,7 +3,7 @@
  * One place that turns a failed connect or query into the text and actions the user sees.
  *
  * The driver's own message is shown verbatim behind the connection name; only the actions are chosen
- * by error number, code or message pattern. Both providers use it.
+ * by error number, code or message pattern. The built-in provider uses it.
  */
 
 import * as vscode from 'vscode';
@@ -128,7 +128,7 @@ function grantStatement(user: string | undefined): string {
  * for the built-in provider, and Retry only when the caller supplies a retry hook. Each action runs
  * on the user's click and any retry it triggers is a single attempt, never a loop.
  *
- * @param err - The raw error from the driver or the mssql extension.
+ * @param err - The raw error from the driver.
  * @param target - The connection the error belongs to.
  * @param hooks - Caller-supplied capabilities the actions use.
  */
@@ -139,7 +139,7 @@ export function describeConnectionError(
 ): { message: string; actions: ConnectionErrorAction[] } {
   const kind = classify(err);
   const message = `${target.name}: ${redactSecrets(errorMessage(err))}${kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : ''}`;
-  const builtIn = target.provider === 'builtIn' && !!target.connectionId;
+  const builtIn = !!target.connectionId;
   const connectionId = target.connectionId;
 
   const make = (id: ConnectionErrorActionId, run: () => Promise<void>): ConnectionErrorAction => ({
@@ -283,21 +283,19 @@ export function reportConnectionError(
  * @param session - The open session.
  */
 export function targetFromSession(session: DbSession): ConnectionErrorTarget {
-  return targetFromStored(session.connectionInfo, session.provider);
+  return targetFromStored(session.connectionInfo);
 }
 
 /**
  * Builds the error target for a stored connection record.
  *
  * @param info - The stored record.
- * @param provider - The provider that is connecting.
  */
-export function targetFromStored(info: StoredConnectionInfo, provider: ConnectionErrorTarget['provider']): ConnectionErrorTarget {
-  const saved = provider === 'builtIn' && info.connectionId
+export function targetFromStored(info: StoredConnectionInfo): ConnectionErrorTarget {
+  const saved = info.connectionId
     ? readBuiltInConnections().find((c) => c.id === info.connectionId)
     : undefined;
   return {
-    provider,
     name: saved?.name ?? describeConnection({ server: info.server, port: info.port, database: info.database || undefined }),
     server: info.server,
     port: info.port,

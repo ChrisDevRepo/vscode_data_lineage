@@ -22,7 +22,7 @@ type JsonSchemaNode = Record<string, unknown>;
  * Tool input schemas are module-level `z.object(...)` constants declared once in the registry
  * (`toolSchemas.ts`) — the same object reference is passed in on every provider attempt of a
  * self-looping phase (up to `MAX_TOOL_PROVIDER_CALLS` per hop). Keying on schema identity (never a
- * derived string) lets an unrelated schema fall out of scope and be collected normally, and the
+ * derived string) allows an unrelated schema to fall out of scope and be collected normally, and the
  * conversion — pure and options-invariant — runs at most once per distinct schema for the process.
  */
 const modelJsonSchemaCache = new WeakMap<z.ZodType, JsonSchemaNode>();

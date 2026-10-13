@@ -1,6 +1,6 @@
 /**
  * Pins the built-in tedious session: cell rendering per SQL type, credential sources, unchanged
- * driver errors, timeout cancellation, request serialization, disposal, and that the mssql extension is never touched.
+ * driver errors, timeout cancellation (owned by the session alone), request serialization, disposal, and that the mssql extension is never touched.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -74,6 +74,7 @@ vi.mock('vscode', async (importOriginal) => {
 });
 
 const { openBuiltInSession, mapCell } = await import('../../../../src/engine/db/builtInProvider');
+const { executeSimpleQuery } = await import('../../../../src/engine/connectionManager');
 
 const yamlQueries = (yaml.load(readFileSync(rootPath('assets', 'dmvQueries.yaml'), 'utf8')) as { queries: DmvQuery[] }).queries;
 const yamlSql = (name: string): string => yamlQueries.find((q) => q.name === name)!.sql;
@@ -153,7 +154,7 @@ describe('cell rendering', () => {
     ['Time', new Date(Date.UTC(1970, 0, 1, 1, 2, 3, 450)), { scale: 3 }, '01:02:03.450'],
   ];
 
-  it.each(cases)('%s renders like the mssql extension', (typeName, value, extra, expected) => {
+  it.each(cases)('%s renders database display values', (typeName, value, extra, expected) => {
     expect(mapCell(value, { colName: 'c', type: { name: typeName }, ...extra } as never))
       .toEqual({ displayValue: expected, isNull: false });
   });
@@ -172,7 +173,7 @@ describe('cell rendering', () => {
       .toBe('2024-01-05 13:04:09 +00:00');
   });
 
-  it('NULL renders as the mssql NULL marker', () => {
+  it('NULL renders as the database NULL marker', () => {
     expect(mapCell(null, col('c', 'Int') as never)).toEqual({ displayValue: 'NULL', isNull: true });
   });
 });
@@ -199,9 +200,8 @@ describe('openBuiltInSession — results', () => {
     expect(result.columnInfo.map((c) => c.columnName)).toEqual(['schema_name', 'object_count', 'is_nullable']);
     expect(result.rows[0].map((c) => c.displayValue)).toEqual(['Sales', '12', '1']);
     expect(result.rows[1][0]).toEqual({ displayValue: 'NULL', isNull: true });
-    expect(session.provider).toBe('builtIn');
     expect(session.connectionInfo).toMatchObject({
-      server: 'sql.example.com', database: 'AdventureWorks', provider: 'builtIn', connectionId: 'c1', authenticationType: 'sqlLogin', user: 'sa',
+      server: 'sql.example.com', database: 'AdventureWorks', connectionId: 'c1', authenticationType: 'sqlLogin', user: 'sa',
     });
     expect(JSON.stringify(session.connectionInfo)).not.toContain('pw');
   });
@@ -236,6 +236,21 @@ describe('openBuiltInSession — results', () => {
     expect(fake.executed.at(-1)).toBe(yamlSql('platform-info'));
   });
 
+  it.each([
+    ['ENGINE_EDITION', 'MAJOR_VERSION', 'EDITION'],
+    ['Engine_Edition', 'Major_Version', 'Edition'],
+  ])('reads server-info aliases case-insensitively: %s', async (engine, major, edition) => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    const session = (await openBuiltInSession(sqlLogin, env))!;
+    script([col(engine, 'Int'), col(major, 'Int'), col(edition, 'NVarChar')], [[11, 16, 'Fabric']]);
+
+    await expect(session.getServerInfo()).resolves.toEqual({
+      serverMajorVersion: 16, serverMinorVersion: 0, serverVersion: '', engineEditionId: 11,
+      isCloud: true, serverEdition: 'Fabric',
+    });
+    await session.dispose();
+  });
+
   it('refuses server info when the YAML has no platform-info query, sending nothing', async () => {
     const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
     const session = (await openBuiltInSession(sqlLogin, { ...env, loadQueries: async () => [] }))!;
@@ -260,7 +275,7 @@ describe('openBuiltInSession — credentials', () => {
     expect(ui.showInputBox).not.toHaveBeenCalled();
   });
 
-  it('drops a tcp: prefix from the server, as SqlClient and the mssql extension accept it', async () => {
+  it('drops a tcp: prefix from the server, using SqlClient syntax', async () => {
     const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
     await openBuiltInSession({ ...sqlLogin, server: 'TCP:sql.example.com' }, env);
     expect(fake.connections[0].config.server).toBe('sql.example.com');
@@ -466,6 +481,19 @@ describe('DbSession behaviour', () => {
     await expect(session.executeSimpleQuery('SLOW', { timeoutMs: 20, timeoutMessage: 'slow query timed out' }))
       .rejects.toThrow('slow query timed out');
     expect(fake.cancelled).toBe(1);
+  });
+
+  it('a timed query through the connection manager is reported only once the session cancelled it on the wire', async () => {
+    const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
+    const session = (await openBuiltInSession(sqlLogin, env))!;
+    fake.respond = () => 'manual';
+    let cancelledAtRejection: number | undefined;
+
+    const outcome = executeSimpleQuery(session, 'SLOW', outputChannel, { ms: 20, message: 'slow query timed out' })
+      .catch((err: unknown) => { cancelledAtRejection = fake.cancelled; throw err; });
+
+    await expect(outcome).rejects.toThrow('slow query timed out');
+    expect(cancelledAtRejection).toBe(1);
   });
 
   it('the default request budget comes from dataLineageViz.dmvQueryTimeout', async () => {

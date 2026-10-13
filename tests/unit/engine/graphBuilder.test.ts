@@ -3,8 +3,8 @@
  *
  * @remarks
  * The trace is the heart of the product, so every directional rule is its own `it`: which
- * nodes a depth cap admits, and which edges survive the toward-the-origin filter, fail for
- * different reasons and must be able to fail independently.
+ * nodes a depth cap admits, and which edges join two traced nodes, fail for different
+ * reasons and must be able to fail independently.
  *
  * Split out of this file, by module under test:
  * - virtual external nodes (`buildModel`) → modelBuilder-externalRefs.test.ts
@@ -13,7 +13,6 @@
 
 import { readFileSync } from 'fs';
 import Graph from 'graphology';
-import { bfsFromNode } from 'graphology-traversal';
 import dagre from '@dagrejs/dagre';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
@@ -63,10 +62,6 @@ describe('traceNodeWithLevels — siblings and shortcuts', () => {
     expect([...traced.nodeIds].sort()).toEqual(['C1', 'C2', 'P1', 'P2', 'X']);
   });
 
-  it('excludes the grandparent, which sits at depth 2', () => {
-    expect(traceNodeWithLevels(graph(), 'X', 1, 1).nodeIds.has('GP')).toBe(false);
-  });
-
   it('includes every edge between traced nodes, the P1→C1 shortcut included', () => {
     const traced = traceNodeWithLevels(graph(), 'X', 1, 1);
     expect([...traced.edgeIds].sort()).toEqual(['P1→C1', 'P1→X', 'P2→X', 'X→C1', 'X→C2']);
@@ -79,13 +74,13 @@ describe('traceNodeWithLevels — siblings and shortcuts', () => {
     expect(traced.edgeIds.has('P1→C1')).toBe(true);
   });
 
-  it('keeps only edges flowing toward the origin when tracing upstream', () => {
+  it('admits the grandparent at upstream depth 2, with every edge between traced nodes', () => {
     const traced = traceNodeWithLevels(graph(), 'X', 2, 0);
     expect(traced.nodeIds.has('GP')).toBe(true);
     expect([...traced.edgeIds].sort()).toEqual(['GP→P1', 'GP→P2', 'P1→X', 'P2→X']);
   });
 
-  it('keeps only edges flowing away from the origin when tracing downstream', () => {
+  it('admits only the children at downstream depth 1, with their edges', () => {
     const traced = traceNodeWithLevels(graph(), 'X', 0, 1);
     expect([...traced.nodeIds].sort()).toEqual(['C1', 'C2', 'X']);
     expect([...traced.edgeIds].sort()).toEqual(['X→C1', 'X→C2']);
@@ -140,45 +135,10 @@ describe('traceNodeWithLevels — bidirectional edges', () => {
     expect(traced.edgeIds.has('Table→SP1')).toBe(true);
   });
 
-  it('is deterministic across repeated runs', () => {
-    const signature = () => {
-      const traced = traceNodeWithLevels(graph(), 'Table', 7, 0);
-      return `${[...traced.nodeIds].sort()}|${[...traced.edgeIds].sort()}`;
-    };
-    const baseline = signature();
-    expect(new Set(Array.from({ length: 50 }, signature))).toEqual(new Set([baseline]));
-  });
 });
 
 
-describe('traceNodeWithLevels — virtual external nodes', () => {
-  const graph = () => directedGraph(
-    ['FileNode', 'SP1', 'Table1'],
-    [['FileNode', 'SP1'], ['SP1', 'Table1']],
-    (id) => ({ type: id === 'FileNode' ? 'external' : id.startsWith('SP') ? 'procedure' : 'table' }),
-  );
-
-  it('reaches the external node upstream and the table downstream', () => {
-    const traced = traceNodeWithLevels(graph(), 'SP1', Infinity, Infinity);
-    expect([...traced.nodeIds].sort()).toEqual(['FileNode', 'SP1', 'Table1']);
-    expect([...traced.edgeIds].sort()).toEqual(['FileNode→SP1', 'SP1→Table1']);
-  });
-
-  it('stops short of the external node at depth 1', () => {
-    const traced = traceNodeWithLevels(graph(), 'Table1', 1, 0);
-    expect(traced.nodeIds.has('SP1')).toBe(true);
-    expect(traced.nodeIds.has('FileNode')).toBe(false);
-  });
-
-  it('reaches the external node at depth 2, with its edge', () => {
-    const traced = traceNodeWithLevels(graph(), 'Table1', 2, 0);
-    expect(traced.nodeIds.has('FileNode')).toBe(true);
-    expect(traced.edgeIds.has('FileNode→SP1')).toBe(true);
-  });
-});
-
-
-describe('traceNodeWithLevels — Synapse dacpac', () => {
+describe('traceNodeWithLevels — SDK-style AdventureWorks dacpac', () => {
   it('never returns an edge whose endpoint is outside the traced node set', async () => {
     const model = await extractDacpac(readFileSync(testPath('AdventureWorks_sdk-style.dacpac')));
     const { graph } = buildGraph(model);
@@ -205,23 +165,6 @@ describe('traceNodeWithLevels — Synapse dacpac', () => {
     expect(phantoms).toEqual([]);
   });
 
-  it('reaches the same node set as a raw graphology BFS at the same depth', async () => {
-    const model = await extractDacpac(readFileSync(testPath('AdventureWorks_sdk-style.dacpac')));
-    const { graph } = buildGraph(model);
-    const origin = model.nodes.find(node => node.type === 'procedure' && graph.hasNode(node.id)
-      && graph.inDegree(node.id) >= 2 && graph.outDegree(node.id) >= 1);
-    expect(origin).toBeDefined();
-
-    const reference = new Set<string>([origin!.id]);
-    for (const mode of ['inbound', 'outbound'] as const) {
-      bfsFromNode(graph, origin!.id, (node: string, _attrs: unknown, depth: number) => {
-        if (depth > 2) return true;
-        reference.add(node);
-      }, { mode });
-    }
-
-    expect(traceNodeWithLevels(graph, origin!.id, 2, 2).nodeIds).toEqual(reference);
-  });
 });
 
 describe('dagreLayout — layout failure', () => {

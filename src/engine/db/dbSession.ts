@@ -1,23 +1,17 @@
 /**
  * @module DbSession
- * Provider-neutral database session contract shared by the mssql-extension and built-in providers.
+ * Built-in database session contract.
  */
 
-import * as vscode from 'vscode';
-import type { SimpleExecuteResult, IServerInfo } from '../../types/mssql';
-import type { ConnectionProviderId, StoredConnectionInfo } from '../shared/bridgeContract';
-
-export type { ConnectionProviderId };
-
-/** Provider used when `dataLineageViz.database.connectionProvider` is unset or holds an unknown value. */
-export const DEFAULT_CONNECTION_PROVIDER: ConnectionProviderId = 'mssqlExtension';
+import type { SimpleExecuteResult, IServerInfo } from '../../types/database';
+import type { StoredConnectionInfo } from '../shared/bridgeContract';
 
 /** Configuration section that owns the connection settings. */
 export const DATABASE_CONFIG_SECTION = 'dataLineageViz.database';
 
 /** Per-request limits a caller may impose on {@link DbSession.executeSimpleQuery}. */
 export interface DbQueryOptions {
-  /** Budget in milliseconds; a provider that owns the wire cancels the request when it is spent. */
+  /** Budget in milliseconds; the session cancels the request on the wire when it is spent, then rejects. Callers add no timer of their own. */
   timeoutMs?: number;
   /** Error message used when the budget is spent. */
   timeoutMessage?: string;
@@ -28,11 +22,9 @@ export interface DbQueryOptions {
  *
  * @remarks
  * Consumers read result cells by column name, so a provider must return `displayValue` strings in
- * the form the mssql extension renders them.
+ * a consistent display format.
  */
 export interface DbSession {
-  /** The provider that opened this session. */
-  readonly provider: ConnectionProviderId;
   /** Persistable, credential-free description of the connection. */
   readonly connectionInfo: StoredConnectionInfo;
   /** Runs one SQL batch and resolves with its first result set. */
@@ -43,20 +35,8 @@ export interface DbSession {
   dispose(): Promise<void>;
 }
 
-/**
- * Reads the active provider from `dataLineageViz.database.connectionProvider`.
- *
- * @returns `builtIn` or `mssqlExtension`; any other stored value reads as the default.
- */
-export function getConnectionProvider(): ConnectionProviderId {
-  const value = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<string>('connectionProvider');
-  return value === 'builtIn' ? 'builtIn' : DEFAULT_CONNECTION_PROVIDER;
-}
-
 /** Identifies the connection an error belongs to; carries no credential. */
 export interface ConnectionErrorTarget {
-  /** Provider that was connecting. */
-  provider: ConnectionProviderId;
   /** Display name shown in front of the driver message. */
   name: string;
   /** Server host name or address. */

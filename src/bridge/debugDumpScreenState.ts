@@ -3,10 +3,24 @@ import { type RenderStateSnapshot, type ScreenStateExtras } from '../engine/shar
 import { directNeighborIds } from '../engine/graphGuards';
 import { trunc } from '../utils/log';
 
+/** Analytics groups printed before the dump says how many more there are. */
+const ANALYTICS_GROUP_CAP = 8;
+
+/** Neighbor ids printed on one detail-panel line. */
+const NEIGHBOR_CAP = 40;
+
 /** Truncates a node-id list for dump display, keeping it scannable. */
 function formatIdList(ids: readonly string[], cap = 40): string {
   if (ids.length === 0) return '(none)';
   return trunc([...ids], cap);
+}
+
+/** Tags neighbors in-trace or off-trace and caps the line. */
+function formatTaggedNeighbors(ids: readonly string[], traced: ReadonlySet<string>): string {
+  if (ids.length === 0) return '(none)';
+  const shown = ids.slice(0, NEIGHBOR_CAP).map(id => `${id} ${traced.has(id) ? '[in-trace]' : '[off-trace]'}`);
+  const extra = ids.length - shown.length;
+  return `${shown.join(', ')}${extra > 0 ? ` … +${extra} more` : ''}`;
 }
 
 /** Formats one lineage side's add/prune affordances, surfacing the grayed-control reason. */
@@ -22,7 +36,7 @@ function formatAffordanceSide(label: string, side: TraceAffordanceSideSnapshot):
 /**
  * Builds the on-screen-state dump sections that explain "why does node X show/hide its
  * +/- buttons" without the live app: the highlighted node, its computed affordances and the
- * reason each control is grayed, the live trace scope, the selected node's full neighbors
+ * reason each control is grayed, the live trace scope, the selected node's neighbors
  * tagged in-trace vs off-trace, and any active analytics/bookmark view.
  *
  * @param renderState - The latest `render-state` snapshot mirrored from the webview.
@@ -64,11 +78,10 @@ export function formatScreenStateSections(
   if (hn && model) {
     const ins = directNeighborIds(model, hn, 'in');
     const outs = directNeighborIds(model, hn, 'out');
-    const tag = (id: string) => `${id} ${traced.has(id) ? '[in-trace]' : '[off-trace]'}`;
-    out.push('DETAIL PANEL (selected node — full neighbors vs. trace scope)');
+    out.push('DETAIL PANEL (selected node — neighbors vs. trace scope)');
     out.push(`  Node: ${hn}${screenState?.detailOpen ? '  (detail panel open)' : ''}`);
-    out.push(`  IN  (${ins.length}): ${ins.length ? ins.map(tag).join(', ') : '(none)'}`);
-    out.push(`  OUT (${outs.length}): ${outs.length ? outs.map(tag).join(', ') : '(none)'}`);
+    out.push(`  IN  (${ins.length}): ${formatTaggedNeighbors(ins, traced)}`);
+    out.push(`  OUT (${outs.length}): ${formatTaggedNeighbors(outs, traced)}`);
     out.push('');
   }
 
@@ -76,9 +89,15 @@ export function formatScreenStateSections(
   if (analytics) {
     out.push('ANALYTICS');
     out.push(`  Type: ${analytics.type}    Active group: ${analytics.activeGroupId ?? '(all)'}`);
-    for (const g of analytics.groups) {
+    const activeFirst = [
+      ...analytics.groups.filter(g => g.id === analytics.activeGroupId),
+      ...analytics.groups.filter(g => g.id !== analytics.activeGroupId),
+    ];
+    for (const g of activeFirst.slice(0, ANALYTICS_GROUP_CAP)) {
       out.push(`    ${g.id === analytics.activeGroupId ? '▶ ' : '  '}${g.label} (${g.nodeIds.length}): ${formatIdList(g.nodeIds, 20)}`);
     }
+    const hiddenGroups = analytics.groups.length - Math.min(analytics.groups.length, ANALYTICS_GROUP_CAP);
+    if (hiddenGroups > 0) out.push(`    … +${hiddenGroups} more group(s)`);
     out.push('');
   }
 

@@ -225,12 +225,14 @@ export class VscodeLangChainBridge extends BaseChatModel<
         }
         if (part instanceof vscode.LanguageModelToolCallPart) {
           capture?.calls.push({ callId: part.callId, name: part.name, input: part.input });
+          // The input goes to LangChain as its JSON text: a value that is not a JSON object lands in
+          // `invalid_tool_calls` with its id and name, so the port can charge that one call.
           const message = new AIMessageChunk({
             content: '',
             tool_call_chunks: [{
               id: part.callId,
               name: part.name,
-              args: JSON.stringify(asRecord(part.input)),
+              args: JSON.stringify(part.input) ?? '',
               index: toolIndex++,
               type: 'tool_call_chunk',
             }],

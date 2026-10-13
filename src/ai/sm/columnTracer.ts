@@ -137,46 +137,23 @@ export class ColumnTracer {
   }
 
   /**
-   * Resolves which columns are active for a candidate node, bounded to the traced spine.
+   * Distinct column names of the committed endpoints a candidate owns on the traced spine.
    *
    * @remarks
-   * The spine for a candidate is the columns flowing *from* it into the tracked chain (staged by
-   * the routing hop before dispatch); a non-bodied carrier the candidate writes is on the spine
-   * too, since a carrier is never analysed and the column is owed by its producers. Off-spine
-   * `entryColumns` are dropped — NORMALIZE-WITH-LOG via `log`, never silent. An empty spine
-   * (candidate not yet staged) falls back to `entryColumns` so the node still dispatches.
+   * Reads {@link spineEndpointsFor} with no written carriers, keeping the first spelling of each
+   * normalized name. Evidence only: it never selects a carry or a hop contract.
    *
-   * @param candidateNodeId - The id of the node being considered.
-   * @param entryColumns - The columns declared for entry by the AI.
-   * @param writtenCarrierIds - Non-bodied carriers the candidate writes; empty when it writes none.
-   * @param log - Optional logger; the caller (`smBase.ts`) supplies the one it already holds.
-   * @param traceDirection - Trace direction of the owning exploration. `from_node`/`from_col` name
-   * the supplier side (next node, upstream); `to_node`/`to_col` name the write target (next node,
-   * downstream).
-   * @returns The resolved active columns for the candidate node.
+   * @param candidateNodeId - Canonical id of the candidate node.
+   * @param traceDirection - Which edge side names the candidate's endpoint.
+   * @returns The spine column names in commit order; empty when no committed edge names the candidate.
    */
-  determineActiveColumnsForCandidate(
-    candidateNodeId: string,
-    entryColumns: string[],
-    writtenCarrierIds: ReadonlySet<string> = new Set(),
-    log: TracerLogFn | undefined,
-    traceDirection: 'upstream' | 'downstream',
-  ): string[] {
-    const spineByNorm = new Map<string, string>();
-    for (const ref of this.spineEndpointsFor(candidateNodeId, writtenCarrierIds, traceDirection)) {
+  spineColumnsFor(candidateNodeId: string, traceDirection: 'upstream' | 'downstream'): string[] {
+    const byKey = new Map<string, string>();
+    for (const ref of this.spineEndpointsFor(candidateNodeId, new Set(), traceDirection)) {
       const key = this.columnKey(ref.col);
-      if (!spineByNorm.has(key)) spineByNorm.set(key, ref.col);
+      if (!byKey.has(key)) byKey.set(key, ref.col);
     }
-    if (spineByNorm.size === 0) return entryColumns;
-    const spine = [...spineByNorm.values()];
-    if (log && entryColumns.length > 0) {
-      const spineNorms = new Set(spineByNorm.keys());
-      const dropped = entryColumns.filter((c) => !spineNorms.has(this.columnKey(c)));
-      if (dropped.length > 0) {
-        log('debug', `[Normalize] entry columns bound to spine id=${candidateNodeId} from=[${entryColumns.join(', ')}] to=[${spine.join(', ')}] — off-spine entry column(s) dropped: [${dropped.join(', ')}]`);
-      }
-    }
-    return spine;
+    return [...byKey.values()];
   }
 
   /**
@@ -398,8 +375,11 @@ export class ColumnTracer {
           invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes.` });
           continue;
         }
-        if ([...verbs].every((v) => v === 'read')) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination.` });
+        if (!verbs.has('write')) {
+          const reason = [...verbs].every(v => v === 'read')
+            ? `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination.`
+            : `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded write dependency into it — ${[...verbs].sort().join(', ')} does not establish a write destination.`;
+          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason });
           continue;
         }
       }
@@ -449,7 +429,7 @@ export class ColumnTracer {
           continue;
         }
 
-        const fromNode = resolveModelNodeId(cont.node, nodeMap, model.identifierCaseSensitive) ?? identifierKey(cont.node);
+        const fromNode = neighbor.id;
         if (fromNode === toNodeForEdge && this.columnKey(cont.col) === this.columnKey(toCol)) {
           invalidRoutes.push({
             kind: 'self_loop_column',
@@ -560,7 +540,11 @@ export class ColumnTracer {
     const downstreamAttached = mixed ? columnAttachment(roots, closureEdges, 'downstream', endpointKey) : undefined;
     const detachedIn = (edges: ColumnEdge[], closure: ColumnAttachment): ColumnEdge[] =>
       edges.filter(edge => !closure.attaches(edge));
-    const rejectDetached = (entryIndex: number, detached: ColumnEdge[]): void => {
+    const rejectedEdges = new Set<ColumnEdge>();
+    // Rejects one entry: names the smaller detached set and withholds every edge the entry staged.
+    const rejectEntry = (entryIndex: number, edges: ColumnEdge[], upDetached: ColumnEdge[], downDetached: ColumnEdge[] | undefined): void => {
+      const detached = downDetached && downDetached.length < upDetached.length ? downDetached : upDetached;
+      for (const edge of edges) rejectedEdges.add(edge);
       const entry = columnFlow[entryIndex];
       const tracked = [...anchors.values()].join(', ');
       invalidRoutes.push({
@@ -575,20 +559,16 @@ export class ColumnTracer {
     };
 
     if (focusIsCarrier) {
-      const rejectedEdges = new Set<ColumnEdge>();
       for (const [entryIndex, edges] of entryEdges) {
         const upDetached = detachedIn(edges, attached);
-        const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : upDetached;
-        const detached = downDetached.length < upDetached.length ? downDetached : upDetached;
-        if (detached.length === 0) continue;
-        rejectDetached(entryIndex, detached);
-        for (const edge of edges) rejectedEdges.add(edge);
+        const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : undefined;
+        if (upDetached.length === 0 || downDetached?.length === 0) continue;
+        rejectEntry(entryIndex, edges, upDetached, downDetached);
       }
       return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)) };
     }
 
     const entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> = [];
-    const rejectedEdges = new Set<ColumnEdge>();
     for (const [entryIndex, edges] of entryEdges) {
       const entry = columnFlow[entryIndex];
       const upDetached = detachedIn(edges, attached);
@@ -604,8 +584,7 @@ export class ColumnTracer {
             entrySides.push({ index: entryIndex, upstream, downstream });
             continue;
           }
-          rejectDetached(entryIndex, downDetached && downDetached.length < upDetached.length ? downDetached : upDetached);
-          for (const edge of edges) rejectedEdges.add(edge);
+          rejectEntry(entryIndex, edges, upDetached, downDetached);
           continue;
         }
       }
@@ -617,8 +596,7 @@ export class ColumnTracer {
         entrySides.push({ index: entryIndex, upstream, downstream: attachedDownstream });
         continue;
       }
-      rejectDetached(entryIndex, downDetached && downDetached.length < upDetached.length ? downDetached : upDetached);
-      for (const edge of edges) rejectedEdges.add(edge);
+      rejectEntry(entryIndex, edges, upDetached, downDetached);
     }
     return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)),
       ...(mixed ? { entrySides } : {}) };

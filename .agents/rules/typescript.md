@@ -1,6 +1,6 @@
-# TypeScript And Architecture
+# TypeScript and architecture
 
-- Keep ownership at the existing layer: `src/engine/` owns database-independent models, parsing, graph traversal and analysis; `src/ai/` owns the chat runtime; `src/components/` and `src/hooks/` own webview presentation.
+- Keep ownership at the existing layer: `src/engine/` owns database-independent models, parsing, graph traversal and analysis; `src/ai/` owns the chat runtime; `src/components/`, `src/hooks/`, `src/contexts/` and `src/detail/` own webview presentation.
 - `src/engine/` must not import from `src/components/` or `src/hooks/`. UI code may import engine types.
 - `src/engine/shared/bridgeContract.ts` is the Zod-validated contract for extension/webview messages. Update the contract and both ends together.
 - Preserve existing runtime contracts in `docs/ARCHITECTURE.md`; preserve YAML contracts in `docs/PARSE_RULES.md` and `docs/DMV_QUERIES.md`.

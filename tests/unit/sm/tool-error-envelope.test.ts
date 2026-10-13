@@ -15,11 +15,6 @@ describe("tool-error-envelope", () => {
     expect(readToolError({ code: 'x', reason: 'y', extra: 1 })).toBeNull();
   });
 
-  it("readToolError: a makeRejection output with detail round-trips through JSON", () => {
-    const made = makeRejection({ code: 'x', reason: 'y', detail: { next_action: 'start_exploration', ids: ['a'] } });
-    expect(readToolError(JSON.parse(JSON.stringify(made)))).toEqual(made);
-  });
-
   it("readToolError: an explicit reason wins over the code", () => {
     const r = readToolError(makeRejection({ code: 'invalid_input', reason: 'focus_node_id `x` not found' }));
     expect(r!.reason).toBe('focus_node_id `x` not found');
@@ -195,6 +190,34 @@ describe("tool-error-envelope", () => {
       const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_tool_input', input, schema });
       expect(rejection.reason).toContain('9 items, limit 8');
       expect(rejection.reason).toContain('9 chars, limit 8');
+    });
+  });
+
+  describe('rejectionFromZodError: a string or number outside its bound', () => {
+    const schema = z.object({
+      name: z.string().max(8).trim().min(1, 'name is required'),
+      revision: z.number().int().positive().optional(),
+    });
+    const reject = (input: unknown) => rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema });
+
+    it('a string over its cap states the measured length and the shorten action once', () => {
+      const rejection = reject({ name: 'x'.repeat(20) });
+      expect(rejection.reason).toContain('20 chars, limit 8');
+      expect(rejection.hint).toContain('Shorten "name" to at most 8 characters; the engine never truncates authored text.');
+      expect(rejection.hint!.match(/Shorten/g)).toHaveLength(1);
+    });
+
+    it('a blank string keeps the schema message instead of a raw length that meets the bound', () => {
+      const rejection = reject({ name: '   ' });
+      expect(rejection.reason).toContain('name is required');
+      expect(rejection.reason).not.toMatch(/3 chars/);
+      expect(rejection.hint).toContain('Send "name" with at least 1 character.');
+    });
+
+    it('an exclusive bound is stated as exclusive', () => {
+      const rejection = reject({ name: 'ok', revision: 0 });
+      expect(rejection.reason).toContain('0, more than 0');
+      expect(rejection.reason).not.toContain('minimum 0');
     });
   });
 

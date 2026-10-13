@@ -529,7 +529,7 @@ interface GraphCanvasProps {
   /** Callback to apply a trace configuration (upstream/downstream levels). */
   onTraceApply: (config: { upstreamLevels: number; downstreamLevels: number }) => void;
   /** Callback to end the current trace/path mode. */
-  onTraceEnd: (onComplete?: () => void) => void;
+  onTraceEnd: () => void;
   /** Callback to reset all filters and traces. */
   onResetAll: () => void;
   /** Callback to toggle visibility of a specific object type. */
@@ -662,27 +662,14 @@ interface GraphCanvasProps {
    * In overview mode, flowNodes are schema aggregates — this set preserves the object-level truth.
    */
   filteredObjectIds?: Set<string>;
-  /** Called when user saves a trace/path result as an advanced bookmark. */
-  onSaveTraceBookmark?: (
-    name: string,
-    nodeIds: string[],
-    source: 'trace' | 'path',
-    positions?: Record<string, { x: number; y: number }>,
-  ) => void;
+  /** Called when user saves a trace result as an advanced bookmark. */
+  onSaveTraceBookmark?: (name: string, nodeIds: string[]) => void;
   /** Called when user saves an analysis result as an advanced bookmark. */
-  onSaveAnalysisBookmark?: (
-    name: string,
-    nodeIds: string[],
-    positions?: Record<string, { x: number; y: number }>,
-  ) => void;
+  onSaveAnalysisBookmark?: (name: string, nodeIds: string[]) => void;
   /** Transient AI preview — shown before user decides to save. */
   aiPreview?: { name: string; nodeIds: Set<string>; aiMetadata: AIViewMetadata } | null;
   /** Called when user saves an AI preview as a bookmark. */
-  onSaveAiBookmark?: (
-    name: string,
-    withPositions: boolean,
-    positions?: Record<string, { x: number; y: number }>,
-  ) => void;
+  onSaveAiBookmark?: (name: string) => void;
   /** Called when user discards the AI preview. */
   onDiscardAiPreview?: () => void;
   /** Called when user clicks the "×" remove-from-view button (advanced bookmark mode). */
@@ -693,12 +680,8 @@ interface GraphCanvasProps {
   bookmarkStaleNames?: string[];
   /** Called when user clicks "Exit View" in the bookmark banner. */
   onExitAdvancedBookmark?: () => void;
-  /** Saved node positions from a bookmark — applied once after the next rebuild. */
-  pendingPositions?: Record<string, { x: number; y: number }>;
   /** Incremented when the next graph-data update should keep the current viewport. */
   viewportPreserveVersion?: number;
-  /** Called after pendingPositions have been applied so the parent can clear them. */
-  onPendingPositionsApplied?: () => void;
   /** Reports the live viewport on every change, for the parent to capture into a view snapshot. */
   onCameraChange?: (viewport: { x: number; y: number; zoom: number }) => void;
   /** A viewport to apply once after the next graph-data update, then cleared. */
@@ -836,9 +819,7 @@ export function GraphCanvas({
   activeAdvancedProfile,
   bookmarkStaleNames,
   onExitAdvancedBookmark,
-  pendingPositions,
   viewportPreserveVersion = 0,
-  onPendingPositionsApplied,
   onCameraChange,
   pendingViewport,
   onPendingViewportApplied,
@@ -1034,20 +1015,18 @@ export function GraphCanvas({
   const columnViewActive = columnView && !!columnTraceView;
 
   /**
-   * Node positions in object space, for the callbacks that persist or export them.
+   * Nodes in object space, for Draw.io export.
    *
    * @remarks
    * React Flow's `getNodes()` yields column-trace nodes while the column view is active — the same
-   * ids in a different coordinate space. Bookmarks and exports are object-view artifacts, so they
-   * read `localNodes` instead, which `onColumnNodesChange` deliberately leaves untouched.
+   * ids in a different coordinate space. Export reads `localNodes` instead, which column drags
+   * leave untouched.
    */
   const objectNodes = useCallback(() => (columnViewActive ? localNodes : getNodes()), [columnViewActive, localNodes, getNodes]);
 
   const pendingZoomRef = useRef<string | null>(null);
   const pendingClickRef = useRef<{ id: string; searchTerm?: string } | null>(null);
-  /** Timestamp when pendingZoomRef was set — used to expire stale refs after PENDING_ZOOM_TIMEOUT_MS. */
-  const pendingZoomSetAt = useRef<number>(0);
-  /** Active timer — guarantees the pendingZoom warning fires even if flowNodes stops changing. */
+  /** Expires a pending zoom whose node never lands in `flowNodes`, with a warning. */
   const pendingZoomTimerRef = useRef<number | null>(null);
   const clearPendingZoomTimer = useCallback(() => {
     if (!pendingZoomTimerRef.current) return;
@@ -1061,15 +1040,10 @@ export function GraphCanvas({
    *
    * @param nodeId - The node to zoom and click once it lands in `flowNodes`.
    * @param searchTerm - Term the deferred click highlights in the detail panel.
-   *
-   * @remarks
-   * The graph-change effect expires a pending zoom against {@link pendingZoomSetAt}; not stamping
-   * it here would leave a stale timestamp and expire the zoom before the expanded graph arrives.
    */
   const armPendingZoom = useCallback((nodeId: string, searchTerm?: string) => {
     pendingZoomRef.current = nodeId;
     pendingClickRef.current = { id: nodeId, searchTerm };
-    pendingZoomSetAt.current = Date.now();
     clearPendingZoomTimer();
     pendingZoomTimerRef.current = window.setTimeout(() => {
       if (!pendingZoomRef.current) return;
@@ -1149,23 +1123,12 @@ export function GraphCanvas({
     void fitView({ padding: fitPaddingRef.current, duration: FIT_VIEW_DURATION });
   }, [fitView]);
 
-  const handleSaveTraceAsBookmark = useCallback((name: string, withPositions: boolean) => {
+  const handleSaveTraceAsBookmark = useCallback((name: string) => {
     if (!onSaveTraceBookmark) return;
-    const nodeIds = Array.from(trace.tracedNodeIds);
-    if (withPositions) {
-      const nodeIdSet = new Set(nodeIds);
-      const nodes = objectNodes();
-      const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodes) {
-        if (nodeIdSet.has(n.id)) pos[n.id] = n.position;
-      }
-      onSaveTraceBookmark(name, nodeIds, 'trace', pos);
-    } else {
-      onSaveTraceBookmark(name, nodeIds, 'trace');
-    }
-  }, [onSaveTraceBookmark, trace.tracedNodeIds, objectNodes]);
+    onSaveTraceBookmark(name, Array.from(trace.tracedNodeIds));
+  }, [onSaveTraceBookmark, trace.tracedNodeIds]);
 
-  const handleSaveAnalysisAsBookmark = useCallback((name: string, withPositions: boolean) => {
+  const handleSaveAnalysisAsBookmark = useCallback((name: string) => {
     if (!onSaveAnalysisBookmark || !analysisMode) return;
     const activeGroup = analysisMode.activeGroupId
       ? analysisMode.result.groups.find(g => g.id === analysisMode.activeGroupId)
@@ -1173,27 +1136,12 @@ export function GraphCanvas({
     const nodeIds = activeGroup
       ? activeGroup.nodeIds
       : analysisMode.result.groups.flatMap(g => g.nodeIds);
-    if (withPositions) {
-      const nodes = objectNodes();
-      const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodes) pos[n.id] = n.position;
-      onSaveAnalysisBookmark(name, nodeIds, pos);
-    } else {
-      onSaveAnalysisBookmark(name, nodeIds);
-    }
-  }, [onSaveAnalysisBookmark, analysisMode, objectNodes]);
+    onSaveAnalysisBookmark(name, nodeIds);
+  }, [onSaveAnalysisBookmark, analysisMode]);
 
-  const handleSaveAiAsBookmark = useCallback((name: string, withPositions: boolean) => {
-    if (!onSaveAiBookmark) return;
-    if (withPositions) {
-      const nodes = objectNodes();
-      const pos: Record<string, { x: number; y: number }> = {};
-      for (const n of nodes) pos[n.id] = n.position;
-      onSaveAiBookmark(name, withPositions, pos);
-    } else {
-      onSaveAiBookmark(name, withPositions);
-    }
-  }, [onSaveAiBookmark, objectNodes]);
+  const handleSaveAiAsBookmark = useCallback((name: string) => {
+    onSaveAiBookmark?.(name);
+  }, [onSaveAiBookmark]);
 
   useKeyboardShortcut(SHORTCUT_KEYS.fitView, handleFitView);
 
@@ -1432,37 +1380,25 @@ export function GraphCanvas({
     const currentTrace = currentTraceRef.current;
     traceAtLastGraphChangeRef.current = currentTrace;
 
-    if (pendingPositions && Object.keys(pendingPositions).length > 0) return;
     const zoomTarget = pendingZoomRef.current;
     const clickTarget = pendingClickRef.current;
     if (zoomTarget) {
-      const nodeExists = flowNodeLookup.ids.has(zoomTarget);
-      const elapsed = Date.now() - pendingZoomSetAt.current;
-      if (!nodeExists) {
-        if (elapsed > PENDING_ZOOM_TIMEOUT_MS) {
-          notifyUser(`"${zoomTarget}" is not visible in the current view. Adjust your schema filter to include it.`);
-          pendingZoomRef.current = null;
-          pendingClickRef.current = null;
-          clearPendingZoomTimer();
-        } else {
-          return; // Don't consume — wait for the next flowNodes update (silent; fires every render)
-        }
-      } else {
-        pendingZoomRef.current = null;
-        pendingClickRef.current = null;
-        clearPendingZoomTimer();
-        zoomToNode(zoomTarget);
-        if (clickTarget) {
-          requestAnimationFrame(() => onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm));
-        }
-        return;
+      // Until the target lands in `flowNodes`, the pending-zoom timer owns the wait and its expiry.
+      if (!flowNodeLookup.ids.has(zoomTarget)) return;
+      pendingZoomRef.current = null;
+      pendingClickRef.current = null;
+      clearPendingZoomTimer();
+      zoomToNode(zoomTarget);
+      if (clickTarget) {
+        requestAnimationFrame(() => onNodeClickRef.current(clickTarget.id, clickTarget.searchTerm));
       }
+      return;
     }
     if (skipFitForPendingViewport(viewportPreserveVersionRef.current, consumedViewportPreserveVersionRef, nodeDataChanged)) return;
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     return fitGraph();
   }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode, aiPreview, analysisMode,
-    shownTraceMode, trace.tracedNodeIds]); // pendingPositions, onNodeClickRef intentionally excluded — read at effect run time
+    shownTraceMode, trace.tracedNodeIds]); // onNodeClickRef intentionally excluded — read at effect run time
 
   const [notesVisible, setNotesVisible] = useState(true);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);
@@ -1477,13 +1413,6 @@ export function GraphCanvas({
 
   const fittedForColumnViewRef = useRef<boolean | null>(null);
 
-  const pendingPositionsRef = useRef(pendingPositions);
-  pendingPositionsRef.current = pendingPositions;
-  const handleFitViewRef = useRef(handleFitView);
-  handleFitViewRef.current = handleFitView;
-  const onPendingPositionsAppliedRef = useRef(onPendingPositionsApplied);
-  onPendingPositionsAppliedRef.current = onPendingPositionsApplied;
-
   /**
    * Node ids currently mid-drag, read by the sync effect below so a rebuild landing mid-drag never
    * resets the dragged node's position out from under the user's pointer.
@@ -1497,17 +1426,7 @@ export function GraphCanvas({
       deferredFlowNodesRef.current = flowNodes;
       return;
     }
-    const pending = pendingPositionsRef.current;
-    if (pending && Object.keys(pending).length > 0) {
-      setLocalNodes(flowNodes.map(n => {
-        const saved = pending[n.id];
-        return saved ? { ...n, position: { x: saved.x, y: saved.y } } : n;
-      }));
-      requestAnimationFrame(() => handleFitViewRef.current());
-      onPendingPositionsAppliedRef.current?.();
-    } else {
-      setLocalNodes(flowNodes);
-    }
+    setLocalNodes(flowNodes);
     setSyncedGraph(current => ({ ...current, nodes: flowNodes }));
   }, [flowNodes]);
 
@@ -1578,8 +1497,8 @@ export function GraphCanvas({
    * Node changes while the column view is on stage.
    *
    * @remarks
-   * Column nodes carry the same ids as the object nodes they replace, so routing their changes
-   * through `onNodesChange` would corrupt the positions a bookmark saves. Only the drag is kept.
+   * Column nodes carry the same ids as the object nodes they replace, so a drag stays in the
+   * column-position cache. Routing it through `onNodesChange` would move those object nodes.
    */
   const onColumnNodesChange: OnNodesChange = useCallback((changes) => {
     setColumnPositions((prev) => {
@@ -1641,7 +1560,7 @@ export function GraphCanvas({
     return neighbors;
   }, [highlightedNodeId, graph]);
 
-  const isBookmarkMode = (filter.allowlistNodeIds?.size ?? 0) > 0;
+  const isBookmarkMode = filter.allowlistNodeIds !== undefined;
 
   const aiHighlightMap = useMemo((): Map<string, { color: string; glow: string; shadow: string }> => {
     const m = new Map<string, { color: string; glow: string; shadow: string }>();
@@ -2103,7 +2022,6 @@ export function GraphCanvas({
         isModeLocked={isModeLocked}
         canStartNewScopedMode={canStartNewScopedMode}
         canSwitchGraphMode={canSwitchGraphMode}
-        isOverview={graphMode === 'overview'}
         graphMode={graphMode}
         onGraphModeChange={onGraphModeChange}
         schemaViewSoftDisabled={schemaViewSoftDisabled}
@@ -2205,7 +2123,7 @@ export function GraphCanvas({
       {aiPreview && onDiscardAiPreview && (
         <AiViewBanner
           name={aiPreview.name}
-          nodeCount={aiPreview.nodeIds.size}
+          nodeCount={localNodes.length}
           onDiscard={onDiscardAiPreview}
           onSaveAsBookmark={onSaveAiBookmark ? handleSaveAiAsBookmark : undefined}
           columnViewAvailable={!!columnTraceView}

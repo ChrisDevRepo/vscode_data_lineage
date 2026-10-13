@@ -197,10 +197,9 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
 }
 
 describe('persistent hop previews with complete memory', () => {
-  it('renders a kept leaf summary without a pruned prefix', async () => {
+  it('renders a kept leaf summary as a plain hop label', async () => {
     const { labels, archive, requests } = await hopSummaryLabelsForTurn(LONG_SUMMARY, LONG_SUMMARY);
-    expect(labels.some(label => label.includes('⛔ pruned'))).toBe(false);
-    expect(labels[1]).toBe(`\n\n**Hop 2/2 — Leaf0**\n\n_${LONG_PREVIEW}_\n\n`);
+    expect(labels[1]).toBe(`\n\n**Hop 2 — Leaf0**\n\n_${LONG_PREVIEW}_\n\n`);
     expect(archive).toContain(LONG_SUMMARY);
     expect(requests).toContain(LONG_SUMMARY);
   });
@@ -213,14 +212,14 @@ describe('persistent hop previews with complete memory', () => {
     expect(hopSummaryLabels).toHaveLength(2);
 
     const [completeLabel, untouchedLabel] = hopSummaryLabels;
-    expect(completeLabel).toBe(`\n\n**Hop 1/2 — Origin**\n\n_${LONG_PREVIEW}_\n\n`);
-    expect(untouchedLabel).toBe(`\n\n**Hop 2/2 — Leaf0**\n\n_${SHORT_SUMMARY}_\n\n`);
+    expect(completeLabel).toBe(`\n\n**Hop 1 — Origin**\n\n_${LONG_PREVIEW}_\n\n`);
+    expect(untouchedLabel).toBe(`\n\n**Hop 2 — Leaf0**\n\n_${SHORT_SUMMARY}_\n\n`);
   });
 
   it('shows the committed summary when the accepted call carried an empty one that a held draft supplied', async () => {
     const {labels: hopSummaryLabels} = await hopSummaryLabelsForTurn('');
     expect(hopSummaryLabels).toHaveLength(2);
-    expect(hopSummaryLabels[1]).toBe(`\n\n**Hop 2/2 — Leaf0**\n\n_${SHORT_SUMMARY}_\n\n`);
+    expect(hopSummaryLabels[1]).toBe(`\n\n**Hop 2 — Leaf0**\n\n_${SHORT_SUMMARY}_\n\n`);
   });
 });
 
@@ -242,7 +241,7 @@ it('keeps native hop headers transient and orders each committed summary before 
 
 it('cancellation before a leaf finding commits exposes only the already accepted origin summary', async () => {
   const { labels, archive } = await hopSummaryLabelsForTurn('Uncommitted leaf summary', SHORT_SUMMARY, true);
-  expect(labels).toEqual([`\n\n**Hop 1/2 — Origin**\n\n_${LONG_PREVIEW}_\n\n`]);
+  expect(labels).toEqual([`\n\n**Hop 1 — Origin**\n\n_${LONG_PREVIEW}_\n\n`]);
   expect(archive).toContain(LONG_SUMMARY);
   expect(labels.join('')).not.toContain('Uncommitted leaf summary');
   expect(labels.join('')).not.toContain('Leaf0');
@@ -258,7 +257,7 @@ it('renders multiplication and identifier punctuation literally without altering
   expect(html).toContain('[Raw_Orders]');
   expect(html).toContain('&lt;filter&gt; &amp; $Rate$.');
   expect(html).not.toContain('<em>UnitPrice');
-  expect(labels[1]).toContain('**Hop 2/2 — Leaf0**');
+  expect(labels[1]).toContain('**Hop 2 — Leaf0**');
   expect(archive).toContain(summary);
   expect(requests).toContain(summary.replace(/</g, '\\\\u003c').replace(/>/g, '\\\\u003e'));
 });

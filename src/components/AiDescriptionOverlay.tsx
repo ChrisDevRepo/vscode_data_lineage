@@ -141,8 +141,6 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     return () => observer.disconnect();
   }, [expanded, onPanelResize, dockPosition]);
 
-  const litSections = activeSection != null ? [activeSection] : [];
-
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const savedScrollTop = useRef(0);
   useEffect(() => {
@@ -359,9 +357,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             {sections.map(section => (
               <button
                 key={section.n}
-                className={`ln-ai-section-chip${litSections.includes(section.n) ? ' ln-active' : ''}`}
+                className={`ln-ai-section-chip${activeSection === section.n ? ' ln-active' : ''}`}
                 onClick={() => handleSectionChip(section.n)}
-                aria-pressed={litSections.includes(section.n)}
+                aria-pressed={activeSection === section.n}
                 title={`${section.n} ${section.label}`}
               >
                 {section.n} {section.label}

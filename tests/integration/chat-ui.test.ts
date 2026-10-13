@@ -1,7 +1,8 @@
 /// <reference lib="dom" />
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 interface DepthProjection {
   upstream:{levels:number|'all';exactness:'exact'|'approximate'};
@@ -22,6 +23,19 @@ suite('Native chat confirmations — actual UI', () => {
   let page: Page;
   let exports: {getSession(): SessionProjection};
   const real = process.env.DLV_CHAT_UI_REAL === '1';
+  const catalogPath = [
+    join(__dirname, '..', 'cases', 'loadCases.cjs'),
+    join(__dirname, '..', '..', '..', '..', 'tests', 'cases', 'loadCases.cjs'),
+  ].find(path => existsSync(path));
+  if (!catalogPath) throw new Error('tests/cases/loadCases.cjs was not found from the chat-ui test.');
+  const fixtureTrace = (createRequire(catalogPath)(catalogPath) as {
+    loadCases: (runner?: string) => Array<{ id: string; prompt?: string; expect?: { phase?: string } }>;
+  }).loadCases('electron').find(row => row.id === 'electron-fixture-trace');
+  if (!fixtureTrace?.prompt || !fixtureTrace.expect?.phase) {
+    throw new Error('electron-fixture-trace needs a prompt and expect.phase in tests/cases/lineage-cases.yaml');
+  }
+  const fixturePrompt = fixtureTrace.prompt;
+  const planPhase = fixtureTrace.expect.phase;
   const originalQuestion = 'Trace all dependencies upstream from  [ai].[spImportOrders]  all level up and one level down';
   const artifactDir = `tmp/chat-ui/${real ? 'live' : 'fixture'}`;
   let fixture: { uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}> };
@@ -32,7 +46,7 @@ suite('Native chat confirmations — actual UI', () => {
   };
   const input = () => page.locator('.interactive-session [role="textbox"]').last();
   const idleInput = async () => {
-    await page.getByRole('button',{name:/^Send \[/}).last().waitFor({state:'visible',timeout:real ? 300000 : 20000});
+    await page.getByRole('button',{name:/^Send \[/}).last().waitFor({state:'visible',timeout:(real ? 300000 : 20000)});
   };
   const send = async (text: string) => {
     await idleInput();
@@ -73,10 +87,10 @@ suite('Native chat confirmations — actual UI', () => {
   };
   const openPlan = async () => {
     await newChat();
-    await send(real ? `@lineage /trace ${originalQuestion}` : '@lineage /trace [dbo].[ufnGetProductDealerPrice]');
-    await continueButton().waitFor({state:'visible',timeout:180000});
+    await send(real ? `@lineage /trace ${originalQuestion}` : fixturePrompt);
     await idleInput();
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate');
+    assert.equal(exports.getSession().phase.kind,planPhase);
+    await continueButton().waitFor({state:'visible',timeout:180000});
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'plan cannot run before approval');
     await changeScopeButton().waitFor({state:'visible'});
     await cancelButton().waitFor({state:'visible'});
@@ -103,7 +117,7 @@ suite('Native chat confirmations — actual UI', () => {
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.PLAYWRIGHT_CDP_PORT}`);
     page = browser.contexts().flatMap(context=>context.pages()).find(p=>p.url().includes('workbench'))!;
     assert.ok(page,'CDP must attach to the test workbench');
-    await vscode.commands.executeCommand('workbench.action.chat.open', {query:'@lineage /trace [dbo].[ufnGetProductDealerPrice]',isPartialQuery:true});
+    await vscode.commands.executeCommand('workbench.action.chat.open', {query: fixturePrompt, isPartialQuery: true});
     // Choose the contributed fixture via the real model picker; no provider credentials.
     await vscode.commands.executeCommand('notifications.clearAll');
     const picker = page.getByRole('button', {name:/^Models|Pick Model|Select Model|Model Picker/i}).last();
@@ -154,7 +168,7 @@ suite('Native chat confirmations — actual UI', () => {
     assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent,{
       upstream:{levels:1,exactness:'exact'},downstream:{levels:0,exactness:'exact'},
     },'typed scope change must change the actual depth bounds');
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate');
+    assert.equal(exports.getSession().phase.kind,planPhase);
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0);
     await continueButton().waitFor({state:'visible'});
     await changeScopeButton().waitFor({state:'visible'});
@@ -192,7 +206,7 @@ suite('Native chat confirmations — actual UI', () => {
     await send('@lineage What does this procedure do?');
     await page.getByText('Typed question received and answered.',{exact:false}).last().waitFor({timeout:20000});
     assert.ok(fixture.uiRequests.length>before,'Enter must actually reach the provider');
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate','ordinary question preserves proposal');
+    assert.equal(exports.getSession().phase.kind,planPhase,'ordinary question preserves proposal');
     await idleInput();
     await changeScopeButton().click();
     await send('@lineage change scope to one level downstream');
@@ -223,7 +237,7 @@ suite('Native chat confirmations — actual UI', () => {
     await page.getByRole('button',{name:/Run trace/}).last().click();
     await continueButton().waitFor({state:'visible',timeout:180000});
     const session = exports.getSession();
-    assert.equal(session.phase.kind,'awaiting_gate');
+    assert.equal(session.phase.kind,planPhase);
     assert.equal(session.memory.getResult().detail_slots.length,0,'no hop runs before consent');
     await idleInput();
     if(exports.getSession().pendingExploration?.classification!=='both') {
@@ -289,7 +303,7 @@ suite('Native chat confirmations — actual UI', () => {
       await page.getByRole('button',{name:/Run trace/}).last().click();
       await continueButton().waitFor({state:'visible',timeout:180000});
     }
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate');
+    assert.equal(exports.getSession().phase.kind,planPhase);
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'no hop runs before consent');
     await idleInput();
     await approveOnce();

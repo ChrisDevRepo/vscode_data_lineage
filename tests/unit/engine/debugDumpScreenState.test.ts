@@ -70,4 +70,31 @@ describe('Debug Dump Screen-State', () => {
     expect(out.includes('Sales core [ai] — allowlist 3 node(s)'), 'bookmark name/source/allowlist size shown').toBe(true);
   });
 
+  it('keeps the active analytics group and caps the rest of a long list', () => {
+    const groups = Array.from({ length: 12 }, (_, i) => ({ id: `g${i}`, label: `Group ${i}`, nodeIds: [`n${i}`] }));
+    const out = formatScreenStateSections(
+      { highlightedNodeId: null, affordances: null, traceScope: null },
+      { analytics: { type: 'hubs', activeGroupId: 'g11', groups }, bookmark: null, detailOpen: false },
+      null,
+    );
+    expect(out).toContain('▶ Group 11 (1)');
+    expect(out).toContain('… +4 more group(s)');
+    expect(out).not.toContain('Group 9');
+  });
+
+  it('caps a long neighbor list and keeps the full count', () => {
+    const sources = Array.from({ length: 41 }, (_, i) => `in-${i}`);
+    const model = { edges: sources.map(source => ({ source, target: 'p' })) } as unknown as DatabaseModel;
+    const out = formatScreenStateSections(
+      { highlightedNodeId: 'p', affordances: null, traceScope: null },
+      { analytics: null, bookmark: null, detailOpen: false },
+      model,
+    );
+    expect(out).toContain('IN  (41):');
+    expect(out).toContain('in-0 [off-trace]');
+    expect(out).toContain('in-39 [off-trace]');
+    expect(out).toContain('… +1 more');
+    expect(out).not.toContain('in-40');
+  });
+
 });

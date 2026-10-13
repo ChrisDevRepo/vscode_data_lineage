@@ -1,12 +1,13 @@
 // Covers how gate steps report a skipped comparison, and when the template-version step may skip.
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { runCommand } from './command.mjs';
+import { checkTemplateSchema } from './assert-template-schema-version.mjs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { isCi, SKIP_EXIT_CODE, stepOutcome } from './gate-status.mjs';
+import { isCi, SKIP_EXIT_CODE, stepOutcome, stepFailureOutput } from './gate-status.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRIPT = join(repoRoot, 'tests', 'tools', 'assert-template-schema-version.mjs');
@@ -29,45 +30,107 @@ test('CI detection follows the conventional CI variable', () => {
 });
 
 /** A throwaway repository holding the two files the template-version check reads, with no remote or tags. */
-function withRepo(run) {
+async function withRepo(run) {
   const dir = mkdtempSync(join(tmpdir(), 'dlv-gate-'));
   try {
     for (const path of TRACKED) {
       mkdirSync(dirname(join(dir, path)), { recursive: true });
       copyFileSync(join(repoRoot, path), join(dir, path));
     }
-    const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
-    git('init', '-q');
-    git('add', '.');
-    git('-c', 'user.name=gate', '-c', 'user.email=gate@example.invalid', 'commit', '-q', '-m', 'baseline');
-    return run(dir, git);
+    const git = (...args) => runCommand('git', args, { cwd: dir });
+    await git('init', '-q');
+    await git('add', '.');
+    await git('-c', 'user.name=gate', '-c', 'user.email=gate@example.invalid', 'commit', '-q', '-m', 'baseline');
+    return await run(dir, git);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-function runCheck(cwd, ci) {
+async function runCheck(cwd, ci) {
   const env = { ...process.env };
   delete env.CI;
   if (ci !== undefined) env.CI = ci;
-  return spawnSync(process.execPath, [SCRIPT], { cwd, env, encoding: 'utf8' });
+  const stdout = [], stderr = [];
+  const status = await checkTemplateSchema({ cwd, env,
+    stdout: message => stdout.push(message), stderr: message => stderr.push(message),
+  });
+  return { status, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
 }
 
-test('without a release tag or origin/main the check skips locally with a distinct status', () => withRepo((dir) => {
-  const run = runCheck(dir);
+/** Checks the real CLI status; diagnostic text is asserted at its shared function boundary. */
+async function cliStatus(cwd, ci) {
+  const env = { ...process.env };
+  delete env.CI;
+  if (ci !== undefined) env.CI = ci;
+  try {
+    await runCommand(process.execPath, [SCRIPT], { cwd, env });
+    return 0;
+  } catch (error) {
+    if (typeof error.code !== 'number') throw error;
+    return error.code;
+  }
+}
+
+test('without a release tag or origin/main the check skips locally with a distinct status', () => withRepo(async (dir) => {
+  const run = await runCheck(dir);
   assert.equal(run.status, SKIP_EXIT_CODE, run.stdout + run.stderr);
   assert.match(run.stdout, /^SKIP /);
+  assert.equal(await cliStatus(dir), SKIP_EXIT_CODE);
 }));
 
-test('without a release tag or origin/main the check fails under CI', () => withRepo((dir) => {
-  const run = runCheck(dir, 'true');
+test('without a release tag or origin/main the check fails under CI', () => withRepo(async (dir) => {
+  const run = await runCheck(dir, 'true');
   assert.equal(run.status, 1, run.stdout + run.stderr);
   assert.match(run.stderr, /^FAIL .*fetch/);
+  assert.equal(await cliStatus(dir, 'true'), 1);
 }));
 
-test('with origin/main present the comparison runs and passes', () => withRepo((dir, git) => {
-  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
-  const run = runCheck(dir, 'true');
+test('with origin/main present the comparison runs and passes', () => withRepo(async (dir, git) => {
+  await git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const run = await runCheck(dir, 'true');
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.match(run.stdout, /^PASS .*unchanged since origin\/main/);
+  assert.equal(await cliStatus(dir, 'true'), 0);
+}));
+
+test('failure logs preserve captured output and diagnose empty child output', () => {
+  const step = { cmd: 'node', args: ['check.mjs'] };
+  assert.equal(stepFailureOutput(step, { output: 'original diagnostic\n', status: 1 }), 'original diagnostic\n');
+  const silent = stepFailureOutput(step, { output: '', status: 7 });
+  assert.match(silent, /No output captured/);
+  assert.match(silent, /node.*check\.mjs/);
+  assert.match(silent, /Exit status: 7/);
+  assert.match(stepFailureOutput(step, { output: '', status: null, signal: 'SIGTERM' }), /Signal: SIGTERM/);
+  assert.match(stepFailureOutput(step, { output: '', status: null, error: new Error('spawn ENOENT') }), /spawn ENOENT/);
+});
+
+test('a missing Git executable is a failure, never a skipped comparison', () => withRepo(async dir => {
+  const diagnostics = [];
+  await assert.rejects(checkTemplateSchema({ cwd: dir, env: { ...process.env, PATH: dir, CI: 'true' },
+    stdout: message => diagnostics.push(message), stderr: message => diagnostics.push(message),
+  }), { code: 'ENOENT' });
+  assert.deepEqual(diagnostics, []);
+}));
+
+test('a corrupt baseline object is a failure, never a predates-file skip', () => withRepo(async dir => {
+  mkdirSync(join(dir, '.git', 'refs', 'remotes', 'origin'), { recursive: true });
+  writeFileSync(join(dir, '.git', 'refs', 'remotes', 'origin', 'main'), '1111111111111111111111111111111111111111\n');
+  const diagnostics = [];
+  await assert.rejects(checkTemplateSchema({ cwd: dir, env: { ...process.env, CI: 'true' },
+    stdout: message => diagnostics.push(message), stderr: message => diagnostics.push(message),
+  }));
+  assert.deepEqual(diagnostics, []);
+}));
+
+test('a baseline that genuinely lacks the asset still reports the predates skip', () => withRepo(async (dir, git) => {
+  await git('rm', 'assets/aiOutputTemplates.yaml');
+  await git('-c', 'user.name=gate', '-c', 'user.email=gate@example.invalid', 'commit', '-q', '-m', 'pre-asset baseline');
+  await git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  mkdirSync(join(dir, 'assets'), { recursive: true });
+  copyFileSync(join(repoRoot, 'assets/aiOutputTemplates.yaml'), join(dir, 'assets/aiOutputTemplates.yaml'));
+  const run = await runCheck(dir, 'true');
+  assert.equal(run.status, SKIP_EXIT_CODE);
+  assert.match(run.stdout, /origin\/main predates assets\/aiOutputTemplates\.yaml/);
+  assert.equal(await cliStatus(dir, 'true'), SKIP_EXIT_CODE);
 }));

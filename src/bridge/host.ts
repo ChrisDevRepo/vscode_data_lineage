@@ -51,8 +51,6 @@ export interface BridgeHost {
   getExtensionUri(): vscode.Uri;
   /** Accesses the extension's global persistent state storage. */
   getGlobalState(): vscode.Memento;
-  /** Accesses the extension's workspace-specific persistent state storage. */
-  getWorkspaceState(): vscode.Memento;
 }
 
 /** The minimum a send target must expose, so a panel and a bare view share one send path. */
@@ -181,7 +179,6 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
     getConfiguration: () => vscode.workspace.getConfiguration('dataLineageViz'),
     getExtensionUri: () => context.extensionUri,
     getGlobalState: () => context.globalState,
-    getWorkspaceState: () => context.workspaceState,
   };
 }
 

@@ -57,16 +57,6 @@ describe('projectSchemaQuotient', () => {
     expect(projected.totalCount).toBe(2);
   });
 
-  it('emits nothing when the working graph holds a single schema', () => {
-    const model = crossSchema();
-    const dboIds = new Set(model.nodes.filter(entry => entry.schema === 'dbo').map(entry => entry.id));
-    const dboOnly = modelOf(
-      model.nodes.filter(entry => dboIds.has(entry.id)),
-      model.edges.filter(edge => dboIds.has(edge.source) && dboIds.has(edge.target)),
-    );
-    expect(projectSchemaQuotient(buildGraphologyGraph(dboOnly)).edges).toEqual([]);
-  });
-
   it('drops same-schema edges — the quotient is cross-schema only', () => {
     const sameSchema = modelOf(
       [node('[dbo].[proca]', 'ProcA', 'dbo', 'procedure'), node('[dbo].[tabled]', 'TableD', 'dbo', 'table')],

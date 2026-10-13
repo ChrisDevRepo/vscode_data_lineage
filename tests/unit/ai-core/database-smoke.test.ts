@@ -1,6 +1,6 @@
 /** Optional database smoke releases sessions after import, malformed metadata, query failure and cancellation. */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { SimpleExecuteResult } from '../../../src/types/mssql';
+import type { SimpleExecuteResult } from '../../../src/types/database';
 import { main } from '../../harness/cli';
 import { openBuiltInSession } from '../../../src/engine/db/builtInProvider';
 
@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   dispose.mockClear(); query.mockClear();
   vi.mocked(openBuiltInSession).mockResolvedValue({
-    provider: 'builtIn', connectionInfo: { server: 'localhost', database: 'SyntheticDb' },
+    connectionInfo: { server: 'localhost', database: 'SyntheticDb' },
     executeSimpleQuery: query, getServerInfo: vi.fn(), dispose,
   });
 });

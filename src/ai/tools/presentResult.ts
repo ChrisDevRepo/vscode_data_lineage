@@ -86,9 +86,9 @@ export const ADD_NODE_IDS_REVEALS = 'reveals objects this exploration already an
  *
  * @remarks
  * `notes[].node_id` is deliberately absent: it is validated against the same result-graph set, so
- * offering it would send the model into an identical rejection. `add_node_ids` is accepted in
- * Completed Phase only (the dispatcher forbids it during a preview or a synthesis render), so every
- * other stage is left with prose.
+ * offering it would send the model into an identical rejection. `add_node_ids` is accepted in the
+ * Completed Phase (the dispatcher forbids it during a preview or a synthesis
+ * render), so that stage names it and every other stage is left with prose.
  */
 const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
   completed: `A real id outside the result graph can be brought into the view with add_node_ids, which ${ADD_NODE_IDS_REVEALS}.`,
@@ -403,8 +403,8 @@ export function presentResultRepairInstruction(
  * @param committed - Sections of the committed report an update call may keep text for, or `null`. A
  *   keep-text section (label, no text) whose label has no committed body is invalid, so `sections` is not held.
  * @remarks
- * A top-level key the tool does not define is reported by the rejection and left out of the held
- * draft; it does not stop the call's valid fields from being held.
+ * Only top-level fields the tool defines are held; any other key, whether or not the rejection could
+ * name it by path, is left out of the held draft and does not stop the call's valid fields from being held.
  *
  * @returns The repair sentence naming the failed fields to resend; `null` when nothing was held: a draft is
  *   already held, the payload is not an object, a failed path names a defined field no repair may
@@ -420,8 +420,7 @@ export function holdRejectedPresentResult(
   if (store.get() || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
   const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
   const failedKeys = [...new Set(failedPaths.map(path => path.split('.')[0]))];
-  const undefinedKeys = new Set(failedKeys.filter(key => !PRESENT_RESULT_DEFINED_FIELDS.has(key)));
-  const failed = failedKeys.filter(key => !undefinedKeys.has(key));
+  const failed = failedKeys.filter(key => PRESENT_RESULT_DEFINED_FIELDS.has(key));
   if (failed.length === 0 || !failed.every(field => repairable.has(field))) return null;
   const highlightGroupPaths = failedPaths.filter(path => path.startsWith('highlight_groups'));
   const highlightLabelPaths = highlightGroupPaths.filter(path => /^highlight_groups\.\d+\.label$/.test(path));
@@ -450,13 +449,15 @@ export function holdRejectedPresentResult(
     ? (rawSections as PresentSectionPatch[]).filter(sec => !('text' in sec && sec.text?.trim()) && !bodies.has(sectionKey(sec))).map(sec => sec.label)
     : [];
   if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
+  // Only fields the tool defines are held: a key the schema does not know never rides the draft,
+  // whether or not the rejection could name it by path.
   const kept = hasLeafRepair
-    ? Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && (
+    ? Object.fromEntries(Object.entries(input).filter(([key]) => PRESENT_RESULT_DEFINED_FIELDS.has(key) && (
       (key === 'highlight_groups' && highlightLabelIndexes)
       || (key === 'sections' && sectionTextLeaves)
       || !failed.includes(key)
     )))
-    : Object.fromEntries(Object.entries(input).filter(([key]) => !undefinedKeys.has(key) && !failed.includes(key)));
+    : Object.fromEntries(Object.entries(input).filter(([key]) => PRESENT_RESULT_DEFINED_FIELDS.has(key) && !failed.includes(key)));
   if (Object.keys(kept).length === 0) return null;
   const fields = failed as PresentResultRepairField[];
   store.hold(kept as PresentResultInput, {
@@ -736,9 +737,9 @@ export function assignEvidenceIds(
   return { slots, blocks };
 }
 
-/** Whitespace-insensitive identity of a fence body, so a re-typed copy of a block matches it. */
+/** Exact fence-body identity; whitespace can change SQL literal and quoted-identifier values. */
 function fenceBodyKey(lines: readonly string[]): string {
-  return lines.join('\n').replace(/\s+/g, ' ').trim();
+  return lines.join('\n');
 }
 
 /** Where a fence stands on its line, widened over a parenthesis pair that wraps only the fence. */
@@ -1104,8 +1105,8 @@ export function findBareNonPrunedNodes(
 
 /**
  * The detail-slot node ids a present call must link from `sections[].node_ids[]`: the slots whose
- * node is in the rendered set. The synthesis envelope lists this set and
- * {@link findUnrenderedDetailSlotIds} enforces it, so the served list and the check share one source.
+ * node is in the rendered set. The synthesis prompt states the rule, the envelope's `detail_slots`
+ * carry exactly these nodes, and {@link findUnrenderedDetailSlotIds} enforces it.
  *
  * @param slotNodeIds - Node ids of every stored detail slot.
  * @param renderedNodeIds - Node ids the render keeps.
@@ -1200,9 +1201,9 @@ export function findUnrenderedDetailSlotIds(
  *   (the cached discovery answer, the result graph), reported through this accumulator alongside the
  *   structural rules below — see {@link PresentResultViolation}.
  * @param stage - The calling stage (engine-derived), used to keep the unknown-node-id repair hint
- *   caller-possible — see {@link presentNodeIdHint}. Defaults to `'completed'`, the only stage whose
- *   tool policy includes `lineage_search_objects`, so existing callers that do not pass a stage keep
- *   today's hint wording unchanged.
+ *   caller-possible — see {@link presentNodeIdHint}. Defaults to `'completed'`, whose tool policy
+ *   includes `lineage_search_objects`, so callers that do not pass a
+ *   stage keep today's hint wording unchanged.
  * @param nodeIdState - Classifies an id the result graph cannot link against the engine state the
  *   caller holds — see {@link PresentNodeIdStateLookup}. Omitted, every offender is reported as
  *   `not_in_model`, which is the only classification a caller without engine state can make.

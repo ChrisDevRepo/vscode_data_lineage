@@ -1,106 +1,66 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classifyUnitTests, unitTestFiles } from './unit-lanes.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const UNIT_ROOT = path.join(repoRoot, 'tests', 'unit');
-
-/** The scripts the gate runs as its unit steps. Keep in step with `STEPS` in gate.mjs. */
-const GATE_UNIT_SCRIPTS = ['coverage:core', 'test:runtime'];
-
-/** Repo-relative POSIX path, so package.json arguments and disk paths compare as strings. */
-const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');
-
-/** Every `*.test.ts` / `*.test.tsx` under `tests/unit`, repo-relative, matching the `npm test` include glob. */
-function unitTestFiles(dir = UNIT_ROOT, found = []) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) unitTestFiles(full, found);
-    else if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) found.push(rel(full));
-  }
-  return found;
-}
 
 /**
- * Path arguments one `run-vitest.mjs` script passes to Vitest.
- *
- * @param command - The npm script body.
- * @returns Repo-relative path arguments, flags and the runner invocation removed.
+ * npm scripts that must keep pointing at the lane runner.
+ * Gate steps are `coverage:core` and `test:runtime`. `test` is their union.
+ * `test:support` is intentional and stays out of the gate.
  */
-function pathArgsOf(command) {
-  return command
-    .split(/\s+/u)
-    .slice(3) // `node tests/tools/run-vitest.mjs run`
-    .filter((token) => token && !token.startsWith('-'))
-    .map((token) => token.replaceAll('\\', '/'));
-}
-
-/** Every unit test file a path argument selects: a file directly, or a directory recursively. */
-function filesSelectedBy(pathArg, allFiles) {
-  const absolute = path.join(repoRoot, pathArg);
-  let stats;
-  try {
-    stats = statSync(absolute);
-  } catch {
-    return null; // Signals a path that no longer exists — reported as its own failure.
-  }
-  if (stats.isFile()) return [pathArg];
-  const prefix = `${pathArg.replace(/\/+$/u, '')}/`;
-  return allFiles.filter((file) => file.startsWith(prefix));
-}
+const SCRIPT_LANES = {
+  test: 'gate',
+  'test:core': 'core',
+  'test:lineage': 'lineage',
+  'test:bfs': 'lineage',
+  'test:runtime': 'runtime',
+  'test:support': 'support',
+  'coverage:core': 'core',
+};
 
 const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-const allFiles = unitTestFiles().sort();
 const problems = [];
 
+for (const [script, lane] of Object.entries(SCRIPT_LANES)) {
+  const command = pkg.scripts?.[script];
+  if (!command) {
+    problems.push(`package.json has no "${script}" script.`);
+    continue;
+  }
+  if (!command.includes('tests/tools/run-lane.mjs') || !command.includes(lane)) {
+    problems.push(`"${script}" must run tests/tools/run-lane.mjs ${lane}. It is: ${command}`);
+  }
+  if (script === 'coverage:core' && !command.includes('--coverage')) {
+    problems.push('"coverage:core" must pass --coverage so the parser and lineage floors still run.');
+  }
+}
+
+const allFiles = unitTestFiles().sort();
 if (allFiles.length === 0) {
   console.error('FAIL: found no tests/unit/**/*.test.ts(x) files at all — treating as a tooling failure.');
   process.exit(2);
 }
 
-/** file -> the gate scripts that run it. */
-const claimedBy = new Map(allFiles.map((file) => [file, []]));
+const classified = classifyUnitTests(allFiles);
+problems.push(...classified.problems);
 
-for (const script of GATE_UNIT_SCRIPTS) {
-  const command = pkg.scripts?.[script];
-  if (!command) {
-    problems.push(`package.json has no "${script}" script, but gate.mjs runs it as a unit step.`);
-    continue;
-  }
-  for (const pathArg of pathArgsOf(command)) {
-    const selected = filesSelectedBy(pathArg, allFiles);
-    if (selected === null) {
-      problems.push(`"${script}" names ${pathArg}, which does not exist.`);
-      continue;
-    }
-    if (selected.length === 0) {
-      problems.push(`"${script}" names ${pathArg}, which selects no test file.`);
-      continue;
-    }
-    for (const file of selected) claimedBy.get(file)?.push(script);
-  }
-}
-
-for (const [file, scripts] of claimedBy) {
-  if (scripts.length === 0) {
-    problems.push(
-      `${file} runs under "npm test" but under no gate unit step. Add its directory to one of `
-      + `${GATE_UNIT_SCRIPTS.join(', ')} in package.json, or the gate will report green without it.`,
-    );
-  } else if (new Set(scripts).size > 1) {
-    problems.push(`${file} is claimed by more than one gate unit step (${[...new Set(scripts)].join(', ')}).`);
-  }
+const gateCount = classified.core.length + classified.runtime.length;
+if (classified.support.length === 0) {
+  problems.push('support lane is empty; optional suites would have been folded back into the gate.');
 }
 
 if (problems.length > 0) {
-  console.error('FAIL  the gate unit steps do not cover the unit suite exactly:\n');
+  console.error('FAIL  the unit lanes do not partition the suite:\n');
   for (const problem of problems) console.error(`  - ${problem}\n`);
-  console.error('See docs/testing/README.md §Default Checks and tests/tools/gate.mjs.');
+  console.error('See docs/testing/README.md and tests/tools/unit-lanes.mjs.');
   process.exit(1);
 }
 
 console.log(
-  `PASS  all ${allFiles.length} unit test files run in exactly one gate unit step `
-  + `(${GATE_UNIT_SCRIPTS.join(', ')}).`,
+  `PASS  ${allFiles.length} unit test files partitioned: `
+  + `${classified.core.length} core, ${classified.runtime.length} runtime, `
+  + `${classified.support.length} support. The gate runs ${gateCount}.`,
 );

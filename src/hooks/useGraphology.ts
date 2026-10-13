@@ -4,8 +4,7 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
 import { buildGraph, buildGraphNoLayout, getGraphMetrics, hasCachedLayout, layoutCacheKey, objectLayoutInputForGraph, seedLayoutCache } from '../engine/graphBuilder';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { filterBySchemas } from '../engine/dacpacExtractor';
-import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
+import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
 import LayoutWorker from '../utils/layout.worker?worker&inline';
@@ -126,8 +125,9 @@ export function useGraphology(): UseGraphologyReturn {
     const schemaColorMap = createSchemaColorMap(schemas, undefined, model.identifierCaseSensitive);
     setRenderedSchemas(schemas);
 
-    const withSchemaColors = (nodes: FlowNode<CustomNodeData>[]): FlowNode<CustomNodeData>[] =>
-      nodes.map((node) => {
+    /** Publishes a built graph, its schema-coloured React Flow projection and its metrics. */
+    const publish = (result: ReturnType<typeof buildGraph>): void => {
+      setFlowNodes((result.flowNodes as FlowNode<CustomNodeData>[]).map((node) => {
         if (node.data.objectType === 'external') return node;
         return {
           ...node,
@@ -136,15 +136,15 @@ export function useGraphology(): UseGraphologyReturn {
             schemaColor: getSchemaColorFromMap(node.data.schema, schemaColorMap, model.identifierCaseSensitive),
           },
         };
-      });
-
-    if (count > config.renderLimit) {
-      log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
-      const result = buildGraphNoLayout(allowlistFiltered, config);
-      setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
+      }));
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
+    };
+
+    if (count > config.renderLimit) {
+      log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
+      publish(buildGraphNoLayout(allowlistFiltered, config));
       setRenderLimitHit(count);
       return count;
     }
@@ -153,10 +153,7 @@ export function useGraphology(): UseGraphologyReturn {
 
     if (skipLayout) {
       const result = buildGraphNoLayout(allowlistFiltered, config);
-      setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
-      setFlowEdges(result.flowEdges);
-      setGraph(result.graph);
-      setMetrics(getGraphMetrics(result.graph));
+      publish(result);
       log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
       prewarmObjectLayout(result.graph, config);
       return count;
@@ -181,10 +178,7 @@ export function useGraphology(): UseGraphologyReturn {
         return count;
       }
     }
-    setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
-    setFlowEdges(result.flowEdges);
-    setGraph(result.graph);
-    setMetrics(getGraphMetrics(result.graph));
+    publish(result);
     if (!layoutFailed) {
       log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
     }

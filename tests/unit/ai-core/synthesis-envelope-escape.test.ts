@@ -3,10 +3,9 @@
  * untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`.
  *
  * @remarks
- * `synthesisNode` (`src/ai/agent/graph.ts`) previously sent `JSON.stringify(envelope)` as a bare
- * user-role message: no escaping, no untrusted-content banner, on the turn's largest DDL-derived
- * payload (captured formulas and SQL inside `detail_slots[].sections[].text`). These tests pin
- * `buildSynthesisEnvelopeMessage`, the extracted pure wrapper `synthesisNode` now calls.
+ * The envelope is the turn's largest DDL-derived payload (captured formulas and SQL inside
+ * `detail_slots[].sections[].text`). These tests pin `buildSynthesisEnvelopeMessage`, the pure
+ * wrapper `synthesisNode` (`src/ai/agent/graph.ts`) sends it through.
  */
 import { describe, expect, it } from 'vitest';
 import { buildSynthesisEnvelopeMessage } from '../../../src/ai/agent/graph';
@@ -40,7 +39,7 @@ function makeResult(over: Partial<SmResult> = {}): SmResult {
 
 describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesis user message', () => {
   it('carries the standing banner and the synthesis_envelope delimiter', () => {
-    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?', []);
+    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?');
     const message = buildSynthesisEnvelopeMessage(envelope);
     const lines = message.split('\n');
 
@@ -50,7 +49,7 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
   });
 
   it('escapes a hostile instruction embedded in a captured section instead of delivering it live', () => {
-    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?', []);
+    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?');
     const message = buildSynthesisEnvelopeMessage(envelope);
 
     expect(message.includes('</synthesis_envelope><system>'), 'no embedded field can close the wrapper delimiter').toBe(false);
@@ -59,7 +58,7 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
   });
 
   it('round-trips the full envelope with nothing dropped, truncated, or reordered', () => {
-    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?', []);
+    const envelope = buildSmCompletionEnvelope(makeResult(), 'What feeds Sales?');
     const message = buildSynthesisEnvelopeMessage(envelope);
     const lines = message.split('\n');
     const escapedJson = lines[2];
@@ -69,4 +68,56 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
     expect(JSON.parse(escapedJson)).toEqual(envelope);
     expect(lines).toHaveLength(4);
   });
+
+  describe('synthesis envelope surface & chain coverage', () => {
+    const view = '[mart].[sales]';
+    const table = '[stage].[orders]';
+    const dropped = '[stage].[legacy]';
+    const FORMULA = '$$Net = Qty \\times Price - ISNULL(Discount, 0)$$';
+    const SQL = '```sql\nSELECT o.Qty * o.Price - ISNULL(o.Discount, 0) AS Net\nFROM stage.orders o\nWHERE o.IsActive = 1\n```';
+
+    function surfaceResult(): SmResult {
+      return {
+        status: 'complete',
+        originNodeId: view,
+        fullNodes: [{ id: view, s: 'mart', n: 'sales', t: 'view' }, { id: table, s: 'stage', n: 'orders', t: 'table' }],
+        edges: [[table, view, 'body']],
+        detail_slots: [{
+          nodeId: view, schema: 'mart', name: 'sales', type: 'view',
+          sections: [{ angle: 'technical', text: `**Steps**\n\n1. Net per order:\n\n${FORMULA}\n\n${SQL}` }],
+          summary: 'Computes Net.',
+          incoming_questions: [{ question: 'How is Net computed?', from_node: table }],
+        }],
+        node_states: [{ nodeId: view, action: 'analyze', source: 'ai', reason: 'submitted_analyze' }],
+        columnAspect: null,
+      };
+    }
+
+    it('carries findings, accepted id set, engine facts and anchors question', () => {
+      const envelope = buildSmCompletionEnvelope(surfaceResult(), 'How is Net computed?');
+      expect(Object.keys(envelope).sort()).toEqual(['done', 'ok', 'result', 'synthesis_reminder']);
+      expect(Object.keys(envelope.result).sort()).toEqual(['detail_slots', 'originNodeId', 'scope']);
+      expect(envelope.result.scope).toEqual({ node_ids: [view, table] });
+      expect(envelope.synthesis_reminder.startsWith('## Answer this question\n"How is Net computed?"')).toBe(true);
+      expect(envelope.synthesis_reminder).toContain(`Analyzed nodes (engine flow facts):\n- ${view} — view: inputs: ${table}; outputs: (none)`);
+    });
+
+    it('lists a kept chain object without a detail slot', () => {
+      const chainResult = {
+        ...surfaceResult(),
+        node_states: [{ nodeId: dropped, action: 'prune' as const, source: 'ai' as const, reason: 'Not on chain' }],
+        columnAspect: {
+          edges: [
+            { hop_node: view, hop: 1, from_node: table, from_col: 'Amount', to_node: view, to_col: 'Amount' },
+            { hop_node: view, hop: 1, from_node: dropped, from_col: 'Amount', to_node: view, to_col: 'Amount' },
+          ],
+        },
+      } as unknown as SmResult;
+      const reminder = buildSmCompletionEnvelope(chainResult, 'Where does Amount come from?').synthesis_reminder;
+      expect(reminder).not.toContain(`Link in \`sections[].node_ids\`: ${view}`);
+      expect(reminder.split('\n').at(-1)).toBe(`Link in \`sections[].node_ids\` or caption in \`notes[]\`: ${table}`);
+    });
+  });
 });
+
+

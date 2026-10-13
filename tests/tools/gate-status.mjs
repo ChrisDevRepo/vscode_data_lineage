@@ -32,3 +32,12 @@ export function stepOutcome(status) {
   if (status === SKIP_EXIT_CODE) return 'SKIP';
   return 'FAIL';
 }
+
+/** Retains the child's output or records its command and termination details when none was captured. */
+export function stepFailureOutput(step, run) {
+  if (run.output.trim()) return run.output;
+  return `No output captured.\nCommand: ${JSON.stringify([step.cmd, ...step.args])}\n`
+    + `Exit status: ${run.status ?? 'none'}\n`
+    + (run.signal ? `Signal: ${run.signal}\n` : '')
+    + (run.error ? `Spawn error: ${run.error.message}\n` : '');
+}

@@ -62,6 +62,8 @@ function emptyStore(): ProjectStore {
 export interface ProjectStoreDropReport {
   /** Number of persisted project records that failed validation and were discarded. */
   dropped: number;
+  /** Optional saved views skipped inside retained projects; absent when no views were skipped. */
+  droppedViews?: number;
   /** Dot-joined paths of the rejected fields, de-duplicated and capped. Names only, no values. */
   issuePaths: string[];
 }
@@ -71,13 +73,14 @@ const MAX_REPORTED_ISSUE_PATHS = 10;
 
 /**
  * Safely deserializes a raw object into a ProjectStore.
- * Validates the schema version and project shapes. Returns an empty store on any parse failure.
+ * Validates the schema version and project shapes and keeps a valid `lastOpenedId` and
+ * `lastWizardView`. Returns an empty store on any parse failure.
  *
  * @remarks
  * Validation is deliberately tolerant of fields it does not recognize — `ProjectReadSchema` drops
  * them rather than rejecting the record. A project written by an older build carries keys this one
  * never declared, and a record is discarded only when a field the schema *requires* is missing or
- * of the wrong type.
+ * of the wrong type. Individual invalid optional views are skipped without discarding their project.
  *
  * Kept free of VS Code imports: discarded records are surfaced through the optional `onDropped`
  * callback so the extension host owns logging and notification, and the engine stays testable.
@@ -104,10 +107,18 @@ export function migrateProjectStore(
     return emptyStore();
   }
   let dropped = 0;
+  let droppedViews = 0;
   const issuePaths: string[] = [];
   const projects = (obj.projects as unknown[]).flatMap((project) => {
     const parsed = ProjectReadSchema.safeParse(project);
-    if (parsed.success) return [parsed.data];
+    if (parsed.success) {
+      const skippedViews = ((project as { filterProfiles?: unknown[] }).filterProfiles?.length ?? 0) - (parsed.data.filterProfiles?.length ?? 0);
+      droppedViews += skippedViews;
+      if (skippedViews > 0 && issuePaths.length < MAX_REPORTED_ISSUE_PATHS && !issuePaths.includes('filterProfiles')) {
+        issuePaths.push('filterProfiles');
+      }
+      return [parsed.data];
+    }
     dropped += 1;
     for (const issue of parsed.error.issues) {
       const path = issue.path.map((segment) => String(segment)).join('.') || '(root)';
@@ -117,11 +128,12 @@ export function migrateProjectStore(
     }
     return [];
   });
-  if (dropped > 0) onDropped?.({ dropped, issuePaths });
+  if (dropped > 0 || droppedViews > 0) onDropped?.({ dropped, issuePaths, ...(droppedViews > 0 ? { droppedViews } : {}) });
   return {
     schemaVersion: 1,
     projects,
     lastOpenedId: typeof obj.lastOpenedId === 'string' ? obj.lastOpenedId : null,
+    ...((obj.lastWizardView === 'main' || obj.lastWizardView === 'projects') && { lastWizardView: obj.lastWizardView }),
   };
 }
 
@@ -256,7 +268,7 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
     showExternalRefs: filter.showExternalRefs,
     externalRefTypes: Array.from(filter.externalRefTypes),
     exclusionPatterns: filter.exclusionPatterns,
-    ...(filter.allowlistNodeIds && filter.allowlistNodeIds.size > 0
+    ...(filter.allowlistNodeIds !== undefined
       ? { allowlistNodeIds: Array.from(filter.allowlistNodeIds) }
       : {}),
   };
@@ -279,7 +291,7 @@ export function deserializeFilter(s: SerializedFilterState): FilterState {
     showExternalRefs: s.showExternalRefs,
     externalRefTypes: new Set(s.externalRefTypes) as FilterState['externalRefTypes'],
     exclusionPatterns: s.exclusionPatterns ?? [],
-    ...(s.allowlistNodeIds && s.allowlistNodeIds.length > 0
+    ...(s.allowlistNodeIds !== undefined
       ? { allowlistNodeIds: new Set(s.allowlistNodeIds) }
       : {}),
   };

@@ -158,7 +158,7 @@ export interface NodeDecoration {
    * @remarks
    * Unlike {@link dimmed}, this stays `false` for an ordinary node whether or not a selection is
    * active, so the object-view canvas can use it as a `className` (see {@link LIT_CLASS_NAME}) that
-   * only changes identity for the handful of nodes actually entering or leaving the lit set.
+   * only changes identity for the nodes entering or leaving the lit set.
    */
   lit: boolean;
   /** Whether the scoped-view remove control is shown. */
@@ -308,7 +308,7 @@ function applyDecoration(node: FlowNode, d: NodeDecoration): FlowNode {
  * @remarks
  * A drag emits a position change for one node, so `applyNodeChanges` returns a new object for that
  * node and keeps every other node's reference. Reusing the cached result for the untouched nodes
- * keeps their `data` reference stable, which is what lets `React.memo` skip them: without it a
+ * keeps their `data` reference stable, which allows `React.memo` to skip them: without it a
  * single drag frame re-renders every node on the canvas.
  *
  * Entries for ids absent from `nodes` are dropped, so the cache tracks the rendered set rather than
@@ -379,7 +379,7 @@ export function createColumnNodeCache(): ColumnNodeCache {
  *
  * Width and height are declared from the view box rather than measured. A column node's height is
  * `header + rows`, so it is known before layout — the same number dagre positioned against — and
- * declaring it lets the minimap draw the node on its first render instead of after a measurement
+ * declaring it allows the minimap to draw the node on its first render instead of after a measurement
  * round-trip.
  *
  * Entries for ids absent from `views` are dropped, so the cache tracks the rendered set.

@@ -1,8 +1,8 @@
 /**
  * Lanes for the graph surface above the tracked fixture size.
  *
- * Nothing above ~150 objects had ever been executed: the largest fixture is 148 nodes, while
- * `maxNodes` admits 2000 and `renderLimit` renders up to 1500. These cover the build, the
+ * The largest tracked fixture is 148 nodes, while `maxNodes` admits up to 5000 (default 2000) and
+ * `renderLimit` renders up to 1500. These cover the build, the
  * object-limit refusal, the render-limit boundary, and — for the scoped surface, which returns
  * before the limit check — how many nodes an unbounded trace can actually put on the canvas.
  *
@@ -17,7 +17,7 @@ import {
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
 import { deriveGraphDisplayMode, deriveInitialGraphMode, traceSizeByDepth } from '../../../src/engine/graphDisplayMode';
-import { filterBySchemas } from '../../../src/engine/dacpacExtractor';
+import { filterBySchemas } from '../../../src/engine/modelFilters';
 import { checkObjectLimit, formatObjectLimitMessage } from '../../../src/engine/modelFilters';
 import { DEFAULT_CONFIG, type DatabaseModel, type ExtensionConfig } from '../../../src/engine/types';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
@@ -52,7 +52,7 @@ function directedReach(model: DatabaseModel, originId: string): number {
 }
 
 describe('graph build above the tracked fixture size', () => {
-  it('builds without layout when the render limit blocks the object surface', () => {
+  it('builds 2000 objects without layout', () => {
     const model = buildLargeModel(2000);
     const result = buildGraphNoLayout(model, DEFAULT_CONFIG);
 

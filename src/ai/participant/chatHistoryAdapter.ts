@@ -54,7 +54,7 @@ interface NativePendingGate {
 /**
  * Applies the existing new-chat reset when VS Code supplies an empty history.
  *
- * The optional pending-gate cancellation lets the new runtime release an old
+ * The optional pending-gate cancellation enables the new runtime to release an old
  * interrupt before the session is reset. Memory implementation details remain
  * owned by `AiSession.resetExploration()`.
  */

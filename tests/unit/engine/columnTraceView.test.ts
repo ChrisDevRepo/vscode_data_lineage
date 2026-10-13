@@ -380,11 +380,6 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     expect(legs.some((leg) => leg.startsWith('dbo.s1.Qty->dbo.t'))).toBe(false);
   });
 
-  it('gives the hop an inbound edge, which is what puts it mid-chain', () => {
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
-    expect(view.edges.some((e) => e.target === 'dbo.p')).toBe(true);
-  });
-
   it('draws the shared outbound leg once', () => {
     const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const outbound = view.edges.filter((e) => e.source === 'dbo.p' && e.target === 'dbo.t');

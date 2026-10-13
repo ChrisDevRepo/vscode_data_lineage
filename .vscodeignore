@@ -105,7 +105,6 @@ CLAUDE*
 GEMINI*
 .GEMINI*
 SECURITY.md
-CODE_OF_CONDUCT.md
 *.vsix
 # Untracked ad-hoc debug dumps still get packaged by vsce — exclude them explicitly.
 debug*.txt

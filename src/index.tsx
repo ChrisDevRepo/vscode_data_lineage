@@ -66,40 +66,38 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     );
   }).catch(err => reportBootstrapFailure('detail', root, err));
 } else {
-    // Acquire VS Code API ONCE — this is the only place it should be called
-    const vscodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
-    window.vscode = vscodeApi ?? undefined; // Used by ErrorBoundary (class component, can't use context)
+  // acquireVsCodeApi may be called once per webview; this is the only call site.
+  const vscodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
+  window.vscode = vscodeApi ?? undefined; // Read by ErrorBoundary, a class component without context access.
 
-    // Global error handlers — surface silent failures in Debug Console + outputChannel
-    window.addEventListener('unhandledrejection', (event) => {
-      const isErr = event.reason instanceof Error;
-      const msg = isErr ? event.reason.message : String(event.reason);
-      const stack = isErr ? event.reason.stack : undefined;
-      window.vscode?.postMessage({
-        type: 'error',
-        source: 'unhandled-rejection',
-        error: msg,
-        stack,
-        timestamp: Date.now(),
-      });
+  // Surface otherwise silent failures in the Output channel.
+  window.addEventListener('unhandledrejection', (event) => {
+    const isErr = event.reason instanceof Error;
+    window.vscode?.postMessage({
+      type: 'error',
+      source: 'unhandled-rejection',
+      error: isErr ? event.reason.message : String(event.reason),
+      stack: isErr ? event.reason.stack : undefined,
+      timestamp: Date.now(),
     });
+  });
 
-    window.addEventListener('error', (event) => {
-      // A browser notice with nothing thrown behind it goes to the log, not a modal toast the user cannot act on.
-      if (!(event.error instanceof Error)) {
-        window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[Graph] Window notice: ${event.message}` });
-        return;
-      }
-      window.vscode?.postMessage({
-        type: 'error',
-        source: 'window-error',
-        error: event.message,
-        stack: event.error.stack,
-        timestamp: Date.now(),
-      });
+  window.addEventListener('error', (event) => {
+    // A browser notice with nothing thrown behind it goes to the log, not a modal toast the user cannot act on.
+    if (!(event.error instanceof Error)) {
+      window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[Graph] Window notice: ${event.message}` });
+      return;
+    }
+    window.vscode?.postMessage({
+      type: 'error',
+      source: 'window-error',
+      error: event.message,
+      stack: event.error.stack,
+      timestamp: Date.now(),
     });
+  });
 
-    Promise.all([
+  Promise.all([
     import('./components/App'),
     import('./contexts/VsCodeContext'),
     import('./components/ErrorBoundary'),

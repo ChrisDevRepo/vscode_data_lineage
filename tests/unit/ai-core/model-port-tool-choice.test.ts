@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { HumanMessage } from '@langchain/core/messages';
 import { z } from 'zod';
-import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
+import { VscodeModelPort, emittedToolCalls } from '../../../src/ai/model/vscodeModelPort';
 import type { ModelToolChoice } from '../../../src/ai/model/modelPort';
 
 function nativePort() {
@@ -67,5 +67,25 @@ describe('VscodeModelPort tool-choice projection', () => {
     if (result.status === 'completed') {
       expect(result.toolCalls).toEqual([{ valid: true, callId: 'call-1', toolName: 'lineage_search_objects', input: { query: 'x' } }]);
     }
+  });
+});
+
+describe('emittedToolCalls', () => {
+  it('keeps every call in order when the stream chunks cannot be paired with the calls', () => {
+    const message = {
+      tool_calls: [
+        { id: 'a', name: 'lineage_search_objects', args: { query: 'a' } },
+        { id: 'b', name: 'lineage_search_objects', args: { query: 'b' } },
+        { id: 'c', name: 'lineage_search_objects', args: { query: 'c' } },
+      ],
+      invalid_tool_calls: [{ id: 'd', name: 'lineage_search_objects', args: '{bad' }],
+      tool_call_chunks: [],
+    };
+    expect(emittedToolCalls(message as never)).toEqual([
+      { id: 'a', name: 'lineage_search_objects', args: { query: 'a' } },
+      { id: 'b', name: 'lineage_search_objects', args: { query: 'b' } },
+      { id: 'c', name: 'lineage_search_objects', args: { query: 'c' } },
+      { id: 'd', name: 'lineage_search_objects', malformedArgs: '{bad' },
+    ]);
   });
 });

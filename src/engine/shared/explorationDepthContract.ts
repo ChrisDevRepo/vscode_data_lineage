@@ -53,7 +53,7 @@ export const ExplorationDepthLimitSchema = numericStringDepth(z.union([z.number(
 export interface DepthSideValue {
   /** Starting level count for this side, or `'all'` for the full chain. */
   levels: number | 'all';
-  /** `'exact'`: a limit the user stated, enforced as a border. `'approximate'`: your own estimate. */
+  /** `'exact'`: a limit the user stated, enforced as a border. `'approximate'`: estimated depth. */
   exactness: 'exact' | 'approximate';
 }
 

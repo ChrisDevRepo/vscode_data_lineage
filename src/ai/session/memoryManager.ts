@@ -53,9 +53,11 @@ export type CaptureAngle = 'business' | 'technical';
  *
  * @remarks
  * Each `business_capture` / `technical_capture` YAML key produces ONE entry with the
- * matching angle. Body text arrives pre-formatted from active phase and is lifted
- * verbatim by synthesis as a peer entry in `present_result.sections[]` (NOT as a
- * nested subheading inside another section).
+ * matching angle. Body text arrives pre-formatted from active phase and reaches synthesis
+ * in the completion envelope's `detail_slots[]`. The synthesis model authors
+ * `present_result.sections[].text` from it, grouping nodes that share a role, and may rephrase or
+ * drop it; the engine copies captured text verbatim only for a ```sql fence the model cites by
+ * evidence id.
  */
 export interface CapturedSection {
   /** Which YAML capture template produced this section. */
@@ -69,8 +71,8 @@ export interface CapturedSection {
  *
  * @remarks
  * Populated during the hop loop by `AiMemoryManager.storeDetail`. Remains at full
- * fidelity for the entire session and is exposed in `getResult()` so the synthesis
- * step can render every archived slot verbatim.
+ * fidelity for the entire session and is exposed in `getResult()`, which the synthesis
+ * completion envelope replays in full.
  */
 export interface DetailSlot {
   /** Node identifier. */
@@ -87,18 +89,44 @@ export interface DetailSlot {
    * may also be stored.
    *
    * @remarks
-   * Synthesis lifts each section verbatim into `present_result.sections[]` as a
-   * peer entry (groupable across nodes for sibling-variant tables). The capture
-   * vs synthesis split is mechanical: the AI writes per-node sections at active
-   * phase; synthesis groups across nodes.
+   * Synthesis receives each section in the completion envelope and the model writes
+   * `present_result.sections[].text` from it, grouping across nodes. The model may rephrase
+   * or drop captured text; only a ```sql fence cited by evidence id is expanded verbatim by
+   * the engine.
    */
   sections: CapturedSection[];
   /** One-line digest of the whole node (across both angles when both fire), shared across hops via `short_term_memory`. */
   summary: string;
   /** Optional hop-time role hint for synthesis; not rendered directly. */
   badge_label?: string;
-  /** The specific reason or question that triggered the analysis of this node. */
+  /**
+   * Every non-blank sub-question the hop was dispatched with, verbatim, with the node whose hop
+   * asked it when the task ledger records one. Revisits append; nothing is replaced.
+   */
+  incoming_questions?: IncomingQuestion[];
+  /** First dispatch question, written only by snapshots taken before `incoming_questions` existed. */
   reason_for_visit?: string;
+}
+
+/** One sub-question a hop was dispatched with. */
+export interface IncomingQuestion {
+  /** The question text as the hop received it. */
+  question: string;
+  /** Node whose hop asked the question; absent when the ledger records no asking hop. */
+  from_node?: string;
+}
+
+/** Appends `incoming` questions not already present by exact sender and trimmed text. */
+function appendUniqueQuestions(earlier: readonly IncomingQuestion[], incoming: readonly IncomingQuestion[]): IncomingQuestion[] {
+  const key = (q: IncomingQuestion): string => JSON.stringify([q.from_node ?? '', q.question.trim()]);
+  const seen = new Set(earlier.map(key));
+  const merged = [...earlier];
+  for (const q of incoming) {
+    if (seen.has(key(q))) continue;
+    seen.add(key(q));
+    merged.push(q);
+  }
+  return merged;
 }
 
 
@@ -298,22 +326,23 @@ export class AiMemoryManager {
    * @param node - The node the findings describe.
    * @param sections - Captured sections (one per fired `*_capture` template).
    * @param summary - One-line digest of the whole node, shared across hops via `short_term_memory`.
-   * @param meta - Optional synthesis metadata — `badge_label`, `reason_for_visit`.
+   * @param meta - Optional synthesis metadata — `badge_label`, `incoming_questions`.
    *
    * @remarks
    * Sections are stored verbatim. A revisit (a post-delivery `supplementAgenda` follow-up re-enqueues a visited node)
-   * appends its sections after the earlier visit's — summary and metadata take the latest visit,
-   * and {@link appendUniqueSections} drops any re-emitted text as no new evidence. Column-flow notes remain on their structural records.
+   * appends its sections and incoming questions after the earlier visit's — summary and badge take
+   * the latest visit, and {@link appendUniqueSections} drops any re-emitted text as no new evidence.
+   * Column-flow notes remain on their structural records.
    *
    * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG lines: the one
    * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat, and
-   * the one naming each `summary` / `badge_label` / `reason_for_visit` a revisit replaced.
+   * the one naming each `summary` / `badge_label` a revisit replaced.
    */
   public storeDetail(
     node: LineageNode,
     sections: CapturedSection[],
     summary: string,
-    meta?: { badge_label?: string; reason_for_visit?: string },
+    meta?: { badge_label?: string; incoming_questions?: readonly IncomingQuestion[] },
     debugLog?: (message: string) => void,
   ): void {
     const previous = this.detailSlots.get(node.id);
@@ -322,12 +351,12 @@ export class AiMemoryManager {
       const replaced = ([
         ['summary', previous.summary, summary],
         ['badge_label', previous.badge_label, meta?.badge_label],
-        ['reason_for_visit', previous.reason_for_visit, meta?.reason_for_visit],
       ] as const).filter(([, before, after]) => before !== after).map(([field]) => field);
       if (replaced.length > 0) {
         debugLog?.(`[Memory] revisit replaced ${replaced.join(',')} — node=${node.id}`);
       }
     }
+    const questions = appendUniqueQuestions(previous?.incoming_questions ?? [], meta?.incoming_questions ?? []);
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
@@ -336,7 +365,7 @@ export class AiMemoryManager {
       sections: appendUniqueSections(earlier, sections, node.id, debugLog),
       summary,
       badge_label: meta?.badge_label,
-      reason_for_visit: meta?.reason_for_visit,
+      ...(questions.length > 0 ? { incoming_questions: questions } : {}),
     });
   }
 
@@ -403,7 +432,7 @@ export class AiMemoryManager {
     return { detail_slots: Array.from(this.detailSlots.values()) };
   }
 
-  /** JSON snapshot used by telemetry, eval extraction, and strict engine-checkpoint assembly. */
+  /** JSON snapshot embedded in the engine checkpoint (state dump and saved run). */
   public toJSON(): MemoryStateSnapshot {
     const slots: Record<string, DetailSlot> = {};
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
@@ -423,7 +452,7 @@ export class AiMemoryManager {
    *
    * @remarks
    * The inverse of {@link toJSON}: restores the detail archive **in insertion order** (so the
-   * sliding `<short_term_memory>` window and synthesis lift see the same sequence), plus the
+   * sliding `<short_term_memory>` window and the synthesis envelope see the same sequence), plus the
    * mission brief, verdict tally and rejection ring.
    *
    * @param snapshot - A prior `toJSON()` payload (typically after a JSON serialize/parse round-trip).
@@ -476,10 +505,6 @@ export class AiMemoryManager {
   /**
    * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the per-hop
    * user message's `<short_term_memory>` block.
-   *
-   * @remarks
-   * Same sliding window used by `getWorkingMemory` — exposed separately so prompt builders
-   * can access it without constructing the full working-memory envelope.
    */
   public getShortTermMemory(): Array<{ nodeId: string; summary: string }> {
     return Array.from(this.detailSlots.values())

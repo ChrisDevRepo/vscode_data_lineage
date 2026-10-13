@@ -20,7 +20,7 @@ import { RepairDraftStore } from '../support/repairDraftStore';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import type { PresentResultInput, PresentResultRepairAuthorization } from '../tools/presentResult';
-import type { LmStage } from '../tools/toolPolicy';
+import type { ChatLmStage } from '../tools/toolPolicy';
 
 /** Reviewable exploration proposal. It has no active engine authority until approval. */
 export interface PendingExplorationProposal {
@@ -66,18 +66,6 @@ export function sameExplorationProposal(
 export type SessionWriteOutcome =
   | { kind: 'accepted' }
   | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number };
-
-/** One recorded sliding-memory wipe: what fired it, at which hop, and how much history it discarded. */
-interface MemoryWipeEvent {
-  /** Only `sliding` exists: the graph replaces history with a continuation anchor after an accepted hop submission. */
-  kind: 'sliding';
-  /** What triggered the wipe. */
-  trigger: string;
-  /** Hop at which the wipe fired. */
-  hop: number;
-  /** Threaded message count discarded by the wipe. */
-  messagesBefore: number;
-}
 
 /**
  * Outcome of attempting to start or resume a navigation engine session.
@@ -126,6 +114,21 @@ type DiscoveryTranscriptTurn = readonly [
 
 function renderDiscoveryTranscript(turns: readonly DiscoveryTranscriptTurn[]): string {
   return JSON.stringify(turns.flat());
+}
+
+/**
+ * Numeric summary of the last SQL parse, kept for Copy Debug Info.
+ * Object names and reference lists stay in the Output channel.
+ */
+export interface SessionParseCounts {
+  resolvedEdges: number;
+  parsedRefs: number;
+  /** References the parser dropped. */
+  droppedRefs: number;
+  /** Scripted procedures and views that were parsed. */
+  scripts: number;
+  /** Definitions that could not be read. */
+  unreadableDefinitions: number;
 }
 
 /**
@@ -186,8 +189,8 @@ export class AiSession {
   public parseRulesLabel = 'built-in rules';
   /** Human-readable label for the data source origin (filename or server/db). */
   public sourceLabel = 'N/A';
-  /** Statistics from the last SQL parsing run. */
-  public parseStats: { resolvedEdges: number; parsedRefs: number; droppedRefs: number } | null = null;
+  /** Counts from the last SQL parse. Names and reference lists stay in the Output channel. */
+  public parseStats: SessionParseCounts | null = null;
   /** Human-readable name of the active project. */
   public projectName: string | null = null;
   /** Persistent identifier for the current project. */
@@ -208,7 +211,7 @@ export class AiSession {
   /** Latest validated presentation, retained for graph replay without another model call. */
   public presentationArtifact: PresentationArtifact | null = null;
   /** Exact LangGraph tool stage; the dispatcher must not infer this from the broader session phase. */
-  public activeLmStage: LmStage | null = null;
+  public activeLmStage: ChatLmStage | null = null;
   /**
    * Last `present_result` description string — consumed by `dataLineageViz.aiCreateView`
    * when re-posting the AI preview to the webview so the narrative survives panel reveal.
@@ -224,7 +227,7 @@ export class AiSession {
    *
    * @remarks
    * Reset at turn start; set true on a successful `present_result` call. The presentation node and
-   * "Show in Graph" gate read it so a graph is announced only when one was actually built.
+   * "Show in Graph" gate read it so a graph is announced only when one was built.
    */
   private _presentResultCalledThisTurn = false;
   /** Whether a `present_result` call succeeded in the current turn. */
@@ -245,10 +248,6 @@ export class AiSession {
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
-  /** Last `present_result` failure reason captured this turn. */
-  private _presentResultLastFailureReasonThisTurn: string | null = null;
-  /** Last `present_result` failure reason captured in the current turn; `null` when none failed. */
-  public get presentResultLastFailureReasonThisTurn(): string | null { return this._presentResultLastFailureReasonThisTurn; }
   /** Held full `present_result` draft for narrow patch-only synthesis repair. */
   public readonly presentResultRepairDraft = new RepairDraftStore<
     PresentResultInput,
@@ -380,8 +379,8 @@ export class AiSession {
    * Mission-type classification inferred at end of discovery.
    *
    * @remarks
-   * Drives which subsections fire at synthesis. `business` omits the Technical
-   * subsection; `technical` renders technical content only; `both` renders both.
+   * Selects the business capture, technical capture, or both angles; synthesis merges
+   * their findings. Unspecified user intent is classified as business at proposal time.
    * `undefined` means classification has not yet been resolved for this session.
    */
   public classification?: ClassificationValue;
@@ -392,15 +391,6 @@ export class AiSession {
 
   /** Sequential log of tool calls and results for the current exploration. */
   public hopLog: HopLogEntry[] = [];
-  /**
-   * Per-wipe detail for this turn — the memory-leak waste basis the analytics layer needs.
-   * Each entry records WHY a wipe fired and how many threaded messages it discarded, so a
-   * regression in the sliding-wipe model (history growing instead of being replaced) is visible
-   * per-wipe in telemetry, not just as an aggregate count.
-   */
-  private _memoryWipeEventsThisTurn: MemoryWipeEvent[] = [];
-  /** Read-only per-wipe memory diagnostics recorded in the current turn. */
-  public get memoryWipeEventsThisTurn(): ReadonlyArray<MemoryWipeEvent> { return this._memoryWipeEventsThisTurn; }
 
   /** Unix timestamp of session creation. Pinned at creation; used for result-graft windowing. */
   public startTime: number;
@@ -506,13 +496,8 @@ export class AiSession {
     this._presentResultAutoDispatched = false;
     this._presentResultAttemptCountThisTurn = 0;
     this._presentResultFailureCountThisTurn = 0;
-    this._presentResultLastFailureReasonThisTurn = null;
     this.presentResultRepairDraft.clear();
     this._synthesisRenderDegradedReason = null;
-  }
-
-  private resetMemoryWipeDiagnostics(): void {
-    this._memoryWipeEventsThisTurn = [];
   }
 
   /**
@@ -532,7 +517,6 @@ export class AiSession {
     this.resetPresentResultLifecycle();
     this.hopCount = 0;
     this.hopLog = [];
-    this.resetMemoryWipeDiagnostics();
     this.pendingUserNotice.clear();
     this.startExplorationRoundId = null;
     this.enterIdle(this._turnEpoch);
@@ -553,7 +537,6 @@ export class AiSession {
    * clear `LineageRuntime.run` calls once instead of resetting each field at its own call site.
    */
   public beginTurnState(): void {
-    this.resetMemoryWipeDiagnostics();
     this.resetPresentResultTurnState();
     this._bufferedFollowUpProse = null;
     this._closingNotices.clear();
@@ -576,7 +559,7 @@ export class AiSession {
   }
 
   /** Enters the exact tool-policy stage for one model call. */
-  public enterLmStage(stage: LmStage, token: number): SessionWriteOutcome {
+  public enterLmStage(stage: ChatLmStage, token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'enterLmStage');
     if (guard.kind === 'accepted') this.activeLmStage = stage;
     return guard;
@@ -988,12 +971,11 @@ export class AiSession {
     return guard;
   }
 
-  /** Records one failed `present_result` invocation and its reason, if the calling turn still owns the session. */
-  public recordPresentResultFailure(token: number, reason: string): SessionWriteOutcome {
+  /** Counts one failed `present_result` invocation, if the calling turn still owns the session. */
+  public recordPresentResultFailure(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'recordPresentResultFailure');
     if (guard.kind !== 'accepted') return guard;
     this._presentResultFailureCountThisTurn += 1;
-    this._presentResultLastFailureReasonThisTurn = reason;
     return guard;
   }
 
@@ -1033,11 +1015,11 @@ export class AiSession {
     const prior = this.resultGraph;
     this.resultGraph = {
       nodeIds: fullResult.fullNodes.map(n => n.id),
+      evidenceNodeIds: fullResult.fullNodes.map(n => n.id),
       edges: fullResult.edges,
       source: sourceMode,
       originNodeId: fullResult.originNodeId,
       notes: prior?.notes,
-      suggested_sections: fullResult.suggested_sections,
       node_states: fullResult.node_states,
       description: prior?.description,
       summary: prior?.summary,
@@ -1089,29 +1071,6 @@ export class AiSession {
     const guard = this.guardTurnWrite(token, 'setHopCount');
     if (guard.kind !== 'accepted') return guard;
     this.hopCount = count;
-    return guard;
-  }
-
-  /**
-   * Records one per-turn memory wipe and updates its matching aggregate counter, guarded by the
-   * turn epoch.
-   *
-   * @remarks
-   * Feeds the analytics layer's per-wipe waste basis (see {@link memoryWipeEventsThisTurn}); a
-   * superseded "zombie" turn must not append to the event log a newer turn now owns, so the push
-   * lands only while {@link token} still matches the live {@link turnEpoch}.
-   *
-   * @param token - The calling turn's epoch (see {@link beginTurn}); a stale token drops the write.
-   * @param event - The wipe event (kind / trigger / hop / messages-before-wipe).
-   * @returns Whether the write committed or was dropped as a stale-turn no-op.
-   */
-  public recordMemoryWipeEvent(
-    token: number,
-    event: MemoryWipeEvent,
-  ): SessionWriteOutcome {
-    const guard = this.guardTurnWrite(token, 'recordMemoryWipeEvent');
-    if (guard.kind !== 'accepted') return guard;
-    this._memoryWipeEventsThisTurn.push(event);
     return guard;
   }
 }

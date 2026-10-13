@@ -9,11 +9,8 @@ interface SuggestionListProps {
   onSelect: (node: AutocompleteNode) => void;
   onHover: (index: number) => void;
   dropdownRef: Ref<HTMLDivElement>;
-  className?: string;
   renderAction?: (node: AutocompleteNode) => ReactNode;
-  /** When true, skip absolute positioning classes (portal handles positioning). */
-  portal?: boolean;
-  /** Inline styles from Floating UI positioning. */
+  /** Inline styles from Floating UI positioning; the list renders inside the caller's portal. */
   style?: CSSProperties;
   /** Nodes that exist in the model but are not visible in the current filtered view. */
   otherSuggestions?: AutocompleteNode[];
@@ -82,9 +79,7 @@ export function SuggestionList({
   onSelect,
   onHover,
   dropdownRef,
-  className = 'w-full',
   renderAction,
-  portal = false,
   style,
   otherSuggestions = [],
   collapsedSuggestions = [],
@@ -97,7 +92,7 @@ export function SuggestionList({
     <div
       ref={dropdownRef}
       role="listbox"
-      className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-y-auto ln-dropdown ${className}`}
+      className="z-50 rounded-md shadow-lg overflow-y-auto ln-dropdown w-full"
       style={{ ...style, maxHeight: 320 }}
     >
       {showVisibleHeader && (

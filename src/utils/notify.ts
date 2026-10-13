@@ -15,5 +15,7 @@
  * body.
  */
 export function notifyUser(text: string): void {
-  window.vscode?.postMessage({ type: 'show-warning', text });
+  if (typeof window !== 'undefined') {
+    window.vscode?.postMessage({ type: 'show-warning', text });
+  }
 }

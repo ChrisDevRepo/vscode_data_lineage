@@ -25,7 +25,7 @@ import {
   UNKNOWN_DB_PLATFORM,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
-import type { SimpleExecuteResult, DbCellValue, IServerInfo } from '../types/mssql';
+import type { SimpleExecuteResult, DbCellValue } from '../types/database';
 import { quoteIdentifier, schemaKey } from '../utils/sql';
 
 /**
@@ -44,8 +44,6 @@ export interface DmvResults {
   constraints?: SimpleExecuteResult;
   /** Server-level platform and version metadata. */
   platformInfo?: SimpleExecuteResult;
-  /** Platform derived from MSSQL server metadata when the platform query is unavailable. */
-  serverPlatform?: string;
 }
 
 /** Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION. */
@@ -114,17 +112,12 @@ export function buildModelFromDmv(
     const c = { table: 0, view: 0, procedure: 0, function: 0 } as Record<string, number>;
     for (const o of objects) if (o.type in c) c[o.type]++;
     const colCount = results.columns.rowCount;
-    const fkCount = results.constraints?.rows.filter(r => {
-      const idx = results.constraints!.columnInfo.findIndex(ci => ci.columnName.toLowerCase() === 'constraint_type');
-      return idx >= 0 && r[idx]?.displayValue === 'FK';
-    }).length ?? 0;
+    const constraintCols = results.constraints ? buildColumnIndex(results.constraints) : undefined;
+    const fkCount = results.constraints?.rows.filter(r => cellValue(r, constraintCols!, 'constraint_type') === 'FK').length ?? 0;
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
   const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);
-  const queryPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
-  const dbPlatform = queryPlatform !== UNKNOWN_DB_PLATFORM
-    ? queryPlatform
-    : results.serverPlatform?.trim() || UNKNOWN_DB_PLATFORM;
+  const dbPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
 
   const warnings: string[] = [];
   if (objects.length === 0) {
@@ -156,21 +149,6 @@ function mapEnginePlatform(result: SimpleExecuteResult): string {
   const majorVersion  = parseInt(cellValue(row, colIdx, 'major_version'), 10);
   const edition       = cellValue(row, colIdx, 'edition');
   return mapEngineMetadata(engineEdition, majorVersion, edition);
-}
-
-/**
- * Maps authoritative MSSQL extension server metadata to a platform label.
- *
- * @remarks
- * A second entry point exists so the `getServerInfo` fallback cannot drift from the
- * `platform-info` query path: both funnel into `mapEngineMetadata`, so a connection
- * yields the same label whichever tier resolved it. Changing one mapping without the
- * other would make the displayed platform depend on which tier happened to answer.
- */
-export function mapServerInfoPlatform(
-  info: Pick<IServerInfo, 'engineEditionId' | 'serverMajorVersion' | 'serverEdition'>,
-): string {
-  return mapEngineMetadata(info.engineEditionId, info.serverMajorVersion, info.serverEdition);
 }
 
 function mapEngineMetadata(engineEdition: number, majorVersion: number, edition: string): string {

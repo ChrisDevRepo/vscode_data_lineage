@@ -1,93 +1,25 @@
-# Table Profiling
+# Table profiling
 
-Table profiling is an opt-in, live-database feature. It does not run for DACPAC
-sources and does not start until the user opens table details and requests
-statistics. The current SQL generation lives in
-[`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts); this document
-covers the user-visible and operational contract rather than duplicating that
-implementation.
+Profiling works on live database sources only. It is on by default (`dataLineageViz.tableStatistics.enabled`) but runs nothing until you request statistics in a table's details. Settings are in [Table statistics](FEATURES.md#table-statistics).
 
-## Prerequisites and safety
+## What runs on the server
 
-- The active database connection needs `SELECT` permission on profiled tables
-  and catalog visibility for row-count metadata.
-- A built-in connection is opened for each profiling request and closed when
-  it finishes. Through the SQL Server (mssql) extension, profiling opens one
-  connection on first use and reuses it until the main lineage panel closes or
-  another saved project is loaded; a query error does not disconnect it.
-- External tables can query remote systems. They are excluded by default and
-  should be enabled only when their cost and latency are understood.
-- Approximate distinct counts require a database version that supports
-  `APPROX_COUNT_DISTINCT`. Disable
-  `dataLineageViz.tableStatistics.useApproxDistinct` on older SQL Server
-  versions.
+Each request opens its own connection, runs these read-only queries, then closes it:
 
-Profiling issues read-only row-count and aggregate `SELECT` queries. Custom DMV
-configuration does not alter profiling SQL.
+1. The `platform-info` query from the active DMV queries (see [`DMV_QUERIES.md`](DMV_QUERIES.md#setup)). If it is missing or fails, the request fails.
+2. A row count from `sys.partitions`.
+3. One aggregate `SELECT` over the table, sampled above the threshold.
 
-## Modes and metrics
+The login needs `SELECT` on the table. External tables are skipped by default. `APPROX_COUNT_DISTINCT` needs SQL Server 2019 or later; on 2016 or 2017 set `dataLineageViz.tableStatistics.useApproxDistinct` to `false`.
 
-Quick mode reports row count, null count, distinct count, completeness, and
-uniqueness. Standard mode adds type-appropriate detail such as numeric range,
-mean and standard deviation, string length and empty-string counts, and date
-range.
+## Modes
 
-Completeness and uniqueness percentages are calculated in the extension from
-the reported table row count and per-column aggregates. Distinct counts use the
-approximate or exact function selected in settings.
-
-Intrinsic non-profileable types and computed columns are shown as not profiled
-and do not consume the column budget. Profilable columns beyond
-`dataLineageViz.tableStatistics.maxColumns` are omitted from the SQL, but the
-current UI can still render them with zero/default metrics; those rows are not
-measurements.
+Quick mode reports row, null and distinct counts, completeness and uniqueness. Standard mode adds numeric range, mean and standard deviation, string length, empty strings and date range. Unsupported types, computed columns and columns beyond `dataLineageViz.tableStatistics.maxColumns` are listed under **Not profiled**.
 
 ## Sampling
 
-Tables above the configured threshold use a platform-specific sampling clause:
-
-- Fabric Data Warehouse uses a `TOP` clause.
-- Other detected editions use `TABLESAMPLE`.
-- A sampled query that fails with a `TABLESAMPLE` error is retried once as a
-  full scan.
-
-The target sample size is converted into the clause required by the detected
-platform. Row-count headers show the catalog row count. On a `TABLESAMPLE` run the
-query also returns the number of rows it read, and NULL %, completeness and
-uniqueness are computed against that sample size, so they describe the sample when at least one row is read. An empty sample
-currently falls back to the catalog row count as the denominator.
-
-Current limitation: Fabric's generated `TOP` aggregate query limits result rows
-rather than the aggregate input. Treat those metrics as full-scan aggregates
-despite the sampling indicator. After a `TABLESAMPLE` retry, the indicator
-also retains the original sampling status even though the retry scans the full table.
-
-## Settings
-
-The maintained defaults, ranges, and descriptions are in VS Code Settings and
-the `contributes.configuration` section of [`package.json`](../package.json).
-The profiling controls cover:
-
-- enabling the feature and Standard mode;
-- excluding external tables;
-- per-query timeout;
-- sampling threshold and target size;
-- approximate versus exact distinct counts; and
-- maximum profiled columns.
-
-See [`FEATURES.md`](FEATURES.md#table-profiling) for the user-facing settings
-summary.
+Fabric Data Warehouse always scans the full table. Other editions use `TABLESAMPLE`, so metrics describe the sample.
 
 ## Diagnostics
 
-Open **View -> Output -> Data Lineage Viz** and set the channel log level to
-**Debug**. `[Stats]` entries describe profiling lifecycle and `[DB]` entries
-show bounded query previews. Review logs before sharing because object and
-column identifiers may be present.
-
-## Reference
-
-- Engine: [`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts)
-- Bridge handler: [`src/bridge/messageHandlers.ts`](../src/bridge/messageHandlers.ts)
-- UI: [`src/components/StatsSection.tsx`](../src/components/StatsSection.tsx)
-- User-facing feature guide: [`FEATURES.md`](FEATURES.md#table-profiling)
+In **View → Output → Data Lineage Viz** at **Debug** level, `[Stats]` and `[DB]` entries show the requests. Logs may contain object and column names.

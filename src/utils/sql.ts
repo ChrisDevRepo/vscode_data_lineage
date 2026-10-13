@@ -12,7 +12,7 @@ const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"(?:""|[^"])*"|[\[\]"]/g;
 
 /**
  * Removes SQL-standard delimiters (brackets `[]` and double-quotes `""`) from an identifier and
- * unescapes the doubled `]` T-SQL uses for a literal one.
+ * unescapes only the matching delimiter: `]]` inside brackets, `""` inside double quotes.
  *
  * Example: `[dbo].[Table]` becomes `dbo.Table`; `[dbo].[a]]b]` becomes `dbo.a]b`.
  *
@@ -22,7 +22,7 @@ const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"(?:""|[^"])*"|[\[\]"]/g;
  */
 export function stripBrackets(name: string): string {
   return name.replace(DELIMITED_PART, part =>
-    part.length > 1 ? part.slice(1, -1).replace(/\]\]/g, ']').replace(/""/g, '"') : ''
+    part.length > 1 ? part.slice(1, -1).replace(part.startsWith('[') ? /\]\]/g : /""/g, part.startsWith('[') ? ']' : '"') : ''
   );
 }
 

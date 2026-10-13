@@ -70,7 +70,7 @@ export function effectiveOverviewThreshold(config: Pick<ExtensionConfig, 'overvi
  *
  * @remarks
  * The render limit is a React Flow node ceiling for the selected surface, not a hidden cap on the
- * underlying model or AI context. Every surface is measured by what it will actually put on the
+ * underlying model or AI context. Every surface is measured by what it places on the
  * canvas: Expanded Schema View and Schema View by their projected node counts, and a trace, path, or
  * analysis scope by its own. A scope is not self-limiting — an all-levels trace over a connected
  * model reaches the whole model — so it is held to the same ceiling rather than exempted from it.
@@ -181,7 +181,7 @@ export function aiPreviewDisplayFilter(
   aiPreviewActive: boolean,
   modelSchemas: Iterable<string>,
 ): FilterState {
-  if (!aiPreviewActive || !filter.allowlistNodeIds || filter.allowlistNodeIds.size === 0) return filter;
+  if (!aiPreviewActive || !filter.allowlistNodeIds) return filter;
   return {
     ...filter,
     schemas: new Set(modelSchemas),
@@ -236,7 +236,7 @@ export function collapseLastExpandedSchema(expandedSchemas: ReadonlySet<string>)
 
 /**
  * Drops expanded schemas no longer present in the model, keeping the rest, so a settings change
- * or Refresh collapses only the schemas that actually disappeared.
+ * or Refresh collapses only the schemas that disappeared.
  *
  * @returns The schemas that still exist, or `null` when none do.
  */

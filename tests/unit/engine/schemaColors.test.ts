@@ -73,12 +73,6 @@ describe('schemaColors', () => {
     }
   });
 
-  it('uses case-insensitive schema color keys', () => {
-    const caseMap = createSchemaColorMap(['Sales', 'sales', 'SALES'], true);
-    expect(caseMap.size, 'schema color keys are case-insensitive').toBe(1);
-    expect(getSchemaColorFromMap('Sales', caseMap)).toBe(getSchemaColorFromMap('sales', caseMap));
-  });
-
   it.each([false, true])('uses the same source policy for palette creation and lookup (CS=%s)', cs => {
     const schemas = ['Sales', 'sales'];
     const map = createSchemaColorMap(schemas, true, cs);

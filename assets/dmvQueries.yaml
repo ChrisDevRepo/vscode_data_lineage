@@ -279,7 +279,7 @@ queries:
         AND (s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))
       ORDER BY referencing_schema, referencing_name
 
-  # ── Platform detection (optional, with MSSQL metadata fallback) ──────────────
+  # ── Platform detection (optional; missing metadata yields an unknown platform) ──────────────
   - name: platform-info
     phase: 1
     description: >

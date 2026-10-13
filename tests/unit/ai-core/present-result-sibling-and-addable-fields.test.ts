@@ -122,3 +122,14 @@ it('names the list a flattened entry key belongs to', () => {
 
   expect(rejection.hint).toContain('"text" is a field of a sections[] entry: send it there.');
 });
+
+it.each([['a key with a space', 'node ids'], ['a key too long to name by path', 'k'.repeat(130)]])(
+  'never holds %s that the rejection reports without a path', (_label, key) => {
+    const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
+    const input = { name: 'Orders lineage', summary: 'Orders from stage to mart.', title: 'x'.repeat(500), [key]: [source] };
+    const schema = presentResultSchemaForPhase('synthesis', null, false);
+    const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: REJECTION_CODES.invalidInput, input, schema });
+    expect(rejection.issuePaths ?? []).not.toContain(key);
+    expect(holdRejectedPresentResult(store, input, rejection.issuePaths ?? [], 'synthesis')).not.toBeNull();
+    expect(store.get()).toEqual({ name: 'Orders lineage', summary: 'Orders from stage to mart.' });
+  });

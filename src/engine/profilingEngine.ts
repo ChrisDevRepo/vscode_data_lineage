@@ -12,7 +12,7 @@
  */
 
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
-import type { SimpleExecuteResult } from '../types/mssql';
+import type { SimpleExecuteResult } from '../types/database';
 import { quoteIdentifier } from '../utils/sql';
 
 /**
@@ -409,7 +409,7 @@ export function parseProfilingResult(
     const cat = classifyColumn(col);
     const isNullable = col.nullable === 'NULL';
 
-    if (cat === 'skip') {
+    if (cat === 'skip' || row[aggregateAlias(index, 'd')] === undefined) {
       columns.push({
         name: col.name,
         type: col.type,

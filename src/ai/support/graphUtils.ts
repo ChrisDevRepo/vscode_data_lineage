@@ -35,13 +35,22 @@ export interface NodeSnapshotStore {
  *
  * @remarks
  * Decoupled from `graphBuilder.ts` so the AI's structural reasoning runs on a clean,
- * performance-oriented model — no layout (Dagre/React Flow) or visual metadata.
+ * performance-oriented model — no layout (Dagre/React Flow) or visual metadata. Each node carries
+ * the identity attributes the engine graph analyses read (`type`, `schema`, `name` and, for an
+ * external object, its `externalType`, `externalDatabase` and `externalUrl`).
  */
 export function buildBareGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
 
   for (const node of model.nodes) {
-    graph.addNode(node.id, { type: node.type, schema: node.schema });
+    graph.addNode(node.id, {
+      type: node.type,
+      schema: node.schema,
+      name: node.name,
+      ...(node.externalType && { externalType: node.externalType }),
+      ...(node.externalDatabase && { externalDatabase: node.externalDatabase }),
+      ...(node.externalUrl && { externalUrl: node.externalUrl }),
+    });
   }
 
   for (const edge of model.edges) {
@@ -71,7 +80,7 @@ export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
 ): ColumnDef[] | undefined {
-  return (typeof store?.getColumns === 'function' ? store.getColumns(nodeId) : undefined) ?? nodeMap.get(nodeId)?.columns;
+  return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
 }
 
 /**
@@ -81,7 +90,7 @@ export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
 ): string | undefined {
-  const raw = (typeof store?.getDdl === 'function' ? store.getDdl(nodeId) : undefined) ?? nodeMap.get(nodeId)?.bodyScript;
+  const raw = store?.getDdl(nodeId) ?? nodeMap.get(nodeId)?.bodyScript;
   return raw ? normalizeBodyScript(raw) : undefined;
 }
 

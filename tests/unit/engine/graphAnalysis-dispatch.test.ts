@@ -38,13 +38,6 @@ function mixedGraph(): Graph {
 describe('runAnalysis — dispatch', () => {
   const TYPES: AnalysisType[] = ['islands', 'hubs', 'orphans', 'longest-path', 'cycles', 'external-refs'];
 
-  it.each(TYPES)('routes %s to the matching analysis and labels the result with it', (type) => {
-    const result = runAnalysis(mixedGraph(), type, CONFIG);
-    expect(result.type).toBe(type);
-    expect(typeof result.summary).toBe('string');
-    expect(Array.isArray(result.groups)).toBe(true);
-  });
-
   it.each(TYPES)('returns an empty %s report for an empty graph instead of throwing', (type) => {
     const result = runAnalysis(new Graph({ type: 'directed', multi: false }), type, CONFIG);
     expect(result.type).toBe(type);

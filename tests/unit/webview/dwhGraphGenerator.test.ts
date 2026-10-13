@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { generateDwhModel, formatDwhStats } from '../helpers/dwhGraphGenerator';
+import { generateDwhModel } from '../helpers/dwhGraphGenerator';
 import { buildSyntheticDacpac } from '../helpers/syntheticDacpac';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
 import { loadParseRules } from '../helpers/testUtils';
@@ -36,12 +36,7 @@ describe('generateDwhModel — determinism', () => {
 });
 
 describe.each([2000, 10000])('generateDwhModel — asymmetry sanity at %i objects', (objectCount) => {
-  const { model, stats } = generateDwhModel({ objectCount, seed: 1234 });
-
-  it('logs the stats table', () => {
-    console.log(`\n[dwh ${objectCount}]\n${formatDwhStats(stats)}`);
-    expect(model.nodes.length).toBeGreaterThan(0);
-  });
+  const { stats } = generateDwhModel({ objectCount, seed: 1234 });
 
   it('edges per node land within the 2.5-3.5 band', () => {
     expect(stats.edgesPerNode).toBeGreaterThanOrEqual(2.5);

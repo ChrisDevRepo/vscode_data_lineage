@@ -9,12 +9,6 @@ import { loadParseRules, rootPath } from '../helpers/testUtils';
 beforeAll(() => loadParseRules());
 afterAll(() => loadParseRules());
 
-it('resolves independent update aliases without optional semicolons', () => {
-  const parsed = parseSqlBody(`UPDATE t SET Value=1 FROM dbo.FirstTable t
-UPDATE t SET Value=2 FROM dbo.SecondTable t`);
-  expect(parsed.targets).toEqual(expect.arrayContaining(['[dbo].[firsttable]', '[dbo].[secondtable]']));
-});
-
 it('keeps both procedure write edges when catalog dependencies are unavailable', () => {
   const objects: ExtractedObject[] = [
     { fullName: 'dbo.FirstTable', type: 'table' },

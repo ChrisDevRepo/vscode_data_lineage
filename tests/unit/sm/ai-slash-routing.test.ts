@@ -70,16 +70,16 @@ describe('ai-slash-routing', () => {
   });
 
   /**
-   * Specification-anchored contract test: every cell cites the `docs/ARCHITECTURE.md` line it
-   * implements, and the table is typed against the FULL `AgentEntryRoute` x
-   * `AgentExecutionTrigger` union (`src/ai/agent/state.ts:48,51`) so an added route or trigger
+   * Specification-anchored contract test: the table implements `docs/ARCHITECTURE.md`
+   * §Discovery and visual preview and is typed against the FULL `AgentEntryRoute` x
+   * `AgentExecutionTrigger` union (`src/ai/agent/state.ts`) so an added route or trigger
    * fails to compile here rather than silently defaulting through the router's fallthrough
    * `return 'discover'`.
    */
   it('routes every AgentEntryRoute x AgentExecutionTrigger pair per docs/ARCHITECTURE.md §Discovery and visual preview', () => {
     const ROUTING_TABLE: Record<AgentEntryRoute, Record<AgentExecutionTrigger, InitialAgentStage>> = {
-      // docs/ARCHITECTURE.md §Discovery and visual preview — "Only a mechanical trigger opens SM
-      // entry": a free-text column_trace verdict runs discovery first, and reaches SM only if the
+      // Entry detection does not decide the runtime stage; only the execution trigger does.
+      // A free-text column_trace verdict runs discovery first, and reaches SM only if the
       // discovery budget guard trips there and hands the turn on as `discovery_budget`. The
       // escalation stays keyed on the trigger, never on the semantic verdict.
       column_trace: {
@@ -89,8 +89,8 @@ describe('ai-slash-routing', () => {
         preview_button: 'visual_preview',
         discovery_budget: 'sm_entry',
       },
-      // docs/ARCHITECTURE.md:154-155 — a render request "does not grant SM authority": it enters
-      // discover, and only an explicit preview_button trigger on a later turn opens the preview.
+      // A render request enters discover; only an explicit preview_button trigger on a later turn
+      // opens the preview.
       visual_render: {
         free_text: 'discover',
         slash_trace: 'sm_entry',
@@ -98,7 +98,7 @@ describe('ai-slash-routing', () => {
         preview_button: 'visual_preview',
         discovery_budget: 'sm_entry',
       },
-      // docs/ARCHITECTURE.md:148 — "Discovery is the default read-only chat state."
+      // Discovery is the default conversational mode.
       discovery: {
         free_text: 'discover',
         slash_trace: 'sm_entry',

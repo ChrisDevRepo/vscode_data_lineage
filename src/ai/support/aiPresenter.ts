@@ -53,7 +53,7 @@ type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & {
 };
 
 /**
- * Optional context that lets {@link presentNode} serve a node's `in`/`out` neighbor split in the
+ * Optional context that enables {@link presentNode} to serve a node's `in`/`out` neighbor split in the
  * same shape `buildHopFocusNode` uses for the hop_context route, instead of only the scalar `deg`.
  */
 export type NodeNeighborSplitContext = {

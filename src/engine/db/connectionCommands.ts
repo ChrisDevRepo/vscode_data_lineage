@@ -320,7 +320,7 @@ export async function runAddConnectionFlow(
           return undefined;
         } catch (err) {
           return describeConnectionError(err, {
-            provider: 'builtIn', name: connection.name, server: connection.server, port: connection.port,
+            name: connection.name, server: connection.server, port: connection.port,
             database: connection.database, user: connection.user, authenticationType: connection.authenticationType,
             connectionId: connection.id, tenantId: connection.tenantId,
           });

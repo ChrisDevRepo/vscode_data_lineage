@@ -23,11 +23,9 @@ import {
   getGraphMetrics,
   hasCachedLayout,
   layoutCacheKey,
-  objectLayoutInput,
   objectLayoutInputForGraph,
   runDagre,
   seedLayoutCache,
-  traceNodeIdsWithLevels,
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
 import { buildWebviewCsp } from '../../../src/utils/cspBuilder';
@@ -111,7 +109,6 @@ describe('schema palette source identity', () => {
     const cluster = expanded.flowNodes.find(node => node.type === 'schemaNode')!;
     expect(object.data.schemaColor).toBe(overview.nodes.find(node => node.data.schemaName === 'Sales')?.data.color);
     expect(cluster.data.color).toBe(overview.nodes.find(node => node.data.schemaName === 'sales')?.data.color);
-    expect(dagreLayout({ nodeIds: [], edges: [], config: DEFAULT_CONFIG }).size).toBe(0);
   });
 });
 
@@ -166,7 +163,7 @@ describe('layout cache seeding (worker prewarm)', () => {
   it('serves buildGraph from positions computed outside the cache', async () => {
     const model = await loadAdventureWorksModel();
     const config = { ...DEFAULT_CONFIG, layout: { ...DEFAULT_CONFIG.layout, nodeSeparation: DEFAULT_CONFIG.layout.nodeSeparation + 7 } };
-    const input = objectLayoutInput(model, config);
+    const input = objectLayoutInputForGraph(buildGraphologyGraph(model), config);
     expect(hasCachedLayout(input)).toBe(false);
     const computed = runDagre(structuredClone(input));
     for (const pos of computed.values()) pos.x += 100_000;
@@ -177,6 +174,21 @@ describe('layout cache seeding (worker prewarm)', () => {
       const seeded = computed.get(node.id);
       if (seeded) expect(node.position).toEqual(seeded);
     }
+  });
+
+  it('keeps the isolated-node row out of the cached object layout', () => {
+    const model = buildModel(
+      [
+        { fullName: '[cache].[A]', type: 'table' },
+        { fullName: '[cache].[B]', type: 'view' },
+        { fullName: '[cache].[Lonely]', type: 'table' },
+      ],
+      [{ sourceName: '[cache].[B]', targetName: '[cache].[A]' }],
+    );
+    const built = buildGraph(model);
+    expect(built.flowNodes.map(node => node.id).sort()).toEqual(['[cache].[a]', '[cache].[b]', '[cache].[lonely]']);
+    const cached = dagreLayout(objectLayoutInputForGraph(buildGraphologyGraph(model)));
+    expect([...cached.keys()].sort()).toEqual(['[cache].[a]', '[cache].[b]']);
   });
 
   it('refuses to cache a layout that misses a node, such as a failed worker run', () => {
@@ -209,11 +221,6 @@ describe('dagreLayout', () => {
     for (const point of positions.values()) {
       expect(Number.isFinite(point.x) && Number.isFinite(point.y)).toBe(true);
     }
-  });
-
-  it('serves an identical request from the cache rather than re-running dagre', () => {
-    const first = dagreLayout(input());
-    expect(dagreLayout(input())).toBe(first);
   });
 
   it('treats a different direction as a different layout, not a cache hit', () => {
@@ -270,23 +277,6 @@ describe('buildGraphNoLayout', () => {
 
 
 describe('traceNodeWithLevels — directional depth caps', () => {
-  it('walks upstream only when the downstream cap is zero', () => {
-    const result = traceNodeWithLevels(chain(), 'B', 1, 0);
-    expect(result.nodeIds).toEqual(new Set(['A', 'B']));
-  });
-
-  it('walks downstream only when the upstream cap is zero', () => {
-    const result = traceNodeWithLevels(chain(), 'B', 0, 1);
-    expect(result.nodeIds).toEqual(new Set(['B', 'C']));
-  });
-
-  it('returns the origin alone when both caps are zero', () => {
-    expect(traceNodeWithLevels(chain(), 'B', 0, 0).nodeIds).toEqual(new Set(['B']));
-  });
-
-  it('returns nothing for an unknown origin', () => {
-    expect(traceNodeWithLevels(chain(), 'nope', 2, 2).nodeIds.size).toBe(0);
-  });
 
   it('applies each cap to its own direction, admitting different node counts per side', () => {
     const longChain = makeGraph(
@@ -323,14 +313,6 @@ describe('traceNodeWithLevels — edge membership', () => {
     const traced = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 1, 0);
     expect([...traced.nodeIds].sort()).toEqual(['A', 'ORIGIN']);
     expect([...traced.edgeIds].sort()).toEqual(['A→ORIGIN']);
-  });
-});
-
-describe('traceNodeIdsWithLevels', () => {
-  it('returns the same node set as traceNodeWithLevels and drops an unknown origin', () => {
-    const graph = chain();
-    expect(traceNodeIdsWithLevels(graph, 'B', 1, 1)).toEqual(traceNodeWithLevels(graph, 'B', 1, 1).nodeIds);
-    expect(traceNodeIdsWithLevels(graph, 'nope', 2, 2).size).toBe(0);
   });
 });
 

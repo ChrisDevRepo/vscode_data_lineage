@@ -29,7 +29,6 @@ function fakeHost(bytes: Uint8Array): BridgeHost {
     withProgress: vi.fn(),
     getExtensionUri: vi.fn(),
     getGlobalState: vi.fn(),
-    getWorkspaceState: vi.fn(),
   };
 }
 

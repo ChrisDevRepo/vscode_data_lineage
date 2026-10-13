@@ -126,7 +126,7 @@ export function dropTcpPrefix(server: string): string {
 }
 
 /**
- * Splits a server address the way SqlClient and the mssql extension read it.
+ * Splits a server address using SqlClient address syntax.
  *
  * @remarks
  * A leading `tcp:` prefix is dropped, a bracketed IPv6 address `[fe80::1]` loses its brackets, and

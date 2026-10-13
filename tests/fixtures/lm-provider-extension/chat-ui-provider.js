@@ -1,5 +1,9 @@
 // Scripted public-demo responses for UI lifecycle checks, not inference evidence.
 const vscode = require('vscode');
+const { loadCases } = require('../../cases/loadCases.cjs');
+const tracedOrigin = loadCases('electron').find(row => row.id === 'electron-fixture-trace')?.prompt
+  ?.match(/\[[^\]]+\]\.\[[^\]]+\]/u)?.[0];
+if (!tracedOrigin) throw new Error('electron-fixture-trace prompt must name [schema].[object].');
 const requests = [];
 let sequence = 0;
 async function respond(request, progress) {
@@ -30,7 +34,7 @@ async function respond(request, progress) {
       });
     }
     else call('lineage_start_exploration', {
-      origin: '[dbo].[ufnGetProductDealerPrice]', analysisMode: 'bb', classification: 'technical',
+      origin: tracedOrigin, analysisMode: 'bb', classification: 'technical',
       // Must differ from the "zero levels downstream" refine, or that patch is a no-op and revision stays 1.
       depth: { upstream: { levels: 2, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
     });

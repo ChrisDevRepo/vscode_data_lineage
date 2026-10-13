@@ -27,6 +27,7 @@ function typeIcon(type?: ObjectType): string {
   return (type && TYPE_COLORS[type]?.icon) || '▪';
 }
 
+/** Props for the {@link TraceTreePanel} component. */
 export interface TraceTreePanelProps {
   /** L0-anchored trace projection from the adapter, over the pre-route scope. */
   tree: TraceTree;

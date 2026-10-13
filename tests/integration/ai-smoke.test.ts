@@ -49,10 +49,17 @@ suite('Real provider smoke', () => {
     const readyBy = Math.min(testDeadline - 130_000, Date.now() + 45_000);
     let demoLoaded = false;
     while (Date.now() < readyBy && !demoLoaded) {
-      const probe = await vscode.lm.invokeTool('lineage_search_objects', {
+      const probe = await Promise.resolve(vscode.lm.invokeTool('lineage_search_objects', {
         input: { query: 'Sales' },
         toolInvocationToken: undefined,
+      })).catch((error: unknown) => {
+        if (error instanceof Error && /no project is loaded/i.test(error.message)) return null;
+        throw error;
       });
+      if (!probe) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
       const resultText = probe.content
         .map((part) => (part as { value?: unknown }).value ?? '')
         .join('');

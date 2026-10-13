@@ -1,3 +1,5 @@
+<!-- Renderer fixture: exercises Markdown and math; not a verified lineage reference. -->
+
 # spImportOrders Lineage — Multi-Source ERP Ingestion & Quality Staging
 
 `[ai].[spImportOrders]` ingests and cleans enterprise order streams federated from SAP and Oracle ERP systems via `[ai].[vwExternalOrders]`.

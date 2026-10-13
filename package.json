@@ -3,7 +3,7 @@
   "displayName": "Data Lineage Viz",
   "preview": false,
   "description": "Visualize object dependencies and data lineage from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse Dedicated SQL Pool databases",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "publisher": "datahelper-chwagner",
   "license": "MIT",
   "pricing": "Free",
@@ -262,20 +262,6 @@
             "default": "",
             "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
             "scope": "resource"
-          },
-          "dataLineageViz.database.connectionProvider": {
-            "type": "string",
-            "enum": [
-              "mssqlExtension",
-              "builtIn"
-            ],
-            "default": "mssqlExtension",
-            "enumDescriptions": [
-              "Use connections saved in the SQL Server (mssql) extension. Microsoft is retiring this API.",
-              "Connect directly with Data Lineage's own connections (SQL login or Microsoft Entra ID). Passwords stay in the VS Code secret store."
-            ],
-            "markdownDescription": "Where database connections come from. With `builtIn`, add connections with **Data Lineage: Add Database Connection**.",
-            "scope": "application"
           },
           "dataLineageViz.database.connections": {
             "type": "array",
@@ -544,7 +530,7 @@
           "dataLineageViz.ai.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Enable the @lineage chat participant and AI lineage tools. Disable for users who do not use VS Code Copilot or want to remove AI features entirely."
+            "description": "Enable the @lineage chat participant and its VS Code language-model tools. Disable for users who do not use VS Code Copilot or want to remove AI features entirely."
           },
           "dataLineageViz.ai.maxRounds": {
             "type": "integer",
@@ -893,12 +879,14 @@
     "dev": "vite",
     "watch": "npm run watch:ext",
     "watch:ext": "node esbuild.config.mjs --watch",
-    "test": "node tests/tools/run-vitest.mjs run",
-    "test:core": "node tests/tools/run-vitest.mjs run tests/unit/parser tests/unit/engine tests/unit/webview",
-    "test:runtime": "node tests/tools/run-vitest.mjs run tests/unit/ai-core tests/unit/sm",
+    "test": "node tests/tools/run-lane.mjs gate",
+    "test:core": "node tests/tools/run-lane.mjs core",
+    "test:lineage": "node tests/tools/run-lane.mjs lineage",
+    "test:runtime": "node tests/tools/run-lane.mjs runtime",
+    "test:support": "node tests/tools/run-lane.mjs support",
     "test:parser": "node tests/tools/run-vitest.mjs run tests/unit/parser",
-    "test:bfs": "node tests/tools/run-vitest.mjs run tests/unit/engine",
-    "coverage:core": "node tests/tools/run-vitest.mjs run --coverage tests/unit/parser tests/unit/engine tests/unit/webview",
+    "test:bfs": "node tests/tools/run-lane.mjs lineage",
+    "coverage:core": "node tests/tools/run-lane.mjs core --coverage",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tests/unit/tsconfig.json --noEmit",
     "generate:tool-manifest": "node scripts/generate-tool-manifest.mjs",

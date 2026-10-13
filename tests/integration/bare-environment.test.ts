@@ -17,7 +17,7 @@ import { announceLaneTier } from './laneTier';
  * disabled by enterprise policy) — that is not reachable from inside a real VS Code host, and the
  * containment for it is the `try/catch` around the AI block in `src/extension.ts`.
  */
-suite('Bare environment — no chat model or database extension', () => {
+suite('Bare environment — no chat model', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
   suiteSetup(() => { announceLaneTier(
@@ -25,14 +25,6 @@ suite('Bare environment — no chat model or database extension', () => {
     'none',
     'activation completes and the core command surface registers with every optional integration absent',
   ); });
-
-  test('the host really is bare — no optional integration is installed', () => {
-    assert.strictEqual(
-      vscode.extensions.getExtension('ms-mssql.mssql'),
-      undefined,
-      'this lane must run without the mssql extension, or it proves nothing about its absence',
-    );
-  });
 
   test('no chat model is available, and asking for one does not throw', async () => {
     const models = await vscode.lm.selectChatModels();

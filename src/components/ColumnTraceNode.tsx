@@ -36,7 +36,7 @@ function lineStateColor(state: ColumnLineState | undefined): string {
  * @remarks
  * Not conditioned on the reduced-motion preference here: `index.css` drops every transition under
  * both VS Code's `workbench.reduceMotion` class and the OS `prefers-reduced-motion` query, so a
- * second check in the render path could only disagree with the rule that actually applies.
+ * second check in the render path could only disagree with the rule in effect.
  */
 const ROW_TRANSITION = 'background-color 120ms ease, opacity 120ms ease';
 

@@ -5,10 +5,10 @@
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';
 import { describe, expect, it } from 'vitest';
-import { buildModelFromDmv, mapServerInfoPlatform, validateQueryResult } from '../../../src/engine/dmvExtractor';
+import { buildModelFromDmv, validateQueryResult } from '../../../src/engine/dmvExtractor';
 import { formatColumnType } from '../../../src/engine/types';
 import type { DmvResults } from '../../../src/engine/dmvExtractor';
-import type { SimpleExecuteResult, DbCellValue, IDbColumn, IServerInfo } from '../../../src/types/mssql';
+import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../../../src/types/database';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../../../src/utils/sql';
 import { isPhase2Query, type DmvQuery } from '../../../src/engine/connectionManager';
 import { loadParseRules, rootPath } from '../helpers/testUtils';
@@ -740,24 +740,7 @@ function testDbPlatformFromDmv() {
   const noRows = modelWithPlatform(emptyRows);
   expect(noRows.dbPlatform, 'Empty platformInfo rows → explicit unknown').toBe('Unknown database platform');
 
-  const serverInfo: IServerInfo = {
-    serverMajorVersion: 16,
-    serverMinorVersion: 0,
-    serverVersion: '16.0.1000.6',
-    engineEditionId: 3,
-    isCloud: false,
-    serverEdition: 'Developer Edition',
-  };
-  expect(mapServerInfoPlatform(serverInfo),
-    'MSSQL server metadata uses the same platform mapping').toBe('SQL Server 2022');
-  const serverFallback = buildModelFromDmv({
-    nodes: emptyNodes,
-    columns: emptyCols,
-    dependencies: emptyDeps,
-    serverPlatform: 'Fabric Data Warehouse',
-  });
-  expect(serverFallback.dbPlatform,
-    'MSSQL server metadata is carried into the database model').toBe('Fabric Data Warehouse');
+
 }
 
 
@@ -872,10 +855,10 @@ function testPkOrdinalFromDmv() {
     const table = model.nodes.find(n => n.type === 'table');
     expect(table?.schema).toBe('we]ird');
     expect(table?.name).toBe('t]x');
-    expect(table?.id).toBe('[we]ird].[t]x]');
+    expect(table?.id).toBe('[we]]ird].[t]]x]');
     expect(table?.columns?.map(c => c.name)).toEqual(['c]1']);
     expect(model.schemas.map(s => s.name)).toContain('we]ird');
-    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]ird].[t]x] -> [dbo].[vsrc]');
+    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]]ird].[t]]x] -> [dbo].[vsrc]');
   });
 
   it('the columns query names a CLR type through its user type', () => {

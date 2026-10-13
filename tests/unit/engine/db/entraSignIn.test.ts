@@ -1,6 +1,6 @@
 /**
  * Pins the Entra directory choice: a saved directory is used as is; otherwise the account's home
- * directory when listed, else the first listed one, as the mssql extension preselects.
+ * directory when listed, else the first listed one.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';

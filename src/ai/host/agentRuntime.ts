@@ -23,6 +23,7 @@ import {
   type ModelPort,
 } from '../model/modelPort';
 import { isCancellationOutcome } from '../support/cancellation';
+import { INTERNAL_INVARIANT_STOP_TEXT, InternalInvariantError } from '../support/internalInvariant';
 import { trackInFlightDispatch, type IToolRegistry } from '../tools/registry';
 import type { Logger } from '../../utils/log';
 import type { TurnEventSink } from '../runtime/turnEventSink';
@@ -34,15 +35,13 @@ import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
 import type { AgentStateUpdate, AgentErrorCode, GateDecision } from '../agent/state';
 
-export { type GateDecision } from '../agent/state';
-
 /** Diagnostic detail behind a non-`ok` {@link TurnOutcome}. */
 export interface AgentFailureDetail {
   /** Error prose behind the non-`ok` outcome — graph-state error or the caught exception message. */
   readonly message: string;
   /** Enumerated {@link AgentErrorCode} when the failure carries one. */
   readonly code?: AgentErrorCode;
-  /** Engine stop reason when the turn ended on a stop rather than a hard failure. */
+  /** Stop reason of the run: an engine stop, or `provider_error` when a model request failed. */
   readonly stop?: string;
 }
 
@@ -81,6 +80,8 @@ export interface AgentRuntimeDeps {
   readonly priorMessages?: readonly ModelMessage[];
   /** Optional logger for graph-attempt diagnostics; forwarded to the graph. Off when undefined. */
   readonly logger?: Logger;
+  /** See the graph's `transportRetryDelayMs`; tests shorten it. */
+  readonly transportRetryDelayMs?: number;
   /**
    * Optional trace sink for rejections raised without a tool dispatch; forwarded to the graph.
    *
@@ -166,6 +167,7 @@ export class AgentRuntime {
       turnEpoch: deps.turnEpoch,
       logger: deps.logger,
       traceSyntheticRejection: deps.traceSyntheticRejection,
+      transportRetryDelayMs: deps.transportRetryDelayMs,
     });
   }
 
@@ -221,6 +223,8 @@ export class AgentRuntime {
       if (err instanceof GraphRecursionError) {
         return this.close('error', 'Analysis stopped: internal step limit reached. The run is incomplete, so no result is shown and the graph was not changed. This is a defect — please report it.');
       }
+      // The message of a broken runtime invariant is written for the log, which already has it.
+      if (err instanceof InternalInvariantError) return this.close('error', INTERNAL_INVARIANT_STOP_TEXT);
       const msg = err instanceof Error ? err.message : String(err);
       return this.close('error', msg);
     }

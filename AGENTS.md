@@ -17,25 +17,23 @@ npm ci
 npm run dev                 # webview dev server
 npm run build               # extension and webview
 npm run typecheck
-npm test                    # deterministic unit tests
-npm run test:core           # parser, engine and webview
-npm run test:runtime        # AI runtime contracts
-npm run test:edh            # VS Code Electron smoke lanes; needs a display
-npm run gate                 # configured deterministic checks
-npm run package              # create VSIX
+npm test                    # parser, lineage, and deterministic AI/trust contracts
+npm run gate                # deterministic gate (excludes test:support); run before reporting a change
+npm run package             # create VSIX
 ```
 
-There is no lint script; use `npm run typecheck`. There is no database migration command: the extension reads source metadata and stores user connection/project data through its existing versioned store logic.
+There is no lint script; use `npm run typecheck`. There is no database migration command; user connection and project data use the existing versioned store logic. [`docs/testing/README.md`](docs/testing/README.md) is the single source for test tiers, lanes and commands.
 
-## Repository Map
+## Repository map
 
 ```text
 src/engine/       SQL ingestion, parsing, graph, database connections and deterministic analysis
 src/ai/           @lineage participant, tools, prompts and runtime
 src/components/   React webview; imports engine types, never the reverse
-src/hooks/        React webview hooks
+src/hooks/        React webview hooks (also src/contexts/, src/detail/)
 assets/           parse rules, DMV queries, AI output templates and public demo DACPAC
-tests/unit/       Vitest parser, engine, AI contract and webview coverage
+tests/unit/       Vitest parser, lineage, AI contract, and supporting suites
+tests/cases/      shared case catalog; runners loop the rows tagged for them
 tests/integration/ VS Code Extension Development Host smoke tests
 tests/tools/      test runners, gate and package checks
 docs/             product architecture, developer and testing documentation
@@ -43,35 +41,33 @@ docs/             product architecture, developer and testing documentation
 .agents/skills/   on-demand task workflows
 ```
 
-## Rules And Skills Router
+## Rules and skills router
 
 - Before changing TypeScript or layering, read `.agents/rules/typescript.md`.
 - Before changing trust boundaries, credentials, logging, or model/provider handling, read `.agents/rules/security.md`.
-- Before adding or changing tests, read `.agents/rules/testing.md` and `.agents/skills/testing/SKILL.md`.
+- Before adding, changing, selecting or diagnosing tests, read `.agents/rules/testing.md` and `.agents/skills/testing/SKILL.md`; tiers and commands are in `docs/testing/README.md`.
 - Before changing SQL parsing, graph traversal, or runtime contracts, read `docs/ARCHITECTURE.md` and the relevant `docs/` contract.
 - For database connection behavior, read `docs/DEVELOPER_GUIDE.md` database sections and `.agents/skills/testing/SKILL.md`.
-- For a trace, state dump, NDJSON conversation, or Langfuse observation, read `.agents/skills/trace-debug/SKILL.md`.
-- For function column-lineage routing or follow-ups, read the column-provenance contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Preserve the caller SQL, qualified requested output and function definition across investigation and retry; parameters are binding context, not invented graph columns. Keep ordinary view routing unchanged.
+- For a trace, state dump, NDJSON quick analysis, or Langfuse debug trace, read `.agents/skills/trace-debug/SKILL.md`.
+- For function column-lineage routing or follow-ups, read the column-trace section of `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Preserve the caller SQL, qualified requested output and function definition across investigation and retry; parameters are binding context, not invented graph columns. Keep ordinary view routing unchanged.
 - For CT/BB routing, read the shared readiness and continuation contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Structural readiness precedes mode ranking; qualified arriving tasks select mode. Do not recover continuation from historical edges, column names or prose.
 - Before comparing prompt variants, read `.agents/skills/prompt-playground/SKILL.md`.
-- Before editing prompt text or AI output templates, read `.agents/skills/prompt-change/SKILL.md` and `docs/AI_PROMPTS.md`.
-- For test tiers and optional environment configuration, read `docs/testing/README.md` and `docs/EDH_TESTING.md`.
-- Before provisioning or verifying a machine, container, CI runner or agent sandbox for tests, read `docs/testing/ENVIRONMENTS.md`. Report which tiers the host can run; do not mark a tier passed when its prerequisites are missing.
-- For native chat buttons, pending-input behavior, AI-preview formulas or follow-up badges, use the Playwright chat acceptance lanes in `docs/EDH_TESTING.md`. Verify actual UI submission and rendered content; direct participant calls and scripted responses do not prove live inference behavior. Use isolated profiles and repeatable CLI commands.
+- Before editing AI prompt text, model-facing tool descriptions or output templates, read `.agents/skills/prompt-change/SKILL.md` and `docs/AI_PROMPTS.md`.
+- Before provisioning a machine, container, CI runner or agent sandbox, read `docs/testing/ENVIRONMENTS.md`.
+- For native chat buttons, pending input, or follow-up badges, run the chat UI labels in `docs/testing/README.md` and verify the rendered UI. A direct participant call does not prove that path.
 
-## Change Constraints
+## Change constraints
 
-- Fix behavior in the layer that owns the contract. Keep `src/engine/` independent of `src/components/`; `src/engine/shared/bridgeContract.ts` owns webview IPC validation.
+- Fix a defect at its root cause in the layer that owns the contract, with a test that fails before the fix. No hack, workaround, retry-until-green, weakened or skipped test, or fixture-specific path in production code. A fix that cannot be made cleanly is not pushed.
 - Validate untrusted inputs at their boundary with the existing schema and error handling. Preserve input identity where the API contract requires it.
-- Use public APIs from VS Code and installed libraries. Do not add fixture-specific behavior to production paths.
-- Add focused tests for changed behavior, including failure and malformed-input paths. Test files end in `.test.ts` or `.test.tsx`.
-- TypeScript uses ESM imports/exports. Exported APIs need contract-focused TSDoc. Keep comments actionable and current.
+- Use public APIs from VS Code and installed libraries.
+- Add focused tests for changed behavior, including failure and malformed-input paths.
+- Documents are part of the change: before a push, check that every changed behavior, command, path and count named in a `.md` file is true, and remove statements that are no longer.
 - Never include credentials, customer database content, raw conversations, or generated test artifacts in tracked files.
 - Do not change `package.json` or lockfile versions unless the user asks.
 
 
-## Test Configuration
+## Test configuration
 
-- Optional test settings are listed in `.env.example`; values come from the process environment, then the ignored `.env`. Never commit `.env` or print secret values.
-- If a needed setting is empty, copy it from the environment's secret store when one exists; otherwise skip that tier. Do not override non-empty values.
-- Report each tier as passed, failed or not runnable, with the missing prerequisite. Do not work around network blocks.
+- Optional test settings are listed in `.env.example`; a non-empty process environment value wins over the ignored `.env`. Never commit `.env` or print secret values.
+- If a needed setting is empty, copy it from the environment's secret store when one exists; do not override non-empty values. Otherwise report the tier as described in `docs/testing/ENVIRONMENTS.md`; an explicitly requested check must fail clearly. Do not work around network blocks.

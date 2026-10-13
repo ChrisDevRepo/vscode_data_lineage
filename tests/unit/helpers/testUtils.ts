@@ -33,6 +33,16 @@ export function rootPath(...segments: string[]): string {
   return resolve(ROOT, ...segments);
 }
 
+/** Reads a required SQL scenario from the shared parser catalog so engine tests use the same body. */
+export function parserCaseSql(id: string): string {
+  const catalog = yaml.load(readFileSync(rootPath('tests/cases/parser/exact-edges.yaml'), 'utf8')) as {
+    cases: Array<{ id: string; sql: string }>;
+  };
+  const row = catalog.cases.find(testCase => testCase.id === id);
+  if (!row) throw new Error(`Parser case not found: ${id}`);
+  return row.sql;
+}
+
 // ─── End-to-end dacpac helpers ────────────────────────────────────────────────
 
 /**
@@ -42,13 +52,6 @@ export function rootPath(...segments: string[]): string {
 export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   loadParseRules();
   const buffer = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  return extractDacpac(buffer);
-}
-
-/** Loads the public demo DACPAC the Extension Development Host opens via `openDemo`. */
-export async function loadDemoModel(): Promise<DatabaseModel> {
-  loadParseRules();
-  const buffer = readFileSync(rootPath('assets/demo.dacpac'));
   return extractDacpac(buffer);
 }
 

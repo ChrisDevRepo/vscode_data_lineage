@@ -55,7 +55,7 @@ export const XML_METHODS: Set<string> = new Set([
  * SQL Server CLR built-in type methods that appear as the last part of a 3-part name.
  *
  * @remarks
- * These often look like `db.schema.object` but are actually method calls on
+ * These often look like `db.schema.object` but are method calls on
  * system types like `HierarchyID`, `Geometry`, or `Geography`.
  *
  * This set is used to suppress false positive catalog references during

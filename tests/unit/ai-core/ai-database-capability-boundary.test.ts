@@ -45,7 +45,7 @@ const aiRoot = fileURLToPath(new URL('../../../src/ai', import.meta.url));
 
 /** Every database-execution identifier that must never appear in the production AI tree. */
 const DATABASE_EXECUTION_PATTERN =
-  /connectionManager|db\/dbSession|builtInProvider|mssqlExtensionProvider|connectDatabase|dmvExtractor|profilingEngine|executeSimpleQuery|executeDmvQueries|promptForConnection|table-stats-request/;
+  /connectionManager|db\/dbSession|builtInProvider|connectDatabase|dmvExtractor|profilingEngine|executeSimpleQuery|executeDmvQueries|table-stats-request/;
 
 /**
  * A token that provably exists in `src/ai/**`. The negative match below is vacuously true when the

@@ -12,8 +12,7 @@ test-results/
 .vscode-test/
 
 # IDE / local
-# Keep the repository workspace settings tracked: they deliberately disable unrelated
-# MCP servers so @lineage remains the only AI tool surface while developing this solution.
+# Keep repository workspace settings tracked.
 tmp/
 PLAN*.md
 TASKLIST*
@@ -90,6 +89,10 @@ scripts/*
 !scripts/repair-langsmith-stub.mjs
 # Regenerates THIRD_PARTY_NOTICES.md from the bundled package set.
 !scripts/generate-third-party-notices.mjs
+# Verifies state-of-the-art TSDoc and non-chatty code comments across src/.
+!scripts/verify-code-comments.mjs
+# Fails the gate when a tracked Markdown file names a link, path, script or setting that does not exist.
+!scripts/verify-docs.mjs
 
 # Code-audit workspace (tool output, inventories, classification artifacts)
 .audit/
@@ -98,7 +101,7 @@ scripts/*
 # repository, so an unignored one is picked up by `vsce ls` and would ship source in the VSIX.
 .verify*/
 
-# Python venv for the analysis scripts (stdlib-only; never bundled).
+# Local Python virtual environments (never bundled).
 .venv/
 
 # The ai-disabled EDH lane's seeded user-data-dir: only the settings seed is tracked; everything

@@ -100,33 +100,6 @@ function oneParagraph(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Requested schema exclusions the named origin removed from the contract: the origin's own schema
- * is never excluded, so it drops out of the active filter.
- *
- * @param requested - The proposal's requested `excludeSchemas`.
- * @param active - The schemas the proposal's active filter still excludes.
- * @param identifierCaseSensitive - Checked catalog policy. Absent or false keeps case-insensitive comparison.
- */
-export function schemaFiltersRemovedByOrigin(requested: readonly string[], active: readonly string[], identifierCaseSensitive: boolean | undefined): string[] {
-  return requested.filter(schema => !active.some(kept => schemaKey(kept, identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive)));
-}
-
-/**
- * Requested object exclusions the named origin removed from the contract: the origin's own id is
- * never excluded, so it drops out of the active filter.
- *
- * @param requested - The proposal's requested `excludeNodeIds`.
- * @param origin - The proposal's origin id.
- * @param active - The object ids the proposal's active filter still excludes.
- * @param identifierCaseSensitive - Checked catalog policy. Absent or false keeps case-insensitive comparison.
- */
-export function nodeFiltersRemovedByOrigin(requested: readonly string[], origin: string, active: readonly string[], identifierCaseSensitive: boolean | undefined): string[] {
-  const originOnly = new Map([[origin, true]]);
-  if (active.some(kept => resolveModelNodeId(kept, originOnly, identifierCaseSensitive) !== null)) return [];
-  return requested.filter(id => resolveModelNodeId(id, originOnly, identifierCaseSensitive) !== null);
-}
-
 /** Schemas in plan order: most hops first, then most nodes, then name. */
 function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary['bySchema'][string]]> {
   return Object.entries(summary.bySchema).sort((a, b) => {
@@ -205,8 +178,6 @@ export function renderScopeSummaryMd(
   summary: ScopeSummary,
   revision?: number,
   classification?: ClassificationValue,
-  _removedSchemaFilters: readonly string[] = [],
-  _removedNodeFilters: readonly string[] = [],
 ): string {
   const readAs: string[] = [];
   const filters = summary.activeFilters;

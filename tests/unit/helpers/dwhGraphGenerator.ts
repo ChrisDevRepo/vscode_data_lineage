@@ -408,24 +408,3 @@ function computeStats(model: DatabaseModel, objs: GenObj[]): DwhStats {
     hubs,
   };
 }
-
-/**
- * Renders {@link DwhStats} as a markdown table for a test report or a manual capture note.
- *
- * @param stats - Statistics computed by {@link generateDwhModel}.
- * @returns A markdown summary table plus a hub table.
- */
-export function formatDwhStats(stats: DwhStats): string {
-  const lines: string[] = [];
-  lines.push('| metric | value |', '|---|---|');
-  lines.push(`| nodes | ${stats.nodeCount} |`);
-  lines.push(`| edges | ${stats.edgeCount} |`);
-  lines.push(`| edges per node | ${stats.edgesPerNode.toFixed(2)} |`);
-  lines.push(`| tables / views / procedures / functions / external | ${stats.byType.table} / ${stats.byType.view} / ${stats.byType.procedure} / ${stats.byType.function} / ${stats.byType.external} |`);
-  lines.push(`| schemas | ${stats.schemaDistribution.length} |`);
-  lines.push(`| cross-schema edge share | ${(stats.crossSchemaEdgeShare * 100).toFixed(1)}% |`);
-  lines.push(`| isolated objects | ${stats.isolatedCount} |`);
-  lines.push('', '| hub | total degree |', '|---|---|');
-  for (const h of stats.hubs) lines.push(`| ${h.id} | ${h.total} |`);
-  return lines.join('\n');
-}

@@ -50,6 +50,7 @@ const sharedConfig = {
   },
 };
 
+/** Keeps the deferred extension runtime out of its bootstrap bundle. */
 const deferredRuntimePlugin = {
   name: 'deferred-extension-runtime',
   setup(build) {

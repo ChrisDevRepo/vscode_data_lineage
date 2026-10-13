@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stepOutcome } from './gate-status.mjs';
+import { stepOutcome, stepFailureOutput } from './gate-status.mjs';
 import { nodeBin, npmCommand } from './npm-launcher.mjs';
 
 /** Where a failing step's captured output is written, so a red gate stays diagnosable. */
@@ -30,12 +30,17 @@ function runStep(step) {
     capture(child.stdout, process.stdout);
     capture(child.stderr, process.stderr);
     child.on('error', (error) => resolve({ status: null, error, output }));
-    child.on('close', (status) => resolve({ status, error: null, output }));
+    child.on('close', (status, signal) => resolve({ status, signal, error: null, output }));
   });
 }
 
 /** One gate step that runs an npm script by name. See npm-launcher.mjs for the spawn form. */
-const npmRun = (name, script) => ({ name, ...npmCommand('npm', ['run', script]) });
+const npmRun = (name, script, args = []) => ({
+  name, ...npmCommand('npm', ['run', script, ...(args.length ? ['--', ...args] : [])]),
+});
+
+/** Keep terminal progress and persist each unit lane's test failures in a JSON report. */
+const unitReportArgs = (lane) => ['--reporter=default', '--reporter=json', `--outputFile.json=${join(LOG_DIR, `${lane}-unit.json`)}`];
 
 const STEPS = [
   npmRun('typecheck', 'typecheck'),
@@ -43,19 +48,19 @@ const STEPS = [
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'test environment profiles', cmd: nodeBin, args: ['--test', 'tests/tools/load-test-env.test.mjs'] },
-  {
-    name: 'test tooling contracts',
-    cmd: nodeBin,
-    args: ['--test', 'tests/tools/gui-test-host.test.mjs', 'tests/tools/chat-ui-replay-trace.test.mjs', 'tests/tools/gate-status.test.mjs'],
-  },
+  { name: 'gate status and lane arguments', cmd: nodeBin, args: ['--test', 'tests/tools/gate-status.test.mjs', 'tests/tools/run-lane.test.mjs'] },
+  { name: 'trace-metrics and case-scorecard rules', cmd: nodeBin, args: ['--test', 'tests/tools/trace-metrics.test.mjs', 'tests/tools/case-scorecard.test.mjs'] },
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
   { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },
   { name: 'no tracked scratch files', cmd: nodeBin, args: ['tests/tools/assert-no-tracked-scratch.mjs'] },
+  { name: 'markdown facts', cmd: nodeBin, args: ['scripts/verify-docs.mjs'] },
+  { name: 'code comments', cmd: nodeBin, args: ['scripts/verify-code-comments.mjs'] },
   { name: 'no new output truncation', cmd: nodeBin, args: ['tests/tools/assert-no-output-truncation.mjs', '--baseline', 'tests/tools/output-truncation-baseline.json'] },
-  npmRun('unit: core (+ core coverage floors)', 'coverage:core'),
-  npmRun('unit: agent runtime', 'test:runtime'),
+  npmRun('unit: parser and lineage (+ coverage floors)', 'coverage:core', unitReportArgs('core')),
+  npmRun('unit: AI and trust contracts', 'test:runtime', unitReportArgs('runtime')),
 
   npmRun('build + integration tsc', 'pretest:integration'),
+  { name: 'third-party notices', cmd: nodeBin, args: ['scripts/generate-third-party-notices.mjs', '--check'] },
   { name: 'package contents', cmd: nodeBin, args: ['tests/tools/assert-package-contents.mjs'] },
   { name: 'no LangSmith in bundle', cmd: nodeBin, args: ['tests/tools/assert-no-langsmith.mjs'] },
 ];
@@ -72,7 +77,7 @@ for (const step of STEPS) {
   let logPath = '';
   if (!ok) {
     logPath = join(LOG_DIR, `${step.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.log`);
-    writeFileSync(logPath, run.output, 'utf8');
+    writeFileSync(logPath, stepFailureOutput(step, run), 'utf8');
   }
   results.push({
     name: step.name,
@@ -80,7 +85,7 @@ for (const step of STEPS) {
     ok,
     logPath,
     note: run.error ? `did not start: ${run.error.message}`
-      : run.status === null ? 'killed by signal'
+      : run.status === null ? `killed by signal${run.signal ? ` ${run.signal}` : ''}`
       : !ok && step.viaShim ? 'ran via the PATH npm shim'
       : '',
     seconds: ((Date.now() - started) / 1000).toFixed(1),
@@ -104,7 +109,8 @@ process.stdout.write(
 );
 process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n');
 process.stdout.write(
-  'Additional checks: npm run test:edh exercises the VS Code host with fixed responses; '
+  'Additional checks: npm run test:support runs webview, database, routing and operator-tool tests. '
+  + 'npm run test:edh exercises the VS Code host with fixed responses; '
   + 'npm run test:ai:smoke optionally calls a configured provider through that host. '
   + 'Review model answer correctness against the source SQL and graph. See docs/testing/README.md.\n',
 );

@@ -1,9 +1,8 @@
 /**
  * Shared helpers for aggregating object-level edges into schema-level edges.
  *
- * Pure, zero-import module used by both the webview projection layer
- * (`schemaProjection`) and the host-side connectivity summarizer
- * (`schemaAdjacency`) so the bidirectional-collapse rules cannot drift.
+ * Pure, zero-import module behind the schema projection layer
+ * (`schemaProjection`), holding its bidirectional-collapse rules.
  */
 
 /** Separator that cannot appear in schema names, for composite edge keys. */

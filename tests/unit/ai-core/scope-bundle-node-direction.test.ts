@@ -12,9 +12,8 @@ import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import type { GetScopeBundleInput } from '../../../src/ai/tools/toolSchemas';
 
 /**
- * Origin `raworderimport` reads INTO `spcleanorders` (OUT side) and is written INTO BY
- * `spimportorders` (IN side) — both edges start at the origin, so tuple position alone cannot
- * distinguish them.
+ * Origin `raworderimport` is read by `spcleanorders` (OUT side) and written by
+ * `spimportorders` (IN side): one neighbor on each side of the origin.
  */
 function makeSplitModel(): DatabaseModel {
   const nodes: LineageNode[] = [
@@ -56,12 +55,6 @@ describe('get_scope_bundle origin node serves an explicit in/out split', () => {
   const originPayload = res.nodes.find(n => n.id === '[ai].[raworderimport]')!;
   const upstreamPayload = res.nodes.find(n => n.id === '[ai].[spimportorders]')!;
   const downstreamPayload = res.nodes.find(n => n.id === '[ai].[spcleanorders]')!;
-
-  it('sanity: both fixture edges start at the origin, so tuple position cannot signal direction', () => {
-    const startingAtOrigin = res.edges.filter(([source]) => source === '[ai].[raworderimport]');
-    expect(startingAtOrigin.length).toBe(1);
-    expect(res.edges.length).toBe(2);
-  });
 
   it("origin node entry carries an explicit in/out split naming which side each neighbor is on — recoverable from the split alone, ignoring res.edges entirely", () => {
     expect(Array.isArray(originPayload.in), 'origin payload has an in[] array').toBe(true);

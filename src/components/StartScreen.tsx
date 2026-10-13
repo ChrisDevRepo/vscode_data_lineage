@@ -6,7 +6,6 @@ import { StatusMessage } from './ui/StatusMessage';
 import { Spinner } from './ui/Spinner';
 import { useReturnFocus } from '../hooks/useReturnFocus';
 import type { Project, FilterProfile } from '../engine/projectStore';
-import { MSSQL_PROJECT_HINT, WARNING_ICON_PATH, usesMssqlExtension } from './mssqlRetiring';
 
 interface StartScreenProps {
   projects: Project[];
@@ -95,12 +94,6 @@ function projectTooltip(project: Project): ReactNode {
       </div>
       {schemas && <div style={{ opacity: 0.55, fontSize: 11 }}>{schemas}</div>}
       {bm && <div style={{ opacity: 0.55, fontSize: 11 }}>{bm}</div>}
-      {usesMssqlExtension(project) && (
-        <div className="flex items-start gap-1.5" style={{ fontSize: 11 }}>
-          <IconWarning />
-          <span>{MSSQL_PROJECT_HINT}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -239,9 +232,6 @@ export const StartScreen = memo(function StartScreen({
                 <span className="block flex-1 min-w-0">
                   <span className="flex items-center gap-2 min-w-0">
                     <span className="text-sm font-medium truncate">{project.name}</span>
-                    {usesMssqlExtension(project) && (
-                      <span role="img" aria-label={MSSQL_PROJECT_HINT} className="shrink-0 ln-provider-warning-badge">! Old connection</span>
-                    )}
                   </span>
                   <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{detail}</span>
                   {schemas && (
@@ -330,14 +320,6 @@ export const StartScreen = memo(function StartScreen({
     </WizardPanel>
   );
 });
-
-function IconWarning() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0 ln-provider-warning-icon" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" d={WARNING_ICON_PATH} />
-    </svg>
-  );
-}
 
 function IconClose() {
   return (

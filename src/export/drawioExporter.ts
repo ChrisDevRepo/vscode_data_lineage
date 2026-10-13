@@ -181,8 +181,9 @@ export function exportToDrawio(
   const idMap = new Map<string, string>();
   let nextId = 2; // 0 and 1 are reserved base cells
 
-  const minX = Math.min(...nodes.map(n => n.position.x));
-  const minY = Math.min(...nodes.map(n => n.position.y));
+  const positions = [...nodes, ...clusterNodes ?? []].map(n => n.position);
+  const minX = Math.min(...positions.map(p => p.x));
+  const minY = Math.min(...positions.map(p => p.y));
   const offsetX = GRAPH_OFFSET_X - Math.min(0, minX);
   const offsetY = 20 - Math.min(0, minY);
 
@@ -262,7 +263,7 @@ export function exportToDrawio(
     const nodeId = String(nextId++);
     const bandId = String(nextId++);
     idMap.set(node.id, nodeId);
-    const { obj, band } = buildSchemaClusterObject(node, nodeId, bandId, node.data.color);
+    const { obj, band } = buildSchemaClusterObject(node, nodeId, bandId, node.data.color, offsetX, offsetY);
     clusterObjects.push(obj);
     clusterBandCells.push(band);
   }
@@ -324,6 +325,8 @@ function buildSchemaClusterObject(
   nodeId: string,
   bandId: string,
   color: string,
+  offsetX = GRAPH_OFFSET_X,
+  offsetY = 20,
 ): { obj: MxObject; band: MxCell } {
   const d = node.data;
   const label =
@@ -346,8 +349,8 @@ function buildSchemaClusterObject(
       '@_vertex': '1',
       '@_parent': '1',
       mxGeometry: {
-        '@_x': String(Math.round(node.position.x + GRAPH_OFFSET_X)),
-        '@_y': String(Math.round(node.position.y + 20)),
+        '@_x': String(Math.round(node.position.x + offsetX)),
+        '@_y': String(Math.round(node.position.y + offsetY)),
         '@_width': '160',
         '@_height': '56',
         '@_as': 'geometry',

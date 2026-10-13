@@ -2,10 +2,9 @@
  * Cancellation classification for the host-graph tool attempt runner (`agent/toolAttempt.ts`).
  *
  * @remarks
- * Lives in `support/`, not `providers/`, and stays provider-pure (no `vscode`, no model-SDK import).
- * Not the only cancellation classifier — `model/modelPort.ts`, `model/vscodeLangChainBridge.ts` and
- * `model/vscodeModelPort.ts` each classify with different coverage; do not consolidate without
- * reconciling all four.
+ * Provider-pure (no `vscode`, no model-SDK import). Host-raised cancellation names and normalized
+ * port cancellations are classified at the model boundary (`isHostCancellationError` and
+ * `isPortCancellation` in `model/modelPort.ts`); callers above the port pair those with this one.
  */
 
 /**

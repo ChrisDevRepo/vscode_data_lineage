@@ -16,7 +16,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import { findShortestPathOrdered } from './graphGuards';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData, ObjectType } from './types';
+import { DatabaseModel, LineageNode, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData, ObjectType } from './types';
 import { createSchemaColorMap, getExternalNodeColor, getSchemaColorFromMap, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
 import {
   projectExpandedSchemaView,
@@ -160,9 +160,28 @@ type LineageFlowNodeSource = {
   definitionUnreadable?: boolean;
 };
 
+/** The flow-node fields of a model node. */
+function flowNodeSource(node: LineageNode): LineageFlowNodeSource {
+  return {
+    id: node.id,
+    label: node.name,
+    schema: node.schema,
+    fullName: node.fullName,
+    objectType: node.type,
+    externalType: node.externalType,
+    externalUrl: node.externalUrl,
+    externalDatabase: node.externalDatabase,
+    definitionUnreadable: node.definitionUnreadable,
+  };
+}
+
+/**
+ * Builds one React Flow object node; its degrees come from `graph`, and are 0 for a node the graph
+ * lacks or when no graph is given (a synthesized trace node whose degrees are recomputed later).
+ */
 function buildLineageFlowNode(
   source: LineageFlowNodeSource,
-  graph: Graph,
+  graph: Graph | null,
   position: { x: number; y: number },
   options?: { highlighted?: boolean; schemaColor?: string },
 ): FlowNode {
@@ -177,8 +196,8 @@ function buildLineageFlowNode(
       schema: source.schema,
       fullName: source.fullName,
       objectType: source.objectType,
-      inDegree: graph.hasNode(source.id) ? graph.inDegree(source.id) : 0,
-      outDegree: graph.hasNode(source.id) ? graph.outDegree(source.id) : 0,
+      inDegree: graph?.hasNode(source.id) ? graph.inDegree(source.id) : 0,
+      outDegree: graph?.hasNode(source.id) ? graph.outDegree(source.id) : 0,
       ...(source.externalType && { externalType: source.externalType }),
       ...(source.externalUrl && { externalUrl: source.externalUrl }),
       ...(source.externalDatabase && { externalDatabase: source.externalDatabase }),
@@ -231,17 +250,7 @@ function toFlowResult(
   config: ExtensionConfig
 ): GraphResult {
   const flowNodes: FlowNode[] = model.nodes.map((node) => buildLineageFlowNode(
-    {
-      id: node.id,
-      label: node.name,
-      schema: node.schema,
-      fullName: node.fullName,
-      objectType: node.type,
-      externalType: node.externalType,
-      externalUrl: node.externalUrl,
-      externalDatabase: node.externalDatabase,
-      definitionUnreadable: node.definitionUnreadable,
-    },
+    flowNodeSource(node),
     graph,
     positions.get(node.id) || { x: 0, y: 0 },
   ));
@@ -427,25 +436,7 @@ function synthesizeMissingTraceScope(
     if (flowNodeIdSet.has(id)) continue;
     const mn = modelNodeMap.get(id);
     if (!mn) continue;
-    filteredNodes.push({
-      id: mn.id,
-      type: 'lineageNode',
-      position: { x: 0, y: 0 },
-      draggable: true,
-      selectable: true,
-      data: {
-        label: mn.name,
-        schema: mn.schema,
-        fullName: mn.fullName,
-        objectType: mn.type,
-        inDegree: 0,
-        outDegree: 0,
-        ...(mn.externalType && { externalType: mn.externalType }),
-        ...(mn.externalUrl && { externalUrl: mn.externalUrl }),
-        ...(mn.externalDatabase && { externalDatabase: mn.externalDatabase }),
-        ...(mn.definitionUnreadable && { definitionUnreadable: true }),
-      },
-    });
+    filteredNodes.push(buildLineageFlowNode(flowNodeSource(mn), null, { x: 0, y: 0 }));
   }
 
   const existingEdgeIds = new Set(filteredEdges.map((e) => e.id));
@@ -962,17 +953,13 @@ function objectLayoutPlan(graph: Graph, config: ExtensionConfig, annotatedNodeId
 }
 
 /**
- * Dagre input {@link buildGraph} lays out for a model — structured-cloneable (no `sizeOf`), so
- * a layout worker can compute it and {@link seedLayoutCache} can store the result.
+ * Dagre input {@link buildGraph} lays out for a graph built from a model — structured-cloneable
+ * (no `sizeOf`), so a layout worker can compute it and {@link seedLayoutCache} can store the result.
  *
- * @param model - Database model to visualize.
+ * @param graph - Graph built from the model by {@link buildGraphologyGraph}.
  * @param config - Extension configuration.
+ * @param annotatedNodeIds - Ids carrying an AI badge or footnote; see {@link computeLayout}.
  */
-export function objectLayoutInput(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): LayoutInput {
-  return objectLayoutInputForGraph(buildGraphologyGraph(model), config);
-}
-
-/** {@link objectLayoutInput} for a graph already built from the model, so it is not built twice. */
 export function objectLayoutInputForGraph(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): LayoutInput {
   return objectLayoutPlan(graph, config, annotatedNodeIds).input;
 }
@@ -990,18 +977,25 @@ export function objectLayoutInputForGraph(graph: Graph, config: ExtensionConfig 
  */
 function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): Map<string, { x: number; y: number }> {
   const { input, isolatedIds } = objectLayoutPlan(graph, config, annotatedNodeIds);
-  const positions = dagreLayout(input);
+  return placeIsolatedRow(new Map(dagreLayout(input)), isolatedIds);
+}
 
-  if (isolatedIds.length > 0) {
-    let maxY = 0;
-    for (const pos of positions.values()) {
-      if (pos.y + NODE_HEIGHT > maxY) maxY = pos.y + NODE_HEIGHT;
-    }
-    const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
-    const cellW = NODE_WIDTH + GRID_CELL_PADDING;
-    isolatedIds.forEach((id, i) => positions.set(id, { x: i * cellW, y: rowY }));
+/**
+ * Places `isolatedIds` in one row below every laid-out position, mutating and returning `positions`.
+ * Dagre's longest-path ranker crashes on fully disconnected components, so they never reach it.
+ */
+function placeIsolatedRow(
+  positions: Map<string, { x: number; y: number }>,
+  isolatedIds: readonly string[],
+): Map<string, { x: number; y: number }> {
+  if (isolatedIds.length === 0) return positions;
+  let maxY = 0;
+  for (const pos of positions.values()) {
+    if (pos.y + NODE_HEIGHT > maxY) maxY = pos.y + NODE_HEIGHT;
   }
-
+  const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
+  const cellW = NODE_WIDTH + GRID_CELL_PADDING;
+  isolatedIds.forEach((id, i) => positions.set(id, { x: i * cellW, y: rowY }));
   return positions;
 }
 
@@ -1052,19 +1046,7 @@ function buildExpandedSchemaViewPositions(
     edges: layoutEdges,
     config,
   }));
-
-  const isolatedIds = candidateIds.filter((id) => !connectedIds.has(id));
-  if (isolatedIds.length === 0) return positions;
-
-  let maxY = 0;
-  for (const position of positions.values()) {
-    if (position.y + NODE_HEIGHT > maxY) maxY = position.y + NODE_HEIGHT;
-  }
-
-  const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
-  const cellW = NODE_WIDTH + GRID_CELL_PADDING;
-  isolatedIds.forEach((id, index) => positions.set(id, { x: index * cellW, y: rowY }));
-  return positions;
+  return placeIsolatedRow(positions, candidateIds.filter((id) => !connectedIds.has(id)));
 }
 
 function buildExpandedSchemaViewFlowNodes(

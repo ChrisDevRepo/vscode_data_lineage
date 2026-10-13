@@ -26,7 +26,7 @@ import {
   resolveRegistrySchemas,
   type IToolRegistry,
 } from '../tools/registry';
-import { getAllowedLmToolNames, type LmStage } from '../tools/toolPolicy';
+import { getAllowedLmToolNames, type ChatLmStage } from '../tools/toolPolicy';
 import {
   presentResultSchemaForPhase,
   submitFindingsSchemaForMode,
@@ -137,7 +137,7 @@ interface ConversePlanInput {
 /** Compiler-ready instruction plan for a converse-mode turn. */
 export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionContext'> & {
   readonly kind: 'converse';
-  readonly stage: LmStage;
+  readonly stage: ChatLmStage;
   readonly registry: IToolRegistry<string>;
   readonly facts?: InstructionPlanFacts;
   /** Phase-derived provider schema replacements; dispatch still uses the canonical registry. */
@@ -156,6 +156,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly freshSubmission?: () => boolean;
   /** The active CT hop's tracked-column facts that narrow the served `column_flow`; read live, absent serves the general schema. */
   readonly hopColumns?: () => SubmitFindingsHopColumns;
+  /** Whether a held draft of the focus carries a valid `column_flow` a retry may omit; read live, `false` when absent. */
+  readonly heldColumnFlow?: () => boolean;
 };
 
 type TextPlanDraft = Omit<CompleteTextInput, 'phase' | 'instructionContext'> & {
@@ -216,12 +218,12 @@ export interface RuntimeFrame {
   /** Approved mission facts relevant to this call. */
   readonly facts?: InstructionPlanFacts;
   /** Tool-policy stage for a tool-capable call. */
-  readonly stage?: LmStage;
+  readonly stage?: ChatLmStage;
   /** Structured schema identity for a structured call. */
   readonly schemaId?: string;
 }
 
-function phaseOf(stage: LmStage): InstructionPhase {
+function phaseOf(stage: ChatLmStage): InstructionPhase {
   return stage.kind;
 }
 
@@ -234,7 +236,7 @@ function phaseOf(stage: LmStage): InstructionPhase {
  * the caller arms the live resolver by this same predicate, so no stage offers the full schema while
  * the handler validates a narrower authorization.
  */
-function stageSupportsPresentResultRepair(stage: LmStage): boolean {
+function stageSupportsPresentResultRepair(stage: ChatLmStage): boolean {
   return stage.kind === 'synthesis' || stage.kind === 'visual_preview' || stage.kind === 'completed';
 }
 
@@ -333,6 +335,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     presentResultRepairSectionTextLeaves,
     freshSubmission,
     hopColumns,
+    heldColumnFlow,
     presentResultRetainableSections,
     presentResultPreviewBlockCount,
     ...input
@@ -357,7 +360,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
     liveResolvers.set(
       'lineage_submit_findings',
-      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.()),
+      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), heldColumnFlow?.() ?? false),
     );
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;

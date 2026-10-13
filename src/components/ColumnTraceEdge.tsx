@@ -20,7 +20,7 @@ const DIM_STROKE_WIDTH = 1;
  * Dash pattern of an edge that only shaped which rows arrive, never the value.
  *
  * @remarks
- * The one drawing convention column-lineage tools actually share: OpenLineage splits every column
+ * Consistent with OpenLineage conventions: OpenLineage splits every column
  * relation into DIRECT and INDIRECT, and a lineage viewer draws the indirect one broken — a column
  * used in a WHERE or a JOIN predicate reaches the output without its value ever landing in it. The
  * `COLUMN_TRANSFORM_DIRECTION` map classifies each class; an INDIRECT-only edge is drawn dashed.

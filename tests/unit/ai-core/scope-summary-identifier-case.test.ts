@@ -1,6 +1,6 @@
 /** Approval summaries preserve checked CS identities while retaining CI name normalization. */
 import { describe, expect, it } from 'vitest';
-import { renderFullPlanMd, renderScopeCardMd, renderScopeSummaryMd, schemaFiltersRemovedByOrigin, nodeFiltersRemovedByOrigin } from '../../../src/ai/prompting/scopeSummaryRenderer';
+import { renderFullPlanMd, renderScopeCardMd, renderScopeSummaryMd } from '../../../src/ai/prompting/scopeSummaryRenderer';
 import { sampleSummary } from '../helpers/scopeSummaryFixture';
 import type { NavigationInitParams } from '../../../src/ai/sm/smTypes';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
@@ -79,8 +79,6 @@ describe('scope summary identifier comparison', () => {
     expect(md).not.toMatch(/Filter removed|\(asked:/);
     expect(md).toContain('**Schemas:** All except `sales`');
     expect(md).not.toContain('**Excluded:**');
-    expect(schemaFiltersRemovedByOrigin(['Sales'], summary.activeFilters.schemas, cs)).toEqual(cs ? ['Sales'] : []);
-    expect(nodeFiltersRemovedByOrigin(['sales.orders'], summary.origin, summary.activeFilters.nodeIds, cs)).toEqual(cs ? [] : ['sales.orders']);
   });
 
   it.each([false, true])('show full plan states effective filters without editorial removal rows (CS=%s)', cs => {
@@ -100,8 +98,6 @@ describe('scope summary identifier comparison', () => {
       init: { ...init, excludeSchemas: ['Sales'], excludeNodeIds: ['sales.orders'] },
     });
     expect(md).not.toMatch(/Filter removed|\(asked:/);
-    expect(schemaFiltersRemovedByOrigin(['Sales'], summary.activeFilters.schemas, undefined)).toEqual([]);
-    expect(nodeFiltersRemovedByOrigin(['sales.orders'], summary.origin, summary.activeFilters.nodeIds, undefined)).toEqual(['sales.orders']);
   });
 
   it('puts a discovery summary ahead of the plan only', () => {

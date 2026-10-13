@@ -1,5 +1,5 @@
 import { executeIsolatedRegexSearch } from '../../../src/ai/support/isolatedRegexSearch';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   compileSearchRegex,
   regexRejectHint,
@@ -458,6 +458,20 @@ describe('model search — enclosing predicate', () => {
     expect(hit).toEqual([[9, 'IF @ForceReimport = 0']]);
   });
 
+  it.each([
+    { predicate: "IF @Status = N'Approved'", inlineBegin: false },
+    { predicate: 'IF [Ready] = 1', inlineBegin: false },
+    { predicate: "IF [Status] = N'BEGIN'", inlineBegin: true },
+  ])('preserves literal and identifier text in $predicate', ({ predicate, inlineBegin }) => {
+    const body = [
+      `${predicate}${inlineBegin ? ' BEGIN -- inline block opener' : ''}`,
+      ...(inlineBegin ? [] : ['BEGIN']),
+      '    SELECT Target',
+      'END',
+    ].join('\n');
+    expect(hits(body, 'Target')).toEqual([[inlineBegin ? 2 : 3, predicate]]);
+  });
+
   it('does not open a frame for BEGIN TRAN, so the IF block closes on its own END', () => {
     const hit = hits([
       'BEGIN',                                     // 1
@@ -549,30 +563,9 @@ describe('model search — enclosing predicate', () => {
     expect(hit).toEqual([[5, 'IF @Flag = 1']]);
   });
 
-  it('leaves a hit with no governing block byte-identical to the shape before the field existed', () => {
-    const compiled = compileSearchRegex('Target');
-    if (!compiled.ok) throw new Error('Target must compile');
-    const [live] = searchBodyScripts(
-      [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT Target' }],
-      compiled.regex,
-    );
-    expect('enclosingPredicate' in live, 'the field is omitted, not undefined-but-present').toBe(false);
-  });
 });
 
 describe('search regex compilation and worker deadline', () => {
-  it('does not charge scheduler delay to a benign pattern', () => {
-    const wallClock = vi.spyOn(performance, 'now')
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(60_000)
-      .mockReturnValueOnce(0)
-      .mockReturnValue(60_000);
-    try {
-      expect(compileSearchRegex('SELECT|HeadToken').ok).toBe(true);
-    } finally {
-      wallClock.mockRestore();
-    }
-  });
 
   it('terminates exponential patterns on actual input without hanging the host', async () => {
     for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {

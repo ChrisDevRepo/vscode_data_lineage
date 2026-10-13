@@ -6,8 +6,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import type { Logger } from '../../utils/log';
-import { Logger as OutputLogger } from '../../utils/log';
+import { Logger } from '../../utils/log';
 import { expandNextQuestionSuggestions } from '../prompting/followupSuggestions';
 import { notifyWarning } from '../../utils/notifications';
 import { VscodeModelPort } from '../model/vscodeModelPort';
@@ -28,15 +27,7 @@ import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
 import { renderFullPlanMd, renderScopeCardMd, GATE_CARD_HEADER, HOLD_GATE_NOTICE } from '../prompting/scopeSummaryRenderer';
 import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
-import {
-  createTurnTokenBudget,
-  DEFAULT_DISCOVERY_NODE_CAP,
-  DEFAULT_DISCOVERY_TOKEN_BUDGET,
-  DEFAULT_MAX_TRACE_COLUMNS,
-  DISCOVERY_WINDOW_SHARE,
-} from '../support/tokenBudget';
-import { readDeclaredNumericSetting } from '../../configCore';
-import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
+import { turnTokenBudgetFromSettings } from '../support/tokenBudget';
 import {
   applyNativeChatBoundary,
   chatHistoryToModelMessages,
@@ -98,7 +89,7 @@ export class LineageParticipant {
     /** Session-scoped trace sink; it remains a no-op until enabled from the Command Palette. */
     private readonly traceWriter?: AiTraceWriter,
   ) {
-    this.logger = OutputLogger.create(outputChannel, 'AI');
+    this.logger = Logger.create(outputChannel, 'AI');
   }
 
   /** Registers the participant, feedback listener, follow-ups, and native gate commands. */
@@ -335,20 +326,10 @@ export class LineageParticipant {
       return {};
     }
 
-    const config = vscode.workspace.getConfiguration('dataLineageViz');
-    const modelWindow = request.model.maxInputTokens > 0
-      ? request.model.maxInputTokens
-      : Number.POSITIVE_INFINITY;
-    const turnBudget = createTurnTokenBudget({
-      modelWindowTokens: request.model.maxInputTokens,
-      discoveryNodeCap: readDeclaredNumericSetting(config, 'ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
-      discoveryTokenBudget: Math.min(
-        readDeclaredNumericSetting(config, 'ai.discoveryTokenBudget', DEFAULT_DISCOVERY_TOKEN_BUDGET),
-        Math.floor(modelWindow * DISCOVERY_WINDOW_SHARE),
-      ),
-      maxRounds: readDeclaredNumericSetting(config, 'ai.maxRounds', DEFAULT_MAX_ROUNDS),
-      maxTraceColumns: readDeclaredNumericSetting(config, 'ai.maxTraceColumns', DEFAULT_MAX_TRACE_COLUMNS),
-    });
+    const turnBudget = turnTokenBudgetFromSettings(
+      vscode.workspace.getConfiguration('dataLineageViz'),
+      request.model.maxInputTokens,
+    );
 
     const requestId = randomUUID();
     const turnStartedAt = Date.now();

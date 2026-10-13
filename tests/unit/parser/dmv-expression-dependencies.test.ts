@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { load } from 'js-yaml';
 import { buildModelFromDmv, validateQueryResult } from '../../../src/engine/dmvExtractor';
-import type { SimpleExecuteResult } from '../../../src/types/mssql';
+import type { SimpleExecuteResult } from '../../../src/types/database';
 import { loadParseRules, rootPath } from '../helpers/testUtils';
 loadParseRules();
 

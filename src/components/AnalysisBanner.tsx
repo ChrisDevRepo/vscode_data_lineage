@@ -8,12 +8,8 @@ interface AnalysisBannerProps {
   analysis: AnalysisMode;
   /** Callback triggered when the user chooses to exit the analysis mode. */
   onClose: () => void;
-  /**
-   * Optional callback to save the current analysis result as a bookmark.
-   * @param name - The name for the bookmark.
-   * @param withPositions - Whether to save the current visual positions of nodes.
-   */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  /** Optional callback to save the current analysis result as a bookmark. */
+  onSaveAsBookmark?: (name: string) => void;
 }
 
 /**

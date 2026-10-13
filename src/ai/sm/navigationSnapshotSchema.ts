@@ -124,6 +124,7 @@ const DetailSlotSchema = z.object({
   sections: z.array(z.object({ angle: z.enum(['business', 'technical']), text: NonEmptyString }).strict()),
   summary: z.string(),
   badge_label: NonEmptyString.optional(),
+  incoming_questions: z.array(z.object({ question: NonEmptyString, from_node: NonEmptyString.optional() }).strict()).optional(),
   reason_for_visit: NonEmptyString.optional(),
 }).strict();
 
@@ -150,6 +151,7 @@ const BbTaskSchema = z.object({
   kind: z.enum(['root', 'analytical']),
   source: z.enum(['mission', 'model', 'engine']),
   question: z.string(),
+  reAnchor: NonEmptyString.optional(),
   nodeId: NonEmptyString.optional(),
   parentTaskId: NonEmptyString.optional(),
   traversalSide: z.enum(['upstream', 'downstream']).optional(),
@@ -167,6 +169,7 @@ const CtTaskSchema = z.object({
   kind: z.literal('column_lineage'),
   source: z.enum(['mission', 'model', 'engine']),
   question: z.string(),
+  reAnchor: NonEmptyString.optional(),
   nodeId: NonEmptyString.optional(),
   parentTaskId: NonEmptyString.optional(),
   traversalSide: z.enum(['upstream', 'downstream']).optional(),
@@ -242,7 +245,7 @@ const EngineInternalsSchema = z.object({
   depthFromOrigin: z.array(z.tuple([NonEmptyString, NonNegativeInt])),
   extendedDepthCap: NonNegativeInt.optional(),
   budgetExpansions: z.array(z.object({ nodeId: NonEmptyString, depth: NonNegativeInt, atHop: NonNegativeInt }).strict()),
-  bodiedScopeSize: NonNegativeInt,
+  bodiedScopeSize: NonNegativeInt.optional(),
   totalNodes: NonNegativeInt,
   userSchemas: z.array(z.string()),
   sessionAllowedSchemas: z.array(z.string()),
@@ -281,6 +284,7 @@ const EngineInternalsSchema = z.object({
   qualityGuards: _legacyQualityGuards,
   extendedDepthCap: _legacyExtendedDepthCap,
   sessionAllowedNodeIds: _legacySessionAllowedNodeIds,
+  bodiedScopeSize: _legacyBodiedScopeSize,
   ...internals
 }) => internals);
 

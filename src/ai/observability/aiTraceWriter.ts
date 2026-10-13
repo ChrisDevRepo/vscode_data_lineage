@@ -70,7 +70,7 @@ export type RuntimeLifecycleRecord =
        * @remarks
        * The join key to the matching {@link RuntimeLifecycleRecord} `gate-resolution` row. Without
        * it a raised gate and the action that answered it cannot be paired, and a gate the user
-       * could not resolve is indistinguishable in the NDJSON from one they simply ignored.
+       * could not resolve is indistinguishable in the NDJSON from one they ignored.
        */
       readonly gateId?: string;
       readonly elapsedMs: number;
@@ -119,11 +119,16 @@ export type RuntimeLifecycleRecord =
        * Dispatch outcome.
        *
        * @remarks
-       * `gate` is not a failure: a consent gate returns through the same rejection envelope as a
-       * real rejection but is never charged against the semantic budget, so folding it into
-       * `rejected` overstates every rejection count derived from this trace.
+       * Only `rejected` is a correction charged against the reply budget. `gate` (a consent gate)
+       * and `refused` (an admission refusal that ends the request with its reason) return through
+       * the rejection envelope but are control outcomes; `not_evaluated` is a sibling call closed
+       * without evaluation because an earlier call of the same reply ended the phase or was the
+       * reply's one evaluated call of its tool. `accepted` is the dispatch outcome: a result the
+       * runtime then refused to store for size (`result_too_large`) is still `accepted` here and
+       * appears in the debug log as `[Observation] result too big`.
        */
-      readonly status: 'accepted' | 'rejected' | 'gate' | 'dispatch_error';
+      readonly status: 'accepted' | 'rejected' | 'gate' | 'refused' | 'not_evaluated' | 'dispatch_error';
+      /** The rejection's code; absent on `accepted` and `gate`. */
       readonly rejectionCode?: string;
       /**
        * Dotted field paths the rejection blamed, when it reported any.

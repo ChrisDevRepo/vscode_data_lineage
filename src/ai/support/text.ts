@@ -60,14 +60,8 @@ export function escapeMarkdownText(value: string): string {
   return escapePromptText(value).replace(/[\\`*_#[\]$]/g, '\\$&');
 }
 
-/**
- * Truncate `text` to `max` characters with a trailing ellipsis.
- *
- * @param text - The string to shorten (status labels, log previews).
- * @param max - Inclusive character budget; defaults to 60.
- * @returns `text` unchanged when within budget, else its first `max - 1` chars + `…`.
- */
-export function trunc(text: string, max = 60): string {
+/** Truncates `text` to `max` characters, the trailing `…` included. */
+function truncWithEllipsis(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
@@ -126,7 +120,19 @@ export function escapeDelimitedJson(value: unknown, space?: number): string {
  * @returns A length-capped message safe to log and surface inline.
  */
 export function sanitizeProviderError(message: string): string {
-  const redacted = message
+  return truncWithEllipsis(redactProviderSecrets(message), PROVIDER_ERROR_MAX);
+}
+
+/**
+ * Redacts credentials, long opaque tokens and URLs from provider error text and collapses
+ * whitespace, without the length cap {@link sanitizeProviderError} applies.
+ *
+ * @remarks
+ * For verbose diagnostic capture only, where the whole error body is the evidence; user-facing and
+ * log text goes through {@link sanitizeProviderError}.
+ */
+export function redactProviderSecrets(message: string): string {
+  return message
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer ‹redacted›')
     .replace(/\b(?:sk|key|api)[-_][A-Za-z0-9]{8,}\b/gi, '‹redacted-key›')
     .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '‹redacted›')
@@ -135,7 +141,6 @@ export function sanitizeProviderError(message: string): string {
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
-  return trunc(redacted, PROVIDER_ERROR_MAX);
 }
 
 /**

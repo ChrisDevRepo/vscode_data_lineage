@@ -27,7 +27,6 @@ import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import Graph from 'graphology';
-import { bidirectional } from 'graphology-shortest-path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   analyzeCycles,
@@ -36,8 +35,7 @@ import {
   analyzeLongestPath,
 } from '../../../src/engine/graphAnalysis';
 import { buildGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
-import { filterBySchemas } from '../../../src/engine/dacpacExtractor';
-import { bfsReachable } from '../../../src/engine/graphGuards';
+import { bfsReachable, findShortestPathOrdered } from '../../../src/engine/graphGuards';
 import type { DatabaseModel } from '../../../src/engine/types';
 import { loadAdventureWorksModel } from '../helpers/testUtils';
 
@@ -138,29 +136,14 @@ describe('AdventureWorks baseline — BFS reachability', () => {
       .toBe(baseline.reachability.downstreamCount);
   });
 
-  it('reaches no more in one direction than it does undirected', () => {
-    const up = traceNodeWithLevels(graph, origin, Infinity, 0).nodeIds.size;
-    const down = traceNodeWithLevels(graph, origin, 0, Infinity).nodeIds.size;
-    expect(Math.max(up, down)).toBeLessThanOrEqual(bfsReachable(graph, origin, new Set()).size);
-  });
 });
 
 describe('AdventureWorks baseline — pathfinding', () => {
   const { start, target, minPathLength } = baseline.pathfinding;
 
   it(`finds a path of at least ${minPathLength} nodes from ${start} to ${target}`, () => {
-    const path = bidirectional(graph, start, target);
-    expect(path).not.toBeNull();
-    expect(path!.length).toBeGreaterThanOrEqual(minPathLength);
-  });
-});
-
-describe('AdventureWorks baseline — schema filter', () => {
-  it('keeps every traced node inside the filtered Sales graph', () => {
-    const salesGraph = buildGraph(filterBySchemas(model, new Set(['Sales']))).graph;
-    const traced = traceNodeWithLevels(salesGraph, '[sales].[vsalesperson]', Infinity, Infinity);
-
-    expect(traced.nodeIds.size).toBeGreaterThan(0);
-    expect([...traced.nodeIds].filter(id => !salesGraph.hasNode(id))).toEqual([]);
+    const found = findShortestPathOrdered(graph, start, target);
+    expect(found?.direction).toBe('source_to_target');
+    expect(found!.path.length).toBeGreaterThanOrEqual(minPathLength);
   });
 });

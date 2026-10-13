@@ -62,8 +62,7 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     }
     const model = ed.getModel();
     if (!model) return;
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const matches = model.findMatches(escaped, true, true, false, null, false);
+    const matches = model.findMatches(query, true, false, false, null, false);
     decorationsRef.current.set(
       matches.map(m => ({
         range: m.range,

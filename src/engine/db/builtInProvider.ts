@@ -1,12 +1,12 @@
 /**
  * @module BuiltInProvider
  * Built-in SQL Server connection provider on `tedious`: SQL login or Microsoft Entra ID, with
- * results rendered as the mssql extension renders them so the DMV consumers need no provider branch.
+ * formatted results consumed by DMV extraction and profiling.
  */
 
 import * as vscode from 'vscode';
 import type { Connection } from 'tedious';
-import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/mssql';
+import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/database';
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
@@ -153,7 +153,7 @@ function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
 }
 
 /**
- * Renders one `tedious` cell value as the mssql extension's `displayValue`.
+ * Renders one `tedious` cell value as a database result `displayValue`.
  *
  * @remarks
  * `bit` renders `1`/`0`, binary as `0x` hex, decimals with their declared scale, temporal values in
@@ -186,7 +186,6 @@ async function yamlQuerySql(loadQueries: () => Promise<DmvQuery[]>, name: string
 
 /** A `tedious` connection wrapped as a {@link DbSession}. */
 class BuiltInSession implements DbSession {
-  readonly provider = 'builtIn' as const;
   private tail: Promise<unknown> = Promise.resolve();
   private closed = false;
   private failure: Error | undefined;
@@ -258,7 +257,7 @@ class BuiltInSession implements DbSession {
     const result = await this.executeSimpleQuery(sql);
     const row = result.rows[0];
     const cell = (name: string): string => {
-      const at = result.columnInfo.findIndex((c) => c.columnName === name);
+      const at = result.columnInfo.findIndex((c) => c.columnName.toLowerCase() === name);
       return at >= 0 && row && !row[at].isNull ? row[at].displayValue : '';
     };
     const engineEditionId = Number.parseInt(cell('engine_edition'), 10) || 0;
@@ -402,7 +401,6 @@ export async function openBuiltInSession(
     ...(connection.port ? { port: connection.port } : {}),
     encrypt,
     trustServerCertificate,
-    provider: 'builtIn',
     connectionId: connection.id,
   });
   const session = new BuiltInSession(raw, lib, connectionInfo, label, logger, env.loadQueries);

@@ -1,35 +1,21 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
+import { listFiles, PackageManager } from '@vscode/vsce';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const vsceCli = path.join(repoRoot, 'node_modules', '@vscode', 'vsce', 'vsce');
-
-const result = spawnSync(process.execPath, [vsceCli, 'ls', '--no-dependencies'], {
-  cwd: repoRoot,
-  encoding: 'utf8',
-  maxBuffer: 16 * 1024 * 1024,
-  shell: false,
-});
-if (result.error) {
-  console.error(`FATAL: could not run the local @vscode/vsce CLI: ${result.error.message}`);
+let files;
+try {
+  files = (await listFiles({ cwd: repoRoot, packageManager: PackageManager.None }))
+    .map(file => file.replaceAll('\\', '/'));
+} catch (error) {
+  console.error(`FAIL: could not list VSIX files: ${error.message}`);
   process.exit(2);
 }
-if (result.status !== 0) {
-  console.error('FAIL: `vsce ls --no-dependencies` did not run successfully.');
-  console.error((result.stderr || result.stdout || '').trim() || '(no output captured)');
-  process.exit(result.status ?? 1);
-}
-
-const files = result.stdout
-  .split(/\r?\n/u)
-  .map((file) => file.trim().replaceAll('\\', '/'))
-  .filter(Boolean);
 
 if (files.length === 0) {
-  console.error('FAIL: `vsce ls` returned zero files — treating as a tooling failure, not an empty package.');
+  console.error('FAIL: VSIX file listing returned zero files — treating as a tooling failure, not an empty package.');
   process.exit(2);
 }
 

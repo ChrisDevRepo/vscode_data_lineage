@@ -3,8 +3,8 @@
  *
  * @remarks
  * `LineageParticipant.handleChatRequest` receives the request's `vscode.CancellationToken` and
- * hands it here to obtain a standard `AbortSignal` for the model port. We do **not** invent a
- * separate cancellation channel — this is the one adapter between the two shapes.
+ * hands it here to obtain a standard `AbortSignal` for the model port. No separate
+ * cancellation channel is created; this is the single adapter bridging the two shapes.
  *
  * VS Code-free: it depends only on the structural shape of a `CancellationToken`
  * ({@link CancellationTokenLike}), so the bridge is unit-testable in the offline `ai` project.

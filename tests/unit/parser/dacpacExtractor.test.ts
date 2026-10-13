@@ -150,79 +150,6 @@ async function testFabricDacpac() {
 }
 
 
-async function testNumericEntitySecurity() {
-
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    parseTagValue: true,
-    trimValues: true,
-  });
-
-  const xmlDecimal = `<root><item>test &#9999999; value</item></root>`;
-  let decimalOk = false;
-  try {
-    parser.parse(xmlDecimal);
-    decimalOk = true;
-  } catch (e: unknown) {
-    if (e instanceof RangeError) {
-      decimalOk = false;
-    } else {
-      decimalOk = true;
-    }
-  }
-  expect(decimalOk, 'Out-of-range decimal entity (&#9999999;) does not crash with RangeError').toBe(true);
-
-  const xmlHex = `<root><item>test &#xFFFFFF; value</item></root>`;
-  let hexOk = false;
-  try {
-    parser.parse(xmlHex);
-    hexOk = true;
-  } catch (e: unknown) {
-    if (e instanceof RangeError) {
-      hexOk = false;
-    } else {
-      hexOk = true;
-    }
-  }
-  expect(hexOk, 'Out-of-range hex entity (&#xFFFFFF;) does not crash with RangeError').toBe(true);
-
-  const xmlValid = `<root><item>test &#65; value</item></root>`;
-  let validOk = false;
-  try {
-    parser.parse(xmlValid);
-    validOk = true;
-  } catch {
-    validOk = false;
-  }
-  expect(validOk, 'Valid entity &#65; parses without error').toBe(true);
-
-  const parserWithEntities = new XMLParser({
-    processEntities: true,
-    htmlEntities: true,
-  });
-
-  let entDecOk = false;
-  try {
-    parserWithEntities.parse(`<root>&#9999999;</root>`);
-    entDecOk = true;
-  } catch (e: unknown) {
-    entDecOk = !(e instanceof RangeError);
-  }
-  expect(entDecOk, 'processEntities + out-of-range decimal does not RangeError').toBe(true);
-
-  let entHexOk = false;
-  try {
-    parserWithEntities.parse(`<root>&#xFFFFFF;</root>`);
-    entHexOk = true;
-  } catch (e: unknown) {
-    entHexOk = !(e instanceof RangeError);
-  }
-  expect(entHexOk, 'processEntities + out-of-range hex does not RangeError').toBe(true);
-}
-
-
 async function testImportErrorHandling() {
   const JSZip = (await import('jszip')).default;
 
@@ -450,7 +377,7 @@ async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
       <Model>
         <Element Type="SqlTable" Name="[my schema].[r&amp;d &lt;t&gt;]">
-          <Relationship Name="Columns">${column('say &quot;hi&quot;', '[int]')}${column('vc', '[varchar]', '<Property Name="IsMax" Value="True" />')}${column('nv', '[nvarchar]', '<Property Name="IsMax" Value="True" />')}${column('vb', '[varbinary]', '<Property Name="IsMax" Value="True" />')}${column('n50', '[nvarchar]', '<Property Name="Length" Value="50" />')}${column('g', '[sys].[geography]')}${column('bad&#0;x&#xD800;y', '[int]')}
+          <Relationship Name="Columns">${column('say &quot;hi&quot;', '[int]')}${column('vc', '[varchar]', '<Property Name="IsMax" Value="True" />')}${column('nv', '[nvarchar]', '<Property Name="IsMax" Value="True" />')}${column('vb', '[varbinary]', '<Property Name="IsMax" Value="True" />')}${column('n50', '[nvarchar]', '<Property Name="Length" Value="50" />')}${column('g', '[sys].[geography]')}${column('bad&#0;x&#xD800;y&#9999999;z&#xFFFFFF;', '[int]')}
           </Relationship>
         </Element>
       </Model>
@@ -470,7 +397,8 @@ async function testNamesAndTypesRoundTrip() {
   expect(byName.get('vb'), 'IsMax keeps (max) on varbinary').toBe('varbinary(max)');
   expect(byName.get('n50'), 'a declared length is untouched').toBe('nvarchar(50)');
   expect(byName.get('g'), 'a sys-qualified CLR type reads as its bare name').toBe('geography');
-  expect([...byName.keys()], 'a reference to a code point XML forbids decodes to U+FFFD').toContain('bad\uFFFDx\uFFFDy');
+  expect([...byName.keys()], 'a forbidden or out-of-range code point decodes to U+FFFD, never a RangeError')
+    .toContain('bad\uFFFDx\uFFFDy\uFFFDz\uFFFD');
 }
 
 
@@ -668,7 +596,6 @@ async function testComputedColumnTypeBorrowing() {
     await testEdgeIntegrity(await loadAdventureWorksModel());
   });
   it('extracts Fabric DACPACs', testFabricDacpac);
-  it('handles numeric XML entities safely', testNumericEntitySecurity);
   it('decodes predefined XML entities in served text, never inside CDATA', testPredefinedEntityDecoding);
   it('reports import errors', testImportErrorHandling);
   it('extracts constraints', testConstraints);

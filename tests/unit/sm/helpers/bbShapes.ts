@@ -62,7 +62,7 @@ export function world(
   return {
     engine, model, graph, logs,
     scope: () => [...state().scopeNodeIds].sort(),
-    leads: () => state().engineInternals.pendingLeads.map(lead => `${lead.nodeId}:${lead.reason}`).sort(),
+    leads: () => state().engineInternals.pendingLeads.filter(lead => lead.status === 'pending').map(lead => `${lead.nodeId}:${lead.reason}`).sort(),
   };
 }
 
@@ -91,13 +91,12 @@ export function drain(engine: NavigationEngine, script: Record<string, HopScript
 }
 
 /** The delivered object graph: sorted node ids, `source>target` edges and the pruned ids on record. */
-export function delivered(engine: NavigationEngine): { nodes: string[]; edges: string[]; pruned: string[]; sections: string[] } {
+export function delivered(engine: NavigationEngine): { nodes: string[]; edges: string[]; pruned: string[] } {
   const result = engine.getResult();
   return {
     nodes: result.fullNodes.map(node => node.id).sort(),
     edges: result.edges.map(([source, target]) => `${source}>${target}`).sort(),
     pruned: result.node_states.filter(state => state.action === 'prune').map(state => state.nodeId).sort(),
-    sections: (result.suggested_sections ?? []).map(section => section.label),
   };
 }
 

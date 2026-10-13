@@ -1,11 +1,10 @@
 /**
- * Pins platform detection on a failed `platform-info` probe: the mssql extension's server metadata is
- * the fallback, while a built-in session — whose server info runs that same query — goes straight to
+ * Pins platform detection on a failed `platform-info` probe: the built-in session records
  * the explicit unknown platform without sending it twice.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../../src/bridge/host';
-import type { SimpleExecuteResult } from '../../../../src/types/mssql';
+import type { SimpleExecuteResult } from '../../../../src/types/database';
 
 vi.mock('vscode', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -35,9 +34,8 @@ const preview: SimpleExecuteResult = {
   rows: [['dbo', 'U', '1'].map((displayValue) => ({ displayValue, isNull: false }))],
 };
 
-function fakeSession(provider: 'builtIn' | 'mssqlExtension') {
+function fakeSession() {
   return {
-    provider,
     connectionInfo: { server: 'localhost', database: 'Sales' },
     executeSimpleQuery: vi.fn(async (sql: string) => {
       if (sql.includes('platform_info')) throw new Error('VIEW SERVER STATE permission denied');
@@ -78,19 +76,11 @@ describe('platform detection after a failed platform-info probe', () => {
   beforeEach(() => connectDatabase.mockReset());
 
   it('a built-in session does not resend platform-info through getServerInfo', async () => {
-    const session = fakeSession('builtIn');
+    const session = fakeSession();
     const result = await connect(session);
 
     expect(session.getServerInfo).not.toHaveBeenCalled();
     expect(session.executeSimpleQuery.mock.calls.filter(([sql]) => sql.includes('platform_info'))).toHaveLength(1);
-    expect(result).toBeDefined();
-  });
-
-  it('an mssql-extension session falls back to its server metadata', async () => {
-    const session = fakeSession('mssqlExtension');
-    const result = await connect(session);
-
-    expect(session.getServerInfo).toHaveBeenCalledTimes(1);
     expect(result).toBeDefined();
   });
 });

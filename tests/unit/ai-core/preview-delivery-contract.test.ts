@@ -48,7 +48,7 @@ describe('deliverToPanel names the delivery outcome', () => {
   });
 });
 
-function presentWorld(deliverPreview: (session: AiSession) => Promise<PreviewDelivery>) {
+function presentWorld(deliverPreview: (session: AiSession) => Promise<PreviewDelivery>, signal?: AbortSignal) {
   const id = (name: string) => normalizeName(`dbo.${name}`, false);
   const origin = id('Report'), source = id('Source');
   const model = buildModel([
@@ -61,7 +61,7 @@ function presentWorld(deliverPreview: (session: AiSession) => Promise<PreviewDel
   session.enterCompleted(epoch);
   const services = {
     getSession: () => session, turnEpoch: () => epoch, requireModel: () => model, logger: silent,
-    budget: DEFAULT_TURN_TOKEN_BUDGET, deliverPreview: vi.fn(() => deliverPreview(session)),
+    budget: DEFAULT_TURN_TOKEN_BUDGET, deliverPreview: vi.fn(() => deliverPreview(session)), signal,
     logAndReturn: (_name: string, data: object) => JSON.stringify(data),
     toolError: (_name: string, error: unknown) => { throw error; },
   } as unknown as ToolServices;
@@ -98,6 +98,25 @@ describe('present_result records the delivery outcome', () => {
     expect(await present()).toMatchObject({ success: true });
     expect(session.presentResultAutoDispatched).toBe(false);
     expect(session.synthesisRenderDegradedReason).toBe('preview_dispatch');
+  });
+});
+
+describe('a cancel during preview delivery', () => {
+  it('commits a preview the canvas already shows, then ends the turn as cancelled', async () => {
+    const controller = new AbortController();
+    const { session, present } = presentWorld(async () => { controller.abort(); return 'delivered'; }, controller.signal);
+    await expect(present()).rejects.toThrow();
+    expect(session.presentResultAutoDispatched).toBe(true);
+    expect(session.resultGraph?.summary).toBe('Report reads Source.');
+  });
+
+  it.each(['no_panel', 'post_failed'] as const)('commits nothing when no preview was drawn (%s)', async delivery => {
+    const controller = new AbortController();
+    const { session, present } = presentWorld(async () => { controller.abort(); return delivery; }, controller.signal);
+    await expect(present()).rejects.toThrow();
+    expect(session.presentResultAutoDispatched).toBe(false);
+    expect(session.resultGraph?.summary).toBeUndefined();
+    expect(session.synthesisRenderDegradedReason).toBeNull();
   });
 });
 

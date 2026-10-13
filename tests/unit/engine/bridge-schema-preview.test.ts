@@ -17,9 +17,9 @@ describe.each(['db-schema-preview', 'dacpac-schema-preview'] as const)('%s metad
     expect(ExtensionToWebviewMsgSchema.parse(message)).toEqual(message);
   });
 
-  it('retains additional preview metadata from the existing flexible payload', () => {
+  it('rejects additional preview metadata for the strict payload', () => {
     const original = { ...message, preview: { ...preview, sourceMetadata: 'synthetic' } };
-    expect(ExtensionToWebviewMsgSchema.parse(original)).toEqual(original);
+    expect(ExtensionToWebviewMsgSchema.safeParse(original).success).toBe(false);
   });
 
   it('preserves the absent-policy legacy CI payload', () => {

@@ -1,5 +1,17 @@
 # Changelog
 
+All notable user-facing changes to Data Lineage Viz are documented in this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [1.2.6] - 2026-10-08
+
+### Removed
+- The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Password…**.
+
+### Fixed
+- AI rejection, retry and cancellation handling, including a cancel while a graph preview is drawn.
+- Database query timeouts, live import metadata and saved-project timestamps.
+
 ## [1.2.5] - 2026-10-07
 
 ### Changed
@@ -167,7 +179,6 @@
 
 ### Removed
 - **Inline mode** — superseded by the chat-vs-walkthrough split.
-
 
 ## [0.9.x] - 2026-02 to 2026-04
 

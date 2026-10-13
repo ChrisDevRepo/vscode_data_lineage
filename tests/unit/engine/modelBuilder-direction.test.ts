@@ -1,8 +1,7 @@
 /** Catalog fallback must compare complete mutation targets, never an identifier prefix. */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
-import { readFileSync } from 'fs';
-import { loadParseRules, testPath } from '../helpers/testUtils';
+import { loadParseRules, parserCaseSql } from '../helpers/testUtils';
 import { quoteIdentifier } from '../../../src/utils/sql';
 
 beforeAll(() => { loadParseRules(); });
@@ -121,7 +120,7 @@ describe.each([false, true])('delete-only write mark CS=%s', cs => {
 });
 
 it('reads and writes the table updated through a CTE that joins it to a GROUP BY derived table', () => {
-  const body = readFileSync(testPath('sql', 'targeted', 'update_alias_03_cte_update.sql'), 'utf-8');
+  const body = parserCaseSql('fixture-update-alias-03-cte-update');
   const edges = edgesFor(body, ['Inventory', 'SalesOrderLine'], false);
   expect(edges.sort()).toEqual([['[dbo].[build]', '[dbo].[inventory]'], ['[dbo].[inventory]', '[dbo].[build]'], ['[dbo].[salesorderline]', '[dbo].[build]']]);
 });

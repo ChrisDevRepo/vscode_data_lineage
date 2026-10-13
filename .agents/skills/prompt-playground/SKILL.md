@@ -1,13 +1,12 @@
 ---
 name: prompt-playground
-description: Load when comparing prompt or instruction variants with repeatable model runs and inspecting their traces.
+description: Compare unchanged baseline and candidate model answers manually against SQL and lineage evidence before deployment. Use for prompt or model-behavior comparisons; deterministic test failures alone belong to testing.
 ---
 
-# Prompt Comparison Workflow
+# Prompt comparison workflow
 
-1. Define a small question and a factual reference from an authorized dataset. Use the public demo DACPAC for tracked examples; keep sensitive datasets and answer collections out of tracked files.
-2. Freeze the model/provider, model version, reasoning effort, input data and tool availability for each comparison. Capture the exact prompt and response for every run.
-3. Compare correctness and completeness against the SQL and lineage graph first. Check unsupported claims, omitted requested facts, tool use and whether the response answers the question. Treat tokens and latency as secondary efficiency measures.
-4. Inspect the trace and state dump for the relevant turn before attributing a difference to prompt wording. Record provider variability separately from repeatable prompt effects.
-5. Change one prompt element at a time. Re-run the same cases with the same configuration and include an unchanged prompt control.
-6. Use sanitized demo-fixture examples in tracked docs. Do not commit provider traces or generated run artifacts.
+1. Select affected questions and a held-out example from an authorized dataset; use the public demo DACPAC for tracked examples. Keep sensitive data and answer collections out of tracked files.
+2. Before editing, run and preserve the unchanged baseline using [baseline review](../../../docs/testing/README.md#before-deployment-baseline-review). Freeze provider/model, reasoning effort, input data, question, scope and tool availability. Pass the frozen question as `npm run test:ai:headless -- --prompt "QUESTION"`. Capture the exact request and response with `--trace-verbose`.
+3. Change one prompt element at its owner, run the deterministic checks, then run the candidate with the same `--prompt`, data, and configuration.
+4. Before deployment, inspect baseline and candidate answers against SQL and the lineage graph with `trace-metrics.mjs` and `case-scorecard.mjs` as described in [Before-deployment baseline review](../../../docs/testing/README.md#before-deployment-baseline-review). Check requested facts, formulas, row rules, scope, output instructions and unsupported claims. Inspect the relevant request id and trace before attributing differences to wording; record the SQL evidence for accepting changes. Tokens and latency are secondary. Neither transport success nor metrics establishes content quality.
+5. Use sanitized demo examples in tracked docs. Keep provider traces and generated evidence local. Report baseline/candidate differences with SQL evidence, validation results and limitations. A baseline or candidate difference is recorded against SQL. It is not encoded as a new Vitest, Playwright, Electron, or catalog row.

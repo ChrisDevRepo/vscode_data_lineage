@@ -1,0 +1,216 @@
+# One catalog. The scripted, headless, Electron, and Playwright runners each loop
+# the rows tagged for them. Prompts, commands, and expected results live only here.
+# Scripted expect fields are ids, columns, edges, and rejection kinds.
+# Host expect fields are graph, phase, and terminal (turn outcome ok, error, or cancelled).
+# Prompt sentences are not scripted rows.
+cases:
+  - id: ct-literal-not-a-column
+    runners: [scripted]
+    active: [Currency]
+    nodes:
+      - { id: rpt, type: view, columns: [Currency] }
+      - { id: fx, type: view, columns: [Rate] }
+      - { id: bare, type: view, columns: [] }
+    focus: rpt
+    out: Currency
+    direction: upstream
+    matrix:
+      - { node: fx, col: "'EUR'" }
+      - { node: fx, col: "N'EUR'" }
+      - { node: fx, col: "0" }
+      - { node: fx, col: "1.5" }
+      - { node: bare, col: "'EUR'" }
+      - { node: bare, col: "N'EUR'" }
+      - { node: bare, col: "0" }
+      - { node: bare, col: "1.5" }
+    expect:
+      edges: []
+      reason_contains: "is a literal, not a column reference"
+
+  - id: ct-row-role-keeps-value-column
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount, transforms: [aggregate] }
+      - { node: src, col: IsOpen, transforms: [filter] }
+      - { node: src, col: StoreId, transforms: [combine, filter] }
+    expect:
+      edges: [Amount]
+      invalid: []
+      log_matches: "IsOpen[\\s\\S]*StoreId"
+
+  - id: ct-row-role-logs-each-omitted-column
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount, transforms: [aggregate] }
+      - { node: src, col: IsOpen, transforms: [filter], note: "WHERE IsOpen = 1" }
+      - { node: src, col: StoreId, transforms: [combine] }
+    expect:
+      log_contains:
+        - "IsOpen (filter: WHERE IsOpen = 1)"
+        - "StoreId (combine)"
+
+  - id: ct-row-role-keeps-value-and-filter
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount, transforms: [compute, filter] }
+    expect:
+      edges: [Amount]
+
+  - id: ct-row-role-keeps-unclassified-column
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount }
+    expect:
+      edges: [Amount]
+
+  - id: ct-row-role-keys-only-ends-here
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: IsOpen, transforms: [filter] }
+    expect:
+      edges: []
+      invalid: []
+
+  - id: ct-row-role-missing-key-column
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Missing, transforms: [filter] }
+    expect:
+      invalid_kind: bad_contributor_col
+
+  - id: ct-detached-entry-stages-no-edge
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total, Other] }
+      - { id: src, type: view, columns: [Amount] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Other }]
+    upstream:
+      - { node: src, col: Amount }
+    expect:
+      edges: []
+      invalid_kind: untracked_out_col
+
+  - id: playwright-open-demo
+    runners: [playwright]
+    command: "Data Lineage: Open Demo"
+    expect:
+      graph: true
+
+  - id: electron-fixture-trace
+    runners: [electron]
+    prompt: "@lineage /trace [dbo].[ufnGetProductDealerPrice]"
+    expect:
+      phase: awaiting_gate
+
+  - id: headless-summary
+    runners: [headless]
+    dacpac: tests/fixtures/AdventureWorks2025_AI.dacpac
+    prompt: "Summarize the loaded database and its main dependencies."
+    followup:
+      - "What are the most connected hub tables in this database?"
+    expect:
+      terminal: ok
+      preview_chars_min: 150
+      must_contain: ["Person", "Employee"]
+
+  - id: headless-column-trace-pricing
+    runners: [headless]
+    dacpac: tests/fixtures/AdventureWorks2025_AI.dacpac
+    prompt: "@lineage /trace [ai].[vwPriceList].[UnitPrice]"
+    gate:
+      - kind: approve
+    followup:
+      - "Which filter decides which prices reach this column?"
+    expect:
+      terminal: ok
+      preview_chars_min: 200
+      must_contain: ["PriceMaster", "ListPrice"]
+
+  - id: headless-aw-ai-sp-refresh-prices
+    runners: [headless]
+    dacpac: tests/fixtures/AdventureWorks2025_AI.dacpac
+    prompt: "@lineage /trace [ai].[PriceMaster].[ListPrice] — trace this column back to its original sources."
+    gate:
+      - kind: approve
+    followup:
+      - "Why is CurrencyConfig filtered and not a value input?"
+    expect:
+      terminal: ok
+      preview_chars_min: 200
+      must_contain: ["SupplierPrices", "CostPrice"]
+
+  - id: headless-procedure-dependencies
+    runners: [headless]
+    dacpac: tests/fixtures/AdventureWorks2025_AI.dacpac
+    prompt: "@lineage /trace [ai].[spBuildSalesReport]"
+    gate:
+      - kind: refine
+        instruction: "Change scope to one level upstream and zero downstream"
+      - kind: approve
+    expect:
+      terminal: ok
+      preview_chars_min: 150
+      must_contain: ["vwConsolidatedSales", "vwPriceList"]
+
+  - id: headless-view-chain
+    runners: [headless]
+    dacpac: tests/fixtures/AdventureWorks2025_AI.dacpac
+    prompt: "Show upstream and downstream dependencies for [ai].[vwConsolidatedSales]."
+    gate:
+      - kind: approve
+    expect:
+      terminal: ok
+      preview_chars_min: 150
+      must_contain: ["SalesStaging", "spBuildSalesReport"]

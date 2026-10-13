@@ -17,6 +17,7 @@
 import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { REJECTION_CODES } from './rejectionCodes';
 import { makeRejection, type ToolRejection } from './toolErrorEnvelope';
+import { readDeclaredNumericSetting, type NumericSettingReader } from '../../configCore';
 
 /**
  * Provides a heuristic estimation of token count from a character count.
@@ -122,8 +123,7 @@ export function createTurnTokenBudget(settings: {
  * The budget in force where no turn selected one — the shipped defaults with no model window.
  *
  * @remarks
- * Read by the `vscode.lm` tool registration, which serves external callers outside any `@lineage`
- * turn and therefore has no model window or turn-scoped settings to calibrate against.
+ * Read where no turn and no host reader selects a budget; callers without a chat turn (`vscode.lm`) have no model window to calibrate against.
  */
 export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget();
 
@@ -186,7 +186,7 @@ const CONTEXT_BLOCK_WINDOW_SHARE = 0.125;
 /** Window, in tokens, assumed when the model reports none. */
 const UNKNOWN_WINDOW_TOKENS = 131_072;
 
-/** Headroom reserved inside a block for identity fields, so one bounded item never fills the whole block. */
+/** Maximum identity-field headroom; small blocks reserve at most half their bytes. */
 const CONTEXT_BLOCK_ITEM_HEADROOM_BYTES = 4_096;
 
 /** Bytes one bounded prompt block may hold on the turn's model: the window share, or the same share of {@link UNKNOWN_WINDOW_TOKENS} when the model reports no window. */
@@ -200,12 +200,39 @@ export function contextBlockBytes(budget: TurnTokenBudget): number {
  * result, held below {@link contextBlockBytes} so one entry cannot fill the block.
  */
 export function storedEvidenceKindBytes(budget: TurnTokenBudget): number {
-  return contextBlockBytes(budget) - CONTEXT_BLOCK_ITEM_HEADROOM_BYTES;
+  const blockBytes = contextBlockBytes(budget);
+  return blockBytes - Math.min(CONTEXT_BLOCK_ITEM_HEADROOM_BYTES, blockBytes / 2);
 }
 
 
 /** Fraction of the selected model's input window the discovery budget may claim — the effective budget is the smaller of the setting and this share of the window. */
-export const DISCOVERY_WINDOW_SHARE = 0.125;
+const DISCOVERY_WINDOW_SHARE = 0.125;
+
+/**
+ * Builds a turn budget from the user's `dataLineageViz.ai.*` settings.
+ *
+ * @remarks
+ * The one place those settings become a budget: the `@lineage` participant passes its model's
+ * input window, and callers without a chat turn (`vscode.lm`) pass none, so only the user's
+ * discovery caps bound their scope requests.
+ *
+ * @param config - The `dataLineageViz` configuration section.
+ * @param modelWindowTokens - Input window of the model running the turn; omitted when there is none.
+ * @returns The frozen budget.
+ */
+export function turnTokenBudgetFromSettings(config: NumericSettingReader, modelWindowTokens?: number): TurnTokenBudget {
+  const window = modelWindowTokens !== undefined && modelWindowTokens > 0 ? modelWindowTokens : Number.POSITIVE_INFINITY;
+  return createTurnTokenBudget({
+    modelWindowTokens,
+    discoveryNodeCap: readDeclaredNumericSetting(config, 'ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
+    discoveryTokenBudget: Math.min(
+      readDeclaredNumericSetting(config, 'ai.discoveryTokenBudget', DEFAULT_DISCOVERY_TOKEN_BUDGET),
+      Math.floor(window * DISCOVERY_WINDOW_SHARE),
+    ),
+    maxRounds: readDeclaredNumericSetting(config, 'ai.maxRounds', DEFAULT_MAX_ROUNDS),
+    maxTraceColumns: readDeclaredNumericSetting(config, 'ai.maxTraceColumns', DEFAULT_MAX_TRACE_COLUMNS),
+  });
+}
 
 /** What the admission check measures of one proposed scope. */
 export interface ProposedScope {

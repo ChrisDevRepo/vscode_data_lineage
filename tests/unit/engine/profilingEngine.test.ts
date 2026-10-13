@@ -3,9 +3,7 @@
  *
  * Covers: extractBaseType, classifyColumn, buildColumnAggregations,
  * buildProfilingQuery, buildRowCountQuery, computeSamplePercent,
- * compactDate, typeBadgeLabel, parseProfilingResult.
- *
- * Skipped (require live sql.ConnectionPool): none — all exports are pure.
+ * compactDate, typeBadgeLabel, parseProfilingResult, profilingRowFromResult.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -350,6 +348,18 @@ describe('ProfilingEngine pure functions', () => {
     expect(result.columns[0].skipped, 'xml column marked skipped=true').toBe(true);
     expect(result.columns[0].distinctCount, 'skipped column has distinctCount=0').toBe(0);
     expect(result.columns[0].completeness, 'skipped column has completeness=1').toBe(1);
+  });
+
+  it('marks budget-excluded columns unmeasured while retaining measured zero', () => {
+    const cols = [col('First', 'int', 'NULL'), col('Second', 'int', 'NULL')];
+    expect(buildColumnAggregations(cols, false, 'quick', 1).map(a => a.colName)).toEqual(['First']);
+    const [first, second] = parseProfilingResult({ c0_d: '0', c0_n: '0' }, cols, 10, false).columns;
+    expect(first.skipped).toBeUndefined();
+    expect(first.nullCount).toBe(0);
+    expect(first.nullPercent).toBe(0);
+    expect(second.skipped).toBe(true);
+    expect(second.nullCount).toBeNull();
+    expect(second.nullPercent).toBeNull();
   });
 
   it('parseProfilingResult — zero rowCount gives uniqueness=0', () => {

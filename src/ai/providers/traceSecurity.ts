@@ -28,7 +28,7 @@ const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
  *
  * @remarks
  * 64 characters is 48 decoded bytes — longer than any object name, column name, or schema-qualified
- * identifier the lineage traces actually carry, so the bound separates encoded key material from
+ * identifier the lineage traces carry, so the bound separates encoded key material from
  * ordinary catalog text without inspecting either.
  */
 const MIN_BASE64_SECRET_CHARS = 64;

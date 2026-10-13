@@ -168,6 +168,20 @@ describe('cross-database references', () => {
     const built = buildModel(sameDbObjects(), sameDbDeps);
     expect(built.nodes.find(node => node.externalType === 'db')).toBeUndefined();
   });
+
+  it('adds no node or edge for a catalog cross-database dependency of an out-of-scope object', () => {
+    const built = buildModel(
+      [table('[dbo].[T]')],
+      [
+        { sourceName: '[etl].[Load]', targetName: '[Other].[dbo].[X]' },
+        { sourceName: '[etl].[Load]', targetName: '[Main].[dbo].[T]' },
+      ],
+      [table('[dbo].[T]'), { fullName: '[etl].[Load]', type: 'procedure' } as BuildObject],
+      'Main',
+    );
+    expect(built.nodes.map(node => node.id)).toEqual(['[dbo].[t]']);
+    expect(built.edges).toEqual([]);
+  });
 });
 
 
@@ -253,16 +267,6 @@ describe('virtual-node suppression', () => {
     expect(built.nodes).toHaveLength(2);
   });
 
-  it('creates virtual nodes regardless of real node count — no admission budget', () => {
-    const built = buildModel(
-      [table('[dbo].[Sales]'), table('[dbo].[Products]'), externalObjects()[1]],
-      [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }],
-      undefined, undefined, true,
-    );
-    const virtual = built.nodes.filter(node => node.externalType === 'file' || node.externalType === 'db');
-    expect(virtual.length).toBeGreaterThan(0);
-    expect(built.nodes).toHaveLength(3 + virtual.length);
-  });
 });
 
 

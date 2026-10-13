@@ -38,7 +38,7 @@ export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: 
       continue;
     }
     if (ch === '-' && next === '-') {
-      while (i < sql.length && sql[i] !== '\n') mask[i++] = SQL_LINE_COMMENT;
+      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r') mask[i++] = SQL_LINE_COMMENT;
       continue;
     }
     if (ch === '/' && next === '*') {

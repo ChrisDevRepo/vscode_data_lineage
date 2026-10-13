@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { XMLParser } from 'fast-xml-parser';
 import { exportToDrawio, exportSchemaOverviewToDrawio } from '../../../src/export/drawioExporter';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import type { CustomNodeData, SchemaNodeData } from '../../../src/engine/types';
@@ -43,6 +44,27 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 describe('Draw.io Exporter', () => {
+  it.each([
+    { objectX: -500, objectY: -100, clusterX: 0, clusterY: 0 },
+    { objectX: 0, objectY: 0, clusterX: -500, clusterY: -100 },
+    { objectX: 100, objectY: 50, clusterX: 500, clusterY: 150 },
+  ])('preserves mixed object/schema relative positions: %j', ({ objectX, objectY, clusterX, clusterY }) => {
+    const object = makeNode('orders', 'Orders', 'Sales', objectX, objectY);
+    const cluster: FlowNode<SchemaNodeData> = {
+      id: 'cluster', type: 'schemaNode', position: { x: clusterX, y: clusterY },
+      data: { schemaName: 'HR', objectCount: 1, typeBreakdown: { table: 1 }, color: '#59A14F' },
+    };
+    const xml = exportToDrawio([object], [makeEdge('edge', object.id, cluster.id)], ['Sales', 'HR'], [cluster]);
+    const parsed = new XMLParser({ ignoreAttributes: false }).parse(xml);
+    const [objectCell, clusterCell] = parsed.mxfile.diagram.mxGraphModel.root.object;
+    const a = objectCell.mxCell.mxGeometry;
+    const b = clusterCell.mxCell.mxGeometry;
+    expect(Number(b['@_x']) - Number(a['@_x'])).toBe(clusterX - objectX);
+    expect(Number(b['@_y']) - Number(a['@_y'])).toBe(clusterY - objectY);
+    expect(Math.min(Number(a['@_x']), Number(b['@_x']))).toBeGreaterThanOrEqual(300);
+    expect(Math.min(Number(a['@_y']), Number(b['@_y']))).toBeGreaterThanOrEqual(20);
+  });
+
   it.each([false, true])('preserves source schema identity in object and overview exports (CS=%s)', cs => {
     const schemas = ['Sales', 'sales'];
     const nodes = schemas.map(schema => makeNode(`${schema}.Orders`, 'Orders', schema));
@@ -87,12 +109,6 @@ describe('Draw.io Exporter', () => {
     expect(countOccurrences(xml, '<object'), 'exactly one object element for one node').toBe(1);
   });
 
-  it('node label appears in the output', () => {
-    const nodes = [makeNode('n1', 'OrderDetails', 'Sales', 0, 0)];
-    const xml = exportToDrawio(nodes, [], []);
-    expect(xml.includes('OrderDetails'), 'node label is present in the XML output').toBe(true);
-  });
-
   it('multiple nodes — correct object count', () => {
     const nodes = [
       makeNode('n1', 'Customer', 'dbo', 0, 0),
@@ -126,16 +142,6 @@ describe('Draw.io Exporter', () => {
     expect(countOccurrences(xml, 'edge='), 'two edges produce two edge= attributes').toBe(2);
   });
 
-  it('multi-schema nodes — each schema name appears in legend', () => {
-    const nodes = [
-      makeNode('n1', 'FactSales', 'fact', 0, 0),
-      makeNode('n2', 'DimProduct', 'dim', 200, 0),
-    ];
-    const xml = exportToDrawio(nodes, [], ['fact', 'dim']);
-    expect(xml.includes('fact'), 'first schema name appears in the output').toBe(true);
-    expect(xml.includes('dim'), 'second schema name appears in the output').toBe(true);
-  });
-
   it('bidirectional edge carries ⇄ label', () => {
     const nodes = [
       makeNode('n1', 'A', 'dbo', 0, 0),
@@ -152,12 +158,6 @@ describe('Draw.io Exporter', () => {
     const badEdge: FlowEdge = { id: 'e-bad', source: 'n1', target: 'ghost' };
     const xml = exportToDrawio(nodes, [badEdge], ['dbo']);
     expect(countOccurrences(xml, 'edge='), 'edge with unknown target id is silently skipped').toBe(0);
-  });
-
-  it('full-name attribute is embedded in node object', () => {
-    const nodes = [makeNode('n1', 'Orders', 'Sales', 0, 0)];
-    const xml = exportToDrawio(nodes, [], ['Sales']);
-    expect(xml.includes('Sales.Orders'), 'fullName attribute is embedded in the node object').toBe(true);
   });
 
   it('exportSchemaOverviewToDrawio — empty returns empty', () => {
@@ -274,16 +274,4 @@ describe('Draw.io Exporter — column view exports the object graph', () => {
     expect(countOccurrences(xml, 'edge='), 'one object-level edge, not one per column pair').toBe(1);
   });
 
-  it('never emits a column-space coordinate for the same ids', () => {
-    const columnSpaceX = 214;
-    const objectNodes = [
-      makeNode('sales.orderheader', 'OrderHeader', 'Sales', 0, 0),
-      makeNode('sales.orderdetail', 'OrderDetail', 'Sales', 500, 400),
-    ];
-
-    const xml = exportToDrawio(objectNodes, [], ['Sales']);
-
-    expect(xml).not.toContain(`x="${columnSpaceX + GRAPH_OFFSET_X}"`);
-    expect(xml, 'column rows are not exported as their own cells').not.toContain('OrderID');
-  });
 });

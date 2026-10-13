@@ -170,7 +170,7 @@ const SchemaPreviewSchema: z.ZodType<SchemaPreview> = z.object({
   schemas: z.array(SchemaInfoSchema),
   totalObjects: z.number(),
   warnings: z.array(z.string()).optional(),
-}).passthrough();
+}).strict();
 
 /** Zod schema for a catalog entry mapping an object namespace to its physical representation. */
 const CatalogEntrySchema = z.object({
@@ -179,6 +179,16 @@ const CatalogEntrySchema = z.object({
   type: ObjectTypeSchema,
   externalType: z.enum(['et', 'file', 'db']).optional(),
 });
+
+const SpParseDetailSchema = z.object({
+  name: z.string(),
+  inCount: z.number(),
+  outCount: z.number(),
+  inRefs: z.array(z.string()).optional(),
+  outRefs: z.array(z.string()).optional(),
+  unrelated: z.array(z.string()),
+  excluded: z.array(z.string()).optional(),
+}).strict();
 
 /** Strict IPC boundary schema for DatabaseModel payloads crossing between the host and webview. */
 const DatabaseModelSchema = z.object({
@@ -195,7 +205,7 @@ const DatabaseModelSchema = z.object({
     parsedRefs: z.number(),
     resolvedEdges: z.number(),
     droppedRefs: z.array(z.string()),
-    spDetails: z.array(z.any()),
+    spDetails: z.array(SpParseDetailSchema),
   }).optional(),
   warnings: z.array(z.string()).optional(),
   dbPlatform: z.string().optional(),
@@ -208,12 +218,9 @@ const DatabaseModelSchema = z.object({
  * @remarks
  * Pinned to {@link ExtensionConfig} so a parsed message keeps its field types instead of degrading
  * to `any`. `Partial` is the honest shape: the host is the sole producer, so a mismatch here is a
- * host refactor bug that must fail at the boundary. `parseRules` alone stays structural.
+ * host refactor bug that must fail at the boundary.
  */
 const ExtensionConfigSchema: z.ZodType<Partial<ExtensionConfig>> = z.object({
-  parseRules: z.custom<NonNullable<ExtensionConfig['parseRules']>>(
-    (v) => typeof v === 'object' && v !== null && Array.isArray((v as { rules?: unknown }).rules),
-  ).optional(),
   excludePatterns: z.array(z.string()).optional(),
   maxNodes: z.number().optional(),
   dmvQueryTimeout: z.number().optional(),
@@ -411,8 +418,6 @@ const AIViewMetadataSchema = z.object({
 /** AI-generated metadata layered onto the lineage graph UI: grouping, badges, highlights, and descriptive text. */
 export type AIViewMetadata = z.infer<typeof AIViewMetadataSchema>;
 
-const NodePositionSchema = z.object({ x: z.number(), y: z.number() }).strict();
-
 const ExpandedSchemaViewSchema = z.object({
   focusNodeId: z.string().nullable(),
   expandedSchemas: z.array(z.string()),
@@ -428,18 +433,19 @@ const ExpandedSchemaViewSchema = z.object({
  */
 const FilterProfileSchema = z.object({
   id: z.string(),
+  /** Absent on legacy views; current encoding preserves literal identifier delimiters and URL identity. */
+  nodeIdEncodingVersion: z.literal(2).optional(),
   name: z.string(),
   createdAt: z.string(),
   filter: SerializedFilterStateSchema,
   source: z.enum(['user', 'trace', 'analysis', 'ai']).optional(),
-  positions: z.record(z.string(), NodePositionSchema).optional(),
   aiMetadata: AIViewMetadataSchema.optional(),
   graphMode: z.enum(['overview', 'full']).optional(),
   expandedSchemaView: ExpandedSchemaViewSchema.optional(),
   showExpandedSchemaClusters: z.boolean().optional(),
 }).strict();
 
-/** A saved filter profile snapshot: layout, filter rules, and optional AI metadata. */
+/** A saved filter profile snapshot: view shape, filter rules, and optional AI metadata. */
 export type FilterProfile = z.infer<typeof FilterProfileSchema>;
 
 /** Human-readable labels for bookmark-view sources. Single owner; banner + info card both read it. */
@@ -466,17 +472,11 @@ export const BOOKMARK_SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['sou
   user: 'Saved view',
 };
 
-/** Identifier of the implementation that opens database connections. */
-export const ConnectionProviderIdSchema = z.enum(['mssqlExtension', 'builtIn']);
-export type ConnectionProviderId = z.infer<typeof ConnectionProviderIdSchema>;
-
 /**
  * Stored database connection metadata.
  *
  * @remarks
- * `provider` and `connectionId` identify how the connection is reopened: a record without
- * `provider` was written for the mssql extension and reads as `mssqlExtension`; `connectionId`
- * names a `dataLineageViz.database.connections` entry and never carries a credential.
+ * `connectionId` names a `dataLineageViz.database.connections` entry and never carries a credential.
  *
  * `.strict()` is load-bearing: unknown fields — a leaked `password` above all — are rejected
  * rather than persisted or replayed to the webview. Tolerance is granted per named field only,
@@ -494,7 +494,6 @@ export const StoredConnectionInfoSchema = z.object({
   port: z.coerce.number().optional(),
   encrypt: z.union([z.string(), z.boolean()]).optional(),
   trustServerCertificate: z.boolean().optional(),
-  provider: ConnectionProviderIdSchema.optional(),
   connectionId: z.string().optional(),
 }).strict();
 
@@ -549,8 +548,9 @@ export type Project = z.infer<typeof ProjectSchema>;
  *
  * @remarks
  * Same fields, but unknown ones are dropped instead of rejecting the record: a record written by an
- * older build legitimately carries keys this one never declared, and discarding the whole project
- * over one of them is silent user-data loss. Rebuilt level by level from the strict schemas' own
+ * older build legitimately carries keys this one never declared (such as the retired connection
+ * `provider` marker, `builtIn` or `mssqlExtension`), and discarding the whole project over one of
+ * them is silent user-data loss. Rebuilt level by level from the strict schemas' own
  * shapes, so a field added above is carried here without a second declaration to keep in step.
  */
 const StoredConnectionInfoReadSchema = z.object(StoredConnectionInfoSchema.shape);
@@ -575,16 +575,18 @@ const AIViewMetadataReadSchema = z.object({
 const FilterProfileReadSchema = z.object({
   ...FilterProfileSchema.shape,
   filter: z.object(SerializedFilterStateSchema.shape),
-  positions: z.record(z.string(), z.object(NodePositionSchema.shape)).optional(),
   aiMetadata: AIViewMetadataReadSchema.optional(),
   expandedSchemaView: z.object(ExpandedSchemaViewSchema.shape).optional(),
 });
 
-/** Persisted-record counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. */
+/** Persisted-record counterpart of {@link ProjectSchema}; invalid optional views are skipped individually. */
 export const ProjectReadSchema = z.object({
   ...ProjectSchema.shape,
   connection: ProjectConnectionReadSchema,
-  filterProfiles: z.array(FilterProfileReadSchema).optional(),
+  filterProfiles: z.array(z.unknown()).transform(profiles => profiles.flatMap(profile => {
+    const parsed = FilterProfileReadSchema.safeParse(profile);
+    return parsed.success ? [parsed.data] : [];
+  })).optional(),
 });
 
 /**
@@ -595,7 +597,7 @@ export const ProjectReadSchema = z.object({
  * Bump it whenever a message shape changes in a way an older peer bundle would misread — a stale
  * webview then fails loudly at the receive site instead of silently mis-rendering.
  */
-export const BRIDGE_PROTOCOL_VERSION = 1;
+export const BRIDGE_PROTOCOL_VERSION = 2;
 
 /** Envelope shape read at receive sites before the payload union is parsed. */
 export type BridgeEnvelope = { protocolVersion?: unknown };
@@ -610,7 +612,7 @@ export type BridgeEnvelope = { protocolVersion?: unknown };
  */
 export type ValidatedBridgeFrame<S extends z.ZodTypeAny> =
   | { ok: true; data: z.infer<S>; msgType: string }
-  | { ok: false; reason: 'parse' | 'version'; msgType: string; version: unknown };
+  | { ok: false; reason: 'parse' | 'version'; msgType: string; version: unknown; issues?: z.ZodIssue[] };
 
 /** Validates one host→webview frame against `schema` plus {@link BRIDGE_PROTOCOL_VERSION}. */
 export function validateBridgeFrame<S extends z.ZodTypeAny>(
@@ -623,7 +625,7 @@ export function validateBridgeFrame<S extends z.ZodTypeAny>(
     const msgType = typeof (raw as { type?: unknown } | undefined)?.type === 'string'
       ? String((raw as { type: string }).type)
       : '?';
-    return { ok: false, reason: 'parse', msgType, version };
+    return { ok: false, reason: 'parse', msgType, version, issues: parsed.error.issues };
   }
   const msgType = String((parsed.data as { type: string }).type);
   if (version !== BRIDGE_PROTOCOL_VERSION) {
@@ -651,7 +653,6 @@ const RenderConnectivitySchema = z.looseObject({
   nodeCount: z.number(),
   edgeCount: z.number(),
   componentCount: z.number(),
-  components: z.array(z.looseObject({ size: z.number(), nodes: z.array(z.string()) })),
   isolatedNodes: z.array(z.string()),
 });
 
@@ -741,15 +742,16 @@ export const UiStateSnapshotSchema = z.looseObject({
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional() }),
   z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
-  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
+  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.enum(['main', 'projects']).optional() }),
   z.object({ type: z.literal('detail-closed') }),
   z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional() }),
   z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
   z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string() }),
+  z.object({ type: z.literal('load-started') }),
+  z.object({ type: z.literal('load-cancelled') }),
   z.object({ type: z.literal('db-cancelled') }),
   z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string() }),
   z.object({ type: z.literal('last-dacpac-gone') }),
-  z.object({ type: z.literal('mssql-status'), available: z.boolean(), provider: ConnectionProviderIdSchema.optional() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
   z.object({ type: z.literal('reload-source') }),
@@ -801,18 +803,17 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('show-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
+  z.object({ type: z.literal('cancel-load') }),
   z.object({ type: z.literal('open-dacpac') }),
   z.object({ type: z.literal('load-project'), id: z.string() }),
   z.object({ type: z.literal('save-project'), project: ProjectSchema }),
   z.object({ type: z.literal('delete-project'), id: z.string() }),
   z.object({ type: z.literal('load-demo') }),
-  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
-  z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
+  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()).max(MAX_ID_LIST_LENGTH), projectName: z.string().optional() }),
+  z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()).max(MAX_ID_LIST_LENGTH), projectName: z.string().optional() }),
   z.object({ type: z.literal('filter-changed'), uiState: UiStateSnapshotSchema }),
   z.object({ type: z.literal('render-state'), renderState: RenderStateSnapshotSchema }),
   z.object({ type: z.literal('db-connect') }),
-  z.object({ type: z.literal('check-mssql') }),
-  z.object({ type: z.literal('use-builtin-connection') }),
   z.object({
     type: z.literal('save-view'),
     projectId: z.string(),
@@ -825,9 +826,9 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request-projects') }),
   z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
-  z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
+  z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string().max(50_000_000) }),
   z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string().max(AI_REPORT_MARKDOWN_MAX_CHARS) }),
-  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string() }),
+  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string().max(100_000) }),
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,
   z.object({ type: z.literal('view-render-result'), rendered: z.number(), of: z.number(), unresolved: z.array(z.string()) }),
@@ -873,8 +874,8 @@ export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExten
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: z.any() }),
   z.object({ type: z.literal('detail-clear') }),
-  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
-  z.object({ type: z.literal('table-stats-error'), message: z.string() }),
+  z.object({ type: z.literal('table-stats-result'), objectRef: z.object({ schema: z.string(), objectName: z.string() }), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
+  z.object({ type: z.literal('table-stats-error'), objectRef: z.object({ schema: z.string(), objectName: z.string() }), message: z.string() }),
 ]);
 
 /** Messages sent from the extension host to the detail-panel webview. */

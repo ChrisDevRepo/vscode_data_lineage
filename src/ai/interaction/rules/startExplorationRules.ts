@@ -64,11 +64,11 @@ function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartR
 }
 
 /**
- * Builds a stable, bounded rejection envelope from start-exploration Zod issues.
+ * Builds a stable rejection envelope from every start-exploration Zod issue.
  *
  * @param error - Strict schema failure whose issue meaning must be preserved.
  * @param input - Raw payload used to distinguish absent enum fields from invalid values.
- * @returns A compatible rejection envelope containing at most three unique field issues; the
+ * @returns A compatible rejection envelope containing every unique field issue; the
  * `reason` states every issue as `path: message` (the path alone when the message is itself a
  * repair the `hint` serves) and the `hint` serves the distinct repairs of
  * every issue once, the generic resend rule last.
@@ -78,7 +78,6 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
   for (const issue of error.issues) {
     const mapped = mapStartIssue(issue, input);
     unique.set(`${mapped.code}:${mapped.path}`, mapped);
-    if (unique.size === 3) break;
   }
   const issues = [...unique.values()];
   const actions = [...new Set(issues.map(issue => issue.action))].sort((a, b) => Number(a === RESEND) - Number(b === RESEND));

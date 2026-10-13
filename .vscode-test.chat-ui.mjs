@@ -15,7 +15,6 @@ if(badge) {
   console.log(`[chat-ui] badge setup replays recorded analysis: ${replayTrace}; only suggestion inference is live`);
 }
 if (real) {
-  process.env.AI_TEST_PROVIDER = process.env.AI_TEST_PROVIDER || 'fireworks';
   const identity = loadTestEnv({requireAiProvider:true});
   if (identity.provider === 'fireworks' && !process.env.AI_TEST_MODEL.includes('/')) {
     process.env.AI_TEST_MODEL = `accounts/fireworks/models/${process.env.AI_TEST_MODEL}`;
@@ -28,12 +27,14 @@ mkdirSync(join(profile, 'User'), { recursive: true });
 writeFileSync(join(profile, 'User', 'settings.json'), JSON.stringify({ 'editor.accessibilitySupport': 'on' }));
 const cdpPort = process.env.PLAYWRIGHT_CDP_PORT || (real ? '9376' : '9377');
 export default defineConfig({
-  version: '1.140.0', label: badge ? 'badge' : column ? 'column' : real ? 'live' : 'fixture',
+  version: 'stable', label: badge ? 'badge' : column ? 'column' : real ? 'live' : 'fixture',
   files: 'out/test/tests/integration/chat-ui.test.js',
   extensionDevelopmentPath: [root, `${root}/tests/fixtures/lm-provider-extension`],
   launchArgs: [root, `--user-data-dir=${profile}`, '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust',
     '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${cdpPort}`],
   env: { DLV_CHAT_UI_FIXTURE: real ? undefined : '1', DLV_CHAT_UI_REAL: real ? '1' : undefined,
+    AI_TEST_PROVIDER: process.env.AI_TEST_PROVIDER,
+    AI_TEST_MODEL: process.env.AI_TEST_MODEL,
     AI_TEST_REAL_PROVIDER: real ? '1' : undefined, AI_TEST_REASONING_EFFORT: real ? 'low' : undefined,
     DLV_CHAT_UI_REPLAY_TRACE:replayTrace,
     PLAYWRIGHT_CDP_PORT: cdpPort },

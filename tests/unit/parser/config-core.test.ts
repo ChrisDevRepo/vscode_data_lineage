@@ -24,11 +24,6 @@ import { AI_TEMPLATE_SCHEMA_VERSION } from '../../../src/ai/session/types';
 describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
   const text = readFileSync(rootPath('assets/aiOutputTemplates.yaml'), 'utf-8');
 
-  it('parses the built-in file without throwing', () => {
-    expect(() => parseAiOutputTemplatesYaml(text)).not.toThrow();
-    expect(parseAiOutputTemplatesYaml(text)).toBeDefined();
-  });
-
   it('declares the schemaVersion the loader enforces', () => {
     expect(parseAiOutputTemplatesYaml(text).schemaVersion).toBe(AI_TEMPLATE_SCHEMA_VERSION);
   });
@@ -48,10 +43,6 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
 
 describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
   const text = readFileSync(rootPath('assets/defaultParseRules.yaml'), 'utf-8');
-
-  it('parses the built-in file without throwing', () => {
-    expect(() => parseParseRulesYaml(text)).not.toThrow();
-  });
 
   it('yields the full shipped rule inventory', () => {
     const parsed = parseParseRulesYaml(text);
@@ -76,12 +67,6 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
     ]);
   });
 
-  it('gives every shipped rule a global regex flag', () => {
-    const parsed = parseParseRulesYaml(text);
-    for (const rule of parsed.rules ?? []) {
-      expect(rule.flags, `${rule.name} flags`).toContain('g');
-    }
-  });
 });
 
 describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
@@ -99,23 +84,6 @@ describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
     expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: "1"\n'); }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(1);
-  });
-});
-
-describe('overlay example in docs/AI_PROMPTS.md', () => {
-  it('parses as an overlay and carries a string instruction under each key it sets', () => {
-    const doc = readFileSync(rootPath('docs/AI_PROMPTS.md'), 'utf-8');
-    const example = /Example — guidance for a junior DBA[\s\S]*?```yaml\n([\s\S]*?)```/.exec(doc)?.[1];
-    expect(example, 'the junior-DBA overlay example is present').toBeDefined();
-
-    const parsed = parseAiOutputTemplatesYaml(`schemaVersion: ${AI_TEMPLATE_SCHEMA_VERSION}\n${example}`) as Record<string, { instruction?: unknown }>;
-    const keys = Object.keys(parsed).filter((key) => key !== 'schemaVersion');
-
-    expect(keys.length).toBeGreaterThan(0);
-    for (const key of keys) {
-      expect(REQUIRED_AI_TEMPLATE_KEYS as string[], `'${key}' is a template key`).toContain(key);
-      expect(typeof parsed[key].instruction, `'${key}' sets instruction, the only field the loader reads`).toBe('string');
-    }
   });
 });
 

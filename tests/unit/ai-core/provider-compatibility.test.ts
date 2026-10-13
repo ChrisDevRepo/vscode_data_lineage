@@ -47,7 +47,7 @@ describe('provider tool-call compatibility', () => {
   it('accepts a tool-less discovery answer directly — tool choice is the model\'s, never a backend evidence gate', async () => {
     const session = new AiSession();
     session.model = oneNodeModel();
-    const model = evidenceRepairModel();
+    const model = toolLessAnswerModel();
     const events: TurnEvent[] = [];
     const runtime = new LineageRuntime({
       getSession: () => session,
@@ -65,11 +65,11 @@ describe('provider tool-call compatibility', () => {
 
     const result = await runtime.run({
       model,
-      request: { id: 'evidence-repair', prompt: 'summarize the loaded context' },
+      request: { id: 'tool-less-answer', prompt: 'summarize the loaded context' },
       sink: new TurnEventSink(event => events.push(event)),
     });
 
-    // Discovery has no evidence gate (removed 5376501f2, row no-intent-guards): the backend cannot
+    // Discovery has no evidence gate: the backend cannot
     // judge from content alone whether a zero-tool-call reply is trustworthy or fabricated, so the
     // first generation's tool-less text is the answer, uncorrected and unretried.
     expect(result).toMatchObject({ outcome: 'ok', modelCalls: 2 });
@@ -98,12 +98,11 @@ function emptyStructuredModel(): ModelPort {
   };
 }
 
-function evidenceRepairModel(): ModelPort {
+function toolLessAnswerModel(): ModelPort {
   let calls = 0;
-  let toolTurns = 0;
   return {
-    id: 'evidence-repair',
-    identity: { id: 'evidence-repair', name: 'Evidence Repair', vendor: 'test', family: 'test', version: '1' },
+    id: 'tool-less-answer',
+    identity: { id: 'tool-less-answer', name: 'Tool-less Answer', vendor: 'test', family: 'test', version: '1' },
     budget: DEFAULT_TURN_TOKEN_BUDGET,
     get modelCalls() { return calls; },
     async getNumTokens(content) { return String(content).length; },
@@ -113,37 +112,11 @@ function evidenceRepairModel(): ModelPort {
     },
     async generateToolTurn() {
       calls += 1;
-      toolTurns += 1;
-      if (toolTurns === 1) {
-        return {
-          status: 'completed' as const,
-          content: [],
-          message: modelToolCallMessage([], '**DB Error**\n\nlineage_get_context() was blocked.'),
-          text: '**DB Error**\n\nlineage_get_context() was blocked.',
-          toolCalls: [],
-          finishReason: 'stop',
-        };
-      }
-      if (toolTurns === 2) {
-        return {
-          status: 'completed' as const,
-          content: [],
-          message: modelToolCallMessage([{ callId: 'context-1', toolName: 'lineage_get_context', input: {} }]),
-          text: '',
-          toolCalls: [{
-            valid: true as const,
-            callId: 'context-1',
-            toolName: 'lineage_get_context',
-            input: {},
-          }],
-          finishReason: 'tool-calls',
-        };
-      }
       return {
         status: 'completed' as const,
         content: [],
-        message: modelToolCallMessage([], 'There is 1 object in the loaded snapshot.'),
-        text: 'There is 1 object in the loaded snapshot.',
+        message: modelToolCallMessage([], '**DB Error**\n\nlineage_get_context() was blocked.'),
+        text: '**DB Error**\n\nlineage_get_context() was blocked.',
         toolCalls: [],
         finishReason: 'stop',
       };

@@ -1,27 +1,12 @@
 /**
  * Pins the two contracts that keep a saved database project readable by the webview:
- * what may reach the mssql extension, and what may reach the `projects-list` frame.
+ * what may reach the `projects-list` frame and how legacy connections migrate.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import * as vscode from 'vscode';
-import { connectDatabase, stripSensitiveFields } from '../../../src/engine/connectionManager';
+import { describe, it, expect } from 'vitest';
 import { partitionSendableProjects } from '../../../src/bridge/messageHandlers';
 import { migrateProjectStore } from '../../../src/engine/projectStore';
 import { ExtensionToWebviewMsgSchema, type Project } from '../../../src/engine/shared/bridgeContract';
-import type { IConnectionInfo } from '../../../src/types/mssql';
-
-const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
-
-vi.mock('vscode', async (importOriginal) => ({
-  ...await importOriginal<Record<string, unknown>>(),
-  workspace: { getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined }) },
-}));
-
-const outputChannel = {
-  debug() {}, info() {}, warn() {}, error() {}, trace() {}, append() {}, appendLine() {},
-} as unknown as vscode.LogOutputChannel;
-const env = { secrets: {} as vscode.SecretStorage, outputChannel, loadQueries: async () => [] };
 
 function dbProject(connectionInfo: Record<string, unknown>): Project {
   return {
@@ -47,48 +32,6 @@ const cleanConnectionInfo = {
 };
 
 describe('stored connection integrity', () => {
-  beforeEach(() => {
-    (vscode as unknown as { extensions: { reset(): void } }).extensions.reset();
-  });
-
-  it('reconnecting hands the mssql extension a clone, so a mutated profile cannot reach the saved record', async () => {
-    const stored = { ...cleanConnectionInfo };
-    let received: Record<string, unknown> | undefined;
-    (vscode as unknown as { extensions: { registry: Map<string, unknown> } }).extensions.registry.set(MSSQL_EXTENSION_ID, {
-      isActive: true,
-      packageJSON: { version: '1.34.0' },
-      exports: {
-        connect(profile: Record<string, unknown>) {
-          received = profile;
-          profile.azureAccountToken = 'token-value';
-          return Promise.resolve('uri://connection');
-        },
-      },
-    });
-
-    const session = await connectDatabase(env, stored);
-
-    expect(session?.provider).toBe('mssqlExtension');
-    expect(received).not.toBe(stored);
-    expect(session?.connectionInfo).not.toHaveProperty('azureAccountToken');
-    expect(stored).not.toHaveProperty('azureAccountToken');
-    expect(Object.keys(stored).sort()).toEqual(Object.keys(cleanConnectionInfo).sort());
-  });
-
-  it('stripSensitiveFields keeps only declared fields, whatever the live object carries', () => {
-    const narrowed = stripSensitiveFields({
-      ...cleanConnectionInfo,
-      azureAccountToken: 'token-value',
-      password: 'never-persisted',
-      applicationName: 'vscode-mssql',
-    } as unknown as IConnectionInfo);
-
-    expect(narrowed).not.toHaveProperty('azureAccountToken');
-    expect(narrowed).not.toHaveProperty('password');
-    expect(narrowed).not.toHaveProperty('applicationName');
-    expect(narrowed.server).toBe('localhost');
-  });
-
   it('one unsendable project no longer costs the whole projects-list frame', () => {
     const good = dbProject(cleanConnectionInfo);
     const bad = { ...dbProject({ ...cleanConnectionInfo, azureAccountToken: 'token-value' }), id: 'p-bad' };
@@ -109,10 +52,13 @@ describe('stored connection integrity', () => {
   });
 
   it('a record written by an older build still loads and reaches the view', () => {
-    const legacy = dbProject({ ...cleanConnectionInfo, azureAccountToken: 'stale', applicationName: 'vscode-mssql' });
+    const legacy = dbProject({ ...cleanConnectionInfo, provider: 'mssqlExtension', azureAccountToken: 'stale', applicationName: 'vscode-mssql' });
     const store = migrateProjectStore({ schemaVersion: 1, projects: [legacy], lastOpenedId: 'p-db' });
 
     expect(store.projects).toHaveLength(1);
+    expect(store.projects[0].connection).toMatchObject({ connectionInfo: cleanConnectionInfo });
+    expect(JSON.stringify(store.projects[0])).not.toContain('provider');
+    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'projects-list', projects: [dbProject({ ...cleanConnectionInfo, provider: 'mssqlExtension' })], lastOpenedId: 'p-db' }).success).toBe(false);
     expect(JSON.stringify(store.projects[0])).not.toContain('azureAccountToken');
     const { sendable, rejected } = partitionSendableProjects(store.projects);
     expect(rejected).toHaveLength(0);

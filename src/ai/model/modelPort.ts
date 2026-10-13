@@ -240,6 +240,15 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
+/**
+ * Reason of the `invalid_tool_input` rejection for a call whose arguments were not a JSON object,
+ * shared by every model port so both lanes state the same fault and the same next action.
+ */
+export const TOOL_ARGUMENTS_NOT_OBJECT_REASON = 'Tool arguments were not a JSON object; send the required fields as one JSON object.';
+
+/** Reason of the `invalid_tool_input` rejection for a call whose arguments were empty text. */
+export const TOOL_ARGUMENTS_EMPTY_REASON = 'Tool arguments were empty; send the required fields as a JSON object.';
+
 /** A registered native tool call ready for argument validation at its execution boundary. */
 export interface ValidGeneratedToolCall {
   /** Literal `true` discriminator for the valid arm. */
@@ -276,16 +285,12 @@ export interface InvalidGeneratedToolCall {
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
   /**
-   * Repair instruction naming the fix for this specific rejection, when the producer derived one
-   * from the issue shape (e.g. an `unrecognized_keys` Zod issue names removal, never the standing
-   * resend-unchanged instruction). Absent for shapes with no producer-derived hint, in which case
-   * the dispatcher applies its own fixed per-code hint.
+   * Repair instruction naming the fix for this specific rejection, set by the tool-call notation
+   * check. Absent otherwise, in which case the dispatcher applies its own fixed per-code hint.
    */
   readonly hint?: string;
-  /** Paths of the schema issues that rejected the input, when known. */
+  /** Paths of the input values that rejected the call, when the producer names them. */
   readonly issuePaths?: readonly string[];
-  /** Offending key(s) when the rejection carries a Zod `unrecognized_keys` issue. */
-  readonly unrecognizedKeys?: readonly string[];
 }
 
 /** Validation result for a provider-emitted tool call. */

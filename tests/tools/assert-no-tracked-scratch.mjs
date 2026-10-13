@@ -5,13 +5,13 @@
  * `tmp/` holds session handovers, logs and evidence that may name private paths, model pins or
  * conversation state; it is ignored, so a tracked file there was force-added by mistake.
  */
-import { execFileSync } from 'node:child_process';
+import { runCommand } from './command.mjs';
 
 const FORBIDDEN_ROOTS = ['tmp/'];
 
 let tracked;
 try {
-  tracked = execFileSync('git', ['ls-files', '-z', '--', ...FORBIDDEN_ROOTS], { encoding: 'utf8' })
+  tracked = (await runCommand('git', ['ls-files', '-z', '--', ...FORBIDDEN_ROOTS])).stdout
     .split('\0')
     .filter(Boolean);
 } catch (error) {

@@ -1,12 +1,12 @@
 ---
 name: prompt-change
-description: Load before editing AI prompt text, tool descriptions, or AI output templates, or when correcting an instruction that changes model behavior.
+description: Make minimal AI instruction changes and verify their contracts. Use before editing prompt text, model-facing tool descriptions or AI output templates; use prompt-playground for baseline/candidate model comparisons.
 ---
 
-# Prompt Change Workflow
+# Prompt change workflow
 
-1. Read `docs/AI_PROMPTS.md` and locate the exact prompt/template owner before editing.
-2. State the user-visible behavior to change and the evidence showing what context and tools the model received.
+1. Read the relevant [prompt/template contract](../../../docs/AI_PROMPTS.md) and locate the exact owner of the requested behavior change.
+2. State the user-visible behavior to change and the evidence showing what context and tools the model received. For model behavior changes, follow the [prompt comparison workflow](../prompt-playground/SKILL.md) to preserve the unchanged baseline before editing.
 3. Make the smallest wording change at the owning prompt or template. Keep examples generic and consistent with the tool schema.
-4. Check deterministic prompt/template tests and schema compatibility checks (`node tests/tools/assert-template-schema-version.mjs`). For model behavior, use `.agents/skills/prompt-playground/SKILL.md`; do not treat fixed-response tests as model evidence.
-5. Review the diff for accidental changes to tool contracts, output schema, sensitive data, or unrelated wording. Describe what behavior was checked and any limitation.
+4. Check template schema compatibility (`node tests/tools/assert-template-schema-version.mjs`) and `npm run test:runtime`. Do not add a unit test per wording edit. A headless comparison passes the frozen question with `--prompt` ([baseline review](../../../docs/testing/README.md#before-deployment-baseline-review)). Complete the candidate review before deployment; fixed-response tests do not establish answer quality.
+5. Review the diff for accidental changes to tool contracts, output schema, sensitive data, or unrelated wording. Report the changed behavior, validation results, SQL review evidence and limitations.

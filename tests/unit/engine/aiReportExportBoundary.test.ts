@@ -1,15 +1,17 @@
 /**
- * The two webview→host handlers that hand a webview-supplied string to a VS Code API: the report
- * "Open in editor" path and the draw.io export save dialog.
+ * The webview→host handlers that hand a webview-supplied string to a VS Code API: the report
+ * "Open in editor" path, the draw.io export save dialog and the webview error log.
  *
- * Both are boundaries, so both are pinned here — the contract cap that stops an unbounded report
+ * All are boundaries, so all are pinned here — the contract cap that stops an unbounded report
  * payload reaching `openTextDocument`, the base-name reduction that stops a webview-supplied file
  * name seeding the save dialog at a path it never came from, and the fallback that keeps the report
- * readable when the built-in Markdown preview is not installed.
+ * readable when the built-in Markdown preview is not installed. The panel double here also pins
+ * the host-side inbound protocol-version check of the main and detail panels.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AI_REPORT_MARKDOWN_MAX_CHARS,
+  BRIDGE_PROTOCOL_VERSION,
   MainPanelToExtensionMsgSchema,
 } from '../../../src/engine/shared/bridgeContract';
 import type { BridgeHost } from '../../../src/bridge/host';
@@ -20,6 +22,7 @@ const showTextDocument = vi.fn();
 const showWarningMessage = vi.fn();
 const applyEdit = vi.fn();
 const createWebviewPanel = vi.fn();
+const windowShowErrorMessage = vi.fn();
 const closeTab = vi.fn();
 /** Tabs the fake workbench reports as open; a test pushes a preview tab to simulate an open preview. */
 const openTabs: Array<{ input: unknown; label: string; isActive: boolean }> = [];
@@ -64,7 +67,7 @@ vi.mock('vscode', async (importOriginal) => {
     window: {
       createWebviewPanel: () => createWebviewPanel(),
       showTextDocument: (...args: unknown[]) => showTextDocument(...args),
-      showErrorMessage: () => undefined,
+      showErrorMessage: (...args: unknown[]) => windowShowErrorMessage(...args),
       showWarningMessage: (...args: unknown[]) => showWarningMessage(...args),
       tabGroups: { get all() { return [{ tabs: openTabs }]; }, close: (...args: unknown[]) => closeTab(...args) },
     },
@@ -94,7 +97,6 @@ function fakeHost(overrides: Partial<BridgeHost> = {}): BridgeHost {
     getConfiguration: vi.fn(),
     getExtensionUri: vi.fn(),
     getGlobalState: vi.fn(),
-    getWorkspaceState: vi.fn(),
     ...overrides,
   } as BridgeHost;
 }
@@ -246,17 +248,6 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     expect(docs[0].text).toBe('# C');
   });
 
-  it('asks for the preview again when the report preview is open but hidden behind another tab', async () => {
-    const { docs, click } = arrange();
-    await click('# A');
-    openTabs.push(previewTabFor('Untitled-1', false));
-    await click('# B');
-
-    expect(executeCommand, 'a click must bring the report on screen, never do nothing visible').toHaveBeenCalledTimes(2);
-    expect(executeCommand.mock.calls[1]).toEqual(['markdown.showPreviewToSide', docs[0].uri]);
-    expect(docs).toHaveLength(1);
-  });
-
   it('closes a hidden report preview once, then asks for the preview, so the command ends with one preview', async () => {
     const { docs, click } = arrange();
     await click('# A');
@@ -307,15 +298,6 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     expect(closeTab).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledWith('markdown.showPreviewToSide', docs[0].uri);
-  });
-
-  it('ignores previews of other documents when deciding whether the report preview is open', async () => {
-    const { click } = arrange();
-    await click('# A');
-    openTabs.push(previewTabFor('notes.md'));
-    await click('# B');
-
-    expect(executeCommand).toHaveBeenCalledTimes(2);
   });
 
   it('does not take a preview of a document whose name merely ends with the report name for the report preview', async () => {
@@ -395,6 +377,27 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
   });
 });
 
+/** Opens the main panel over an idle session; the caller arranges what `createWebviewPanel` returns. */
+function openMainPanel(): void {
+  const session = {
+    phase: { kind: 'idle' },
+    resetExploration: vi.fn(),
+    columnStore: { clear: vi.fn() },
+    clearDiscoveryTranscript: vi.fn(),
+    model: null,
+    graph: null,
+  };
+  openPanel(
+    { extensionUri: { scheme: 'file', path: '/ext' }, globalState: { get: vi.fn(), update: vi.fn() } } as never,
+    'Data Lineage',
+    () => session as never,
+    { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+    () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }),
+    vi.fn(),
+    vi.fn(),
+  );
+}
+
 /** A webview panel double that records its message listener and fires dispose listeners on `dispose()`. */
 function fakeWebviewPanel() {
   const disposeListeners: Array<() => void> = [];
@@ -429,23 +432,7 @@ describe('ai-open-in-editor across a closed and reopened panel', () => {
     const fake = fakeWebviewPanel();
     livePanels.push(fake.panel);
     createWebviewPanel.mockReset().mockReturnValue(fake.panel);
-    const session = {
-      phase: { kind: 'idle' },
-      resetExploration: vi.fn(),
-      columnStore: { clear: vi.fn() },
-      clearDiscoveryTranscript: vi.fn(),
-      model: null,
-      graph: null,
-    };
-    openPanel(
-      { extensionUri: { scheme: 'file', path: '/ext' }, globalState: { get: vi.fn(), update: vi.fn() } } as never,
-      'Data Lineage',
-      () => session as never,
-      { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
-      () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }),
-      vi.fn(),
-      vi.fn(),
-    );
+    openMainPanel();
     return fake;
   }
 
@@ -497,6 +484,44 @@ describe('ai-open-in-editor across a closed and reopened panel', () => {
     expect(docs).toHaveLength(2);
     expect(docs[1].text).toBe('# B');
     second.panel.dispose();
+  });
+});
+
+describe('inbound bridge protocol version', () => {
+  const stale = BRIDGE_PROTOCOL_VERSION + 1;
+
+  it('the main panel drops a frame stamped with another protocol version and reports the mismatch', async () => {
+    const main = fakeWebviewPanel();
+    createWebviewPanel.mockReset().mockReturnValue(main.panel);
+    openMainPanel();
+    openTextDocument.mockReset().mockResolvedValue(fakeDocument('Untitled-1'));
+    windowShowErrorMessage.mockReset();
+
+    await main.send({ type: 'ai-open-in-editor', markdown: '# A', protocolVersion: stale });
+
+    expect(openTextDocument).not.toHaveBeenCalled();
+    expect(windowShowErrorMessage).toHaveBeenCalledTimes(1);
+    expect(windowShowErrorMessage.mock.calls[0][0]).toContain(`bridge protocol v${stale}`);
+    main.panel.dispose();
+  });
+
+  it('the detail panel drops a frame stamped with another protocol version and still accepts a matching one', async () => {
+    const main = fakeWebviewPanel();
+    const detail = fakeWebviewPanel();
+    const disposeDetail = vi.spyOn(detail.panel, 'dispose');
+    createWebviewPanel.mockReset().mockReturnValueOnce(main.panel).mockReturnValueOnce(detail.panel);
+    openMainPanel();
+    await main.send({ type: 'show-detail' });
+    windowShowErrorMessage.mockReset();
+
+    await detail.send({ type: 'close-detail', protocolVersion: stale });
+    expect(disposeDetail).not.toHaveBeenCalled();
+    expect(windowShowErrorMessage).toHaveBeenCalledTimes(1);
+    expect(windowShowErrorMessage.mock.calls[0][0]).toContain('detail panel');
+
+    await detail.send({ type: 'close-detail', protocolVersion: BRIDGE_PROTOCOL_VERSION });
+    expect(disposeDetail).toHaveBeenCalledTimes(1);
+    main.panel.dispose();
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * @module EntraSignIn
  * Microsoft Entra sign-in for built-in connections through VS Code's Microsoft account, with
- * Microsoft's `@microsoft/vscode-azext-azureauth` library, as the SQL Server (mssql) extension signs in.
+ * Microsoft's `@microsoft/vscode-azext-azureauth` library.
  */
 
 import * as vscode from 'vscode';
@@ -16,7 +16,7 @@ const PUBLIC_SQL_RESOURCE = 'https://database.windows.net/';
  * Azure SQL resource of the Microsoft cloud VS Code signs in to; the library requests its `.default` scope.
  *
  * @remarks
- * Built from the cloud's SQL server host name suffix, which gives the resources the mssql extension
+ * Built from the cloud's SQL server host name suffix, which gives the resources the database connection
  * uses: `database.windows.net`, `database.usgovcloudapi.net`, `database.chinacloudapi.cn`. A custom
  * cloud that names no suffix uses the public resource.
  *
@@ -100,7 +100,7 @@ export async function listTenants(account: vscode.AuthenticationSessionAccountIn
 }
 
 /**
- * Picks the directory the mssql extension preselects: the account's home directory when it is
+ * Picks the home directory: the account's home directory when it is
  * listed, otherwise the first listed one.
  *
  * @remarks

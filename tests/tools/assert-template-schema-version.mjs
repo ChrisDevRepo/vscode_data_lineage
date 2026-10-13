@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
+import { runCommand } from './command.mjs';
 import { readFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isCi, SKIP_EXIT_CODE } from './gate-status.mjs';
 import { breakingStructureChanges, structureDiff, templateStructure } from './templateStructure.mjs';
 
@@ -12,7 +14,7 @@ const YAML_VERSION_RE = /^schemaVersion:\s*(\d+)\s*$/m;
 /** Line endings differ between the index (LF) and a Windows working copy (CRLF); only content matters. */
 const normalize = (text) => text.replace(/\r\n/g, '\n');
 
-const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const git = async (args, cwd, env) => (await runCommand('git', args, { cwd, env })).stdout;
 
 /**
  * Baseline the gate compares against: the highest release tag, which is what a user actually
@@ -23,124 +25,131 @@ const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ign
  * ancestor of the feature branch being gated, and `describe` would find nothing and skip the check
  * on precisely the branches that need it. Sorting all `v*` tags by version is reachability-free.
  */
-function baselineRef() {
+async function baselineRef(cwd, env) {
+  const tag = (await git(['tag', '--list', 'v*', '--sort=-v:refname'], cwd, env)).split('\n')[0].trim();
+  if (tag) return { ref: tag, label: tag };
   try {
-    const tag = git(['tag', '--list', 'v*', '--sort=-v:refname']).split('\n')[0].trim();
-    if (tag) return { ref: tag, label: tag };
-  } catch {
-    // A failed tag lookup falls through to the origin/main baseline below.
-  }
-  try {
-    git(['rev-parse', '--verify', '--quiet', 'origin/main']);
+    await git(['rev-parse', '--verify', '--quiet', 'origin/main'], cwd, env);
     return { ref: 'origin/main', label: 'origin/main' };
-  } catch {
+  } catch (error) {
+    if (error.code !== 1) throw error;
     return { ref: '', label: '' };
   }
 }
 
-function showAtTag(tag, path) {
-  try {
-    return normalize(git(['show', `${tag}:${path}`]));
-  } catch {
-    return undefined;
-  }
+async function showAtTag(tag, path, cwd, env) {
+  const entries = await git(['ls-tree', '--name-only', '-z', tag, '--', path], cwd, env);
+  if (!entries) return undefined;
+  return normalize(await git(['show', `${tag}:${path}`], cwd, env));
 }
 
 const readVersion = (text, re, label) => {
   const match = text.match(re);
   if (!match) {
-    console.error(`FAIL  no ${label} found — the gate cannot verify the contract version.`);
-    process.exit(1);
+    throw new Error(`FAIL  no ${label} found — the gate cannot verify the contract version.`);
   }
   return Number(match[1]);
 };
 
-const currentAsset = normalize(readFileSync(ASSET, 'utf8'));
-const currentTypes = normalize(readFileSync(TYPES, 'utf8'));
+/** Compares the working tree with its Git baseline and returns the gate status with its diagnostics. */
+export async function checkTemplateSchema({ cwd = process.cwd(), env = process.env, stdout = console.log, stderr = console.error } = {}) {
+  const currentAsset = normalize(readFileSync(join(cwd, ASSET), 'utf8'));
+  const currentTypes = normalize(readFileSync(join(cwd, TYPES), 'utf8'));
 
-const constantVersion = readVersion(currentTypes, VERSION_RE, 'AI_TEMPLATE_SCHEMA_VERSION');
-const assetVersion = readVersion(currentAsset, YAML_VERSION_RE, `schemaVersion in ${ASSET}`);
-if (constantVersion !== assetVersion) {
-  console.error(
-    `FAIL  version mismatch: AI_TEMPLATE_SCHEMA_VERSION is ${constantVersion} but ${ASSET} declares ` +
-    `schemaVersion ${assetVersion}. The built-in templates must satisfy their own gate.`,
-  );
-  process.exit(1);
-}
-
-/** Reports a comparison that cannot run; the gate shows it as SKIP, not PASS. */
-const skip = (message) => {
-  console.log(`SKIP  ${message}`);
-  process.exit(SKIP_EXIT_CODE);
-};
-
-const { ref: baseline, label: baselineLabel } = baselineRef();
-if (!baseline) {
-  if (isCi()) {
-    console.error(
-      'FAIL  no release tag and no origin/main in this CI checkout — fetch tags or origin/main ' +
-      '(actions/checkout `fetch-depth: 0`) so the templates asset is compared against a baseline.',
+  const constantVersion = readVersion(currentTypes, VERSION_RE, 'AI_TEMPLATE_SCHEMA_VERSION');
+  const assetVersion = readVersion(currentAsset, YAML_VERSION_RE, `schemaVersion in ${ASSET}`);
+  if (constantVersion !== assetVersion) {
+    stderr(
+      `FAIL  version mismatch: AI_TEMPLATE_SCHEMA_VERSION is ${constantVersion} but ${ASSET} declares ` +
+      `schemaVersion ${assetVersion}. The built-in templates must satisfy their own gate.`,
     );
-    process.exit(1);
+    return 1;
   }
-  skip('no release tag and no origin/main — cannot compare the templates asset against a baseline.');
-}
 
-const baselineAsset = showAtTag(baseline, ASSET);
-if (baselineAsset === undefined) {
-  skip(`${baselineLabel} predates ${ASSET} — no comparable baseline.`);
-}
+  /** Reports a comparison that cannot run; the gate shows it as SKIP, not PASS. */
+  const skip = (message) => {
+    stdout(`SKIP  ${message}`);
+    return SKIP_EXIT_CODE;
+  };
 
-if (baselineAsset === currentAsset) {
-  console.log(`PASS  ${ASSET} unchanged since ${baselineLabel}; schemaVersion ${assetVersion} still correct.`);
-  process.exit(0);
-}
+  const { ref: baseline, label: baselineLabel } = await baselineRef(cwd, env);
+  if (!baseline) {
+    if (isCi(env)) {
+      stderr(
+        'FAIL  no release tag and no origin/main in this CI checkout — fetch tags or origin/main ' +
+        '(actions/checkout `fetch-depth: 0`) so the templates asset is compared against a baseline.',
+      );
+      return 1;
+    }
+    return skip('no release tag and no origin/main — cannot compare the templates asset against a baseline.');
+  }
 
-const baselineStructure = templateStructure(baselineAsset);
-const currentStructure = templateStructure(currentAsset);
-const identicalStructure = JSON.stringify(baselineStructure) === JSON.stringify(currentStructure);
-const changes = structureDiff(baselineStructure, currentStructure);
-const breaking = breakingStructureChanges(changes);
-const formattedChanges = changes.map((line) => `      ${line}`).join('\n');
+  const baselineAsset = await showAtTag(baseline, ASSET, cwd, env);
+  if (baselineAsset === undefined) {
+    return skip(`${baselineLabel} predates ${ASSET} — no comparable baseline.`);
+  }
 
-const baselineTypes = showAtTag(baseline, TYPES);
-if (baselineTypes === undefined) {
-  skip(`${baselineLabel} predates ${TYPES} — no comparable baseline for the constant.`);
-}
-const baselineVersion = readVersion(baselineTypes, VERSION_RE, `AI_TEMPLATE_SCHEMA_VERSION at ${baselineLabel}`);
+  if (baselineAsset === currentAsset) {
+    stdout(`PASS  ${ASSET} unchanged since ${baselineLabel}; schemaVersion ${assetVersion} still correct.`);
+    return 0;
+  }
 
-if (breaking.length === 0) {
-  if (baselineVersion !== constantVersion) {
-    console.error(
-      `FAIL  ${ASSET} changed since ${baselineLabel} with no removal, rename, or retype — wording and ` +
-      `additions are backward compatible — but AI_TEMPLATE_SCHEMA_VERSION moved ` +
-      `${baselineVersion} → ${constantVersion} anyway:\n${formattedChanges}\n` +
-      `      The bump alone forces every custom overlay to be re-scaffolded for nothing. Revert the ` +
-      `constant in ${TYPES} and schemaVersion in ${ASSET} to ${baselineVersion}.`,
+  const baselineStructure = templateStructure(baselineAsset);
+  const currentStructure = templateStructure(currentAsset);
+  const identicalStructure = JSON.stringify(baselineStructure) === JSON.stringify(currentStructure);
+  const changes = structureDiff(baselineStructure, currentStructure);
+  const breaking = breakingStructureChanges(changes);
+  const formattedChanges = changes.map((line) => `      ${line}`).join('\n');
+
+  const baselineTypes = await showAtTag(baseline, TYPES, cwd, env);
+  if (baselineTypes === undefined) {
+    return skip(`${baselineLabel} predates ${TYPES} — no comparable baseline for the constant.`);
+  }
+  const baselineVersion = readVersion(baselineTypes, VERSION_RE, `AI_TEMPLATE_SCHEMA_VERSION at ${baselineLabel}`);
+
+  if (breaking.length === 0) {
+    if (baselineVersion !== constantVersion) {
+      stderr(
+        `FAIL  ${ASSET} changed since ${baselineLabel} with no removal, rename, or retype — wording and ` +
+        `additions are backward compatible — but AI_TEMPLATE_SCHEMA_VERSION moved ` +
+        `${baselineVersion} → ${constantVersion} anyway:\n${formattedChanges}\n` +
+        `      The bump alone forces every custom overlay to be re-scaffolded for nothing. Revert the ` +
+        `constant in ${TYPES} and schemaVersion in ${ASSET} to ${baselineVersion}.`,
+      );
+      return 1;
+    }
+    stdout(
+      (identicalStructure
+        ? `PASS  ${ASSET} wording changed since ${baselineLabel}; template structure unchanged`
+        : `PASS  ${ASSET} changed additively since ${baselineLabel} — no template key or field removed, renamed, or retyped`) +
+      `, so a previous overlay still fits; schemaVersion ${assetVersion} stays.`,
     );
-    process.exit(1);
+    return 0;
   }
-  console.log(
-    (identicalStructure
-      ? `PASS  ${ASSET} wording changed since ${baselineLabel}; template structure unchanged`
-      : `PASS  ${ASSET} changed additively since ${baselineLabel} — no template key or field removed, renamed, or retyped`) +
-    `, so a previous overlay still fits; schemaVersion ${assetVersion} stays.`,
+
+  if (baselineVersion === constantVersion) {
+    stderr(
+      `FAIL  ${ASSET} broke structure since ${baselineLabel} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
+      `${breaking.map((line) => `      ${line}`).join('\n')}\n` +
+      `      A ${baselineLabel} custom overlay will match this version, be accepted, and be read against a shape it\n` +
+      `      no longer fits, with no warning and no fallback. Bump the constant in ${TYPES} and\n` +
+      `      schemaVersion in ${ASSET}, then record the change in CHANGELOG.md.`,
+    );
+    return 1;
+  }
+
+  stdout(
+    `PASS  ${ASSET} broke structure since ${baselineLabel} and AI_TEMPLATE_SCHEMA_VERSION was bumped ` +
+    `${baselineVersion} → ${constantVersion}; stale overlays fall back to built-in templates.\n${formattedChanges}`,
   );
-  process.exit(0);
+  return 0;
 }
 
-if (baselineVersion === constantVersion) {
-  console.error(
-    `FAIL  ${ASSET} broke structure since ${baselineLabel} but AI_TEMPLATE_SCHEMA_VERSION is still ${constantVersion}:\n` +
-    `${breaking.map((line) => `      ${line}`).join('\n')}\n` +
-    `      A ${baselineLabel} custom overlay will match this version, be accepted, and be read against a shape it\n` +
-    `      no longer fits, with no warning and no fallback. Bump the constant in ${TYPES} and\n` +
-    `      schemaVersion in ${ASSET}, then record the change in CHANGELOG.md.`,
-  );
-  process.exit(1);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    process.exitCode = await checkTemplateSchema();
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }
-
-console.log(
-  `PASS  ${ASSET} broke structure since ${baselineLabel} and AI_TEMPLATE_SCHEMA_VERSION was bumped ` +
-  `${baselineVersion} → ${constantVersion}; stale overlays fall back to built-in templates.\n${formattedChanges}`,
-);

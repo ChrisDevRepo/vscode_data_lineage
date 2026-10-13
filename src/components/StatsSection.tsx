@@ -28,14 +28,6 @@ function formatDecimal(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-/** Format a raw min/max string — if numeric, add thousands separators. */
-function formatValue(raw: string | undefined): string {
-  if (!raw) return '–';
-  const n = Number(raw);
-  if (!isNaN(n)) return formatDecimal(n);
-  return raw;
-}
-
 /** Format a count with percentage of total rows. */
 function formatCount(count: number, rowCount: number): string {
   const formatted = count.toLocaleString();
@@ -64,7 +56,8 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   const pairs: Array<{ label: string; value: string }> = [];
 
   if (col.min !== undefined && col.mean !== undefined) {
-    pairs.push({ label: 'Range', value: `${formatValue(col.min)} – ${formatValue(col.max)}` });
+    // SQL extrema may exceed JavaScript numeric precision; keep their source strings exact.
+    pairs.push({ label: 'Range', value: `${col.min} – ${col.max ?? '–'}` });
     pairs.push({ label: 'Mean', value: formatDecimal(col.mean) });
     if (col.stdDev !== undefined) pairs.push({ label: 'Std Dev', value: formatDecimal(col.stdDev) });
     if (col.zeroCount !== undefined && col.zeroCount > 0) {
