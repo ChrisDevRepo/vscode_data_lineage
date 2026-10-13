@@ -22,6 +22,8 @@ Edges come from two sources combined. The catalog or DACPAC lists which objects 
 
 The **lineage agent** runs inside VS Code chat with the model the user selected. It works only on the loaded lineage model: it never connects to a database or runs SQL. Its result is a highlighted subgraph with a written explanation.
 
+The agent is optional. The graph, search, tracing and analysis work without any model, and with a DACPAC the extension runs fully offline. `@lineage` reaches only the model picked in VS Code chat; with a Copilot bring-your-own-key (BYOK) provider such as Ollama, that model can run locally, so the whole tool stays offline.
+
 ## Code map
 
 | Directory | Contents |

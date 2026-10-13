@@ -64,7 +64,7 @@ It answers in chat, draws a **graph preview** you can save as a bookmark, or, wi
 
 ## Security and privacy
 
-- No telemetry. `.dacpac` parsing is offline. The only network connections are your database, Entra ID sign-in and, for `@lineage`, your chosen language model.
+- No telemetry. With a `.dacpac` and no AI the extension runs fully offline. The only network connections are your database, Entra ID sign-in and, for `@lineage`, your chosen language model, which can be a local model through a Copilot BYOK provider such as Ollama.
 - Live imports and profiling run read-only queries only when you start them.
 - `@lineage` sends your prompt, its chat history and the returned metadata or DDL to the selected model. It cannot connect to a database or run SQL.
 - Custom YAML files are trusted; custom DMV SQL runs as written.
