@@ -1,5 +1,5 @@
 import { loadTestEnv } from './tests/tools/load-test-env.mjs';
-import { findBadgeReplayTrace } from './tests/tools/chat-ui-replay-trace.mjs';
+import { badgeReplayTrace } from './tests/tools/chat-ui-replay-trace.mjs';
 import { defineConfig } from '@vscode/test-cli';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,8 +11,10 @@ const column = process.argv.includes('column');
 const real = process.env.DLV_CHAT_UI_REAL === '1' || process.argv.includes('live') || badge || column;
 let replayTrace;
 if(badge) {
-  replayTrace=findBadgeReplayTrace(root);
-  console.log(`[chat-ui] badge setup replays recorded analysis: ${replayTrace}; only suggestion inference is live`);
+  replayTrace=badgeReplayTrace(root, process.env.DLV_CHAT_UI_BADGE_LIVE);
+  console.log(replayTrace
+    ? `[chat-ui] badge setup replays recorded analysis: ${replayTrace}; only suggestion inference is live`
+    : '[chat-ui] badge setup runs fresh real-model analysis; suggestion inference is also live');
 }
 if (real) {
   const identity = loadTestEnv({requireAiProvider:true});
@@ -27,7 +29,7 @@ mkdirSync(join(profile, 'User'), { recursive: true });
 writeFileSync(join(profile, 'User', 'settings.json'), JSON.stringify({ 'editor.accessibilitySupport': 'on' }));
 const cdpPort = process.env.PLAYWRIGHT_CDP_PORT || (real ? '9376' : '9377');
 export default defineConfig({
-  version: 'stable', label: badge ? 'badge' : column ? 'column' : real ? 'live' : 'fixture',
+  version: '1.141.0', label: badge ? 'badge' : column ? 'column' : real ? 'live' : 'fixture',
   files: 'out/test/tests/integration/chat-ui.test.js',
   extensionDevelopmentPath: [root, `${root}/tests/fixtures/lm-provider-extension`],
   launchArgs: [root, `--user-data-dir=${profile}`, '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust',

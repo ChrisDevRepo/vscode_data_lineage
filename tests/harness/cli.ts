@@ -13,11 +13,12 @@ import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvRes
 import { createHeadlessLogger } from './headlessLogger';
 import { exportRunToLangfuse, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
 import { OpenAiCompatiblePort, type FetchLike } from './openAiCompatiblePort';
-import { runHarnessTurn } from './runTurn';
+import { runHarnessTurn, nativeHarnessPrompt } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
 import { parseTrace } from './traceModel';
 import { setShimLogSink, Uri } from './vscodeHostShim';
 import { createRequire } from 'node:module';
+import { modelUserMessage, modelAssistantMessage, type ModelMessage } from '../../src/ai/model/modelPort';
 
 interface CatalogCase {
   readonly id: string;
@@ -218,8 +219,8 @@ export function aiRunStatus(turns: readonly { readonly outcome: string }[]): str
  * @returns One message per failed check; empty when every check passed.
  */
 export function turnChecks(
-  run: Pick<AiRun, 'expectTerminal' | 'expectMetrics'>,
-  turn: { terminalStatus?: string | null; outcome: { outcome: string }; events: ReadonlyArray<{ type: string; recoverable?: boolean }>; text: string },
+  run: Pick<AiRun, 'expectTerminal' | 'expectMetrics' | 'gate'>,
+  turn: { terminalStatus?: string | null; outcome: { outcome: string }; events: ReadonlyArray<{ type: string; recoverable?: boolean }>; text: string; gates?: readonly { decision: string; instruction?: string }[] },
   firstTurn: boolean,
 ): string[] {
   const failures: string[] = [];
@@ -228,6 +229,15 @@ export function turnChecks(
     failures.push(`sink terminal ${turn.terminalStatus} disagrees with outcome ${turn.outcome.outcome}`);
   }
   if (run.expectTerminal && actual !== run.expectTerminal) failures.push(`terminal ${actual}, catalog expects ${run.expectTerminal}`);
+  if (firstTurn) {
+    for (const [index, policy] of (run.gate ?? []).entries()) {
+      const gate = turn.gates?.[index];
+      const round = index + 1;
+      if (!gate) failures.push(`gate round ${round} was not exercised`);
+      else if (gate.decision !== policy.kind) failures.push(`gate round ${round} decision ${gate.decision}, expected ${policy.kind}`);
+      else if (policy.kind === 'refine' && gate.instruction !== policy.instruction) failures.push(`gate round ${round} refinement differs from catalog`);
+    }
+  }
   const expect = run.expectMetrics;
   if (expect?.rejections_max !== undefined) {
     const rejections = turn.events.filter(event => event.type === 'error' && event.recoverable).length;
@@ -394,12 +404,13 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       if (reasoningEffort) result.thinkingLevel = reasoningEffort;
       result.endpoint = endpoint;
       result.cases = runs.map(run => run.id);
-      const turns: Array<{ id: string; outcome: string; modelCalls: number; failedChecks: string[] }> = [];
+      const turns: Array<{ id: string; outcome: string; modelCalls: number; failedChecks: string[]; gates: readonly import('./runTurn').HarnessGateDecision[] }> = [];
       let turnIndex = 0;
       let stop = false;
       for (const run of runs) {
         if (stop) break;
         const { session, budget } = await createHarnessSession({ dacpacPath: run.dacpac, contextWindow: Infinity });
+        const priorMessages: ModelMessage[] = [];
         result.sections ??= [...new Set(Object.values(session.outputSections).flat())];
         for (const [promptIndex, prompt] of run.prompts.entries()) {
           turnIndex += 1;
@@ -409,15 +420,16 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
             model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.requestTimeoutMs,
             ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),
           }, { requestId, budget, fetchImpl, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
-          const turn = await runHarnessTurn({ session, model: port, requestId, prompt, gate: run.gate, runDir: join(runDir, `turn-${turnIndex}`), logger, signal: controller.signal, traceWriter });
+          const turn = await runHarnessTurn({ session, model: port, requestId, prompt, priorMessages: [...priorMessages], gate: run.gate, runDir: join(runDir, `turn-${turnIndex}`), logger, signal: controller.signal, traceWriter });
           const failedChecks = turnChecks(run, turn, promptIndex === 0);
           for (const failure of failedChecks) logger.error(`${run.id} turn ${turnIndex}: ${failure}`);
-          turns.push({ id: run.id, outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls, failedChecks });
+          turns.push({ id: run.id, outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls, failedChecks, gates: turn.gates });
           const next = nextAiRunStep(turn.outcome.outcome, controller.signal.aborted);
           if (next !== 'prompt') {
             stop = next === 'stop';
             break;
           }
+          priorMessages.push(modelUserMessage(nativeHarnessPrompt(prompt)), modelAssistantMessage(turn.text));
         }
       }
       result.turns = turns;

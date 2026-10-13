@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ModelPort } from '../../src/ai/model/modelPort';
+import type { ModelPort, ModelMessage } from '../../src/ai/model/modelPort';
 import type { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
 import { LineageRuntime } from '../../src/ai/runtime/lineageRuntime';
 import { TurnEventSink, type TurnEvent } from '../../src/ai/runtime/turnEventSink';
@@ -12,6 +12,11 @@ import type { NavigationEngine } from '../../src/ai/sm/smBase';
 import { buildAiToolRegistry } from '../../src/ai/tools/toolProvider';
 import { Logger } from '../../src/utils/log';
 import type { HeadlessLogChannel } from './headlessLogger';
+
+/** Removes the leading native participant mention; leaves command text and SQL unchanged. */
+export function nativeHarnessPrompt(prompt: string): string {
+  return prompt.replace(/^@lineage(?=\s|$)[ \t]?/u, '');
+}
 
 /**
  * Reads `uiState.screenState.bookmark.id` out of a parsed `--ui-state` buffer.
@@ -88,6 +93,8 @@ export interface HarnessTurnOptions {
   /** The lane's model port, supplied by its scripted or HTTP transport. */
   readonly model: ModelPort;
   readonly prompt: string;
+  /** Prior visible question-and-answer text, oldest first, matching native chat history. */
+  readonly priorMessages?: readonly ModelMessage[];
   /** Directory the post-run artifacts are written to; created if absent. */
   readonly runDir: string;
   readonly logger: HeadlessLogChannel;
@@ -263,7 +270,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
   options.logger.info(`[harness] turn start request=${requestId} model=${options.model.identity.id}`);
   const outcome = await runtime.run({
     model: options.model,
-    request: { id: requestId, prompt: options.prompt },
+    request: { id: requestId, prompt: nativeHarnessPrompt(options.prompt), ...(options.priorMessages !== undefined ? { priorMessages: options.priorMessages } : {}) },
     sink,
     ...(options.signal ? { signal: options.signal } : {}),
   });

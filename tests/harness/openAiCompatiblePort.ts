@@ -447,6 +447,8 @@ type PortGenerationPart =
       readonly input?: Record<string, unknown>;
       /** Why the arguments could not be used, when they could not. */
       readonly argumentsIssue?: 'empty' | 'malformed';
+      /** Content-free JSON syntax category and zero-based character offset. */
+      readonly argumentsDiagnostic?: string;
       readonly rawArguments: string;
       /** The call's opaque `extra_content`, verbatim, when the provider sent one. */
       readonly extraContent?: Record<string, unknown>;
@@ -630,6 +632,9 @@ export class OpenAiCompatiblePort implements ModelPort {
           // below observes; the replayed assistant call carries `{}`, the only object this
           // genuinely unparseable case has to offer.
           replayInput = {};
+          if (part.argumentsDiagnostic) {
+            this.options.debugLog?.(`[AI] tool-arguments ${part.argumentsDiagnostic}`);
+          }
           call = {
             valid: false,
             callId: part.callId,
@@ -1234,13 +1239,30 @@ function readCompletion(body: unknown): ReadCompletion {
 
 function parseArguments(serialized: string):
   | { readonly input: Record<string, unknown> }
-  | { readonly argumentsIssue: 'empty' | 'malformed' } {
+  | { readonly argumentsIssue: 'empty' | 'malformed'; readonly argumentsDiagnostic?: string } {
   if (!serialized.trim()) return { argumentsIssue: 'empty' };
   let parsed: unknown;
   try {
     parsed = JSON.parse(serialized);
-  } catch {
-    return { argumentsIssue: 'malformed' };
+  } catch (error) {
+    // Parser messages may quote input; expose only a fixed category and numeric offset.
+    const message = error instanceof Error ? error.message : '';
+    const positionText = /\bposition (\d+)\b/.exec(message)?.[1];
+    const position = positionText === undefined
+      ? /end of JSON input/i.test(message) ? serialized.length : undefined
+      : Number(positionText);
+    const offset = position !== undefined && Number.isSafeInteger(position) && position >= 0 && position <= serialized.length
+      ? position
+      : undefined;
+    const category = offset === serialized.length
+      ? 'incomplete value'
+      : offset !== undefined && /[}\]]/.test(serialized[offset] ?? '') && /,\s*$/.test(serialized.slice(0, offset))
+        ? 'trailing comma'
+        : 'invalid encoding';
+    return {
+      argumentsIssue: 'malformed',
+      argumentsDiagnostic: `Invalid JSON syntax: ${category}${offset === undefined ? '' : ` at character ${offset}`}.`,
+    };
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { argumentsIssue: 'malformed' };

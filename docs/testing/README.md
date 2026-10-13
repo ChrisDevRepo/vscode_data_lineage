@@ -65,11 +65,16 @@ Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs`, ad
 
 Check `live` answers against the fixture's SQL and graph. Keep reports, screenshots and traces out of git.
 
+To run `badge` without a recorded trace, use `DLV_CHAT_UI_BADGE_LIVE=1 npx vscode-test --config .vscode-test.chat-ui.mjs --label badge`. This executes fresh real-model analysis and the same native consent, graph and suggestion assertions. The default badge mode still requires a qualifying recorded trace.
+
 ## Live-model and database settings
 
 Copy [`.env.example`](../../.env.example) to `.env` and fill only the section you need; never commit `.env`, traces or answers. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter` or `openai-compatible`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. These settings configure test harnesses only; the extension itself uses the VS Code chat model.
 
-Headless `--timeout-ms` bounds the whole run and `--request-timeout-ms` each request. Native smoke and live chat use fixed per-request deadlines (120 s and 300 s). For Entra ID database checks, set `DB_TEST_AUTH_TYPE=entraId` and `DB_TEST_TOKEN` (an existing SQL access token); the default is SQL login.
+Headless `--timeout-ms` bounds the whole run and `--request-timeout-ms` each request. Native smoke and live chat use fixed per-request deadlines (120 s and 300 s). Real chat UI control waits use a 600 s phase budget so they do not expire before an allowed provider request; captured provider failures end those waits immediately with the request number and error. Native chat runs pin the host version in `.vscode-test.chat-ui.mjs`; baseline comparisons must verify the same resolved host version in both launcher logs. For Entra ID database checks, set `DB_TEST_AUTH_TYPE=entraId` and `DB_TEST_TOKEN` (an existing SQL access token); the default is SQL login.
+
+Headless follow-ups receive prior visible questions and answers through the same runtime history input as native chat. Each catalog case starts with a separate session and empty history.
+The harness removes a leading `@lineage` participant mention before dispatch, preserving slash commands and the remaining SQL text. A catalog row's configured consent steps must execute in order on its first turn; an answer that bypasses them fails the case.
 
 ## Packaging
 

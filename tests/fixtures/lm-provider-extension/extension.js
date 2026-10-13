@@ -77,6 +77,7 @@ function hasToolResult(request, callId) {
 }
 
 function activate(context) {
+  const uiErrors = [];
   const provider = {
     provideLanguageModelChatInformation() {
       return [{
@@ -110,7 +111,16 @@ function activate(context) {
       }
       if (process.env.AI_TEST_REAL_PROVIDER === '1') {
         if(replayAnalysis(request,progress)) return;
-        await callLiveProvider(request, progress, token);
+        const requestIndex = require('./chat-ui-provider').requests.length;
+        try {
+          await callLiveProvider(request, progress, token);
+        } catch (error) {
+          if (process.env.DLV_CHAT_UI_REAL === '1') uiErrors.push({
+            requestIndex,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
         return;
       }
 
@@ -139,7 +149,7 @@ function activate(context) {
     },
   };
   context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider(VENDOR, provider));
-  return { uiRequests: require('./chat-ui-provider').requests };
+  return { uiRequests: require('./chat-ui-provider').requests, uiErrors };
 }
 
 module.exports = { activate };

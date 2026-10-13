@@ -10,8 +10,40 @@ import { createHeadlessLogger } from '../../harness/headlessLogger';
 import { ScriptedModelPort, validCall } from '../../harness/scriptedModelPort';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { modelUserMessage, modelAssistantMessage } from '../../../src/ai/model/modelPort';
+import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 
 describe('headless registry parity', () => {
+  it.each([
+    { label: 'absent history', history: false, prompt: 'Which filter affects this column?', expected: 'Which filter affects this column?' },
+    { label: 'provided history', history: true, prompt: 'Which filter affects this column?', expected: 'Which filter affects this column?' },
+    { label: 'native participant mention', history: false, prompt: '@lineage /trace [dbo].[A].[Amount]', expected: '/trace [dbo].[A].[Amount]' },
+    { label: 'caller SQL', history: false, prompt: '@lineage /trace [dbo].[A].[Amount]\nSELECT x FROM dbo.fn(@p);\n', expected: '/trace [dbo].[A].[Amount]\nSELECT x FROM dbo.fn(@p);\n' },
+    { label: 'SQL indentation', history: false, prompt: '@lineage  SELECT x FROM dbo.A', expected: ' SELECT x FROM dbo.A' },
+    { label: 'mention in SQL', history: false, prompt: "SELECT '@lineage' AS Label FROM dbo.A", expected: "SELECT '@lineage' AS Label FROM dbo.A" },
+    { label: 'other participant name', history: false, prompt: '@lineageOther /trace A', expected: '@lineageOther /trace A' },
+  ])('forwards $label through the native request boundary', async ({ history, prompt, expected }) => {
+    const runDir = mkdtempSync(join(tmpdir(), 'lineage-history-'));
+    try {
+      const nodes = [makeNode({ id: 'A', name: 'A', schema: 'dbo', type: 'view' })];
+      const session = new AiSession();
+      session.model = makeModel(nodes, [], ['dbo']);
+      session.graph = makeGraph(nodes, []);
+      const priorMessages = history
+        ? [modelUserMessage('Inspect A.Amount'), modelAssistantMessage('A.Amount comes from B.Cost.')]
+        : undefined;
+      const model = new ScriptedModelPort([{ text: 'Synthetic boundary reply.' }]);
+      const run = vi.spyOn(LineageRuntime.prototype, 'run').mockResolvedValue({ outcome: 'ok', modelCalls: 0 });
+      await runHarnessTurn({ session, model, prompt, runDir,
+        logger: createHeadlessLogger('test', join(runDir, 'host.log')), priorMessages,
+      });
+      expect(run.mock.calls[0][0].request.priorMessages).toBe(priorMessages);
+      expect(run.mock.calls[0][0].request.prompt).toBe(expected);
+    } finally {
+      vi.restoreAllMocks();
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
   it.each(['handoff', 'cancel', 'budget'] as const)('uses the selected model for %s', async scenario => {
     const runDir = mkdtempSync(join(tmpdir(), 'lineage-registry-'));
     try {

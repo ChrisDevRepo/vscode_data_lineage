@@ -5,6 +5,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { loadTestEnv } from './load-test-env.mjs';
+import * as badgeReplay from './chat-ui-replay-trace.mjs';
+
+test('badge setup can explicitly use fresh analysis without accepting invalid settings', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dlv-badge-setup-'));
+  try {
+    for (const setting of [undefined, '', '0']) {
+      assert.throws(() => badgeReplay.badgeReplayTrace(root, setting), /Badge acceptance needs/);
+    }
+    assert.equal(badgeReplay.badgeReplayTrace(root, '1'), undefined);
+    for (const setting of ['true', '2']) {
+      assert.throws(() => badgeReplay.badgeReplayTrace(root, setting), /DLV_CHAT_UI_BADGE_LIVE must/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('every provider profile resolves from the supplied environment when .env is absent', () => {
   const profiles = [
@@ -103,4 +119,12 @@ test('selected profiles reject missing values and invalid endpoints without expo
     }),
     /Unsupported AI_TEST_PROVIDER/u,
   );
+});
+
+test('native control waits report new provider failures and ignore prior chat failures', () => {
+  const errors = [{ requestIndex: 1, message: 'AI provider returned HTTP 402' }];
+  assert.doesNotThrow(() => badgeReplay.assertUiProviderHealthy(errors, 1));
+  errors.push({ requestIndex: 3, message: 'AI provider request timed out after 300 seconds.' });
+  assert.throws(() => badgeReplay.assertUiProviderHealthy(errors, 1), /request 3: AI provider request timed out after 300 seconds/);
+  assert.throws(() => badgeReplay.assertUiProviderHealthy(errors, 0), /request 1: AI provider returned HTTP 402/);
 });

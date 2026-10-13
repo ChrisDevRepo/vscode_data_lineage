@@ -15,7 +15,7 @@ interface SessionProjection {
   lastPresentResultDescription: string | null;
   stateMachine: {deferredQuestions: unknown} | null;
 }
-import { chromium, type Browser, type Page } from 'playwright-core';
+import { chromium, type Browser, type Page, type Locator } from 'playwright-core';
 
 /** Opt-in Playwright test of native chat controls in a real isolated Electron host. */
 suite('Native chat confirmations — actual UI', () => {
@@ -23,6 +23,7 @@ suite('Native chat confirmations — actual UI', () => {
   let page: Page;
   let exports: {getSession(): SessionProjection};
   const real = process.env.DLV_CHAT_UI_REAL === '1';
+  const phaseTimeoutMs = real ? 600000 : 180000;
   const catalogPath = [
     join(__dirname, '..', 'cases', 'loadCases.cjs'),
     join(__dirname, '..', '..', '..', '..', 'tests', 'cases', 'loadCases.cjs'),
@@ -38,19 +39,41 @@ suite('Native chat confirmations — actual UI', () => {
   const planPhase = fixtureTrace.expect.phase;
   const originalQuestion = 'Trace all dependencies upstream from  [ai].[spImportOrders]  all level up and one level down';
   const artifactDir = `tmp/chat-ui/${real ? 'live' : 'fixture'}`;
-  let fixture: { uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}> };
+  let fixture: { uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}>;
+    uiErrors: Array<{requestIndex:number;message:string}> };
+  let firstErrorIndex = 0;
+  let assertUiProviderHealthy: (errors: Array<{requestIndex:number;message:string}>, firstErrorIndex:number) => void;
+  const assertProviderHealthy = () => {
+    if (!real || !fixture) return;
+    assertUiProviderHealthy(fixture.uiErrors, firstErrorIndex);
+  };
   const deadlineWait = async (predicate: () => boolean, label: string) => {
-    const deadline = Date.now()+(real ? 600000 : 20000);
-    while (!predicate() && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,100));
+    const deadline = Date.now()+(real ? phaseTimeoutMs : 20000);
+    while (!predicate() && Date.now()<deadline) {
+      assertProviderHealthy();
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assertProviderHealthy();
     assert.ok(predicate(), label);
+  };
+  const waitForControl = async (locator: Locator, timeout = phaseTimeoutMs) => {
+    if (!real) return locator.waitFor({state:'visible',timeout});
+    const deadline = Date.now()+timeout;
+    while (!await locator.isVisible() && Date.now()<deadline) {
+      assertProviderHealthy();
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assertProviderHealthy();
+    await locator.waitFor({state:'visible',timeout:Math.max(1,deadline-Date.now())});
   };
   const input = () => page.locator('.interactive-session [role="textbox"]').last();
   const idleInput = async () => {
-    await page.getByRole('button',{name:/^Send \[/}).last().waitFor({state:'visible',timeout:(real ? 300000 : 20000)});
+    await page.getByRole('button',{name:/^Send \[/}).last().waitFor({state:'visible',timeout:(real ? phaseTimeoutMs : 20000)});
   };
   const send = async (text: string) => {
     await idleInput();
     const before=fixture.uiRequests.length;
+    firstErrorIndex=fixture.uiErrors.length;
     const box = input();
     await box.waitFor({state:'visible'});
     assert.notEqual(await box.getAttribute('aria-readonly'),'true','input must accept a typed turn');
@@ -81,6 +104,7 @@ suite('Native chat confirmations — actual UI', () => {
     await page.screenshot({path:`${artifactDir}/${name}.png`});
   };
   const newChat = async () => {
+    firstErrorIndex=fixture.uiErrors.length;
     await idleInput();
     await page.getByRole('button',{name:/^New Chat \(/}).click();
     await idleInput();
@@ -89,8 +113,9 @@ suite('Native chat confirmations — actual UI', () => {
     await newChat();
     await send(real ? `@lineage /trace ${originalQuestion}` : fixturePrompt);
     await idleInput();
+    assertProviderHealthy();
     assert.equal(exports.getSession().phase.kind,planPhase);
-    await continueButton().waitFor({state:'visible',timeout:180000});
+    await waitForControl(continueButton());
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'plan cannot run before approval');
     await changeScopeButton().waitFor({state:'visible'});
     await cancelButton().waitFor({state:'visible'});
@@ -98,6 +123,10 @@ suite('Native chat confirmations — actual UI', () => {
 
   suiteSetup(async function () {
     await vscode.workspace.getConfiguration('editor').update('accessibilitySupport','on',vscode.ConfigurationTarget.Global);
+    const extensionPath = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.extensionPath;
+    ({ assertUiProviderHealthy } = createRequire(join(extensionPath,'package.json'))(
+      join(extensionPath,'tests/tools/chat-ui-replay-trace.mjs'),
+    ));
     fixture = await vscode.extensions.getExtension('data-lineage-test.data-lineage-test-model-provider')!.activate();
     assert.ok((await vscode.lm.selectChatModels({vendor:'lineage-test'})).length,'scripted provider must resolve');
     exports = await vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.activate();
@@ -151,7 +180,7 @@ suite('Native chat confirmations — actual UI', () => {
     await openPlan();
     const before=fixture.uiRequests.length;
     await send(`@lineage ${reply}`);
-    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:180000});
+    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:phaseTimeoutMs});
     await idleInput();
     assert.ok(fixture.uiRequests.length>before,'typed cancellation must reach AI');
     assert.equal(exports.getSession().pendingExploration,null);
@@ -168,6 +197,7 @@ suite('Native chat confirmations — actual UI', () => {
     assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent,{
       upstream:{levels:1,exactness:'exact'},downstream:{levels:0,exactness:'exact'},
     },'typed scope change must change the actual depth bounds');
+    assertProviderHealthy();
     assert.equal(exports.getSession().phase.kind,planPhase);
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0);
     await continueButton().waitFor({state:'visible'});
@@ -231,11 +261,11 @@ suite('Native chat confirmations — actual UI', () => {
     await send(`@lineage ${originalQuestion}`);
     console.log('[chat-ui] live question dispatched');
     const preview = page.getByRole('button',{name:/Show graph preview/}).last();
-    await preview.waitFor({state:'visible',timeout:180000});
+    await waitForControl(preview);
     await preview.click();
-    await page.getByRole('button',{name:/Run trace/}).last().waitFor({state:'visible',timeout:180000});
+    await waitForControl(page.getByRole('button',{name:/Run trace/}).last());
     await page.getByRole('button',{name:/Run trace/}).last().click();
-    await continueButton().waitFor({state:'visible',timeout:180000});
+    await waitForControl(continueButton());
     const session = exports.getSession();
     assert.equal(session.phase.kind,planPhase);
     assert.equal(session.memory.getResult().detail_slots.length,0,'no hop runs before consent');
@@ -244,7 +274,7 @@ suite('Native chat confirmations — actual UI', () => {
       await changeScopeButton().click();
       await send('@lineage Change the pending plan to both business and technical analysis. Keep all levels upstream and one level downstream.');
       await idleInput();
-      await continueButton().waitFor({state:'visible',timeout:180000});
+      await waitForControl(continueButton());
     }
     assert.equal(exports.getSession().pendingExploration?.classification,'both');
     assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent,{
@@ -256,7 +286,7 @@ suite('Native chat confirmations — actual UI', () => {
     await deadlineWait(()=>exports.getSession().phase.kind==='completed','approved real analysis must complete');
     assert.equal(exports.getSession().resultGraph?.nodeIds.length,8,'the completed graph must retain the approved eight-node scope');
     const suggestion = page.getByRole('button',{name:/What could I explore next/}).last();
-    await suggestion.waitFor({state:'visible',timeout:180000});
+    await waitForControl(suggestion);
 
 
     const stateBefore=JSON.stringify({phase:session.phase,graph:session.resultGraph,description:session.lastPresentResultDescription,leads:session.stateMachine?.deferredQuestions});
@@ -264,7 +294,7 @@ suite('Native chat confirmations — actual UI', () => {
     const followupStart=Date.now();
     await suggestion.click();
     await deadlineWait(()=>fixture.uiRequests.length>callStart,'follow-up badge must invoke the selected AI model');
-    await page.getByText('Would you like me to analyze one of these in detail?',{exact:false}).last().waitFor({state:'visible',timeout:90000});
+    await page.getByText('Would you like me to analyze one of these in detail?',{exact:false}).last().waitFor({state:'visible',timeout:real ? phaseTimeoutMs : 90000});
     await idleInput();
     const reply=responses().last();
     assert.equal(await reply.locator('.rendered-markdown').locator('h1,h2,h3,h4,h5,h6').count(),0,'no decorative title in the answer body');
@@ -296,20 +326,21 @@ suite('Native chat confirmations — actual UI', () => {
     await newChat();
     assert.ok(exports.getSession().model?.nodes.some(node=>node.id.toLowerCase()==='[ai].[pricemaster]'),'the real fixture must contain the traced table');
     await send(`@lineage /trace ${column} — trace this column back to its original sources.`);
-    await continueButton().or(page.getByRole('button',{name:/Show graph preview/}).last()).waitFor({state:'visible',timeout:180000});
+    await waitForControl(continueButton().or(page.getByRole('button',{name:/Show graph preview/}).last()));
     if (!await continueButton().isVisible()) {
       await page.getByRole('button',{name:/Show graph preview/}).last().click();
-      await page.getByRole('button',{name:/Run trace/}).last().waitFor({state:'visible',timeout:180000});
+      await waitForControl(page.getByRole('button',{name:/Run trace/}).last());
       await page.getByRole('button',{name:/Run trace/}).last().click();
-      await continueButton().waitFor({state:'visible',timeout:180000});
+      await waitForControl(continueButton());
     }
+    assertProviderHealthy();
     assert.equal(exports.getSession().phase.kind,planPhase);
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'no hop runs before consent');
     await idleInput();
     await approveOnce();
     await deadlineWait(()=>exports.getSession().phase.kind==='completed','approved column trace must complete');
     const fullReport = page.getByRole('button',{name:/Show (the )?full description/}).last();
-    await fullReport.waitFor({state:'visible',timeout:180000});
+    await waitForControl(fullReport);
     await fullReport.click();
     await idleInput();
     const reply = responses().last();

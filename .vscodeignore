@@ -83,6 +83,7 @@ GLM*
 CODEX*
 .CODEX*
 codex.md
+.codex
 .codex/**
 .gemini/**
 .cursor/**

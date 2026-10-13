@@ -138,3 +138,17 @@ export function findBadgeReplayTrace(rootDir) {
   if (!trace) throw setupError();
   return trace;
 }
+
+/** Selects recorded badge setup unless fresh real-model analysis is explicitly requested. */
+export function badgeReplayTrace(rootDir, freshAnalysis) {
+  if (![undefined, '', '0', '1'].includes(freshAnalysis)) {
+    throw new Error('DLV_CHAT_UI_BADGE_LIVE must be 0 or 1.');
+  }
+  return freshAnalysis === '1' ? undefined : findBadgeReplayTrace(rootDir);
+}
+
+/** Throws the captured provider failure for the current native UI request, preserving its cause. */
+export function assertUiProviderHealthy(errors, firstErrorIndex) {
+  const failure = errors[firstErrorIndex];
+  if (failure) throw new Error(`Native UI provider request ${failure.requestIndex}: ${failure.message}`);
+}

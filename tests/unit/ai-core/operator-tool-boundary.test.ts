@@ -4,6 +4,7 @@
  * Transport retries, Langfuse upload, and stage-replay mechanics stay with those operator tools.
  * These rows keep the configuration failures and the secret boundary that must not regress.
  */
+import { z } from 'zod';
 import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -104,6 +105,19 @@ describe('operator runner configuration', () => {
     ]);
     expect(turnChecks(run, { ...turn('Price rules'), events: [{ type: 'error', recoverable: true }] }, false))
       .toEqual(['rejections 1 exceeded max 0']);
+  });
+
+  it.each([
+    { label: 'unused approval', gate: [{ kind: 'approve' }], gates: [], first: true, failures: ['gate round 1 was not exercised'] },
+    { label: 'approval', gate: [{ kind: 'approve' }], gates: [{ decision: 'approve' }], first: true, failures: [] },
+    { label: 'wrong decision', gate: [{ kind: 'approve' }], gates: [{ decision: 'deny' }], first: true, failures: ['gate round 1 decision deny, expected approve'] },
+    { label: 'missing second step', gate: [{ kind: 'refine', instruction: 'one level upstream' }, { kind: 'approve' }], gates: [{ decision: 'refine', instruction: 'one level upstream' }], first: true, failures: ['gate round 2 was not exercised'] },
+    { label: 'wrong refinement', gate: [{ kind: 'refine', instruction: 'one level upstream' }], gates: [{ decision: 'refine', instruction: 'all levels' }], first: true, failures: ['gate round 1 refinement differs from catalog'] },
+    { label: 'follow-up', gate: [{ kind: 'approve' }], gates: [], first: false, failures: [] },
+  ] as const)('checks the catalog gate path for $label', ({ gate, gates, first, failures }) => {
+    expect(turnChecks({ expectTerminal: 'ok', gate }, {
+      terminalStatus: 'ok', outcome: { outcome: 'ok' }, events: [], text: 'Synthetic answer.', gates,
+    }, first)).toEqual(failures);
   });
 
   it.each([['--timeout-ms', '0'], ['--timeout-ms', 'NaN'], ['--request-timeout-ms', '0'], ['--request-timeout-ms', 'NaN'], ['--request-timeout-ms', '7200001'], ['--request-timeout-ms'], ['--prompt'], ['--runs', '10']])(
@@ -223,6 +237,46 @@ describe('operator secret boundary', () => {
     } as unknown as ParsedRun;
     const generation = { requestId: 'r', generation: 1 } as GenerationEntry;
     expect(verboseContent(run, generation)).toEqual({});
+  });
+
+  it.each([
+    ['{"value":"synthetic-secret",}', false, 'Invalid JSON syntax: trailing comma at character 28.'],
+    ['{"value":"synthetic-secret"', false, 'Invalid JSON syntax: incomplete value at character 27.'],
+    ['["synthetic-secret"]', false, null],
+    ['{"value":"synthetic-secret"}', true, null],
+  ] as const)('keeps tool input identity and logs content-free syntax diagnostics: %s', async (raw, valid, diagnostic) => {
+    const diagnostics: string[] = [];
+    const port = new OpenAiCompatiblePort(
+      { baseUrl: 'https://provider.example/v1', apiKey: 'unrelated-key', model: 'synthetic-model' },
+      { debugLog: line => diagnostics.push(line), fetchImpl: async () => new Response(JSON.stringify({
+        choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{
+          id: 'original-call', type: 'function', function: { name: 'synthetic_tool', arguments: raw },
+        }] } }],
+      })) },
+    );
+    const outcome = await port.generateToolTurn({
+      messages: [modelUserMessage('synthetic input')],
+      tools: [{ name: 'synthetic_tool', description: 'Synthetic boundary', inputSchema: z.object({ value: z.string() }) }],
+      toolChoice: 'auto', phase: 'discovery',
+    });
+    expect(outcome.status).toBe('completed');
+    if (outcome.status !== 'completed') throw new Error('Unexpected transport failure');
+    const call = outcome.toolCalls[0]!;
+    expect(call.callId).toBe('original-call');
+    if (valid) {
+      expect(call.valid).toBe(true);
+      expect(call.input).toEqual({ value: secret });
+    } else {
+      expect(call.valid).toBe(false);
+      expect(call.input).toBe(raw);
+      if (call.valid) throw new Error('Malformed input accepted');
+      expect(call.code).toBe('invalid_tool_input');
+      expect(call.reason).toBe('Tool arguments were not a JSON object; send the required fields as one JSON object.');
+      if (diagnostic) expect(diagnostics.some(line => line.includes(diagnostic))).toBe(true);
+      expect(diagnostics.filter(line => line.startsWith('[AI] tool-arguments')).join(' ')).not.toContain(secret);
+      expect(call.reason).not.toContain(secret);
+      expect(call.reason.length).toBeLessThan(240);
+    }
   });
 
   it('does not return the API key from an HTTP rejection', async () => {
