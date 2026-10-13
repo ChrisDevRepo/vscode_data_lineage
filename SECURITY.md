@@ -29,13 +29,11 @@ Allow time for a fix to be released before disclosing the issue publicly.
 
 ## Security notes
 
-- `.dacpac` files are parsed offline. Object DDL is parsed, never executed.
-- A live import runs catalog/DMV queries only when you start it. Built-in queries are read-only; custom DMV SQL is trusted local configuration and runs as written.
-- Table statistics run row-count and aggregate `SELECT` queries only when you request them.
-- The extension connects only to the database you configure, with SQL login or Microsoft Entra ID, and to Microsoft Entra ID sign-in when you use it. It sends no usage data anywhere.
-- `@lineage` passes your prompt, its chat history, and the lineage metadata or SQL its tools return to that model. It cannot connect to a database, run SQL, import or profile.
-- Custom YAML (parse rules, DMV queries, AI templates) is trusted configuration; do not load files you have not reviewed. In an untrusted workspace, workspace values for these settings and `excludePatterns` are ignored.
-- The webview's Content Security Policy blocks everything by default and allows only nonce-tagged scripts.
-- AI trace logging is off by default. When enabled it writes prompts, responses, SQL and tool payloads to `tmp/lm-trace/` in the first workspace folder until the extension host restarts. **Dump AI State Machine** writes to `tmp/sm-dumps/`. Review these files and **Copy Debug Info** output before sharing.
-- **Trust Server Certificate**, offered after a certificate error, disables certificate validation for that connection.
-- Use a read-only database login for live imports.
+- `.dacpac` files are read locally; the SQL in them is never run.
+- The extension connects only to your database and, if you use it, Microsoft Entra ID sign-in.
+- Built-in database queries are read-only and run only when you start an import or profiling. Custom DMV SQL runs as you wrote it.
+- `@lineage` sends your question, recent chat and the SQL or metadata it reads to the model you picked in VS Code chat. It cannot connect to a database or run SQL.
+- Logs stay local. AI trace files (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`) are written only when you run their commands. They contain SQL; check them before sharing.
+- Custom YAML files run as trusted configuration; load only files you have reviewed. Untrusted workspaces ignore them.
+- **Trust Server Certificate** turns off certificate checks for that connection.
+- Use a read-only database login.
