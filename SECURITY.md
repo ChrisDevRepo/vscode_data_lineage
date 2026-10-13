@@ -33,7 +33,6 @@ Allow time for a fix to be released before disclosing the issue publicly.
 - A live import runs catalog/DMV queries only when you start it. Built-in queries are read-only; custom DMV SQL is trusted local configuration and runs as written.
 - Table statistics run row-count and aggregate `SELECT` queries only when you request them.
 - The extension connects only to the database you configure, with SQL login or Microsoft Entra ID, and to Microsoft Entra ID sign-in when you use it. It sends no usage data anywhere.
-- `@lineage` passes requests to the language model selected in VS Code through VS Code's language model API. VS Code, Copilot and the model provider handle those requests; their data handling is governed by their own terms, not by this extension.
 - `@lineage` passes your prompt, its chat history, and the lineage metadata or SQL its tools return to that model. It cannot connect to a database, run SQL, import or profile.
 - Custom YAML (parse rules, DMV queries, AI templates) is trusted configuration; do not load files you have not reviewed. In an untrusted workspace, workspace values for these settings and `excludePatterns` are ignored.
 - The webview's Content Security Policy blocks everything by default and allows only nonce-tagged scripts.
