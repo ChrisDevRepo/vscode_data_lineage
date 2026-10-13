@@ -60,11 +60,7 @@ Each step is a **hop**: the AI reads one object's SQL, records what it does, and
 Exploration runs in one of two modes, chosen when you approve the plan:
 
 - **BB** (object lineage) follows whole objects: which procedures and views feed a table, and what they do.
-- **CT** (column trace) builds on BB: it follows named columns through the same objects and adds column detail.
-
-### Column trace
-
-The engine traces objects only; column lineage comes from the AI. In CT the AI reads each object's SQL and reports which source columns feed each traced column: copied, computed, aggregated, or only used to join or filter. The engine checks every column it names against the loaded metadata. Column links are AI findings; check them against the SQL.
+- **CT** (column trace) is an AI-only option on top of BB: the AI reads each object's SQL and reports which source columns feed each named column (copied, computed, aggregated, or only used to join or filter). The engine has no column lineage of its own; it only checks that every column the AI names exists. Check column links against the SQL.
 
 ### Large graphs and memory
 
