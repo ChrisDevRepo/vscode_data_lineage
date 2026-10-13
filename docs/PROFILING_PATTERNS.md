@@ -67,6 +67,8 @@ Sampling applies when the row count exceeds `dataLineageViz.tableStatistics.samp
 
 `sampleSize` is `dataLineageViz.tableStatistics.sampleSize` (default 10,000). If the server rejects `TABLESAMPLE`, the statement is sent once more without it as a full scan, and the result is shown as unsampled.
 
+Row-count headers show the catalog row count. On a `TABLESAMPLE` run, NULL %, completeness and uniqueness are computed against the rows the sample read, so they describe the sample; an empty sample falls back to the catalog row count as the denominator. On Fabric Data Warehouse the metrics are full-scan aggregates although the statistics show a sampling indicator.
+
 ## Diagnostics
 
 In **View → Output → Data Lineage Viz** at **Debug** level, `[Stats]` and `[DB]` entries show each request and statement. Logs may contain object and column names.

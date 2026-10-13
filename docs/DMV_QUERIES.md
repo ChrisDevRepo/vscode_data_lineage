@@ -88,7 +88,15 @@ If it is missing, fails or returns nothing, the import continues with `Unknown d
 | Filter | Schema-qualified references only (`referenced_schema_name` and `referenced_entity_name` not NULL); `referenced_class = 1`; referencing object not `is_ms_shipped`; referencing or referenced schema in `{{SCHEMAS}}` |
 | Returns | One row per reference: `referencing_schema`, `referencing_name`, `referenced_schema`, `referenced_name`, `referenced_database`, `referenced_server`, `referencing_column`, `referenced_column`, `referenced_type` |
 
-`sys.sql_expression_dependencies` does not record dynamic SQL or schema-less names; those references come only from the [parse rules](PARSE_RULES.md), if at all.
+## Known limitations
+
+| Limitation | Reason |
+|------------|--------|
+| Dynamic SQL dependencies not captured | `sys.sql_expression_dependencies` only tracks static references. |
+| Remote database internals not introspected | Three- or four-part references can surface as virtual cross-database nodes when metadata exposes database/schema/object names, but DMV import remains scoped to the connected database. |
+| Unqualified / unresolved references may be excluded | Built-in dependency SQL filters unresolved rows; parser fallback can recover some schema-qualified references from SQL bodies, but default-schema ambiguity is not reliable. |
+
+These are metadata-source limits rather than UI-only gaps.
 
 ## Custom queries
 

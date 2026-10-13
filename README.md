@@ -74,18 +74,18 @@ Details: [`SECURITY.md`](SECURITY.md).
 
 ## Limitations
 
-The graph comes from database metadata only. Not covered:
+The lineage graph is built from database DDL/catalog metadata only. The following are out of scope:
 
-- **External pipelines** (ADF, SSIS, Spark, Dataflow): their target tables appear as leaves.
-- **Other databases or servers**: shown as external nodes, not explored.
-- **Dynamic SQL** (`EXEC(@sql)`, `sp_executesql`).
-- **References without a schema**: ambiguous; catalog metadata resolves some, the rest may not resolve.
-- **Triggers, synonyms, CLR modules, extended stored procedures, sequences and user-defined types**: not loaded, and references through them are lost.
-- **Encrypted or unviewable procedures**: shown without dependencies, with a warning.
-- **Features that are not database objects** (JSON, XML, vector, `PREDICT`, SQL Graph syntax, column methods, variables): ignored; the tables around them are read as usual.
-- **Column-level lineage**: the graph is object-level. Column traces come from `@lineage` and its language model; check them against the SQL.
+- **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source. Target tables appear as leaves; the upstream pipeline does not.
+- **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected.
+- **Dynamic SQL** — `EXEC(@sql)` and `sp_executesql` cannot be analysed statically.
+- **Unqualified references** — references without a schema prefix are ambiguous; metadata may resolve some known dependencies, but dynamic/default-schema cases are not guaranteed.
+- **Triggers, synonyms and other object kinds** — only tables, views, functions, stored procedures and external objects are loaded. Triggers, synonyms, CLR modules, extended stored procedures, sequences and user-defined types are not: they do not appear as nodes, and references made through them do not become edges.
+- **Features that are not database objects** — built-in and function-style features (JSON, XML, vector, `PREDICT`, SQL Graph syntax), types, column methods and variables are ignored. The tables around them are read as usual.
+- **Unreadable definitions** — a stored procedure created `WITH ENCRYPTION`, or one whose definition the connected user may not view, is shown as a node without dependencies and marked with a warning; its body cannot be read.
+- **Column-level lineage** — the graph is object-level. Column traces come from `@lineage` and its language model; check them against the SQL.
 
-Synapse serverless SQL pool is not supported. Parse details: [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md).
+Supported platforms are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse Dedicated SQL Pool. Synapse serverless SQL pool is not supported. The parse details are in [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md).
 
 ## FAQ
 

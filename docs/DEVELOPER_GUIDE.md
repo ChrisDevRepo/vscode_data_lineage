@@ -36,7 +36,7 @@ flowchart LR
     MODEL --> GRAPH[Lineage graph]
 ```
 
-A `.dacpac` and a live database produce the same database model through the same parse rules; the model's `source` field (`'dacpac'` or `'database'`) records which. The DMV extractor runs `assets/dmvQueries.yaml` as described in [`DMV_QUERIES.md`](DMV_QUERIES.md#query-execution); a change to SQL sent to a live database updates that page in the same commit. SQL parse regexes are in `assets/defaultParseRules.yaml`, and the passes are listed in [`PARSE_RULES.md`](PARSE_RULES.md#what-the-rules-see).
+A `.dacpac` and a live database produce the same database model through the same parse rules; the model's `source` field (`'dacpac'` or `'database'`) records which. The DMV extractor runs `assets/dmvQueries.yaml` as described in [`DMV_QUERIES.md`](DMV_QUERIES.md#query-execution); a change to SQL sent to a live database updates that page in the same commit. SQL parse regexes are in `assets/defaultParseRules.yaml`, and the passes are listed in [`PARSE_RULES.md`](PARSE_RULES.md#how-sql-is-read).
 
 Saved projects are read tolerantly and written through the strict schemas in `src/engine/shared/bridgeContract.ts`, which keep credentials out of the store. A change to the saved project or filter-profile shape needs a reviewed compatibility path.
 
