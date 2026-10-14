@@ -950,13 +950,9 @@ export function createMessageHandlers(
     'view-render-result': (msg) => {
       const logger = Logger.create(outputChannel, 'Bridge');
       if (msg.of === 0) return;
-      if (msg.rendered === msg.of) {
-        logger.debug(`AI view rendered — ${msg.rendered}/${msg.of} nodes resolved`);
-      } else if (msg.rendered > 0) {
-        logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model: ${trunc(msg.unresolved.join(', '), 200)}`);
-      } else {
-        logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model. unresolved: ${trunc(msg.unresolved.join(', '), 200)}`);
-      }
+      if (msg.rendered === 0) logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model`);
+      else if (msg.rendered < msg.of) logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model`);
+      logger.debug(`AI view rendered ${msg.rendered}/${msg.of}${msg.unresolved.length ? ` — unresolved: ${trunc(msg.unresolved.join(', '), 200)}` : ''}`);
     },
   };
 
@@ -1077,7 +1073,8 @@ async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChann
 async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, token: vscode.CancellationToken, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
   const queries = await loadQueries();
   if (token.isCancellationRequested) return;
-  host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
+  host.log('info', 'DB', `Running Phase 2 queries for ${schemas.length} schema(s)`);
+  host.log('debug', 'DB', `Phase 2 schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
   const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;

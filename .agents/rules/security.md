@@ -8,8 +8,8 @@
 - An incomplete submission receives the exact missing neighbor or target and a repair hint requesting only the missing entries plus the required tool envelope. Retain unrelated valid fields, merge the correction and revalidate before commit. Do not require the model to regenerate held answers.
 - A fault the sender cannot correct (backend state, thrown exception) ends the run as a logged error; it is never returned as a retry request.
 - Keep credentials in VS Code SecretStorage or process environment as appropriate; never log or commit credentials.
-- Use `src/utils/log.ts` for extension output. Messages must be single-line; diagnostic detail belongs at debug level.
-- Avoid emitting database identifiers, SQL bodies or model content unless the user explicitly invokes the relevant diagnostic action.
+- Use `src/utils/log.ts` for extension output. Messages must be single-line. Debug is the lowest output-log level: database identifiers, SQL text and other diagnostic detail are logged only at debug; error, warn and info give outcomes and counts.
+- More detail than debug exists only for AI runs: the local NDJSON trace the user enables per session, and Langfuse debug tracing when configured. Prompts, model responses and tool payloads go only there.
 - Do not add customer data, secrets, raw model conversations, generated traces or test output to tracked files.
 - Keep external tracing disabled unless explicitly configured. Do not add a telemetry SDK or transmit content through an unconfigured tracing path.
 - Preserve LangSmith containment: the `stubs/langsmith` npm override, the fail-closed runtime tracing guard, the `assert-no-langsmith` gate step, and the `@langchain/core` pin. Do not remove a layer or suppress its check. `scripts/repair-langsmith-stub.mjs` repairs the override after installation.

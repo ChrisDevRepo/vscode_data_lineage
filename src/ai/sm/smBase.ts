@@ -2147,9 +2147,9 @@ export class NavigationEngine implements IHopStateMachine {
     const guiHiddenLine = guiHiddenIgnored.length > 0 ? ` gui_hidden_in_scope=[${guiHiddenIgnored.join(',')}]` : '';
     const excludeNodeIdsLine = excludeIds.resolved.length > 0 ? ` excludeNodeIds=[${trunc(excludeIds.resolved, 10)}]` : '';
     if (wasRefine) {
-      this.log('info', `[BFS-refine] cause=user_refine origin=${originNode.id} dir=${direction} depth=${depthLabel}${excludeNodeIdsLine} → scope=Δ (was=${prevScopeSize} now=${this.scopeNodeIds.size}) (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excludedTypesAnnotated}]${guiHiddenLine}`);
+      this.log('debug', `[BFS-refine] cause=user_refine origin=${originNode.id} dir=${direction} depth=${depthLabel}${excludeNodeIdsLine} → scope=Δ (was=${prevScopeSize} now=${this.scopeNodeIds.size}) (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excludedTypesAnnotated}]${guiHiddenLine}`);
     } else {
-      this.log('info', `[BFS] origin=${originNode.id} dir=${direction} depth=${depthLabel} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excludedTypesAnnotated}]${excludeNodeIdsLine}${guiHiddenLine}`);
+      this.log('debug', `[BFS] origin=${originNode.id} dir=${direction} depth=${depthLabel} → scope=${this.scopeNodeIds.size} (tables=${breakdown.table}, views=${breakdown.view}, procs=${breakdown.procedure}, functions=${breakdown.function}) excludeTypes=[${excludedTypesAnnotated}]${excludeNodeIdsLine}${guiHiddenLine}`);
     }
 
     const contractParts = [
@@ -2269,7 +2269,7 @@ export class NavigationEngine implements IHopStateMachine {
       for (const id of bridge) connectors.add(id);
       admitted.push(node.id);
     }
-    if (admitted.length > 0) this.log('info', `[Border] supplement admit ids=[${admitted.join(',')}]`);
+    if (admitted.length > 0) this.log('debug', `[Border] supplement admit ids=[${admitted.join(',')}]`);
     return { admitted, connectors: [...connectors], skipped };
   }
 
@@ -2300,7 +2300,7 @@ export class NavigationEngine implements IHopStateMachine {
   private restoreConnectors(ids: readonly string[]): void {
     const restored = ids.filter(id => this.removedSet.has(id));
     for (const id of restored) this.unprune(id);
-    if (restored.length > 0) this.log('info', `[Supplement] restore pruned connector(s) ids=[${restored.join(', ')}] — on the path joining the named target to the trace; state prune → kept`);
+    if (restored.length > 0) this.log('debug', `[Supplement] restore pruned connector(s) ids=[${restored.join(', ')}] — on the path joining the named target to the trace; state prune → kept`);
   }
 
   /**
