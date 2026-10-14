@@ -94,12 +94,13 @@ interface SelfPruneCase {
   graph: { edges: Array<[string, string]> };
   expect: {
     eligible: boolean;
+    /** Eligible, but the removal is rejected because committed column mappings name the node. */
+    refused?: boolean;
     pruned: string[];
     unvisited?: string[];
     inspected?: string[];
     kept?: string[];
     edges?: Array<[string, string]>;
-    column_edges?: ColumnEdge[];
   };
 }
 
@@ -173,7 +174,7 @@ describe('lineage case catalog', () => {
     expect(storedArrivalCases.length).toBeGreaterThan(0);
     expect(selfPruneCases.length).toBeGreaterThan(0);
     expect(selfPruneCases.every(row => typeof row.story === 'string' && row.story.trim().length > 0)).toBe(true);
-    for (const row of selfPruneCases.filter(row => row.expect.eligible)) {
+    for (const row of selfPruneCases.filter(row => row.expect.eligible && !row.expect.refused)) {
       expect(Object.keys(row.expect)).toEqual(expect.arrayContaining(['unvisited', 'pruned', 'inspected', 'kept', 'edges']));
     }
     expect(scriptedCatalog.every(row => row.contract === undefined || row.contract === 'stored-arrival' || row.contract === 'self-prune')).toBe(true);
@@ -631,8 +632,9 @@ describe('current-hop removal after unresolved passthrough', () => {
       expect(engine.getDetailSlots()).toEqual(details);
     }
     const pruned = engine.pruneCurrent(focus, 'This whole node is irrelevant to the investigation.');
-    if (!row.expect.eligible) {
+    if (!row.expect.eligible || row.expect.refused) {
       expect(pruned).toHaveProperty('code', 'invalid_input');
+      if (row.expect.refused) expect(pruned).toHaveProperty('reason', expect.stringContaining('Committed column mappings name [d].[Current]'));
       expect(engine.toJSON()).toEqual(before);
       expect(engine.getDetailSlots()).toEqual(details);
       if (mapped) {
@@ -646,12 +648,15 @@ describe('current-hop removal after unresolved passthrough', () => {
       }
       return;
     }
-    expect(pruned).toHaveProperty('ok', true);
-    expect(engine.columnAspect?.edges).toEqual(row.expect.column_edges ?? before.columnAspect?.edges);
+    const { cut_ids: cut = [], ...ack } = pruned as { ok: true; pruned: string[]; cut_ids?: string[] };
+    expect(ack.pruned[0]).toBe(focus);
+    expect([...ack.pruned, ...cut].sort()).toEqual([...row.expect.pruned].sort());
+    expect(engine.columnAspect?.edges).toEqual(before.columnAspect?.edges);
     expect(engine.heldFindingFocus).toBeNull();
     const after = engine.toJSON();
     expect(after.removedSet.slice().sort()).toEqual([...before.removedSet, ...row.expect.pruned].sort());
     expect(after.visited).toEqual(before.visited);
+    expect(after.removedSet.filter(id => id !== focus && before.visited.includes(id))).toEqual([]);
     expect(after.agenda.some(entry => row.expect.pruned.includes(entry.nodeId))).toBe(false);
     const inspected: string[] = [];
     for (let step = 0; step < nodes.length; step++) {

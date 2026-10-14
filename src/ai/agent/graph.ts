@@ -1197,6 +1197,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     let terminalTool = 'lineage_submit_findings';
     const committedFinding: { value: { summary: string } | null } = { value: null };
     const inputMessages = [...state.messages, hopMessage];
+    const isHopCommit = (toolName: string): boolean => deps.registry.get(toolName)?.effect === 'hop_commit';
 
     logClassificationGating(deps, 'active', classification, [
       ...systemInstruction.classificationGatedKeys,
@@ -1227,7 +1228,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       canPruneCurrent: () => engine.canPruneCurrent,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, _input, isError) => {
-        if (toolName !== 'lineage_submit_findings' && toolName !== 'lineage_prune_current') return;
+        if (!isHopCommit(toolName)) return;
         terminalTool = toolName;
         if (!isError) {
           submitted = true;
@@ -1238,7 +1239,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const rejectedCommitTool = res.rejections.find(rejection => rejection.toolName === 'lineage_submit_findings' || rejection.toolName === 'lineage_prune_current')?.toolName;
+    const rejectedCommitTool = res.rejections.find(rejection => isHopCommit(rejection.toolName))?.toolName;
     const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt, rejectedCommitTool ?? terminalTool);
 
     if (res.stop === 'error') {

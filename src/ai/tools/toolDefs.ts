@@ -93,7 +93,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_prune_current', title: 'Prune Current Node', inputSchema: PruneCurrentInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
     userDescription: 'Remove the current irrelevant node after passthrough routing.',
-    modelDescription: 'Optional alternative to submit_findings, available only on a hop reached through passthrough. If this whole node is irrelevant to the investigation, hard-cut it and the unvisited nodes removed by the normal pruning rules. This removes the object, rather than ending a column continuation. BB and CT use the same command. Send one hop commit command per reply.',
+    modelDescription: 'Optional alternative to submit_findings, available only on a hop reached through passthrough. If this whole node is irrelevant to the investigation, hard-cut it and the unvisited nodes removed by the normal pruning rules; the result lists the node in `pruned` and the nodes cut with it in `cut_ids`. It is rejected when committed analysis or column mappings depend on the node. This removes the object, rather than ending a column continuation. BB and CT use the same command. Send one hop commit command per reply.',
   },
   {
     name: 'lineage_present_result', title: 'Present Lineage View', inputSchema: PresentResultModelSchema, tags: ['lineage-presentation'], effect: 'presentation_commit',

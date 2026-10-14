@@ -468,7 +468,8 @@ const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough. ';
  */
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path; that neighbor and whatever only it leads to are removed. '
-  + 'The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
+  + 'The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry. '
+  + 'A commit result lists removed neighbors in `pruned` and the nodes cut with them in `cut_ids`; a prune that would disconnect committed analysis is rejected.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
