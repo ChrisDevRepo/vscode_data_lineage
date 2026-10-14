@@ -49,48 +49,6 @@ export class ColumnTracer {
     return this.aspect;
   }
 
-  /**
-   * The aspect as delivered, minus the edges whose endpoint the render dispositioned away.
-   *
-   * @remarks
-   * A projection for delivery only, never a mutation: {@link state} keeps every committed edge, so
-   * the state dump records the full chain and completeness accounting reads the same edge set it
-   * always did. `target_columns`/`active_columns` carry through untouched. Every
-   * call projects the edges that remain after withholding through {@link columnAttachment} of `roots`:
-   * an edge outside it (one whose path ran through a withheld endpoint) is withheld too and named in one `log` line; no edge is added or rewritten.
-   *
-   * @param droppedEndpointIds - Endpoint node ids the render withheld; empty on almost every call.
-   * @param roots - The requested output columns the trace started from.
-   * @param direction - The approved trace direction that defines the closure.
-   * @param log - Optional logger naming the edges withheld by the closure.
-   * @param rendered - Node ids of the delivered object result; an edge whose destination or
-   *   authoring hop is outside it is withheld and named in one `log` line. A source may lie outside.
-   * @returns The aspect to deliver — the live state itself when nothing was withheld.
-   */
-  deliveredState(
-    droppedEndpointIds: ReadonlySet<string>,
-    roots: readonly { node: string; col: string }[],
-    direction: 'upstream' | 'downstream' | 'both',
-    log?: TracerLogFn,
-    rendered?: ReadonlySet<string>,
-  ): ColumnAspect {
-    const present = this.aspect.edges.filter(
-      e => !droppedEndpointIds.has(e.from_node) && !droppedEndpointIds.has(e.to_node));
-    const kept = rendered ? present.filter(e => rendered.has(e.to_node) && rendered.has(e.hop_node)) : present;
-    if (kept.length < present.length) {
-      const absent = present.filter(e => !kept.includes(e)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col} (hop ${e.hop_node})`);
-      log?.('debug', `[Disposition] getResult withholds ${absent.length} column edge(s) whose destination or authoring hop is not in the delivered object result — ${absent.join(', ')}`);
-    }
-    const endpointKey = columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive);
-    const closure = columnAttachment(roots, kept, direction, endpointKey);
-    const delivered = kept.filter(e => closure.attaches(e));
-    if (delivered.length < kept.length) {
-      const detached = kept.filter(e => !delivered.includes(e)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col}`);
-      log?.('debug', `[Disposition] getResult withholds ${detached.length} column edge(s) outside the closure of the tracked roots — ${detached.join(', ')}`);
-    }
-    return delivered.length === this.aspect.edges.length ? this.aspect : { ...this.aspect, edges: delivered };
-  }
-
   /** Columns requested at the start of the trace. */
   get targetColumns(): string[] {
     return this.aspect.target_columns;

@@ -399,17 +399,19 @@ function recallPruned(run: StoredAiRun): Record<string, unknown>[] {
  *
  * @remarks
  * A lead on an object the graph already shows is a deeper look, not an addition; `on_graph`
- * distinguishes the two. Resolved, scheduled and dismissed leads are history, not open.
+ * distinguishes the two; the graph shows exactly the nodes with an `analyze` or `passthrough` state.
+ * Resolved, scheduled and dismissed leads are history, not open.
  */
 function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
   const snapshot = asRecord(run.snapshot);
   const internals = asRecord(snapshot?.engineInternals);
   const leads = Array.isArray(internals?.pendingLeads) ? internals.pendingLeads : [];
   const identifierKey = (id: string): string => schemaKey(id, snapshot?.identifierCaseSensitive === true);
-  const idSet = (value: unknown): Set<string> =>
-    new Set((Array.isArray(value) ? value : []).flatMap(item => typeof item === 'string' ? [identifierKey(item)] : []));
-  const scope = idSet(snapshot?.scopeNodeIds);
-  const offGraph = new Set([...idSet(snapshot?.removedSet), ...idSet(snapshot?.renderDroppedNodeIds)]);
+  const onGraph = new Set((Array.isArray(snapshot?.nodeStates) ? snapshot.nodeStates : []).flatMap(raw => {
+    const state = asRecord(raw);
+    const id = asString(state?.nodeId);
+    return id !== null && state?.action !== 'prune' ? [identifierKey(id)] : [];
+  }));
   return leads.flatMap(raw => {
     const lead = asRecord(raw);
     const id = asString(lead?.nodeId);
@@ -418,7 +420,7 @@ function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
     const key = identifierKey(id);
     return [definedOnly({
       id,
-      on_graph: scope.has(key) && !offGraph.has(key),
+      on_graph: onGraph.has(key),
       from: optionalString(lead?.fromNodeId),
       reason: optionalString(lead?.reason),
       value: optionalString(lead?.valueToUser),
