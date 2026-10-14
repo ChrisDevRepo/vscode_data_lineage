@@ -12,7 +12,6 @@
 import { escapePromptText } from '../support/text';
 import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
 import type { InvestigationTask } from '../sm/smTypes';
-import { taskPromptText } from '../sm/taskLedger';
 
 /**
  * Phase key used by the TS prompt protocol builders.
@@ -770,24 +769,21 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * questions are always this focus's own, carried on its AgendaEntry, never a
  * different node's.
  *
- * A task forwarded through a passthrough renders its stored re-anchor sentence on the line after
- * its question, inside the same `<sub_question>`.
- *
  * @param currentTasks - Structured tasks assigned to the active node.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.
  * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
- * @returns Structured `<current_task>` XML block; a task with neither question nor re-anchor renders no element,
+ * @returns Structured `<current_task>` XML block; a task without a question renders no element,
  *   and the result is an empty string when no element would render.
  */
 export function buildCurrentTaskBlock(
-  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'reAnchor'>>,
+  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question'>>,
   columnTraceColumns?: string[],
   columnLineageQuestions?: string[],
 ): string {
   if (currentTasks.length === 0) return '';
   const lines = ['<current_task>'];
   for (const task of currentTasks) {
-    const question = taskPromptText(task).trim();
+    const question = task.question.trim();
     if (!question) continue;
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
     lines.push(`  <${tag}>${escapePromptText(question)}</${tag}>`);

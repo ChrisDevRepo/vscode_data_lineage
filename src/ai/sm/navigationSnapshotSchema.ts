@@ -182,7 +182,9 @@ const CtTaskSchema = z.object({
   callerContext: z.object({ node: NonEmptyString, col: NonEmptyString, callerTaskId: NonEmptyString, ddlHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
 
-const InvestigationTaskSchema = z.discriminatedUnion('kind', [BbTaskSchema, CtTaskSchema]);
+/** A retired `reAnchor` on a saved task is accepted and dropped. */
+const InvestigationTaskSchema = z.discriminatedUnion('kind', [BbTaskSchema, CtTaskSchema])
+  .transform(({ reAnchor: _legacyReAnchor, ...task }) => task);
 
 const PendingLeadSchema = z.object({
   id: NonEmptyString,

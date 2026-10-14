@@ -58,6 +58,16 @@ describe('checkpoint identity ownership', () => {
     expect(read).toBeDefined();
     expect(read!.snapshot.engineInternals).not.toHaveProperty('bodiedScopeSize');
   });
+  it('reads a run saved with a retired task reAnchor and drops it', () => {
+    const saved = JSON.parse(JSON.stringify(record('[dbo].[ordinary]', true)));
+    const tasks = saved.snapshot.engineInternals.investigationTasks;
+    expect(tasks.length).toBeGreaterThan(0);
+    tasks[0].reAnchor = '(Inherited through passthrough [dbo].[t]; re-anchor this question to [dbo].[ordinary].)';
+    const read = readStoredRun({ get: <T,>() => saved as T }, 'saved-view');
+    expect(read).toBeDefined();
+    expect(read!.snapshot.engineInternals.investigationTasks[0]).not.toHaveProperty('reAnchor');
+    expect(read!.snapshot.engineInternals.investigationTasks[0].question).toBe(tasks[0].question);
+  });
   it('continues to recall ordinary legacy IDs unchanged', async () => {
     const { result } = await recall('[dbo].[ordinary]', ['[dbo].[ordinary]']);
     expect(result.objects).toEqual([expect.objectContaining({ id: '[dbo].[ordinary]', in_current_model: true, stale: false })]);

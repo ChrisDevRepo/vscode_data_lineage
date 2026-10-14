@@ -25,7 +25,7 @@ import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarRetur
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
-import { TaskLedger, taskPromptText, type InvestigationTaskInput } from './taskLedger';
+import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -2639,8 +2639,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.currentFocusNodeId = entry.nodeId;
     this.currentFocusTaskIds = [...entry.taskIds];
     for (const taskId of entry.taskIds) this.taskLedger.setTaskStatus(taskId, 'active');
-    const focusTask = this.taskLedger.getTask(entry.taskIds[0]);
-    this.currentFocusQuestion = focusTask ? taskPromptText(focusTask) : null;
+    this.currentFocusQuestion = this.taskLedger.getTask(entry.taskIds[0])?.question ?? null;
 
     if (this.tracer) {
       this.tracer.setActiveColumns(entry.activeColumns || []);

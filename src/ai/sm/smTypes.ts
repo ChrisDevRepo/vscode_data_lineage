@@ -714,13 +714,6 @@ interface InvestigationTaskBase {
   source: 'mission' | 'model' | 'engine';
   /** Question the hop must answer, as authored; synthesis receives only this text. */
   question: string;
-  /**
-   * Engine-authored passthrough re-anchor sentence, set when the question was forwarded through a
-   * non-bodied node to this bodied one. Rendered after `question` in the hop's `<current_task>`
-   * only; it never reaches synthesis. Absent on older snapshots, whose `question` may already end
-   * with the sentence.
-   */
-  reAnchor?: string;
   /** Node the task applies to, when known. */
   nodeId?: string;
   /** Parent task for a routed or contracted continuation. */

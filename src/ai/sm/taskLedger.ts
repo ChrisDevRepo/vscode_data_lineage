@@ -13,8 +13,6 @@ export type InvestigationTaskInput = {
   source: InvestigationTask['source'];
   /** The question this task exists to answer, compared by normalized identity. */
   question: string;
-  /** Passthrough re-anchor sentence for the receiving hop; part of the task identity when present. */
-  reAnchor?: string;
   /** Object the task is pinned to, when it concerns one node rather than the walk. */
   nodeId?: string;
   /** Task this one was split from, so a resolved child rolls up to its parent. */
@@ -33,19 +31,6 @@ export type InvestigationTaskInput = {
   /** Column-lineage task: the traced columns it must follow, at least one. */
   | { kind: 'column_lineage'; activeColumns: [string, ...string[]]; returnTargets?: ScalarReturnTarget[]; sourceRefs?: ScalarReturnTarget[] }
 );
-
-/**
- * The text a hop is asked for one task: the authored question followed, on its own line, by the
- * passthrough re-anchor sentence when the task carries one.
- *
- * @param task - Task whose hop-facing text is rendered.
- * @returns The question alone when no re-anchor is stored, the re-anchor alone when the question is
- *   blank, otherwise both joined by a newline.
- */
-export function taskPromptText(task: Pick<InvestigationTask, 'question' | 'reAnchor'>): string {
-  if (!task.reAnchor) return task.question;
-  return task.question.trim() ? `${task.question}\n${task.reAnchor}` : task.reAnchor;
-}
 
 /** Normalizes authored questions for exact identity comparison without substring matching. */
 function normalizeText(value: string): string {
@@ -162,7 +147,6 @@ export class TaskLedger {
         ? [input.returnTargets.map(target => [this.identifierKey(target.node), normalizeColName(target.col, this.identifierCaseSensitive)]).sort()]
         : []),
       ...(input.callerContext ? [[input.callerContext.node, input.callerContext.col, input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
-      ...(input.reAnchor ? [{ reAnchor: normalizeText(input.reAnchor) }] : []),
     ]);
     return this.upsertByIdentity(
       this.tasks,
