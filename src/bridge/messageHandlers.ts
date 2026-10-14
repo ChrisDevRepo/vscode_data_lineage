@@ -14,7 +14,7 @@ import {
 import { notifyError, notifyWarning } from '../utils/notifications';
 import { type BridgeHost } from './host';
 import {
-  type DatabaseModel, type XmlElement, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
+  type DatabaseModel, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
   type ExtensionConfig, type LayoutConfig, type OverviewConfig,
 } from '../engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
@@ -280,9 +280,7 @@ export function createMessageHandlers(
   reportDocumentRef: ReportDocumentRef = {}
 ): MessageHandlerBundle {
 
-  let cachedElements: XmlElement[] | null = null;
-  let cachedDspName = '';
-  let cachedIdentifierCaseSensitive = false;
+  let cachedDacpac: Awaited<ReturnType<typeof extractSchemaPreview>> | null = null;
   let lastConnectionInfo: StoredConnectionInfo | undefined;
   const dmvQueries = createDmvQueryCache(() => loadDmvQueries(outputChannel, context.extensionUri));
   const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: dmvQueries.get };
@@ -547,8 +545,8 @@ export function createMessageHandlers(
           host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
           return;
         }
-        const { preview, elements, dspName, identifierCaseSensitive } = extracted;
-        cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
+        const { preview } = extracted;
+        cachedDacpac = extracted;
         host.postMessage({
           type: 'dacpac-schema-preview',
           preview,
@@ -587,7 +585,8 @@ export function createMessageHandlers(
 
           const config = readExtensionConfig(host);
           const schemas = project.connection.schemas;
-          const { preview, elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
+          const extracted = await extractSchemaPreview(data);
+          const { preview, elements, dspName, identifierCaseSensitive, databaseName } = extracted;
           if (token.isCancellationRequested) return;
 
           if (schemas && schemas.length > 0) {
@@ -596,6 +595,7 @@ export function createMessageHandlers(
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
               externalRefsEnabled: config.externalRefs.enabled,
               identifierCaseSensitive,
+              databaseName,
             });
             if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
             logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
@@ -604,7 +604,7 @@ export function createMessageHandlers(
             host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
           } else {
             host.log('debug', 'Bridge', 'No schemas in project, showing preview');
-            cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
+            cachedDacpac = extracted;
             host.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
             host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
           }
@@ -690,8 +690,8 @@ export function createMessageHandlers(
       const token = beginLoad().token;
       if (token.isCancellationRequested) return;
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      if (!cachedElements) {
-        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedElements is null)');
+      if (!cachedDacpac) {
+        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (no cached dacpac preview)');
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
         return;
       }
@@ -699,9 +699,10 @@ export function createMessageHandlers(
       const logger = Logger.create(outputChannel, 'Parse');
       let model: DatabaseModel;
       try {
-        model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+        model = extractDacpacFiltered(cachedDacpac.elements, new Set(msg.schemas), cachedDacpac.dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
           externalRefsEnabled: config.externalRefs.enabled,
-          identifierCaseSensitive: cachedIdentifierCaseSensitive,
+          identifierCaseSensitive: cachedDacpac.identifierCaseSensitive,
+          databaseName: cachedDacpac.databaseName,
         });
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);

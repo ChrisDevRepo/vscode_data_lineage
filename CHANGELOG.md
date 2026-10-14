@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - AI rejection, retry and cancellation handling, including a cancel while a graph preview is drawn.
 - Database query timeouts, live import metadata and saved-project timestamps.
+- A DACPAC three-part name to another database no longer resolves to a local object with the same schema and name; the DACPAC name is its current database, as on a live connection.
 
 ## [1.2.5] - 2026-10-07
 

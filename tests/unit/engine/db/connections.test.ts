@@ -402,7 +402,7 @@ describe('supported bridge connection failures and logging', () => {
 
   it.each([
     ['load-project', { type: 'load-project', id: 'missing' }, 'FAILED: Load project — Project not found: missing'],
-    ['dacpac-visualize', { type: 'dacpac-visualize', schemas: ['dbo'] }, 'FAILED: Dacpac visualize — Session expired (cachedElements is null)'],
+    ['dacpac-visualize', { type: 'dacpac-visualize', schemas: ['dbo'] }, 'FAILED: Dacpac visualize — Session expired (no cached dacpac preview)'],
     ['db-visualize', { type: 'db-visualize', schemas: ['dbo'] }, 'FAILED: Database visualize — No stored connection info'],
   ])('%s logs its synthetic failure as message text with no stack of the logging site', async (key, message, expected) => {
     const { lines, handlers } = bridgeErrors();

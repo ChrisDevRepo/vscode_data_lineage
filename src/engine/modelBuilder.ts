@@ -225,6 +225,11 @@ function isSystemRef(name: string, ctx?: EdgeContext): boolean {
   return SYSTEM_SCHEMAS.has(schema);
 }
 
+/** A three-part name is local only in the current database; without one, every database part is external. */
+function isCurrentDatabase(db: string, currentDatabase: string | undefined): boolean {
+  return !!currentDatabase && stripBrackets(db).toLowerCase() === stripBrackets(currentDatabase).toLowerCase();
+}
+
 /** Classifies an existing metadata dependency using captured tuples, never body text. */
 function classifyMutation(
   mutations: ReturnType<typeof parseSqlBody>['mutations'], target: string[],
@@ -237,7 +242,7 @@ function classifyMutation(
     const matches = target.length === 2
       ? parts.length === 1 ? same(parts[0], target[1])
         : parts.length === 2 ? parts.every((part, i) => same(part, target[i]))
-        : parts.length === 3 && (!currentDatabase || parts[0].toLowerCase() === currentDatabase.toLowerCase())
+        : parts.length === 3 && isCurrentDatabase(parts[0], currentDatabase)
           && parts.slice(1).every((part, i) => same(part, target[i]))
       : parts.length === target.length && parts.every((part, i) => same(part, target[i]));
     if (!matches) continue;
@@ -799,14 +804,6 @@ function createVirtualNodes(
     }
   }
 
-  const isLocalRef = (db: string, localId: string): boolean => {
-    const normDb = stripBrackets(db).toLowerCase();
-    const normLocal = normalizeName(localId, identifierCaseSensitive);
-    if (currentDatabase && normDb === stripBrackets(currentDatabase).toLowerCase()) return true;
-    if (!currentDatabase && nodeIds.has(normLocal)) return true;
-    return false;
-  };
-
   const addLocalEdge = (sourceId: string, localId: string, isWrite: boolean, deleteOnly = false): void => {
     const resolved = normalizeName(localId, identifierCaseSensitive);
     if (!nodeIds.has(resolved) || resolved === sourceId) return;
@@ -831,7 +828,7 @@ function createVirtualNodes(
       const [db, schema, object] = parts;
       const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
       const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
-      if (isLocalRef(db, localId)) {
+      if (isCurrentDatabase(db, currentDatabase)) {
         addLocalEdge(nodeId, localId, false);
         continue;
       }
@@ -847,7 +844,7 @@ function createVirtualNodes(
         const [db, schema, object] = parts;
         const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
         const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
-        if (isLocalRef(db, localId)) {
+        if (isCurrentDatabase(db, currentDatabase)) {
           addLocalEdge(nodeId, localId, true);
           continue;
         }
@@ -870,9 +867,9 @@ function createVirtualNodes(
       const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
       const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
       const mutation = sourceNode?.type === 'procedure'
-        ? classifyMutation(mutationsByNode.get(sourceId) ?? [], isLocalRef(db, localId) ? [schema, object] : parts, currentDatabase, identifierCaseSensitive) : 'read';
+        ? classifyMutation(mutationsByNode.get(sourceId) ?? [], isCurrentDatabase(db, currentDatabase) ? [schema, object] : parts, currentDatabase, identifierCaseSensitive) : 'read';
       const isWrite = mutation !== 'read';
-      if (isLocalRef(db, localId)) {
+      if (isCurrentDatabase(db, currentDatabase)) {
         addLocalEdge(sourceId, localId, isWrite, mutation === 'delete');
         continue;
       }

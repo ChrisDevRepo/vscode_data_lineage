@@ -16,6 +16,9 @@
  * edge, source and target exactly as generated. An external-ref carrier procedure instead gets an
  * `OPENROWSET` body and no `BodyDependencies`, so `modelBuilder.ts`'s independent external-reference
  * scan discovers it and creates the matching virtual node.
+ *
+ * {@link buildThreePartDacpac} writes a small DACPAC in the shape an SDK-style build emits for
+ * three-part names, with an optional `DacMetadata.xml`.
  */
 
 import JSZip from 'jszip';
@@ -162,3 +165,26 @@ export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promi
     edgeCount,
   };
 }
+
+/** Builds a dacpac shaped like an SDK-style build: a procedure that reads and writes the local and a same-named other-database table. */
+export async function buildThreePartDacpac(dacMetadata: string | undefined): Promise<Uint8Array> {
+  const zip = new JSZip();
+  zip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
+      <Model>
+        <Element Type="SqlTable" Name="[dbo].[T]" />
+        <Element Type="SqlTable" Name="[dbo].[X]" />
+        <Element Type="SqlProcedure" Name="[dbo].[usp_Sync]">
+          <Property Name="BodyScript" Value="INSERT INTO SelfDb.dbo.X (a) SELECT a FROM OtherDb.dbo.X; INSERT INTO OtherDb.dbo.T (a) SELECT a FROM dbo.T;" />
+          <Relationship Name="BodyDependencies">
+            <Entry><References Name="[dbo].[T]" /></Entry>
+            <Entry><References ExternalSource="OtherDb.dacpac" Name="[$(OtherDb)]|[dbo].[X]" /></Entry>
+          </Relationship>
+        </Element>
+      </Model>
+    </DataSchemaModel>`);
+  if (dacMetadata !== undefined) zip.file('DacMetadata.xml', dacMetadata);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+export const SELF_DB_METADATA = '<?xml version="1.0" encoding="utf-8"?><DacType xmlns="http://schemas.microsoft.com/sqlserver/dac/Serialization/2012/02"><Name>SelfDb</Name><Version>1.0.0.0</Version></DacType>';

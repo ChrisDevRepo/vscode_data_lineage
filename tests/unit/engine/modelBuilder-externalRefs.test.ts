@@ -164,9 +164,9 @@ describe('cross-database references', () => {
     expect(built.nodes.find(node => node.externalType === 'db')).toBeUndefined();
   });
 
-  it('resolves a same-database reference locally when the local object exists (dacpac path)', () => {
+  it('keeps a three-part reference external when no current database is known', () => {
     const built = buildModel(sameDbObjects(), sameDbDeps);
-    expect(built.nodes.find(node => node.externalType === 'db')).toBeUndefined();
+    expect(built.nodes.find(node => node.externalType === 'db')?.id).toBe('[mydb].[dbo].[sales]');
   });
 
   it('adds no node or edge for a catalog cross-database dependency of an out-of-scope object', () => {
@@ -351,4 +351,23 @@ describe('three-part self-reference in the current database', () => {
       [], undefined, 'MyDb');
     expect(model.edges.some(edge => edge.source === '[dbo].[src]' && edge.target === '[dbo].[pload]')).toBe(true);
   });
+});
+
+describe('three-part reference to another database that has a same-named local object', () => {
+  const body = `CREATE PROCEDURE [dbo].[pSync] AS
+    INSERT INTO OtherDb.dbo.T (a) SELECT a FROM OtherDb.dbo.X;
+    UPDATE o SET a = l.a FROM OtherDb.dbo.T o JOIN dbo.T l ON l.a = o.a`;
+  const objects = [procedure('[dbo].[pSync]', body), table('[dbo].[T]'), table('[dbo].[X]')];
+  const deps = [{ sourceName: '[dbo].[pSync]', targetName: '[dbo].[T]' }];
+
+  it.each([['a known current database', 'LocalDb'], ['no known current database', undefined]] as const)(
+    'keeps the other database external with %s', (_label, currentDatabase) => {
+      const edges = buildModel(objects, deps, undefined, currentDatabase).edges.map(edge => `${edge.source} -> ${edge.target}`).sort();
+      expect(edges).toEqual([
+        '[dbo].[psync] -> [otherdb].[dbo].[t]',
+        '[dbo].[t] -> [dbo].[psync]',
+        '[otherdb].[dbo].[t] -> [dbo].[psync]',
+        '[otherdb].[dbo].[x] -> [dbo].[psync]',
+      ]);
+    });
 });

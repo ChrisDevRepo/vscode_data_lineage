@@ -1,14 +1,16 @@
 /**
  * Pins that reopening a saved project whose source grew past `dataLineageViz.maxNodes` loads nothing
- * and reports the one object-limit message — for a DACPAC project and for a database project alike.
+ * and reports the one object-limit message — for a DACPAC project and for a database project alike —
+ * and that every DACPAC load path resolves three-part names against the DACPAC name.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
 import type { ProjectStore } from '../../../src/engine/projectStore';
 import type { DbCellValue, SimpleExecuteResult } from '../../../src/types/database';
 import { ColumnStore } from '../../../src/engine/columnStore';
 import { formatObjectLimitMessage } from '../../../src/engine/modelFilters';
-import { buildSyntheticDacpac } from '../helpers/syntheticDacpac';
+import { buildSyntheticDacpac, buildThreePartDacpac, SELF_DB_METADATA } from '../helpers/syntheticDacpac';
+import { loadParseRules } from '../helpers/testUtils';
 
 const db = vi.hoisted(() => ({ tableCount: 0, gate: undefined as Promise<void> | undefined, started: undefined as (() => void) | undefined }));
 
@@ -211,5 +213,36 @@ describe('refreshing a project against current saved data', () => {
     resume();
     await loading;
     expect(readStore().projects).toEqual([]);
+  });
+});
+
+describe('DACPAC load paths and three-part names', () => {
+  beforeAll(() => { loadParseRules(); });
+
+  const expected = [
+    '[dbo].[t] -> [dbo].[usp_sync]',
+    '[dbo].[usp_sync] -> [dbo].[x]',
+    '[dbo].[usp_sync] -> [otherdb].[dbo].[t]',
+    '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
+  ];
+  const modelEdges = (host: BridgeHost) => {
+    const frame = vi.mocked(host.postMessage).mock.calls.map(([message]) => message).find(message => message.type === 'dacpac-model');
+    if (frame?.type !== 'dacpac-model') throw new Error('Expected a loaded DACPAC model');
+    return frame.model.edges.map(edge => `${edge.source} -> ${edge.target}`).sort();
+  };
+
+  it('a saved DACPAC project keeps the DACPAC database local', async () => {
+    const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA));
+    await arrange(host, { type: 'dacpac', path: '/tmp/self.dacpac', displayName: 'Self', schemas: ['dbo'] }).handlers['load-project']({ type: 'load-project', id: 'p1' });
+    expect(modelEdges(host)).toEqual(expected);
+  });
+
+  it('an opened DACPAC keeps the DACPAC database local after schema selection', async () => {
+    const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA));
+    vi.mocked(host.showOpenDialog).mockResolvedValue([{ fsPath: '/tmp/self.dacpac' }] as never);
+    const { handlers } = arrange(host, { type: 'dacpac', path: '/tmp/self.dacpac', displayName: 'Self' });
+    await handlers['open-dacpac']({ type: 'open-dacpac' } as never);
+    await handlers['dacpac-visualize']({ type: 'dacpac-visualize', schemas: ['dbo'] } as never);
+    expect(modelEdges(host)).toEqual(expected);
   });
 });

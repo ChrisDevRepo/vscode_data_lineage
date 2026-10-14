@@ -6,6 +6,7 @@ import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, parseDspPlatform } from '../../../src/engine/dacpacExtractor';
 import { loadParseRules, testPath, loadAdventureWorksModel } from '../helpers/testUtils';
+import { buildThreePartDacpac, SELF_DB_METADATA } from '../helpers/syntheticDacpac';
 
 describe('DACPAC Extractor', () => {
   loadParseRules();
@@ -26,6 +27,38 @@ async function makeExternalRefDacpac(): Promise<Uint8Array> {
   return bytes;
 }
 
+
+const edgeList = (model: { edges: Array<{ source: string; target: string }> }) => model.edges.map(edge => `${edge.source} -> ${edge.target}`).sort();
+
+/** The DACPAC name is the current database, so three-part names resolve as they do on a live connection. */
+async function testThreePartNamesUseDacpacName() {
+  const expected = [
+    '[dbo].[t] -> [dbo].[usp_sync]',
+    '[dbo].[usp_sync] -> [dbo].[x]',
+    '[dbo].[usp_sync] -> [otherdb].[dbo].[t]',
+    '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
+  ];
+  const buffer = await buildThreePartDacpac(SELF_DB_METADATA);
+  expect(edgeList(await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true }))).toEqual(expected);
+  const { elements, dspName, identifierCaseSensitive, databaseName } = await extractSchemaPreview(buffer);
+  expect(databaseName).toBe('SelfDb');
+  const filtered = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, { externalRefsEnabled: true, identifierCaseSensitive, databaseName });
+  expect(edgeList(filtered)).toEqual(expected);
+}
+
+/** Without a readable DACPAC name, no three-part name is assumed local. */
+async function testThreePartNamesWithoutDacpacName() {
+  for (const metadata of [undefined, '<DacType><Name>', '<DacType><Version>1.0</Version></DacType>']) {
+    const buffer = await buildThreePartDacpac(metadata);
+    expect((await extractSchemaPreview(buffer)).databaseName).toBeUndefined();
+    expect(edgeList(await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true }))).toEqual([
+      '[dbo].[t] -> [dbo].[usp_sync]',
+      '[dbo].[usp_sync] -> [otherdb].[dbo].[t]',
+      '[dbo].[usp_sync] -> [selfdb].[dbo].[x]',
+      '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
+    ]);
+  }
+}
 
 /** A DACPAC foreign key keeps its ON DELETE action and a view column keeps a dotted bracketed name. */
 async function testFkDeleteActionAndDottedColumns() {
@@ -331,7 +364,7 @@ async function testPkOrdinalInModel() {
 async function testPhase1Phase2Bridge() {
 
   const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { preview, elements, dspName } = await extractSchemaPreview(buf);
+  const { preview, elements, dspName, databaseName } = await extractSchemaPreview(buf);
 
   expect(preview.schemas.length > 0, 'Phase 1: schemas list populated').toBe(true);
   expect(preview.totalObjects > 0, 'Phase 1: totalObjects > 0').toBe(true);
@@ -340,7 +373,7 @@ async function testPhase1Phase2Bridge() {
   expect(Array.isArray(elements) && elements.length > 0, 'Phase 1: elements array non-empty (bridge cache)').toBe(true);
 
   const allSchemas = new Set(preview.schemas.map(s => s.name));
-  const phase2Model = extractDacpacFiltered(elements, allSchemas, dspName);
+  const phase2Model = extractDacpacFiltered(elements, allSchemas, dspName, undefined, undefined, { databaseName });
   const fullModel = await loadAdventureWorksModel();
 
   expect(phase2Model.nodes.length,
@@ -350,7 +383,7 @@ async function testPhase1Phase2Bridge() {
   expect(phase2Model.dbPlatform,
     'Phase 2: dbPlatform matches full extract').toBe(fullModel.dbPlatform);
 
-  const hrOnly = extractDacpacFiltered(elements, new Set(['HumanResources']), dspName);
+  const hrOnly = extractDacpacFiltered(elements, new Set(['HumanResources']), dspName, undefined, undefined, { databaseName });
   expect(hrOnly.nodes.length < fullModel.nodes.length,
     'Phase 2 schema subset: fewer nodes than full model').toBe(true);
   expect(hrOnly.nodes.every(n => n.schema === 'HumanResources' || n.externalType !== undefined),
@@ -606,6 +639,8 @@ async function testComputedColumnTypeBorrowing() {
   it('bridges phase-one and phase-two extraction', testPhase1Phase2Bridge);
   it('retains the cross-schema catalog under filtering', testCrossSchemaCatalogUnderFilter);
   it('honors DACPAC extraction options', testDacpacExtractionOptions);
+  it('resolves three-part names against the DACPAC name', testThreePartNamesUseDacpacName);
+  it('keeps three-part names external without a DACPAC name', testThreePartNamesWithoutDacpacName);
   it('decodes entity-encoded names and keeps (max) and CLR type names', testNamesAndTypesRoundTrip);
 
   it('extracts from a byte view at a nonzero offset', async () => {

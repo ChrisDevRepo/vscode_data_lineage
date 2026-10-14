@@ -71,7 +71,7 @@ describe.each([false, true])('delete-only write mark CS=%s', cs => {
       { fullName: procedure, type: 'procedure', bodyScript: body },
       ...names.map(name => ({ fullName: `[dbo].${quoteIdentifier(name)}`, type: 'table' as const })),
     ];
-    return buildModel(objects, names.map(name => ({ sourceName: procedure, targetName: `[dbo].${quoteIdentifier(name)}` })), objects, undefined, false, undefined, cs).edges;
+    return buildModel(objects, names.map(name => ({ sourceName: procedure, targetName: `[dbo].${quoteIdentifier(name)}` })), objects, 'MyDb', false, undefined, cs).edges;
   };
   const writeEdge = (body: string, names: readonly string[], to: string) =>
     build(body, names).find(edge => edge.source === key(procedure, cs) && edge.target === to);
