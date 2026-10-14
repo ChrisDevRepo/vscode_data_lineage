@@ -2,41 +2,12 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyUnitTests, unitTestFiles } from './unit-lanes.mjs';
+import { classifyUnitTests, laneScriptProblems, unitTestFiles } from './unit-lanes.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/**
- * npm scripts that must keep pointing at the lane runner.
- * Gate steps are `coverage:core` and `test:runtime`. `test` is their union.
- * `test:support` is intentional and stays out of the gate.
- */
-const SCRIPT_LANES = {
-  test: 'gate',
-  'test:core': 'core',
-  'test:lineage': 'lineage',
-  'test:bfs': 'lineage',
-  'test:runtime': 'runtime',
-  'test:support': 'support',
-  'coverage:core': 'core',
-};
-
 const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-const problems = [];
-
-for (const [script, lane] of Object.entries(SCRIPT_LANES)) {
-  const command = pkg.scripts?.[script];
-  if (!command) {
-    problems.push(`package.json has no "${script}" script.`);
-    continue;
-  }
-  if (!command.includes('tests/tools/run-lane.mjs') || !command.includes(lane)) {
-    problems.push(`"${script}" must run tests/tools/run-lane.mjs ${lane}. It is: ${command}`);
-  }
-  if (script === 'coverage:core' && !command.includes('--coverage')) {
-    problems.push('"coverage:core" must pass --coverage so the parser and lineage floors still run.');
-  }
-}
+const problems = laneScriptProblems(pkg.scripts);
 
 const allFiles = unitTestFiles().sort();
 if (allFiles.length === 0) {

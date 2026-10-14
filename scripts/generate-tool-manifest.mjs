@@ -5,7 +5,7 @@
  * The catalog (`src/ai/tools/toolDefs.ts`) is the single source of truth for tool names,
  * descriptions, tags, and input schemas; `package.json` is the static copy VS Code reads before the
  * extension activates. Hand-editing two copies of the same facts is what the drift test in
- * `tests/unit/sm/ai-tool-registration.test.ts` keeps catching, so this script makes the manifest a
+ * `tests/unit/ai-core/ai-tool-registration.test.ts` keeps catching, so this script makes the manifest a
  * derived artifact and leaves the test as the CI guard.
  *
  * Two rules shape the output:

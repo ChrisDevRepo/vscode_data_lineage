@@ -15,6 +15,29 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+/** Fixed aggregate recipes: filters or disabling flags would silently narrow a gate lane. */
+const laneScriptCommands = {
+  test: 'node tests/tools/run-lane.mjs gate',
+  'test:core': 'node tests/tools/run-lane.mjs core',
+  'test:lineage': 'node tests/tools/run-lane.mjs lineage',
+  'test:bfs': 'node tests/tools/run-lane.mjs lineage',
+  'test:runtime': 'node tests/tools/run-lane.mjs runtime',
+  'test:support': 'node tests/tools/run-lane.mjs support',
+  'coverage:core': 'node tests/tools/run-lane.mjs core --coverage',
+};
+
+/** Checks aggregate npm recipes; callers can still pass options to the lane runner explicitly. */
+export function laneScriptProblems(scripts = {}) {
+  return Object.entries(laneScriptCommands).flatMap(([script, expected]) => {
+    const command = scripts[script];
+    if (!command) return [`package.json has no "${script}" script.`];
+    if (typeof command !== 'string' || command.trim().split(/[ \t]+/u).join(' ') !== expected) {
+      return [`"${script}" must run ${expected}. It is: ${command}`];
+    }
+    return [];
+  });
+}
+
 /** Repo-relative POSIX path. */
 export const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');
 

@@ -96,16 +96,17 @@ export function detailPanelStub(
 /** Builds the standard detail-handler host while leaving connection behavior to each test. */
 export function detailHandlers(
   create: typeof import('../../../src/bridge/messageHandlers').createMessageHandlers,
-  { isDbSession = true, settings = {}, outputChannel = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, trace: () => {} }, extensionUri = 'ext' }: {
+  { isDbSession = true, settings = {}, outputChannel = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, trace: () => {} }, extensionUri = 'ext', log = () => {} }: {
     isDbSession?: boolean;
     settings?: Record<string, unknown>;
     outputChannel?: Pick<Parameters<typeof create>[3], 'info' | 'debug' | 'warn' | 'error' | 'trace'>;
     extensionUri?: unknown;
+    log?: Parameters<typeof create>[0]['log'];
   } = {},
 ) {
   return create(
     {
-      postMessage: async () => true, log: () => {}, getExtensionUri: () => extensionUri,
+      postMessage: async () => true, log, getExtensionUri: () => extensionUri,
       getConfiguration: () => ({ get: (key: string, fallback: unknown) => key in settings ? settings[key] : fallback }),
     } as unknown as Parameters<typeof create>[0],
     { globalState: { get: () => undefined, update: () => undefined }, secrets: {}, extensionUri } as never,

@@ -43,6 +43,8 @@ Each contract has one owning suite. **Unit contracts** invoke a schema, rule or 
 
 The gate runs core once and runtime once, with disjoint file membership; duplicate declarations fail partition validation. `npm test` is their aggregate, parser/lineage commands select subsets, and `test:bfs` aliases lineage. These selectable commands are not extra gate executions. Path arguments override the lane selection.
 
+The partition check requires the complete aggregate npm recipes and enabled core coverage. It rejects filters, shell suffixes, embedded command newlines and coverage-disabling flags in those recipes. Pass options or file filters to an individual run after `--` instead.
+
 Retirement is applied: nine fragmented presentation files are replaced by the four presentation owners above; synthetic traversal/depth assertions have moved out of the two graph-builder suites into the traversal table. The historical schema comparator derived from the current schema is removed; explicit acceptance/rejection expectations remain. A shared shape or SQL input across different entry boundaries is retained only for a distinct contract.
 
 ## Case catalogs

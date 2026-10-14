@@ -33,6 +33,8 @@ const required = [
 ];
 
 const forbidden = [
+  { pattern: /(?:^|\/)(?:\.audit|\.reviews|reviews?|audits?)\//iu, label: 'local review/audit directory' },
+  { pattern: /(?:^|\/)(?:[^/]*[-_.])?(?:review|audit)[^/]*\.md$/iu, label: 'local review/audit report' },
   { pattern: /^(?:src|test|tests|test-results|tmp|tooling|scripts|ai)\//u, label: 'source/test/tmp/tooling directory' },
   { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
   { pattern: /^\.vscode-test[^/]*\.mjs$/u, label: 'VS Code test runner configuration' },

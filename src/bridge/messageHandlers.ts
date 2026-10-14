@@ -464,7 +464,8 @@ export function createMessageHandlers(
       }
     },
     'show-detail': async (msg) => {
-      host.log('info', 'Bridge', `Node detail opened — ${msg.node?.id || '(no node)'}`);
+      host.log('info', 'Bridge', 'Node detail opened');
+      host.log('debug', 'Bridge', `Node detail: ${msg.node?.id || '(no node)'}`);
       lastDetailNode = msg.node ?? null;
 
       if (!detailPanel) {
