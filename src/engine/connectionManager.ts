@@ -22,6 +22,7 @@ import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
 import { describeConnection, dropTcpPrefix, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
 import { builtInTarget, type ConnectionErrorHooks } from './db/connectionErrors';
+import { errorMessage } from '../utils/errorMessage';
 
 const DmvQueriesConfigSchema = z.object({
   version: z.coerce.number().optional(),
@@ -157,7 +158,7 @@ export async function loadDmvQueries(
           logger,
           'Load custom DMV queries',
           'Failed to load custom DMV queries — using built-in defaults. Check Output channel.',
-          { reason: err instanceof Error ? err.message : String(err), path: resolved, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
+          { reason: errorMessage(err), path: resolved, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
         );
       }
     } else {

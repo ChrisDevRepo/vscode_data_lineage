@@ -1,6 +1,7 @@
 import { wrap, type Remote } from 'comlink';
 import type { LayoutInput } from '../engine/graphBuilder';
 import type { LayoutWorkerApi } from './layout.worker';
+import { errorMessage } from './errorMessage';
 
 type LayoutPositions = Map<string, { x: number; y: number }>;
 
@@ -50,7 +51,7 @@ export function createLayoutWorkerClient(
     try {
       spawned = spawn();
     } catch (error: unknown) {
-      drop(error instanceof Error ? error.message : String(error));
+      drop(errorMessage(error));
       return undefined;
     }
     spawned.addEventListener('error', (event) => {

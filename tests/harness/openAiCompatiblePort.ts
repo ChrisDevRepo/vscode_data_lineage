@@ -13,6 +13,7 @@ import {
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
+  cancelledError,
   cancelledToolTurnResult,
   errorToolTurnResult,
   isPortCancellation,
@@ -1280,8 +1281,4 @@ function isCancellation(error: unknown): boolean {
   return isPortCancellation(error)
     || (error instanceof Error
       && ['AbortError', 'Canceled', 'Cancelled'].includes(error.name));
-}
-
-function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
 }

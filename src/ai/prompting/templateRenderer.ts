@@ -54,7 +54,7 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
  * @remarks
  * A fresh exploration locks classification before the approval gate, so active
  * prompt assembly normally receives a concrete value. The `undefined` behavior
- * remains defensive for pre-gate/legacy callers: every gated capture key fires
+ * remains defensive for pre-gate callers: every gated capture key fires
  * rather than silently dropping an evidence angle.
  */
 const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue[]>> = {

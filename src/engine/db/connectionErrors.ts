@@ -13,6 +13,7 @@ import { readBuiltInConnections, upsertBuiltInConnection, describeConnection, ty
 import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from './dbSession';
 import { pickAccount, signInForSql } from './entraSignIn';
 import { redactSecrets } from '../../utils/redact';
+import { errorMessage } from '../../utils/errorMessage';
 
 /** The error target of a saved connection opened on `database`. */
 export function builtInTarget(connection: BuiltInConnection, database: string | undefined): ConnectionErrorTarget {
@@ -83,10 +84,6 @@ const TOKEN_REJECTED_TEXT = /not currently configured to accept this token/i;
 const TOKEN_REJECTED_HINT = 'The server did not accept this Microsoft account. Check that the server has a Microsoft Entra admin and that the account is a user in the database, or sign in with another account.';
 const SIGN_IN_TEXT = /Microsoft sign-in did not complete|User did not consent to login/i;
 const CANNOT_OPEN_DATABASE_TEXT = /Cannot open database\s+["'].+["']\s+requested by the login|not able to access the database/i;
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function errorCode(err: unknown): string | undefined {
   const code = (err as { code?: unknown } | undefined)?.code;

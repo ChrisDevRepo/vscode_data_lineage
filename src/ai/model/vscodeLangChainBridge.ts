@@ -26,6 +26,7 @@ import {
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
 import {
+  cancelledError,
   isHostCancellationError,
   messageProviderParts,
   ModelPortError,
@@ -276,7 +277,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
  * flag, and the bridge adds no prose. A failed call reaches the model through its content alone,
  * which for every rejection or dispatch error is the shared error envelope naming its code.
  */
-export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
+function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
     return vscode.LanguageModelChatMessage.User(toTextParts(message.content), message.name);
   }
@@ -406,10 +407,6 @@ function rawErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (isRecord(error)) return typeof error.message === 'string' ? error.message : '';
   return error === null || error === undefined ? '' : String(error);
-}
-
-function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

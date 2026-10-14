@@ -8,6 +8,7 @@ import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllow
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
 import LayoutWorker from '../utils/layout.worker?worker&inline';
+import { errorMessage } from '../utils/errorMessage';
 
 const logPrewarmSkipped = (reason: string): void => {
   window.vscode?.postMessage({ type: 'log', text: `[Filter] Layout prewarm skipped (${reason})`, level: 'debug' });
@@ -29,7 +30,7 @@ function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
     (positions) => {
       if (!seedLayoutCache(input, positions, key)) logPrewarmSkipped('incomplete layout');
     },
-    (e: unknown) => logPrewarmSkipped(e instanceof Error ? e.message : String(e)),
+    (e: unknown) => logPrewarmSkipped(errorMessage(e)),
   );
 }
 
@@ -111,7 +112,7 @@ export function useGraphology(): UseGraphologyReturn {
     const exclusionFiltered = applyExclusionFilter(
       { ...filtered, nodes: fusedNodes, edges: fusedEdges },
       filter.exclusionPatterns,
-      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`, 'debug'),
+      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${errorMessage(err)}`, 'debug'),
     );
     const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
@@ -166,11 +167,11 @@ export function useGraphology(): UseGraphologyReturn {
       result = buildGraph(allowlistFiltered, config, annotatedNodeIds);
     } catch (e) {
       layoutFailed = true;
-      log(`[Filter] Layout failed (${e instanceof Error ? e.message : String(e)}) — rendering without positions`, 'info');
+      log(`[Filter] Layout failed (${errorMessage(e)}) — rendering without positions`, 'info');
       try {
         result = buildGraphNoLayout(allowlistFiltered, config);
       } catch (e2) {
-        log(`[Filter] Graph build completely failed — ${e2 instanceof Error ? e2.message : String(e2)}`, 'info');
+        log(`[Filter] Graph build completely failed — ${errorMessage(e2)}`, 'info');
         setFlowNodes([]);
         setFlowEdges([]);
         setGraph(null);

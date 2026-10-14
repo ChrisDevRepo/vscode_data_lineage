@@ -15,6 +15,7 @@ import {
   MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_TCP_PORT, MAX_SYSNAME_LENGTH, passwordSecretKey, passwordTooLong, readBuiltInConnections,
   savePassword, tooLong, upsertBuiltInConnection, type BuiltInConnection,
 } from './connectionSettings';
+import { errorMessage } from '../../utils/errorMessage';
 
 const WIZARD_TITLE = 'Add Database Connection';
 const WIZARD_STEPS = 6;
@@ -249,7 +250,7 @@ export async function runAddConnectionFlow(
           try {
             account = await pickAccount();
           } catch (err) {
-            void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+            void vscode.window.showErrorMessage(errorMessage(err));
             return 'back';
           }
           if (account.id !== state.accountId) state.tenantId = undefined;

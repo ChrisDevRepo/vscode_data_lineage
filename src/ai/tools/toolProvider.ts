@@ -47,8 +47,7 @@ import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/toke
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
-import { resolveModelNodeId } from '../support/inputNormalization';
-import { createSavedReferenceResolver } from '../../engine/shared/nodeIdResolution';
+import { createSavedReferenceResolver, resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { cursorOffset } from '../support/text';
 import { getModelNodeMap, type AiViewPreviewMessage, type ToolCaller, type ToolServices } from './handlers/toolServices';
 import type { PreviewDelivery } from '../support/chatAnswer';
@@ -60,6 +59,7 @@ import type { ModelPort } from '../model/modelPort';
 import { tokenToAbortSignal } from '../providers/cancellation';
 import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { errorMessage } from '../../utils/errorMessage';
 
 /**
  * Progress-message group for a rejection code, shared by this module's `[Reject]` debug line and
@@ -232,7 +232,7 @@ class ToolHandler implements ToolServices {
   }
 
   public toolError(toolName: string, err: unknown): string {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     const noProject = err instanceof NoProjectLoadedError;
     if (toolName === 'present_result' && this.caller === 'turn') {
       const sess = this.getSession();

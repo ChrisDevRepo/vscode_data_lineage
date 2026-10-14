@@ -84,6 +84,7 @@ import {
   type AgentStateType,
   type AgentStateUpdate,
 } from './state';
+import { errorMessage } from '../../utils/errorMessage';
 
 /**
  * Count of one-time phase nodes that each self-loop up to {@link MAX_TOOL_PROVIDER_CALLS} times.
@@ -1165,7 +1166,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       classification = sess.requireLockedClassification();
     } catch (err) {
       deps.logger?.error('[AI] classification lock missing in active worker', err);
-      return fail(err instanceof Error ? err.message : String(err));
+      return fail(errorMessage(err));
     }
 
     const focusId = engine.currentFocus;
@@ -1336,7 +1337,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       classification = sess.requireLockedClassification();
     } catch (err) {
       deps.logger?.error('[AI] classification lock missing at synthesis', err);
-      return fail(err instanceof Error ? err.message : String(err));
+      return fail(errorMessage(err));
     }
     deps.sink.status('synthesizing', 'Synthesising...');
     const result = engine.getResult();

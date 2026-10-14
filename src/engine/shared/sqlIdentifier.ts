@@ -6,7 +6,7 @@ import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../u
  *
  * @param name - Name to use.
  * @param identifierCaseSensitive - True only when checked catalog metadata requires exact casing.
- * @returns Canonical quoted key; legacy/default comparison lowercases identifiers.
+ * @returns Canonical quoted key; default case-insensitive comparison lowercases identifiers.
  */
 export function normalizeName(name: string, identifierCaseSensitive = false): string {
   const parts = splitSqlName(name).map(p => schemaKey(stripBrackets(p), identifierCaseSensitive));

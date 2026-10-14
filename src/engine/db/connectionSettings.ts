@@ -10,7 +10,7 @@ import type { Logger } from '../../utils/log';
 import { DATABASE_CONFIG_SECTION } from './dbSession';
 
 /** Setting key, relative to {@link DATABASE_CONFIG_SECTION}, that holds the built-in connection list. */
-export const CONNECTIONS_SETTING = 'connections';
+const CONNECTIONS_SETTING = 'connections';
 
 /** Secret-store key prefix; the connection id is appended. */
 const PASSWORD_SECRET_PREFIX = 'dataLineageViz.database.password.';
@@ -89,7 +89,7 @@ export const MAX_TCP_PORT = 65535;
 /** SQL Server `sysname` length: bounds logins and database names. */
 export const MAX_SYSNAME_LENGTH = 128;
 /** SQL Server maximum password length. */
-export const MAX_PASSWORD_LENGTH = 128;
+const MAX_PASSWORD_LENGTH = 128;
 /** Input-box validation message for a password SQL Server cannot accept, or `undefined`. */
 export function passwordTooLong(value: string): string | undefined {
   return value.length > MAX_PASSWORD_LENGTH ? `A password has at most ${MAX_PASSWORD_LENGTH} characters.` : undefined;
@@ -167,7 +167,7 @@ const connectionFields = {
 export const BuiltInConnectionSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH), ...connectionFields });
 
 /** {@link BuiltInConnectionSchema} with the id optional, for callers that let the extension assign one. */
-export const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
+const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
 
 /** A validated built-in connection. */
 export type BuiltInConnection = z.infer<typeof BuiltInConnectionSchema>;
