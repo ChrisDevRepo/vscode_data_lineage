@@ -769,7 +769,7 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * questions are always this focus's own, carried on its AgendaEntry, never a
  * different node's.
  *
- * @param currentTasks - Structured tasks assigned to the active node.
+ * @param currentTasks - Structured tasks assigned to the active node, each with the engine's qualified endpoints; the block renders them and derives none.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.
  * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
  * @param nonBodied - Whether this focus routes stored endpoints using metadata rather than its own SQL body.
@@ -777,10 +777,10 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  *   and the result is an empty string when no element would render.
  */
 export function buildCurrentTaskBlock(
-  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'nodeId' | 'traversalSide' | 'callerContext'> & {
-    readonly activeColumns?: readonly string[];
-    readonly sourceRefs?: readonly ScalarReturnTarget[];
+  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'traversalSide' | 'callerContext'> & {
     readonly returnTargets?: readonly ScalarReturnTarget[];
+    /** The engine's qualified endpoints for this task, split by owning object. */
+    readonly endpoints?: { readonly assigned: readonly ScalarReturnTarget[]; readonly external: readonly ScalarReturnTarget[] };
   }>,
   columnTraceColumns?: string[],
   columnLineageQuestions?: string[],
@@ -795,9 +795,7 @@ export function buildCurrentTaskBlock(
     lines.push(`  <${tag}>${escapePromptText(question)}</${tag}>`);
     // Caller-output investigations retain their specialized binding context in the hop envelope.
     if (task.kind !== 'column_lineage' || task.returnTargets?.length || task.callerContext) continue;
-    const refs = task.sourceRefs ?? (task.nodeId ? task.activeColumns?.map(col => ({ node: task.nodeId!, col })) : undefined) ?? [];
-    const assigned = refs.filter(ref => ref.node === task.nodeId);
-    const external = refs.filter(ref => ref.node !== task.nodeId);
+    const { assigned = [], external = [] } = task.endpoints ?? {};
     const endpoints = (values: readonly ScalarReturnTarget[]) => values.map(ref => escapePromptText(`${ref.node}.${ref.col}`)).join(', ');
     if (assigned.length) lines.push(
       nonBodied
@@ -814,7 +812,7 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Arriving column names: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
-      `    Resolve the qualified tasks above. Record SQL-supported mappings in \`column_flow\`, including downstream renames; keep unrelated column analysis in \`sections\`. When some inputs stop while others continue, name the stopping endpoints in \`terminated_inputs\`. An explicitly empty \`column_flow\` ends an ordinary arrival's whole CT continuation without deleting prior accepted mappings.`,
+      `    Resolve the qualified tasks above. Record SQL-supported mappings in \`column_flow\`, including downstream renames; keep unrelated column analysis in \`sections\`.`,
       `  </column_trace>`,
     );
   }

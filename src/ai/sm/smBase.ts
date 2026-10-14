@@ -1391,6 +1391,29 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * The qualified endpoints of a task as the prompt renders them: those on the task's own object
+   * (assigned) and those on another object (external), compared by identifier key.
+   *
+   * @param task - A current task, from {@link getCurrentTasks}.
+   * @returns Both groups; empty for an object task or a column task without qualified endpoints.
+   */
+  public taskEndpoints(task: InvestigationTask): { assigned: ScalarReturnTarget[]; external: ScalarReturnTarget[] } {
+    const refs = this.qualifiedTaskRefs(task) ?? [];
+    const own = (ref: ScalarReturnTarget): boolean => !!task.nodeId && this.identifierKey(ref.node) === this.identifierKey(task.nodeId);
+    return { assigned: refs.filter(own), external: refs.filter(ref => !own(ref)) };
+  }
+
+  /**
+   * Whether a queued task still dispatches exactly as accepted: its qualified endpoints exist
+   * ({@link qualifiedTaskRefs}) and each names a loaded object and, where that object declares
+   * columns, one of them. Dispatch never rewrites or narrows the accepted carry.
+   */
+  private taskRefsResolve(task: InvestigationTask): boolean {
+    const refs = this.qualifiedTaskRefs(task);
+    return refs !== null && refs.every(ref => this.nodeMap.has(ref.node) && this.matchColumnsToNode(ref.node, [ref.col]).unmatched.length === 0);
+  }
+
+  /**
    * The qualified tracked-column identities this hop received, read only from its current tasks
    * ({@link qualifiedTaskRefs}); dispatch refuses a task without them.
    *
@@ -2575,8 +2598,9 @@ export class NavigationEngine implements IHopStateMachine {
    * Gets the details for the next scheduled navigation hop.
    *
    * @remarks
-   * CT is selected from this entry's merged demand. A row-only arrival cannot recover
-   * columns from another branch's historical evidence.
+   * CT is selected from this entry's merged demand and dispatched exactly as accepted; no column
+   * is recovered from historical evidence. A queued task whose qualified endpoints no longer
+   * resolve stops the run.
    */
   public getHopContext(): HopContext {
     let entry: AgendaEntry | undefined;
@@ -2607,7 +2631,7 @@ export class NavigationEngine implements IHopStateMachine {
         if (task?.callerContext && (task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(candidate.nodeId, task.callerContext))) {
           return this.failInvariant(candidate.nodeId, 'callerContext', CALLER_CONTEXT_CHANGED);
         }
-        if (task && this.qualifiedTaskRefs(task) === null) {
+        if (task && !this.taskRefsResolve(task)) {
           return this.failInvariant(candidate.nodeId, 'sourceRefs', COLUMN_SOURCE_MISSING);
         }
       }
@@ -2618,8 +2642,6 @@ export class NavigationEngine implements IHopStateMachine {
           }
         }
         candidate.activeColumns = [...new Set(candidate.columnCarry.outputs.map(target => target.col))];
-      } else if (this.tracer && candidate.columnCarry?.kind !== 'row_role_only' && candidate.activeColumns?.length) {
-        candidate.activeColumns = this.columnsForEntry(candidate);
       }
 
       entry = candidate;
@@ -2959,7 +2981,10 @@ export class NavigationEngine implements IHopStateMachine {
       const carryByNode = new Map<string, Set<string>>();
       const routeContexts: ValidatedHop['routeContexts'] = new Map();
       const flowQuestionByNode = new Map<string, string>();
-      const addCarry = (nid: string, ref: ScalarReturnTarget, traversalSide: 'upstream' | 'downstream'): void => {
+      // A carried endpoint keeps its accepted identity in the declared spelling of its object's column.
+      const addCarry = (nid: string, accepted: ScalarReturnTarget, traversalSide: 'upstream' | 'downstream'): void => {
+        const declared = getNodeColumns(accepted.node, this.nodeMap, this.store ?? undefined)?.find(column => this.columnKey(column.name) === this.columnKey(accepted.col));
+        const ref = { node: accepted.node, col: declared?.name ?? accepted.col };
         if (!carryByNode.has(nid)) carryByNode.set(nid, new Set());
         carryByNode.get(nid)!.add(ref.col);
         const legs = routeContexts.get(nid) ?? [];
@@ -3144,14 +3169,6 @@ export class NavigationEngine implements IHopStateMachine {
       });
       for (const nid of finding.verdict === 'passthrough' ? flowQuestionByNode.keys() : []) {
         if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid) || this.visited.has(nid) || this.removedSet.has(nid)) continue;
-        requested.add(nid);
-        routeRequests.push({ nodeId: nid, question: incomingQuestion });
-      }
-      // A queued function may owe a second caller even though no new traversal is required.
-      for (const nid of focusNeighborIds) {
-        if (finding.verdict !== 'passthrough') continue;
-        if (!this._agenda.has(nid) || requested.has(nid) || pruneNeighborIds.has(nid)) continue;
-        if (this.neighborCarryFor(nid, carryByNode).kind !== 'scalar_return') continue;
         requested.add(nid);
         routeRequests.push({ nodeId: nid, question: incomingQuestion });
       }
@@ -4047,42 +4064,16 @@ export class NavigationEngine implements IHopStateMachine {
     return carriers;
   }
 
-  /** Resolves an authenticated local binding or retains the qualified unresolved arrival; never a session-wide restart. */
-  private columnsForEntry(entry: AgendaEntry): string[] {
-    const columns = entry.activeColumns ?? [];
-    if (!this.tracer || entry.columnCarry?.kind === 'row_role_only') return [];
-    if (this.columnTraceDirection() === 'downstream') return [...columns];
-    const tasks = entry.taskIds.flatMap(id => this.taskLedger.getTask(id) ?? []);
-    const refs = tasks.flatMap(task => task.kind === 'column_lineage' ? task.sourceRefs ?? [] : []);
-    const carriers = this.writtenCarrierIds(entry.nodeId);
-    const key = columnEndpointKeyFactory(this.nodeMap, this.identifierCaseSensitive);
-    const wanted = new Set((refs.length ? refs : [entry.nodeId, ...carriers].flatMap(node => columns.map(col => ({ node, col })))).map(ref => key(ref.node, ref.col)));
-    const bound = this.tracer.edges.filter(edge => edge.from_node === entry.nodeId
-      && (wanted.has(key(edge.from_node, edge.from_col)) || wanted.has(key(edge.to_node, edge.to_col))))
-      .map(edge => edge.from_col);
-    return bound.length ? this.resolveActiveColumnsForNode(entry.nodeId, [...new Set(bound)]) ?? [...new Set(bound)] : [...columns];
-  }
-
   /**
    * Derives one neighbor's continuation from accepted flow, explicit qualified passthrough or a
-   * scalar obligation. Routing prose and historical evidence cannot reactivate a terminal arrival.
+   * validated caller context, exactly as accepted. Routing prose, compiler metadata and historical
+   * evidence never replace or reactivate it.
    */
   private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>, callerContext?: FunctionCallerContext): ColumnCarry {
     if (!this.tracer) return { kind: 'carry', columns: [] };
     if (callerContext && !getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length && this.validFunctionCallerContext(nodeId, callerContext)) {
       return { kind: 'scalar_return', outputs: [{ node: callerContext.node, col: callerContext.col }] };
     }
-    if (!carryByNode.get(nodeId)?.size || (this.currentFocusNodeId && this.columnTraceDirection() === 'upstream' && this.isDeleteOnlyWrite(nodeId, this.currentFocusNodeId))) return { kind: 'row_role_only' };
-    const endpoints = [
-      ...this.incomingColumnRefs(),
-      ...(this.currentFocusNodeId ? this.tracer.activeColumns.map(col => ({ node: this.currentFocusNodeId!, col })) : []),
-    ];
-    const outputs = uniqueScalarReturnTargets(endpoints.flatMap(target => {
-      if (!this.scopeNodeIds.has(target.node)) return [];
-      const bound = resolveScalarReturnTarget(nodeId, target, this.nodeMap, this.store, this.model.identifierCaseSensitive);
-      return bound ? [bound] : [];
-    }), this.model.identifierCaseSensitive);
-    if (outputs.length) return { kind: 'scalar_return', outputs };
     const byKey = new Map<string, string>();
     for (const col of carryByNode.get(nodeId) ?? []) if (!byKey.has(this.columnKey(col))) byKey.set(this.columnKey(col), col);
     const columns = [...byKey.values()];

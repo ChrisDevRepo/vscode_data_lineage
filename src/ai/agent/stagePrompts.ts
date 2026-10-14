@@ -227,7 +227,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
   const isCtMode = engine.currentHopAnalysisMode === 'ct';
   const nonBodied = focusIsNonBodied(sess, engine);
   const currentTask = buildCurrentTaskBlock(
-    engine.getCurrentTasks(),
+    engine.getCurrentTasks().map(task => ({ ...task, endpoints: engine.taskEndpoints(task) })),
     isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
     nonBodied,
