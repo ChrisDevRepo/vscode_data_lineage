@@ -104,8 +104,9 @@ Details: [`SECURITY.md`](SECURITY.md).
 The lineage graph is built from database DDL/catalog metadata only. The following are out of scope:
 
 - **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source. Target tables appear as leaves; the upstream pipeline does not.
-- **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected.
-- **Dynamic SQL** — `EXEC(@sql)` and `sp_executesql` cannot be analysed statically.
+- **Cross-database / cross-server flow** — three- or four-part references to another database surface as virtual external nodes; the remote database internals are not introspected. A three-part name is local only when its database is the connected database, or for a DACPAC the name in its `DacMetadata.xml` (the source database for an extracted DACPAC, the project name for a built one).
+- **Dynamic SQL and cursors** — `EXEC(@sql)`, `sp_executesql` and cursors are not analysed; the tables around them still load, and the output log warns which modules use them.
+- **SQLCMD variables** — a DACPAC stores a database reference such as `[$(OtherDb)]` without its value, which is set at deployment. It is shown as a cross-database node named `[$(OtherDb)]`, not as the deployed database.
 - **Unqualified references** — references without a schema prefix are ambiguous; metadata may resolve some known dependencies, but dynamic/default-schema cases are not guaranteed.
 - **Triggers, synonyms and other object kinds** — only tables, views, functions, stored procedures and external objects are loaded. Triggers, synonyms, CLR modules, extended stored procedures, sequences and user-defined types are not: they do not appear as nodes, and references made through them do not become edges.
 - **Features that are not database objects** — built-in and function-style features (JSON, XML, vector, `PREDICT`, SQL Graph syntax), types, column methods and variables are ignored. The tables around them are read as usual.

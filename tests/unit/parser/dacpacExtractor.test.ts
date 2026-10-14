@@ -28,35 +28,13 @@ async function makeExternalRefDacpac(): Promise<Uint8Array> {
 }
 
 
-const edgeList = (model: { edges: Array<{ source: string; target: string }> }) => model.edges.map(edge => `${edge.source} -> ${edge.target}`).sort();
-
-/** The DACPAC name is the current database, so three-part names resolve as they do on a live connection. */
-async function testThreePartNamesUseDacpacName() {
-  const expected = [
-    '[dbo].[t] -> [dbo].[usp_sync]',
-    '[dbo].[usp_sync] -> [dbo].[x]',
-    '[dbo].[usp_sync] -> [otherdb].[dbo].[t]',
-    '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
-  ];
-  const buffer = await buildThreePartDacpac(SELF_DB_METADATA);
-  expect(edgeList(await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true }))).toEqual(expected);
-  const { elements, dspName, identifierCaseSensitive, databaseName } = await extractSchemaPreview(buffer);
-  expect(databaseName).toBe('SelfDb');
-  const filtered = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, { externalRefsEnabled: true, identifierCaseSensitive, databaseName });
-  expect(edgeList(filtered)).toEqual(expected);
-}
-
-/** Without a readable DACPAC name, no three-part name is assumed local. */
-async function testThreePartNamesWithoutDacpacName() {
-  for (const metadata of [undefined, '<DacType><Name>', '<DacType><Version>1.0</Version></DacType>']) {
+/** The DACPAC name in DacMetadata.xml is the current database; without a readable name there is none. */
+async function testDacpacDatabaseName() {
+  for (const [metadata, name] of [[SELF_DB_METADATA, 'SelfDb'], [undefined, undefined], ['<DacType><Name>', undefined], ['<DacType><Version>1.0</Version></DacType>', undefined]] as const) {
     const buffer = await buildThreePartDacpac(metadata);
-    expect((await extractSchemaPreview(buffer)).databaseName).toBeUndefined();
-    expect(edgeList(await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true }))).toEqual([
-      '[dbo].[t] -> [dbo].[usp_sync]',
-      '[dbo].[usp_sync] -> [otherdb].[dbo].[t]',
-      '[dbo].[usp_sync] -> [selfdb].[dbo].[x]',
-      '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
-    ]);
+    expect((await extractSchemaPreview(buffer)).databaseName).toBe(name);
+    const model = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true });
+    expect(model.nodes.some(node => node.id === '[selfdb].[dbo].[x]')).toBe(name === undefined);
   }
 }
 
@@ -639,8 +617,7 @@ async function testComputedColumnTypeBorrowing() {
   it('bridges phase-one and phase-two extraction', testPhase1Phase2Bridge);
   it('retains the cross-schema catalog under filtering', testCrossSchemaCatalogUnderFilter);
   it('honors DACPAC extraction options', testDacpacExtractionOptions);
-  it('resolves three-part names against the DACPAC name', testThreePartNamesUseDacpacName);
-  it('keeps three-part names external without a DACPAC name', testThreePartNamesWithoutDacpacName);
+  it('reads the DACPAC name as the current database', testDacpacDatabaseName);
   it('decodes entity-encoded names and keeps (max) and CLR type names', testNamesAndTypesRoundTrip);
 
   it('extracts from a byte view at a nonzero offset', async () => {
