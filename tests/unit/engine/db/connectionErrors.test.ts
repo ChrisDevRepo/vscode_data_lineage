@@ -350,7 +350,9 @@ describe('action handlers', () => {
   });
 
   it('Copy GRANT Statement copies only VIEW DEFINITION for the login, bracket-quoted', async () => {
-    await run(driver('x', { number: 229 }), { ...builtIn, user: 'we]ird' }, 'copyGrantStatement');
+    const error = driver('x', { number: 229 });
+    expect(describeConnectionError(error, builtIn, hooks).actions[0].label).toBe('Copy GRANT Statement');
+    await run(error, { ...builtIn, user: 'we]ird' }, 'copyGrantStatement');
     expect(host.writeText).toHaveBeenCalledWith('GRANT VIEW DEFINITION TO [we]]ird];');
   });
 

@@ -103,6 +103,7 @@ beforeEach(() => {
 describe('BuiltInConnectionSchema', () => {
   it('accepts a full SQL login entry and a minimal Entra entry', () => {
     expect(BuiltInConnectionSchema.safeParse(valid).success).toBe(true);
+    expect(BuiltInConnectionSchema.parse({ ...valid, password: 'leaked' })).not.toHaveProperty('password');
     expect(BuiltInConnectionSchema.safeParse({
       id: 'b0f3a1c2-0000-4000-8000-000000000001', name: 'Cloud', server: 'x.database.windows.net', authenticationType: 'entraId', tenantId: 't',
     }).success).toBe(true);

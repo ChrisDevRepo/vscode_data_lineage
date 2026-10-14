@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const host = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
+  bridgeConnect: undefined as undefined | ((...args: unknown[]) => Promise<unknown>),
   showQuickPick: vi.fn(),
   showInputBox: vi.fn(),
   showInformationMessage: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('vscode', async (importOriginal) => {
       showErrorMessage: vi.fn(),
       showInputBox: (...a: unknown[]) => host.showInputBox(...a),
     },
+    ProgressLocation: { Notification: 15 },
     QuickPickItemKind: { Separator: -1, Default: 0 },
     commands: { executeCommand: (...a: unknown[]) => host.executeCommand(...a) },
     workspace: {
@@ -40,6 +42,12 @@ vi.mock('../../../../src/engine/db/connectionCommands', async (importOriginal) =
   ...await importOriginal<Record<string, unknown>>(),
   runAddConnectionFlow: (...a: unknown[]) => host.runAddConnectionFlow(...a),
 }));
+
+vi.mock('../../../../src/engine/connectionManager', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, any>>();
+  return { ...actual, connectDatabase: (...args: unknown[]) =>
+    host.bridgeConnect ? host.bridgeConnect(...args) : actual.connectDatabase(...args) };
+});
 
 const { connectDatabase } = await import('../../../../src/engine/connectionManager');
 const { DbConnectionError } = await import('../../../../src/engine/db/dbSession');
@@ -63,6 +71,7 @@ function fakeBuiltInSession(conn: Record<string, any>) {
 
 beforeEach(() => {
   host.settings = {};
+  host.bridgeConnect = undefined;
   for (const fn of [host.showQuickPick, host.showInputBox, host.showInformationMessage, host.showWarningMessage, host.openBuiltInSession, host.runAddConnectionFlow, host.executeCommand]) fn.mockClear();
   host.openBuiltInSession.mockImplementation(async (conn: Record<string, any>) => fakeBuiltInSession(conn));
 });
@@ -311,5 +320,94 @@ describe('migration from the mssql extension to the built-in connection', () => 
     expect(host.showQuickPick).not.toHaveBeenCalled();
     expect(host.showInformationMessage).not.toHaveBeenCalled();
     expect(second?.connectionInfo).toMatchObject({ connectionId: 'id-added' });
+  });
+});
+
+
+// Preserve supported bridge error contracts previously mixed with provider-switch tests.
+const { createMessageHandlers } = await import('../../../../src/bridge/messageHandlers');
+const { createBridgeHost } = await import('../../../../src/bridge/host');
+
+function bridgeErrors() {
+  const lines: string[] = [];
+  const posted: Array<Record<string, unknown>> = [];
+  const channel = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), appendLine: vi.fn(),
+    error: (message: string) => { lines.push(message); } };
+  const realHost = createBridgeHost({ webview: { postMessage: (message: Record<string, unknown>) => {
+    posted.push(message); return Promise.resolve(true);
+  } } } as never, {} as never, channel as never);
+  const bundle = createMessageHandlers(
+    { ...realHost, withProgress: (_options: unknown, task: (progress: unknown, token: unknown) => Promise<void>) =>
+      task({ report: vi.fn() }, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) }) } as never,
+    { globalState: { get: () => undefined, update: () => Promise.resolve() }, secrets: {} } as never,
+    () => ({ model: null, uiState: {}, renderState: null }) as never,
+    channel as never,
+    () => ({ schemaVersion: 1, projects: [] }) as never,
+    vi.fn().mockResolvedValue(undefined), vi.fn(), false, vi.fn(),
+  );
+  return { lines, posted, channel, host: realHost, handlers: bundle.handlers };
+}
+
+describe('supported bridge connection failures and logging', () => {
+  it('redacts secrets in the log and in the message posted to the webview', async () => {
+    host.bridgeConnect = vi.fn().mockRejectedValue(new Error('Bad connection string Password=abc123;Server=x'));
+    const { handlers, posted, lines } = bridgeErrors();
+    await handlers['db-connect']({ type: 'db-connect' });
+    const error = posted.find((message) => message.type === 'db-error');
+    expect(String(error?.message)).not.toContain('abc123');
+    expect(String(error?.message)).toContain('Password=[removed]');
+    expect(lines.join('\n')).not.toContain('abc123');
+  });
+
+  it('writes one FAILED line naming the operation and the redacted message through the real host logger', async () => {
+    host.bridgeConnect = vi.fn().mockRejectedValue(new Error('Missing schema-preview query Password=abc123;'));
+    const { handlers, lines } = bridgeErrors();
+    await handlers['db-connect']({ type: 'db-connect' });
+    expect(lines.filter(line => line.includes('FAILED:'))).toEqual(['[DB] FAILED: Connecting — Missing schema-preview query Password=[removed];']);
+    expect(lines.join('\n')).not.toContain('abc123');
+    expect(lines.join('\n')).not.toContain('undefined');
+    expect(lines, 'no stack of the logging site: the redacted text is the whole record').toHaveLength(1);
+  });
+
+  it('redacts a connection string in the message and in the stack of a caught Error', () => {
+    const { lines, host: realHost } = bridgeErrors();
+    const err = new Error('Login failed Server=x;Password=abc123;Database=d');
+    err.stack = 'Error: Login failed Server=x;Password=abc123;\n    at connect (driver.js:1:1)\n    at auth Bearer abcdefgh12345678';
+    realHost.log('error', 'Bridge', 'Load project', err);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe('[Bridge] FAILED: Load project — Login failed Server=x;Password=[removed];Database=d');
+    expect(lines[1]).toMatch(/^\[Bridge\] Stack: Error: Login failed Server=x;Password=\[removed\];/);
+    expect(lines[1]).toContain('Bearer [token removed]');
+    expect(lines.join('\n')).not.toMatch(/abc123|abcdefgh12345678/);
+  });
+
+  it('redacts a thrown string, which carries no stack', () => {
+    const { lines, host: realHost } = bridgeErrors();
+    realHost.log('error', 'Dacpac', 'Dacpac visualize', 'rejected pwd=abc123 Bearer abcdefgh12345678');
+    expect(lines).toEqual(['[Dacpac] FAILED: Dacpac visualize — rejected pwd=[removed] Bearer [token removed]']);
+  });
+
+  it('redacts the operation text', () => {
+    const { lines, host: realHost } = bridgeErrors();
+    realHost.log('error', 'Bridge', 'Load project Password=abc123', 'boom');
+    expect(lines).toEqual(['[Bridge] FAILED: Load project Password=[removed] — boom']);
+  });
+
+  it.each(['warn', 'info', 'debug'] as const)('redacts a caught driver message carried in %s-level text', (level) => {
+    const { host: realHost, channel } = bridgeErrors();
+    realHost.log(level, 'DB', 'Disconnect failed: Login failed Server=x;Password=abc123; Bearer abcdefgh12345678');
+    expect(channel[level]).toHaveBeenCalledTimes(1);
+    expect(channel[level]).toHaveBeenCalledWith('[DB] Disconnect failed: Login failed Server=x;Password=[removed]; Bearer [token removed]');
+  });
+
+  it.each([
+    ['load-project', { type: 'load-project', id: 'missing' }, 'FAILED: Load project — Project not found: missing'],
+    ['dacpac-visualize', { type: 'dacpac-visualize', schemas: ['dbo'] }, 'FAILED: Dacpac visualize — Session expired (cachedElements is null)'],
+    ['db-visualize', { type: 'db-visualize', schemas: ['dbo'] }, 'FAILED: Database visualize — No stored connection info'],
+  ])('%s logs its synthetic failure as message text with no stack of the logging site', async (key, message, expected) => {
+    const { lines, handlers } = bridgeErrors();
+    await (handlers as Record<string, (message: unknown) => Promise<void>>)[key as string](message);
+    expect(lines).toEqual([expect.stringContaining(expected)]);
+    expect(lines.join('\n')).not.toContain('Stack:');
   });
 });
