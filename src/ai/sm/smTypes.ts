@@ -1092,17 +1092,17 @@ export interface InvalidRoute {
     available_routes?: string[];
 }
 
-/** Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section angles, whether the summary, other field names. */
+/**
+ * Parts of a rejected `lineage_submit_findings` call the session holds for its retry, and the parts
+ * the retry must resend. Each part is held or owed whole: a failed list entry fails its whole list.
+ */
 export interface HeldSubmissionParts {
+  /** Held section angles. */
   readonly sections: readonly string[];
+  /** Whether a summary is held. */
   readonly summary: boolean;
-  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
+  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`, `terminated_inputs`). */
   readonly fields: readonly string[];
-  /**
-   * What identifies each held list entry, present only when a held list survives: canonical neighbor
-   * ids of `questions` / `prune_neighbors` entries, and the `out_col` (with its `returns_to` target,
-   * when one is named) of `column_flow` entries. A failed entry is never held; the valid entries of
-   * the same list are.
-   */
-  readonly entries?: { readonly questions?: readonly string[]; readonly prune_neighbors?: readonly string[]; readonly column_flow?: readonly string[]; readonly terminated_inputs?: readonly string[] };
+  /** Parts the rejection failed: `sections.<angle>` or a top-level field name. */
+  readonly resend: readonly string[];
 }

@@ -321,8 +321,12 @@ describe('carrier value-edge orientation', () => {
     expect(after.agenda).toEqual(before.agenda);
     expect(after.columnAspect).toEqual(before.columnAspect);
     expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+    expect(JSON.stringify(rejected)).toContain('Held: sections.technical, summary, questions. Resend: column_flow, terminated_inputs.');
+    expect(engine.heldColumnFlow, 'a failed column_flow entry fails the whole list; its valid entries are not held').toBe(false);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    expect(schema.safeParse({ focus_node_id: writer, verdict: 'analyze', terminated_inputs: [{ node: input, col: 'Region' }] }).success).toBe(false);
     expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: writer, verdict: 'analyze',
+      column_flow: [{ out_col: 'Amount', upstream_columns: valueContributors, writes_to: { node: stored, col: 'Total' } }],
       terminated_inputs: [{ node: input, col: 'Region' }],
     })))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored }, analysis_mode: 'ct' });
@@ -818,8 +822,13 @@ describe('current task completeness before advancement', () => {
     expect(after.agenda).toEqual(before.agenda);
     expect(after.columnAspect).toEqual(before.columnAspect);
     expect(engine.currentFocus).toBe(root);
+    if (missing === 'target') {
+      expect(result).toMatchObject({ hint: expect.stringContaining('Resend: column_flow.') });
+      expect(engine.submitFindings({ ...finding, column_flow: [terminal('Other')] }),
+        'a sent column_flow replaces the held flow; the Value entry is not merged back by out_col').toMatchObject({ code: 'incomplete_task' });
+    }
     expect(engine.submitFindings({ ...finding, ...(missing === 'target'
-      ? { column_flow: [terminal('Other')] }
+      ? { column_flow: [terminal('Value'), terminal('Other')] }
       : { questions: [{ nodeId: neighbor, question: 'Explain the source object role.' }] }),
     })).toHaveProperty('ok', true);
   });
@@ -837,15 +846,33 @@ describe('current task completeness before advancement', () => {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'bb' });
     expect(engine.columnAspect?.edges).toEqual([]);
   });
-  it('retains a valid neighbor question when a correction supplies only the missing neighbor', () => {
+  it('owes the whole questions list when one neighbor is missing, and merges no question back', () => {
     const engine = world(true);
     expect(engine.submitFindings({ ...finding, column_flow: [terminal('Value'), terminal('Other')],
       questions: [{ nodeId: neighbor, question: 'Explain Source rows.' }],
-    })).toHaveProperty('code');
+    })).toMatchObject({ code: 'incomplete_task', hint: expect.stringContaining('Held: sections.technical, summary, column_flow. Resend: questions.') });
     const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
-    const patch = schema.parse({ focus_node_id: root, verdict: 'analyze', questions: [{ nodeId: other, question: 'Explain OtherSource rows.' }] });
-    expect(engine.submitFindings(toHopFinding(patch))).toHaveProperty('ok', true);
+    const patch = (questions: Array<{ nodeId: string; question: string }>) => toHopFinding(schema.parse({ focus_node_id: root, verdict: 'analyze', questions }));
+    const otherQuestion = { nodeId: other, question: 'Explain OtherSource rows.' };
+    expect(engine.submitFindings(patch([otherQuestion]))).toMatchObject({ code: 'incomplete_task', reason: expect.stringContaining(neighbor) });
+    expect(engine.submitFindings(patch([{ nodeId: neighbor, question: 'Explain Source rows.' }, otherQuestion]))).toHaveProperty('ok', true);
     expect(engine.toJSON().agenda.map(entry => entry.nodeId).sort()).toEqual([neighbor, other].sort());
+  });
+  it('replaces a held questions list whole and never drops a held question for a neighbor named in prune_neighbors', () => {
+    const engine = world(true);
+    const overlong = { out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', note: 'x'.repeat(201) }] };
+    const questions = [{ nodeId: neighbor, question: 'Explain Source Value.' }, { nodeId: other, question: 'Explain OtherSource rows.' }];
+    expect(engine.submitFindings({ ...finding, column_flow: [overlong, terminal('Other')], questions }))
+      .toMatchObject({ code: 'field_length_exceeded', hint: expect.stringContaining('Held: sections.technical, summary, questions. Resend: column_flow.') });
+    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value' }] }, terminal('Other')];
+    const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const retry = (extra: Record<string, unknown>) => toHopFinding(schema.parse({ focus_node_id: root, verdict: 'analyze', column_flow, ...extra }));
+    expect(engine.submitFindings(retry({ prune_neighbors: [{ id: other, reason: 'OtherSource supplies no tracked value.' }] })),
+      'the held question for the pruned neighbor is kept, so the two lists conflict').toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining(other) });
+    expect(engine.submitFindings(retry({ questions: [questions[1]] })),
+      'a sent questions list replaces the held list; the neighbor entry is not merged back').toMatchObject({ code: 'incomplete_task', reason: expect.stringContaining(neighbor) });
+    expect(engine.submitFindings(retry({ questions: [questions[0]], prune_neighbors: [{ id: other, reason: 'OtherSource supplies no tracked value.' }] }))).toHaveProperty('ok', true);
+    expect(engine.toJSON().agenda.map(entry => entry.nodeId)).toEqual([neighbor]);
   });
   it('keeps the authored investigation purpose separate from generated column instructions', () => {
     const engine = world();
@@ -866,24 +893,38 @@ describe('current task completeness before advancement', () => {
     }, ['summary']);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
     const patch = (summary?: string) => toHopFinding(schema.parse({ focus_node_id: root, verdict: 'analyze', ...(summary ? { summary } : {}) }));
-    expect(engine.submitFindings(patch())).toMatchObject({ code: 'missing_field', issuePaths: ['summary'], hint: expect.stringContaining('send only summary plus focus_node_id and verdict') });
+    expect(engine.submitFindings(patch())).toMatchObject({ code: 'missing_field', issuePaths: ['summary'],
+      hint: expect.stringContaining('Held: sections.technical, questions, column_flow. Resend: summary.') });
     expect(engine.submitFindings(patch('Both requested outputs are constants.'))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'bb' });
   });
-  it('names held flow groups in a sole length rejection and accepts only the shortened group', () => {
+  it('owes the whole column_flow after a sole length rejection and merges no flow entry back by out_col', () => {
     const engine = world();
     const overlong = { out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', note: 'x'.repeat(201) }] };
     const rejected = engine.submitFindings({ ...finding, column_flow: [overlong, terminal('Other')],
       questions: [{ nodeId: neighbor, question: 'Explain Source Value.' }],
     });
     expect(rejected).toMatchObject({ code: 'field_length_exceeded', issuePaths: ['column_flow.0.upstream_columns.0.note'] });
-    expect(JSON.stringify(rejected)).toContain('out_col: Other');
-    expect(JSON.stringify(rejected)).toContain('column_flow: [] clears');
+    expect(rejected).toMatchObject({ hint: expect.stringContaining('Held: sections.technical, summary, questions. Resend: column_flow.') });
+    expect(engine.heldColumnFlow).toBe(false);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
-    expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: root, verdict: 'analyze', column_flow: [
-      { ...overlong, upstream_columns: [{ node: neighbor, col: 'Value', note: 'The source value.' }] },
-    ] })))).toHaveProperty('ok', true);
+    const shortened = { ...overlong, upstream_columns: [{ node: neighbor, col: 'Value', note: 'The source value.' }] };
+    const retry = (column_flow: unknown[]) => toHopFinding(schema.parse({ focus_node_id: root, verdict: 'analyze', column_flow }));
+    expect(engine.submitFindings(retry([shortened])), 'the Other entry of the rejected call is not restored').toMatchObject({ code: 'incomplete_task' });
+    expect(engine.submitFindings(retry([shortened, terminal('Other')]))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'ct' });
+  });
+  it('holds the valid angle of a failed section and names the failed and missing locked angle as owed', () => {
+    const engine = world();
+    engine.classification = 'both';
+    expect(engine.holdRejectedSubmission({ ...finding, sections: { technical: finding.sections[0].text, business: 42 },
+      column_flow: [terminal('Value'), terminal('Other')], questions: [{ nodeId: neighbor, question: 'Explain Source rows.' }],
+    }, ['sections.business'])).toEqual({ sections: ['technical'], summary: true, fields: ['questions', 'column_flow'], resend: ['sections.business'] });
+    const schema = submitFindingsSchemaForMode('ct', 'both', false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const retry = (sections: Record<string, string>) => toHopFinding(schema.parse({ focus_node_id: root, verdict: 'analyze', sections }));
+    expect(engine.submitFindings(retry({}))).toMatchObject({ code: 'invalid_input',
+      hint: expect.stringContaining('Held: sections.technical, summary, questions, column_flow. Resend: sections.business.') });
+    expect(engine.submitFindings(retry({ business: 'Both outputs are fixed values.' }))).toHaveProperty('ok', true);
   });
   it('rejects an unknown neighbor id rather than silently dropping its question', () => {
     const engine = world();

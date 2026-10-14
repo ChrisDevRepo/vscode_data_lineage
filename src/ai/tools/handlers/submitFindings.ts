@@ -5,7 +5,7 @@
  * Known identity encodings are normalized before raw arguments are parsed once against the
  * current hop's served contract and converted to the internal finding. Turn-lease validation and effect serialization remain in the registry.
  */
-import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
+import { toHopFinding, submitFindingsSchemaForMode, findingRepairOrder } from '../../tools/toolSchemas';
 import { rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import type { ColumnFlowEntry } from '../../sm/smTypes';
@@ -50,7 +50,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: prepared.input, schema });
         const held = engine.holdRejectedSubmission(prepared.input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, prepared.input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, prepared.input, schema), findingRepairOrder(held)].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, prepared.input);
       }
       const normalizedInput = parsed.data;

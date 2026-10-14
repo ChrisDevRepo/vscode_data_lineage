@@ -10,8 +10,6 @@
 
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { keyedResendRule } from '../support/repairDraftStore';
-import { HELD_FINDING_CALL_ORDER } from '../tools/toolSchemas';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
@@ -30,9 +28,9 @@ export function isAbsentKind(kind: InvalidRouteKind): boolean {
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   missing_task_decision:
-    'Send only the missing entries; valid entries are held. Account for each listed target with its mapping or explicit endpoint; terminated_inputs names arriving columns that stop without a local output. With analyze, supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it. Only passthrough forwards the incoming question automatically.',
+    'Account for each listed target with its mapping or explicit endpoint; terminated_inputs names arriving columns that stop without a local output. With analyze, supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it. Only passthrough forwards the incoming question automatically.',
   invalid_task_decision:
-    'Correct only the invalid mapping or input disposition. A write needs a value contribution or an explicit constant output; row-role-only inputs end through terminated_inputs when they have no value output. terminated_inputs must name an assigned incoming column that is not also mapped. Valid finding entries are held.',
+    'Correct the invalid mapping or input disposition. A write needs a value contribution or an explicit constant output; row-role-only inputs end through terminated_inputs when they have no value output. terminated_inputs must name an assigned incoming column that is not also mapped.',
   absent_contributor:
     'Record it as an unresolved upstream source in your analysis and keep the upstream columns that resolve — it is not in the loaded model.',
   bad_out_col:
@@ -80,14 +78,6 @@ const DETACHED_LINK_DIRECTIVE =
   'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in sections; do not invent a write.';
 
 /**
- * Resubmission order for a rejection made only of field-scoped content errors (a column or prune
- * reference the reason names). The engine holds the draft for that set, so the prose the model
- * authored survives the correction instead of being re-authored from scratch.
- */
-export const HELD_CORRECTION_ORDER =
-  `Your analysis is held: ${HELD_FINDING_CALL_ORDER}. ${keyedResendRule('sections', 'angle')} Omit summary to keep the held summary.`;
-
-/**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the
  * model gets a specific, structured classification; mixed kinds fall back to the generic code.
  * Exported so a nonfatal (absent-kind) notice can be logged to `host.log` with the same code the
@@ -132,19 +122,18 @@ function routeErrorLine(error: InvalidRoute): string {
  * @remarks
  * Each kind is emitted by one policy owner, so no message-text inference or mode branch is needed.
  * `code` is the specific per-kind code when one kind dominates; `hint` is the verb-led
- * order(s) followed by the held-correction order, since the engine holds the draft of every
+ * order(s) followed by the engine's repair order (`findingRepairOrder`), since the engine holds the draft of every
  * rejected submission; `reason` states each failure with its valid set as one line per error;
  * `detail` carries the same facts as data.
  *
  * @param errors - Field-resolved validation failures accumulated before commit; at least one.
- * @param heldEntries - Engine-owned sentence naming the held neighbor-list entries
- *   (`heldEntriesRepairLine`), appended after the held-correction order; omitted when none is held.
+ * @param repairOrder - The engine's sentence naming the held parts and the parts to resend.
  * @returns A stable structured rejection without a second repair protocol.
  */
-export function buildRouteValidationRejection(errors: InvalidRoute[], heldEntries = ''): ToolRejection {
+export function buildRouteValidationRejection(errors: InvalidRoute[], repairOrder: string): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
-  const hint = [routeRejectionDirectives(errors), HELD_CORRECTION_ORDER, heldEntries].filter(Boolean).join(' ');
+  const hint = [routeRejectionDirectives(errors), repairOrder].filter(Boolean).join(' ');
   return makeRejection({
     code,
     reason: routeRejectionReason(errors),
@@ -156,7 +145,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], heldEntrie
 
 /**
  * The verb-led corrective orders for a set of route/column failures, one per distinct kind, without
- * the held-correction order; shared by {@link buildRouteValidationRejection} and a finding rejection
+ * the repair order; shared by {@link buildRouteValidationRejection} and a finding rejection
  * that also reports other faults of the same submission.
  */
 export function routeRejectionDirectives(errors: readonly InvalidRoute[]): string {
