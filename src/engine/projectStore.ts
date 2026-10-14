@@ -4,7 +4,7 @@
  * Pure module: no VS Code imports. Usable in both extension host and tests.
  * Stored in context.globalState under key 'dataLineageViz.projectStore'.
  *
- * Schema versioning: schemaVersion field enables forward-compatible migrations.
+ * Schema versioning: the validating loader accepts only the current schemaVersion.
  */
 
 import type { FilterState } from './types';
@@ -32,7 +32,7 @@ export type {
  * Contains all user projects and the state of the wizard.
  */
 export interface ProjectStore {
-  /** The current schema version of the store. Used for migrations. */
+  /** The current schema version of the store, checked by the validating loader. */
   schemaVersion: 1;
   /** The list of saved projects. */
   projects: Project[];

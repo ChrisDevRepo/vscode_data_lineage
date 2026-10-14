@@ -85,6 +85,7 @@ import { normalizeColName, schemaKey } from '../utils/sql';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
 import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import { errorMessage } from '../utils/errorMessage';
 
 /**
  * Mapping of custom node types for React Flow.
@@ -1005,7 +1006,7 @@ export function GraphCanvas({
       vscodeApi.postMessage({
         type: 'log',
         level: 'warn',
-        text: `[Graph] Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        text: `[Graph] Column view unavailable: ${errorMessage(err)}`,
       });
       return null;
     }

@@ -13,6 +13,7 @@ import {
   type ToolGenerationInput,
   type ToolGenerationResult,
   TOOL_ARGUMENTS_NOT_OBJECT_REASON,
+  cancelledError,
   cancelledToolTurnResult,
   modelToolCallMessage,
   errorToolTurnResult,
@@ -38,6 +39,7 @@ import {
   StructuredOutputError,
   structuredRejectReason,
 } from '../providers/structuredOutput';
+import { errorMessage } from '../../utils/errorMessage';
 
 /**
  * Request-scoped model port over the exact native model selected in Chat UI.
@@ -129,7 +131,7 @@ export class VscodeModelPort implements ModelPort {
     } catch (error) {
       this.options.debugLog?.(
         `[AI] count-tokens-fallback model=${this.model.id}`
-        + ` error=${error instanceof Error ? error.message : String(error)}`,
+        + ` error=${errorMessage(error)}`,
       );
       return estimateTokens(text.length);
     }
@@ -495,8 +497,4 @@ function bindCancellation(signal?: AbortSignal): {
 
 function isCancellation(error: unknown): boolean {
   return isPortCancellation(error) || isHostCancellationError(error);
-}
-
-function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
 }

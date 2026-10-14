@@ -691,7 +691,7 @@ export type RenderStateSnapshot = z.infer<typeof RenderStateSnapshotSchema>;
  * @remarks
  * Same tolerance terms as {@link RenderStateSnapshotSchema}: walked fields typed, extras kept.
  */
-export const ScreenStateExtrasSchema = z.looseObject({
+const ScreenStateExtrasSchema = z.looseObject({
   analytics: z.looseObject({
     type: z.string(),
     activeGroupId: z.string().nullable(),

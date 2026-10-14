@@ -21,6 +21,7 @@ import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope'
 import { sanitizeForLog, trunc } from '../../utils/log';
 import type { PresentResultInput, PresentResultRepairAuthorization } from '../tools/presentResult';
 import type { ChatLmStage } from '../tools/toolPolicy';
+import { errorMessage } from '../../utils/errorMessage';
 
 /** Reviewable exploration proposal. It has no active engine authority until approval. */
 export interface PendingExplorationProposal {
@@ -876,7 +877,7 @@ export class AiSession {
       return { kind: 'accepted', engine: built };
     } catch (err) {
       this.memory.restoreFromJSON(priorMemory);
-      return { kind: 'rejected', reason: err instanceof Error ? err.message : String(err) };
+      return { kind: 'rejected', reason: errorMessage(err) };
     }
   }
 

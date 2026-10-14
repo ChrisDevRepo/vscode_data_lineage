@@ -7,6 +7,7 @@ import { useVsCode } from '../contexts/VsCodeContext';
 import { AI_SECTION_ID_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
 import { FOCUS_NODE_HREF_PREFIX } from '../engine/shared/bridgeContract';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
+import { errorMessage } from '../utils/errorMessage';
 
 /** Which edge of the canvas the report column is docked against. */
 export type AiDockPosition = 'right' | 'left' | 'bottom';
@@ -173,7 +174,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     try {
       nodeId = decodeURIComponent(encoded);
     } catch (err) {
-      vscodeApi.postMessage({ type: 'log', level: 'debug', text: `[AI] focus link decode failed: ${encoded} (${err instanceof Error ? err.message : String(err)})` });
+      vscodeApi.postMessage({ type: 'log', level: 'debug', text: `[AI] focus link decode failed: ${encoded} (${errorMessage(err)})` });
     }
     return () => onFocusNode(nodeId);
   }

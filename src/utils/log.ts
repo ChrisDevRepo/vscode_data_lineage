@@ -7,6 +7,7 @@
  */
 import type { LogOutputChannel } from 'vscode';
 import { redactSecrets } from './redact';
+import { errorMessage } from './errorMessage';
 
 /**
  * Canonical categories used to tag extension log entries.
@@ -207,7 +208,7 @@ export function sanitizeForLog(s: string): string {
  * Format: `[CAT] FAILED: operation — error detail`
  */
 function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
-  const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));
+  const detail = normalizeLogMessage(errorMessage(err));
   const msg = `FAILED: ${normalizeCategorizedLogMessage(cat, op)} — ${detail}`;
   ch.error(`[${cat}] ${msg}`);
   if (err instanceof Error && err.stack) {

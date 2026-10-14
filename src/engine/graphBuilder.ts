@@ -27,6 +27,7 @@ import {
   type SchemaProjectionNode,
 } from './schemaProjection';
 import { notifyUser } from '../utils/notify';
+import { errorMessage } from '../utils/errorMessage';
 
 /**
  * Receives a diagnostic line raised while a graph is built or laid out.
@@ -669,7 +670,7 @@ export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, an
   try {
     dagre.layout(g);
   } catch (e) {
-    logSink('warn', `[Graph] Dagre layout failed — ${e instanceof Error ? e.message : String(e)}`);
+    logSink('warn', `[Graph] Dagre layout failed — ${errorMessage(e)}`);
     return new Map();
   }
 
@@ -865,7 +866,7 @@ export function buildSchemaGraph(
   try {
     dagre.layout(g);
   } catch (e) {
-    logSink('warn', `[Graph] Schema layout failed — ${e instanceof Error ? e.message : String(e)}`);
+    logSink('warn', `[Graph] Schema layout failed — ${errorMessage(e)}`);
   }
 
   const nodes: FlowNode<SchemaNodeData>[] = schemaIds.map((schema) => {

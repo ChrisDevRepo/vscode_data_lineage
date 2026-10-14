@@ -59,6 +59,7 @@ import { summarizeZodError, postToDetail } from './host';
 import { readDeclaredNumericSetting } from '../configCore';
 import { buildWebviewCsp } from '../utils/cspBuilder';
 import { getNonce } from '../utils/getNonce';
+import { errorMessage } from '../utils/errorMessage';
 
 /**
  * Maps each main-panel message type to a handler whose `msg` parameter is
@@ -394,7 +395,7 @@ export function createMessageHandlers(
     try {
       await clearStoredRun(context.globalState, profileId);
     } catch (err) {
-      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${errorMessage(err)}`);
     }
   }
 
@@ -557,7 +558,7 @@ export function createMessageHandlers(
           if (token.isCancellationRequested) return;
         } catch (err) {
           if (token.isCancellationRequested) return;
-          const reason = err instanceof Error ? err.message : String(err);
+          const reason = errorMessage(err);
           host.log('error', 'Dacpac', `Open ${uris[0].fsPath}`, err);
           host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
           return;
@@ -628,7 +629,7 @@ export function createMessageHandlers(
             host.log('warn', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
             host.postMessage({ type: 'last-dacpac-gone' });
           } else {
-            const reason = err instanceof Error ? err.message : String(err);
+            const reason = errorMessage(err);
             host.log('error', 'Bridge', `Load project ${project.connection.path}`, err);
             host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}`, phase: 'extract' });
           }
@@ -706,7 +707,7 @@ export function createMessageHandlers(
       try {
         installFilteredDacpac(cachedDacpac, msg.schemas, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null, projectName);
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
+        const reason = errorMessage(err);
         host.log('error', 'Dacpac', 'Dacpac visualize', err);
         host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}`, phase: 'extract' });
       }
@@ -814,7 +815,7 @@ export function createMessageHandlers(
             logger.debug(`AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`);
           }
         } catch (runErr) {
-          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);
+          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${errorMessage(runErr)}`);
         }
       } catch (err) {
         logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
@@ -902,7 +903,7 @@ export function createMessageHandlers(
           Logger.create(outputChannel, 'Bridge'),
           'Markdown preview unavailable',
           'Data Lineage: the built-in Markdown preview is unavailable, so the report opened as a Markdown document instead.',
-          { messageType: 'ai-open-in-editor', reason: err instanceof Error ? err.message : String(err) },
+          { messageType: 'ai-open-in-editor', reason: errorMessage(err) },
         );
       }
     },
@@ -1038,7 +1039,7 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
     host.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true, isDemo: true });
   } catch (err) {
     if (token.isCancellationRequested) return;
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     notifyError(
       Logger.create(outputChannel, 'Dacpac'),
       'Load demo',
@@ -1089,7 +1090,7 @@ async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: st
       const catalogMap = await executeDmvQueries(session, [allObjectsQuery], outputChannel, undefined, timeoutMs);
       allObjectsResult = catalogMap.get('all-objects');
     } catch (err) {
-      host.log('warn', 'DB', `Object catalog unavailable — cross-schema references stay unresolved: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('warn', 'DB', `Object catalog unavailable — cross-schema references stay unresolved: ${errorMessage(err)}`);
     }
   }
   if (token.isCancellationRequested) return;
@@ -1168,7 +1169,7 @@ async function loadDatabasePlatform(
         : 'no rows';
       logger.warn(`Platform query returned unusable metadata (${reason}) — ${fallback}`);
     } catch (err) {
-      logger.warn(`Platform query failed — ${fallback}: ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
+      logger.warn(`Platform query failed — ${fallback}: ${redactSecrets(errorMessage(err))}`);
     }
   } else {
     logger.warn(`Custom DMV configuration has no platform-info query — ${fallback}`);
@@ -1189,7 +1190,7 @@ async function withDbProgressHost(
     let session: DbSession | undefined;
     let disconnected: Promise<void> | undefined;
     const disconnect = () => session ? disconnected ??= session.dispose().catch((err: unknown) =>
-      host.log('warn', 'DB', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`)) : Promise.resolve();
+      host.log('warn', 'DB', `Disconnect failed: ${errorMessage(err)}`)) : Promise.resolve();
     const progressCancellation = token.onCancellationRequested(onCancel);
     const loadCancellation = load.token.onCancellationRequested(() => { void disconnect(); });
     if (token.isCancellationRequested) onCancel();
@@ -1216,7 +1217,7 @@ async function withDbProgressHost(
         );
         host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
       } else {
-        const message = redactSecrets(err instanceof Error ? err.message : String(err));
+        const message = redactSecrets(errorMessage(err));
         host.log('error', 'DB', title, message);
         host.postMessage({ type: 'db-error', message, phase: 'connect' });
       }
@@ -1293,7 +1294,7 @@ async function handleTableStatsRequestHost(
     try {
       profilingResult = await executeSimpleQuery(session, profilingSql, outputChannel, profilingTimeout);
     } catch (sampleErr) {
-      if (!sampled || !/TABLESAMPLE/i.test(sampleErr instanceof Error ? sampleErr.message : String(sampleErr))) throw sampleErr;
+      if (!sampled || !/TABLESAMPLE/i.test(errorMessage(sampleErr))) throw sampleErr;
       // The table refuses TABLESAMPLE: profile it with a full scan, reported as unsampled.
       const fullScanSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, -1, sampleSize);
       profilingResult = await executeSimpleQuery(session, fullScanSql, outputChannel, profilingTimeout);
@@ -1315,11 +1316,11 @@ async function handleTableStatsRequestHost(
       return;
     }
     host.log('error', 'Stats', 'Profiling', err);
-    void postToDetail(panel, { type: 'table-stats-error', objectRef: { schema, objectName }, message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
+    void postToDetail(panel, { type: 'table-stats-error', objectRef: { schema, objectName }, message: redactSecrets(errorMessage(err)) }, logger);
   } finally {
     if (session) {
       await session.dispose().catch((err: unknown) =>
-        host.log('warn', 'Stats', `Disconnect failed: ${redactSecrets(err instanceof Error ? err.message : String(err))}`));
+        host.log('warn', 'Stats', `Disconnect failed: ${redactSecrets(errorMessage(err))}`));
     }
   }
 }

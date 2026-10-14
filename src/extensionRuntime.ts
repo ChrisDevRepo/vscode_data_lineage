@@ -18,6 +18,7 @@ import { loadRules } from './engine/sqlBodyParser';
 import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import { buildExtensionConfig } from './bridge/messageHandlers';
+import { errorMessage } from './utils/errorMessage';
 
 declare const __BUILD_TIMESTAMP__: string;
 
@@ -102,7 +103,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   ));
 
   const templateSet = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
-    logger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
+    logger.warn(`Failed to load AI output templates: ${errorMessage(err)} — using empty defaults`);
     return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
   });
   getSession().outputTemplates = templateSet.templates;
@@ -161,7 +162,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   } catch (err) {
     lineageRuntime = undefined;
     participant = undefined;
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = errorMessage(err);
     notifyWarning(
       logger,
       'Initialise AI surface',
@@ -209,7 +210,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
         const t = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
-          configLogger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
+          configLogger.warn(`Failed to load AI output templates: ${errorMessage(err)} — using empty defaults`);
           return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
         });
         getSession().outputTemplates = t.templates;
@@ -392,7 +393,7 @@ async function loadAiOutputTemplates(
       logger,
       'Load custom AI output templates',
       `Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`,
-      { reason: err instanceof Error ? err.message : String(err), path: resolved, setting: 'ai.outputTemplateFile', fallback: 'built-in defaults' },
+      { reason: errorMessage(err), path: resolved, setting: 'ai.outputTemplateFile', fallback: 'built-in defaults' },
     );
   }
 
@@ -459,7 +460,7 @@ async function loadParseRules(
           logger,
           'Load custom parse rules',
           `Failed to load custom parse rules from "${resolved}" — using built-in defaults. Check Output channel for details.`,
-          { reason: err instanceof Error ? err.message : String(err), path: resolved, setting: 'parseRulesFile', fallback: 'built-in defaults' },
+          { reason: errorMessage(err), path: resolved, setting: 'parseRulesFile', fallback: 'built-in defaults' },
         );
       }
     } else {

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { edgeApiType } from '../support/aiPresenter';
 import { normalizeColName, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { getNodeColumns } from '../support/graphUtils';
-import { resolveModelNodeId } from '../support/inputNormalization';
+import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import type { ScalarReturnTarget } from './smTypes';
 
 /** Keeps every qualified part, so a remote reference cannot collapse onto a local scalar identity. */

@@ -165,7 +165,7 @@ export type NeighborIndex = Record<string, { in: string[]; out: string[] }>;
  * The unified database model representing all nodes, edges, and metadata.
  */
 export interface DatabaseModel {
-  /** Checked source catalog metadata enables exact identifier comparison; absent/false retains legacy CI identity. */
+  /** Checked source catalog metadata enables exact identifier comparison; absent/false uses case-insensitive identity. */
   identifierCaseSensitive?: boolean;
   /** All objects (nodes) included in the model. */
   nodes: LineageNode[];
@@ -217,7 +217,7 @@ export const UNKNOWN_DB_PLATFORM = 'Unknown database platform';
  * Metadata for a schema-level preview used in the project wizard.
  */
 export interface SchemaPreview {
-  /** Checked source catalog policy; absent preserves legacy case-insensitive identity. */
+  /** Checked source catalog policy; absent uses case-insensitive identity. */
   identifierCaseSensitive?: boolean;
   /** Summary of all schemas available in the source. */
   schemas: SchemaInfo[];

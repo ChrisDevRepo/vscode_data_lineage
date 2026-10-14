@@ -153,6 +153,11 @@ export function isPortCancellation(error: unknown): boolean {
   return error instanceof ModelPortError && error.code === 'cancelled';
 }
 
+/** Creates the port-level cancellation error that {@link isPortCancellation} recognizes. */
+export function cancelledError(): ModelPortError {
+  return new ModelPortError('cancelled', 'Language model request was cancelled.');
+}
+
 /**
  * Error names the VS Code language-model host raises when a request is cancelled.
  *

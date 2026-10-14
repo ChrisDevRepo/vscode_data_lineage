@@ -260,7 +260,7 @@ export interface RenderLimitFallback {
 }
 
 /** Instruction on every render-limit screen. The notice offers no button. */
-export const RENDER_LIMIT_NOTICE = 'Reduce filter scope or adjust VS Code settings.';
+const RENDER_LIMIT_NOTICE = 'Reduce filter scope or adjust VS Code settings.';
 
 /**
  * The render-limit notice. The current view stays selected and nothing is drawn.

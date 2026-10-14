@@ -5,6 +5,7 @@
 
 import type { SimpleExecuteResult, IServerInfo } from '../../types/database';
 import type { StoredConnectionInfo } from '../shared/bridgeContract';
+import { errorMessage } from '../../utils/errorMessage';
 
 /** Configuration section that owns the connection settings. */
 export const DATABASE_CONFIG_SECTION = 'dataLineageViz.database';
@@ -64,7 +65,7 @@ export interface ConnectionErrorTarget {
  */
 export class DbConnectionError extends Error {
   constructor(readonly target: ConnectionErrorTarget, readonly original: unknown) {
-    super(original instanceof Error ? original.message : String(original));
+    super(errorMessage(original));
     this.name = 'DbConnectionError';
   }
 }

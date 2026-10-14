@@ -11,6 +11,7 @@ import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './b
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { registerConnectionCommands } from './engine/db/connectionCommands';
 import { loadDmvQueries } from './engine/connectionManager';
+import { errorMessage } from './utils/errorMessage';
 
 /**
  * Registers all user-facing and internal commands for the Data Lineage Viz extension.
@@ -262,7 +263,7 @@ export function registerCommands(
 
         configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorMessage(err);
         notifyError(configLogger, 'Open external project', `Data Lineage: Failed to read file — ${msg}`, err, {
           command: 'dataLineageViz.openExternalProject',
           path: uri.fsPath,

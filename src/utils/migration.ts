@@ -8,6 +8,7 @@ import {
   type ProjectStoreDropReport,
 } from '../engine/projectStore';
 import { Logger } from './log';
+import { errorMessage } from './errorMessage';
 
 /**
  * Migrates legacy workspace-state connection metadata into the project store.
@@ -49,7 +50,7 @@ export async function migrateFromWorkspaceState(
       try {
         connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
       } catch (err) {
-        logger.warn(`Legacy connection "${sourceName}" failed validation and was not migrated: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(`Legacy connection "${sourceName}" failed validation and was not migrated: ${errorMessage(err)}`);
       }
     }
   }

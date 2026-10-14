@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { z } from 'zod';
 import './index.css';
 import { notifyUser } from './utils/notify';
+import { errorMessage } from './utils/errorMessage';
 
 z.config({ jitless: true });
 
@@ -25,7 +26,7 @@ if (!root) {
  * @param error - The rejection value from the import chain.
  */
 function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement, error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   window.vscode?.postMessage({
     type: 'error',
     source: 'window-error',

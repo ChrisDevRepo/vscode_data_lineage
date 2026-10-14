@@ -34,6 +34,7 @@ import { buildAgentGraph, turnRecursionLimit } from '../agent/graph';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
 import type { AgentStateUpdate, AgentErrorCode, GateDecision } from '../agent/state';
+import { errorMessage } from '../../utils/errorMessage';
 
 /** Diagnostic detail behind a non-`ok` {@link TurnOutcome}. */
 export interface AgentFailureDetail {
@@ -225,7 +226,7 @@ export class AgentRuntime {
       }
       // The message of a broken runtime invariant is written for the log, which already has it.
       if (err instanceof InternalInvariantError) return this.close('error', INTERNAL_INVARIANT_STOP_TEXT);
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       return this.close('error', msg);
     }
   }

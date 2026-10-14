@@ -54,7 +54,7 @@ export interface GeneralPromptContext {
   readonly visibleNodes: number;
   /** Total number of nodes in the loaded model. */
   readonly totalNodes: number;
-  /** Checked source catalog policy; absent retains the legacy CI prompt. */
+  /** Checked source catalog policy; absent uses the case-insensitive prompt. */
   readonly identifierCaseSensitive?: boolean;
   /** One phrase naming the trace, analysis, or bookmark applied on screen; absent when nothing is applied. */
   readonly screen?: string;

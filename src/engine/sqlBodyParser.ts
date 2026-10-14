@@ -22,6 +22,7 @@ import {
   PASS1_CLEANSE_RE, NAME_PERIOD_SPACING_RE
 } from './shared/sqlRegex';
 import type { ExternalRef } from './types';
+import { errorMessage } from '../utils/errorMessage';
 
 /**
  * Represents the extracted SQL dependencies from a parsed SQL body.
@@ -187,7 +188,7 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
       return { valid: false, name, error: `${name}: regex matches empty string — this would cause infinite loops` };
     }
   } catch (e) {
-    return { valid: false, name, error: `${name}: invalid regex — ${e instanceof Error ? e.message : String(e)}` };
+    return { valid: false, name, error: `${name}: invalid regex — ${errorMessage(e)}` };
   }
 
   return { valid: true, name };
