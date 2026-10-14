@@ -29,6 +29,23 @@ Add a supporting check as one row in an existing file or case catalog; a new fil
 - AI column-trace state contracts (not deterministic SQL-to-column inference): a `runners: [scripted]` row in [`tests/cases/lineage-cases.yaml`](../../tests/cases/lineage-cases.yaml), run by `tests/unit/sm/lineage-cases.test.ts` on `npm run test:runtime` and the gate.
 - Playwright, Electron and headless rows use the matching `runners` tag and stay outside the gate. Keep the prompt and expected result on the row, not in the runner.
 
+Use each section's existing runner and fixtures rather than adding a universal test framework:
+
+| Section | Case data and runner | Evidence |
+|---|---|---|
+| SQL parsing and graph construction | `tests/cases/parser/exact-edges.yaml`, parser runner | SQL inputs and independently declared exact references, mutations and graph edges |
+| Backend column-task admission | `tests/cases/lineage-cases.yaml`, runtime runner | Supplied mappings, qualified tasks, rejection, continuation and delivered column rows |
+| Database, persistence and webview | Typed fixture rows in the owning support test | Boundary, lifecycle and presentation behavior |
+| AI answer quality | `headless` catalog rows and live/native runners | Model answers reviewed against SQL; deterministic backend cases cannot establish this |
+
+The backend catalog's `contract: stored-arrival` rows share one producer → table → receiver fixture. Each row declares receiver type, SQL and column metadata, supplied `column_flow`, optional `terminated_inputs`, and independent expected mapped inputs, receiver rows, sink mode and sink columns. Partial-consumption rows also declare the rejection expected before termination is supplied. Adding another consumption variant needs a row, not another runner. Keep unique contracts such as separate write destinations, final endpoints and sibling independence as focused tests, using shared graph/render setup. Do not derive expected results from the submitted mappings or from production output.
+
+The same catalog's `contract: self-prune` rows declare a `story`, BB/CT `mode`, route fixture, optional `sender_verdict`, `graph.edges` and independent `expect` values. They check the single eligibility rule (routing through passthrough), immediate hard cuts, shared descendants and removal of cut column evidence. Tool-boundary and dispatcher tests check conditional delivery, strict input and shared completion. These are backend enforcement tests, not evidence that the model judged SQL relevance correctly.
+
+The runner creates synthetic objects from edge endpoints and qualifies short names in schema `d`. [`makeIndexedModel`](../../tests/unit/sm/helpers/fixtures.ts) builds complete neighbor metadata; existing [`makeGraph`](../../tests/unit/helpers/testUtils.ts) builds the directed graph. Other fixtures can reuse these builders with explicit object types, columns and SQL. `makeModel` retains its empty-index default for missing-metadata tests. [`generateDwhModel`](../../tests/unit/helpers/dwhGraphGenerator.ts) remains the larger dataset/scale generator.
+
+For an inherited case, `Origin` directly reaches `Current`; arbitrary continuation edges after it need only a catalog row. See the diamond rows in [`lineage-cases.yaml`](../../tests/cases/lineage-cases.yaml) for complete examples. The helper generates structure, never expected cuts: `expect.unvisited`, `pruned`, `inspected`, `kept` and `edges` are authored independently. Tests check the exact cut immediately, then the remaining visits and complete surviving graph. YAML anchors reuse the same topology and expectations for BB/CT without a templating framework.
+
 ## What these checks establish
 
 Deterministic tests verify parser, graph and runtime contracts. A structurally valid AI result does not establish complete SQL lineage, correct model-authored argument bindings or inclusion of every contributor. Fixed-response host tests establish API wiring and lifecycle, not inference quality. Current escaped-bracket identifiers are covered in both case modes. Ambiguous identifiers in older saved views or checkpoints cannot always be recovered: legacy references resolve only when they have a unique owner in the current model. Statement scanning uses semicolons or recognised top-level statement keywords; identifier tests do not establish complete parsing of arbitrary SQL without delimiters. See [parser limits](../PARSE_RULES.md).

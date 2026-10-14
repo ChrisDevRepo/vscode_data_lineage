@@ -20,7 +20,6 @@ import {
   StartExplorationCompletedProviderInputSchema,
   StartExplorationFreshProviderInputSchema,
   StartExplorationRefineProviderInputSchema,
-  SubmitFindingsModelSchema,
 } from '../tools/toolSchemas';
 import {
   buildActiveContinuationAnchor,
@@ -1195,7 +1194,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const hopMessage = modelUserMessage(hopInstruction.message);
 
     let submitted = false;
-    const committedFinding: { value: { summary: string; verdict: z.infer<typeof SubmitFindingsModelSchema>['verdict'] } | null } = { value: null };
+    let terminalTool = 'lineage_submit_findings';
+    const committedFinding: { value: { summary: string } | null } = { value: null };
     const inputMessages = [...state.messages, hopMessage];
 
     logClassificationGating(deps, 'active', classification, [
@@ -1224,19 +1224,22 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
       hopColumns: () => engine.hopSubmitColumns,
       heldColumnFlow: () => engine.heldColumnFlow,
+      canPruneCurrent: () => engine.canPruneCurrent,
       isPhaseComplete: () => submitted,
-      onToolResult: (toolName, input, isError) => {
-        if (toolName === 'lineage_submit_findings' && !isError) {
+      onToolResult: (toolName, _input, isError) => {
+        if (toolName !== 'lineage_submit_findings' && toolName !== 'lineage_prune_current') return;
+        terminalTool = toolName;
+        if (!isError) {
           submitted = true;
-          const finding = input as z.infer<typeof SubmitFindingsModelSchema>;
           const summary = sess.memory.getResult().detail_slots.find(slot => slot.nodeId === focusId)?.summary;
-          committedFinding.value = { summary: summary ?? '', verdict: finding.verdict };
+          committedFinding.value = { summary: summary ?? '' };
         }
       },
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt, 'lineage_submit_findings');
+    const rejectedCommitTool = res.rejections.find(rejection => rejection.toolName === 'lineage_submit_findings' || rejection.toolName === 'lineage_prune_current')?.toolName;
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt, rejectedCommitTool ?? terminalTool);
 
     if (res.stop === 'error') {
       return {

@@ -1,5 +1,7 @@
 export interface CatalogCase {
   id: string;
+  contract?: 'stored-arrival' | 'self-prune';
+  story?: string;
   runners?: string[];
   prompt?: string;
   command?: string;

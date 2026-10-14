@@ -113,7 +113,7 @@ describe('AI tool registration', () => {
     expect(participantNames).toEqual(TOOL_DEFS.map(tool => tool.name));
 
     const internalOnly = TOOL_DEFS.filter(contract => !EXTERNAL_TOOL_NAMES.has(contract.name)).map(tool => tool.name);
-    expect(internalOnly.sort()).toEqual(['lineage_get_scope_bundle', 'lineage_present_result', 'lineage_start_exploration', 'lineage_submit_findings']);
+    expect(internalOnly.sort()).toEqual(['lineage_get_scope_bundle', 'lineage_present_result', 'lineage_prune_current', 'lineage_start_exploration', 'lineage_submit_findings']);
 
     lmBindings.clear();
     const disposables = registerAiTools(createExternalToolSource(() => session, channel, () => undefined));

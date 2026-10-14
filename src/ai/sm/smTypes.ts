@@ -717,6 +717,8 @@ interface InvestigationTaskBase {
   nodeId?: string;
   /** Parent task for a routed or contracted continuation. */
   parentTaskId?: string;
+  /** Engine-owned sender of this task's route through explicit passthrough. */
+  passthroughFromNodeId?: string;
   /** Directed routing leg retained through table and user-pass contraction. */
   traversalSide?: 'upstream' | 'downstream';
   /** Lifecycle controlled by the navigation engine. */

@@ -17,6 +17,7 @@ import {
   GetScopeBundleModelSchema,
   StartExplorationProviderInputSchema,
   SubmitFindingsModelSchema,
+  PruneCurrentInputSchema,
   PresentResultModelSchema,
   GetObjectDetailInputSchema,
   DetectGraphPatternsInputSchema,
@@ -88,6 +89,11 @@ export const TOOL_DEFS = [
     name: 'lineage_submit_findings', title: 'Submit Findings', inputSchema: SubmitFindingsModelSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
     userDescription: 'Submit analysis of the current node and each neighbor\'s prune or question decision.',
     modelDescription: 'Commits this hop: the focus node\'s verdict and analysis, and its neighbor decisions.',
+  },
+  {
+    name: 'lineage_prune_current', title: 'Prune Current Node', inputSchema: PruneCurrentInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
+    userDescription: 'Remove the current irrelevant node after passthrough routing.',
+    modelDescription: 'Optional alternative to submit_findings, available only on a hop reached through passthrough. If this whole node is irrelevant to the investigation, hard-cut it and the unvisited nodes removed by the normal pruning rules. This removes the object, rather than ending a column continuation. BB and CT use the same command. Send one hop commit command per reply.',
   },
   {
     name: 'lineage_present_result', title: 'Present Lineage View', inputSchema: PresentResultModelSchema, tags: ['lineage-presentation'], effect: 'presentation_commit',

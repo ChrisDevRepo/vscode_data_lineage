@@ -1,9 +1,390 @@
 # One catalog. The scripted, headless, Electron, and Playwright runners each loop
 # the rows tagged for them. Prompts, commands, and expected results live only here.
-# Scripted expect fields are ids, columns, edges, and rejection kinds.
+# Scripted rows test backend contracts with supplied mappings, not model inference.
+# Rows with contract: stored-arrival share the producer/table/receiver fixture.
 # Host expect fields are graph, phase, and terminal (turn outcome ok, error, or cancelled).
 # Prompt sentences are not scripted rows.
 cases:
+  # Shared topology/expectations exercise the same command in both modes.
+  - id: bb-self-prune-unvisited-diamond
+    story: &exclusive_diamond_story Removing current cuts both unvisited arms, their join and the tail after the diamond.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: inherited
+    graph: &exclusive_diamond_graph
+      edges: [[Origin, Current], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Join, Tail]]
+    expect: &exclusive_diamond_expect
+      eligible: true
+      unvisited: [Left, Right, Join, Tail]
+      pruned: ["[d].[Current]", "[d].[Join]", "[d].[Left]", "[d].[Right]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: ct-self-prune-unvisited-diamond
+    story: *exclusive_diamond_story
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: inherited
+    graph: *exclusive_diamond_graph
+    expect: *exclusive_diamond_expect
+
+  - id: bb-self-prune-diamond-with-live-bypass
+    story: &bypass_diamond_story Current and its exclusive arms leave, while the sibling bypass retains the join and its tail.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: inherited
+    graph: &bypass_diamond_graph
+      edges: [[Origin, Current], [Origin, Sibling], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Sibling, Join], [Join, Tail]]
+    expect: &bypass_diamond_expect
+      eligible: true
+      unvisited: [Left, Right, Sibling, Join, Tail]
+      pruned: ["[d].[Current]", "[d].[Left]", "[d].[Right]"]
+      inspected: [Sibling, Join, Tail]
+      kept: [Origin, Sibling, Join, Tail]
+      edges: [[Origin, Sibling], [Sibling, Join], [Join, Tail]]
+
+  - id: ct-self-prune-diamond-with-live-bypass
+    story: *bypass_diamond_story
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: inherited
+    graph: *bypass_diamond_graph
+    expect: *bypass_diamond_expect
+
+  - id: bb-self-prune-two-unvisited-diamonds
+    story: &serial_diamonds_story A cut before two consecutive diamonds removes both joins and every exclusive unvisited continuation.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: inherited
+    graph: &serial_diamonds_graph
+      edges: [[Origin, Current], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Join, LowerLeft], [Join, LowerRight], [LowerLeft, FinalJoin], [LowerRight, FinalJoin], [FinalJoin, Tail]]
+    expect: &serial_diamonds_expect
+      eligible: true
+      unvisited: [Left, Right, Join, LowerLeft, LowerRight, FinalJoin, Tail]
+      pruned: ["[d].[Current]", "[d].[FinalJoin]", "[d].[Join]", "[d].[Left]", "[d].[LowerLeft]", "[d].[LowerRight]", "[d].[Right]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: ct-self-prune-two-unvisited-diamonds
+    story: *serial_diamonds_story
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: inherited
+    graph: *serial_diamonds_graph
+    expect: *serial_diamonds_expect
+
+  - id: bb-upstream-self-prune-unvisited-diamond
+    story: &upstream_diamond_story An unrelated writer is removed along with both exclusive upstream arms, their common source and its source.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    direction: upstream
+    route: inherited
+    graph: &upstream_diamond_graph
+      edges: [[Current, Origin], [Left, Current], [Right, Current], [Join, Left], [Join, Right], [Tail, Join]]
+    expect: &upstream_diamond_expect
+      eligible: true
+      unvisited: [Left, Right, Join, Tail]
+      pruned: ["[d].[Current]", "[d].[Join]", "[d].[Left]", "[d].[Right]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: ct-upstream-self-prune-unvisited-diamond
+    story: *upstream_diamond_story
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    direction: upstream
+    route: inherited
+    graph: *upstream_diamond_graph
+    expect: *upstream_diamond_expect
+
+  - id: bb-passthrough-self-prune-exclusive-tail
+    story: An irrelevant BB reader removes itself and its unvisited exclusive tail.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: &exclusive_tail_expect
+      eligible: true
+      unvisited: [Tail]
+      pruned: ["[d].[Current]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: ct-passthrough-self-prune-exclusive-tail
+    story: An unused CT reader removes itself and its unvisited exclusive tail.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: *exclusive_tail_expect
+
+  - id: bb-upstream-passthrough-writer-self-prune
+    story: An unrelated writer removes itself and its exclusive upstream source.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    direction: upstream
+    route: inherited
+    graph:
+      edges: [[Current, Origin], [Tail, Current]]
+    expect: *exclusive_tail_expect
+
+  - id: ct-upstream-passthrough-writer-self-prune
+    story: A writer that does not supply X can decline the stored target without removing the table.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    direction: upstream
+    route: inherited
+    graph:
+      edges: [[Current, Origin], [Tail, Current]]
+    expect: *exclusive_tail_expect
+
+  - id: bb-passthrough-self-prune-shared-descendant
+    story: A sibling still supports the unvisited shared descendant after current is removed.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Tail], [Origin, Sibling], [Sibling, Tail]]
+    expect:
+      eligible: true
+      unvisited: [Sibling, Tail]
+      pruned: ["[d].[Current]"]
+      inspected: [Sibling, Tail]
+      kept: [Origin, Sibling, Tail]
+      edges: [[Origin, Sibling], [Sibling, Tail]]
+
+  - id: ct-passthrough-self-prune-shared-descendant
+    story: Candidate CT stops at current while another route retains the shared descendant.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Tail], [Origin, Sibling], [Sibling, Tail]]
+    expect:
+      eligible: true
+      unvisited: [Sibling, Tail]
+      pruned: ["[d].[Current]"]
+      inspected: [Sibling, Tail]
+      kept: [Origin, Sibling, Tail]
+      edges: [[Origin, Sibling], [Sibling, Tail]]
+
+  - id: bb-authored-question-cannot-self-prune
+    story: A directly analyzed route offers no self-prune command.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: authored
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: bb-origin-cannot-self-prune
+    story: The approved origin cannot remove itself.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: root
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: bb-authored-question-after-passthrough-can-self-prune
+    story: An explicit question does not block whole-node pruning after passthrough routing.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: authored
+    sender_verdict: passthrough
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: *exclusive_tail_expect
+
+  - id: ct-accepted-terminal-cannot-self-prune
+    story: A mapped endpoint that is final stays in the trace.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: mapped
+    graph:
+      edges: [[Current, Origin], [Tail, Current]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: ct-mapped-node-after-passthrough-can-self-prune
+    story: Whole-node pruning after passthrough removes the node and its column evidence.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: mapped
+    sender_verdict: passthrough
+    graph:
+      edges: [[Current, Origin], [Tail, Current]]
+    expect: { eligible: true, unvisited: [Tail], pruned: ["[d].[Current]", "[d].[Tail]"], inspected: [], kept: [Origin], edges: [], column_edges: [] }
+
+  - id: ct-function-obligation-cannot-self-prune
+    story: A direct function investigation without passthrough offers no self-prune command.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: function
+    graph:
+      edges: [[Current, Origin]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: bb-merged-arrival-after-passthrough-can-self-prune
+    story: A node reached through passthrough can be declared irrelevant even with another authored arrival.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: mixed
+    graph:
+      edges: [[Origin, Left], [Origin, Right], [Left, Current], [Right, Current], [Current, Tail]]
+    expect: { eligible: true, unvisited: [Tail], pruned: ["[d].[Current]", "[d].[Tail]"], inspected: [], kept: [Origin, Left, Right], edges: [[Origin, Left], [Origin, Right]] }
+
+  - id: ct-held-mapping-after-passthrough-can-self-prune
+    story: Whole-node pruning after passthrough clears held findings and cuts the unvisited tail.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: held-mapping
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: *exclusive_tail_expect
+
+  - id: bb-cycle-after-passthrough-can-self-prune
+    story: Current is cut while the independent origin route keeps the unvisited sibling in the cycle.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: pending-sender
+    graph:
+      edges: [[Origin, Current], [Origin, Sibling], [Current, Sibling], [Sibling, Current], [Current, Tail]]
+    expect: { eligible: true, unvisited: [Sibling, Tail], pruned: ["[d].[Current]", "[d].[Tail]"], inspected: [Sibling], kept: [Origin, Sibling], edges: [[Origin, Sibling]] }
+
+  - id: ct-function-after-passthrough-can-self-prune
+    story: A scalar function reached through passthrough uses the same whole-node prune command.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: function
+    sender_verdict: passthrough
+    graph:
+      edges: [[Current, Origin]]
+    expect: { eligible: true, unvisited: [], pruned: ["[d].[Current]"], inspected: [], kept: [Origin], edges: [] }
+
+  - id: ct-stored-procedure-all-used
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: procedure
+    sql: INSERT d.Sink(ResultX,ResultY) SELECT X,Y FROM d.Stored;
+    receiver_columns: []
+    sink_columns: [ResultX, ResultY]
+    column_flow:
+      - { out_col: ResultX, writes_to: { node: "[d].[Sink]", col: ResultX }, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+      - { out_col: ResultY, writes_to: { node: "[d].[Sink]", col: ResultY }, upstream_columns: [{ node: "[d].[Stored]", col: Y }] }
+    expect:
+      mapped_inputs: [X, Y]
+      receiver_rows: [X, ResultX, Y, ResultY]
+      sink_mode: ct
+      sink_columns: [ResultX, ResultY]
+
+  - id: ct-stored-procedure-one-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: procedure
+    sql: INSERT d.Sink(ResultX) SELECT X FROM d.Stored;
+    receiver_columns: []
+    sink_columns: [ResultX]
+    column_flow:
+      - { out_col: ResultX, writes_to: { node: "[d].[Sink]", col: ResultX }, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+    terminated_inputs: [{ node: "[d].[Stored]", col: Y }]
+    expect:
+      incomplete_code: incomplete_task
+      mapped_inputs: [X]
+      receiver_rows: [X, ResultX]
+      sink_mode: ct
+      sink_columns: [ResultX]
+
+  - id: ct-stored-procedure-all-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: procedure
+    sql: INSERT d.Sink(Unrelated) SELECT 42 FROM d.Stored;
+    receiver_columns: []
+    sink_columns: [Unrelated]
+    column_flow: []
+    expect:
+      mapped_inputs: []
+      receiver_rows: []
+      sink_mode: bb
+      sink_columns: []
+
+  - id: ct-stored-view-all-used
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: view
+    sql: CREATE VIEW d.Receiver AS SELECT X AS ResultX,Y AS ResultY FROM d.Stored;
+    receiver_columns: [ResultX, ResultY]
+    sink_columns: [ResultX, ResultY]
+    column_flow:
+      - { out_col: ResultX, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+      - { out_col: ResultY, upstream_columns: [{ node: "[d].[Stored]", col: Y }] }
+    expect:
+      mapped_inputs: [X, Y]
+      receiver_rows: [ResultX, ResultY]
+      sink_mode: ct
+      sink_columns: [ResultX, ResultY]
+
+  - id: ct-stored-view-one-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: view
+    sql: CREATE VIEW d.Receiver AS SELECT X AS ResultX FROM d.Stored;
+    receiver_columns: [ResultX]
+    sink_columns: [ResultX]
+    column_flow:
+      - { out_col: ResultX, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+    terminated_inputs: [{ node: "[d].[Stored]", col: Y }]
+    expect:
+      incomplete_code: incomplete_task
+      mapped_inputs: [X]
+      receiver_rows: [ResultX]
+      sink_mode: ct
+      sink_columns: [ResultX]
+
+  - id: ct-stored-view-all-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: view
+    sql: CREATE VIEW d.Receiver AS SELECT 42 AS Unrelated FROM d.Stored;
+    receiver_columns: [Unrelated]
+    sink_columns: [Unrelated]
+    column_flow: []
+    expect:
+      mapped_inputs: []
+      receiver_rows: []
+      sink_mode: bb
+      sink_columns: []
+
   - id: ct-literal-not-a-column
     runners: [scripted]
     active: [Currency]

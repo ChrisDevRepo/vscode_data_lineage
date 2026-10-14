@@ -6,7 +6,7 @@ import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { TOOL_ARGUMENTS_NOT_OBJECT_REASON } from '../../../src/ai/model/modelPort';
 import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFormed';
-import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';
+import { compileInstructionPlan, explorationFacts } from '../../../src/ai/agent/instructionPlan';
 import {
   executeToolAttempt,
   IDENTICAL_RESEND_HINT,
@@ -21,6 +21,7 @@ import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
 import { makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
+import { PruneCurrentInputSchema } from '../../../src/ai/tools/toolSchemas';
 
 const SearchSchema = z.object({ query: z.string().min(1) }).strict();
 
@@ -58,6 +59,44 @@ function discoveryPlan(registry: IToolRegistry<string>) {
 
 const toolMessage = (messages: readonly unknown[]): ToolMessage => messages.find(item => item instanceof ToolMessage) as ToolMessage;
 const call = (id: string, input: unknown, tool = 'lineage_search_objects') => new vscode.LanguageModelToolCallPart(id, tool, input as object);
+
+describe('optional passthrough hop command delivery', () => {
+  it.each([
+    { mode: 'bb', accepted: true }, { mode: 'ct', accepted: true },
+    { mode: 'bb', accepted: false }, { mode: 'ct', accepted: false },
+  ] as const)('serves conditional self-prune and evaluates one commit in $mode (accepted=$accepted)', async ({ mode, accepted }) => {
+    const registry = new ToolRegistry<string>();
+    const prune = vi.fn(() => JSON.stringify(accepted ? { ok: true } : makeRejection({ code: REJECTION_CODES.offPolicy, reason: 'Removal no longer admitted.' })));
+    registry.register({ name: 'lineage_submit_findings', inputSchema: z.object({}), effect: 'hop_commit', execute: () => '{}' });
+    registry.register({ name: 'lineage_prune_current', inputSchema: PruneCurrentInputSchema, effect: 'hop_commit', execute: prune });
+    const draft = {
+      kind: 'converse' as const, stage: { kind: 'active' as const, mode: mode === 'ct' ? 'sm_ct' as const : 'sm_bb' as const },
+      registry, messages: [new HumanMessage('Inspect the current object.')], sink: new TurnEventSink(() => {}),
+      facts: explorationFacts(mode, ['Value'], { classification: 'technical', memorySections: [] }), requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required' as const,
+      onToolResult: (name: string, _input: unknown, isError: boolean) => { if (name === 'lineage_prune_current' && !isError) completed = true; },
+      isPhaseComplete: () => completed,
+    };
+    let completed = false;
+    for (const canPruneCurrent of [undefined, () => false]) {
+      const unavailable = compileInstructionPlan({ ...draft, canPruneCurrent });
+      expect(unavailable.context.toolNames).not.toContain('lineage_prune_current');
+      expect(unavailable.input.registry.has('lineage_prune_current')).toBe(false);
+      expect(() => unavailable.input.registry.invoke('lineage_prune_current', {})).toThrow('no tool registered');
+    }
+    const available = compileInstructionPlan({ ...draft, canPruneCurrent: () => true });
+    expect(available.context.toolNames).toContain('lineage_prune_current');
+    expect(available.input.registry.get('lineage_prune_current')?.inputSchema).toBe(PruneCurrentInputSchema);
+    const input = { focus_node_id: 'dbo.Reader', reason: 'None of the inherited work applies to this SQL.' };
+    const model = nativePort(() => [call('prune', input, 'lineage_prune_current'), call('sibling', {}, 'lineage_submit_findings')]);
+    const result = await executeToolAttempt(model.port, available);
+    expect(result.stop).toBe(accepted ? 'phase_complete' : 'continue');
+    expect(result.observations).toEqual([]);
+    expect(prune).toHaveBeenCalledExactlyOnceWith(input);
+    const messages = result.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
+    expect(messages[0].status).toBe(accepted ? 'success' : 'error');
+    expect(messages[1].artifact).toMatchObject({ code: accepted ? 'phase_closed' : 'extra_call_not_evaluated' });
+  });
+});
 
 describe('per-reply progress accounting', () => {
   const refused = JSON.stringify(makeRejection({ code: 'result_too_large', hint: 'Narrow the request.' }));

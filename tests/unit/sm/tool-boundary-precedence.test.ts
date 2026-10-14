@@ -9,8 +9,11 @@ import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
+import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
-import { StartExplorationInputSchema, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
+import { StartExplorationInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
+import Ajv from 'ajv';
 import { makeGraph } from '../helpers/testUtils';
 import { makeModel, makeNode } from './helpers/fixtures';
 import { stubToolServices } from './helpers/toolServices';
@@ -44,6 +47,77 @@ function ctWorld(options: { deferred?: boolean; scalar?: boolean; caseSensitive?
   const registry = buildAiToolRegistry(() => session, { info: noop, debug: noop, warn: noop, error: noop } as never, () => undefined);
   return { session, model, graph, registry, engine };
 }
+
+/** An inherited investigation reaches a reader that does not use the table's Value. */
+function passthroughWorld(mode: 'bb' | 'ct') {
+  const nodes = [
+    makeNode({ id: ORIGIN, schema: 'hop', name: 'origin', type: 'table', columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }] }),
+    makeNode({ id: BRANCH, schema: 'hop', name: 'branch', type: 'view', bodyScript: `SELECT Other FROM ${ORIGIN};` }),
+    makeNode({ id: OTHER, schema: 'hop', name: 'other', type: 'view', bodyScript: `SELECT Other FROM ${BRANCH};` }),
+  ];
+  const pairs: Array<[string, string]> = [[ORIGIN, BRANCH], [BRANCH, OTHER]];
+  const model = makeModel(nodes, pairs, ['hop']);
+  model.neighborIndex = { [ORIGIN]: { in: [], out: [BRANCH] }, [BRANCH]: { in: [ORIGIN], out: [OTHER] }, [OTHER]: { in: [BRANCH], out: [] } };
+  const graph = makeGraph(nodes, pairs);
+  const session = new AiSession();
+  session.model = model; session.graph = graph; session.setClassification('technical'); session.beginTurn();
+  const engine = new NavigationEngine(model, graph, () => {}, {});
+  engine.classification = 'technical';
+  expect(engine.init({ origin: ORIGIN, question: 'Follow the Value investigation.', analysisMode: mode,
+    ...(mode === 'ct' ? { targetColumns: ['Value'] } : {}), direction: 'downstream',
+    depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
+  engine.getHopContext();
+  session.stateMachine = engine;
+  session.enterExploring(session.turnEpoch);
+  const { services } = stubToolServices({ session, model, graph });
+  expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'passthrough', summary: 'Stores values.',
+    sections: { technical: 'Its readers must establish relevance.' }, ...(mode === 'ct' ? { column_flow: [] } : {}) }, services))).toMatchObject({ ok: true, next_focus: BRANCH });
+  return { engine, session, services };
+}
+
+describe('lineage_prune_current boundary', () => {
+  it.each(['bb', 'ct'] as const)('normalizes the current %s focus and completes through the shared acknowledgement', mode => {
+    const { engine, session, services } = passthroughWorld(mode);
+    const input = { focus_node_id: 'HOP.BRANCH', reason: 'The supplied SQL uses only Other and does not answer the inherited purpose.' };
+    const before = structuredClone(input);
+    expect(engine.canPruneCurrent).toBe(true);
+    const result = JSON.parse(executePruneCurrent(input, services));
+    expect(result).toMatchObject({ ok: true, done: true });
+    expect(engine.status).toBe('complete');
+    expect(engine.getResult().fullNodes.map(node => node.id)).toEqual([ORIGIN]);
+    expect(session.resultGraph?.nodeIds).toEqual([ORIGIN]);
+    expect(input).toEqual(before);
+  });
+
+  it.each([null, {}, { focus_node_id: BRANCH, reason: '' }, { focus_node_id: BRANCH, reason: 1 },
+    { focus_node_id: BRANCH, reason: 'Off path.', column_flow: [] }, { focus_node_id: OTHER, reason: 'Wrong focus.' }])(
+    'rejects malformed or stale commands without mutation: %j', input => {
+      const { engine, services } = passthroughWorld('ct');
+      const before = engine.toJSON();
+      expect(JSON.parse(executePruneCurrent(input, services))).toHaveProperty('code');
+      expect(engine.toJSON()).toEqual(before);
+    });
+
+  it('keeps provider and runtime schemas strict for the reason-only command', () => {
+    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(PruneCurrentInputSchema));
+    for (const input of [{ focus_node_id: BRANCH, reason: 'Irrelevant to this investigation.' }, {},
+      { focus_node_id: BRANCH }, { focus_node_id: BRANCH, reason: 'Off path.', verdict: 'end_branch' }]) {
+      expect(wire(input)).toBe(PruneCurrentInputSchema.safeParse(input).success);
+    }
+  });
+
+  it('refuses self-pruning on a direct analyzed arrival and leaves its evidence intact', () => {
+    const { engine, session, model, graph } = ctWorld();
+    const { services } = stubToolServices({ session, model, graph });
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'Value comes from branch.',
+      sections: { technical: 'The source endpoint is assigned.' }, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+      questions: [{ nodeId: BRANCH, question: 'Resolve the source endpoint.' }] }, services))).toHaveProperty('next_focus', BRANCH);
+    expect(engine.canPruneCurrent).toBe(false);
+    const before = engine.toJSON();
+    expect(JSON.parse(executePruneCurrent({ focus_node_id: BRANCH, reason: 'No continuation.' }, services))).toHaveProperty('code');
+    expect(engine.toJSON()).toEqual(before);
+  });
+});
 
 describe('lineage_start_exploration boundary', () => {
   it.each([{}, { question: 'What feeds it?' }, { excludeTypes: ['table'] }])('rejects a start with no origin, supplement or revision at the schema: %j', input => {

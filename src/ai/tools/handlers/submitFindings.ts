@@ -8,7 +8,6 @@
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
 import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
-import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
@@ -18,6 +17,7 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import type { ColumnFlowEntry } from '../../sm/smTypes';
 import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
 import { type ToolServices, getModelNodeMap } from './toolServices';
+import { acknowledgeCommittedHop } from './hopCommit';
 
 /**
  * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
@@ -96,25 +96,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         `tally=R${diag.tally.analyze}/P${diag.tally.passthrough}/I${diag.tally.prune} expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}${ctSuffix}`
       );
 
-      const nextHop = engine.getHopContext();
-      let acknowledgement: Record<string, unknown>;
-      if (nextHop.done) {
-        const finalResult = engine.getResult();
-        sess.storeSmResult(finalResult, s.turnEpoch(sess));
-        if (!sess.classification) throw new Error('classification missing at synthesis handoff — start_exploration contract violated');
-        acknowledgement = { ...buildSmCompletionEnvelope(
-          finalResult,
-          sess.memory.getUserQuestion(),
-          model.identifierCaseSensitive,
-        ) };
-      } else {
-        acknowledgement = {
-          done: false,
-          accepted_focus: finding.focus_node_id,
-          hop: nextHop.hop,
-          next_focus: nextHop.focus_node?.id,
-        };
-      }
-      return s.logAndReturn('lineage_submit_findings', { ...result, ...acknowledgement }, normalizedInput);
+      return s.logAndReturn('lineage_submit_findings', acknowledgeCommittedHop(engine, s, finding.focus_node_id, result), normalizedInput);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

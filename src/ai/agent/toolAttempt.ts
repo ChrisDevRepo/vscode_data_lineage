@@ -273,6 +273,7 @@ export interface ToolAttemptResult {
 }
 
 const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
+const PRUNE_CURRENT_TOOL = 'lineage_prune_current';
 
 /**
  * The held `lineage_present_result` repair draft as the model sees it on a present_result
@@ -583,10 +584,10 @@ export async function renderToolAttemptContext(
 const PRESENT_RESULT_TOOL = 'lineage_present_result';
 
 /**
- * Tools a reply carries once: each call replaces the whole answer of its phase or hop, so a second
- * call in the same reply competes with the first for the held draft instead of adding to it.
+ * Tools a reply carries once. Hop findings and candidate removal share one slot: a second commit
+ * in the same reply competes with the first instead of adding to its held draft.
  */
-const ONE_CALL_PER_REPLY_TOOLS: ReadonlySet<string> = new Set([SUBMIT_FINDINGS_TOOL, PRESENT_RESULT_TOOL]);
+const ONE_CALL_PER_REPLY_TOOLS: ReadonlySet<string> = new Set([SUBMIT_FINDINGS_TOOL, PRUNE_CURRENT_TOOL, PRESENT_RESULT_TOOL]);
 
 /**
  * Embeds the labels of the session's held `lineage_present_result` draft into a present_result
@@ -1099,14 +1100,18 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         `closed by ${closedBy.toolName} callId ${closedBy.callId}`);
       continue;
     }
-    const evaluatedCallId = evaluatedOncePerReply.get(call.toolName);
+    // Findings and candidate removal are competing ways to commit this same hop.
+    const onceKey = call.toolName === PRUNE_CURRENT_TOOL ? SUBMIT_FINDINGS_TOOL : call.toolName;
+    const evaluatedCallId = evaluatedOncePerReply.get(onceKey);
     if (evaluatedCallId !== undefined) {
       const outcome = recordToolOutcome(call, {
         status: 'phase_closed',
         closedByCallId: evaluatedCallId,
         rejection: makeRejection({
           code: 'extra_call_not_evaluated',
-          reason: `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
+          reason: onceKey === SUBMIT_FINDINGS_TOOL
+            ? 'Not evaluated: a reply carries one hop commit command, and an earlier findings or candidate-removal command in this reply was evaluated.'
+            : `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
           hint: "Answer that call's result with one call in your next reply.",
           detail: { evaluatedCallId },
         }),
@@ -1116,7 +1121,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         `evaluated callId ${evaluatedCallId}`);
       continue;
     }
-    if (ONE_CALL_PER_REPLY_TOOLS.has(call.toolName)) evaluatedOncePerReply.set(call.toolName, call.callId);
+    if (ONE_CALL_PER_REPLY_TOOLS.has(call.toolName)) evaluatedOncePerReply.set(onceKey, call.callId);
     if (!call.valid) {
       const rejected = rejectionFromInvalid(call, input.registry);
       const argumentRejected = isArgumentRejection(call.code);

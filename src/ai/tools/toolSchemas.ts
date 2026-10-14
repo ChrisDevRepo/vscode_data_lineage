@@ -603,6 +603,12 @@ const HopVerdictSchema = z.enum(['analyze', 'passthrough']).describe(
   + 'The focus stays. Name off-path neighbors in prune_neighbors; naming every neighbor leaves this node visible as a dead end.',
 );
 
+/** Reason-only removal of the whole current node after passthrough routing. */
+export const PruneCurrentInputSchema = z.object({
+  focus_node_id: z.string().min(1).regex(/\S/).describe('The current focus_node.id from hop_context.'),
+  reason: z.string().min(1).regex(/\S/).describe('Why the whole current node is irrelevant to this investigation.'),
+}).strict();
+
 const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries. When only some arriving inputs end without a local output, name them in terminated_inputs.';
 
 const TerminatedInputsSchema = z.array(ColumnFlowWritesToObject).describe(

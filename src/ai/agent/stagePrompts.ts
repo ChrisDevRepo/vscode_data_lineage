@@ -225,14 +225,16 @@ interface ActiveHopInstruction {
  */
 export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
   const isCtMode = engine.currentHopAnalysisMode === 'ct';
+  const nonBodied = focusIsNonBodied(sess, engine);
   const currentTask = buildCurrentTaskBlock(
     engine.getCurrentTasks(),
     isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
+    nonBodied,
   );
   const captureRecipe = resolveStage(sess, 'active', isCtMode, {
     scope: 'per_focus',
-    focusKind: focusIsNonBodied(sess, engine) ? 'non_bodied' : 'bodied',
+    focusKind: nonBodied ? 'non_bodied' : 'bodied',
   });
   const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
   const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);

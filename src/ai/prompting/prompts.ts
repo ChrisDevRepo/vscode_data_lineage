@@ -11,7 +11,7 @@
 
 import { escapePromptText } from '../support/text';
 import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
-import type { InvestigationTask } from '../sm/smTypes';
+import type { InvestigationTask, ScalarReturnTarget } from '../sm/smTypes';
 
 /**
  * Phase key used by the TS prompt protocol builders.
@@ -204,7 +204,7 @@ function buildActivePhasePrompt(): string {
     'Answer each `<sub_question>` from the focus\'s own evidence in the section it belongs to, or state that this hop cannot answer it.',
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
-    'Deliver one `lineage_submit_findings` call:',
+    'Complete this hop with one available hop-completion command. For a kept hop, use `lineage_submit_findings`:',
     '1. `verdict` for the focus node, judged from the focus itself.',
     '2. With `analyze` or `passthrough`: `sections` and a one-sentence `summary`.',
     '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
@@ -772,13 +772,19 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
  * @param currentTasks - Structured tasks assigned to the active node.
  * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.
  * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
+ * @param nonBodied - Whether this focus routes stored endpoints using metadata rather than its own SQL body.
  * @returns Structured `<current_task>` XML block; a task without a question renders no element,
  *   and the result is an empty string when no element would render.
  */
 export function buildCurrentTaskBlock(
-  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question'>>,
+  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'nodeId' | 'traversalSide' | 'callerContext'> & {
+    readonly activeColumns?: readonly string[];
+    readonly sourceRefs?: readonly ScalarReturnTarget[];
+    readonly returnTargets?: readonly ScalarReturnTarget[];
+  }>,
   columnTraceColumns?: string[],
   columnLineageQuestions?: string[],
+  nonBodied = false,
 ): string {
   if (currentTasks.length === 0) return '';
   const lines = ['<current_task>'];
@@ -787,19 +793,35 @@ export function buildCurrentTaskBlock(
     if (!question) continue;
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
     lines.push(`  <${tag}>${escapePromptText(question)}</${tag}>`);
+    // Caller-output investigations retain their specialized binding context in the hop envelope.
+    if (task.kind !== 'column_lineage' || task.returnTargets?.length || task.callerContext) continue;
+    const refs = task.sourceRefs ?? (task.nodeId ? task.activeColumns?.map(col => ({ node: task.nodeId!, col })) : undefined) ?? [];
+    const assigned = refs.filter(ref => ref.node === task.nodeId);
+    const external = refs.filter(ref => ref.node !== task.nodeId);
+    const endpoints = (values: readonly ScalarReturnTarget[]) => values.map(ref => escapePromptText(`${ref.node}.${ref.col}`)).join(', ');
+    if (assigned.length) lines.push(
+      nonBodied
+        ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints on a focus without a SQL body. Preserve accepted mappings and use neighbor metadata for explicit passthrough in the approved direction, without inventing value edges. The receiving SQL objects resolve whether and how those values continue.</assigned_endpoints>`
+        : `  <assigned_endpoints>${endpoints(assigned)}: resolve these endpoints from this object's SQL in the approved direction. Record their qualified continuation or establish their final endpoint; preserve accepted mappings.</assigned_endpoints>`,
+    );
+    if (external.length) lines.push(task.traversalSide === 'upstream'
+      ? `  <writer_targets>${endpoints(external)}: determine whether this writer's SQL supplies these stored outputs. Record confirmed write mappings and their value contributors; end targets this writer does not supply on this branch.</writer_targets>`
+      : task.traversalSide === 'downstream'
+        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, explain join/filter-only roles separately, and end unused inputs on this branch. If none contributes a value, stop CT continuation here. If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
+        : `  <incoming_endpoints>${endpoints(external)}: resolve these qualified arrivals from this object's SQL in the approved direction. Record confirmed mappings or establish where this branch ends; do not assume consumption from object adjacency.</incoming_endpoints>`);
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
       `  <column_trace>`,
-      `    Active columns: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
-      `    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`,
+      `    Arriving column names: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
+      `    Resolve the qualified tasks above. Record SQL-supported mappings in \`column_flow\`, including downstream renames; keep unrelated column analysis in \`sections\`. When some inputs stop while others continue, name the stopping endpoints in \`terminated_inputs\`. An explicitly empty \`column_flow\` ends an ordinary arrival's whole CT continuation without deleting prior accepted mappings.`,
       `  </column_trace>`,
     );
   }
   if (columnTraceColumns?.length && columnLineageQuestions?.length) {
     lines.push(
       `  <lineage_questions>`,
-      `    Column-chain continuations opened on an earlier hop for this focus. Address them:`,
+      `    Endpoint continuations and consumption checks opened on an earlier hop for this focus. Address them:`,
       ...columnLineageQuestions.map(q => `    - ${escapePromptText(q)}`),
       `  </lineage_questions>`,
     );

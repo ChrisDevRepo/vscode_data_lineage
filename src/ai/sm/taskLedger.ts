@@ -17,6 +17,8 @@ export type InvestigationTaskInput = {
   nodeId?: string;
   /** Task this one was split from, so a resolved child rolls up to its parent. */
   parentTaskId?: string;
+  /** Explicit passthrough on the route that created this task. */
+  passthroughFromNodeId?: string;
   traversalSide?: InvestigationTask['traversalSide'];
   /** Initial status; defaults to pending. */
   status?: InvestigationTask['status'];
@@ -140,6 +142,7 @@ export class TaskLedger {
       input.parentTaskId ?? '',
       identityColumns ?? [],
       ...(input.traversalSide ? [{ traversalSide: input.traversalSide }] : []),
+      ...(input.passthroughFromNodeId ? [{ passthroughFromNodeId: this.identifierKey(input.passthroughFromNodeId) }] : []),
       ...(input.kind === 'column_lineage' && input.sourceRefs
         ? [{ sourceRefs: input.sourceRefs.map(ref => [this.identifierKey(ref.node), normalizeColName(ref.col, this.identifierCaseSensitive)]).sort() }]
         : []),

@@ -158,6 +158,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly hopColumns?: () => SubmitFindingsHopColumns;
   /** Whether a held draft of the focus carries a valid `column_flow` a retry may omit; read live, `false` when absent. */
   readonly heldColumnFlow?: () => boolean;
+  /** Live engine eligibility for the optional current-candidate removal command; absent denies it. */
+  readonly canPruneCurrent?: () => boolean;
 };
 
 type TextPlanDraft = Omit<CompleteTextInput, 'phase' | 'instructionContext'> & {
@@ -336,6 +338,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     freshSubmission,
     hopColumns,
     heldColumnFlow,
+    canPruneCurrent,
     presentResultRetainableSections,
     presentResultPreviewBlockCount,
     ...input
@@ -352,7 +355,8 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   if (presentResultRepairFields && !stageSupportsPresentResultRepair(stage)) {
     throw new Error('InstructionPlan: present_result repair authorization is valid only in synthesis, visual preview, or completed.');
   }
-  const allowed = getAllowedLmToolNames(stage);
+  const allowed = new Set(getAllowedLmToolNames(stage));
+  if (stage.kind !== 'active' || !(canPruneCurrent?.() ?? false)) allowed.delete('lineage_prune_current');
   const filteredRegistry = filterRegistry(sourceRegistry, allowed);
   const schemaOverrides = new Map(toolSchemaOverrides ?? []);
   const liveResolvers = new Map<string, () => z.ZodType>();

@@ -185,6 +185,12 @@ export interface IHopStateMachine {
   /** Submits the findings for the current step and calculates the next state. */
   submitFindings(params: HopSubmission): SubmitResult;
 
+  /** Whether the current hop was reached through explicit passthrough. */
+  readonly canPruneCurrent: boolean;
+
+  /** Removes an unrelated candidate focus through the shared atomic removal policy. */
+  pruneCurrent(focusNodeId: string, reason: string): SubmitResult;
+
   /** Final result of the exploration session. */
   getResult(): SmResult;
 
@@ -2795,6 +2801,89 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
+  /** Validates a hop decision's active status and canonical focus before held content or mutation. */
+  private validateCurrentHopFocus(rawFocusId: unknown): string | ToolRejection {
+    if (this._status === 'complete') return makeRejection({
+      code: REJECTION_CODES.explorationComplete,
+      hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
+      detail: { next_action: 'present_result' },
+    });
+    if (this._status !== 'awaiting_findings') return makeRejection({
+      code: REJECTION_CODES.invalidStatus,
+      reason: `Findings arrived while the engine is in status '${this._status}', not 'awaiting_findings'.`,
+      detail: { current_status: this._status },
+    });
+    const focusId = typeof rawFocusId === 'string'
+      ? resolveModelNodeId(rawFocusId, this.nodeMap, this.identifierCaseSensitive) ?? this.identifierKey(rawFocusId) : undefined;
+    if (!focusId || !this.nodeMap.has(focusId)) return makeRejection({
+      code: REJECTION_CODES.invalidInput,
+      reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
+      hint: activeSubmitFindingsRecoveryHint(this.currentFocusNodeId ?? undefined),
+    });
+    const expected = this.currentFocusNodeId ?? '';
+    if (focusId !== expected) return makeRejection({
+      code: REJECTION_CODES.focusNodeIdMismatch,
+      reason: `focus_node_id names \`${focusId}\`; the current object is \`${expected}\`.`,
+      hint: `Resend the same call with focus_node_id \`${expected}\`.`,
+      issuePaths: ['focus_node_id'],
+      detail: { expected, got: focusId },
+    });
+    return focusId;
+  }
+
+  /** True while an active hop carries at least one route through explicit passthrough. */
+  public get canPruneCurrent(): boolean {
+    return this._status === 'awaiting_findings' && this.getCurrentTasks().some(task => task.passthroughFromNodeId !== undefined);
+  }
+
+  /**
+   * Removes a whole unrelated hop reached through passthrough and its exclusively supported open
+   * work. Uses the ordinary structural removal policy in BB and CT; unaffected branches remain.
+   */
+  public pruneCurrent(focusNodeId: string, reason: string): SubmitResult {
+    const focusId = this.validateCurrentHopFocus(focusNodeId);
+    if (typeof focusId !== 'string') return focusId;
+    if (typeof reason !== 'string' || !reason.trim()) return makeRejection({
+      code: REJECTION_CODES.invalidInput, reason: 'A non-empty reason must explain why this object is unrelated.',
+    });
+    if (!this.canPruneCurrent) return makeRejection({
+      code: REJECTION_CODES.invalidInput, reason: 'The current hop was not reached through passthrough.',
+      hint: 'Use lineage_submit_findings to resolve this hop.',
+    });
+    const removal = this.removalSupport(this.removedSet, new Set([...this.removedSet, focusId]));
+    if (removal.rejection || removal.disconnectedVisited.length > 0) return makeRejection({
+      code: REJECTION_CODES.invalidInput,
+      reason: removal.rejection ? REMOVAL_REFUSAL[removal.rejection] : 'Removing this object would disconnect previously committed analysis.',
+    });
+
+    const fromNodeId = this.getCurrentTasks().find(task => task.passthroughFromNodeId !== undefined)!.passthroughFromNodeId!;
+    this.committedHops++;
+    this.lastRoutedNew = 0;
+    this.lastRoutedRejected = 0;
+    this.lastRoutedDeferred = 0;
+    this.lastHopColumnFlowEntries = 0;
+    this._pendingLineageQuestions = [];
+    this.lastHopDetailChars = 0;
+    this.lastHopSummaryChars = reason.length;
+    this.archiveChars += reason.length;
+    this.memory.storeDetail(this.nodeMap.get(focusId)!, [], reason, { incoming_questions: this.currentIncomingQuestions() });
+    this.removedSet.add(focusId);
+    this.pruneBallots.delete(focusId);
+    this.markNodeState(focusId, 'prune', 'ai', 'submitted_prune', { viaNodeId: fromNodeId, atHop: this.hopCount });
+    this.lastHopVerdict = 'prune';
+    this.completeTasks(this.currentFocusTaskIds);
+    this.recordPruneLead(focusId, fromNodeId, reason);
+    this.cutUnreachable(focusId, removal);
+    const cut = new Set([focusId, ...removal.cutIds]);
+    if (this.tracer) this.tracer.edges.splice(0, this.tracer.edges.length,
+      ...this.tracer.edges.filter(edge => !cut.has(edge.from_node) && !cut.has(edge.to_node) && !cut.has(edge.hop_node)));
+    this.heldFindingDraft.clear();
+    this.resolvePendingPrunes();
+    this._status = 'exploring';
+    this.log('debug', `[Self-Prune] hop=${this.hopCount} id=${focusId}`);
+    return { ok: true };
+  }
+
   /**
    * Processes the findings from a completed hop and adjusts the agenda.
    *
@@ -2811,42 +2900,8 @@ export class NavigationEngine implements IHopStateMachine {
    * or defers a route for scope size once the run is approved.
    */
   public submitFindings(params: HopSubmission): SubmitResult {
-    if (this._status === 'complete') {
-      return makeRejection({
-        code: REJECTION_CODES.explorationComplete,
-        hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
-        detail: { next_action: 'present_result' },
-      });
-    }
-    if (this._status !== 'awaiting_findings') {
-      return makeRejection({
-        code: REJECTION_CODES.invalidStatus,
-        reason: `Findings arrived while the engine is in status '${this._status}', not 'awaiting_findings'.`,
-        detail: { current_status: this._status },
-      });
-    }
-
-    // The focus is checked before any held merge: a retry naming another object is told so, and the
-    // draft held for the current object stays untouched.
-    const rawFocusId = params.focus_node_id;
-    const focusId = resolveModelNodeId(rawFocusId, this.nodeMap, this.model.identifierCaseSensitive) ?? (rawFocusId === undefined ? undefined : this.identifierKey(rawFocusId));
-    if (!focusId || !this.nodeMap.has(focusId)) {
-      return makeRejection({
-        code: REJECTION_CODES.invalidInput,
-        reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
-        hint: activeSubmitFindingsRecoveryHint(this.currentFocusNodeId ?? undefined),
-      });
-    }
-    if (focusId !== this.currentFocusNodeId) {
-      const expected = this.currentFocusNodeId ?? '';
-      return makeRejection({
-        code: REJECTION_CODES.focusNodeIdMismatch,
-        reason: `focus_node_id names \`${focusId}\`; the current object is \`${expected}\`.`,
-        hint: `Resend the same call with focus_node_id \`${expected}\`.`,
-        issuePaths: ['focus_node_id'],
-        detail: { expected, got: focusId },
-      });
-    }
+    const focusId = this.validateCurrentHopFocus(params?.focus_node_id);
+    if (typeof focusId !== 'string') return focusId;
 
     const submitted = params;
     const archivedAngles = this.memory.getArchivedAngles(focusId);
@@ -2992,11 +3047,19 @@ export class NavigationEngine implements IHopStateMachine {
             }
           }
           const continuation = [...outputs.values()].filter(ref => !terminated.has(key(ref.node, ref.col)));
+          const passedInputs = new Set(finding.verdict === 'passthrough' ? downstreamRefs.map(ref => key(ref.node, ref.col)) : []);
           for (const nid of this.graph.outNeighbors(focusId)) {
             if (!this.onDownstreamSide(nid)) continue;
-            for (const ref of continuation) addCarry(nid, ref, 'downstream');
-            if (continuation.length > 0) {
-              flowQuestionByNode.set(nid, `Trace downstream use of ${continuation.map(ref => `${ref.node}.${ref.col}`).join(', ')} in ${nid}; record any output mapping from its SQL.`);
+            // A declared write assigns the destination's endpoints, not the producer's borrowed ports.
+            const assigned = continuation.filter(ref => this.identifierKey(ref.node) === this.identifierKey(nid));
+            const routed = assigned.length ? assigned : continuation.filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
+              || passedInputs.has(key(ref.node, ref.col)));
+            for (const ref of routed) addCarry(nid, ref, 'downstream');
+            if (routed.length > 0) {
+              const endpoints = routed.map(ref => `${ref.node}.${ref.col}`).join(', ');
+              flowQuestionByNode.set(nid, assigned.length
+                ? `Resolve the assigned endpoints ${endpoints} in ${nid}; continue their trace or establish their final endpoint.`
+                : `Determine whether ${nid} uses ${endpoints}; map confirmed value contributions and end unused inputs on this branch.`);
             }
           }
         }
@@ -3473,6 +3536,7 @@ export class NavigationEngine implements IHopStateMachine {
           carry: this.neighborCarryFor(nid, legCarry, req.callerContext),
           sourceRefs: leg?.sourceRefs,
           traversalSide: leg?.traversalSide,
+          ...(finding.verdict === 'passthrough' ? { passthroughFromNodeId: focusId } : {}),
           ...(req.callerContext ? { callerContext: req.callerContext, parentTaskId: req.callerContext.callerTaskId } : {}),
           lineageQuestions: columnQuestions,
           freshScopeExpansion: isFreshExpansion,
@@ -3836,6 +3900,7 @@ export class NavigationEngine implements IHopStateMachine {
           lineageQuestions: targets?.length ? entry.lineageQuestions : undefined,
           traversalSide: continues ? task.traversalSide : undefined,
           sourceRefs: targets?.length && task.kind === 'column_lineage' ? task.sourceRefs ?? task.returnTargets : undefined,
+          passthroughFromNodeId: entry.nodeId,
         });
       }
     }
@@ -3900,6 +3965,8 @@ export class NavigationEngine implements IHopStateMachine {
       readonly existingTaskId?: string;
       /** Parent task assigned when a new task is created. */
       readonly parentTaskId?: string;
+      /** Engine-owned sender of this route through explicit passthrough. */
+      readonly passthroughFromNodeId?: string;
       /**
        * Records a node left un-enqueued, keyed by node id: `already_visited` /
        * `already_pruned` for the visit-once skip, `not_enqueued` for an out-of-scope target.
@@ -3919,6 +3986,7 @@ export class NavigationEngine implements IHopStateMachine {
       sourceRefs,
       traversalSide,
       parentTaskId,
+      passthroughFromNodeId,
       dispositions,
     } = opts;
     if (!this.scopeNodeIds.has(targetId) && priority !== 3) {
@@ -3946,7 +4014,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (this.tracer && node.type === 'function' && carry.kind === 'row_role_only' && !getNodeColumns(node.id, this.nodeMap, this.store ?? undefined)?.length) {
       question = `${question}${question ? '\n' : ''}No declared scalar caller output binding is available for this function. This visit does not resolve a caller's column contribution; do not invent function columns or return destinations.`;
     }
-    const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined, callerContext, sourceRefs, traversalSide);
+    const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined, callerContext, sourceRefs, traversalSide, passthroughFromNodeId);
     const alreadyQueued = this._agenda.has(targetId);
     this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry), ...this.carryToRecord(carry), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
     if (!alreadyQueued && (freshScopeExpansion || reactivated)) this._totalNodes++;
@@ -4065,6 +4133,7 @@ export class NavigationEngine implements IHopStateMachine {
     callerContext?: FunctionCallerContext,
     sourceRefs?: readonly ScalarReturnTarget[],
     traversalSide?: 'upstream' | 'downstream',
+    passthroughFromNodeId?: string,
   ): InvestigationTask {
     const existing = existingTaskId ? this.taskLedger.getTask(existingTaskId) : undefined;
     if (existing) return existing;
@@ -4076,6 +4145,7 @@ export class NavigationEngine implements IHopStateMachine {
       createdHop: this.hopCount,
       ...(callerContext ? { callerContext } : {}),
       ...(traversalSide ? { traversalSide } : {}),
+      ...(passthroughFromNodeId ? { passthroughFromNodeId } : {}),
     }, 'analytical', activeColumns, returnTargets, sourceRefs));
   }
 
@@ -4295,7 +4365,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Disposition] getResult drops ${orphaned.length} scope node(s) unreachable from origin under removedSet — ${trunc(orphaned.join(', '), 200)} (orphaned by a prune; never dispositioned themselves)`);
     }
 
-    const droppedSlots = mem.detail_slots.filter(slot => !finalNodeIds.has(slot.nodeId) && !undispositioned.has(slot.nodeId));
+    const droppedSlots = mem.detail_slots.filter(slot => !finalNodeIds.has(slot.nodeId) && !undispositioned.has(slot.nodeId)
+      && this.nodeStates.get(slot.nodeId)?.reason !== 'submitted_prune');
     if (droppedSlots.length > 0) {
       this.log('debug', `[Disposition] getResult drops ${droppedSlots.length} analyzed detail slot(s) unreachable from origin under removedSet/scope — ${trunc(droppedSlots.map(s => s.nodeId).join(', '), 200)} (conservation delta; expected empty)`);
     }

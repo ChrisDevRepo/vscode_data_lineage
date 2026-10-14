@@ -54,6 +54,7 @@ import { getModelNodeMap, type AiViewPreviewMessage, type ToolCaller, type ToolS
 import type { PreviewDelivery } from '../support/chatAnswer';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
+import { executePruneCurrent } from './handlers/pruneCurrent';
 import { executePresentResult } from './handlers/presentResult';
 import type { ModelPort } from '../model/modelPort';
 import { tokenToAbortSignal } from '../providers/cancellation';
@@ -401,6 +402,11 @@ class ToolHandler implements ToolServices {
     return executeSubmitFindings(input, this);
   }
 
+  /** Commits removal of an eligible unresolved current candidate. */
+  public pruneCurrent(input: unknown) {
+    return executePruneCurrent(input, this);
+  }
+
   public presentResult(input: unknown) {
     return executePresentResult(input, this);
   }
@@ -569,6 +575,7 @@ export function buildAiToolRegistry(
     lineage_get_scope_bundle: (input) => handler.getScopeBundle(input),
     lineage_start_exploration: (input) => handler.startExploration(input),
     lineage_submit_findings: (input) => handler.submitFindings(input),
+    lineage_prune_current: (input) => handler.pruneCurrent(input),
     lineage_present_result: (input) => handler.presentResult(input),
     lineage_get_object_detail: (input) => handler.getObjectDetail(input),
     lineage_detect_graph_patterns: (input) => handler.runAnalysis(input),

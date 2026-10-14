@@ -9,8 +9,8 @@
  * | `discover`                | get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl, get_object_detail, detect_graph_patterns |
  * | `visual_preview`          | present_result (restructures the cached discovery answer)                                  |
  * | `sm_entry`                | get_screen_state, search_objects, get_object_detail (resolve all columns for a CT start), start_exploration (resolve origin + open the consent gate) |
- * | `active` (sm_bb)          | submit_findings                                                                                 |
- * | `active` (sm_ct)          | submit_findings, get_neighbor_columns                                                            |
+ * | `active` (sm_bb)          | submit_findings; prune_current when the engine authorizes candidate removal                        |
+ * | `active` (sm_ct)          | submit_findings, get_neighbor_columns; the same conditional prune_current                         |
  * | `synthesis`               | present_result                                                                                    |
  * | `completed`               | present_result, start_exploration (a supplement on the completed engine, or a fresh proposal), and every discovery read tool |
  * | `external`                | the existing read-only VS Code tool surface                |
@@ -137,8 +137,8 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
       return EXTERNAL_TOOL_NAMES;
     case 'active': {
       return new Set(stage.mode === 'sm_ct'
-        ? ['lineage_submit_findings', 'lineage_get_neighbor_columns']
-        : ['lineage_submit_findings']);
+        ? ['lineage_submit_findings', 'lineage_prune_current', 'lineage_get_neighbor_columns']
+        : ['lineage_submit_findings', 'lineage_prune_current']);
     }
     default:
       return assertNever(stage);
