@@ -23,17 +23,7 @@ export type HopProgress = { current: number; open: number; total: number; pruned
 /** Whether a hop neighbor was already visited (`cycle`) or not (`none`). */
 export type BoundaryFlag = 'none' | 'cycle';
 
-/**
- * The focus node's self-status submitted each hop. Two states:
- * `analyze` = the node applies business logic on the data path (sections stored, featured in the answer);
- * `passthrough` = the node is on the data path but applies no logic (a raw source / bridge / target
- *   table, a SELECT * or synonym) — it is KEPT in the lineage and linked by flow role, and the trace
- *   continues *through* it, or it carries nothing further (a dead end).
- * Off-path neighbors leave through `prune_neighbors` (recorded as node action `prune`).
- */
-export type Verdict = 'analyze' | 'passthrough';
-
-/** Engine-owned lifecycle action for a node in an SM result. Mirrors {@link Verdict}. */
+/** Engine-owned lifecycle action for a node in an SM result. */
 export type SmNodeAction = 'analyze' | 'passthrough' | 'prune';
 
 /** Who made the lifecycle decision for a node. */
@@ -455,12 +445,6 @@ export type SubmitResult =
       ok: true;
       /** Per-neighbor disposition for every neighbor this hop enqueued, deferred or found already settled; engine-side, never returned to the model. */
       route_outcomes?: RouteOutcome[];
-      /**
-       * CT tracked columns this hop's `column_flow` left unaccounted, by name — plain data, never a
-       * rejection. Whether a chain starts, ends, or stays incomplete at a hop is the model's
-       * decision. Absent when every active column was accounted for, or in BB.
-       */
-      unaccounted_columns?: string[];
     }
   | ToolRejection;
 

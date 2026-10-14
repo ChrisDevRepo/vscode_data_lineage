@@ -6,7 +6,6 @@ import { resolveModelNodeId } from '../support/inputNormalization';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
-import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import { sanitizeForLog } from '../../utils/log';
 import { DirectedGraph } from 'graphology';
@@ -113,28 +112,6 @@ export class ColumnTracer {
    */
   setActiveColumns(columns: string[]): void {
     this.aspect.active_columns = columns;
-  }
-
-  /**
-   * Active tracked columns the AI left unaccounted for in this hop's `column_flow`.
-   *
-   * @remarks
-   * The structural completeness guard for the column chain: every active column must be resolved —
-   * continued (an entry with upstream real columns) or produced here (`upstream_columns: []`). An
-   * UPSTREAM trace accounts via `active_columns − {out_col}`; a DOWNSTREAM trace accounts against
-   * `out_col` UNION every `upstream_columns[].col` named, since the active column there lives on
-   * the PREVIOUS node. Dispatcher admission separately checks qualified task endpoints,
-   * including explicit input termination and caller-output investigations.
-   *
-   * @param columnFlow - The column flow entries submitted by the AI.
-   * @param traceDirection - Trace direction of the owning exploration.
-   * @returns An array of active columns that were not accounted for.
-   */
-  unaccountedActiveColumns(columnFlow: ColumnFlowEntry[], traceDirection: 'upstream' | 'downstream'): string[] {
-    const accounted = traceDirection === 'downstream'
-      ? columnFlow.flatMap(e => [e.out_col, ...e.upstream_columns.map(r => r.col)])
-      : columnFlow.map(e => e.out_col);
-    return computeUnaccounted(this.aspect.active_columns, accounted, this.identifierCaseSensitive);
   }
 
   /**

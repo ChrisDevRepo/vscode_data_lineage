@@ -206,6 +206,24 @@ describe('extractExternalRefs', () => {
     if (kind) expect(refs[0].kind).toBe(kind);
   });
 
+  it.each([
+    ['bracketed', "[OPENROWSET(BULK '/phantom-open')]", "[COPY INTO dbo.T FROM '/phantom-copy']", "[BULK INSERT dbo.T FROM '/phantom-bulk']"],
+    ['double-quoted', '"OPENROWSET(BULK \'/phantom-open\')"', '"COPY INTO dbo.T FROM \'/phantom-copy\'"', '"BULK INSERT dbo.T FROM \'/phantom-bulk\'"'],
+  ])('ignores external syntax inside %s identifiers while retaining real quoted paths', (_name, openIdentifier, copyIdentifier, bulkIdentifier) => {
+    const sql = `
+      SELECT ${openIdentifier}, ${copyIdentifier}, ${bulkIdentifier} FROM dbo.Real;
+      SELECT * FROM OPENROWSET(BULK 'https://real.example/a/*b--c.csv', SINGLE_CLOB) AS r;
+      COPY INTO dbo.Target FROM 'https://real.example/copy.csv';
+      BULK INSERT dbo.Target FROM 'C:\\Data\\bulk.csv';
+    `;
+
+    expect(extractExternalRefs(sql)).toEqual([
+      { url: 'https://real.example/a/*b--c.csv', kind: 'openrowset' },
+      { url: 'https://real.example/copy.csv', kind: 'copy_from' },
+      { url: 'C:\\Data\\bulk.csv', kind: 'bulk_from' },
+    ]);
+  });
+
   it('finds both an external file and a cross-database reference in one body', () => {
     const body = `
       CREATE PROCEDURE [etl].[spLoadMixed] AS

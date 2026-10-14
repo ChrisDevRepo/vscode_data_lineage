@@ -9,7 +9,6 @@ import {
   ExtensionToDetailMsgSchema,
   type ExtensionToDetailMsg,
 } from '../engine/shared/bridgeContract';
-import { redactSecrets } from '../utils/redact';
 
 /**
  * Defines the abstract interface for the extension-webview communication bridge.
@@ -144,17 +143,6 @@ export function postToDetail(
   );
 }
 
-/** Redacts credential-shaped text from a caught value's message and stack before it is logged. */
-function redactErrorDetail(err: unknown): unknown {
-  if (err instanceof Error) {
-    const safe = new Error(redactSecrets(err.message));
-    safe.name = err.name;
-    safe.stack = err.stack === undefined ? undefined : redactSecrets(err.stack);
-    return safe;
-  }
-  return err === undefined ? undefined : redactSecrets(String(err));
-}
-
 /** Creates a concrete {@link BridgeHost} implementation tied to a specific WebviewPanel. */
 export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, outputChannel: vscode.LogOutputChannel): BridgeHost {
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
@@ -162,11 +150,10 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
     postMessage: (msg) => postToWebview(panel, msg, bridgeLogger),
     log: (level, cat, text, err) => {
       const logger = Logger.create(outputChannel, cat);
-      const safeText = redactSecrets(text);
-      if (level === 'info') logger.info(safeText);
-      else if (level === 'warn') logger.warn(safeText);
-      else if (level === 'error') logger.error(safeText, redactErrorDetail(err));
-      else logger.debug(safeText);
+      if (level === 'info') logger.info(text);
+      else if (level === 'warn') logger.warn(text);
+      else if (level === 'error') logger.error(text, err);
+      else logger.debug(text);
     },
     showErrorMessage: (msg) => { void vscode.window.showErrorMessage(msg); },
     executeCommand: (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args),

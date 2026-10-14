@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { type AiSession } from './ai/session/session';
 import { Logger, safeStringifyForLog } from './utils/log';
 import { notifyError } from './utils/notifications';
-import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { createBridgeHost, summarizeZodError, type BridgeHost } from './bridge/host';
 import { buildWebviewCsp } from './utils/cspBuilder';
@@ -195,9 +194,9 @@ async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
  * Generates the root HTML for the lineage webview.
  */
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo: boolean): string {
-  const stylesUri = getUri(webview, extensionUri, ["dist", "assets", "index.css"]);
-  const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
-  const logoUri = getUri(webview, extensionUri, ["images", "logo.png"]);
+  const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
+  const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "images", "logo.png"));
   const nonce = getNonce();
   const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
 
