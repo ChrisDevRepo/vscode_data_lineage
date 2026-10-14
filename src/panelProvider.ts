@@ -17,6 +17,7 @@ import {
 
 let activePanel: vscode.WebviewPanel | undefined;
 let activeTriggerDemo: (() => Promise<void>) | undefined;
+let activeBeginExternalLoad: (() => vscode.CancellationToken) | undefined;
 /** Outlives every panel: handlers are re-created per panel, the AI report document is one per session. */
 const reportDocumentRef: ReportDocumentRef = {};
 
@@ -24,6 +25,13 @@ export { PROJECT_STORE_KEY };
 
 /** Retrieves the currently active lineage webview panel, if one exists. */
 export function getActivePanel() { return activePanel; }
+
+/**
+ * Starts a host-initiated import on the active panel, superseding any load in flight.
+ *
+ * @returns The new load's cancellation token, or `undefined` when no panel is open.
+ */
+export function beginActivePanelLoad(): vscode.CancellationToken | undefined { return activeBeginExternalLoad?.(); }
 
 /**
  * Orchestrates the creation, restoration, and lifecycle of the primary Data Lineage Webview.
@@ -94,6 +102,7 @@ export function openPanel(
     bridgeLogger.info('Panel disposed');
     activePanel = undefined;
     activeTriggerDemo = undefined;
+    activeBeginExternalLoad = undefined;
     detailPanel?.dispose();
     while (panelDisposables.length > 0) panelDisposables.pop()?.dispose();
 
@@ -108,7 +117,7 @@ export function openPanel(
     void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
-  const { handlers, cleanup, triggerDemoLoad } = createMessageHandlers(
+  const { handlers, cleanup, triggerDemoLoad, beginExternalLoad } = createMessageHandlers(
     host,
     context,
     getSession,
@@ -122,6 +131,7 @@ export function openPanel(
   );
 
   activeTriggerDemo = triggerDemoLoad;
+  activeBeginExternalLoad = beginExternalLoad;
 
   panel.onDidDispose(() => {
     cleanup().catch(err => bridgeLogger.warn(`Cleanup failed — next session may reuse stale state: ${err}`));

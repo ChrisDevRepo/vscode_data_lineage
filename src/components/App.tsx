@@ -1411,8 +1411,10 @@ export function App() {
     if (!activeViewId) return false;
     const profile = filterProfiles.find(p => p.id === activeViewId);
     if (!profile) return false;
-    return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(profile.filter);
-  }, [activeViewId, filterProfiles, filter]);
+    // Compare against the view as applied: Apply restores the reconciled filter, not the persisted spelling.
+    const saved = model ? reconcileSavedView(profile, model).profile.filter : profile.filter;
+    return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(saved);
+  }, [activeViewId, filterProfiles, filter, model]);
 
   const isFilterDirty = useMemo(() => {
     if (!model) return false;
@@ -1478,18 +1480,15 @@ export function App() {
   /** Updates an existing view profile with the current filters. */
   const handleUpdateView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
-    let existing = filterProfiles.find(p => p.id === profileId);
+    const existing = filterProfiles.find(p => p.id === profileId);
     if (!existing) return;
+    // The current filter replaces the saved one, so only the references the update keeps are reconciled.
+    let updated: FilterProfile = { ...existing, filter: serializeFilter(filter) };
     if (model) {
-      const reconciled = reconcileSavedView(existing, model);
-      existing = reconciled.profile;
+      const reconciled = reconcileSavedView(updated, model);
+      updated = reconciled.profile;
       if (reconciled.unresolved.length) vscodeApi.postMessage({ type: 'show-warning', text: `Saved view has ${reconciled.unresolved.length} unresolved object or schema reference(s). Those references were not restored.` });
     }
-
-    const updated: FilterProfile = {
-      ...existing,
-      filter: serializeFilter(filter),
-    };
     persistFilterProfile(updated);
   }, [activeProjectId, filter, filterProfiles, persistFilterProfile, model, vscodeApi]);
 

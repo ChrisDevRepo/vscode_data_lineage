@@ -302,9 +302,12 @@ class ToolHandler implements ToolServices {
       if (!parsed.ok) return this.logAndReturn('lineage_get_screen_state', parsed.error, input);
       const sess = this.getSession();
       const model = this.requireModel();
-      const legacyIds = createSavedReferenceResolver(model);
-      const currentIds = createSavedReferenceResolver(model, 2);
-      const savedId = (id: string, version?: 2) => (version === 2 ? currentIds : legacyIds).nodeId(id);
+      // Built on first saved-id lookup only: each resolver indexes every node and its legacy aliases.
+      let legacyIds: ReturnType<typeof createSavedReferenceResolver> | undefined;
+      let currentIds: ReturnType<typeof createSavedReferenceResolver> | undefined;
+      const savedId = (id: string, version?: 2) => (version === 2
+        ? currentIds ??= createSavedReferenceResolver(model, 2)
+        : legacyIds ??= createSavedReferenceResolver(model)).nodeId(id);
       const getDdl = (id: string, version?: 2) => {
         const resolved = savedId(id, version);
         return resolved === null ? undefined : sess.columnStore.getDdl(resolved);

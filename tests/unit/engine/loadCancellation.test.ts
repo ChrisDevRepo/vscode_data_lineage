@@ -160,6 +160,30 @@ describe('database load cancellation', () => {
 
 });
 
+describe('host-initiated loads', () => {
+  it('announce a new load and supersede the load in flight', async () => {
+    const extracted = deferred<DatabaseModel>();
+    ports.extract.mockReturnValue(extracted.promise);
+    const app = arrange();
+    const demo = app.handlers['load-demo']({ type: 'load-demo' });
+    await vi.waitFor(() => expect(ports.extract).toHaveBeenCalled());
+    const starts = app.frames().filter(frame => frame.type === 'load-started').length;
+    const token = app.beginExternalLoad();
+    expect(token.isCancellationRequested).toBe(false);
+    expect(app.frames().filter(frame => frame.type === 'load-started')).toHaveLength(starts + 1);
+    extracted.resolve(model()); await demo;
+    expect(app.frames().some(frame => frame.type === 'dacpac-model')).toBe(false);
+  });
+
+  it('are cancelled at once on a closed panel', async () => {
+    const app = arrange();
+    await app.cleanup();
+    const before = app.frames().length;
+    expect(app.beginExternalLoad().isCancellationRequested).toBe(true);
+    expect(app.frames()).toHaveLength(before);
+  });
+});
+
 describe('closed or cancelled DACPAC loads', () => {
   it.each(['demo', 'open', 'saved-preview', 'saved-model'] as const)('panel close during %s extraction suppresses late model, preview and refresh', async (kind) => {
     const extracted = deferred<DatabaseModel | typeof preview>();

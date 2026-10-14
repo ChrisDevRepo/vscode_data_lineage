@@ -184,6 +184,11 @@ export interface MessageHandlerBundle {
   cleanup: () => Promise<void>;
   /** Function to programmatically trigger the demo load when the panel is already active. */
   triggerDemoLoad: () => Promise<void>;
+  /**
+   * Starts a host-initiated import on this panel: supersedes the active load and tells the webview
+   * a new load began, so its result is not discarded as belonging to a cancelled load.
+   */
+  beginExternalLoad: () => vscode.CancellationToken;
 }
 
 /**
@@ -970,6 +975,7 @@ export function createMessageHandlers(
       dmvQueries.dispose();
     },
     triggerDemoLoad: async () => { await handlers['load-demo']({ type: 'load-demo' }); },
+    beginExternalLoad: () => beginLoad().token,
   };
 }
 

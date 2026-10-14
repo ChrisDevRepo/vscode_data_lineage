@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { type AiSession } from './ai/session/session';
-import { getActivePanel } from './panelProvider';
+import { beginActivePanelLoad, getActivePanel } from './panelProvider';
 import { postToWebview } from './bridge/host';
 import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
@@ -230,6 +230,8 @@ export function registerCommands(
      */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
       configLogger.info(`Forcing project load from: ${uri.fsPath}`);
+      // Supersedes a panel load in flight and tells the webview this import is current.
+      const loadToken = beginActivePanelLoad();
       try {
         const { extractDacpac } = await import('./engine/dacpacExtractor');
 
@@ -243,6 +245,10 @@ export function registerCommands(
             externalRefsEnabled: config.externalRefs.enabled,
           },
         );
+        if (loadToken?.isCancellationRequested) {
+          configLogger.info('Forced project load superseded by a newer load — not applied.');
+          return;
+        }
         if (isModelOverLimit(model, config.maxNodes, configLogger)) return;
         const sess = getSession();
 
