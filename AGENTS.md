@@ -58,10 +58,10 @@ docs/             product architecture, developer and testing documentation
 
 ## Change constraints
 
-- Fix a defect at its root cause in the layer that owns the contract, with a test that fails before the fix. No hack, workaround, retry-until-green, weakened or skipped test, or fixture-specific path in production code. A fix that cannot be made cleanly is not pushed.
+- Fix a reproduced defect at its root cause in the layer that owns the contract. Establish a supported trigger and failing evidence before changing production code. No hack, workaround, retry-until-green, weakened or skipped test, or fixture-specific path in production code. A fix that cannot be made cleanly is not pushed.
 - Validate untrusted inputs at their boundary with the existing schema and error handling. Preserve input identity where the API contract requires it.
 - Use public APIs from VS Code and installed libraries.
-- Extend existing owning tests only for changed key features or verified stability/security defects, including relevant failure paths. Preserve distinct parser and lineage scenarios and coverage floors.
+- Extend existing owning tests only for changed key features or reproduced stability/security defects, including relevant failure paths. Use private one-time checks for cleanup equivalence, reference audits, assets, documentation and ancillary tooling probes. Preserve distinct parser and lineage scenarios and coverage floors.
 - Documents are part of the change: before a push, check that every changed behavior, command, path and count named in a `.md` file is true, and remove statements that are no longer.
 - Never include credentials, customer database content, raw conversations, or generated test artifacts in tracked files.
 - Keep generated reviews, audit reports, inventories and session notes in `.audit/` or outside the repository. Never commit or publish them, or put them under `docs/`. Update existing public documentation only for supported behavior changes.

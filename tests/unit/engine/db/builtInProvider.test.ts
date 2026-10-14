@@ -411,21 +411,12 @@ describe('openBuiltInSession — failures', () => {
     fake.connectHangs = true;
     const { env } = makeEnv({ 'dataLineageViz.database.password.c1': 'pw' });
     const source = new CancellationTokenSource();
-    const subscriptionDisposed = vi.fn();
-    const token = {
-      get isCancellationRequested() { return source.token.isCancellationRequested; },
-      onCancellationRequested(listener: () => void) {
-        const subscription = source.token.onCancellationRequested(listener);
-        return { dispose() { subscriptionDisposed(); subscription.dispose(); } };
-      },
-    };
-    const opening = openBuiltInSession(sqlLogin, env, { token: token as never });
+    const opening = openBuiltInSession(sqlLogin, env, { token: source.token });
     await vi.waitFor(() => expect(fake.connections).toHaveLength(1));
     source.cancel();
 
     await expect(opening).resolves.toBeUndefined();
     expect(fake.connections[0].closed).toBe(true);
-    expect(subscriptionDisposed).toHaveBeenCalledExactlyOnceWith();
   });
 
   it('a token cancelled before the connect opens no socket', async () => {

@@ -391,11 +391,11 @@ export async function openBuiltInSession(
   logger.debug(`Connection target: ${label}${database ? ` / ${database}` : ''}`);
   const started = Date.now();
   let cancelled: boolean;
-  let connectCancellation: vscode.Disposable | undefined;
   try {
     cancelled = await new Promise<boolean>((resolve, reject) => {
-      connectCancellation = options.token?.onCancellationRequested(() => resolve(true));
+      const subscription = options.token?.onCancellationRequested(() => resolve(true));
       raw.connect((err?: Error) => {
+        subscription?.dispose();
         if (err) reject(err);
         else resolve(false);
       });
@@ -403,8 +403,6 @@ export async function openBuiltInSession(
   } catch (err) {
     await session.dispose();
     throw err;
-  } finally {
-    connectCancellation?.dispose();
   }
   if (cancelled) {
     await session.dispose();

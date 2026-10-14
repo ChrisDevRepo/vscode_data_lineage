@@ -19,7 +19,7 @@ export interface LayoutWorkerClient {
  * @remarks
  * A `Worker` that fails to load raises an `error` event and never a rejection, so a bare Comlink
  * proxy leaves every pending call unsettled and a module-level singleton broken for the rest of
- * the page. This client terminates and forgets the worker on failure or an unreadable message, rejects the calls in
+ * the page. This client terminates and forgets the worker on that event, rejects the calls in
  * flight, and retries construction on the next call. A factory that throws synchronously is the
  * same failure reported once through `onUnavailable`.
  *
@@ -55,9 +55,6 @@ export function createLayoutWorkerClient(
     }
     spawned.addEventListener('error', (event) => {
       if (worker === spawned) drop(event.message || 'layout worker failed');
-    });
-    spawned.addEventListener('messageerror', () => {
-      if (worker === spawned) drop('layout worker message could not be deserialized');
     });
     worker = spawned;
     api = wrap<LayoutWorkerApi>(spawned);
