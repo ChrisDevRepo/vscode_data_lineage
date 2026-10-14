@@ -5,8 +5,7 @@ import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { AiSession } from '../../../src/ai/session/session';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
-import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
 import { ScriptedModelPort, validCall } from '../../harness/scriptedModelPort';
 
 const origin = '[ai].[Origin]', source = '[ai].[Source]';
@@ -32,8 +31,7 @@ function completedModel() {
 function world() {
   const session = new AiSession();
   const nodes = [origin, source].map(id => makeNode({ id, schema: 'ai', name: id === origin ? 'Origin' : 'Source', type: 'view', bodyScript: 'SELECT 1 AS Value;' }));
-  session.model = makeModel(nodes, [[source, origin]], ['ai']);
-  session.model.neighborIndex = { [origin]: { in: [source], out: [] }, [source]: { in: [], out: [origin] } };
+  session.model = makeIndexedModel(nodes, [[source, origin]]);
   session.graph = makeGraph(nodes, [[source, origin]]);
   const noop = () => {};
   const channel = { debug: noop, info: noop, warn: noop, error: noop } as never;

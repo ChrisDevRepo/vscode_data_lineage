@@ -1,7 +1,8 @@
 /**
  * Covers the host-side exported `graphBuilder` surface that no test named: pathfinding,
  * the layout engine and its cache (including worker-computed seeding), graph metrics, and
- * the no-layout build.
+ * the no-layout build. Synthetic trace membership/depth contracts belong to
+ * traversal-edge-cases.test.ts.
  *
  * These sit between the BFS trace and what the user sees. A defect here shows as a
  * correct trace rendered wrongly — a node missing from the view, an edge dropped —
@@ -26,14 +27,14 @@ import {
   objectLayoutInputForGraph,
   runDagre,
   seedLayoutCache,
-  traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
 import { buildWebviewCsp } from '../../../src/utils/cspBuilder';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { buildColumnTraceView, columnRowKey, type ColumnTraceRelation } from '../../../src/engine/columnTraceView';
 import { normalizeColName, schemaKey } from '../../../src/utils/sql';
 import { DEFAULT_CONFIG, type DatabaseModel, type ExtractedObject } from '../../../src/engine/types';
-import { loadAdventureWorksModel, loadParseRules, makeGraph } from '../helpers/testUtils';
+import { loadAdventureWorksModel, loadParseRules } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 
 /** `A → B → C`, plus `D` joining at `C`, and an unreachable `Z`. */
 function chain() {
@@ -275,46 +276,6 @@ describe('buildGraphNoLayout', () => {
   });
 });
 
-
-describe('traceNodeWithLevels — directional depth caps', () => {
-
-  it('applies each cap to its own direction, admitting different node counts per side', () => {
-    const longChain = makeGraph(
-      [{ id: 'U2' }, { id: 'U1' }, { id: 'O' }, { id: 'D1' }, { id: 'D2' }, { id: 'D3' }],
-      [['U2', 'U1'], ['U1', 'O'], ['O', 'D1'], ['D1', 'D2'], ['D2', 'D3']],
-    );
-    expect(traceNodeWithLevels(longChain, 'O', 1, 3).nodeIds)
-      .toEqual(new Set(['U1', 'O', 'D1', 'D2', 'D3']));
-    expect(traceNodeWithLevels(longChain, 'O', 2, 1).nodeIds)
-      .toEqual(new Set(['U2', 'U1', 'O', 'D1']));
-  });
-});
-
-
-describe('traceNodeWithLevels — edge membership', () => {
-  const withBackEdge = () => makeGraph(
-    [{ id: 'ORIGIN' }, { id: 'A' }, { id: 'S' }],
-    [['A', 'ORIGIN'], ['S', 'A'], ['A', 'S']],
-  );
-
-  it('draws an edge between two admitted nodes even when it points away from the origin', () => {
-    const traced = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 2, 0);
-    expect([...traced.nodeIds].sort()).toEqual(['A', 'ORIGIN', 'S']);
-    expect([...traced.edgeIds].sort()).toEqual(['A→ORIGIN', 'A→S', 'S→A']);
-  });
-
-  it('draws the same edges upstream-only as it does with both directions active', () => {
-    const upstreamOnly = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 2, 0);
-    const bothWays = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 2, 2);
-    expect([...upstreamOnly.edgeIds].sort()).toEqual([...bothWays.edgeIds].sort());
-  });
-
-  it('leaves out an edge whose other endpoint the depth cap excluded', () => {
-    const traced = traceNodeWithLevels(withBackEdge(), 'ORIGIN', 1, 0);
-    expect([...traced.nodeIds].sort()).toEqual(['A', 'ORIGIN']);
-    expect([...traced.edgeIds].sort()).toEqual(['A→ORIGIN']);
-  });
-});
 
 describe('layoutCacheKey', () => {
   const input = {

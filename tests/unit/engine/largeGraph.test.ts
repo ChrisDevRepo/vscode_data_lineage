@@ -1,13 +1,12 @@
 /**
- * Lanes for the graph surface above the tracked fixture size.
+ * Backend graph build, traversal and display-policy contracts above the tracked fixture size.
  *
  * The largest tracked fixture is 148 nodes, while `maxNodes` admits up to 5000 (default 2000) and
  * `renderLimit` renders up to 1500. These cover the build, the
  * object-limit refusal, the render-limit boundary, and — for the scoped surface, which returns
  * before the limit check — how many nodes an unbounded trace can actually put on the canvas.
  *
- * Layout timings are printed, never asserted: they are machine-dependent and belong in the report
- * rather than in the gate.
+ * No DOM, display or layout engine is needed; layout checks live in tests/scale.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -22,7 +21,7 @@ import { checkObjectLimit, formatObjectLimitMessage } from '../../../src/engine/
 import { DEFAULT_CONFIG, type DatabaseModel, type ExtensionConfig } from '../../../src/engine/types';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
 import { filterSuggestions } from '../../../src/utils/autocomplete';
-import { buildLargeModel } from './largeGraphFixture';
+import { buildLargeModel } from '../helpers/largeGraphFixture';
 
 function configWith(overrides: Partial<ExtensionConfig>): ExtensionConfig {
   return { ...DEFAULT_CONFIG, ...overrides };

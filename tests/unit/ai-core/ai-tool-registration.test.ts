@@ -1,3 +1,4 @@
+// Owner: src/ai/tools/toolDefs.ts, toolPolicy.ts and toolProvider.ts; registration and delivery contracts.
 /**
  * Pins tool registration: the manifest's `languageModelTools` match the external stage of the core
  * tool policy, `vscode.lm` receives exactly that subset while the participant registry keeps the full catalog,
@@ -35,7 +36,7 @@ import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { buildAiToolRegistry, createExternalToolSource, registerAiTools } from '../../../src/ai/tools/toolProvider';
 import { EXTERNAL_TOOL_NAMES } from '../../../src/ai/tools/toolPolicy';
 import { AiSession } from '../../../src/ai/session/session';
-import { makeModel } from './helpers/fixtures';
+import { makeModel } from '../helpers/modelFixtures';
 
 type ManifestTool = {
   name: string;

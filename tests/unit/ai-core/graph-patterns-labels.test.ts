@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { runAnalysis } from '../../../src/ai/tools/tools';
 import { buildBareGraph } from '../../../src/ai/support/graphUtils';
 import { DEFAULT_TURN_TOKEN_BUDGET as BUDGET } from '../../../src/ai/support/tokenBudget';
-import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { makeModel, makeNode } from '../helpers/modelFixtures';
 
 const hub = '[sales].[orders]';
 const readers = ['[sales].[v1]', '[sales].[v2]', '[sales].[v3]'];

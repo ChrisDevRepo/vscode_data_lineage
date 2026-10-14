@@ -1,3 +1,4 @@
+// Owner: src/ai/support/toolErrorEnvelope.ts with real tools/toolSchemas.ts; rejection diagnostic contracts.
 /**
  * One case per Zod issue kind the model-facing tool schemas can emit, against the real schemas,
  * asserting the reason line and the repair hint the model reads

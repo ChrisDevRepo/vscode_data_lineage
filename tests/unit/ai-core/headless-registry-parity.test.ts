@@ -8,8 +8,7 @@ import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import { runHarnessTurn } from '../../harness/runTurn';
 import { createHeadlessLogger } from '../../harness/headlessLogger';
 import { ScriptedModelPort, validCall } from '../../harness/scriptedModelPort';
-import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { makeGraph, makeModel, makeNode } from '../helpers/modelFixtures';
 import { modelUserMessage, modelAssistantMessage } from '../../../src/ai/model/modelPort';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 

@@ -1,3 +1,4 @@
+// Owner: src/ai/tools/toolProvider.ts and tools/handlers; raw tool admission and handler functional contracts.
 /**
  * The strict boundary that runs first owns these rejections, so the handler and engine never see the
  * shapes below: a start with no origin/supplement/revision, a non-string scope list, an empty
@@ -14,8 +15,7 @@ import { executeStartExploration } from '../../../src/ai/tools/handlers/startExp
 import { StartExplorationInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv';
-import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { stubToolServices } from './helpers/toolServices';
 
 const ORIGIN = '[hop].[origin]';
@@ -30,9 +30,8 @@ function ctWorld(options: { deferred?: boolean; scalar?: boolean; caseSensitive?
     makeNode({ id: OTHER, schema: 'hop', name: 'other', type: 'table', columns: column }),
   ];
   const pairs: Array<[string, string]> = [[BRANCH, ORIGIN], ...(options.deferred ? [[OTHER, BRANCH] as [string, string]] : [])];
-  const model = makeModel(nodes, pairs, ['hop']);
+  const model = makeIndexedModel(nodes, pairs);
   model.identifierCaseSensitive = options.caseSensitive ?? false;
-  model.neighborIndex = { [ORIGIN]: { in: [BRANCH], out: [] }, [BRANCH]: { in: options.deferred ? [OTHER] : [], out: [ORIGIN] }, [OTHER]: { in: [], out: options.deferred ? [BRANCH] : [] } };
   const graph = makeGraph(nodes, pairs);
   const session = new AiSession();
   session.model = model; session.graph = graph; session.setClassification('technical'); session.beginTurn();
@@ -56,8 +55,7 @@ function passthroughWorld(mode: 'bb' | 'ct') {
     makeNode({ id: OTHER, schema: 'hop', name: 'other', type: 'view', bodyScript: `SELECT Other FROM ${BRANCH};` }),
   ];
   const pairs: Array<[string, string]> = [[ORIGIN, BRANCH], [BRANCH, OTHER]];
-  const model = makeModel(nodes, pairs, ['hop']);
-  model.neighborIndex = { [ORIGIN]: { in: [], out: [BRANCH] }, [BRANCH]: { in: [ORIGIN], out: [OTHER] }, [OTHER]: { in: [BRANCH], out: [] } };
+  const model = makeIndexedModel(nodes, pairs);
   const graph = makeGraph(nodes, pairs);
   const session = new AiSession();
   session.model = model; session.graph = graph; session.setClassification('technical'); session.beginTurn();

@@ -1,3 +1,4 @@
+// Owner: src/ai/sm/smBase.ts, columnTracer.ts and agendaManager.ts; supplied-message functional contracts.
 /**
  * Runs column-flow rows from `tests/cases/lineage-cases.yaml`.
  * A row locks ids, columns, edges, and rejection kinds. Prompt sentences stay out of the catalog.
@@ -10,9 +11,9 @@ import type { ColumnEdge, ColumnFlowEntry, ScalarReturnTarget } from '../../../s
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
 import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
-import { makeGraph } from '../helpers/testUtils';
+
 import type { LineageNode, ObjectType } from '../../../src/engine/types';
-import { makeIndexedModel, makeModel, makeNode } from './helpers/fixtures';
+import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { buildColumnTraceView } from '../../../src/engine/columnTraceView';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
@@ -86,7 +87,7 @@ interface StoredArrivalCase {
 interface SelfPruneCase {
   id: string;
   story: string;
-  mode: 'bb' | 'ct';
+  mode: 'bb' | 'ct' | Array<'bb' | 'ct'>;
   direction?: 'upstream' | 'downstream';
   route: 'inherited' | 'authored' | 'mapped' | 'root' | 'function' | 'mixed' | 'held-mapping' | 'pending-sender';
   sender_verdict?: 'analyze' | 'passthrough';
@@ -106,7 +107,10 @@ interface SelfPruneCase {
 const scriptedCatalog = loadCases('scripted');
 const scriptedCases = scriptedCatalog.filter(row => row.contract === undefined) as unknown as LineageCase[];
 const storedArrivalCases = scriptedCatalog.filter(row => row.contract === 'stored-arrival') as unknown as StoredArrivalCase[];
-const selfPruneCases = scriptedCatalog.filter(row => row.contract === 'self-prune') as unknown as SelfPruneCase[];
+const selfPruneCases = (scriptedCatalog.filter(row => row.contract === 'self-prune') as unknown as SelfPruneCase[])
+  .flatMap(row => [row.mode].flat().map(mode => ({ ...row, mode,
+    id: Array.isArray(row.mode) ? `${mode}-${row.id}` : row.id,
+  })));
 
 function column(name: string) {
   return { name, type: 'int', nullable: 'NULL' as const, extra: '' };
@@ -172,6 +176,7 @@ describe('lineage case catalog', () => {
     expect(scriptedCases.length).toBeGreaterThan(0);
     expect(storedArrivalCases.length).toBeGreaterThan(0);
     expect(selfPruneCases.length).toBeGreaterThan(0);
+    expect(new Set(selfPruneCases.map(row => row.id)).size).toBe(selfPruneCases.length);
     expect(selfPruneCases.every(row => typeof row.story === 'string' && row.story.trim().length > 0)).toBe(true);
     for (const row of selfPruneCases.filter(row => row.expect.eligible)) {
       expect(Object.keys(row.expect)).toEqual(expect.arrayContaining(['unvisited', 'pruned', 'inspected', 'kept', 'edges']));
@@ -221,11 +226,7 @@ describe('carrier value-edge orientation', () => {
       columns: (id === nextId && upstream ? [] : ['Value']).map(column),
     }));
     const pairs: Array<[string, string]> = upstream ? [mode === 'prune-direction' ? [carrier, nextId] : [nextId, carrier], [carrier, origin]] : [[origin, carrier], [carrier, nextId]];
-    const model = makeModel(nodes, pairs, ['d', 'x']);
-    model.neighborIndex = Object.fromEntries(nodes.map(node => [node.id, {
-      in: pairs.filter(([, to]) => to === node.id).map(([from]) => from),
-      out: pairs.filter(([from]) => from === node.id).map(([, to]) => to),
-    }]));
+    const model = makeIndexedModel(nodes, pairs);
     if (mode === 'missing-index') model.neighborIndex = {};
     if (mode === 'delete-only') model.edges[0].deleteOnly = true;
     const engine = new NavigationEngine(model, makeGraph(nodes, pairs), () => {}, {});
@@ -350,8 +351,32 @@ describe('carrier value-edge orientation', () => {
 });
 
 describe('stored-column arrival admission and delivery', () => {
+  const producer = '[d].[Producer]', stored = '[d].[Stored]';
+  const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'analyze' as const,
+    summary: 'Inspect the supplied stored-column task.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes the input dispositions.' }] });
+
+  function storedWorld(readers: LineageNode[], branches: Array<[string, string]>, question: string, storedColumns = ['X', 'Y']) {
+    const nodes = [
+      makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [], bodyScript: 'INSERT d.Stored(X,Y) SELECT 10,20;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: storedColumns.map(column) }), ...readers,
+    ];
+    const pairs: Array<[string, string]> = [[producer, stored], ...branches];
+    const engine = navigationFor(nodes, pairs);
+    expect(engine.init({ origin: producer, question, analysisMode: 'ct', targetColumns: ['X', 'Y'], direction: 'downstream',
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...record(producer), column_flow: ['X', 'Y'].map(out_col => ({ out_col,
+      upstream_columns: [], writes_to: { node: stored, col: out_col } })), questions: [{ nodeId: stored, question }],
+    })).toHaveProperty('ok', true);
+    const producerEdges = structuredClone(engine.columnAspect!.edges);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored }, analysis_mode: 'ct' });
+    expect(engine.submitFindings({ ...record(stored), verdict: 'passthrough', column_flow: [] })).toHaveProperty('ok', true);
+    return { engine, nodes, pairs, producerEdges };
+  }
+
   it('assigns each write destination its own renamed endpoints and other readers only producer outputs', () => {
-    const producer = '[d].[Producer]', left = '[d].[LeftTarget]', right = '[d].[RightTarget]', reader = '[d].[Reader]';
+    const left = '[d].[LeftTarget]', right = '[d].[RightTarget]', reader = '[d].[Reader]';
     const nodes = [
       makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [],
         bodyScript: 'INSERT d.LeftTarget(SavedLeft) SELECT 1; INSERT d.RightTarget(SavedRight) SELECT 2;' }),
@@ -415,7 +440,6 @@ describe('stored-column arrival admission and delivery', () => {
   });
 
   it.each([false, true])('keeps four stored-column reader branches independent with optional self-pruning=%s', pruneUnused => {
-    const producer = '[d].[Producer]', stored = '[d].[Stored]';
     const readers = [
       { id: '[d].[One]', type: 'view' as const, used: ['X'], sql: 'CREATE VIEW d.One AS SELECT X AS ResultX FROM d.Stored;' },
       { id: '[d].[Both]', type: 'procedure' as const, used: ['X', 'Y'], sql: 'INSERT d.BothSink(ResultX,ResultY) SELECT X,Y FROM d.Stored;' },
@@ -423,31 +447,13 @@ describe('stored-column arrival admission and delivery', () => {
       { id: '[d].[NeitherSp]', type: 'procedure' as const, used: [], sql: 'INSERT d.NeitherSpSink(Unrelated) SELECT Z FROM d.Stored;' },
     ].map(reader => ({ ...reader, sink: reader.id.replace(/\]$/, 'Sink]') }));
     const outputCols = (used: string[]) => used.length ? used.map(col => `Result${col}`) : ['Unrelated'];
-    const nodes = [makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [],
-      bodyScript: 'INSERT d.Stored(X,Y) SELECT 10,20;' }),
-      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: ['X', 'Y', 'Z'].map(column) }),
-      ...readers.flatMap(reader => [
-        makeNode({ id: reader.id, schema: 'd', name: reader.id, type: reader.type, bodyScript: reader.sql,
-          columns: (reader.type === 'procedure' ? [] : outputCols(reader.used)).map(column) }),
-        makeNode({ id: reader.sink, schema: 'd', name: reader.sink, type: reader.type === 'procedure' ? 'table' : 'view',
-          columns: outputCols(reader.used).map(column) }),
-      ])];
-    const pairs: Array<[string, string]> = [[producer, stored], ...readers.flatMap(reader => [[stored, reader.id], [reader.id, reader.sink]] as Array<[string, string]>)];
-    const engine = navigationFor(nodes, pairs);
-    const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'analyze' as const,
-      summary: 'Establish whether the supplied candidate inputs contribute.', sections: [{ angle: 'technical' as const, text: 'The receiving SQL determines this branch.' }] });
-    expect(engine.init({ origin: producer, question: 'Check whether each reader uses Stored.X or Stored.Y and follow only confirmed contributions.',
-      analysisMode: 'ct', targetColumns: ['X', 'Y'], direction: 'downstream',
-      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
-    })).toHaveProperty('ok', true);
-    engine.getHopContext();
-    expect(engine.submitFindings({ ...record(producer),
-      column_flow: ['X', 'Y'].map(out_col => ({ out_col, upstream_columns: [], writes_to: { node: stored, col: out_col } })),
-      questions: [{ nodeId: stored, question: 'Check candidate consumption at each reader.' }],
-    })).toHaveProperty('ok', true);
-    const producerEdges = structuredClone(engine.columnAspect!.edges);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored } });
-    expect(engine.submitFindings({ ...record(stored), verdict: 'passthrough', column_flow: [] })).toHaveProperty('ok', true);
+    const { engine, nodes, pairs, producerEdges } = storedWorld(readers.flatMap(reader => [
+      makeNode({ id: reader.id, schema: 'd', name: reader.id, type: reader.type, bodyScript: reader.sql,
+        columns: (reader.type === 'procedure' ? [] : outputCols(reader.used)).map(column) }),
+      makeNode({ id: reader.sink, schema: 'd', name: reader.sink, type: reader.type === 'procedure' ? 'table' : 'view',
+        columns: outputCols(reader.used).map(column) }),
+    ]), readers.flatMap(reader => [[stored, reader.id], [reader.id, reader.sink]] as Array<[string, string]>),
+      'Check candidate consumption at each reader.', ['X', 'Y', 'Z']);
     const inspected = new Set<string>();
     for (let step = 0; step < nodes.length; step++) {
       const hop = engine.getHopContext();
@@ -497,28 +503,11 @@ describe('stored-column arrival admission and delivery', () => {
     expect(view.nodes.find(node => node.id === stored)!.rows.map(row => row.name)).toEqual(['X', 'Y']);
   });
   it.each(storedArrivalCases)('$id', row => {
-    const writer = '[d].[Producer]', stored = '[d].[Stored]', receiver = '[d].[Receiver]', sink = '[d].[Sink]';
-    const nodes = [writer, stored, receiver, sink].map(id => makeNode({ id, schema: 'd', name: id,
-      type: id === stored ? 'table' : id === writer ? 'procedure' : id === receiver ? row.receiver_type : row.receiver_type === 'procedure' ? 'table' : 'view',
-      columns: (id === writer ? [] : id === stored ? ['X', 'Y'] : id === receiver ? row.receiver_columns : row.sink_columns).map(column),
-      ...(id === writer ? { bodyScript: 'INSERT d.Stored(X,Y) SELECT 10,20;' }
-        : id === receiver ? { bodyScript: row.sql } : {}),
-    }));
-    const pairs: Array<[string, string]> = [[writer, stored], [stored, receiver], [receiver, sink]];
-    const engine = navigationFor(nodes, pairs);
-    const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'analyze' as const,
-      summary: 'Inspect the supplied stored-column task.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes the input dispositions.' }] });
-    expect(engine.init({ origin: writer, question: 'Trace X and Y downstream.', analysisMode: 'ct', targetColumns: ['X', 'Y'], direction: 'downstream',
-      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
-    })).toHaveProperty('ok', true);
-    engine.getHopContext();
-    expect(engine.submitFindings({ ...record(writer), column_flow: ['X', 'Y'].map(out_col => ({ out_col,
-      upstream_columns: [], writes_to: { node: stored, col: out_col } })),
-      questions: [{ nodeId: stored, question: 'Determine how the stored X and Y are used downstream.' }],
-    })).toHaveProperty('ok', true);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored }, analysis_mode: 'ct' });
-    const producerEdges = structuredClone(engine.columnAspect!.edges);
-    expect(engine.submitFindings({ ...record(stored), verdict: 'passthrough', column_flow: [] })).toHaveProperty('ok', true);
+    const receiver = '[d].[Receiver]', sink = '[d].[Sink]';
+    const { engine, nodes, pairs, producerEdges } = storedWorld([
+      makeNode({ id: receiver, schema: 'd', name: receiver, type: row.receiver_type, columns: row.receiver_columns.map(column), bodyScript: row.sql }),
+      makeNode({ id: sink, schema: 'd', name: sink, type: row.receiver_type === 'procedure' ? 'table' : 'view', columns: row.sink_columns.map(column) }),
+    ], [[stored, receiver], [receiver, sink]], 'Determine how the stored X and Y are used downstream.');
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: receiver }, analysis_mode: 'ct' });
     expect(engine.columnAspect!.edges).toEqual(producerEdges);
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({
@@ -543,7 +532,7 @@ describe('stored-column arrival admission and delivery', () => {
       : { kind: 'analytical' });
     const relations = engine.columnAspect!.edges;
     expect(relations.filter(edge => edge.hop_node === receiver && edge.from_node === stored).map(edge => edge.from_col)).toEqual(row.expect.mapped_inputs);
-    expect(relations.filter(edge => edge.hop_node === writer)).toEqual(producerEdges);
+    expect(relations.filter(edge => edge.hop_node === producer)).toEqual(producerEdges);
     const view = columnViewFor(nodes, pairs, relations);
     expect(view.nodes.find(node => node.id === receiver)!.rows.map(row => row.name)).toEqual(row.expect.receiver_rows);
     expect(view.nodes.find(node => node.id === stored)!.rows.map(row => row.name)).toEqual(['X', 'Y']);
@@ -787,9 +776,9 @@ describe('TaskLedger qualified references', () => {
 
 describe('current task completeness before advancement', () => {
   const root = '[d].[Root]', neighbor = '[d].[Source]', other = '[d].[OtherSource]';
-  function world(twoNeighbors = false) {
+  function world(twoNeighbors = false, rootSql = 'SELECT 1 AS Value, 2 AS Other;') {
     const nodes = [root, neighbor, ...(twoNeighbors ? [other] : [])].map(id => makeNode({ id, schema: 'd', name: id, type: 'view',
-      columns: [column('Value'), column('Other')], bodyScript: 'SELECT 1 AS Value, 2 AS Other;' }));
+      columns: [column('Value'), column('Other')], bodyScript: id === root ? rootSql : 'SELECT 1 AS Value, 2 AS Other;' }));
     const pairs: Array<[string, string]> = [[neighbor, root], ...(twoNeighbors ? [[other, root] as [string, string]] : [])];
     const engine = new NavigationEngine(makeModel(nodes, pairs, ['d']), makeGraph(nodes, pairs), () => {}, {});
     expect(engine.init({ origin: root, question: 'Trace Value and Other', analysisMode: 'ct', targetColumns: ['Value', 'Other'], direction: 'upstream',
@@ -854,6 +843,42 @@ describe('current task completeness before advancement', () => {
     expect(engine.getCurrentTasks().map(task => task.question)).toContain(question);
     expect(engine.pendingLineageQuestions.join('\n')).toContain('Value');
   });
+  it.each([false, true])('combines mapping, question and prune atomically, with same-neighbor conflict=%s', conflict => {
+    const engine = world(true, 'SELECT Value, 2 AS Other FROM d.Source;');
+    const prune = { id: other, reason: 'This source does not supply the requested value.' };
+    const input = { ...finding, column_flow: [
+      { out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value' }] }, terminal('Other'),
+    ], questions: [{ nodeId: neighbor, question: 'Resolve the source Value.' }],
+    prune_neighbors: [prune, ...(conflict ? [{ id: neighbor, reason: 'Conflicts with its investigation.' }] : [])] };
+    const before = engine.toJSON();
+    const submitted = engine.submitFindings(input);
+    if (conflict) {
+      expect(submitted).toMatchObject({ code: 'route_validation_failed',
+        issuePaths: ['questions.0.nodeId', 'prune_neighbors.1.id'] });
+      const after = engine.toJSON();
+      expect(after.agenda).toEqual(before.agenda);
+      expect(after.removedSet).toEqual(before.removedSet);
+      expect(after.visited).toEqual(before.visited);
+      expect(after.columnAspect).toEqual(before.columnAspect);
+      expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+      expect(engine.currentFocus).toBe(root);
+      expect(engine.heldColumnFlow).toBe(true);
+      const repair = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+      expect(engine.submitFindings(toHopFinding(repair.parse({ focus_node_id: root, verdict: 'analyze', questions: input.questions })))).toHaveProperty('ok', true);
+    } else expect(submitted).toHaveProperty('ok', true);
+    expect(engine.toJSON().removedSet).toEqual([other]);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'ct' });
+    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({
+      activeColumns: ['Value'], sourceRefs: [{ node: neighbor, col: 'Value' }], question: 'Resolve the source Value.',
+    }));
+    expect(engine.submitFindings({ ...finding, focus_node_id: neighbor, column_flow: [terminal('Value')] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ done: true });
+    const result = engine.getResult();
+    expect(result.fullNodes.map(node => node.id).sort()).toEqual([root, neighbor].sort());
+    expect(result.edges.map(([from, to]) => [from, to])).toEqual([[neighbor, root]]);
+    expect(result.columnAspect!.edges.map(edge => [edge.from_node, edge.from_col, edge.to_node, edge.to_col]))
+      .toEqual([[neighbor, 'Value', root, 'Value']]);
+  });
   it('requests only a missing summary when valid sections and flow are held', () => {
     const engine = world();
     engine.holdRejectedSubmission({ ...finding, sections: { technical: finding.sections[0].text }, summary: '', column_flow: [terminal('Value'), terminal('Other')],
@@ -899,8 +924,7 @@ describe('shared object dispatch', () => {
       makeNode({ id: writer, schema: 'd', name: 'writer', type: 'procedure', columns: [column('Value')] }),
     ];
     const pairs: Array<[string, string]> = [[writer, relay], [relay, root]];
-    const model = makeModel(nodes, pairs, ['d']);
-    model.neighborIndex = Object.fromEntries(nodes.map(node => [node.id, { in: pairs.filter(([, to]) => to === node.id).map(([from]) => from), out: pairs.filter(([from]) => from === node.id).map(([, to]) => to) }]));
+    const model = makeIndexedModel(nodes, pairs);
     const engine = new NavigationEngine(model, makeGraph(nodes, pairs), () => {}, {});
     expect(engine.init({ origin: root, question: 'Explain the input chain', analysisMode, ...(analysisMode === 'ct' ? { targetColumns: ['Value'] } : {}), direction: 'upstream',
       depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },

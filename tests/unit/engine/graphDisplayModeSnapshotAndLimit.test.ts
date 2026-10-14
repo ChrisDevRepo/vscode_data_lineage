@@ -21,7 +21,7 @@ import {
   type ViewSnapshot,
 } from '../../../src/engine/graphDisplayMode';
 import type { FilterState } from '../../../src/engine/types';
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 
 describe('userFilterForHost', () => {
   const userFilter = { schemas: new Set(['dbo', 'Person']), types: new Set(['table']) } as unknown as FilterState;

@@ -10,7 +10,7 @@ import { AiSession } from '../../../src/ai/session/session';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
 import type { AiTraceRecord, AiTraceWriter } from '../../../src/ai/observability/aiTraceWriter';
 import { ScriptedModelPort, scriptedRegistry, validCall } from '../../harness/scriptedModelPort';
-import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { makeModel, makeNode } from '../helpers/modelFixtures';
 
 const ORIGIN = '[d].[origin]';
 const start = (id: string) => validCall(id, 'lineage_start_exploration', { origin: ORIGIN, analysisMode: 'bb', classification: 'technical' });

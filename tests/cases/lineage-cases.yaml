@@ -6,15 +6,15 @@
 # Prompt sentences are not scripted rows.
 cases:
   # Shared topology/expectations exercise the same command in both modes.
-  - id: bb-self-prune-unvisited-diamond
-    story: &exclusive_diamond_story Removing current cuts both unvisited arms, their join and the tail after the diamond.
+  - id: self-prune-unvisited-diamond
+    story: Removing current cuts both unvisited arms, their join and the tail after the diamond.
     runners: [scripted]
     contract: self-prune
-    mode: bb
+    mode: [bb, ct]
     route: inherited
-    graph: &exclusive_diamond_graph
+    graph:
       edges: [[Origin, Current], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Join, Tail]]
-    expect: &exclusive_diamond_expect
+    expect:
       eligible: true
       unvisited: [Left, Right, Join, Tail]
       pruned: ["[d].[Current]", "[d].[Join]", "[d].[Left]", "[d].[Right]", "[d].[Tail]"]
@@ -22,24 +22,15 @@ cases:
       kept: [Origin]
       edges: []
 
-  - id: ct-self-prune-unvisited-diamond
-    story: *exclusive_diamond_story
+  - id: self-prune-diamond-with-live-bypass
+    story: Current and its exclusive arms leave, while the sibling bypass retains the join and its tail.
     runners: [scripted]
     contract: self-prune
-    mode: ct
+    mode: [bb, ct]
     route: inherited
-    graph: *exclusive_diamond_graph
-    expect: *exclusive_diamond_expect
-
-  - id: bb-self-prune-diamond-with-live-bypass
-    story: &bypass_diamond_story Current and its exclusive arms leave, while the sibling bypass retains the join and its tail.
-    runners: [scripted]
-    contract: self-prune
-    mode: bb
-    route: inherited
-    graph: &bypass_diamond_graph
+    graph:
       edges: [[Origin, Current], [Origin, Sibling], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Sibling, Join], [Join, Tail]]
-    expect: &bypass_diamond_expect
+    expect:
       eligible: true
       unvisited: [Left, Right, Sibling, Join, Tail]
       pruned: ["[d].[Current]", "[d].[Left]", "[d].[Right]"]
@@ -47,24 +38,15 @@ cases:
       kept: [Origin, Sibling, Join, Tail]
       edges: [[Origin, Sibling], [Sibling, Join], [Join, Tail]]
 
-  - id: ct-self-prune-diamond-with-live-bypass
-    story: *bypass_diamond_story
+  - id: self-prune-two-unvisited-diamonds
+    story: A cut before two consecutive diamonds removes both joins and every exclusive unvisited continuation.
     runners: [scripted]
     contract: self-prune
-    mode: ct
+    mode: [bb, ct]
     route: inherited
-    graph: *bypass_diamond_graph
-    expect: *bypass_diamond_expect
-
-  - id: bb-self-prune-two-unvisited-diamonds
-    story: &serial_diamonds_story A cut before two consecutive diamonds removes both joins and every exclusive unvisited continuation.
-    runners: [scripted]
-    contract: self-prune
-    mode: bb
-    route: inherited
-    graph: &serial_diamonds_graph
+    graph:
       edges: [[Origin, Current], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Join, LowerLeft], [Join, LowerRight], [LowerLeft, FinalJoin], [LowerRight, FinalJoin], [FinalJoin, Tail]]
-    expect: &serial_diamonds_expect
+    expect:
       eligible: true
       unvisited: [Left, Right, Join, LowerLeft, LowerRight, FinalJoin, Tail]
       pruned: ["[d].[Current]", "[d].[FinalJoin]", "[d].[Join]", "[d].[Left]", "[d].[LowerLeft]", "[d].[LowerRight]", "[d].[Right]", "[d].[Tail]"]
@@ -72,25 +54,16 @@ cases:
       kept: [Origin]
       edges: []
 
-  - id: ct-self-prune-two-unvisited-diamonds
-    story: *serial_diamonds_story
+  - id: upstream-self-prune-unvisited-diamond
+    story: An unrelated writer is removed along with both exclusive upstream arms, their common source and its source.
     runners: [scripted]
     contract: self-prune
-    mode: ct
-    route: inherited
-    graph: *serial_diamonds_graph
-    expect: *serial_diamonds_expect
-
-  - id: bb-upstream-self-prune-unvisited-diamond
-    story: &upstream_diamond_story An unrelated writer is removed along with both exclusive upstream arms, their common source and its source.
-    runners: [scripted]
-    contract: self-prune
-    mode: bb
+    mode: [bb, ct]
     direction: upstream
     route: inherited
-    graph: &upstream_diamond_graph
+    graph:
       edges: [[Current, Origin], [Left, Current], [Right, Current], [Join, Left], [Join, Right], [Tail, Join]]
-    expect: &upstream_diamond_expect
+    expect:
       eligible: true
       unvisited: [Left, Right, Join, Tail]
       pruned: ["[d].[Current]", "[d].[Join]", "[d].[Left]", "[d].[Right]", "[d].[Tail]"]
@@ -98,21 +71,11 @@ cases:
       kept: [Origin]
       edges: []
 
-  - id: ct-upstream-self-prune-unvisited-diamond
-    story: *upstream_diamond_story
+  - id: passthrough-self-prune-exclusive-tail
+    story: An irrelevant reader removes itself and its unvisited exclusive tail.
     runners: [scripted]
     contract: self-prune
-    mode: ct
-    direction: upstream
-    route: inherited
-    graph: *upstream_diamond_graph
-    expect: *upstream_diamond_expect
-
-  - id: bb-passthrough-self-prune-exclusive-tail
-    story: An irrelevant BB reader removes itself and its unvisited exclusive tail.
-    runners: [scripted]
-    contract: self-prune
-    mode: bb
+    mode: [bb, ct]
     route: inherited
     graph:
       edges: [[Origin, Current], [Current, Tail]]
@@ -124,59 +87,22 @@ cases:
       kept: [Origin]
       edges: []
 
-  - id: ct-passthrough-self-prune-exclusive-tail
-    story: An unused CT reader removes itself and its unvisited exclusive tail.
-    runners: [scripted]
-    contract: self-prune
-    mode: ct
-    route: inherited
-    graph:
-      edges: [[Origin, Current], [Current, Tail]]
-    expect: *exclusive_tail_expect
-
-  - id: bb-upstream-passthrough-writer-self-prune
+  - id: upstream-passthrough-writer-self-prune
     story: An unrelated writer removes itself and its exclusive upstream source.
     runners: [scripted]
     contract: self-prune
-    mode: bb
+    mode: [bb, ct]
     direction: upstream
     route: inherited
     graph:
       edges: [[Current, Origin], [Tail, Current]]
     expect: *exclusive_tail_expect
 
-  - id: ct-upstream-passthrough-writer-self-prune
-    story: A writer that does not supply X can decline the stored target without removing the table.
-    runners: [scripted]
-    contract: self-prune
-    mode: ct
-    direction: upstream
-    route: inherited
-    graph:
-      edges: [[Current, Origin], [Tail, Current]]
-    expect: *exclusive_tail_expect
-
-  - id: bb-passthrough-self-prune-shared-descendant
+  - id: passthrough-self-prune-shared-descendant
     story: A sibling still supports the unvisited shared descendant after current is removed.
     runners: [scripted]
     contract: self-prune
-    mode: bb
-    route: inherited
-    graph:
-      edges: [[Origin, Current], [Current, Tail], [Origin, Sibling], [Sibling, Tail]]
-    expect:
-      eligible: true
-      unvisited: [Sibling, Tail]
-      pruned: ["[d].[Current]"]
-      inspected: [Sibling, Tail]
-      kept: [Origin, Sibling, Tail]
-      edges: [[Origin, Sibling], [Sibling, Tail]]
-
-  - id: ct-passthrough-self-prune-shared-descendant
-    story: Candidate CT stops at current while another route retains the shared descendant.
-    runners: [scripted]
-    contract: self-prune
-    mode: ct
+    mode: [bb, ct]
     route: inherited
     graph:
       edges: [[Origin, Current], [Current, Tail], [Origin, Sibling], [Sibling, Tail]]
