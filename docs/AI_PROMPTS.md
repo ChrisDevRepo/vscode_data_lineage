@@ -31,7 +31,7 @@ Output templates control the tone, structure and detail of `@lineage` answers, n
 - `sections` (on `business_capture` and `technical_capture` only) is an optional ordered list of bold section labels; `{{sections}}` in `general` expands to them.
 - `stages` and `example` are not read. Unknown keys are skipped with a warning; a key set to a plain string invalidates the whole file.
 
-Capture templates run under a fixed header you cannot override. Write each instruction to stand alone; do not refer to "above" or "below".
+Capture templates run under a fixed header you cannot override. Write each instruction to stand alone; do not refer to "above" or "below". Instructions replace presentation guidance, but cannot bypass consent, scope, identity checks or output schemas. Synthesis may rephrase hop findings, so wording needed in the final report belongs in a final-report key.
 
 ### Reload and check your changes
 
@@ -39,7 +39,7 @@ Templates load on activation and whenever `dataLineageViz.ai.outputTemplateFile`
 
 ### Keep `schemaVersion` current
 
-Your file must declare the same `schemaVersion` as [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml); otherwise the extension warns and uses the built-in templates. The version changes only when a key or field is removed or renamed. To upgrade, move your old file aside, run **Data Lineage: Create AI Output Templates** again, copy your `instruction` edits across and point the setting at the new file.
+Your file must declare the same `schemaVersion` as [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml); otherwise the extension warns and uses the built-in templates. A breaking removal, rename or field-type change requires a new version; wording and additive changes do not. To upgrade, move your old file aside, run **Data Lineage: Create AI Output Templates** again, copy your `instruction` edits across and point the setting at the new file.
 
 ## How prompts are built
 
@@ -51,7 +51,13 @@ One tool catalog serves every caller; seven read-only tools are also exposed to 
 
 Discovery and follow-ups use ordinary conversation history. Each hop sends a stable system prefix (protocol, mission brief, original question, discovery summary) and a short per-hop message (focus object, arriving tasks, capture template, recent summaries and rejections). After each committed hop the thread restarts from one continuation message; findings are replayed once at synthesis.
 
-A hop gets CT instructions only when it carries column work; otherwise it runs as BB. Carried tasks keep qualified object and column endpoints and the traversal side, not bare column names. A function investigation keeps the caller SQL, the requested output and the function definition on every retry.
+A hop gets CT instructions only when it carries column work; otherwise it runs as BB. Carried tasks keep qualified object and column endpoints and the traversal side, not bare column names. A function investigation keeps the caller SQL, the requested output and the function definition on every retry. Parameters are caller-binding context, not invented graph columns. An object dependency alone does not establish a column contribution, and valid identifiers do not prove a complete or correct SQL interpretation.
+
+BB and CT share the same validation and correction path. Valid parts of a rejected submission are held so the AI can send only corrections with the required tool envelope. CT can explicitly end an arriving input through `terminated_inputs` when other inputs continue; terminated branches cannot restart from later object-only work. Generated CT instructions describe accepted mappings alongside the AI's neighbor question.
+
+An explicitly filter-only or key-only contributor cannot establish a value write or complete an arriving column task. Explain its row role separately and explicitly terminate that qualified input when its value contribution ends; constant outputs and columns with both value and row roles remain valid.
+
+Static SQL can suggest a performance pattern, but cannot establish actual index benefit, join strategy, parameter sniffing or statistics freshness without catalog or runtime evidence. Custom templates cannot give the assistant evidence absent from the loaded model.
 
 ## Change a prompt or tool description
 
@@ -59,7 +65,7 @@ Follow the [prompt-change workflow](../.agents/skills/prompt-change/SKILL.md). I
 
 - Make the smallest change where the behavior is owned: stage prompt, tool schema or template.
 - After changing a tool description or schema, run `npm run generate:tool-manifest` so `package.json` matches the catalog.
-- After removing or renaming a template key or field, raise `schemaVersion` in the YAML and in `src/ai/session/types.ts` together.
+- For a breaking removal, rename or field-type change, update `schemaVersion` in the YAML and in `src/ai/session/types.ts` together.
 - Run `npm run test:runtime` and `npm run gate`.
 - For a change in model behavior, compare baseline and candidate answers with the [prompt-playground workflow](../.agents/skills/prompt-playground/SKILL.md).
 

@@ -8,13 +8,13 @@ Reference for DBAs: the statements sent when someone requests table statistics. 
 |---|---|
 | Connection | A new connection per request, with the import's connection settings (`ReadOnly` intent; see [`DMV_QUERIES.md`](DMV_QUERIES.md#connection)); closed afterwards |
 | Permission | `SELECT` on the table, and catalog visibility of the table (`VIEW DEFINITION`) for the row count |
-| Statements | Three `SELECT` statements, in order; no writes |
+| Statements | With the built-in queries: three `SELECT` statements, in order; no writes. A sampling fallback can issue a fourth statement. |
 | Timeout | `dataLineageViz.tableStatistics.queryTimeout` (default 60 s) for statements 2 and 3; `dataLineageViz.dmvQueryTimeout` for statement 1 |
 | Off switch | `dataLineageViz.tableStatistics.enabled` = `false`; requests are then rejected by the extension before connecting |
 
 External tables can query remote systems (object storage, other databases), so they are not offered for profiling while `dataLineageViz.tableStatistics.excludeExternalTables` is on (default). Turn it off only when their cost and latency are understood.
 
-A custom DMV queries file changes only statement 1; statements 2 and 3 are fixed.
+A custom DMV queries file changes only statement 1; statements 2 and 3 are fixed. Custom SQL is executable input, so review that file before use; the read-only description above applies to the built-in queries.
 
 ## Modes and metrics
 
@@ -63,7 +63,7 @@ Per profiled column `[c]`:
 
 Completeness and uniqueness are computed by the extension from these counts and the row count; no further statement is sent.
 
-For `float` columns, `AVG` and `STDEV` are wrapped in a `CASE` that returns NULL when `MAX(ABS([c]))` exceeds the float range.
+For `float` columns, `AVG` and `STDEV` are wrapped in a `CASE` that returns NULL when `MAX(ABS([c]))` exceeds the conservative `1E+150` threshold used to avoid overflow in the moments.
 
 Not profiled, and shown as not profiled: computed columns; `binary`, `varbinary`, `image`, `text`, `ntext`, `xml`, `geography`, `geometry`, `hierarchyid`, `sql_variant`, `timestamp`/`rowversion`, `sysname` and other unlisted types; columns beyond `dataLineageViz.tableStatistics.maxColumns` (default 50). Types that are never profiled and computed columns do not count towards that limit. If no column is left, no aggregate statement is sent and the request reports that there are no profileable columns. `bit` and `uniqueidentifier` get only the distinct and null counts. Standard mode is unavailable when `dataLineageViz.tableStatistics.standardModeEnabled` is `false`.
 
@@ -71,12 +71,12 @@ Not profiled, and shown as not profiled: computed columns; `binary`, `varbinary`
 
 ## Sampling
 
-Sampling applies when the row count exceeds `dataLineageViz.tableStatistics.sampleThreshold` (default 100,000; `0` always samples).
+Sampling applies when the row count exceeds `dataLineageViz.tableStatistics.sampleThreshold` (default 100,000; `0` samples nonempty tables).
 
 | Platform | Statement | Effect |
 |---|---|---|
 | Fabric Data Warehouse | `TOP <sampleSize>` | Does not limit an aggregate; the full table is scanned. |
-| Other platforms | `TABLESAMPLE(p PERCENT)` with p = ceil(`sampleSize` / row count × 100), plus `COUNT_BIG(*)` for the rows read | Metrics describe the sample. |
+| Other platforms | `TABLESAMPLE(p PERCENT)` with p = min(100, ceil(`sampleSize` / row count × 100)), plus `COUNT_BIG(*)` for the rows read | Metrics describe the sample. |
 
 `sampleSize` is `dataLineageViz.tableStatistics.sampleSize` (default 10,000). If the server rejects `TABLESAMPLE`, the statement is sent once more without it as a full scan, and the result is shown as unsampled.
 
@@ -90,7 +90,7 @@ Row-count headers show the catalog row count. On a `TABLESAMPLE` run, NULL %, co
 | `dataLineageViz.tableStatistics.standardModeEnabled` | `true` | Allows Standard mode; when `false` only Quick mode is offered |
 | `dataLineageViz.tableStatistics.excludeExternalTables` | `true` | Hides profiling for external tables |
 | `dataLineageViz.tableStatistics.queryTimeout` | `60` (10–600 s) | Timeout of statements 2 and 3 |
-| `dataLineageViz.tableStatistics.sampleThreshold` | `100000` | Row count above which sampling applies; `0` always samples |
+| `dataLineageViz.tableStatistics.sampleThreshold` | `100000` | Row count above which sampling applies; `0` samples nonempty tables |
 | `dataLineageViz.tableStatistics.sampleSize` | `10000` (100–1,000,000) | Target rows per sample |
 | `dataLineageViz.tableStatistics.useApproxDistinct` | `true` | `APPROX_COUNT_DISTINCT` instead of `COUNT(DISTINCT)` |
 | `dataLineageViz.tableStatistics.maxColumns` | `50` (1–500) | Maximum profiled columns per request |

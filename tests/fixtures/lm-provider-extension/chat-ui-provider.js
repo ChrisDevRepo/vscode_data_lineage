@@ -42,7 +42,8 @@ async function respond(request, progress) {
   }
   if (names.includes('lineage_submit_findings')) {
     call('lineage_submit_findings', {
-      focus_node_id: session.stateMachine.currentFocus, verdict: 'analyze',
+      // Explicit forwarding exercises the approved UI lifecycle, not SQL interpretation.
+      focus_node_id: session.stateMachine.currentFocus, verdict: 'passthrough',
       summary: 'Calculates the dealer price from the effective list price.', badge_label: 'Dealer price',
       sections: { technical: 'The function returns sixty percent of the effective list price.' }, questions: [],
     });

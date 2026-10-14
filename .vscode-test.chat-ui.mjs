@@ -40,6 +40,6 @@ export default defineConfig({
     AI_TEST_REAL_PROVIDER: real ? '1' : undefined, AI_TEST_REASONING_EFFORT: real ? 'low' : undefined,
     DLV_CHAT_UI_REPLAY_TRACE:replayTrace,
     PLAYWRIGHT_CDP_PORT: cdpPort },
-  mocha: { ui: 'tdd', timeout: real ? 1200000 : 90000, color: true,
+  mocha: { ui: 'tdd', timeout: real ? Number(process.env.AI_TEST_TIMEOUT_MS) + 60_000 : 90000, color: true,
     ...(badge ? {grep:'live AI question'} : column ? {grep:'live column trace'} : {}) },
 });

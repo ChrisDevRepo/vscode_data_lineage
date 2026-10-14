@@ -29,6 +29,10 @@ export function isAbsentKind(kind: InvalidRouteKind): boolean {
  * is stated in the rejection reason; column inventories remain machine-only until the final rejection.
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
+  missing_task_decision:
+    'Send only the missing entries; valid entries are held. Account for each listed target with its mapping or explicit endpoint; terminated_inputs names arriving columns that stop without a local output. With analyze, supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it. Only passthrough forwards the incoming question automatically.',
+  invalid_task_decision:
+    'Correct only the invalid mapping or input disposition. A write needs a value contribution or an explicit constant output; row-role-only inputs end through terminated_inputs when they have no value output. terminated_inputs must name an assigned incoming column that is not also mapped. Valid finding entries are held.',
   absent_contributor:
     'Record it as an unresolved upstream source in your analysis and keep the upstream columns that resolve — it is not in the loaded model.',
   bad_out_col:
@@ -38,7 +42,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_contributor_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   non_writer_continuation:
-    'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours on this focus\'s carrier side, using the valid routes named in the rejection reason, carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
+    'upstream_columns always name value inputs, independent of exploration direction. For a bodyless focus, name only its recorded writers. Do not name downstream readers as inputs. An explicit downstream passthrough can forward the arriving qualified task and question with column_flow: [] without adding a value edge.',
   self_loop_column:
     'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in sections.',
   bad_return_target:
@@ -88,6 +92,8 @@ export const HELD_CORRECTION_ORDER =
  * model would have received had the kind been fatal — one machine-code source for both surfaces.
  */
 export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
+  missing_task_decision: REJECTION_CODES.incompleteTask,
+  invalid_task_decision: REJECTION_CODES.routeValidationFailed,
   absent_contributor: REJECTION_CODES.routeValidationFailed,
   bad_out_col: REJECTION_CODES.outColNotOnNode,
   untracked_out_col: REJECTION_CODES.outColNotTracked,

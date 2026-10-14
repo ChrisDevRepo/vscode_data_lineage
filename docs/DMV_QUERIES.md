@@ -1,6 +1,6 @@
 # DMV queries
 
-Reference for DBAs: every statement a database import sends, what it reads and what it returns. The SQL is in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and can be replaced by a custom file.
+Reference for DBAs: the application SQL a database import sends, what it reads and what it returns. The SQL is in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and can be replaced by a custom file.
 
 ## Connection
 
@@ -10,9 +10,11 @@ Reference for DBAs: every statement a database import sends, what it reads and w
 | Application intent | `ReadOnly` |
 | Encryption | On by default; required for Entra ID |
 | Permission | `VIEW DEFINITION` on the database for lineage; `SELECT` on tables for table statistics. Custom queries may need additional permissions. |
-| Statements | `SELECT` on catalog views and `SERVERPROPERTY` only; no writes, no temp objects, no user-table reads |
+| Built-in statements | Catalog queries and metadata functions only; no writes, no temp objects, no user-table reads |
 | Timeout | `dataLineageViz.dmvQueryTimeout` per query (default 120 s) |
 | Platforms | SQL Server 2016 or later, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool |
+
+These guarantees describe the shipped queries. Custom YAML SQL is executed with the connection’s permissions; it is not restricted to `SELECT`. `ReadOnly` application intent is a connection-routing hint, not a permission boundary. Use a login with only the permissions needed for your chosen features.
 
 Table statistics use the same connection settings with different statements; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 
@@ -22,14 +24,14 @@ Table statistics use the same connection settings with different statements; see
 |---|---|---|
 | Phase 1 | `schema-preview` | When an import starts, to fill the schema-selection wizard. |
 | Platform detection | `platform-info` | After the preview, and again at the start of Phase 2 (10-second limit). |
-| Object catalog | `all-objects` | Once per import, unfiltered. |
+| Object catalog | `all-objects` | At the start of Phase 2, after platform detection, unfiltered. |
 | Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | After you select schemas. |
 
 Nothing runs in the background. A query is any entry in the YAML; `phase: 1` marks it as not schema-filtered and keeps it out of the Phase 2 sweep, so `platform-info` and `all-objects` carry `phase: 1` although they run at Phase 2 time. Every query without `phase: 1` runs in the Phase 2 sweep, in file order.
 
 If `all-objects` is missing or fails, references into unselected schemas stay unclassified and the import continues.
 
-Table statistics also send `platform-info` when they need server details (edition, version). The connection sends no catalog SQL that is not in the YAML; the database name is typed, not listed.
+Table statistics also send `platform-info` when they need server details (edition, version). The extension's import catalog queries come from the YAML; the database name is typed, not listed. Driver connection/session setup is separate from these application queries. Opening a local `.dacpac` does not connect to a database.
 
 ### `{{SCHEMAS}}`
 
@@ -64,7 +66,7 @@ The standard `sys.objects.type` codes; the only deviation is `ET` for external t
 | `TF` | Multi-statement table-valued function |
 | `ET` | External table (PolyBase, Synapse Dedicated SQL Pool, Fabric) |
 
-**Object filter.** Unless noted, queries return only user objects of type `U` (table), `V` (view), `P` (procedure), `FN` (scalar function), `IF` (inline table function), `TF` (table function) and `ET` (external table, `sys.tables.is_external = 1`). They exclude `is_ms_shipped = 1`, the `sys` and `INFORMATION_SCHEMA` schemas, and objects with the extended property `microsoft_database_tools_support`.
+**Object filter.** `schema-preview`, `all-objects`, and `nodes` return only user objects of type `U` (table), `V` (view), `P` (procedure), `FN` (scalar function), `IF` (inline table function), `TF` (table function) and `ET` (external table, `sys.tables.is_external = 1`). They exclude `is_ms_shipped = 1` and objects with the extended property `microsoft_database_tools_support`. The unfiltered preview and full catalog also explicitly exclude the `sys` and `INFORMATION_SCHEMA` schemas; `nodes` uses the selected schema list. Other query filters are listed below.
 
 ### `schema-preview`
 
@@ -142,16 +144,16 @@ If the query is missing, fails, or returns no row or not the three required colu
 | `type_code` | string | Object type code |
 | `body_script` | string/null | `sys.sql_modules.definition` for procedures, views and functions; NULL for tables and for bodies the login cannot read |
 
-A repeated object name is kept once.
+A repeated schema-qualified object identity is kept once, using the detected identifier case-sensitivity policy.
 
 ### `columns`
 
 | | |
 |---|---|
 | Reads | `sys.columns`, `sys.objects`, `sys.schemas`, `sys.indexes`, `sys.index_columns`, `sys.extended_properties` |
-| Filter | Types `U`, `V`, `IF`, `TF`, `ET`; `s.name IN ({{SCHEMAS}})` |
+| Filter | Types `U`, `V`, `IF`, `TF`, `ET`; excludes shipped objects and `microsoft_database_tools_support`; `s.name IN ({{SCHEMAS}})` |
 | Returns | One row per column, ordered by schema, object and `column_id` (columns below) |
-| Used for | The table design preview in the SQL viewer |
+| Used for | Table design preview and column metadata available to optional AI questions; no deterministic column-lineage graph is built |
 
 | Column | Type | Description |
 |---|---|---|
@@ -192,7 +194,7 @@ A repeated object name is kept once.
 
 The query is optional; without it the design view shows no constraint annotations.
 
-Most CHECK constraints are table-level (`parent_column_id = 0`), even when they reference one column; those are not returned. Only a CHECK written inline in a column definition is. Primary keys come from `columns` (`pk_ordinal`).
+Table-level CHECK constraints (`parent_column_id = 0`) are not returned, even when they reference one column. The query returns column-level CHECK constraints such as those written inline in a column definition. Primary keys come from `columns` (`pk_ordinal`).
 
 ### `dependencies`
 
@@ -218,6 +220,8 @@ Most CHECK constraints are table-level (`parent_column_id = 0`), even when they 
 The built-in query keeps the optional columns with left joins, so object-level rows are preserved. A custom query that omits them keeps object-level lineage and loses column bindings.
 
 `referencing_column` binds a referenced object, such as a scalar function, to the output column that calls it. SQL Server can report a reference with `referencing_minor_id = 0`; such a row does not say which output column calls the function, so no column binding is made. A binding is made only when `referencing_column` matches a loaded column; it keeps server, database, schema, object and column qualification with SQL identifier quoting. A binding declares a dependency, not which values contribute to the column; column-level answers come only from the optional AI column trace, which reviews the SQL. Which column dependencies SQL Server records also differs for schema-bound and non-schema-bound objects; see [`sys.sql_expression_dependencies`](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
+
+When catalog output bindings are absent, the optional AI [column-tracing workflow](ARCHITECTURE.md) can investigate a loaded neighboring function using the caller SQL and a real loaded caller output. This does not populate column bindings from object-level rows or authorize guessed column edges. Live imports and DACPACs can supply different declaration coverage; checking object and column identities does not prove that AI contributor mappings are complete or semantically correct.
 
 ## Known limitations
 

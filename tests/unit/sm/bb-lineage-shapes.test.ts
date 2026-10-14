@@ -25,6 +25,11 @@ interface Shape {
 
 const v = (...ids: string[]): Record<string, ObjectType> => Object.fromEntries(ids.map(id => [id, 'view' as ObjectType]));
 
+// These topology scenarios deliberately forward every unpruned branch; SQL interpretation is not
+// their contract. State that authorization explicitly while preserving each scripted prune/ask.
+const forwarding = (types: Record<string, ObjectType>, script: Record<string, HopScript> = {}): Record<string, HopScript> =>
+  Object.fromEntries(Object.keys(types).map(id => [id, { verdict: 'passthrough', ...script[id] }]));
+
 const SHAPES: Shape[] = [
   { name: 'chain under an exact border defers the next level', types: v('o', 'a', 'b', 'c'), edges: [['o', 'a'], ['a', 'b'], ['b', 'c']], up: CLOSED, down: exact(2), nodes: ['a', 'b', 'o'], leads: ['c:depth_boundary'] },
   { name: 'transitive shortcut sets the level', types: v('o', 'a', 'b', 'c'), edges: [['o', 'a'], ['a', 'b'], ['b', 'c'], ['o', 'c']], up: CLOSED, down: exact(1), nodes: ['a', 'c', 'o'], leads: ['b:depth_boundary'] },
@@ -53,7 +58,7 @@ describe('BB lineage by shape', () => {
     const origin = Object.keys(shape.types)[0];
     const w = world(shape.types, shape.edges, origin, shape.up, shape.down);
     const before = w.scope();
-    drain(w.engine, shape.script);
+    drain(w.engine, forwarding(shape.types, shape.script));
     const result = delivered(w.engine);
     expect(result.nodes).toEqual(shape.nodes);
     expect(result.pruned).toEqual(shape.pruned ?? []);
@@ -72,16 +77,16 @@ describe('BB lineage: a prune inside a cycle through the origin', () => {
   const cycleWorld = () => {
     const w = world(v('origin', 'd', 'j', 'x'), [['origin', 'd'], ['d', 'j'], ['j', 'origin'], ['j', 'x']], 'origin', ALL, ALL);
     expect(w.engine.getHopContext()).toMatchObject({ focus_node: { id: 'origin' } });
-    expect(submit(w.engine, 'origin', { prune: ['d'] })).toMatchObject({ ok: true });
+    expect(submit(w.engine, 'origin', { verdict: 'passthrough', prune: ['d'] })).toMatchObject({ ok: true });
     expect(w.engine.getHopContext()).toMatchObject({ focus_node: { id: 'j' } });
-    expect(submit(w.engine, 'j', { prune: ['d'] })).toMatchObject({ ok: true });
+    expect(submit(w.engine, 'j', { verdict: 'passthrough', prune: ['d'] })).toMatchObject({ ok: true });
     expect(w.engine.toJSON().nodeStates.filter(state => state.action === 'prune').map(state => state.nodeId)).toContain('d');
     return w;
   };
 
   it('a continuation behind a join kept only by the other leg does not stay in the answer', () => {
     const w = cycleWorld();
-    drain(w.engine);
+    drain(w.engine, forwarding(v('origin', 'd', 'j', 'x')));
     expect(withoutDirectedPath(w.engine, 'origin', { upstream: true, downstream: true })).toEqual([]);
   });
 });
@@ -94,7 +99,7 @@ describe('BB lineage: refused prune', () => {
   it('an object kept by a refused prune still gets its hop', () => {
     const types: Record<string, ObjectType> = { o: 'view', t: 'table', u: 'view', s: 'view', d: 'view', b: 'table' };
     const w = world(types, [['s', 'd'], ['u', 't'], ['d', 't'], ['s', 'u'], ['b', 'd'], ['u', 'd'], ['o', 'b'], ['s', 'o'], ['t', 's']], 'o', ALL, ALL);
-    const order = drain(w.engine, { o: { prune: ['s'] }, d: { prune: ['s', 't'] }, u: { prune: ['s', 't'] } });
+    const order = drain(w.engine, forwarding(types, { o: { prune: ['s'] }, d: { prune: ['s', 't'] }, u: { prune: ['s', 't'] } }));
     const result = delivered(w.engine);
     expect(result.nodes.filter(id => types[id] !== 'table' && !order.includes(id))).toEqual([]);
   });
@@ -102,7 +107,7 @@ describe('BB lineage: refused prune', () => {
   it('a table kept by a refused prune carries the same column role as a routed table', () => {
     const types: Record<string, ObjectType> = { o: 'view', t: 'table', u: 'view', s: 'table', d: 'view', b: 'table' };
     const w = world(types, [['s', 'd'], ['u', 't'], ['d', 't'], ['s', 'u'], ['b', 'd'], ['u', 'd'], ['o', 'b'], ['s', 'o'], ['t', 's']], 'o', ALL, ALL);
-    drain(w.engine, { o: { prune: ['s'] }, d: { prune: ['s', 't'] }, u: { prune: ['s', 't'] } });
+    drain(w.engine, forwarding(types, { o: { prune: ['s'] }, d: { prune: ['s', 't'] }, u: { prune: ['s', 't'] } }));
     const roles = Object.fromEntries(w.engine.toJSON().nodeStates.map(state => [state.nodeId, state.columnRole ?? null]));
     expect(roles).toMatchObject({ s: roles.b });
     expect(w.logs.some(line => line.includes('[Prune] reject id=s'))).toBe(true);
@@ -112,7 +117,7 @@ describe('BB lineage: refused prune', () => {
   // sender); the run-end resolution refuses both removals, and the kept objects must still get their hop.
   it('an object kept by a refused prune at the end of the run still gets its hop', () => {
     const w = world(v('o', 'a', 'b', 'c', 'd', 'e'), [['o', 'a'], ['o', 'e'], ['a', 'b'], ['b', 'o'], ['b', 'c'], ['c', 'd'], ['d', 'a'], ['e', 'o'], ['e', 'b'], ['e', 'c']], 'o', ALL, ALL);
-    const order = drain(w.engine, { o: { prune: ['b', 'c', 'e'] }, a: { prune: ['o', 'b', 'e'] }, b: { prune: ['a', 'e'] }, c: { prune: ['b', 'e'] }, d: { prune: ['o', 'a', 'b'] }, e: { prune: ['o', 'a', 'b', 'c', 'd'] } });
+    const order = drain(w.engine, forwarding(v('o', 'a', 'b', 'c', 'd', 'e'), { o: { prune: ['b', 'c', 'e'] }, a: { prune: ['o', 'b', 'e'] }, b: { prune: ['a', 'e'] }, c: { prune: ['b', 'e'] }, d: { prune: ['o', 'a', 'b'] }, e: { prune: ['o', 'a', 'b', 'c', 'd'] } }));
     expect(w.logs.some(line => line.includes('resolve at run end id=b'))).toBe(true);
     expect(delivered(w.engine).nodes.filter(id => !order.includes(id))).toEqual([]);
   });
@@ -124,7 +129,7 @@ describe('BB lineage: a prune is plain reachability', () => {
   // reaches x, so x stays and gets its hop: no sender's vote removes an object another route reaches.
   it('an object another unpruned route reaches stays although one side pruned it', () => {
     const w = world(v('o', 's', 'x'), [['o', 'x'], ['x', 's'], ['s', 'o']], 'o', ALL, ALL);
-    const order = drain(w.engine, { o: { prune: ['x'] } });
+    const order = drain(w.engine, forwarding(v('o', 's', 'x'), { o: { prune: ['x'] } }));
     expect(order).toEqual(['o', 's', 'x']);
     expect(delivered(w.engine)).toMatchObject({ nodes: ['o', 's', 'x'], edges: ['o>x', 's>o', 'x>s'], pruned: [] });
     expect(withoutDirectedPath(w.engine, 'o', { upstream: true, downstream: true })).toEqual([]);

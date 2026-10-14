@@ -153,13 +153,14 @@ const REJECTION_GROUP_CHAT_TEXT: Readonly<Record<RejectionChatGroup, string>> = 
   source_selection: 'source selection',
   answer_format: 'answer format',
   backend_fault: 'internal error',
-  correction: 'correction',
+  missing_details: 'missing details',
+  correction: 'response',
 };
 
 /** Chat-facing group text for an attempt's latest rejection, for repair-progress chat lines. */
 function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>): string {
   const last = attempt.rejections[attempt.rejections.length - 1];
-  return last ? REJECTION_GROUP_CHAT_TEXT[classifyRejectionCode(last.code)] : 'rejected call';
+  return last ? REJECTION_GROUP_CHAT_TEXT[classifyRejectionCode(last.code)] : 'response';
 }
 
 /**
@@ -353,24 +354,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * Announces one in-phase repair retry in the same progress grammar the hop counter uses.
+   * Shows validation failures as short, transient progress updates while the model corrects them.
+   * Accepted non-terminal calls add no clarification status. Attempts and rejection details stay
+   * in the debug/trace record; terminal budget, provider and backend failures keep their own errors.
    *
-   * @remarks
-   * A semantic failure inside a self-looping phase is otherwise invisible in chat. This fires only
-   * when the attempt just recorded added a failure — an accepted non-terminal tool call that loops
-   * the phase announces nothing — and re-emits the phase status with a `(Retry N — <cause>)`
-   * bracket, mirroring the hop counter's `(+N added, −N pruned)` brackets.
-   *
-   * Retry ⇒ transient `status` (native `stream.progress`), never permanent `text` (native
-   * `stream.markdown`): a retry the phase goes on to resolve is exactly the "still working" signal
-   * VS Code's progress surface exists for, not content that belongs in the final transcript — a
-   * retry that later succeeds leaves the reader nothing to act on once the turn completes. This is
-   * additive-safe for the opposite case too: a phase that never recovers still ends on its own
-   * terminal `error`/`terminal` event (`failStopped`/`failProvider`/`fail`), and every rejection is
-   * already logged unconditionally at `[Reject]`/`[Attempt]` regardless of what reaches chat, so the
-   * debug trail still carries every drop even though the transcript no longer repeats it as content.
-   *
-   * @param statusText - The phase's own status line to re-emit; defaults to the phase progress label.
+   * @param statusText - The phase's own status line; defaults to the phase progress label.
    */
   const emitRepairProgress = (
     phaseLabel: InstructionPhase,
@@ -381,7 +369,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (nextAttempt.rejections.length <= priorAttempt.rejections.length) return;
     const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel]}…`;
     const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
-    deps.sink.status(statusPhase, `${base} (Retry ${nextAttempt.noProgressCalls} — ${rejectionCauseLabel(nextAttempt)})`);
+    deps.sink.status(statusPhase, `${base} (Validation failed: ${rejectionCauseLabel(nextAttempt)})`);
   };
 
   /**
@@ -390,7 +378,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    *
    * @remarks
    * Complements the per-attempt `[AI] [Attempt]` line and toolProvider's `[Reject]` line with the
-   * one line support needs to correlate a chat retry count ({@link emitRepairProgress}) with what
+   * one line support needs to correlate clarification progress ({@link emitRepairProgress}) with what
    * the hop actually did: the ordered chain of rejection GROUPS — never raw codes, the same rule the
    * chat line follows — and whether the model was converging on one fault category or bouncing
    * between unrelated ones.

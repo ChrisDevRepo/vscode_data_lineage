@@ -15,7 +15,7 @@ You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 20+ with np
 | `npm run build` | Build the extension and webview |
 | `npm run typecheck` | Type-check (there is no lint script) |
 | `npm test` | Parser, lineage and AI contract tests |
-| `npm run gate` | All deterministic checks |
+| `npm run gate` | Core/runtime checks, coverage floors, build and repository checks; support tests are separate |
 | `npm run package` | Create the VSIX |
 
 None of these need a database, model provider or credentials. Test tiers are in [`docs/testing/README.md`](docs/testing/README.md); code layout is in [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).

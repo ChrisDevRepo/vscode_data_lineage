@@ -1,15 +1,16 @@
+import { detailHandlers } from '../../helpers/testUtils';
 /**
  * Pins the table-statistics connection lifetime: a built-in connection is opened per request and
  * closed afterwards; a DACPAC model never reaches a database.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BridgeHost } from '../../../../src/bridge/host';
 
 const connectDatabase = vi.fn();
 let detailPanelListener: ((message: unknown) => Promise<void>) | undefined;
 
 vi.mock('vscode', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
+  const { detailPanelStub } = await import('../../helpers/testUtils');
   return {
     ...actual,
     Uri: { joinPath: (...parts: unknown[]) => parts.join('/') },
@@ -18,21 +19,7 @@ vi.mock('vscode', async (importOriginal) => {
       getConfiguration: () => ({ get: () => undefined }),
     },
     window: {
-      createWebviewPanel: () => ({
-        title: '',
-        reveal: vi.fn(),
-        onDidDispose: () => ({ dispose: () => {} }),
-        webview: {
-          html: '',
-          cspSource: 'vscode-resource:',
-          asWebviewUri: (uri: unknown) => uri,
-          onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
-            detailPanelListener = listener;
-            return { dispose: () => {} };
-          },
-          postMessage: async () => true,
-        },
-      }),
+      createWebviewPanel: () => detailPanelStub(listener => { detailPanelListener = listener; }),
     },
   };
 });
@@ -63,23 +50,7 @@ async function requestStatsTwice(
   outputChannel = makeOutputChannel(),
   settings: Record<string, unknown> = {},
 ): Promise<() => Promise<void>> {
-  const host = {
-    postMessage: vi.fn().mockResolvedValue(true),
-    log: vi.fn(),
-    getExtensionUri: () => 'ext',
-    getConfiguration: () => ({ get: (key: string, fallback: unknown) => (key in settings ? settings[key] : fallback) }),
-  } as unknown as BridgeHost;
-  const { handlers, cleanup } = createMessageHandlers(
-    host,
-    { globalState: { get: vi.fn(), update: vi.fn() }, secrets: {} } as never,
-    () => ({ isDbSession }) as never,
-    outputChannel as never,
-    () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
-    vi.fn(),
-    vi.fn(),
-    false,
-    vi.fn(),
-  );
+  const { handlers, cleanup } = detailHandlers(createMessageHandlers, { isDbSession, outputChannel: outputChannel as never, settings });
   await handlers['show-detail']({ type: 'show-detail' });
   for (let i = 0; i < 2; i++) {
     await detailPanelListener!({ type: 'table-stats-request', schema: 'dbo', objectName: 'Orders', mode: 'quick', columns: [] });

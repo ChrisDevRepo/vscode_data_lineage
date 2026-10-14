@@ -1,9 +1,9 @@
+import { detailHandlers } from '../helpers/testUtils';
 /**
  * Pins how table statistics report sampling: a table that refuses `TABLESAMPLE` is profiled again
  * with a full scan, and that result is reported as unsampled.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BridgeHost } from '../../../src/bridge/host';
 
 const detailMessages: Array<Record<string, unknown>> = [];
 let detailPanelListener: ((message: unknown) => Promise<void>) | undefined;
@@ -11,26 +11,13 @@ const connectDatabase = vi.fn();
 
 vi.mock('vscode', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
+  const { detailPanelStub } = await import('../helpers/testUtils');
   return {
     ...actual,
     Uri: { joinPath: (...parts: unknown[]) => parts.join('/') },
     ViewColumn: { Beside: -2 },
     window: {
-      createWebviewPanel: () => ({
-        title: '',
-        reveal: vi.fn(),
-        onDidDispose: () => ({ dispose: () => {} }),
-        webview: {
-          html: '',
-          cspSource: 'vscode-resource:',
-          asWebviewUri: (uri: unknown) => uri,
-          onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
-            detailPanelListener = listener;
-            return { dispose: () => {} };
-          },
-          postMessage: async (message: Record<string, unknown>) => { detailMessages.push(message); return true; },
-        },
-      }),
+      createWebviewPanel: () => detailPanelStub(listener => { detailPanelListener = listener; }, message => { detailMessages.push(message as Record<string, unknown>); }),
     },
   };
 });
@@ -45,26 +32,7 @@ const { createMessageHandlers } = await import('../../../src/bridge/messageHandl
 
 const cell = (displayValue: string) => ({ displayValue, isNull: false });
 
-function arrange() {
-  const host = {
-    postMessage: vi.fn().mockResolvedValue(true),
-    log: vi.fn(),
-    getExtensionUri: () => 'ext',
-    getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }),
-  } as unknown as BridgeHost;
-  const outputChannel = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
-  return createMessageHandlers(
-    host,
-    { globalState: { get: vi.fn(), update: vi.fn() }, secrets: {} } as never,
-    () => ({ isDbSession: true }) as never,
-    outputChannel as never,
-    () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
-    vi.fn(),
-    vi.fn(),
-    false,
-    vi.fn(),
-  );
-}
+const arrange = () => detailHandlers(createMessageHandlers);
 
 beforeEach(() => { detailMessages.length = 0; connectDatabase.mockReset(); });
 

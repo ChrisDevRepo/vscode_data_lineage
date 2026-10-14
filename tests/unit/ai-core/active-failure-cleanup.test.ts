@@ -20,6 +20,7 @@ function completedModel() {
     first,
     ...[origin, source].map((focus, index) => ({ toolCalls: [validCall(`finding-${index}`, 'lineage_submit_findings', {
       focus_node_id: focus, verdict: 'analyze', summary: 'Synthetic view.', sections: { technical: 'Synthetic evidence.' },
+      ...(focus === origin ? { questions: [{ nodeId: source, question: 'Inspect Source for the Origin investigation.' }] } : {}),
     })] })),
     { toolCalls: [validCall('present', 'lineage_present_result', {
       name: 'Synthetic report', summary: 'Synthetic lineage.', highlight_groups: [{ label: 'Views', color: 'target', node_ids: [origin, source] }],

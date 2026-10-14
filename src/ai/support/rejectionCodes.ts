@@ -23,6 +23,8 @@ export const REJECTION_CODES = {
   staleTurn: 'stale_turn',
   /** Tool input failed its schema or the engine's argument contract; the hint names the offending field. */
   invalidInput: 'invalid_input',
+  /** A well-formed finding omitted required task details; retain it and request only those details. */
+  incompleteTask: 'incomplete_task',
   /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
   notFound: 'not_found',
   /** `supplement` was requested without a prior exploration in `complete` status to extend; the next call is a fresh proposal, never a resend. */

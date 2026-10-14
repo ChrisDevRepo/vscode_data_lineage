@@ -6,8 +6,7 @@ suite('Real provider smoke', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
   const FIXTURE_ID = 'data-lineage-test.data-lineage-test-model-provider';
   const TEST_VENDOR = 'lineage-test';
-  const TEST_TIMEOUT_MS = 290_000;
-  const PROVIDER_REQUEST_TIMEOUT_MS = 120_000;
+  const TEST_TIMEOUT_MS = Number(process.env.AI_TEST_TIMEOUT_MS);
   const DEADLINE_MARGIN_MS = 10_000;
 
   function recordingStream() {
@@ -23,7 +22,7 @@ suite('Real provider smoke', () => {
   }
 
   test('a configured provider completes a public demo-data question', async function () {
-    this.timeout(TEST_TIMEOUT_MS);
+    this.timeout(TEST_TIMEOUT_MS + 60_000);
     const startedAt = Date.now();
     const testDeadline = startedAt + TEST_TIMEOUT_MS;
     for (const name of ['AI_TEST_PROVIDER', 'AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL']) {
@@ -33,7 +32,7 @@ suite('Real provider smoke', () => {
     const fixture = vscode.extensions.getExtension(FIXTURE_ID);
     assert.ok(fixture, 'the language-model adapter fixture must be installed in this lane');
     await fixture.activate();
-    const deadline = Math.min(testDeadline - 150_000, Date.now() + 20_000);
+    const deadline = Math.min(testDeadline - DEADLINE_MARGIN_MS, Date.now() + 20_000);
     let model: vscode.LanguageModelChat | undefined;
     while (Date.now() < deadline && !model) {
       model = (await vscode.lm.selectChatModels({ vendor: TEST_VENDOR }))[0];
@@ -46,7 +45,7 @@ suite('Real provider smoke', () => {
     const exports = await extension.activate();
     assert.ok(exports?.participant);
     await vscode.commands.executeCommand('dataLineageViz.openDemo');
-    const readyBy = Math.min(testDeadline - 130_000, Date.now() + 45_000);
+    const readyBy = Math.min(testDeadline - DEADLINE_MARGIN_MS, Date.now() + 45_000);
     let demoLoaded = false;
     while (Date.now() < readyBy && !demoLoaded) {
       const probe = await Promise.resolve(vscode.lm.invokeTool('lineage_search_objects', {
@@ -75,9 +74,8 @@ suite('Real provider smoke', () => {
 
     const { stream, markdown } = recordingStream();
     const cancellation = new vscode.CancellationTokenSource();
-    // A provider request can remain in flight for 120 seconds. Cancel early enough for that
-    // request and host teardown to finish before Mocha's hard deadline.
-    const cancelAt = testDeadline - PROVIDER_REQUEST_TIMEOUT_MS - DEADLINE_MARGIN_MS;
+    // Cancellation aborts the provider request; reserve only teardown time.
+    const cancelAt = testDeadline - DEADLINE_MARGIN_MS;
     assert.ok(cancelAt > Date.now(), 'setup left no safe time for a provider turn');
     const cancelTimer = setTimeout(() => cancellation.cancel(), cancelAt - Date.now());
     let finalStatus = 'error';

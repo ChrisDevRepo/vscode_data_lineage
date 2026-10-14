@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { z } from 'zod';
 
 const ENV_FILE = resolve('.env');
+const testTimeout = z.coerce.number().int().min(1).max(2_147_423_647);
 const REQUIRED_AI_KEYS = ['AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL'];
 const PROVIDER_PROFILES = {
   azure: ['AZURE_URI', 'AZURE_API', 'AZURE_MODEL'],
@@ -36,6 +38,10 @@ export function loadTestEnv({ env = process.env, envFile = ENV_FILE, requireAiPr
     }
   }
 
+  if (requireAiProvider) {
+    env.AI_TEST_TIMEOUT_MS = String(testTimeout.parse(env.AI_TEST_TIMEOUT_MS?.trim() || 7_200_000));
+    env.AI_TEST_REQUEST_TIMEOUT_MS = String(testTimeout.parse(env.AI_TEST_REQUEST_TIMEOUT_MS?.trim() || env.AI_TEST_TIMEOUT_MS));
+  }
   return applyProviderProfile(env, requireAiProvider);
 }
 

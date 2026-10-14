@@ -61,8 +61,8 @@ import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /**
- * Retry-messaging group for a rejection code, shared by this module's `[Reject]` debug line and
- * `graph.ts`'s chat-facing `Retry N — <group>` line — ONE classification, read by both surfaces, so
+ * Progress-message group for a rejection code, shared by this module's `[Reject]` debug line and
+ * `graph.ts`'s validation progress labels — one classification read by both surfaces, so
  * a debug trace and what the user saw can never disagree about which group a code belongs to.
  *
  * @remarks
@@ -70,7 +70,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
  * `rejections[]`, so a group for them would be unreachable and would misrepresent a budget refusal
  * as a model correction.
  */
-export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'correction';
+export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'missing_details' | 'correction';
 
 /**
  * Explicit membership for the non-fallback groups. Every rejection code NOT listed here —
@@ -80,6 +80,7 @@ export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer
  * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
  * - `source_selection` — routing and prune-topology guards.
  * - `answer_format` — structural/schema violations of the tool envelope itself.
+ * - `missing_details` — a valid submission still owes an explicit task or neighbor decision.
  * - `backend_fault` — a backend state or exception no model reply can correct (a closed panel
  *   included); the run ends on the first one instead of spending the step's replies.
  *
@@ -96,6 +97,7 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.writesToNamesReader]: 'column_mapping',
   [REJECTION_CODES.prunedContributor]: 'column_mapping',
   [REJECTION_CODES.routeValidationFailed]: 'source_selection',
+  [REJECTION_CODES.incompleteTask]: 'missing_details',
   [REJECTION_CODES.validation]: 'answer_format',
   [REJECTION_CODES.invalidInput]: 'answer_format',
   [REJECTION_CODES.ctFieldForbiddenInBb]: 'answer_format',

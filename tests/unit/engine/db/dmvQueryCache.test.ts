@@ -6,8 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BridgeHost } from '../../../../src/bridge/host';
-import { rootPath } from '../../helpers/testUtils';
+import { rootPath, detailHandlers } from '../../helpers/testUtils';
 
 const CUSTOM_PATH = resolve('/workspace', 'dmvQueries.yaml');
 
@@ -21,6 +20,7 @@ const env = vi.hoisted(() => ({
 
 vi.mock('vscode', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
+  const { detailPanelStub } = await import('../../helpers/testUtils');
   const { resolve: resolvePath } = await import('node:path');
   return {
     ...actual,
@@ -55,21 +55,7 @@ vi.mock('vscode', async (importOriginal) => {
     },
     window: {
       showWarningMessage: (...args: unknown[]) => env.showWarningMessage(...args),
-      createWebviewPanel: () => ({
-        title: '',
-        reveal: vi.fn(),
-        onDidDispose: () => ({ dispose: () => {} }),
-        webview: {
-          html: '',
-          cspSource: 'vscode-resource:',
-          asWebviewUri: (uri: unknown) => uri,
-          onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
-            env.detailListener = listener;
-            return { dispose: () => {} };
-          },
-          postMessage: async () => true,
-        },
-      }),
+      createWebviewPanel: () => detailPanelStub(listener => { env.detailListener = listener; }),
     },
   };
 });
@@ -188,23 +174,7 @@ describe('table statistics read the DMV queries once', () => {
   }
 
   async function openDetail() {
-    const host = {
-      postMessage: vi.fn().mockResolvedValue(true),
-      log: vi.fn(),
-      getExtensionUri: () => extensionUri,
-      getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }),
-    } as unknown as BridgeHost;
-    const bundle = createMessageHandlers(
-      host,
-      { globalState: { get: vi.fn(), update: vi.fn() }, secrets: {}, extensionUri } as never,
-      () => ({ isDbSession: true }) as never,
-      outputChannel,
-      () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
-      vi.fn(),
-      vi.fn(),
-      false,
-      vi.fn(),
-    );
+    const bundle = detailHandlers(createMessageHandlers, { outputChannel, extensionUri });
     await bundle.handlers['show-detail']({ type: 'show-detail' });
     return bundle;
   }

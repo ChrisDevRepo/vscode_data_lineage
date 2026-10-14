@@ -1,8 +1,8 @@
+import { detailHandlers } from '../helpers/testUtils';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { BridgeHost } from '../../../src/bridge/host';
 
 const connectDatabase = vi.fn();
 let detailPanelListener: ((message: unknown) => Promise<void>) | undefined;
@@ -10,26 +10,13 @@ const detailPanelPosts: unknown[] = [];
 
 vi.mock('vscode', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
+  const { detailPanelStub } = await import('../helpers/testUtils');
   return {
     ...actual,
     Uri: { joinPath: (...parts: unknown[]) => parts.join('/') },
     ViewColumn: { Beside: -2 },
     window: {
-      createWebviewPanel: () => ({
-        title: '',
-        reveal: vi.fn(),
-        onDidDispose: () => ({ dispose: () => {} }),
-        webview: {
-          html: '',
-          cspSource: 'vscode-resource:',
-          asWebviewUri: (uri: unknown) => uri,
-          onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
-            detailPanelListener = listener;
-            return { dispose: () => {} };
-          },
-          postMessage: async (message: unknown) => { detailPanelPosts.push(message); return true; },
-        },
-      }),
+      createWebviewPanel: () => detailPanelStub(listener => { detailPanelListener = listener; }, message => { detailPanelPosts.push(message); }),
     },
   };
 });
@@ -83,23 +70,7 @@ describe('AI/database capability boundary', () => {
   });
 
   it('enforces the profiling disable switch again at the extension-host boundary', async () => {
-    const host = {
-      postMessage: vi.fn().mockResolvedValue(true),
-      log: vi.fn(),
-      getExtensionUri: () => 'ext',
-      getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'tableStatistics.enabled' ? false : fallback }),
-    } as unknown as BridgeHost;
-    const { handlers } = createMessageHandlers(
-      host,
-      { globalState: { get: vi.fn(), update: vi.fn() } } as never,
-      () => ({ isDbSession: true }) as never,
-      { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() } as never,
-      () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
-      vi.fn(),
-      vi.fn(),
-      false,
-      vi.fn(),
-    );
+    const { handlers } = detailHandlers(createMessageHandlers, { settings: { 'tableStatistics.enabled': false } });
 
     await handlers['show-detail']({ type: 'show-detail' });
     expect(detailPanelListener).toBeDefined();

@@ -39,7 +39,7 @@ npm run build                 # esbuild extension + Vite webview
 npm run package               # package with the pinned local @vscode/vsce
 ```
 
-Press <kbd>F5</kbd> to build both bundles and launch the Extension Development Host. **Run Extension (Watch)** watches only the extension bundle and does not build the webview; run `npm run build:webview` before it and after React or CSS changes.
+Press <kbd>F5</kbd> to build both bundles and launch the Extension Development Host. **Run Extension (Watch)** builds the webview once through its prerequisite task, then watches the extension bundle; run `npm run build:webview` again after React or CSS changes.
 
 ### Packaging
 
@@ -68,7 +68,7 @@ flowchart LR
     DM --> GB[Graph builder] --> G[Directed graph<br/>graphology]
 ```
 
-Both paths produce the same `DatabaseModel`, through the same preprocessing, parse rules, normalisation and edge-direction logic; the parser does not know the source. Each extractor stamps `DatabaseModel.source` (`'dacpac'` or `'database'`). Read that field for provenance; `dbPlatform` is no proxy, because a DACPAC derives a platform label from its DSP just as a live import derives one from the server.
+Both paths produce a `DatabaseModel`, through the same preprocessing, parse rules, normalisation and edge-direction logic; the parser does not know the source. Each extractor stamps `DatabaseModel.source` (`'dacpac'` or `'database'`). Read that field for provenance; `dbPlatform` is no proxy, because a DACPAC derives a platform label from its DSP just as a live import derives one from the server.
 
 **DACPAC** ([`src/engine/dacpacExtractor.ts`](../src/engine/dacpacExtractor.ts)). Reads `model.xml` from the ZIP, derives `dbPlatform` from the DSP and keeps the full lightweight object catalog. Unknown DSP text is kept as is.
 
@@ -129,7 +129,7 @@ Every message crossing the boundary is parsed with the Zod schemas in [`src/engi
 | Prompt builders | [`src/ai/prompting/`](../src/ai/prompting/); stage assembly in [`stagePrompts.ts`](../src/ai/agent/stagePrompts.ts), one-call planning in [`instructionPlan.ts`](../src/ai/agent/instructionPlan.ts) |
 | Tool registry, phase policy, Zod dispatcher | [`src/ai/tools/`](../src/ai/tools/) |
 
-The model writes findings and structured presentation fields. The engine validates every change, keeps the result graph connected to its origin, and assembles the rendered answer from the structured parts. After changing the tool catalog, run `npm run generate:tool-manifest`.
+The model writes findings and structured presentation fields. The engine validates structure and graph consistency, keeps the result graph connected to its origin, and assembles the rendered answer from the structured parts. Validation does not prove that the model interpreted the SQL correctly. After changing the tool catalog, run `npm run generate:tool-manifest`.
 
 During development `@lineage` was tested with several models, such as Claude, ChatGPT, DeepSeek Flash, Gemini Flash, GLM Flash and Qwen, through providers such as Azure OpenAI, Fireworks, OpenRouter and local OpenAI-compatible servers; this is not a list of supported models.
 
@@ -142,7 +142,7 @@ Tiers, lanes and optional configuration: [`testing/README.md`](testing/README.md
 | `npm run gate` | Deterministic checks, coverage floors, builds and package checks. Needs no database, model provider or display. Run before a push. |
 | `npm test` | Parser, lineage and deterministic AI contract suites. |
 | `npm run test:parser` | Expected edges per SQL construct. |
-| `npm run test:core` | Parser, engine and webview tests. |
+| `npm run test:core` | Parser and deterministic lineage tests; supporting webview tests run in `npm run test:support`. |
 | `npm run coverage:core` | Protected core coverage floors. |
 | `npm run test:runtime` | Agent runtime and state machine with a stubbed VS Code API. |
 | `npm run typecheck:tests` | Type-check the tests. |

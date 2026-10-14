@@ -68,59 +68,9 @@ export interface HttpRequestInit {
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
   readonly signal?: AbortSignal;
-  /** Undici `Agent` dispatcher when the transport upgrade resolved; ignored by fake transports. */
-  readonly dispatcher?: unknown;
 }
 
-/**
- * Resolves the transport provider requests are issued through.
- *
- * @remarks
- * Node's global `fetch` is undici's, and undici aborts a request whose response **headers** have
- * not arrived within its own hard-coded 300 s `headersTimeout` — invisible to the port's own
- * `requestTimeoutMs` deadline and fatal for local thinking models whose single non-streamed
- * generation legitimately runs longer (measured 2026-08-30: Qwen3.8-27B via LM Studio needed
- * ~280 s of decode for one planning turn, and the 300 s header cap fired exactly as the model
- * finished, surfacing as `UND_ERR_HEADERS_TIMEOUT`). When the `undici` package is resolvable
- * (transitively present via tooling dependencies), the port uses undici's own `fetch` with an
- * `Agent` whose `headersTimeout` and `bodyTimeout` equal the lane deadline, so the ONLY deadline
- * for a response is the port's. The TCP/TLS connect phase gets its own {@link CONNECT_TIMEOUT_MS}
- * (undici's default is 10 s, too short for a congested egress path; a timeout there sends nothing). Without undici, global `fetch` is kept and the 300 s header cap applies — the
- * warning names it.
- */
-/** Connect-phase deadline (TCP + TLS) for the undici transport, capped by the lane deadline. */
-const CONNECT_TIMEOUT_MS = 30_000;
-
-function resolveTransport(
-  timeoutMs: number,
-  debugLog: ((message: string) => void) | undefined,
-): { fetchImpl: FetchLike; dispatcher: unknown } {
-  try {
-    // Lazy, optional transport upgrade: undici is not a direct dependency, so resolve it at
-    // runtime and fall back to global fetch when it is not installed.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const undici = require('undici') as {
-      fetch: (url: string, init: HttpRequestInit) => Promise<HttpResponseLike>;
-      Agent: new (options: { headersTimeout: number; bodyTimeout: number; connect: { timeout: number } }) => unknown;
-    };
-    const agent = new undici.Agent({
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs,
-      connect: { timeout: Math.min(timeoutMs, CONNECT_TIMEOUT_MS) },
-    });
-    return {
-      fetchImpl: (url, init) => undici.fetch(url, { ...init, dispatcher: agent }),
-      dispatcher: agent,
-    };
-  } catch {
-    debugLog?.(
-      '[AI] undici is not resolvable; using global fetch — undici\'s built-in 300s headers timeout will abort long non-streamed generations.',
-    );
-    return { fetchImpl: (url, init) => globalThis.fetch(url, init as RequestInit) as Promise<HttpResponseLike>, dispatcher: undefined };
-  }
-}
-
-/** The injectable transport. Production passes global `fetch`; tests pass canned responses. */
+/** Injectable transport for deterministic checks; live runs use explicit HTTP deadlines. */
 export type FetchLike = (url: string, init: HttpRequestInit) => Promise<HttpResponseLike>;
 
 /**
@@ -262,11 +212,13 @@ export interface OpenAiCompatiblePortConfig {
    */
   readonly chatCompletionsUrl?: string;
   readonly model: string;
-  /** Sent as `Authorization: Bearer …`; never logged, traced, or included in an error. */
+  /** Sent only in the configured authentication header; never logged or traced. */
   readonly apiKey: string;
   /** Lane identifier, surfaced as the identity vendor so a trace names its lane. */
   readonly laneId?: string;
-  /** Whole-request budget including the body read; defaults to five minutes. */
+  /** Azure deployment authentication uses api-key instead of Bearer authorization. */
+  readonly apiKeyHeader?: 'api-key';
+  /** Per-attempt budget including the body read; defaults to two hours. */
   readonly requestTimeoutMs?: number;
   readonly capabilities?: OpenAiLaneCapabilities;
   /** Optional request-body tuning; absent fields send nothing extra. */
@@ -327,7 +279,7 @@ export interface OpenAiGenerationSummary {
 }
 
 /** Default whole-request budget; a reasoning model on a cold route legitimately takes minutes. */
-const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 7_200_000;
 
 /**
  * DD-4a transient-transport retry, {@link OpenAiCompatiblePort.send} only.
@@ -505,9 +457,6 @@ export class OpenAiCompatiblePort implements ModelPort {
 
   private readonly fetchImpl: FetchLike;
 
-  /** Undici `Agent` aligning header/body deadlines with {@link OpenAiCompatiblePortConfig.requestTimeoutMs}. */
-  private readonly dispatcher: unknown;
-
   public constructor(
     private readonly config: OpenAiCompatiblePortConfig,
     private readonly options: OpenAiCompatiblePortOptions = {},
@@ -534,17 +483,12 @@ export class OpenAiCompatiblePort implements ModelPort {
     };
     this.budget = options.budget ?? DEFAULT_TURN_TOKEN_BUDGET;
     if (options.fetchImpl) {
-      // Injected transports (tests, custom integrations) are used verbatim; no dispatcher is
-      // attached because the caller owns the transport behavior end to end.
       this.fetchImpl = options.fetchImpl;
-      this.dispatcher = undefined;
     } else {
-      const transport = resolveTransport(
-        config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-        options.debugLog,
-      );
-      this.fetchImpl = transport.fetchImpl;
-      this.dispatcher = transport.dispatcher;
+      const { createProviderFetch } = require(
+        `${process.cwd()}/tests/fixtures/lm-provider-extension/live-provider-adapter.js`,
+      ) as { createProviderFetch: (timeoutMs: number) => FetchLike };
+      this.fetchImpl = createProviderFetch(config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
     }
     // Record the configured model before any provider request can fail.
     this.options.debugLog?.(
@@ -1011,11 +955,12 @@ export class OpenAiCompatiblePort implements ModelPort {
             // The only place the credential appears. No record type carries headers, on any lane.
             headers: {
               'content-type': 'application/json',
-              authorization: `Bearer ${this.config.apiKey}`,
+              ...(this.config.apiKeyHeader === 'api-key'
+                ? { 'api-key': this.config.apiKey }
+                : { authorization: `Bearer ${this.config.apiKey}` }),
             },
             body: JSON.stringify(payload),
             signal: controller.signal,
-            ...(this.dispatcher !== undefined ? { dispatcher: this.dispatcher } : {}),
           });
         } catch (error) {
           const code = transientTransportErrorCode(error);

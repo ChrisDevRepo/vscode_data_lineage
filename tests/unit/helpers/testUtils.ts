@@ -99,3 +99,44 @@ export function hasName(list: string[], name: string): boolean {
     return parts[parts.length - 1] === lower;
   });
 }
+
+/** Detail-panel shell for host-boundary tests; messages still pass through the real handlers. */
+export function detailPanelStub(
+  receive: (listener: (message: unknown) => Promise<void>) => void,
+  post: (message: unknown) => void = () => {},
+) {
+  return {
+    title: '', reveal: () => {}, onDidDispose: () => ({ dispose: () => {} }),
+    webview: {
+      html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: unknown) => uri,
+      onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
+        receive(listener);
+        return { dispose: () => {} };
+      },
+      postMessage: async (message: unknown) => { post(message); return true; },
+    },
+  };
+}
+
+/** Builds the standard detail-handler host while leaving connection behavior to each test. */
+export function detailHandlers(
+  create: typeof import('../../../src/bridge/messageHandlers').createMessageHandlers,
+  { isDbSession = true, settings = {}, outputChannel = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, trace: () => {} }, extensionUri = 'ext' }: {
+    isDbSession?: boolean;
+    settings?: Record<string, unknown>;
+    outputChannel?: Pick<Parameters<typeof create>[3], 'info' | 'debug' | 'warn' | 'error' | 'trace'>;
+    extensionUri?: unknown;
+  } = {},
+) {
+  return create(
+    {
+      postMessage: async () => true, log: () => {}, getExtensionUri: () => extensionUri,
+      getConfiguration: () => ({ get: (key: string, fallback: unknown) => key in settings ? settings[key] : fallback }),
+    } as unknown as Parameters<typeof create>[0],
+    { globalState: { get: () => undefined, update: () => undefined }, secrets: {}, extensionUri } as never,
+    () => ({ isDbSession }) as never,
+    outputChannel as never,
+    () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
+    async () => {}, async () => {}, false, () => {},
+  );
+}

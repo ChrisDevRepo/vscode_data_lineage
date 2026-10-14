@@ -25,9 +25,17 @@ The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAI
 
 Add a supporting check as one row in an existing file or case catalog; a new file needs a contract no lane already owns. Coverage floors stay at their current numbers.
 
-- Parser edge: one row in `tests/cases/parser/exact-edges.yaml` with `id`, `description`, `sql` and the exact lists it checks (`sources`, `targets`, `exec`, `cross_db_sources`, `cross_db_targets`, and `external` only when checked). Lists are compared exactly, so a missing name is asserted absent.
-- Column flow: a `runners: [scripted]` row in [`tests/cases/lineage-cases.yaml`](../../tests/cases/lineage-cases.yaml), run by `tests/unit/sm/lineage-cases.test.ts` on `npm run test:runtime` and the gate.
+- SQL/parser case: one row in `tests/cases/parser/exact-edges.yaml`, run by `tsql-coverage-matrix.test.ts`, with `id`, `description`, `sql` and exact `sources`, `targets`, `exec`, `cross_db_sources` and `cross_db_targets` lists (omitted lists mean empty). Optional `case_modes: [ci, cs]` preserves case-sensitive scenarios; the default is `[ci]`. Add exact `mutations` or `external` lists when those contracts matter. For model behavior, add `graph` with independent `tables`, catalog `metadata`, optional `current_database` and the complete expected `edges`, including type and `deleteOnly`; the subject procedure is `gen.Subject`. Do not derive expected graph edges from parser output. Keep custom-rule setup, extractor/API contracts and generated performance cases in their existing tests.
+- AI column-trace state contracts (not deterministic SQL-to-column inference): a `runners: [scripted]` row in [`tests/cases/lineage-cases.yaml`](../../tests/cases/lineage-cases.yaml), run by `tests/unit/sm/lineage-cases.test.ts` on `npm run test:runtime` and the gate.
 - Playwright, Electron and headless rows use the matching `runners` tag and stay outside the gate. Keep the prompt and expected result on the row, not in the runner.
+
+## What these checks establish
+
+Deterministic tests verify parser, graph and runtime contracts. A structurally valid AI result does not establish complete SQL lineage, correct model-authored argument bindings or inclusion of every contributor. Fixed-response host tests establish API wiring and lifecycle, not inference quality. Current escaped-bracket identifiers are covered in both case modes. Ambiguous identifiers in older saved views or checkpoints cannot always be recovered: legacy references resolve only when they have a unique owner in the current model. Statement scanning uses semicolons or recognised top-level statement keywords; identifier tests do not establish complete parsing of arbitrary SQL without delimiters. See [parser limits](../PARSE_RULES.md).
+
+Headless AI uses simulated consent decisions and its own transport. It does not test interactive approval controls or the VS Code account's model integration. Badge replay checks the rendered follow-up control and live suggestion call, but does not prove fresh synthesis. Inspecting headless Markdown does not establish rendered layout; native UI checks remain separate. Live checks can incur provider charges.
+
+Layout timings describe the tested dataset, hardware and runtime, not a general performance threshold. For manual performance review, record warm/cold state, repetitions, median and p95. Preserve each distinct contract and failure assertion when consolidating tests; coverage totals alone do not prove scenario preservation.
 
 ## Optional checks
 
@@ -60,7 +68,7 @@ Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs`, ad
 |---|---|
 | default | Chat input, plan approval and cancellation with scripted responses |
 | `live` | The same controls against `AI_TEST_PROVIDER` and `tests/fixtures/AdventureWorks2025_AI.dacpac` |
-| `badge` | The follow-up suggestion badge, replaying the newest `live` trace under `tmp/lm-trace/` |
+| `badge` | The follow-up suggestion badge, replaying a qualifying `live` analysis under `tmp/lm-trace/` and making a live model call for suggestions |
 | `column` | A column-trace query and the rendered report |
 
 Check `live` answers against the fixture's SQL and graph. Keep reports, screenshots and traces out of git.
@@ -71,10 +79,14 @@ To run `badge` without a recorded trace, use `DLV_CHAT_UI_BADGE_LIVE=1 npx vscod
 
 Copy [`.env.example`](../../.env.example) to `.env` and fill only the section you need; never commit `.env`, traces or answers. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter` or `openai-compatible`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. These settings configure test harnesses only; the extension itself uses the VS Code chat model.
 
-Headless `--timeout-ms` bounds the whole run and `--request-timeout-ms` each request. Native smoke and live chat use fixed per-request deadlines (120 s and 300 s). Real chat UI control waits use a 600 s phase budget so they do not expire before an allowed provider request; captured provider failures end those waits immediately with the request number and error. Native chat runs pin the host version in `.vscode-test.chat-ui.mjs`; baseline comparisons must verify the same resolved host version in both launcher logs. For Entra ID database checks, set `DB_TEST_AUTH_TYPE=entraId` and `DB_TEST_TOKEN` (an existing SQL access token); the default is SQL login.
+`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless catalog run or each native test. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models; headless `--timeout-ms` and `--request-timeout-ms` override their respective settings. Native live UI waits use the AI budget, with an additional minute for test teardown. Captured provider failures end UI waits immediately with the request number and error. Database smoke retains its five-minute default. Native chat runs pin the host version in `.vscode-test.chat-ui.mjs`; baseline comparisons must verify the same resolved host version in both launcher logs. For Entra ID database checks, set `DB_TEST_AUTH_TYPE=entraId` and `DB_TEST_TOKEN` (an existing SQL access token); the default is SQL login.
 
 Headless follow-ups receive prior visible questions and answers through the same runtime history input as native chat. Each catalog case starts with a separate session and empty history.
 The harness removes a leading `@lineage` participant mention before dispatch, preserving slash commands and the remaining SQL text. A catalog row's configured consent steps must execute in order on its first turn; an answer that bypasses them fails the case.
+
+Headless artifacts go under ignored `test-results/headless/`. Completion is runtime evidence, not answer-quality evidence. Optional `--langfuse` export requires all three `LANGFUSE_*` settings and access to that endpoint; its separate deadline is 30 seconds. Full prompt/system and provider bodies require `--trace-verbose`, while ordinary answers and tool artifacts can already contain database metadata. `--attach` additionally exports evidence files. Use synthetic/public input, review captured content and keep artifacts out of Git.
+
+`AI_TEST_REASONING_EFFORT` depends on provider/model support; leave it empty when unsupported. Identically named effort levels do not establish equivalent reasoning across providers. Harness settings do not configure the installed extension.
 
 ## Packaging
 

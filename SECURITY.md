@@ -31,12 +31,12 @@ Allow time for a fix to be released before disclosing the issue publicly.
 
 ### What is read and sent
 
-- **DACPAC:** read locally; no connection is made. The SQL in it is parsed, never run.
+- **DACPAC:** read locally; no database connection is made. The SQL in it is parsed, never run. Import and object-level graph exploration work offline after installation. Optional AI requests can send loaded DACPAC content to the selected model.
 - **Database import:** runs the catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) only when you start an import. The built-in queries are read-only. Custom DMV SQL is trusted local configuration and runs as written, with `{{SCHEMAS}}` expanded in Phase 2 queries.
 - **Table statistics:** runs row-count and aggregate `SELECT` queries on a table only when you request them, on a separate connection (`dataLineageViz.tableStatistics.enabled`). The generated SQL is in [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md).
-- **`@lineage` (optional):** sends the question, recent `@lineage` chat and the SQL or metadata it reads from the loaded model to the chat model selected in VS Code. It cannot connect to a database, run SQL, start an import or start profiling (`dataLineageViz.ai.enabled`).
+- **`@lineage` (optional):** sends the question, recent `@lineage` chat and the SQL or metadata it reads from the loaded model to the chat model selected in VS Code. It cannot connect to a database, run SQL, start an import or start profiling. Set `dataLineageViz.ai.enabled` to `false` and reload the window to disable the participant and AI tools.
 
-The extension never executes object DDL and does not modify database objects or your source code.
+The built-in import and statistics queries do not modify database objects, and loaded object DDL is never executed. Custom DMV queries run with your database permissions: read-only application intent does not enforce read-only SQL. Use a login restricted to the required reads. The extension does not edit your source code.
 
 ### Connections
 

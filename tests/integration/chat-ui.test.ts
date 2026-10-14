@@ -23,7 +23,13 @@ suite('Native chat confirmations — actual UI', () => {
   let page: Page;
   let exports: {getSession(): SessionProjection};
   const real = process.env.DLV_CHAT_UI_REAL === '1';
-  const phaseTimeoutMs = real ? 600000 : 180000;
+  const phaseTimeoutMs = real ? Number(process.env.AI_TEST_TIMEOUT_MS) : 180000;
+  let testDeadline = Number.POSITIVE_INFINITY;
+  const remainingWait = (timeout: number) => {
+    const remaining = Math.min(timeout, testDeadline - Date.now());
+    assert.ok(remaining > 0, 'native chat test exceeded AI_TEST_TIMEOUT_MS');
+    return remaining;
+  };
   const catalogPath = [
     join(__dirname, '..', 'cases', 'loadCases.cjs'),
     join(__dirname, '..', '..', '..', '..', 'tests', 'cases', 'loadCases.cjs'),
@@ -48,7 +54,7 @@ suite('Native chat confirmations — actual UI', () => {
     assertUiProviderHealthy(fixture.uiErrors, firstErrorIndex);
   };
   const deadlineWait = async (predicate: () => boolean, label: string) => {
-    const deadline = Date.now()+(real ? phaseTimeoutMs : 20000);
+    const deadline = Date.now()+remainingWait(real ? phaseTimeoutMs : 20000);
     while (!predicate() && Date.now()<deadline) {
       assertProviderHealthy();
       await new Promise(resolve=>setTimeout(resolve,100));
@@ -58,6 +64,7 @@ suite('Native chat confirmations — actual UI', () => {
   };
   const waitForControl = async (locator: Locator, timeout = phaseTimeoutMs) => {
     if (!real) return locator.waitFor({state:'visible',timeout});
+    timeout = remainingWait(timeout);
     const deadline = Date.now()+timeout;
     while (!await locator.isVisible() && Date.now()<deadline) {
       assertProviderHealthy();
@@ -68,14 +75,14 @@ suite('Native chat confirmations — actual UI', () => {
   };
   const input = () => page.locator('.interactive-session [role="textbox"]').last();
   const idleInput = async () => {
-    await page.getByRole('button',{name:/^Send \[/}).last().waitFor({state:'visible',timeout:(real ? phaseTimeoutMs : 20000)});
+    await waitForControl(page.getByRole('button',{name:/^Send \[/}).last(),real ? phaseTimeoutMs : 20000);
   };
   const send = async (text: string) => {
     await idleInput();
     const before=fixture.uiRequests.length;
     firstErrorIndex=fixture.uiErrors.length;
     const box = input();
-    await box.waitFor({state:'visible'});
+    await waitForControl(box,real ? phaseTimeoutMs : 0);
     assert.notEqual(await box.getAttribute('aria-readonly'),'true','input must accept a typed turn');
     await page.keyboard.press('Escape');
     await page.locator('.interactive-session .monaco-editor').last().click();
@@ -87,7 +94,7 @@ suite('Native chat confirmations — actual UI', () => {
       const editors=document.querySelectorAll('.interactive-session [role="textbox"]');
       const editor=editors[editors.length-1];
       return (editor instanceof HTMLTextAreaElement ? editor.value : editor?.textContent)===expected;
-    },text,{timeout:5000});
+    },text,{timeout:remainingWait(5000)});
     await page.keyboard.press('Escape');
     assert.equal(await box.evaluate(el=>el instanceof HTMLTextAreaElement ? el.value : el.textContent),text,'the real input must contain exactly the user message');
     await page.keyboard.press('Enter');
@@ -117,9 +124,18 @@ suite('Native chat confirmations — actual UI', () => {
     assert.equal(exports.getSession().phase.kind,planPhase);
     await waitForControl(continueButton());
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'plan cannot run before approval');
-    await changeScopeButton().waitFor({state:'visible'});
-    await cancelButton().waitFor({state:'visible'});
+    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 0);
+    await waitForControl(cancelButton(),real ? phaseTimeoutMs : 0);
   };
+
+  setup(() => {
+    testDeadline = real ? Date.now() + phaseTimeoutMs : Number.POSITIVE_INFINITY;
+  });
+  teardown(async () => {
+    // Cancel through the native action so the provider's cancellation token aborts its request.
+    if (real && page) await vscode.commands.executeCommand('workbench.action.chat.cancel');
+    testDeadline = Number.POSITIVE_INFINITY;
+  });
 
   suiteSetup(async function () {
     await vscode.workspace.getConfiguration('editor').update('accessibilitySupport','on',vscode.ConfigurationTarget.Global);
@@ -159,7 +175,7 @@ suite('Native chat confirmations — actual UI', () => {
     await openPlan();
     const before=fixture.uiRequests.length;
     await cancelButton().click();
-    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:20000});
+    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:remainingWait(20000)});
     await idleInput();
     assert.equal(exports.getSession().pendingExploration,null);
     assert.equal(exports.getSession().phase.kind,'idle');
@@ -171,7 +187,7 @@ suite('Native chat confirmations — actual UI', () => {
       assert.equal(exports.getSession().pendingExploration,null,'stale approval must not restore a proposal');
       assert.equal(fixture.uiRequests.length,before,'stale approval must not run');
       assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'stale approval must not start analysis');
-      await new Promise(resolve=>setTimeout(resolve,100));
+      await new Promise(resolve=>setTimeout(resolve,remainingWait(100)));
     }
     await capture('cancel-button');
   });
@@ -180,7 +196,7 @@ suite('Native chat confirmations — actual UI', () => {
     await openPlan();
     const before=fixture.uiRequests.length;
     await send(`@lineage ${reply}`);
-    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:phaseTimeoutMs});
+    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:remainingWait(phaseTimeoutMs)});
     await idleInput();
     assert.ok(fixture.uiRequests.length>before,'typed cancellation must reach AI');
     assert.equal(exports.getSession().pendingExploration,null);
@@ -200,8 +216,8 @@ suite('Native chat confirmations — actual UI', () => {
     assertProviderHealthy();
     assert.equal(exports.getSession().phase.kind,planPhase);
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0);
-    await continueButton().waitFor({state:'visible'});
-    await changeScopeButton().waitFor({state:'visible'});
+    await waitForControl(continueButton(),real ? phaseTimeoutMs : 0);
+    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 0);
     await cancelButton().click();
     await idleInput();
     await capture('typed-scope-change');
@@ -234,14 +250,14 @@ suite('Native chat confirmations — actual UI', () => {
     await openPlan();
     const before = fixture.uiRequests.length;
     await send('@lineage What does this procedure do?');
-    await page.getByText('Typed question received and answered.',{exact:false}).last().waitFor({timeout:20000});
+    await page.getByText('Typed question received and answered.',{exact:false}).last().waitFor({timeout:remainingWait(20000)});
     assert.ok(fixture.uiRequests.length>before,'Enter must actually reach the provider');
     assert.equal(exports.getSession().phase.kind,planPhase,'ordinary question preserves proposal');
     await idleInput();
     await changeScopeButton().click();
     await send('@lineage change scope to one level downstream');
     await idleInput();
-    await continueButton().waitFor({state:'visible',timeout:20000});
+    await waitForControl(continueButton(),20000);
     assert.equal(exports.getSession().pendingExploration?.revision,2,'typed scope change revises proposal');
     assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent,{
       upstream:{levels:0,exactness:'exact'},downstream:{levels:1,exactness:'exact'},
@@ -294,7 +310,7 @@ suite('Native chat confirmations — actual UI', () => {
     const followupStart=Date.now();
     await suggestion.click();
     await deadlineWait(()=>fixture.uiRequests.length>callStart,'follow-up badge must invoke the selected AI model');
-    await page.getByText('Would you like me to analyze one of these in detail?',{exact:false}).last().waitFor({state:'visible',timeout:real ? phaseTimeoutMs : 90000});
+    await page.getByText('Would you like me to analyze one of these in detail?',{exact:false}).last().waitFor({state:'visible',timeout:remainingWait(real ? phaseTimeoutMs : 90000)});
     await idleInput();
     const reply=responses().last();
     assert.equal(await reply.locator('.rendered-markdown').locator('h1,h2,h3,h4,h5,h6').count(),0,'no decorative title in the answer body');
@@ -345,7 +361,12 @@ suite('Native chat confirmations — actual UI', () => {
     await idleInput();
     const reply = responses().last();
     const chainHeading = reply.locator('.rendered-markdown').locator('h1,h2,h3,h4,h5,h6').filter({hasText:/^\s*Column Chain\s*$/i});
-    await chainHeading.first().waitFor({state:'visible',timeout:60000});
+    await chainHeading.first().waitFor({state:'visible',timeout:remainingWait(60000)});
+    const reportText = await reply.innerText();
+    mkdirSync(artifactDir,{recursive:true});
+    writeFileSync(`${artifactDir}/column-report.txt`,reportText);
+    await reply.scrollIntoViewIfNeeded();
+    await capture('column-trace');
     // Source rows of the Column Chain: table rows between its heading and the next h1/h2 section, first cell = source column.
     const chainSources = await reply.evaluate(root=>{
       const nodes=Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6,tr'));
@@ -360,7 +381,6 @@ suite('Native chat confirmations — actual UI', () => {
     const sources = chainSources.map(normalized);
     assert.ok(sources.some(row=>row.includes('costprice')),`Column Chain must list the value input CostPrice; rows: ${JSON.stringify(chainSources)}`);
     assert.ok(!sources.some(row=>row.includes('currencyconfig')),`join/filter-only CurrencyConfig must not be a Column Chain source; rows: ${JSON.stringify(chainSources)}`);
-    const reportText = await reply.innerText();
     assert.match(normalized(reportText),/currencyconfig/,'the join/filter object stays in the report');
     assert.ok(!(await reply.locator('.rendered-markdown').allInnerTexts()).join('\n').includes('```'),'no literal code fence may render as text');
     const listStarts = await reply.locator('.rendered-markdown ol').evaluateAll(lists=>lists.map(list=>list.getAttribute('start') ?? '1'));
@@ -368,10 +388,6 @@ suite('Native chat confirmations — actual UI', () => {
     for (const line of (exports.getSession().lastPresentResultDescription ?? '').split('\n')) {
       assert.ok(!line.includes('```') || /^\s*```/.test(line),`an SQL fence must stand on its own line: ${line.slice(0,120)}`);
     }
-    mkdirSync(artifactDir,{recursive:true});
-    writeFileSync(`${artifactDir}/column-report.txt`,reportText);
-    await reply.scrollIntoViewIfNeeded();
-    await capture('column-trace');
   });
 
 });

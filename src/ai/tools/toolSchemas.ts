@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import { resolveModelNodeId } from '../support/inputNormalization';
+import { normalizeColName } from '../../utils/sql';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -480,7 +481,7 @@ const PruneNeighborSchema = z.object({
  * the permissive participant union.
  */
 const QUESTIONS_DESCRIPTION =
-  KEPT_VERDICT_ONLY + 'Provide a self-contained subquestion for each eligible in-scope neighbor kept for analysis or passthrough, tied to the user question. '
+  KEPT_VERDICT_ONLY + 'With analyze, provide a self-contained purpose question for each eligible in-scope neighbor you keep, including column continuations, tied to the user question. With passthrough, undecided neighbors receive the incoming purpose question; subquestions are optional. '
   + 'For an eligible out-of-scope neighbor, optionally propose a relevant follow-up; it is deferred until scope approval. '
   + 'No questions to visited or pruned neighbors.';
 
@@ -582,8 +583,9 @@ const ColumnFlowEntrySchema = z.object({
     'an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. ' +
     'A column used only to join, filter, group, partition or order rows is not a source: omit it here and state it in sections. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
-    'At a bodyless focus, follow carrier-side neighbours (writers upstream, readers downstream) with the ' +
-    'tracked column unchanged; [] only when out_col terminates here.',
+    'At a bodyless focus, upstream_columns names only writers supplying the tracked column, never readers. ' +
+    'For downstream passthrough, forward the arriving column task without declaring a reader as its source; ' +
+    'analyze with [] declares a terminal output.',
   ),
 }).strict();
 
@@ -601,7 +603,11 @@ const HopVerdictSchema = z.enum(['analyze', 'passthrough']).describe(
   + 'The focus stays. Name off-path neighbors in prune_neighbors; naming every neighbor leaves this node visible as a dead end.',
 );
 
-const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries.';
+const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries. When only some arriving inputs end without a local output, name them in terminated_inputs.';
+
+const TerminatedInputsSchema = z.array(ColumnFlowWritesToObject).describe(
+  'Qualified incoming columns whose value contribution ends here without a local output, as established from this hop’s SQL. Use when other incoming columns continue in column_flow; name only the supplied incoming endpoints, never invent an output column.',
+);
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
@@ -653,6 +659,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
   .omit({ sections: true, summary: true, badge_label: true, prune_neighbors: true, questions: true, reason: true })
   .extend({
     column_flow: ColumnFlowSchema,
+    terminated_inputs: TerminatedInputsSchema.optional(),
     summary,
     badge_label,
     prune_neighbors,
@@ -668,7 +675,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
  * internal union. This is what {@link submitFindingsSchemaForMode} itself parses to: the schema is
  * a validator only, so parsing an already-valid `FlatSubmitFindings` a second time is a no-op.
  */
-export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema> };
+export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?: z.output<typeof ColumnFlowSchema>; terminated_inputs?: z.output<typeof TerminatedInputsSchema> };
 
 /**
  * Enforces the fresh kept shape of one flat `submit_findings` payload.
@@ -751,6 +758,7 @@ export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
   if (value.prune_neighbors !== undefined) kept.prune_neighbors = value.prune_neighbors;
   if (value.questions !== undefined) kept.questions = value.questions;
   if (value.column_flow !== undefined) kept.column_flow = value.column_flow;
+  if (value.terminated_inputs !== undefined) kept.terminated_inputs = value.terminated_inputs;
   return kept;
 }
 
@@ -791,8 +799,8 @@ function finalizeSubmitFindingsSchema(
  *
  * @remarks
  * The node's self-status is `analyze` (carries lineage) or `passthrough` (kept, not a key transform).
- * The focus stays. Every open neighbour not named in `prune_neighbors` is enqueued; `questions`
- * attach a check to one of them. Naming every neighbor leaves the focus visible as a dead end.
+ * The focus stays. Analyze requires a question or prune decision for each open neighbour;
+ * passthrough forwards undecided neighbours. Pruning every neighbor leaves a visible dead end.
  * BB does not carry CT-only `column_flow`.
  */
 export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindingBaseSchema, true);
@@ -858,6 +866,9 @@ export interface SubmitFindingsHopColumns {
   readonly outCols: readonly string[] | null;
   readonly writesTo: boolean;
   readonly returnTargets?: readonly { readonly node: string; readonly col: string }[];
+  /** Exact arriving endpoints available for an explicit no-contribution declaration. */
+  readonly incomingRefs?: readonly { readonly node: string; readonly col: string }[];
+  readonly identifierCaseSensitive?: boolean;
   /** Neighboring functions eligible for an explicit current-caller output investigation. */
   readonly callerContextNodeIds?: readonly string[];
   /**
@@ -880,6 +891,19 @@ function columnSourceNodeSchema(sources: readonly string[]) {
     value => resolveModelNodeId(value, resolvable) !== null,
     { message: 'upstream_columns[].node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
   ).meta({ enum: [...sources] });
+}
+
+/** Restricts explicit input termination to the hop's qualified arrivals, without inventing local outputs. */
+function terminatedInputsSchemaForHop(hop?: SubmitFindingsHopColumns) {
+  if (!hop?.incomingRefs) return TerminatedInputsSchema;
+  const nodes = new Map(hop.incomingRefs.map(ref => [ref.node, ref.node]));
+  const endpoints = hop.incomingRefs.map(ref => ColumnFlowWritesToObject.extend({
+    node: z.string().refine(value => resolveModelNodeId(value, nodes, hop.identifierCaseSensitive) === ref.node, 'Name this incoming object.').meta({ enum: [ref.node] }),
+    col: z.string().refine(value => normalizeColName(value, hop.identifierCaseSensitive) === normalizeColName(ref.col, hop.identifierCaseSensitive), 'Name this incoming column.').meta({ enum: [ref.col] }),
+  }));
+  if (endpoints.length === 0) return TerminatedInputsSchema.max(0);
+  const endpoint = endpoints.length === 1 ? endpoints[0]! : z.union(endpoints as [typeof endpoints[number], typeof endpoints[number], ...Array<typeof endpoints[number]>]);
+  return z.array(endpoint).describe(TerminatedInputsSchema.description ?? '');
 }
 
 /** Projects {@link ColumnFlowSchema} onto one hop: `out_col` as the hop's tracked-column enum, `writes_to` only for a procedure focus. */
@@ -952,7 +976,7 @@ export function submitFindingsSchemaForMode(
   /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held entries. */
   heldColumnFlow = false,
 ): z.ZodType<FlatSubmitFindings> {
-  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}` : '';
+  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}:${JSON.stringify(hop.incomingRefs ?? null)}:${!!hop.identifierCaseSensitive}` : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
@@ -960,7 +984,7 @@ export function submitFindingsSchemaForMode(
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
-  if (hopKey && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
+  if (hopKey && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop), terminated_inputs: terminatedInputsSchemaForHop(hop).optional() }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
     const [first, ...rest] = hop.callerContextNodeIds;
     const question = first === undefined ? NeighborQuestionSchema : z.union([
@@ -1011,7 +1035,7 @@ function internalKeptFindingSchema(
     verdict: z.enum(['analyze', 'passthrough']),
     summary: HopFindingBaseSchema.shape.summary.unwrap(),
     sections: z.array(section),
-    ...(mode === 'ct' ? { column_flow: requireColumnFlow ? flow : flow.optional() } : {}),
+    ...(mode === 'ct' ? { column_flow: requireColumnFlow ? flow : flow.optional(), terminated_inputs: terminatedInputsSchemaForHop(hop).optional() } : {}),
   }).strict().superRefine((value, ctx) => {
     const seen = new Set<string>();
     value.sections.forEach((entry, index) => {
@@ -1044,10 +1068,10 @@ export function validateHopSubmissionShape(
 
 /** Required call envelope retained by every held findings repair. */
 export const HELD_FINDING_CALL_ORDER =
-  'Resend the full call: always focus_node_id, verdict and every other required field; the failed field(s) corrected';
+  'Resend focus_node_id and verdict with only the missing or corrected fields; omit valid held content';
 
 type HeldEntryField = keyof NonNullable<HeldSubmissionParts['entries']>;
-const HELD_ENTRY_FIELDS: readonly HeldEntryField[] = ['questions', 'prune_neighbors', 'column_flow'];
+const HELD_ENTRY_FIELDS: readonly HeldEntryField[] = ['questions', 'prune_neighbors', 'column_flow', 'terminated_inputs'];
 
 /** A held entry list's label with the keys its held entries name, e.g. `questions ([dbo].[a])` or `column_flow (out_col: A, B)`. */
 function heldListLabel(field: string, held: Pick<HeldSubmissionParts, 'entries'>): string {
@@ -1062,6 +1086,7 @@ function heldEntryRules(held: Pick<HeldSubmissionParts, 'entries'>): string {
   return [
     ...(listed('questions') || listed('prune_neighbors') ? [HELD_NEIGHBOR_LIST_RULE] : []),
     ...(listed('column_flow') ? [HELD_COLUMN_FLOW_RULE] : []),
+    ...(listed('terminated_inputs') ? ['terminated_inputs: resend only endpoints you add or change; unnamed held endpoints are kept, and terminated_inputs: [] clears them.'] : []),
   ].join(' ');
 }
 
@@ -1712,6 +1737,7 @@ export const SubmitFindingsModelSchema = z.object({
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
+  terminated_inputs: TerminatedInputsSchema.optional(),
   badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()

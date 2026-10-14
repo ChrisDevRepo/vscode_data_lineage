@@ -103,6 +103,37 @@ describe('fresh kept required-field projection', () => {
     expect(wire(oneAngle)).toBe(true);
   });
 
+  it('admits only corrections when a valid CT flow is held in both provider and runtime schemas', () => {
+    const held = submitFindingsSchemaForMode('ct', 'both', false, undefined, true);
+    const unheld = submitFindingsSchemaForMode('ct', 'both', false);
+    const ajv = new Ajv({ strict: false });
+    const wire = ajv.compile(toModelJsonSchema(held));
+    const unheldWire = ajv.compile(toModelJsonSchema(unheld));
+    const envelope = { focus_node_id: 'source', verdict: 'analyze' };
+    const corrections = [
+      { summary: 'Corrected summary.' },
+      { sections: { technical: 'Corrected mechanics.' } },
+      { questions: [{ nodeId: 'neighbor', question: 'Establish its contribution.' }] },
+      { prune_neighbors: [{ id: 'neighbor', reason: 'SQL shows no contribution.' }] },
+      { terminated_inputs: [{ node: 'upstream', col: 'Value' }] },
+    ];
+    for (const correction of corrections) {
+      const patch = { ...envelope, ...correction };
+      expect(held.safeParse(patch).success).toBe(true);
+      expect(wire(patch)).toBe(true);
+      expect(unheld.safeParse(patch).success).toBe(false);
+      expect(unheldWire(patch)).toBe(false);
+    }
+    for (const patch of [{ ...envelope, column_flow: [] }, { ...envelope, terminated_inputs: [] }]) {
+      expect(held.safeParse(patch).success).toBe(true);
+      expect(wire(patch)).toBe(true);
+    }
+    for (const patch of [{ ...envelope, extra: true }, { ...envelope, questions: [{ nodeId: 'neighbor' }] }]) {
+      expect(held.safeParse(patch).success).toBe(false);
+      expect(wire(patch)).toBe(false);
+    }
+  });
+
   it('requires both fresh locked angles without changing the authored input or contaminating a held schema', () => {
     const held = submitFindingsSchemaForMode('ct', 'both', false);
     const fresh = submitFindingsSchemaForMode('ct', 'both', true);

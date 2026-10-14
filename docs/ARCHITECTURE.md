@@ -14,13 +14,13 @@ flowchart LR
     AGENT -.->|result graph| VIEW
 ```
 
-The core is a deterministic lineage engine and a graph view. Search, tracing, path finding, analysis and table statistics all work without AI. `@lineage` is an optional chat helper on top of the loaded graph.
+The core is a deterministic object-lineage engine and a graph view. Search, tracing, path finding, analysis and table statistics all work without AI. `@lineage` is an optional chat helper on top of the loaded graph.
 
 ## Lineage engine
 
-**Ingestion.** Input is a DACPAC file or a live database. A live database is read with the catalog (DMV) queries in [`DMV_QUERIES.md`](DMV_QUERIES.md): first a schema preview, then objects, columns, constraints and dependencies for the schemas you select. Both paths produce the same model.
+**Ingestion.** Input is a DACPAC file or a live database. A live database is read with the catalog (DMV) queries in [`DMV_QUERIES.md`](DMV_QUERIES.md): first a schema preview, then objects, columns, constraints and dependencies for the schemas you select. Both paths use the same object-graph model; their available metadata and SQL definitions can differ.
 
-**Edges.** Edges come from two sources combined. The catalog or DACPAC lists which objects reference which, but not whether a procedure reads, writes or calls them. Configurable regex [parse rules](PARSE_RULES.md) read the SQL bodies to supply that direction: stored procedures get their reads, writes and calls from the rules, and views and functions use them to add references the metadata misses. A catalog dependency no rule captured is still drawn, with a default direction.
+**Edges.** Edges come from two sources combined. The catalog or DACPAC lists which objects reference which, but not whether a procedure reads, writes or calls them. Configurable regex [parse rules](PARSE_RULES.md) read the SQL bodies to supply that direction: stored procedures get their reads, writes and calls from the rules, and views and functions use them to add references the metadata misses. A catalog dependency no rule captured is retained when its endpoints resolve. Physical mutation detection supplements the rules to classify writes and delete-only edges; the remaining references use the object-type fallback described in the parse-rules reference.
 
 **Graph.** The result is one directed, object-level graph: which object reads, writes or calls which, not which column feeds which. Tracing, path finding and pattern analysis run on it, and a React webview draws it.
 
@@ -28,7 +28,7 @@ The core is a deterministic lineage engine and a graph view. Search, tracing, pa
 
 ## Data access
 
-**Database import.** Runs the read-only catalog queries in [`DMV_QUERIES.md`](DMV_QUERIES.md) when you start an import.
+**Database import.** Runs the built-in read-only catalog queries in [`DMV_QUERIES.md`](DMV_QUERIES.md) when you start an import. A configured custom DMV file supplies executable SQL and must be reviewed before use.
 
 **Table statistics.** Runs row-count and aggregate queries on a table when you request them. Setting: `dataLineageViz.tableStatistics.enabled`.
 
@@ -48,28 +48,28 @@ Database connections use SQL login or Microsoft Entra ID. AI trace files are wri
 
 ## Optional AI: `@lineage`
 
-`@lineage` runs in VS Code chat with the AI chat model you picked, which can be a local one such as Ollama through Copilot bring-your-own-key (BYOK). It reads only the loaded graph through read-only tools; it cannot connect to a database or run SQL. Its result is a highlighted subgraph with a written explanation.
+`@lineage` runs in VS Code Chat with your selected compatible model provider. A hosted provider needs network access; offline AI depends on whether your provider supports local operation. Its catalog tools read the loaded graph and SQL definitions; it cannot connect to a database or run SQL. Its result is a highlighted subgraph with a written explanation.
 
 A small question is answered directly in chat. A larger one becomes an exploration plan that you approve, change or cancel; the approved plan is then walked object by object, and the findings are written up as the answer and a result graph.
 
 ### Exploration
 
-Each step is a **hop**: the AI reads one object's SQL, records what it does, and notes which neighbors to skip or check. The engine decides the order, keeps the run inside the approved scope, visits every object once, and rejects invalid answers. If a hop cannot produce a valid answer, the run stops with an error naming the object.
+Each step is a **hop**: the AI reads one object's SQL or available metadata, records what it does, and supplies decisions and questions for its neighbors. The engine validates the submission before committing or advancing; an incomplete or invalid submission receives feedback so the AI can correct only the affected parts. Explicit passthrough forwards the incoming question within the approved scope. These checks do not establish that the AI interpreted the SQL correctly. If correction cannot produce a valid answer, the run stops with an error naming the object.
 
-Exploration runs in one of two modes, chosen when you approve the plan:
+An exploration can carry object-level or column-level work:
 
 - **BB** (object lineage) follows whole objects: which procedures and views feed a table, and what they do.
-- **CT** (column trace) is an AI-only option on top of BB: the AI reads each object's SQL and reports which source columns feed each named column (copied, computed, aggregated, or only used to join or filter). The engine has no column lineage of its own; it only checks that every column the AI names exists. Check column links against the SQL.
+- **CT** (column trace) carries the columns relevant to the question: the AI reads each object's SQL and reports copied, computed or aggregated value contributions, separately explaining columns used only to join or filter. The engine validates qualified endpoints, allowed dependencies and active trace tasks; it does not derive the column links itself. Check the AI’s column links against the SQL.
 
 ### Large graphs and memory
 
-The graph is never sent to the AI whole. A chat answer reads at most `dataLineageViz.ai.discoveryNodeCap` objects within `dataLineageViz.ai.discoveryTokenBudget` tokens; an exploration is limited to `dataLineageViz.ai.maxRounds` hops.
+Discovery catalog requests limit the graph material returned to the AI using `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; exploration admission is limited by `dataLineageViz.ai.maxRounds` hops.
 
-Each hop uses sliding memory: the question and approved scope, the current object, its neighbors' columns, and short summaries of the last three hops. After each hop the conversation restarts from that summary, so the prompt stays the same size however many objects a run visits. The findings are kept by the engine and read once at the end to write the answer.
+Each hop uses sliding memory: the question and approved scope, the current object, its neighbors' columns, and short summaries of the last three hops. After each committed hop, the conversation restarts with continuation context rather than replaying every prior tool exchange. Prompt size still varies with SQL, scope and task context. The findings are kept by the engine and read once at the end to write the answer.
 
 ## Design boundaries
 
 - `src/engine/` never imports `src/components/` or `src/ai/`.
-- `src/ai/` reads the loaded graph only and imports no database or network code.
+- AI lineage tools read the loaded graph; model requests use the VS Code language-model API. The tools do not execute SQL.
 - Tool calls and webview messages are schema-checked.
 - Other VS Code agents can call the read-only lineage tools.

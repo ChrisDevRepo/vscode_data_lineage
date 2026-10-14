@@ -51,17 +51,33 @@ describe('operator runner configuration', () => {
       .toMatchObject({ prompt: 'Inspect dependencies', followups: ['First', 'Second'], timeoutMs: 1000, langfuse: false, verbose: false });
   });
 
-  it('defaults the AI deadline to 30 minutes and the database deadline to five', () => {
-    expect(parseOptions('ai', []).timeoutMs).toBe(1_800_000);
+  it('defaults the AI deadline to two hours and the database deadline to five', () => {
+    expect(parseOptions('ai', []).timeoutMs).toBe(7_200_000);
     expect(parseOptions('db', []).timeoutMs).toBe(300_000);
   });
 
   it('defaults request deadlines to the run deadline and accepts an independent AI request bound', () => {
-    expect(parseOptions('ai', []).requestTimeoutMs).toBe(1_800_000);
+    expect(parseOptions('ai', []).requestTimeoutMs).toBe(7_200_000);
     expect(parseOptions('ai', ['--timeout-ms', '1000']).requestTimeoutMs).toBe(1000);
     expect(parseOptions('ai', ['--request-timeout-ms', '60000', '--timeout-ms', '1800000']))
       .toMatchObject({ timeoutMs: 1_800_000, requestTimeoutMs: 60_000 });
     expect(() => parseOptions('db', ['--request-timeout-ms', '60000'])).toThrow('Unknown option');
+  });
+
+  it('accepts slower local-model budgets and gives explicit flags precedence over the environment', () => {
+    vi.stubEnv('AI_TEST_TIMEOUT_MS', '28800000');
+    vi.stubEnv('AI_TEST_REQUEST_TIMEOUT_MS', '10800000');
+    try {
+      expect(parseOptions('ai', [])).toMatchObject({ timeoutMs: 28_800_000, requestTimeoutMs: 10_800_000 });
+      expect(parseOptions('ai', ['--timeout-ms', '14400000', '--request-timeout-ms', '7200000']))
+        .toMatchObject({ timeoutMs: 14_400_000, requestTimeoutMs: 7_200_000 });
+      expect(parseOptions('db', []).timeoutMs).toBe(300_000);
+      vi.stubEnv('AI_TEST_TIMEOUT_MS', 'invalid');
+      vi.stubEnv('AI_TEST_REQUEST_TIMEOUT_MS', 'invalid');
+      expect(() => parseOptions('ai', [])).toThrow();
+      expect(parseOptions('ai', ['--timeout-ms', '14400000', '--request-timeout-ms', '7200000']))
+        .toMatchObject({ timeoutMs: 14_400_000, requestTimeoutMs: 7_200_000 });
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('loops catalog headless rows unless a prompt is passed', () => {
@@ -120,7 +136,7 @@ describe('operator runner configuration', () => {
     }, first)).toEqual(failures);
   });
 
-  it.each([['--timeout-ms', '0'], ['--timeout-ms', 'NaN'], ['--request-timeout-ms', '0'], ['--request-timeout-ms', 'NaN'], ['--request-timeout-ms', '7200001'], ['--request-timeout-ms'], ['--prompt'], ['--runs', '10']])(
+  it.each([['--timeout-ms', '0'], ['--timeout-ms', 'NaN'], ['--request-timeout-ms', '0'], ['--request-timeout-ms', 'NaN'], ['--request-timeout-ms', '2147423648'], ['--request-timeout-ms'], ['--prompt'], ['--runs', '10']])(
     'rejects invalid or campaign options %j',
     (...args) => {
       expect(() => parseOptions('ai', args)).toThrow();
@@ -168,8 +184,8 @@ describe('operator runner configuration', () => {
   it('names the timeout bound when --timeout-ms is out of range', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      expect(await main('ai', ['--prompt', 'test', '--timeout-ms', '10800000'])).toBe(4);
-      expect(error.mock.calls[0]?.[0]).toContain('--timeout-ms must be at most 7200000');
+      expect(await main('ai', ['--prompt', 'test', '--timeout-ms', '2147423648'])).toBe(4);
+      expect(error.mock.calls[0]?.[0]).toContain('test timeout must be at most 2147423647');
     } finally { error.mockRestore(); }
   });
 

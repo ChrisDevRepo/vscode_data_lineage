@@ -2,6 +2,8 @@
 
 Regex rules read dependencies from SQL bodies. Stored procedures get their reads, writes and calls from them; views and functions use them to add to the dependencies the `.dacpac` or catalog reports. Tables have no SQL body to parse.
 
+Parsing builds object-level lineage locally and does not require an AI provider or database connection when importing a `.dacpac`. It does not compute deterministic column lineage; optional AI tracing interprets SQL in response to a user question.
+
 The built-in rules are in [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). That file is the source of truth for rule names and patterns.
 
 ## Setup
@@ -56,7 +58,7 @@ Guidance:
 - Add rules rather than editing built-in ones, and give them priorities after the shipped ones unless an earlier pass is intended.
 - Use non-capturing groups `(?:...)` except for group 1.
 - For dialect-specific syntax (Synapse `LABEL`, Fabric), add a sibling rule guarded by the dialect's keyword instead of changing a generic rule.
-- A capture that does not resolve to a loaded object adds no edge.
+- A local capture that does not resolve to a loaded object adds no edge; a known object in an unselected schema can still appear in dependency details. Cross-database and external-file references can create virtual nodes.
 
 ## How SQL is read
 
@@ -68,7 +70,7 @@ Before the rules run, the SQL is cleaned:
 - `TOP (expression) [PERCENT]` is taken out of `INSERT`, `UPDATE` and `MERGE`, so the target follows the keyword.
 - The column list and `WITH` options of `CREATE [EXTERNAL] TABLE ... AS SELECT` are removed, so the name stands directly before `AS`.
 
-Then custom `preprocessing` rules run, the other rules run in priority order, and captures are resolved against the loaded objects. `external_ref` rules read the raw SQL, because paths and URLs occur in string literals.
+Built-in statement scanning also records mutation targets before custom rewrites, so metadata fallback can distinguish data-producing writes from deletes. Then custom `preprocessing` rules run, the other rules run in priority order, and captures are resolved against the loaded objects. `external_ref` rules read the raw SQL, because paths and URLs occur in string literals.
 
 The shipped rules cover `FROM` / `JOIN` / `APPLY` sources, DML and `CREATE TABLE AS SELECT` targets, procedure calls, and file references from `OPENROWSET`, `COPY INTO` and `BULK INSERT`.
 
@@ -85,17 +87,24 @@ Temp tables (`#local`, `##global`), table variables (`@name`), CTE names and unq
 - A CTE that joins two table references, a table function or a writable derived table, uses `APPLY` or a set operator, or names no single table leaves the write unresolved. A comma list is read as a join list.
 - An `INSERT` or `MERGE` into a CTE yields no write target.
 
+### DELETE and TRUNCATE classification
+
+The shipped target rules do not treat a deletion as data flowing into a table. When metadata supplies a table dependency, a separate mutation scan classifies `DELETE` and `TRUNCATE TABLE` as a procedure→table edge marked `deleteOnly`, provided the body has no data-producing write to the same target. A parsed source can also retain a table→procedure read edge.
+
+For `DELETE T FROM dbo.T AS T` and `DELETE FROM T FROM dbo.T AS T`, the target alias resolves only against source bindings in that statement. The optional `FROM` before the target is not a source binding. Ambiguous aliases stay unresolved; a CTE-only DELETE target is not traced through the CTE to invent a mutation target.
+
 ## Known boundaries
 
 These constructs can lose references in SQL-body parsing, or are left unresolved by design because only syntax and identifier normalisation are applied. Native DACPAC or DMV metadata may still supply dependencies.
 
 | Construct | Behaviour | Where it applies |
 |---|---|---|
+| Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) | SQL assembled or held in strings is not parsed for object dependencies: the cleansing pass neutralises string literals and does not evaluate variables or concatenation. Static statements elsewhere in the same body can still contribute edges. | Any supported platform; the extension does not execute a body to discover dependencies |
 | `FREETEXTTABLE(dbo.T, ...)` / `CONTAINSTABLE(dbo.T, ...)` | The table is not captured. | Where full-text table functions are available |
 | `OPENDATASOURCE(...)...` | Nothing is captured, including the four-part table name. | Where the SQL dialect supports this syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | Neither table is captured. | Partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list whose member is followed by `TABLESAMPLE`, or that continues with a comma after a `JOIN ... ON` condition or an `APPLY` | The list ends at that member, so tables after it are lost (table-variable members are not tables). | Legacy bodies on any platform |
-| `DELETE` / `TRUNCATE TABLE` | No data write is captured; the table named after `FROM` is read as a source. When the catalog or `.dacpac` lists the dependency, the table is also marked as a delete-only write, with or without `FROM`. | By design: a delete is not a data flow into the table |
+| `DELETE` / `TRUNCATE TABLE` | No target edge comes from the shipped regex rules alone. Metadata-backed table dependencies use the mutation classification above; a qualified table after `FROM` can also be captured as a read. | Deletes remove rows rather than supply column values |
 | `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d` | `dbo.T` is read as a source; the delete-only write is not marked because the statement names only the CTE. | Any platform with CTEs |
 | Schema-less `EXEC uspA`, `FROM T`, `db..T` | Not captured; only schema-qualified names resolve. | By design: the parser does not choose a schema |
 | `EXEC db.schema.proc` / `EXEC server.db.schema.proc` | The cross-database call is not captured; cross-database reads and writes are. | SQL Server, Azure SQL Managed Instance |
@@ -109,7 +118,7 @@ Lineage covers five object kinds: table, view, function, stored procedure and ex
 
 | Item | Behaviour | Reason |
 |---|---|---|
-| Triggers, DML and DDL | Not loaded. The catalog query lists only the types `U`, `V`, `P`, `FN`, `IF`, `TF`, `ET`, and the DACPAC reader tracks only table, view, procedure, function and external-table elements. | Not an object kind of the lineage |
+| DML and DDL triggers | Not loaded. The catalog query lists only the types `U`, `V`, `P`, `FN`, `IF`, `TF`, `ET`, and the DACPAC reader tracks only table, view, procedure, function and external-table elements. | Not an object kind of the lineage |
 | Synonyms | Not loaded. A reference through a synonym is captured as a two-part name, no catalog object carries it, and it resolves to nothing. | Not an object kind of the lineage |
 | CLR procedures, functions and aggregates; extended stored procedures | Not loaded from a live database; the types `PC`, `FS`, `FT`, `AF`, `X` are outside the catalog query. | Not an object kind of the lineage |
 | Numbered procedures `proc;2` | The group number is dropped: `EXEC dbo.p;2` reads as a call to `dbo.p`; the groups are not told apart. | Not an object kind of the lineage |

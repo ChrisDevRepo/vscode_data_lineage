@@ -12,7 +12,7 @@ import { loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered } from '..
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
 import { exportRunToLangfuse, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
-import { OpenAiCompatiblePort, type FetchLike } from './openAiCompatiblePort';
+import { OpenAiCompatiblePort } from './openAiCompatiblePort';
 import { runHarnessTurn, nativeHarnessPrompt } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
 import { parseTrace } from './traceModel';
@@ -61,7 +61,8 @@ recorded in run.json and exits 2 after the trace export. Failed turns end that r
 dependent follow-ups; independent rows continue unless the run is cancelled.
 --prompt runs that question instead of the catalog.
 --timeout-ms bounds the entire run; --request-timeout-ms independently bounds each
-provider request and defaults to the whole-run timeout.
+provider request. AI_TEST_TIMEOUT_MS and AI_TEST_REQUEST_TIMEOUT_MS set defaults;
+AI defaults to two hours with requests bounded by the same budget.
 AI requires a hosted provider: AI_TEST_PROVIDER (azure, fireworks, openrouter or
 openai-compatible) with its AI_TEST_ENDPOINT, AI_TEST_API_KEY and AI_TEST_MODEL. There is no
 default provider.
@@ -76,12 +77,9 @@ test interactive VS Code consent.`;
 
 /** Database smoke deadline. */
 const DEFAULT_DB_TIMEOUT_MS = 300_000;
-/**
- * Whole-run AI deadline; model requests default to this deadline. A `/trace` turn makes 12–17
- * sequential non-streamed model calls and measured 7–14 minutes on a hosted provider, so the
- * database-smoke default would abort a healthy run.
- */
-const DEFAULT_AI_TIMEOUT_MS = 1_800_000;
+/** Configurable budget for multi-turn AI runs, including slower local providers. */
+const DEFAULT_AI_TIMEOUT_MS = 7_200_000;
+const testTimeoutSchema = z.coerce.number().int().min(1).max(2_147_423_647, 'test timeout must be at most 2147423647');
 
 /**
  * Reads the run's evidence files for upload to the trace backend; missing files are skipped.
@@ -115,8 +113,8 @@ export function parseOptions(kind: string, args: readonly string[]) {
   let prompt: string | undefined;
   let promptFromCli = false;
   let dacpacFromCli = false;
-  let timeoutMs = kind === 'ai' ? DEFAULT_AI_TIMEOUT_MS : DEFAULT_DB_TIMEOUT_MS;
-  let requestTimeoutMs: number | undefined;
+  let timeoutMs: number | string = kind === 'ai' ? process.env.AI_TEST_TIMEOUT_MS?.trim() || DEFAULT_AI_TIMEOUT_MS : DEFAULT_DB_TIMEOUT_MS;
+  let requestTimeoutMs: string | undefined = kind === 'ai' ? process.env.AI_TEST_REQUEST_TIMEOUT_MS?.trim() || undefined : undefined;
   let langfuse = false;
   let verbose = false;
   let attach = false;
@@ -138,8 +136,8 @@ export function parseOptions(kind: string, args: readonly string[]) {
     }
     const value = args[++i];
     if (!value?.trim() || value.startsWith('--')) throw new Error(`${flag} requires a value.`);
-    if (flag === '--timeout-ms') timeoutMs = z.coerce.number().int().min(1, '--timeout-ms must be at least 1').max(7_200_000, '--timeout-ms must be at most 7200000 (2 hours)').parse(value);
-    if (flag === '--request-timeout-ms') requestTimeoutMs = z.coerce.number().int().min(1, '--request-timeout-ms must be at least 1').max(7_200_000, '--request-timeout-ms must be at most 7200000 (2 hours)').parse(value);
+    if (flag === '--timeout-ms') timeoutMs = value;
+    if (flag === '--request-timeout-ms') requestTimeoutMs = value;
     if (flag === '--dacpac') { dacpac = resolve(value); dacpacFromCli = true; }
     if (flag === '--prompt') { prompt = value; promptFromCli = true; }
     if (flag === '--effort' || flag === '--thinking') {
@@ -151,7 +149,7 @@ export function parseOptions(kind: string, args: readonly string[]) {
     if (flag === '--tag') tags.push(z.string().trim().min(1).max(100).parse(value));
   }
   if (attach && !langfuse) throw new Error('--attach requires --langfuse.');
-  return { dacpac, prompt, promptFromCli, dacpacFromCli, followups, timeoutMs, requestTimeoutMs: requestTimeoutMs ?? timeoutMs, langfuse, verbose, label, session, tags, attach, effort };
+  return { dacpac, prompt, promptFromCli, dacpacFromCli, followups, timeoutMs: testTimeoutSchema.parse(timeoutMs), requestTimeoutMs: testTimeoutSchema.parse(requestTimeoutMs ?? timeoutMs), langfuse, verbose, label, session, tags, attach, effort };
 }
 
 
@@ -390,12 +388,6 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
         providerEndpoint: (endpoint: string, provider: string, model: string) => string;
       };
       const endpoint = providerEndpoint(process.env.AI_TEST_ENDPOINT!, provider!.provider, provider!.model);
-      const fetchImpl: FetchLike = (url, init) => fetch(url, {
-        ...init,
-        headers: provider!.provider === 'azure'
-          ? { 'content-type': 'application/json', 'api-key': process.env.AI_TEST_API_KEY! }
-          : init.headers,
-      });
       result.provider = provider!.provider;
       result.model = provider!.model;
       result.executionMode = options.promptFromCli ? 'cli-prompt-live' : 'catalog-live';
@@ -418,8 +410,9 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
           const port = new OpenAiCompatiblePort({
             baseUrl: process.env.AI_TEST_ENDPOINT!, chatCompletionsUrl: endpoint, apiKey: process.env.AI_TEST_API_KEY!,
             model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.requestTimeoutMs,
+            ...(provider!.provider === 'azure' ? { apiKeyHeader: 'api-key' as const } : {}),
             ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),
-          }, { requestId, budget, fetchImpl, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
+          }, { requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
           const turn = await runHarnessTurn({ session, model: port, requestId, prompt, priorMessages: [...priorMessages], gate: run.gate, runDir: join(runDir, `turn-${turnIndex}`), logger, signal: controller.signal, traceWriter });
           const failedChecks = turnChecks(run, turn, promptIndex === 0);
           for (const failure of failedChecks) logger.error(`${run.id} turn ${turnIndex}: ${failure}`);

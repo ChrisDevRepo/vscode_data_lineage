@@ -2,8 +2,8 @@
  * Executes active-hop submissions for the `lineage_submit_findings` tool.
  *
  * @remarks
- * Raw arguments are parsed once against the current hop's served contract, before id resolution
- * and internal conversion. Turn-lease validation and effect serialization remain in the registry.
+ * Known identity encodings are normalized before raw arguments are parsed once against the
+ * current hop's served contract and converted to the internal finding. Turn-lease validation and effect serialization remain in the registry.
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
@@ -52,30 +52,27 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         reason: 'No exploration is active.',
       }), input);
 
-      const focus = engine.currentFocus;
-      const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
-      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldColumnFlow);
-      const parsed = schema.safeParse(input);
-      if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
-        return s.logAndReturn('lineage_submit_findings', rejection, input);
-      }
-      const rawInput: SubmitFindingsInputObject = parsed.data;
-
       const model = s.requireModel();
-      const modelNodeMap = getModelNodeMap(model);
-      const normalized = normalizeSubmitFindingsInputIds(rawInput, modelNodeMap, model.identifierCaseSensitive);
-      const normalizedInput = normalized.input;
+      const normalized = input !== null && typeof input === 'object' && !Array.isArray(input)
+        ? normalizeSubmitFindingsInputIds(input as SubmitFindingsInputObject, getModelNodeMap(model), model.identifierCaseSensitive)
+        : { input, normalizations: [] };
       for (const event of normalized.normalizations) {
         s.logger.debug(
           `[Normalize] tool=submit_findings field=${event.field} from=${sanitizeForLog(event.from)} to=${sanitizeForLog(event.to)}`,
         );
       }
-      const flat = normalizedInput as typeof parsed.data;
-
-      const finding = toHopFinding(flat);
+      const focus = engine.currentFocus;
+      const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
+      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldColumnFlow);
+      const parsed = schema.safeParse(normalized.input);
+      if (!parsed.success) {
+        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: normalized.input, schema });
+        const held = engine.holdRejectedSubmission(normalized.input, rejection.issuePaths ?? []);
+        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, normalized.input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        return s.logAndReturn('lineage_submit_findings', rejection, normalized.input);
+      }
+      const normalizedInput = parsed.data;
+      const finding = toHopFinding(normalizedInput);
 
       const result = engine.submitFindings(finding);
       if ('code' in result) {
@@ -100,24 +97,24 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       );
 
       const nextHop = engine.getHopContext();
+      let acknowledgement: Record<string, unknown>;
       if (nextHop.done) {
         const finalResult = engine.getResult();
         sess.storeSmResult(finalResult, s.turnEpoch(sess));
         if (!sess.classification) throw new Error('classification missing at synthesis handoff — start_exploration contract violated');
-        const envelope = buildSmCompletionEnvelope(
+        acknowledgement = { ...buildSmCompletionEnvelope(
           finalResult,
           sess.memory.getUserQuestion(),
           model.identifierCaseSensitive,
-        );
-        return s.logAndReturn('lineage_submit_findings', envelope, normalizedInput);
+        ) };
+      } else {
+        acknowledgement = {
+          done: false,
+          accepted_focus: finding.focus_node_id,
+          hop: nextHop.hop,
+          next_focus: nextHop.focus_node?.id,
+        };
       }
-      return s.logAndReturn('lineage_submit_findings', {
-        ok: true,
-        done: false,
-        accepted_focus: finding.focus_node_id,
-        hop: nextHop.hop,
-        next_focus: nextHop.focus_node?.id,
-        ...(result.unaccounted_columns ? { unaccounted_columns: result.unaccounted_columns } : {}),
-      }, normalizedInput);
+      return s.logAndReturn('lineage_submit_findings', { ...result, ...acknowledgement }, normalizedInput);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

@@ -879,7 +879,7 @@ function resolveUpdateAliasTarget(sql: string, scan: AliasScan, match: RegExpExe
 }
 
 /** Resolves one statement-local UPDATE/DELETE target; direct names remain raw until metadata binding. */
-function resolveAliasTarget(sql: string, scan: AliasScan, start: number, keywordLength: number, alias: string, identifierCaseSensitive: boolean, allowDirect = false): string | null {
+function resolveAliasTarget(sql: string, scan: AliasScan, start: number, keywordLength: number, alias: string, identifierCaseSensitive: boolean, allowDirect = false, targetEnd = start + keywordLength): string | null {
   if (start > scan.unclosedFrom) return null;
   const codeMask = scan.mask;
   const aliasKey = normalizeColName(alias, identifierCaseSensitive);
@@ -888,7 +888,9 @@ function resolveAliasTarget(sql: string, scan: AliasScan, start: number, keyword
   const bindingName = allowDirect ? `(?:${QUALIFIED_NAME.source}|${ANY_IDENT.source})` : QUALIFIED_NAME.source;
   const bindings = new RegExp(`\\b(?:FROM|JOIN)(?:\\s+|\\s*(?=\\[))(${bindingName})(?:(?:\\s+(?:AS\\s+)?|(?<=\\])\\s*(?=\\[))(${ANY_IDENT.source}))?`, 'giu');
   const targets = new Set<string>();
-  for (const [from, to] of depth0Spans) {
+  for (const [spanStart, to] of depth0Spans) {
+    // The optional FROM before a DELETE target is not a source binding.
+    const from = Math.max(spanStart, targetEnd);
     if (from >= to) continue;
     collectMatchesWith(sql.slice(from, to), bindings, targets, (reference, binding) => {
       const hasAlias = binding[2] && !KEYWORDS_RE.test(binding[2]);
@@ -946,7 +948,7 @@ function collectMutations(sql: string, identifierCaseSensitive: boolean): Parsed
     if (sql[skip(sql, '\\s*', at + name.length)] === '.') continue;
     let reference = name;
     if (/^(?:UPDATE|DELETE)$/iu.test(match[0]) && splitSqlName(name).length === 1) {
-      const resolved = resolveAliasTarget(sql, scan, match.index!, match[0].length, name, identifierCaseSensitive, true);
+      const resolved = resolveAliasTarget(sql, scan, match.index!, match[0].length, name, identifierCaseSensitive, true, at + name.length);
       if (resolved === null) continue;
       reference = resolved;
     }

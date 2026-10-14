@@ -95,6 +95,10 @@ describe('per-reply progress accounting', () => {
 
 describe('rejection classification', () => {
   it.each([
+    ['incomplete_task', 'missing_details'],
+    [REJECTION_CODES.invalidInput, 'answer_format'],
+    [REJECTION_CODES.missingField, 'answer_format'],
+    [REJECTION_CODES.routeValidationFailed, 'source_selection'],
     [REJECTION_CODES.noProjectLoaded, 'backend_fault'],
     [REJECTION_CODES.internalError, 'backend_fault'],
     [REJECTION_CODES.toolExecutionError, 'backend_fault'],

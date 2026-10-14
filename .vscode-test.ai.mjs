@@ -15,5 +15,5 @@ export default defineConfig({
   label: 'ai-smoke',
   files: 'out/test/tests/integration/ai-smoke.test.js',
   launchArgs: ['--disable-extensions', `--extensionDevelopmentPath=${fixtureExtension}`],
-  mocha: { ui: 'tdd', timeout: 300_000, color: true },
+  mocha: { ui: 'tdd', timeout: Number(process.env.AI_TEST_TIMEOUT_MS) + 60_000, color: true },
 });

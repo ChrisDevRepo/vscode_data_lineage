@@ -16,7 +16,7 @@ import { makeModel, makeNode } from './fixtures';
 export type DepthSide = DepthIntent['upstream'];
 
 /** What one scripted hop tells the engine about its neighbours. */
-export interface HopScript { prune?: string[]; ask?: string[] }
+export interface HopScript { prune?: string[]; ask?: string[]; verdict?: 'analyze' | 'passthrough' }
 
 /** A built world: the engine after `init`, its runtime handles and the captured host log. */
 export interface BbWorld {
@@ -69,7 +69,7 @@ export function world(
 /** Submits one kept hop for the current focus. */
 export function submit(engine: NavigationEngine, focus: string, script: HopScript = {}): ReturnType<NavigationEngine['submitFindings']> {
   return engine.submitFindings({
-    focus_node_id: focus, verdict: 'analyze', summary: `Observed ${focus}`,
+    focus_node_id: focus, verdict: script.verdict ?? 'analyze', summary: `Observed ${focus}`,
     sections: [{ angle: 'technical', text: `SQL at ${focus}` }],
     ...(script.prune?.length ? { prune_neighbors: script.prune.map(id => ({ id, reason: 'off the answer' })) } : {}),
     ...(script.ask?.length ? { questions: script.ask.map(nodeId => ({ nodeId, question: 'check this' })) } : {}),

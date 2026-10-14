@@ -5178,3 +5178,513 @@ cases:
       - dbo.InvoiceDraft
     exec:
       - dbo.usp_ApplyDiscounts
+  - id: delete-target-alias-as
+    description: DELETE target alias — as
+    sql: "DELETE FROM T FROM dbo.T AS T WHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: &delete_alias_mutations [{parts: [dbo, T], kind: delete}]
+    graph: &delete_alias_graph
+      tables: [dbo.T, dbo.Other]
+      metadata: [dbo.T]
+      edges:
+        - {source: "[dbo].[T]", target: "[gen].[Subject]", type: body}
+        - {source: "[gen].[Subject]", target: "[dbo].[T]", type: body, deleteOnly: true}
+  - id: delete-target-alias-without-as
+    description: DELETE target alias — without as
+    sql: "DELETE FROM T FROM dbo.T T WHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-multiple-spaces
+    description: DELETE target alias — multiple spaces
+    sql: "DELETE   FROM   T   FROM   dbo.T   T   WHERE   T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-mixed-linebreaks-with-as
+    description: DELETE target alias — mixed linebreaks with as
+    sql: "DELETE\tFROM T\r\nFROM dbo.T\tAS\nT\nWHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-linebreaks-without-as
+    description: DELETE target alias — linebreaks without as
+    sql: "DELETE\nFROM T\nFROM dbo.T\tT\nWHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-inline-comments
+    description: DELETE target alias — inline comments
+    sql: "DELETE FROM T -- target\nFROM dbo.T -- table\nT -- alias\nWHERE T.ID = 1; -- predicate"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-comment-after-as
+    description: DELETE target alias — comment after as
+    sql: "DELETE   FROM T -- target\r\nFROM dbo.T AS -- alias follows\r\nT WHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-without-target-from
+    description: DELETE target alias — without target from
+    sql: "DELETE T FROM dbo.T AS T WHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-top
+    description: DELETE target alias — top
+    sql: "DELETE TOP (5) FROM T FROM dbo.T AS T WHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-quoted
+    description: DELETE target alias — quoted
+    sql: "DELETE FROM [T] FROM [dbo].[T] AS [T] WHERE [T].ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-block-comments
+    description: DELETE target alias — block comments
+    sql: "DELETE /* target */ FROM T /* source */ FROM dbo.T AS T WHERE T.ID = 1;"
+    sources: [dbo.T]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph: *delete_alias_graph
+  - id: delete-target-alias-following-select
+    description: DELETE target alias — following select
+    sql: "DELETE FROM T FROM dbo.T AS T WHERE T.ID = 1; SELECT ID FROM dbo.Other;"
+    sources: [dbo.T, dbo.Other]
+    case_modes: [ci, cs]
+    mutations: *delete_alias_mutations
+    graph:
+      tables: [dbo.T, dbo.Other]
+      metadata: [dbo.T]
+      edges:
+        - {source: "[dbo].[T]", target: "[gen].[Subject]", type: body}
+        - {source: "[gen].[Subject]", target: "[dbo].[T]", type: body, deleteOnly: true}
+        - {source: "[dbo].[Other]", target: "[gen].[Subject]", type: body}
+  - id: cs-update-top
+    description: Case-sensitive target identity — update-top
+    sql: "UPDATE TOP (5) Sales.Target SET x=1"
+    case_modes: [cs]
+    sources: []
+    targets: [Sales.Target]
+  - id: cs-update-top-alias
+    description: Case-sensitive target identity — update-top-alias
+    sql: "UPDATE TOP (5) t SET x=1 FROM Sales.Target t"
+    case_modes: [cs]
+    sources: [Sales.Target]
+    targets: [Sales.Target]
+  - id: cs-update-nested-select
+    description: Case-sensitive target identity — update-nested-select
+    sql: "UPDATE t SET x=(SELECT 1 FROM Sales.Other) FROM Sales.Target t"
+    case_modes: [cs]
+    sources: [Sales.Other, Sales.Target]
+    targets: [Sales.Target]
+  - id: cs-update-cte
+    description: Case-sensitive target identity — update-cte
+    sql: "WITH c AS (SELECT * FROM Sales.Target) UPDATE c SET x=1"
+    case_modes: [cs]
+    sources: [Sales.Target]
+    targets: [Sales.Target]
+  - id: cs-ctas-with-cte
+    description: Case-sensitive target identity — ctas-with-cte
+    sql: "CREATE TABLE Sales.Target WITH (DISTRIBUTION = ROUND_ROBIN) AS WITH c AS (SELECT 1 x) SELECT * FROM c"
+    case_modes: [cs]
+    sources: []
+    targets: [Sales.Target]
+  - id: update-boundary-two-writes-without-metadata
+    description: Separate un-delimited UPDATE statements retain both physical writes without catalog dependencies
+    sql: |-
+      UPDATE t SET Value=1 FROM dbo.FirstTable t
+      UPDATE t SET Value=2 FROM dbo.SecondTable t
+    sources:
+      - dbo.FirstTable
+      - dbo.SecondTable
+    targets:
+      - dbo.FirstTable
+      - dbo.SecondTable
+    graph:
+      tables:
+        - dbo.FirstTable
+        - dbo.SecondTable
+      metadata: []
+      edges:
+        - source: '[dbo].[FirstTable]'
+          target: '[gen].[Subject]'
+          type: body
+        - source: '[gen].[Subject]'
+          target: '[dbo].[FirstTable]'
+          type: body
+        - source: '[dbo].[SecondTable]'
+          target: '[gen].[Subject]'
+          type: body
+        - source: '[gen].[Subject]'
+          target: '[dbo].[SecondTable]'
+          type: body
+  - id: update-boundary-nested-and-inert-keywords
+    description: Nested SELECT and quoted/commented UPDATE keywords do not break separate UPDATE statements
+    case_modes:
+      - ci
+      - cs
+    sql: >-
+      UPDATE t SET Value=1 FROM dbo.FirstTable t WHERE t.Value=(SELECT MAX(Value) FROM dbo.Source) AND t.Value <> 'UPDATE x FROM dbo.False
+      x' /* UPDATE z FROM dbo.False z */
+
+      UPDATE t SET Value=2 FROM dbo.SecondTable t
+    sources:
+      - dbo.FirstTable
+      - dbo.Source
+      - dbo.SecondTable
+    targets:
+      - dbo.FirstTable
+      - dbo.SecondTable
+  - id: update-boundary-following-select-alias
+    description: A later SELECT alias cannot obscure the preceding UPDATE target
+    case_modes:
+      - ci
+      - cs
+    sql: |-
+      UPDATE t SET Value=1 FROM dbo.FirstTable t
+      SELECT t.Value FROM dbo.SecondTable t
+    sources:
+      - dbo.FirstTable
+      - dbo.SecondTable
+    targets:
+      - dbo.FirstTable
+  - id: update-boundary-unterminated-expression
+    description: An unterminated nested expression cannot supply an unresolved outer UPDATE alias
+    sql: UPDATE absent SET Value=(SELECT 1 FROM dbo.FirstTable t
+    sources:
+      - dbo.FirstTable
+  - id: update-boundary-nested-join-alias
+    description: A nested JOIN subquery alias cannot replace the outer UPDATE binding or lose the write edge
+    case_modes:
+      - ci
+      - cs
+    sql: UPDATE a SET col = 1 FROM dbo.Target a JOIN (SELECT id FROM dbo.Other a) s ON s.id = a.id
+    sources:
+      - dbo.Target
+      - dbo.Other
+    targets:
+      - dbo.Target
+    graph:
+      tables:
+        - dbo.Target
+        - dbo.Other
+      metadata: []
+      edges:
+        - source: '[dbo].[Target]'
+          target: '[gen].[Subject]'
+          type: body
+        - source: '[dbo].[Other]'
+          target: '[gen].[Subject]'
+          type: body
+        - source: '[gen].[Subject]'
+          target: '[dbo].[Target]'
+          type: body
+  - id: update-boundary-exists-alias
+    description: An EXISTS subquery alias cannot replace the outer UPDATE binding
+    case_modes:
+      - ci
+      - cs
+    sql: UPDATE a SET col = 1 FROM dbo.Target a WHERE EXISTS (SELECT 1 FROM dbo.Other a)
+    sources:
+      - dbo.Target
+      - dbo.Other
+    targets:
+      - dbo.Target
+  - id: update-boundary-ambiguous-outer-alias
+    description: Two top-level tables sharing an UPDATE alias retain reads but resolve no write target
+    case_modes:
+      - ci
+      - cs
+    sql: UPDATE a SET col = 1 FROM dbo.Target a JOIN dbo.Other a
+    sources:
+      - dbo.Target
+      - dbo.Other
+  - id: update-boundary-unaliased-inner-join
+    description: An unaliased UPDATE table remains resolvable before inner-join
+    sql: UPDATE Target SET col = 1 FROM dbo.Target INNER JOIN dbo.Other ON Other.id = Target.id
+    sources:
+      - dbo.Target
+      - dbo.Other
+    targets:
+      - dbo.Target
+  - id: update-boundary-unaliased-left-join
+    description: An unaliased UPDATE table remains resolvable before left-join
+    sql: UPDATE Target SET col = 1 FROM dbo.Target LEFT OUTER JOIN dbo.Other o ON o.id = Target.id
+    sources:
+      - dbo.Target
+      - dbo.Other
+    targets:
+      - dbo.Target
+  - id: update-boundary-unaliased-cross-apply
+    description: An unaliased UPDATE table remains resolvable before cross-apply
+    sql: UPDATE Target SET col = 1 FROM dbo.Target CROSS APPLY dbo.Other(Target.id) f
+    sources:
+      - dbo.Target
+      - dbo.Other
+    targets:
+      - dbo.Target
+  - id: update-boundary-reserved-alias
+    description: A bracketed reserved word remains a valid UPDATE alias
+    sql: UPDATE [left] SET col = 1 FROM dbo.Target [left] JOIN dbo.Other o ON o.id = [left].id
+    sources:
+      - dbo.Target
+      - dbo.Other
+    targets:
+      - dbo.Target
+  - id: mutation-at-schema-bracket-write
+    description: Delimited @-prefixed schema retains its physical mutation
+    sql: UPDATE [@warehouse].[Target] SET ID=1;
+    case_modes: [ci, cs]
+    mutations: [{parts: ['@warehouse', Target], kind: write}]
+    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body}]}
+  - id: mutation-at-schema-bracket-delete
+    description: Delimited @-prefixed schema retains its physical mutation
+    sql: DELETE FROM [@warehouse].[Target];
+    case_modes: [ci, cs]
+    mutations: [{parts: ['@warehouse', Target], kind: delete}]
+    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body, deleteOnly: true}]}
+  - id: mutation-at-schema-double-quote-write
+    description: Delimited @-prefixed schema retains its physical mutation
+    sql: UPDATE "@warehouse"."Target" SET ID=1;
+    case_modes: [ci, cs]
+    mutations: [{parts: ['@warehouse', Target], kind: write}]
+    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body}]}
+  - id: mutation-at-schema-double-quote-delete
+    description: Delimited @-prefixed schema retains its physical mutation
+    sql: DELETE FROM "@warehouse"."Target";
+    case_modes: [ci, cs]
+    mutations: [{parts: ['@warehouse', Target], kind: delete}]
+    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body, deleteOnly: true}]}
+  - id: mutation-table-variable
+    description: Table variables do not hide a qualified @-prefixed object
+    sql: DECLARE @rows TABLE(ID int); UPDATE @rows SET ID=1; DELETE FROM @rows; UPDATE dbo.[@Target] SET ID=1;
+    case_modes: [ci, cs]
+    targets: ['[dbo].[@Target]']
+    mutations: [{parts: [dbo, '@Target'], kind: write}]
+  - id: mutation-merge-action-space
+    description: MERGE DELETE action cannot mutate an OUTPUT-named catalog decoy
+    sql: MERGE dbo.TargetC AS t USING dbo.Source AS s ON t.ID=s.ID WHEN MATCHED THEN DELETE OUTPUT $action; SELECT ID FROM dbo.[OUTPUT];
+    case_modes: [ci, cs]
+    sources: [dbo.Source, dbo.OUTPUT]
+    targets: [dbo.TargetC]
+    mutations: [{parts: [dbo, TargetC], kind: write}]
+    graph: {tables: [dbo.TargetC, dbo.Source, 'dbo.[OUTPUT]'], metadata: [dbo.TargetC, 'dbo.[OUTPUT]'], edges: [{source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}, {source: '[dbo].[Source]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[OUTPUT]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-merge-action-comment
+    description: MERGE DELETE action cannot mutate an OUTPUT-named catalog decoy
+    sql: >-
+      MERGE dbo.TargetC AS t USING dbo.Source AS s ON t.ID=s.ID WHEN MATCHED THEN /* action */ DELETE OUTPUT $action; SELECT ID FROM
+      dbo.[OUTPUT];
+    case_modes: [ci, cs]
+    sources: [dbo.Source, dbo.OUTPUT]
+    targets: [dbo.TargetC]
+    mutations: [{parts: [dbo, TargetC], kind: write}]
+    graph: {tables: [dbo.TargetC, dbo.Source, 'dbo.[OUTPUT]'], metadata: [dbo.TargetC, 'dbo.[OUTPUT]'], edges: [{source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}, {source: '[dbo].[Source]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[OUTPUT]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-merge-action-crlf
+    description: MERGE DELETE action cannot mutate an OUTPUT-named catalog decoy
+    sql: "MERGE dbo.TargetC AS t USING dbo.Source AS s ON t.ID=s.ID WHEN MATCHED THEN\r\nDELETE OUTPUT $action; SELECT ID FROM dbo.[OUTPUT];"
+    case_modes: [ci, cs]
+    sources: [dbo.Source, dbo.OUTPUT]
+    targets: [dbo.TargetC]
+    mutations: [{parts: [dbo, TargetC], kind: write}]
+    graph: {tables: [dbo.TargetC, dbo.Source, 'dbo.[OUTPUT]'], metadata: [dbo.TargetC, 'dbo.[OUTPUT]'], edges: [{source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}, {source: '[dbo].[Source]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[OUTPUT]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-output-table
+    description: A delimited OUTPUT-named table remains a real DELETE target
+    sql: DELETE FROM dbo.[OUTPUT];
+    case_modes: [ci, cs]
+    sources: [dbo.OUTPUT]
+    mutations: [{parts: [dbo, OUTPUT], kind: delete}]
+  - id: mutation-output-alias
+    description: OUTPUT remains usable as a DELETE target alias
+    sql: DELETE OUTPUT FROM dbo.TargetC AS OUTPUT;
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    mutations: [{parts: [dbo, TargetC], kind: delete}]
+  - id: mutation-unicode-then
+    description: Unicode alias ending in THEN cannot swallow a following DELETE
+    sql: |-
+      SELECT ID FROM dbo.Source AS αTHEN
+      DELETE FROM dbo.TargetC;
+    case_modes: [ci, cs]
+    sources: [dbo.Source, dbo.TargetC]
+    mutations: [{parts: [dbo, TargetC], kind: delete}]
+    graph: {tables: [dbo.Source, dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[Source]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+  - id: mutation-inert-line-comment
+    description: Inert SQL cannot turn a real read into a write
+    sql: SELECT ID FROM dbo.TargetC; -- UPDATE dbo.TargetC SET ID=1;
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-inert-nested-comment
+    description: Inert SQL cannot turn a real read into a write
+    sql: SELECT ID FROM dbo.TargetC; /* outer /* DELETE FROM dbo.TargetC */ INSERT INTO dbo.TargetC VALUES(1); */
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-inert-literal
+    description: Inert SQL cannot turn a real read into a write
+    sql: SELECT N'UPDATE dbo.TargetC SET ID=1; DELETE FROM dbo.TargetC;' AS note, ID FROM dbo.TargetC;
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-commented-insert
+    description: Commented data production cannot hide a delete-only write
+    sql: DELETE FROM dbo.TargetC; /* INSERT INTO dbo.TargetC(ID) VALUES(1); */
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+  - id: mutation-quoted-delete
+    description: Quoted row-removal statements retain delete-only metadata
+    sql: DELETE FROM "dbo"."TargetC";
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+  - id: mutation-quoted-truncate
+    description: Quoted row-removal statements retain delete-only metadata
+    sql: TRUNCATE TABLE "dbo"."TargetC";
+    case_modes: [ci, cs]
+    sources: []
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+  - id: mutation-alias-twin-delete
+    description: Target alias resolves the physical table instead of its catalog namesake
+    sql: DELETE victim FROM dbo.TargetC AS victim JOIN dbo.victim AS other ON other.ID=victim.ID;
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC, dbo.victim]
+    graph: {tables: [dbo.TargetC, dbo.victim], metadata: [dbo.TargetC, dbo.victim], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[victim]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+  - id: mutation-alias-twin-update
+    description: Target alias resolves the physical table instead of its catalog namesake
+    sql: UPDATE victim SET ID=1 FROM dbo.TargetC AS victim JOIN dbo.victim AS other ON other.ID=victim.ID;
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC, dbo.victim]
+    targets: [dbo.TargetC]
+    graph: {tables: [dbo.TargetC, dbo.victim], metadata: [dbo.TargetC, dbo.victim], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[victim]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
+  - id: mutation-ambiguous-delete
+    description: Ambiguous top-level DELETE bindings cannot choose a mutation target
+    sql: DELETE FROM T FROM dbo.First AS T JOIN dbo.Second AS T ON T.ID = T.ID;
+    case_modes: [ci, cs]
+    sources: [dbo.First, dbo.Second]
+    mutations: []
+  - id: mutation-remote-read
+    description: A qualified remote read remains distinct from local row removal
+    sql: DELETE FROM dbo.TargetC; SELECT ID FROM ArchiveDb.dbo.TargetC;
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    cross_db_sources: [ArchiveDb.dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC, ArchiveDb.dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}, {source: '[ArchiveDb].[dbo].[TargetC]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-current-database-metadata
+    description: Current-database metadata resolves to the local delete-only target
+    sql: DELETE FROM dbo.TargetC;
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [LocalDb.dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+  - id: mutation-delete-output-into
+    description: DELETE OUTPUT INTO retains both removal and data production
+    sql: DELETE FROM dbo.TargetC OUTPUT deleted.ID INTO dbo.Archive(ID);
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    targets: [dbo.Archive]
+    mutations: [{parts: [dbo, TargetC], kind: delete}, {parts: [dbo, Archive], kind: write}]
+    graph: {tables: [dbo.TargetC, dbo.Archive], metadata: [dbo.TargetC, dbo.Archive], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}, {source: '[gen].[Subject]', target: '[dbo].[Archive]', type: body}]}
+  - id: mutation-omitted-schema
+    description: An omitted remote schema cannot mutate a qualified local decoy
+    sql: DELETE ArchiveDb..TargetC; SELECT ID FROM ArchiveDb.TargetC;
+    case_modes: [ci, cs]
+    sources: [ArchiveDb.TargetC]
+    graph: {tables: [ArchiveDb.TargetC], metadata: [ArchiveDb.TargetC], edges: [{source: '[ArchiveDb].[TargetC]', target: '[gen].[Subject]', type: body}]}
+  - id: mutation-literal-dots-bracket
+    description: Literal dots inside identifier segments retain mutation identity
+    sql: UPDATE [dot..schema].[Target.part] SET ID=1;
+    case_modes: [ci, cs]
+    targets: ['[dot..schema].[Target.part]']
+    mutations: [{parts: [dot..schema, Target.part], kind: write}]
+    graph: {tables: ['[dot..schema].[Target.part]'], metadata: ['[dot..schema].[Target.part]'], edges: [{source: '[gen].[Subject]', target: '[dot..schema].[Target.part]', type: body}]}
+  - id: mutation-literal-dots-double-quote
+    description: Literal dots inside identifier segments retain mutation identity
+    sql: UPDATE "dot..schema"."Target.part" SET ID=1;
+    case_modes: [ci, cs]
+    targets: ['[dot..schema].[Target.part]']
+    mutations: [{parts: [dot..schema, Target.part], kind: write}]
+    graph: {tables: ['[dot..schema].[Target.part]'], metadata: ['[dot..schema].[Target.part]'], edges: [{source: '[gen].[Subject]', target: '[dot..schema].[Target.part]', type: body}]}
+  - id: mutation-insert-dominates
+    description: Current-database INSERT dominates local deletion on the same object
+    sql: DELETE FROM dbo.TargetC; INSERT INTO LocalDb.dbo.TargetC(ID) VALUES(1);
+    case_modes: [ci, cs]
+    sources: [dbo.TargetC]
+    cross_db_targets: [LocalDb.dbo.TargetC]
+    graph: {tables: [dbo.TargetC], metadata: [LocalDb.dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
+  - id: external-comment-block
+    description: Commented external paths cannot create references
+    sql: |-
+      /* SELECT * FROM OPENROWSET(BULK 'https://fake.blob.core.windows.net/container/ghost.csv', SINGLE_CLOB) AS r; */
+      SELECT * FROM OPENROWSET(BULK 'https://real.blob.core.windows.net/container/data.csv', SINGLE_CLOB) AS r;
+    external: [{url: https://real.blob.core.windows.net/container/data.csv, kind: openrowset}]
+  - id: external-comment-nested
+    description: Commented external paths cannot create references
+    sql: >-
+      /* outer /* SELECT * FROM OPENROWSET(BULK 'https://fake.blob.core.windows.net/container/ghost.csv', SINGLE_CLOB) AS r; */ still
+      comment */
+
+      SELECT * FROM OPENROWSET(BULK 'https://real.blob.core.windows.net/container/data.csv', SINGLE_CLOB) AS r;
+    external: [{url: https://real.blob.core.windows.net/container/data.csv, kind: openrowset}]
+  - id: external-comment-line
+    description: Commented external paths cannot create references
+    sql: |-
+      -- SELECT * FROM OPENROWSET(BULK 'https://fake.blob.core.windows.net/container/ghost.csv', SINGLE_CLOB) AS r;
+
+      SELECT * FROM OPENROWSET(BULK 'https://real.blob.core.windows.net/container/data.csv', SINGLE_CLOB) AS r;
+    external: [{url: https://real.blob.core.windows.net/container/data.csv, kind: openrowset}]
+  - id: external-comment-terminator-lf
+    description: A terminated line comment preserves the following external path
+    sql: |-
+      -- ignored
+      SELECT * FROM OPENROWSET(BULK 'https://real.blob.core.windows.net/container/data.csv', SINGLE_CLOB) AS r;
+    external: [{url: https://real.blob.core.windows.net/container/data.csv, kind: openrowset}]
+  - id: external-comment-terminator-crlf
+    description: A terminated line comment preserves the following external path
+    sql: "-- ignored\r\nSELECT * FROM OPENROWSET(BULK 'https://real.blob.core.windows.net/container/data.csv', SINGLE_CLOB) AS r;"
+    external: [{url: https://real.blob.core.windows.net/container/data.csv, kind: openrowset}]
+  - id: external-comment-terminator-cr
+    description: A terminated line comment preserves the following external path
+    sql: "-- ignored\rSELECT * FROM OPENROWSET(BULK 'https://real.blob.core.windows.net/container/data.csv', SINGLE_CLOB) AS r;"
+    external: [{url: https://real.blob.core.windows.net/container/data.csv, kind: openrowset}]
+  - id: external-literal-comment-markers
+    description: Comment markers inside an actual path literal remain part of its URL
+    sql: SELECT * FROM OPENROWSET(BULK 'https://real.blob.core.windows.net/container/a/*b--c.csv', SINGLE_CLOB) AS r;
+    external: [{url: https://real.blob.core.windows.net/container/a/*b--c.csv, kind: openrowset}]
+  - id: comment-token-boundary-plain
+    description: Comments separate SQL tokens for reads, writes and calls
+    sql: SELECT * FROM/* note */dbo.Source; INSERT/* note */INTO/* note */dbo.Target SELECT 1; EXEC/* note */dbo.Callee;
+    sources: [dbo.Source]
+    targets: [dbo.Target]
+    exec: [dbo.Callee]
+  - id: comment-token-boundary-nested
+    description: Comments separate SQL tokens for reads, writes and calls
+    sql: >-
+      SELECT * FROM/* outer /* inner */ still comment */dbo.Source; INSERT/* outer /* inner */ still comment */INTO/* outer /* inner */
+      still comment */dbo.Target SELECT 1; EXEC/* outer /* inner */ still comment */dbo.Callee;
+    sources: [dbo.Source]
+    targets: [dbo.Target]
+    exec: [dbo.Callee]
+  - id: comment-token-boundary-multiline
+    description: Comments separate SQL tokens for reads, writes and calls
+    sql: "SELECT * FROM/* note\nFROM dbo.Ghost\r\n*/dbo.Source; INSERT/* note\nFROM dbo.Ghost\r\n*/INTO/* note\nFROM dbo.Ghost\r\n*/dbo.Target SELECT 1; EXEC/* note\nFROM dbo.Ghost\r\n*/dbo.Callee;"
+    sources: [dbo.Source]
+    targets: [dbo.Target]
+    exec: [dbo.Callee]
+  - id: comment-token-identifier-boundary
+    description: Comment removal cannot join identifier and trailing alias text
+    sql: SELECT * FROM dbo.Foo/* note */Bar;
+    sources: [dbo.Foo]

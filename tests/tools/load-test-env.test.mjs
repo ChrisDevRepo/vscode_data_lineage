@@ -128,3 +128,21 @@ test('native control waits report new provider failures and ignore prior chat fa
   assert.throws(() => badgeReplay.assertUiProviderHealthy(errors, 1), /request 3: AI provider request timed out after 300 seconds/);
   assert.throws(() => badgeReplay.assertUiProviderHealthy(errors, 0), /request 1: AI provider returned HTTP 402/);
 });
+
+test('native AI budgets allow slow local models and reject invalid timer values', () => {
+  const base = { AI_TEST_PROVIDER: 'openai-compatible', AI_TEST_ENDPOINT: 'http://localhost:8000/v1', AI_TEST_API_KEY: 'placeholder', AI_TEST_MODEL: 'local' };
+  for (const [settings, expected] of [
+    [{}, ['7200000', '7200000']],
+    [{ AI_TEST_TIMEOUT_MS: '28800000' }, ['28800000', '28800000']],
+    [{ AI_TEST_TIMEOUT_MS: '28800000', AI_TEST_REQUEST_TIMEOUT_MS: '10800000' }, ['28800000', '10800000']],
+  ]) {
+    const env = { ...base, ...settings };
+    loadTestEnv({ env, envFile: join(tmpdir(), 'missing-lineage-env'), requireAiProvider: true });
+    assert.deepEqual([env.AI_TEST_TIMEOUT_MS, env.AI_TEST_REQUEST_TIMEOUT_MS], expected);
+  }
+  for (const key of ['AI_TEST_TIMEOUT_MS', 'AI_TEST_REQUEST_TIMEOUT_MS']) {
+    for (const value of ['0', '-1', 'NaN', '1.5', '2147423648']) {
+      assert.throws(() => loadTestEnv({ env: { ...base, [key]: value }, envFile: join(tmpdir(), 'missing-lineage-env'), requireAiProvider: true }), { name: 'ZodError' });
+    }
+  }
+});

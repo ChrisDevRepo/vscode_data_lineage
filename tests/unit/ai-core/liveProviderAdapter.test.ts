@@ -1,9 +1,13 @@
 /** Covers the real-provider fixture's normalized message, request and response boundary. */
+import { gzipSync } from 'node:zlib';
+import { createServer } from 'node:http';
+import { OpenAiCompatiblePort } from '../../harness/openAiCompatiblePort';
 import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const adapter = require('../../fixtures/lm-provider-extension/live-provider-adapter.js') as {
+  createProviderFetch: (timeoutMs: number) => typeof fetch;
   buildProviderRequest: (request: RequestFixture, config: ConfigFixture) => WireRequest;
   parseProviderResponse: (payload: unknown) => ProviderOutput;
   sendProviderRequest: (
@@ -51,6 +55,72 @@ const config: ConfigFixture = {
 const emptyRequest = (): RequestFixture => ({ messages: [], tools: [], toolMode: 'auto' });
 
 describe('live provider adapter', () => {
+  it.each(['azure', 'openrouter'].flatMap(provider => ['plain', 'gzip', 'redirect'].map(response => ({ provider, response }))))(
+    'uses explicit long HTTP budgets and preserves $provider authentication for $response', async ({ provider, response }) => {
+    const server = createServer((req, res) => {
+      expect(req.headers[provider === 'azure' ? 'api-key' : 'authorization'])
+        .toBe(provider === 'azure' ? 'test-key' : 'Bearer test-key');
+      expect(req.method).toBe('POST');
+      if (response === 'redirect' && req.url !== '/redirected') {
+        res.writeHead(307, { location: '/redirected' });
+        res.end();
+        return;
+      }
+      res.setHeader('content-type', 'application/json');
+      const body = JSON.stringify({ choices: [{ message: { content: 'done' } }] });
+      if (response === 'gzip') res.setHeader('content-encoding', 'gzip');
+      res.end(response === 'gzip' ? gzipSync(body) : body);
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
+    const undici = require('undici');
+    const requestSpy = vi.spyOn(undici, 'request');
+    const globalFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('hidden fetch deadline'));
+    try {
+      const timeoutMs = 7_200_000;
+      const native = await adapter.sendProviderRequest(emptyRequest(), { ...config, provider, endpoint },
+        adapter.createProviderFetch(timeoutMs), new AbortController().signal);
+      expect(native.text).toBe('done');
+      const port = new OpenAiCompatiblePort({ baseUrl: endpoint, apiKey: 'test-key', model: 'test-model',
+        ...(provider === 'azure' ? { apiKeyHeader: 'api-key' } : {}) });
+      await expect(port.completeText({ messages: [], system: 'Synthetic transport check.' })).resolves.toBe('done');
+      expect(globalFetch).not.toHaveBeenCalled();
+      expect(requestSpy).toHaveBeenCalledTimes(2);
+      for (const [, options] of requestSpy.mock.calls) {
+        expect(options).toMatchObject({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+      }
+    } finally {
+      requestSpy.mockRestore();
+      globalFetch.mockRestore();
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it.each(['headers', 'body'].flatMap(phase => ['abort', 'deadline'].map(end => ({ phase, end }))))(
+    'ends a stalled $phase response on $end', async ({ phase, end }) => {
+    const controller = new AbortController();
+    const server = createServer((req, res) => {
+      if (req.url !== '/stall') {
+        res.writeHead(307, { location: '/stall' });
+        res.end();
+        return;
+      }
+      if (phase === 'body') { res.writeHead(200); res.write('{'); }
+      if (end === 'abort') setTimeout(() => controller.abort(), 20);
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const endpoint = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      await expect(adapter.createProviderFetch(end === 'abort' ? 7_200_000 : 50)(endpoint, { method: 'POST', body: '{}', signal: controller.signal }))
+        .rejects.toMatchObject(end === 'abort' ? { name: 'AbortError' }
+          : { code: phase === 'headers' ? 'UND_ERR_HEADERS_TIMEOUT' : 'UND_ERR_BODY_TIMEOUT' });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   it('forwards the live acceptance reasoning and temperature settings on the wire',()=>{
     expect(adapter.buildProviderRequest(emptyRequest(),{...config,reasoningEffort:'low',temperature:0.1}).body)
       .toMatchObject({reasoning_effort:'low',temperature:0.1});

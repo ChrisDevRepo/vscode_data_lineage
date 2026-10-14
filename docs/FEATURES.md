@@ -12,7 +12,7 @@ Use SQL login or Microsoft Entra ID (MFA supported); Windows authentication is n
 
 ## Keyboard shortcuts
 
-Shortcuts work only inside the graph view and are ignored while you type.
+Shortcuts work only inside the graph view and are ignored while you type. Bare-key shortcuts do not fire with Ctrl, Cmd or Alt held.
 
 | Key | Action |
 |-----|--------|
@@ -33,11 +33,11 @@ A load with more objects than `dataLineageViz.overview.threshold` opens in **Sch
 
 - Double-click a schema to expand it. By default it becomes the only expanded schema; set `dataLineageViz.overview.schemaDoubleClickBehavior` to `expand` to keep others open.
 - Picking a search result inside a schema box expands that schema.
-- **Refresh View** resets schema, type and focus filters and re-checks the threshold.
+- Filters and exclusions do not automatically switch views. **Refresh View** resets schema, type and focus filters, collapses expanded schemas and re-checks the threshold; exclusions and Hide Isolated persist.
 
 ### Rendering limits
 
-- `dataLineageViz.maxNodes` caps the objects loaded. A larger selection is refused.
+- `dataLineageViz.maxNodes` caps the objects loaded, including virtual external references. A larger selection is refused without truncation; neither the graph nor AI loads it, and the prior view remains.
 - `dataLineageViz.renderLimit` caps the nodes drawn at once. Above it, the graph shows *Render limit reached*. A trace, path, analysis or AI preview counts only its own nodes; in Schema View each collapsed schema counts as one. Search, DDL and `@lineage` still use the whole loaded model.
 
 ## Filters and bookmarks
@@ -49,7 +49,7 @@ A load with more objects than `dataLineageViz.overview.threshold` opens in **Sch
 
 A **bookmark** saves the current filters and exclusions, or a trace, analysis, path or AI view, under a name, per project. Node positions are not saved.
 
-A bookmark saved from an AI view also keeps that run's findings, so `@lineage` can recall them instead of redoing the work. Findings on objects whose DDL has changed since are flagged as stale and rechecked.
+A bookmark saved from an AI view also keeps that run's findings, so `@lineage` can recall them instead of redoing the work. Findings on objects whose DDL has changed since are flagged as stale, so the assistant can identify which evidence needs rechecking. Older bookmarks may have no saved run; incompatible or invalid run records are ignored instead of recalled. Deleting a bookmark or its project deletes its run record.
 
 ## Exclusion rules
 
@@ -70,7 +70,7 @@ Patterns are case-insensitive regular expressions matched against the object nam
 
 Right-click a node and choose **Trace Levels** to show its inputs (upstream) and outputs (downstream). Change depth with the level controls; defaults are `dataLineageViz.trace.defaultUpstreamLevels` and `dataLineageViz.trace.defaultDownstreamLevels`. Press <kbd>Esc</kbd> to leave.
 
-On a node, **+** adds a direct neighbor and **−** removes it with any branch that hangs only on it.
+On a node, **+** adds a direct neighbor and **−** removes it with any branch that hangs only on it. The trace origin cannot be removed. These edits apply to Trace Levels, not a computed shortest path, and do not change your filters; rerun the trace or press <kbd>Esc</kbd> to discard them.
 
 ### Trace navigator
 
@@ -105,15 +105,17 @@ Live database only. Profiling runs only when you click it, on a separate connect
 - **Quick**: row count, nulls, distinct values, completeness and uniqueness.
 - **Standard**: adds min/max, average and standard deviation for numbers, min/max for dates, string length, empty strings and zero counts.
 
-Large tables are sampled where supported; Fabric always scans in full ([sampling limits](PROFILING_PATTERNS.md#sampling)). External tables are skipped by default. Settings: [Table statistics](#table-statistics).
+Large tables are sampled where supported; Fabric always scans in full ([sampling limits](PROFILING_PATTERNS.md#sampling)). External tables are skipped by default because they may query remote data sources. Each query has a configurable timeout, and columns above `tableStatistics.maxColumns` are skipped. Settings: [Table statistics](#table-statistics).
 
 ## `@lineage` AI
 
-Type `@lineage` in VS Code Chat to ask about the loaded graph in plain language. It uses exactly the model you picked for the chat (GitHub Copilot or any compatible provider, including BYOK). Your question and the DDL and columns of the objects in scope are passed to that model.
+This optional chat participant investigates the loaded graph and SQL in response to your questions. It does not add deterministic column lineage to the parser; any column mappings are model interpretations to verify against the SQL. Its tools cannot connect to a database or execute SQL.
+
+Type `@lineage` in VS Code Chat to ask a question. It uses exactly the model you picked for the chat (GitHub Copilot or any compatible provider, including BYOK). Your question, recent chat context and the SQL or metadata it reads are passed to that model. Hosted models require a provider connection even when the source is a local DACPAC.
 
 ### How it answers
 
-- **Chat answer** (default): it looks up objects, DDL, neighbors and patterns, then answers in chat. `/search` always uses this mode. If the question needs more than `dataLineageViz.ai.discoveryNodeCap` objects or `dataLineageViz.ai.discoveryTokenBudget` tokens, it offers a deep analysis instead.
+- **Chat answer** (default): it looks up objects, DDL, neighbors and patterns, then answers in chat. `/search` always uses this mode. If a single discovery catalog request exceeds `dataLineageViz.ai.discoveryNodeCap` objects or `dataLineageViz.ai.discoveryTokenBudget` estimated DDL tokens, it offers a deep analysis instead.
 - **Graph preview**: the **Show graph preview** follow-up opens an **AI Preview** in the graph view. It is temporary; click **Save as Bookmark** to keep it. **Data Lineage: Show AI Trace in Graph** reopens it.
 - **Deep analysis**: `/trace`, the **Start deeper hop-by-hop analysis** follow-up, or an over-budget question. You first see the plan; choose **Approve & Proceed**, **Change scope** or **Cancel**. It then walks the scope one object at a time.
 
@@ -125,20 +127,20 @@ When a run finds column mappings, the preview offers an **Objects / Detail** swi
 
 ### Depth
 
-Depth 0 turns a direction off, and a number you give is a hard limit. With none, the assistant picks a start and may go further within the approved scope. The graph's trace-level settings do not affect AI depth.
+Depth 0 turns a direction off, and a number you give is a hard limit. With none, the assistant picks a start and may go further within the approved scope. The graph's trace-level settings do not affect AI depth. Review depth, schemas and exclusions before approval. Out-of-scope objects can be offered as follow-up leads; naming one object in a follow-up does not select its whole schema.
 
 ### Requirements and turning it off
 
-You need VS Code 1.101 or later and a VS Code Language Model Chat provider, such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). To turn `@lineage` off, set `dataLineageViz.ai.enabled` to `false` and reload the window.
+You need VS Code 1.101 or later and a VS Code Language Model Chat provider, such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). To turn `@lineage` and its registered language-model tools off, set `dataLineageViz.ai.enabled` to `false` and reload the window. The graph features remain available.
 
 ## Advanced settings
 
 Run **Data Lineage: Settings** or search "dataLineageViz" in VS Code Settings.
 
 - Reload the data source after changing `maxNodes`, `excludePatterns`, `externalRefs.enabled`, `parseRulesFile` or `dmvQueriesFile`.
-- `ai.enabled` needs a window reload.
+- `ai.enabled` needs a window reload; the other AI limits are read on each request.
 
-To debug AI answers, run **Data Lineage: Enable AI Trace Logging for This Session** (needs an open workspace folder). The log can hold SQL and prompts; review it before sharing. See [Diagnostics](DEVELOPER_GUIDE.md#diagnostics).
+To debug AI answers, run **Data Lineage: Enable AI Trace Logging for This Session** (needs an open workspace folder). Logging stops when the extension host restarts. The log can hold SQL, object names, prompts, responses and tool payloads; never commit it and review it before sharing. See [Diagnostics](DEVELOPER_GUIDE.md#diagnostics).
 
 ### Settings reference
 
@@ -151,7 +153,7 @@ All keys start with `dataLineageViz.`.
 | `maxNodes` | 2000 (10–5000) | Objects loaded, including external references. |
 | `renderLimit` | 750 (100–1500) | Nodes drawn at once; above it the graph shows a notice instead. |
 | `excludePatterns` | `[]` | Patterns hidden on every load; same syntax as [Exclusion rules](#exclusion-rules). |
-| `externalRefs.enabled` | on | Shows `OPENROWSET` paths and cross-database names as external nodes. |
+| `externalRefs.enabled` | on | Shows `OPENROWSET` paths and cross-database names as virtual external nodes. Off suppresses those nodes, not catalog external tables. |
 | `overview.enabled` | on | Allows Schema View. Off always opens Object View and disables the toggle. |
 | `overview.threshold` | 150 (10–1000) | Object count above which a load opens in Schema View. Values above `renderLimit` count as `renderLimit`. |
 | `overview.schemaDoubleClickBehavior` | `expandOnly` | `expand` adds the schema; `expandOnly` makes it the only one expanded. |
@@ -173,12 +175,12 @@ Live database only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 |---|---|---|
 | `tableStatistics.enabled` | on | Shows column statistics and row counts. |
 | `tableStatistics.standardModeEnabled` | on | Offers Standard mode. Off leaves only Quick mode. |
-| `tableStatistics.excludeExternalTables` | on | Skips external tables, which can be slow and costly. |
+| `tableStatistics.excludeExternalTables` | on | Skips external tables, whose statistics queries may read remote data sources. |
 | `tableStatistics.queryTimeout` | 60 s (10–600) | Time per profiling query. |
 | `tableStatistics.sampleThreshold` | 100000 (0–999999999) | Rows above which a table is sampled; `0` samples every nonempty table. |
 | `tableStatistics.sampleSize` | 10000 (100–1000000) | Rows sampled. |
-| `tableStatistics.useApproxDistinct` | on | Uses `APPROX_COUNT_DISTINCT` (fast, about 2% error). Needs SQL Server 2019 or later. |
-| `tableStatistics.maxColumns` | 50 (1–500) | Columns profiled per table. |
+| `tableStatistics.useApproxDistinct` | on | Uses `APPROX_COUNT_DISTINCT` (fast, about 2% error). Needs SQL Server 2019 or later; turn off on older versions. |
+| `tableStatistics.maxColumns` | 50 (1–500) | Columns profiled per table; the rest are skipped. |
 
 #### Layout, trace and analysis
 
@@ -202,8 +204,8 @@ Live database only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 | Setting | Default | Detail |
 |---|---|---|
 | `ai.enabled` | on | Turns `@lineage` on or off. Reload the window after changing it. |
-| `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis: one per procedure, view or function read. |
-| `ai.maxTraceColumns` | 10 (min 1) | Starting columns one column trace may follow. |
-| `ai.discoveryNodeCap` | 10 (1–30) | Objects a chat answer may use before deep analysis is offered. |
-| `ai.discoveryTokenBudget` | 10000 (1000–32000) | DDL tokens a chat answer may use (at most one eighth of the model's input window). |
+| `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis: one per procedure, view or function read; tables count when they require their own analysis hop. |
+| `ai.maxTraceColumns` | 10 (min 1) | Starting columns one trace may follow; columns discovered along the way do not count toward this limit. |
+| `ai.discoveryNodeCap` | 10 (1–30) | Scope objects per discovery catalog request before deep analysis is offered. |
+| `ai.discoveryTokenBudget` | 10000 (1000–32000) | Estimated DDL tokens per discovery catalog request (at most one eighth of the model's input window). |
 | `ai.outputTemplateFile` | empty | Custom output templates YAML. Create with **Data Lineage: Create AI Output Templates**; see [`AI_PROMPTS.md`](AI_PROMPTS.md). |

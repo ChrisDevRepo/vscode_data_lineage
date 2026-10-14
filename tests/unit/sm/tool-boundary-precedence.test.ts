@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
+import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
 import { StartExplorationInputSchema, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import { makeGraph } from '../helpers/testUtils';
@@ -18,29 +19,30 @@ const ORIGIN = '[hop].[origin]';
 const BRANCH = '[hop].[branch]';
 const OTHER = '[hop].[other]';
 
-function ctWorld() {
+function ctWorld(options: { deferred?: boolean; scalar?: boolean; caseSensitive?: boolean } = {}) {
   const column = [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }];
   const nodes = [
-    makeNode({ id: ORIGIN, schema: 'hop', name: 'origin', type: 'view', columns: column, bodyScript: `SELECT Value FROM ${BRANCH};` }),
-    makeNode({ id: BRANCH, schema: 'hop', name: 'branch', type: 'view', columns: column, bodyScript: 'SELECT 1 AS Value;' }),
+    makeNode({ id: ORIGIN, schema: 'hop', name: 'origin', type: 'view', columns: column, bodyScript: options.scalar ? `SELECT ${BRANCH}(1) AS Value;` : `SELECT Value FROM ${BRANCH};` }),
+    makeNode({ id: BRANCH, schema: 'hop', name: 'branch', type: options.scalar ? 'function' : 'view', columns: options.scalar ? [] : column, bodyScript: options.scalar ? `CREATE FUNCTION ${BRANCH}(@Amount int) RETURNS int AS BEGIN RETURN @Amount END` : 'SELECT 1 AS Value;' }),
     makeNode({ id: OTHER, schema: 'hop', name: 'other', type: 'table', columns: column }),
   ];
-  const pairs: Array<[string, string]> = [[BRANCH, ORIGIN]];
+  const pairs: Array<[string, string]> = [[BRANCH, ORIGIN], ...(options.deferred ? [[OTHER, BRANCH] as [string, string]] : [])];
   const model = makeModel(nodes, pairs, ['hop']);
-  model.neighborIndex = { [ORIGIN]: { in: [BRANCH], out: [] }, [BRANCH]: { in: [], out: [ORIGIN] }, [OTHER]: { in: [], out: [] } };
+  model.identifierCaseSensitive = options.caseSensitive ?? false;
+  model.neighborIndex = { [ORIGIN]: { in: [BRANCH], out: [] }, [BRANCH]: { in: options.deferred ? [OTHER] : [], out: [ORIGIN] }, [OTHER]: { in: [], out: options.deferred ? [BRANCH] : [] } };
   const graph = makeGraph(nodes, pairs);
   const session = new AiSession();
   session.model = model; session.graph = graph; session.setClassification('technical'); session.beginTurn();
   const engine = new NavigationEngine(model, graph, () => {}, {});
   engine.classification = 'technical';
   expect(engine.init({ origin: ORIGIN, question: 'Trace Value.', analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream',
-    depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toMatchObject({ ok: true });
+    depthIntent: { upstream: { levels: options.deferred ? 1 : 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toMatchObject({ ok: true });
   engine.getHopContext();
   session.stateMachine = engine;
   session.enterExploring(session.turnEpoch);
   const noop = () => {};
   const registry = buildAiToolRegistry(() => session, { info: noop, debug: noop, warn: noop, error: noop } as never, () => undefined);
-  return { session, model, graph, registry };
+  return { session, model, graph, registry, engine };
 }
 
 describe('lineage_start_exploration boundary', () => {
@@ -121,4 +123,69 @@ describe('lineage_get_neighbor_columns boundary', () => {
     expect(result).toMatchObject({ total: 1, results: [{ id: BRANCH, columns: [expect.objectContaining({})] }] });
     expect(JSON.stringify(result)).not.toContain('not_found');
   });
+});
+
+
+describe('lineage_submit_findings boundary', () => {
+  it.each([false, true])('preserves explicit route dispositions when done=%s', done => {
+    const { session, model, graph } = ctWorld({ deferred: true });
+    const { services } = stubToolServices({ session, model, graph });
+    const first = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'analyze',
+      summary: 'Supplies Value.', sections: { technical: 'Value comes from branch.' },
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+      questions: [{ nodeId: BRANCH, question: 'Establish the source of Value.' }],
+    }, services));
+    const result = done ? JSON.parse(executeSubmitFindings({ focus_node_id: BRANCH, verdict: 'analyze',
+      summary: 'Value is constant.', sections: { technical: 'The value is defined locally.' },
+      column_flow: [{ out_col: 'Value', upstream_columns: [] }],
+      questions: [{ nodeId: OTHER, question: 'Inspect this source if the depth is expanded.' }],
+    }, services)) : first;
+    expect(result).toMatchObject({ ok: true, done, route_outcomes: expect.arrayContaining([
+      done ? { nodeId: OTHER, accepted: false, deferred: true, reason: 'depth' } : { nodeId: BRANCH, accepted: true },
+    ]) });
+  });
+
+  it.each([
+    { caseSensitive: false, node: 'HOP.BRANCH', extra: false, accepted: true },
+    { caseSensitive: true, node: 'HOP.BRANCH', extra: false, accepted: false },
+    { caseSensitive: false, node: ORIGIN, extra: false, accepted: false },
+    { caseSensitive: false, node: 'HOP.BRANCH', extra: true, accepted: false },
+  ])('resolves only permitted qualified terminal input identity: %j', options => {
+    const { session, model, graph, engine } = ctWorld({ caseSensitive: options.caseSensitive });
+    const { services } = stubToolServices({ session, model, graph });
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'analyze',
+      summary: 'Branch supplies Value.', sections: { technical: 'Inspect its source.' },
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+      questions: [{ nodeId: BRANCH, question: 'Establish Value provenance.' }],
+    }, services))).toHaveProperty('ok', true);
+    const edges = structuredClone(engine.columnAspect?.edges);
+    const input = { focus_node_id: BRANCH, verdict: 'analyze', summary: 'No further input.',
+      sections: { technical: 'The input ends here.' }, column_flow: [],
+      terminated_inputs: [{ node: options.node, col: '[value]', ...(options.extra ? { transforms: [] } : {}) }],
+    };
+    const before = structuredClone(input);
+    const result = JSON.parse(executeSubmitFindings(input, services));
+    expect(result.ok === true).toBe(options.accepted);
+    if (options.accepted) expect(result.done).toBe(true);
+    else expect(result).toHaveProperty('code', 'invalid_input');
+    expect(engine.columnAspect?.edges).toEqual(edges);
+    expect(input).toEqual(before);
+  });
+
+  it.each([{ caseSensitive: false, extra: false, accepted: true }, { caseSensitive: true, extra: false, accepted: false }, { caseSensitive: false, extra: true, accepted: false }])(
+    'normalizes only permitted caller-neighbor identity before strict validation: %j', options => {
+      const { session, model, graph } = ctWorld({ scalar: true, caseSensitive: options.caseSensitive });
+      const { services } = stubToolServices({ session, model, graph });
+      const input = { focus_node_id: ORIGIN, verdict: 'analyze', summary: 'The function computes Value.',
+        sections: { technical: 'Inspect its supplied caller argument.' }, column_flow: [],
+        questions: [{ nodeId: '[HOP].[BRANCH]', question: 'Establish Value from the caller argument.', caller_context: { node: ORIGIN, col: 'Value' } }],
+        ...(options.extra ? { undeclared: true } : {}),
+      };
+      const before = structuredClone(input);
+      const result = JSON.parse(executeSubmitFindings(input, services));
+      expect(result.ok === true).toBe(options.accepted);
+      if (options.accepted) expect(result.next_focus).toBe(BRANCH);
+      else expect(result).toHaveProperty('code', 'invalid_input');
+      expect(input).toEqual(before);
+    });
 });

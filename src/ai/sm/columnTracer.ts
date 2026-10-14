@@ -123,7 +123,8 @@ export class ColumnTracer {
    * continued (an entry with upstream real columns) or produced here (`upstream_columns: []`). An
    * UPSTREAM trace accounts via `active_columns − {out_col}`; a DOWNSTREAM trace accounts against
    * `out_col` UNION every `upstream_columns[].col` named, since the active column there lives on
-   * the PREVIOUS node. A non-empty result is returned on the hop ack as data. The engine does not reject the hop for it.
+   * the PREVIOUS node. Dispatcher admission separately checks qualified task endpoints,
+   * including explicit input termination and caller-output investigations.
    *
    * @param columnFlow - The column flow entries submitted by the AI.
    * @param traceDirection - Trace direction of the owning exploration.
@@ -299,9 +300,10 @@ export class ColumnTracer {
     if (!focusNode) return { invalidRoutes, stagedEdges };
 
     const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
-    const continuationSide = traceDirection === 'downstream' ? 'out' : 'in';
+    // Exploration direction never reverses a value edge: upstream_columns are inputs.
     const continuationNeighbors = focusIsCarrier
-      ? new Set((model.neighborIndex[identifierKey(focusId)]?.[continuationSide] ?? []).map((id) => identifierKey(id)))
+      ? new Set((model.neighborIndex[identifierKey(focusId)]?.in ?? []).map((id) => identifierKey(id))
+        .filter(id => !model.edges.some(edge => edge.deleteOnly && identifierKey(edge.source) === id && identifierKey(edge.target) === identifierKey(focusId))))
       : null;
 
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
@@ -472,15 +474,15 @@ export class ColumnTracer {
         }
 
         if (continuationNeighbors) {
-          if (continuationNeighbors.size === 0) {
-            log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded ${continuationSide === 'in' ? 'writers' : 'readers'}, accepting unverified`);
+          if (continuationNeighbors.size === 0 && !model.neighborIndex[identifierKey(focusId)]) {
+            log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded writers, accepting unverified`);
           } else {
             if (!continuationNeighbors.has(identifierKey(neighbor.id))) {
               invalidRoutes.push({
                 kind: 'non_writer_continuation',
                 id: cont.node,
                 path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`,
-                reason: `focus "${focusId}" has no body of its own, so upstream_columns declare continuation at the nodes that ${continuationSide === 'in' ? 'write it' : 'read from it'} — "${cont.node}" is not one of them`,
+                reason: `focus "${focusId}" has no body of its own, so upstream_columns name nodes that write it — "${cont.node}" is not one of them. Downstream readers consume this column; they are not its inputs.`,
                 available_routes: Array.from(continuationNeighbors).sort(),
               });
               continue;
@@ -518,8 +520,14 @@ export class ColumnTracer {
       }
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
+      if (writerEdge && rowRoleOnly.length > 0 && rowRoleOnly.length === entry.upstream_columns.length) {
+        invalidRoutes.push({
+          kind: 'invalid_task_decision', id: focusId, path: `column_flow.${entryIndex}.upstream_columns`,
+          reason: `column_flow.${entryIndex} names only row-role contributors but declares a value write to \`${writerEdge.toNode}.${writerEdge.toCol}\`. Row eligibility does not establish a written value. Correct this mapping, or end the assigned filter-only inputs explicitly in terminated_inputs and explain their row role in sections.`,
+        });
+      }
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
-        && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry || rowRoleOnly.length > 0)) {
+        && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry)) {
         stagedEdges.push({
           hop: 0, // Assigned by caller
           hop_node: focusId,

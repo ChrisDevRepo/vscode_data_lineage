@@ -4,7 +4,9 @@
 [![VS Code](https://img.shields.io/badge/vscode-1.101+-blue.svg)](https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz)
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
 
-See SQL dependencies as a graph inside VS Code. Search, trace and filter it, and optionally ask `@lineage` about it in plain language.
+A free, open-source VS Code helper for DBAs, data engineers and others working with SQL databases. Explore **object-level lineage** between tables, views, procedures and functions: search dependencies, trace connections and read SQL definitions.
+
+The graph works without AI. The optional `@lineage` chat participant can explain SQL and investigate lineage based on your questions, including column relationships to check against the SQL.
 
 Load a `.dacpac` file or connect to SQL Server, Azure SQL, Fabric Data Warehouse or Synapse Dedicated SQL Pool.
 
@@ -18,7 +20,7 @@ Load a `.dacpac` file or connect to SQL Server, Azure SQL, Fabric Data Warehouse
 - A `.dacpac` file, or a database login with `VIEW DEFINITION` (plus `SELECT` on tables you want to profile). See [Database projects](#database-projects).
 - Optional, for `@lineage` only: a VS Code Language Model Chat provider such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) or a compatible BYOK provider.
 
-With a `.dacpac` file no database connection is made.
+Once installed, loading a local `.dacpac`, exploring its graph, viewing SQL, saving bookmarks and exporting work offline. No database connection or chat provider is required. Live imports and profiling need database access; hosted chat models need their provider connection.
 
 ## Get started
 
@@ -32,11 +34,11 @@ No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to expl
 
 ## Database projects
 
-Connect to SQL Server, Azure SQL, Fabric Data Warehouse or Synapse Dedicated SQL Pool with SQL login or Microsoft Entra ID. Windows authentication is not supported.
+The extension supports **SQL login** and **Microsoft Entra ID**. Windows authentication is not supported.
 
 Save, reuse and manage connections in the wizard or with **Add / Edit / Remove Database Connection** and **Update Database Password**. Passwords stay in VS Code secret storage.
 
-A live project reads database metadata for lineage and, only when you ask, profiles table data. Use a read-only login. The catalog queries are in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) and the profiling SQL in [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md). For setup, permissions and connection help, see [Troubleshooting](docs/TROUBLESHOOTING.md#import-and-connection).
+A live project reads database metadata for lineage and, only when you ask, profiles table data. Use a least-privilege login with the permissions needed for those operations. The catalog queries are in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) and the profiling SQL in [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md). For setup, permissions and connection help, see [Troubleshooting](docs/TROUBLESHOOTING.md#import-and-connection).
 
 ## Explore your lineage
 
@@ -56,7 +58,7 @@ The full feature catalogue is in [`docs/FEATURES.md`](docs/FEATURES.md).
 
 ## Optional AI lineage with `@lineage`
 
-With a VS Code Language Model Chat provider, `@lineage` answers questions about the loaded model, using the model you picked in chat. It reads only the loaded graph; it cannot connect to a database or run SQL.
+With a VS Code Language Model Chat provider, `@lineage` answers questions about the loaded model, using the model you picked in chat. Its tools read the loaded graph, SQL definitions and saved analysis; they cannot connect to a database or run SQL.
 
 ```text
 @lineage trace from Sales.SalesOrderDetail upstream to the source tables
@@ -89,8 +91,8 @@ Parse rules, DMV queries and AI output templates are YAML you can override: **Da
 
 ## Security and privacy
 
-- **DACPAC:** read locally; no connection is made.
-- **Database import:** runs the read-only catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) when you start an import.
+- **DACPAC:** parsed locally; loading it makes no database connection. If you use AI afterward, relevant definitions and metadata can be sent to the selected model.
+- **Database import:** runs the built-in read-only catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) when you start an import.
 - **Table statistics:** runs row-count and aggregate queries on a table when you request them (`dataLineageViz.tableStatistics.enabled`).
 - **`@lineage` (optional):** sends the question, recent chat and the SQL or metadata it reads to the chat model selected in VS Code. It cannot run SQL (`dataLineageViz.ai.enabled`).
 - Logs are local.
@@ -108,7 +110,7 @@ The lineage graph is built from database DDL/catalog metadata only. The followin
 - **Triggers, synonyms and other object kinds** — only tables, views, functions, stored procedures and external objects are loaded. Triggers, synonyms, CLR modules, extended stored procedures, sequences and user-defined types are not: they do not appear as nodes, and references made through them do not become edges.
 - **Features that are not database objects** — built-in and function-style features (JSON, XML, vector, `PREDICT`, SQL Graph syntax), types, column methods and variables are ignored. The tables around them are read as usual.
 - **Unreadable definitions** — a stored procedure created `WITH ENCRYPTION`, or one whose definition the connected user may not view, is shown as a node without dependencies and marked with a warning; its body cannot be read.
-- **Column-level lineage** — the graph is object-level. Column traces come from `@lineage` and its language model; check them against the SQL.
+- **Deterministic column-level lineage** — the parser builds object dependencies, not column-to-column lineage. Optional `@lineage` investigations can trace columns requested in your question; check their conclusions against the SQL.
 
 Supported platforms are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse Dedicated SQL Pool. Synapse serverless SQL pool is not supported. The parse details are in [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md).
 
@@ -137,7 +139,7 @@ An unqualified name depends on the caller's default schema and context. Schema-q
 
 ## Source code
 
-The source is public so you can clone, build and adapt it under the MIT license; see [`CONTRIBUTING.md`](CONTRIBUTING.md). Report bugs in [issues](https://github.com/ChrisDevRepo/vscode_data_lineage/issues) and vulnerabilities as described in [`SECURITY.md`](SECURITY.md).
+The source is public under the MIT license so you can review it before installing, or clone, build and adapt it. Start with [`SECURITY.md`](SECURITY.md) for data boundaries and the [developer guide](docs/DEVELOPER_GUIDE.md) for source builds. The query documents above show DBAs what the extension sends to a database. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for repository guidance. Report bugs in [issues](https://github.com/ChrisDevRepo/vscode_data_lineage/issues) and vulnerabilities as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 

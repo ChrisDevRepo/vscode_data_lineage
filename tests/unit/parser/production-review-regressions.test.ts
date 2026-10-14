@@ -9,23 +9,6 @@ import { loadParseRules } from '../helpers/testUtils';
 beforeEach(() => { loadParseRules(); });
 afterEach(() => { loadParseRules(); });
 
-describe('block comments preserve SQL token boundaries', () => {
-  it.each([
-    '/* note */',
-    '/* outer /* inner */ still comment */',
-    '/* note\nFROM dbo.Ghost\r\n*/',
-  ])('keeps reads, writes and calls separated by %s', comment => {
-    const result = parseSqlBody(`SELECT * FROM${comment}dbo.Source; INSERT${comment}INTO${comment}dbo.Target SELECT 1; EXEC${comment}dbo.Callee;`);
-    expect(result.sources).toEqual(['[dbo].[source]']);
-    expect(result.targets).toEqual(['[dbo].[target]']);
-    expect(result.execCalls).toEqual(['[dbo].[callee]']);
-  });
-
-  it('does not join an identifier to keyword text across a block comment', () => {
-    expect(parseSqlBody('SELECT * FROM dbo.Foo/* note */Bar;').sources).toEqual(['[dbo].[foo]']);
-  });
-});
-
 it('consumes external_ref rules only as external references', () => {
   expect(loadRules({ rules: [{
     name: 'external_custom', priority: 50, category: 'external_ref', kind: 'file',

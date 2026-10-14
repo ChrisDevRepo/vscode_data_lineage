@@ -315,6 +315,8 @@ export interface HopFindingKept {
    * Required (and validated) on every CT hop; ignored when the column aspect is inactive.
    */
   column_flow?: ColumnFlowEntry[];
+  /** Qualified arriving columns the model explicitly ends without a local output mapping. */
+  terminated_inputs?: ScalarReturnTarget[];
 }
 
 /** A single finding for a focus node. Off-path neighbors leave through `prune_neighbors`. */
@@ -1072,7 +1074,9 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_out_of_scope'
       | 'prune_question_conflict'
       | 'question_not_neighbor'
-      | 'question_closed';
+      | 'question_closed'
+      | 'missing_task_decision'
+      | 'invalid_task_decision';
 
 /**
  * Represents an invalid route returned during validation.
@@ -1106,5 +1110,5 @@ export interface HeldSubmissionParts {
    * when one is named) of `column_flow` entries. A failed entry is never held; the valid entries of
    * the same list are.
    */
-  readonly entries?: { readonly questions?: readonly string[]; readonly prune_neighbors?: readonly string[]; readonly column_flow?: readonly string[] };
+  readonly entries?: { readonly questions?: readonly string[]; readonly prune_neighbors?: readonly string[]; readonly column_flow?: readonly string[]; readonly terminated_inputs?: readonly string[] };
 }

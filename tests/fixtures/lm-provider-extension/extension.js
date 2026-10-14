@@ -1,5 +1,5 @@
 const vscode = require('vscode');
-const { sendProviderRequest } = require('./live-provider-adapter');
+const { createProviderFetch, sendProviderRequest } = require('./live-provider-adapter');
 
 const VENDOR = 'lineage-test';
 const MODEL_ID = 'lineage-smoke-model';
@@ -42,8 +42,10 @@ async function callLiveProvider(request, progress, token) {
   if (!endpoint || !apiKey || !model || !provider) {
     throw new Error('AI smoke requires AI_TEST_PROVIDER, AI_TEST_ENDPOINT, AI_TEST_API_KEY, and AI_TEST_MODEL.');
   }
+  if (token.isCancellationRequested) return;
   const controller = new AbortController();
-  const timeoutMs = process.env.DLV_CHAT_UI_REAL === '1' ? 300_000 : 120_000;
+  const timeoutMs = Number(process.env.AI_TEST_REQUEST_TIMEOUT_MS);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_423_647) throw new Error('Configure AI_TEST_REQUEST_TIMEOUT_MS through the test launcher.');
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const cancellation = token.onCancellationRequested(() => controller.abort());
   try {
@@ -54,7 +56,7 @@ async function callLiveProvider(request, progress, token) {
       provider,
       reasoningEffort: process.env.AI_TEST_REASONING_EFFORT,
       ...(process.env.DLV_CHAT_UI_REAL === '1' ? {temperature:0.1} : {}),
-    }, fetch, controller.signal);
+    }, createProviderFetch(timeoutMs), controller.signal);
     if (token.isCancellationRequested) return;
     for (const call of response.toolCalls) {
       progress.report(new vscode.LanguageModelToolCallPart(call.id, call.name, call.input));
