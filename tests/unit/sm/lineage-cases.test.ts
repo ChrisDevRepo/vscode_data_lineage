@@ -919,3 +919,63 @@ describe('shared object dispatch', () => {
     expect(engine.getCurrentTasks()[0].question).toBe(question);
   });
 });
+
+describe('result dispositions', () => {
+  const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'analyze' as const,
+    summary: 'Record the supplied definition.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes this hop.' }] });
+
+  it('delivers a committed write edge whose destination lies outside the approved border', () => {
+    const producer = '[d].[Producer]', stored = '[d].[Stored]';
+    const nodes = [
+      makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [], bodyScript: 'INSERT d.Stored(X) SELECT 10;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column('X')] }),
+    ];
+    const engine = navigationFor(nodes, [[producer, stored]]);
+    expect(engine.init({ origin: producer, question: 'Where does X go?', analysisMode: 'ct', targetColumns: ['X'], direction: 'downstream',
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } }, excludeNodeIds: [stored],
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...record(producer),
+      column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: stored, col: 'X' } }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ done: true });
+    const committed = structuredClone(engine.columnAspect!.edges);
+    expect(committed).toHaveLength(1);
+    const result = engine.getResult();
+    expect(result.fullNodes.map(node => node.id)).toEqual([producer]);
+    expect(result.columnAspect!.edges).toEqual(committed);
+  });
+
+  it('renders exactly the dispositioned nodes and reports a pruned neighbor through its state', () => {
+    const target = '[d].[Target]', writer = '[d].[Writer]', used = '[d].[Used]', unused = '[d].[Unused]';
+    const nodes = [
+      makeNode({ id: target, schema: 'd', name: 'Target', type: 'table', columns: [column('X')] }),
+      makeNode({ id: writer, schema: 'd', name: 'Writer', type: 'procedure', columns: [],
+        bodyScript: 'INSERT d.Target(X) SELECT u.X FROM d.Used u WHERE EXISTS (SELECT 1 FROM d.Unused);' }),
+      makeNode({ id: used, schema: 'd', name: 'Used', type: 'table', columns: [column('X')] }),
+      makeNode({ id: unused, schema: 'd', name: 'Unused', type: 'table', columns: [column('X')] }),
+    ];
+    const engine = navigationFor(nodes, [[writer, target], [used, writer], [unused, writer]]);
+    expect(engine.init({ origin: target, question: 'What loads Target?', analysisMode: 'bb', direction: 'upstream',
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    const decisions: Record<string, object> = {
+      [target]: { questions: [{ nodeId: writer, question: 'How is Target loaded?' }] },
+      [writer]: { questions: [{ nodeId: used, question: 'What does Used hold?' }],
+        prune_neighbors: [{ id: unused, reason: 'Unused only gates the load and is outside the question.' }] },
+      [used]: { verdict: 'passthrough' },
+    };
+    for (let step = 0; step < nodes.length; step++) {
+      const hop = engine.getHopContext();
+      if (hop.done) break;
+      const id = hop.focus_node!.id as string;
+      expect(engine.submitFindings({ ...record(id), ...decisions[id] })).toHaveProperty('ok', true);
+    }
+    const result = engine.getResult();
+    const kept = result.node_states.filter(state => state.action !== 'prune').map(state => state.nodeId);
+    expect(kept.sort()).toEqual([target, used, writer]);
+    expect(result.fullNodes.map(node => node.id).sort()).toEqual(kept);
+    expect(result.node_states.find(state => state.nodeId === unused)).toMatchObject({ action: 'prune' });
+    expect(result.edges.map(([from, to]) => `${from}->${to}`).sort()).toEqual([`${used}->${writer}`, `${writer}->${target}`]);
+    expect(result.detail_slots.map(slot => slot.nodeId).sort()).toEqual(kept);
+  });
+});

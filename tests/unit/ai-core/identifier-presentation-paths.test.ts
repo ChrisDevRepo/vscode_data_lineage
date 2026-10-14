@@ -109,12 +109,16 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     const run = {
       schemaVersion: 1, runId: 'run', savedAt: '2026-10-02', origin: null, ddlHashes: {},
       snapshot: {
-        identifierCaseSensitive: cs, scopeNodeIds: ['[dbo].[Report]', '[dbo].[report]'],
-        removedSet: ['[dbo].[report]'], renderDroppedNodeIds: [], nodeStates: [],
+        identifierCaseSensitive: cs, scopeNodeIds: ['[dbo].[Report]', '[dbo].[report]', '[dbo].[Unvisited]'],
+        removedSet: ['[dbo].[report]'], nodeStates: [
+          ...(cs ? [{ nodeId: '[dbo].[Report]', action: 'analyze', source: 'ai', reason: 'submitted_analyze' }] : []),
+          { nodeId: '[dbo].[report]', action: 'prune', source: 'ai', reason: 'submitted_prune' },
+        ],
         engineInternals: { pendingLeads: [
           { nodeId: '[dbo].[Report]', status: 'pending' },
           { nodeId: '[dbo].[report]', status: 'pending' },
           { nodeId: '[DBO].[REPORT]', status: 'pending' },
+          { nodeId: '[dbo].[Unvisited]', status: 'pending' },
         ] },
       },
     } as unknown as StoredAiRun;
@@ -123,6 +127,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
       { id: '[dbo].[Report]', on_graph: cs },
       { id: '[dbo].[report]', on_graph: false },
       { id: '[DBO].[REPORT]', on_graph: false },
+      { id: '[dbo].[Unvisited]', on_graph: false },
     ] });
   });
 

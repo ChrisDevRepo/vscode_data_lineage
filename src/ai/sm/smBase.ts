@@ -366,11 +366,6 @@ export class NavigationEngine implements IHopStateMachine {
    * accepted ballots so resuming does not change a shared node's fate.
    */
   private pruneBallots = new Map<string, Map<string, 'prune' | 'keep'>>();
-  /**
-   * Nodes the last {@link getResult} removed from the render as undispositioned sinks, surfaced as
-   * `renderDroppedNodeIds` so the render states its own disposition explicitly.
-   */
-  protected renderDroppedIds = new Set<string>();
   /** Engine-owned lifecycle state for nodes; detail slots are content storage only. */
   protected nodeStates = new Map<string, SmNodeState>();
   /** List representing the current navigation agenda. */
@@ -1360,12 +1355,6 @@ export class NavigationEngine implements IHopStateMachine {
     return origin && this.tracer ? this.matchColumnsToNode(origin, this.tracer.targetColumns).resolved.map(col => ({ node: origin, col })) : [];
   }
 
-  /** The approved column-closure direction of the session: one traversal direction, or both. */
-  private columnClosureDirection(): 'upstream' | 'downstream' | 'both' {
-    const direction = this.effectiveDirection();
-    return direction === 'bidirectional' ? 'both' : direction;
-  }
-
   /**
    * The qualified (node, column) identities a column task continues from.
    *
@@ -2062,7 +2051,6 @@ export class NavigationEngine implements IHopStateMachine {
     this.visited.clear();
     this.removedSet.clear();
     this.pruneBallots.clear();
-    this.renderDroppedIds.clear();
     this.supplementNodeIds.clear();
     this._agenda.clear();
     this.taskLedger.clear();
@@ -4212,83 +4200,6 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Collects the column-edge endpoints the render does not hold.
-   *
-   * @remarks
-   * A hop's read source or write target one hop past the border is a correct answer that is simply not a render member, so the delivered
-   * chain can name something the panel never draws. These endpoints are the one class the sink disposition never sees on its own, since it
-   * only iterates the render. Empty in BB, where there is no tracer at all.
-   *
-   * @param render - The render set membership is tested against.
-   * @returns Endpoint ids outside the render, usually empty.
-   */
-  private columnEndpointsOutsideRender(render: ReadonlySet<string>): Set<string> {
-    const outside = new Set<string>();
-    for (const edge of this.tracer?.edges ?? []) {
-      if (!render.has(edge.from_node)) outside.add(edge.from_node);
-      if (!render.has(edge.to_node)) outside.add(edge.to_node);
-    }
-    return outside;
-  }
-
-  /**
-   * Selects the nodes no hop dispositioned that the render reaches only as a write sink.
-   *
-   * @remarks
-   * Scope admits a node; only a hop dispositions one. A node with no investigation task, no column-aspect edge endpoint, and no
-   * {@link nodeStates} entry was never analyzed, routed, contracted through or pruned — it is in the render only because BFS reachability
-   * walked into it. Such a node that also supplies nothing the render keeps (every edge into it is written-to or EXEC'd) is a side-effect
-   * sink, not answer evidence; peeling is iterative, so a sink chain goes as a unit. A node that *supplies* a rendered node stays — a
-   * candidate carrying the only path to a kept node is a passthrough, not a sink, and is restored.
-   *
-   * @param reachable - The reachability-bounded render set to classify.
-   * @param columnBorder - Column-edge endpoints the render does not hold ({@link columnEndpointsOutsideRender}), classified against the
-   *   same contract with one difference from `reachable`: a border node's membership bypasses `removedSet`, so a prune that pulled it out of the render can
-   *   still leave it named on a committed edge — routed through the sink check here, the one case a prune verdict does not already answer.
-   *   Off the border every in-scope node is inside the approved schema set, so a schema the approval opened through `excludeSchemas`
-   *   is classified exactly like one the GUI filter ticked.
-   * @returns Ids to drop; reachable ones leave the render, border ones leave the delivered chain.
-   */
-  private undispositionedSinkIds(reachable: ReadonlySet<string>, columnBorder: ReadonlySet<string>): Set<string> {
-    const candidates: string[] = [];
-    for (const id of [...reachable, ...columnBorder]) {
-      if (id === this.originNodeId) continue;
-      const state = this.nodeStates.get(id);
-      const onBorder = columnBorder.has(id);
-      const borderPruned = onBorder && state?.action === 'prune';
-      if (state !== undefined && !borderPruned) continue;
-      if (this.taskLedger.investigationTasks.some(task => task.nodeId === id && task.status !== 'deferred')) continue;
-      if (!onBorder && this.tracer?.edges.some(edge =>
-        edge.from_node === id || edge.to_node === id || edge.hop_node === id)) continue;
-      candidates.push(id);
-    }
-    if (candidates.length === 0) return new Set();
-
-    const render = new Set(reachable);
-    const sinks = new Set<string>();
-    for (let peeled = true; peeled;) {
-      peeled = false;
-      for (const id of candidates) {
-        if (sinks.has(id)) continue;
-        if (this.model.edges.some(e => e.source === id && render.has(e.target))) continue;
-        sinks.add(id);
-        render.delete(id);
-        peeled = true;
-      }
-    }
-
-    let stranded: string[] = [];
-    for (let pass = sinks.size; pass >= 0; pass--) {
-      const kept = bfsReachable(this.graph, this.originNodeId!, new Set([...this.removedSet, ...sinks]), undefined, this.scopeNodeIds);
-      stranded = Array.from(reachable).filter(id => !sinks.has(id) && !kept.has(id));
-      if (stranded.length === 0) return sinks;
-      for (const id of stranded) for (const nid of this.graph.neighbors(id)) sinks.delete(nid);
-    }
-    this.log('debug', `[Disposition] sink trim abandoned — ${stranded.length} node(s) still stranded (${trunc(stranded.join(', '), 200)})`);
-    return new Set();
-  }
-
-  /**
    * Shortest node chain from origin to a node, ignoring `removedSet` but bounded to `scopeNodeIds`
    * (plus the target itself) so a chain is never assembled from ground the run never explored.
    *
@@ -4331,6 +4242,12 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Packages exploration records into the final presentation topology.
    *
+   * @remarks
+   * The render is exactly the nodes a hop or the user's pass filter dispositioned `analyze` or
+   * `passthrough`, the model edges between them, and every committed column edge. A pruned node is
+   * absent from the render and reported through its `prune` entry in `node_states`; nothing else is
+   * withheld or added.
+   *
    * @returns Detailed analysis metrics matching the outcome format.
    * @throws When the exploration is not `complete`: a result exists only once no agenda entry and
    *   no focus is left, so a stopped run never yields one.
@@ -4339,56 +4256,20 @@ export class NavigationEngine implements IHopStateMachine {
     if (this._status !== 'complete') {
       throw new Error(`Exploration result requested in status '${this._status}': a result exists only for a complete exploration.`);
     }
-    const mem = this.memory.getResult();
-
-    const reachableNodeIds = bfsReachable(this.graph, this.originNodeId!, this.removedSet, undefined, this.scopeNodeIds);
-    const finalNodeIds = new Set<string>(reachableNodeIds);
-    finalNodeIds.add(this.originNodeId!);
-
-    const columnBorder = this.columnEndpointsOutsideRender(finalNodeIds);
-    const undispositioned = this.undispositionedSinkIds(finalNodeIds, columnBorder);
-    const borderSinks = new Set<string>();
-    for (const id of columnBorder) if (undispositioned.delete(id)) borderSinks.add(id);
-    this.renderDroppedIds = new Set(undispositioned);
-    if (borderSinks.size > 0) {
-      this.log('debug', `[Disposition] getResult withholds ${borderSinks.size} column-chain endpoint(s) — ${trunc(Array.from(borderSinks).join(', '), 200)} (past the render border, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
-    }
-    if (undispositioned.size > 0) {
-      for (const id of undispositioned) finalNodeIds.delete(id);
-      this.log('debug', `[Disposition] getResult drops ${undispositioned.size} undispositioned sink node(s) — ${trunc(Array.from(undispositioned).join(', '), 200)} (in scope, never analyzed, routed, contracted or pruned, and supplying nothing the render keeps)`);
-    }
-
-    const orphaned = Array.from(this.scopeNodeIds).filter(
-      id => !finalNodeIds.has(id) && !this.removedSet.has(id) && !undispositioned.has(id));
-    if (orphaned.length > 0) {
-      for (const id of orphaned) this.renderDroppedIds.add(id);
-      this.log('debug', `[Disposition] getResult drops ${orphaned.length} scope node(s) unreachable from origin under removedSet — ${trunc(orphaned.join(', '), 200)} (orphaned by a prune; never dispositioned themselves)`);
-    }
-
-    const droppedSlots = mem.detail_slots.filter(slot => !finalNodeIds.has(slot.nodeId) && !undispositioned.has(slot.nodeId)
-      && this.nodeStates.get(slot.nodeId)?.reason !== 'submitted_prune');
-    if (droppedSlots.length > 0) {
-      this.log('debug', `[Disposition] getResult drops ${droppedSlots.length} analyzed detail slot(s) unreachable from origin under removedSet/scope — ${trunc(droppedSlots.map(s => s.nodeId).join(', '), 200)} (conservation delta; expected empty)`);
-    }
-
-    const finalEdges: Array<[string, string, string]> = [];
-    for (const e of this.model.edges) {
-      if (finalNodeIds.has(e.source) && finalNodeIds.has(e.target)) {
-        finalEdges.push([e.source, e.target, edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '')]);
-      }
-    }
-
+    const nodeStates = Array.from(this.nodeStates.values());
+    const rendered = new Set(nodeStates.filter(state => state.action !== 'prune').map(state => state.nodeId));
     return {
       status: 'complete',
       originNodeId: this.originNodeId!,
-      fullNodes: Array.from(finalNodeIds).map(id => {
+      fullNodes: Array.from(rendered, id => {
         const n = this.nodeMap.get(id)!;
         return { id: n.id, s: n.schema, n: n.name, t: n.type };
       }),
-      edges: finalEdges,
-      detail_slots: mem.detail_slots.filter(slot => finalNodeIds.has(slot.nodeId)),
-      node_states: Array.from(this.nodeStates.values()),
-      columnAspect: this.tracer?.deliveredState(borderSinks, this.columnRoots(), this.columnClosureDirection(), this.log, finalNodeIds) ?? null,
+      edges: this.model.edges.filter(e => rendered.has(e.source) && rendered.has(e.target))
+        .map(e => [e.source, e.target, edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '')]),
+      detail_slots: this.memory.getResult().detail_slots.filter(slot => rendered.has(slot.nodeId)),
+      node_states: nodeStates,
+      columnAspect: this.tracer?.state ?? null,
     };
   }
 
@@ -4414,7 +4295,6 @@ export class NavigationEngine implements IHopStateMachine {
       currentFocusNodeId: this.currentFocusNodeId,
       memory: this.memory.toJSON(),
       engineInternals: this.serializeInternals(),
-      ...(this.renderDroppedIds.size > 0 ? { renderDroppedNodeIds: Array.from(this.renderDroppedIds) } : {}),
       ctDeclaredRouteIds: [...new Set((this.tracer?.edges ?? []).flatMap(edge => [edge.from_node, edge.to_node]))],
       ...(this.tracer ? { lineageQuestionsLastHop: [...this._pendingLineageQuestions] } : {}),
     };

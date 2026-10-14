@@ -52,19 +52,16 @@ export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
 export type PresentNodeIdState =
   | 'not_in_model'
   | 'pruned'
-  | 'render_dropped'
   | 'in_scope_undispositioned'
   | 'out_of_scope';
 
 /**
  * Wording per {@link PresentNodeIdState}, in the vocabulary the engine already rejects with
- * (`ROUTE_REJECTION_DIRECTIVE`, the `getResult` disposition lines) — no second dialect for the same
- * facts.
+ * (`ROUTE_REJECTION_DIRECTIVE`) — no second dialect for the same facts.
  */
 const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> = {
   not_in_model: 'not in the loaded model',
   pruned: 'already pruned on an earlier hop',
-  render_dropped: 'in scope, dropped from the render',
   in_scope_undispositioned: 'in scope but never dispositioned',
   out_of_scope: 'outside the approved exploration scope',
 };

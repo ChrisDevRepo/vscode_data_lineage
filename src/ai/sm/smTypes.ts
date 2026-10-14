@@ -1018,11 +1018,7 @@ export interface SmState {
    * object retention is independent of this projection.
    */
   ctDeclaredRouteIds?: string[];
-  /**
-   * Node IDs the last `getResult` removed from the render as undispositioned write sinks.
-   * Present only when that call dropped something; a drop is a recorded disposition, not a gap
-   * between this snapshot's scope and the rendered node set for a reader to infer.
-   */
+  /** Legacy key from saved runs written before the render held exactly the dispositioned nodes; accepted and ignored. */
   renderDroppedNodeIds?: string[];
 }
 
