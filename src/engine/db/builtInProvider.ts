@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Connection } from 'tedious';
-import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/database';
+import type { DbCellValue, IServerInfo, SimpleExecuteResult } from '../../types/database';
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
@@ -48,9 +48,6 @@ const CONNECT_RETRY_INTERVAL_MS = 5 * MS_PER_SECOND;
 const CONNECT_MAX_RETRIES = 3;
 /** Login budget of one connect attempt; Microsoft recommends 30 seconds for Azure SQL and Synapse. */
 const CONNECT_TIMEOUT_MS = 30 * MS_PER_SECOND;
-
-/** Engine editions that run in a Microsoft cloud service. */
-const CLOUD_ENGINE_EDITIONS: ReadonlySet<number> = new Set([5, 6, 8, 11, 12]);
 
 /** The part of `tedious` column metadata that decides how a value is rendered. */
 interface CellMetadata {
@@ -172,13 +169,6 @@ export function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
   return { displayValue: String(value), isNull: false };
 }
 
-const NULLABLE_VARIANT = /^(Int|Bit|Float|Money|DateTime|Decimal|Numeric)N$/;
-
-function toColumnInfo(meta: ColumnMetadata, ordinal: number): IDbColumn {
-  const name = meta.type.name.replace(NULLABLE_VARIANT, '$1').toLowerCase();
-  return { columnName: meta.colName, dataType: name, dataTypeName: name, allowDBNull: (meta.flags & 1) === 1, columnOrdinal: ordinal };
-}
-
 /** Returns the SQL of the named DMV query, or `undefined` when the YAML does not define it. */
 async function yamlQuerySql(loadQueries: () => Promise<DmvQuery[]>, name: string): Promise<string | undefined> {
   return (await loadQueries()).find((q) => q.name === name)?.sql;
@@ -232,7 +222,7 @@ class BuiltInSession implements DbSession {
       };
       const request = new this.lib.Request(sql, (err) => {
         if (err) finish(() => reject(timedOut ? new Error(timeoutMessage) : err));
-        else finish(() => resolve({ rowCount: rows.length, columnInfo: columns.map(toColumnInfo), rows }));
+        else finish(() => resolve({ rowCount: rows.length, columnInfo: columns.map((meta) => ({ columnName: meta.colName })), rows }));
       });
       request.on('columnMetadata', (meta) => {
         resultSets++;
@@ -260,15 +250,7 @@ class BuiltInSession implements DbSession {
       const at = result.columnInfo.findIndex((c) => c.columnName.toLowerCase() === name);
       return at >= 0 && row && !row[at].isNull ? row[at].displayValue : '';
     };
-    const engineEditionId = Number.parseInt(cell('engine_edition'), 10) || 0;
-    return {
-      serverMajorVersion: Number.parseInt(cell('major_version'), 10) || 0,
-      serverMinorVersion: 0,
-      serverVersion: '',
-      engineEditionId,
-      isCloud: CLOUD_ENGINE_EDITIONS.has(engineEditionId),
-      serverEdition: cell('edition'),
-    };
+    return { engineEditionId: Number.parseInt(cell('engine_edition'), 10) || 0 };
   }
 
   async dispose(): Promise<void> {

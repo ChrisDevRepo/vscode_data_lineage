@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [1.2.6] - 2026-10-08
 
 ### Added
-- The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, and names the module; the references the parser captures still load.
+- The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, with the module count (the debug log names the modules); the references the parser captures still load.
 
 ### Removed
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Password…**.
@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AI rejection, retry and cancellation handling, including a cancel while a graph preview is drawn.
 - Database query timeouts, live import metadata and saved-project timestamps.
 - A DACPAC three-part name to another database no longer resolves to a local object with the same schema and name; the DACPAC name is its current database, as on a live connection.
+- Reconnecting a database project by server now matches a saved connection whose server is written with a `tcp:` prefix.
 
 ## [1.2.5] - 2026-10-07
 

@@ -14,6 +14,20 @@ import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, ty
 import { pickAccount, signInForSql } from './entraSignIn';
 import { redactSecrets } from '../../utils/redact';
 
+/** The error target of a saved connection opened on `database`. */
+export function builtInTarget(connection: BuiltInConnection, database: string | undefined): ConnectionErrorTarget {
+  return {
+    name: connection.name,
+    server: connection.server,
+    port: connection.port,
+    database,
+    user: connection.user,
+    authenticationType: connection.authenticationType,
+    connectionId: connection.id,
+    tenantId: connection.tenantId,
+  };
+}
+
 /** Identifier of an action a connection error can offer. */
 export type ConnectionErrorActionId =
   | 'updatePassword' | 'editConnection' | 'signInAnotherAccount' | 'chooseDatabase' | 'retry'
@@ -124,8 +138,8 @@ function grantStatement(user: string | undefined): string {
  * @remarks
  * `message` is `<connection name>: <original driver text>` with credential-shaped text removed, plus
  * one hint when the server rejects a Microsoft token. The
- * actions depend on the error class; those that manage a saved built-in connection are offered only
- * for the built-in provider, and Retry only when the caller supplies a retry hook. Each action runs
+ * actions depend on the error class; those that manage a saved connection are offered only when the
+ * error names one, and Retry only when the caller supplies a retry hook. Each action runs
  * on the user's click and any retry it triggers is a single attempt, never a loop.
  *
  * @param err - The raw error from the driver.
@@ -139,7 +153,7 @@ export function describeConnectionError(
 ): { message: string; actions: ConnectionErrorAction[] } {
   const kind = classify(err);
   const message = `${target.name}: ${redactSecrets(errorMessage(err))}${kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : ''}`;
-  const builtIn = !!target.connectionId;
+  const saved = !!target.connectionId;
   const connectionId = target.connectionId;
 
   const make = (id: ConnectionErrorActionId, run: () => Promise<void>): ConnectionErrorAction => ({
@@ -194,7 +208,7 @@ export function describeConnectionError(
   const entra = target.authenticationType === 'entraId' || /token-identified principal/i.test(errorMessage(err));
   const wanted: ConnectionErrorAction[] = [];
   const add = (...items: Array<ConnectionErrorAction | undefined>) => wanted.push(...items.filter((a): a is ConnectionErrorAction => !!a));
-  const managed = (factory: () => ConnectionErrorAction) => (builtIn ? factory() : undefined);
+  const managed = (factory: () => ConnectionErrorAction) => (saved ? factory() : undefined);
   const retrying = () => (hooks.retry ? actions.retry() : undefined);
 
   switch (kind) {

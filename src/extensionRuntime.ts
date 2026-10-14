@@ -21,11 +21,6 @@ import { buildExtensionConfig } from './bridge/messageHandlers';
 
 declare const __BUILD_TIMESTAMP__: string;
 
-/** Settings that load or drop a whole feature bundle at activation; a change applies on reload. */
-const KILL_SWITCHES = [
-  { key: 'dataLineageViz.ai.enabled', label: 'AI features', fallback: DEFAULT_AI_ENABLED },
-] as const;
-
 let outputChannel: vscode.LogOutputChannel;
 let activeTraceWriter: AiTraceWriter | undefined;
 
@@ -202,14 +197,12 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       if (!e.affectsConfiguration('dataLineageViz')) return;
       configLogger.debug('Settings changed — dataLineageViz.*');
 
-      // Kill switches load or drop whole bundles at activation, so a change applies on reload.
-      for (const { key, label, fallback } of KILL_SWITCHES) {
-        if (!e.affectsConfiguration(key)) continue;
-        const nowEnabled = vscode.workspace.getConfiguration().get<boolean>(key, fallback);
-        const msg = `${label} ${nowEnabled ? 'enabled' : 'disabled'}. Reload the window to apply.`;
-        configLogger.info(`Config changed — ${key}=${nowEnabled}; notification="${msg}"`);
-        const pick = await vscode.window.showInformationMessage(msg, 'Reload Window');
-        if (pick === 'Reload Window') {
+      // The AI bundle loads at activation, so a change applies on reload.
+      if (e.affectsConfiguration('dataLineageViz.ai.enabled')) {
+        const nowEnabled = vscode.workspace.getConfiguration().get<boolean>('dataLineageViz.ai.enabled', DEFAULT_AI_ENABLED);
+        const msg = `AI features ${nowEnabled ? 'enabled' : 'disabled'}. Reload the window to apply.`;
+        configLogger.info(`Config changed — dataLineageViz.ai.enabled=${nowEnabled}; notification="${msg}"`);
+        if (await vscode.window.showInformationMessage(msg, 'Reload Window') === 'Reload Window') {
           void vscode.commands.executeCommand('workbench.action.reloadWindow');
         }
       }

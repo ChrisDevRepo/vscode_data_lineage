@@ -45,8 +45,7 @@ export type SmNodeStateReason =
   | 'submitted_passthrough'
   | 'submitted_prune'
   | 'bb_prune_neighbor'
-  | 'user_pass_filter'
-  | 'non_bodied_passthrough';
+  | 'user_pass_filter';
 
 /**
  * Process state for one node in the SM traversal.

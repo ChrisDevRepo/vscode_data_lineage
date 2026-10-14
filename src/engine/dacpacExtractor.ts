@@ -73,38 +73,8 @@ export async function extractDacpac(
   const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
   if (onDebugLog) onDebugLog(`Dacpac: model.xml parsed — ${elements.length} elements (dsp=${dspName || 'unspecified'})`);
 
-  const dbPlatform = parseDspPlatform(dspName);
-
-  const objects = extractObjects(elements, undefined, identifierCaseSensitive);
-  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
-  const deps = extractDependencies(elements);
-  const c = countObjectsByType(objects);
-  if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
-  if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
-
-  const model = buildModel(
-    objects,
-    deps,
-    allObjects,
-    databaseName,
-    options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
-    onDebugLog,
-    identifierCaseSensitive,
-  );
-
-  const warnings: string[] = [];
-  if (elements.length === 0) {
-    warnings.push('This dacpac appears to be empty.');
-  } else if (model.nodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found in this file.');
-  }
-
-  return {
-    ...model,
-    warnings: warnings.length > 0 ? warnings : undefined,
-    dbPlatform: dbPlatform || undefined,
-    source: 'dacpac',
-  };
+  const emptyWarning = elements.length === 0 ? 'This dacpac appears to be empty.' : 'No tables, views, or stored procedures found in this file.';
+  return buildDacpacModel(elements, elements, dspName, { ...options, identifierCaseSensitive, databaseName }, emptyWarning, onDebugLog, onInfoLog);
 }
 
 /**
@@ -162,9 +132,22 @@ export function extractDacpacFiltered(
   });
   if (onDebugLog) onDebugLog(`Dacpac: Filter — ${elements.length} → ${filtered.length} tracked elements after schema filter`);
 
-  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
-  const objects = extractObjects(filtered, elements, identifierCaseSensitive);
-  const deps = extractDependencies(filtered);
+  return buildDacpacModel(filtered, elements, dspName, options, 'No tables, views, or stored procedures found for selected schemas.', onDebugLog, onInfoLog);
+}
+
+/** Builds the model of the given DACPAC elements, with `allElements` as the catalog; `emptyWarning` is reported when no node is built. */
+function buildDacpacModel(
+  elements: XmlElement[],
+  allElements: XmlElement[],
+  dspName: string | undefined,
+  options: DacpacExtractionOptions,
+  emptyWarning: string,
+  onDebugLog?: (msg: string) => void,
+  onInfoLog?: (msg: string) => void,
+): DatabaseModel {
+  const identifierCaseSensitive = options.identifierCaseSensitive === true;
+  const objects = extractObjects(elements, allElements, identifierCaseSensitive);
+  const deps = extractDependencies(elements);
   const c = countObjectsByType(objects);
   if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
   if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
@@ -172,22 +155,16 @@ export function extractDacpacFiltered(
   const model = buildModel(
     objects,
     deps,
-    allObjects,
+    extractObjectsLightweight(allElements, identifierCaseSensitive),
     options.databaseName,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
     onDebugLog,
     identifierCaseSensitive,
   );
-  const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
-
-  const warnings: string[] = [];
-  if (model.nodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found for selected schemas.');
-  }
   return {
     ...model,
-    warnings: warnings.length > 0 ? warnings : undefined,
-    dbPlatform: dbPlatform || undefined,
+    warnings: model.nodes.length === 0 ? [emptyWarning] : undefined,
+    dbPlatform: (dspName && parseDspPlatform(dspName)) || undefined,
     source: 'dacpac',
   };
 }

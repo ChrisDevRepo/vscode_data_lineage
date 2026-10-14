@@ -105,8 +105,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         if (res.skippedDetails.length > 0) {
           s.logger.debug(`[${sess.id}] supplement skippedIds=[${sanitizeForLog(res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(','))}]`);
         }
-        if (res.agendaed === 0 && res.contracted === 0) {
-          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 contracted=0 skipped=${res.skipped}`);
+        if (res.agendaed === 0) {
+          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 skipped=${res.skipped}`);
           const unresolvedIds = res.skippedDetails.filter(skip => skip.reason === 'unresolved').map(skip => skip.nodeId);
           const borderSkips = res.skippedDetails.filter(skip => skip.reason !== 'unresolved');
           const hint = [
@@ -129,7 +129,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         );
         applyFollowUpContext();
         sess.enterExploring(s.turnEpoch(sess));
-        s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}`);
+        s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} skipped=${res.skipped}`);
         const hopCtx = priorEngine.getHopContext();
         return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }

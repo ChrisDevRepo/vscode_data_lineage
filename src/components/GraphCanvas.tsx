@@ -111,12 +111,12 @@ const AI_PANEL_DEFAULT_HEIGHT = 'min(360px, 45vh)';
 const AI_DOCK_STATE_KEY = 'aiDockPosition';
 
 /** Reverse of `aiSections`' per-section `nodeIds`: every section that badged `nodeId`, in order. */
-export function sectionsForNode(sections: readonly AiReportSection[], nodeId: string): number[] {
+function sectionsForNode(sections: readonly AiReportSection[], nodeId: string): number[] {
   return sections.filter(s => s.nodeIds.includes(nodeId)).map(s => s.n);
 }
 
 /** Cache key for the AI pane's open state + pinned section — origin id ('preview' with none) + view name. */
-export function aiLayoutCacheKey(originId: string | undefined, viewName: string): string {
+function aiLayoutCacheKey(originId: string | undefined, viewName: string): string {
   return `${originId ?? 'preview'}::${viewName}`;
 }
 
@@ -182,7 +182,7 @@ export function scheduleFit(
  * Resumes a graph fit blocked by rebuilding only while its generation still owns the camera.
  * @returns A fit scheduler whose cleanup also cancels a resumed fit.
  */
-export function useRebuildResumableFit(
+function useRebuildResumableFit(
   isRebuilding: boolean,
   generationRef: { current: number },
   armFit: () => () => void,
@@ -217,7 +217,7 @@ export function useRebuildResumableFit(
 }
 
 /** Reframes pane size changes unless a saved camera restore owns the view; user gestures still win. */
-export function useCanvasResizeFit(width: number, height: number, fitGraph: () => () => void, restoringViewport = false): void {
+function useCanvasResizeFit(width: number, height: number, fitGraph: () => () => void, restoringViewport = false): void {
   const previousSize = useRef({ width, height });
   useEffect(() => {
     const previous = previousSize.current;

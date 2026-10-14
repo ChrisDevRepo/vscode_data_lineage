@@ -230,9 +230,7 @@ describe('openBuiltInSession — results', () => {
       [col('engine_edition', 'Int'), col('major_version', 'Int'), col('edition', 'NVarChar')],
       [[5, 12, 'SQL Azure']],
     );
-    await expect(session.getServerInfo()).resolves.toEqual({
-      serverMajorVersion: 12, serverMinorVersion: 0, serverVersion: '', engineEditionId: 5, isCloud: true, serverEdition: 'SQL Azure',
-    });
+    await expect(session.getServerInfo()).resolves.toEqual({ engineEditionId: 5 });
     expect(fake.executed.at(-1)).toBe(yamlSql('platform-info'));
   });
 
@@ -244,10 +242,7 @@ describe('openBuiltInSession — results', () => {
     const session = (await openBuiltInSession(sqlLogin, env))!;
     script([col(engine, 'Int'), col(major, 'Int'), col(edition, 'NVarChar')], [[11, 16, 'Fabric']]);
 
-    await expect(session.getServerInfo()).resolves.toEqual({
-      serverMajorVersion: 16, serverMinorVersion: 0, serverVersion: '', engineEditionId: 11,
-      isCloud: true, serverEdition: 'Fabric',
-    });
+    await expect(session.getServerInfo()).resolves.toEqual({ engineEditionId: 11 });
     await session.dispose();
   });
 

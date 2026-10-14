@@ -647,7 +647,7 @@ export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, iden
  * @param links - Staged or submitted endpoint pairs to close over.
  * @param direction - Whether to validate upstream connectivity or propagate downstream values.
  */
-export function reachableColumnEndpoints(
+function reachableColumnEndpoints(
   seeds: ReadonlySet<string>,
   links: ReadonlyArray<ColumnEndpointLink>,
   direction: 'upstream' | 'downstream' = 'upstream',

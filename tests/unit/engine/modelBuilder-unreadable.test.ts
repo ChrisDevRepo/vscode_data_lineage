@@ -60,7 +60,7 @@ describe('module with a construct that is not fully supported', () => {
 
   it.each([
     "-- DECLARE c CURSOR FOR\nSELECT 'CURSOR', 'EXEC(@x)' AS a FROM [dbo].[Orders];",
-    'SELECT [cursor] FROM [dbo].[Orders];',
+    'DECLARE @cursor INT; SELECT [cursor] FROM [dbo].[Orders];',
     "SELECT CURSOR_STATUS('local', 'c') FROM [dbo].[Orders]; EXEC dbo.uspAudit;",
   ])('records nothing for a comment, string, identifier or plain call: %s', body => {
     expect(build(body).parseStats?.unsupported).toBeUndefined();

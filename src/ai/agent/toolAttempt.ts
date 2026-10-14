@@ -864,7 +864,6 @@ function rejectionPathsForLog(paths: readonly string[] | undefined): string {
 interface DispatchOutcome {
   readonly resultText: string;
   readonly cancelled: boolean;
-  readonly failed: boolean;
 }
 
 async function dispatchRegistryTool(
@@ -872,15 +871,15 @@ async function dispatchRegistryTool(
   call: Extract<GeneratedToolCall, { valid: true }>,
 ): Promise<DispatchOutcome> {
   try {
-    return { resultText: await input.registry.invoke(call.toolName, call.input), cancelled: false, failed: false };
+    return { resultText: await input.registry.invoke(call.toolName, call.input), cancelled: false };
   } catch (error) {
     if (isCancellationOutcome(error, input.signal)) {
-      return { resultText: '', cancelled: true, failed: false };
+      return { resultText: '', cancelled: true };
     }
     const diagnostic = sanitizeProviderErrorDiagnostic(error, input.phase);
     const detail = formatProviderErrorDiagnostic(diagnostic);
     input.debugLog?.(`[AI] tool-execution-error source=dispatcher tool=${call.toolName} callId=${safeCallId(call.callId)} ${detail}`);
-    return { resultText: buildToolExecutionError(call.toolName, detail), cancelled: false, failed: true };
+    return { resultText: buildToolExecutionError(call.toolName), cancelled: false };
   }
 }
 

@@ -64,7 +64,7 @@ interface ParsedDependencies {
 
 /** Body constructs that are not analysed; the references the other rules capture around them still count. */
 const PARTIAL_SUPPORT: ReadonlyArray<readonly [label: string, pattern: RegExp]> = [
-  ['Cursor', /(?<!\[)\bCURSOR\b(?!\])/i],
+  ['Cursor', /(?<![[@\w])CURSOR\b(?!\])/i],
   ['Dynamic SQL', /\bEXEC(?:UTE)?\s*\(|\bsp_executesql\b/i],
 ];
 

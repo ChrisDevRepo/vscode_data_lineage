@@ -1311,6 +1311,70 @@ cases:
     sources:
       - dbo.mytable
       - dbo.other
+  - id: mixed-keyword-case-join
+    description: JOIN with mixed keyword casing
+    sql: sElEcT s.Value fRoM Sales.Source s lEfT jOiN Sales.Target t ON s.Value=t.Value
+    case_modes: [ci, cs]
+    sources: [Sales.Source, Sales.Target]
+  - id: mixed-keyword-case-insert-select
+    description: INSERT SELECT with mixed keyword casing
+    sql: iNsErT iNtO Sales.Target (Value) sElEcT Value fRoM Sales.Source
+    case_modes: [ci, cs]
+    sources: [Sales.Source]
+    targets: [Sales.Target]
+  - id: mixed-keyword-case-update
+    description: UPDATE of a qualified target with mixed keyword casing
+    sql: uPdAtE Sales.Target sEt Value=1
+    case_modes: [ci, cs]
+    targets: [Sales.Target]
+  - id: mixed-keyword-case-merge-using
+    description: MERGE USING with mixed keyword casing
+    sql: mErGe iNtO Sales.Target AS t uSiNg Sales.Source AS s ON t.Value=s.Value WHEN MATCHED THEN UPDATE SET t.Value=s.Value;
+    case_modes: [ci, cs]
+    sources: [Sales.Source]
+    targets: [Sales.Target]
+  - id: mixed-keyword-case-select-into
+    description: SELECT INTO with mixed keyword casing
+    sql: sElEcT Value iNtO Sales.Target fRoM Sales.Source
+    case_modes: [ci, cs]
+    sources: [Sales.Source]
+    targets: [Sales.Target]
+  - id: mixed-keyword-case-ctas
+    description: CTAS with mixed keyword casing
+    sql: cReAtE tAbLe Sales.Target WITH (DISTRIBUTION=ROUND_ROBIN) aS sElEcT Value fRoM Sales.Source
+    case_modes: [ci, cs]
+    sources: [Sales.Source]
+    targets: [Sales.Target]
+  - id: mixed-keyword-case-output-into
+    description: OUTPUT INTO with mixed keyword casing
+    sql: uPdAtE Sales.Target SET Value=1 oUtPuT inserted.Value iNtO Sales.Audit
+    case_modes: [ci, cs]
+    targets: [Sales.Target, Sales.Audit]
+  - id: mixed-keyword-case-execute-return-variable
+    description: EXECUTE with a return variable and mixed keyword casing
+    sql: eXeCuTe @result = Sales.Callee @Value=1
+    case_modes: [ci, cs]
+    exec: [Sales.Callee]
+  - id: mixed-keyword-case-apply-scalar-function
+    description: APPLY and scalar function calls with mixed keyword casing
+    sql: sElEcT Sales.Scalar(s.Value) fRoM Sales.Source s oUtEr aPpLy Sales.Rows(s.Value) r
+    case_modes: [ci, cs]
+    sources: [Sales.Source, Sales.Rows, Sales.Scalar]
+  - id: mixed-keyword-case-delete
+    description: DELETE with mixed keyword casing retains the read dependency without a write
+    sql: dElEtE fRoM Sales.Target WHERE Value=1
+    case_modes: [ci, cs]
+    sources: [Sales.Target]
+  - id: mixed-keyword-case-bulk-insert
+    description: BULK INSERT with mixed keyword casing
+    sql: 'bUlK iNsErT Sales.Target FROM ''synthetic.csv'''
+    case_modes: [ci, cs]
+    targets: [Sales.Target]
+  - id: mixed-keyword-case-copy-into
+    description: COPY INTO with mixed keyword casing
+    sql: 'cOpY iNtO Sales.Target FROM ''https://example.invalid/synthetic.csv'''
+    case_modes: [ci, cs]
+    targets: [Sales.Target]
   - id: a-keyword-glued-to-a-delimited-name-exec-and-execute
     description: 'a keyword glued to a delimited name: EXEC and EXECUTE'
     sql: EXEC[dbo].[uspA]; EXECUTE[dbo].[uspB] 1; EXEC @rc =[dbo].[uspC]; EXEC[dbo].[usp D] @p = 1

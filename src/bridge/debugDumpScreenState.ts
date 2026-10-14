@@ -6,9 +6,6 @@ import { trunc } from '../utils/log';
 /** Analytics groups printed before the dump says how many more there are. */
 const ANALYTICS_GROUP_CAP = 8;
 
-/** Neighbor ids printed on one detail-panel line. */
-const NEIGHBOR_CAP = 40;
-
 /** Truncates a node-id list for dump display, keeping it scannable. */
 function formatIdList(ids: readonly string[], cap = 40): string {
   if (ids.length === 0) return '(none)';
@@ -17,10 +14,7 @@ function formatIdList(ids: readonly string[], cap = 40): string {
 
 /** Tags neighbors in-trace or off-trace and caps the line. */
 function formatTaggedNeighbors(ids: readonly string[], traced: ReadonlySet<string>): string {
-  if (ids.length === 0) return '(none)';
-  const shown = ids.slice(0, NEIGHBOR_CAP).map(id => `${id} ${traced.has(id) ? '[in-trace]' : '[off-trace]'}`);
-  const extra = ids.length - shown.length;
-  return `${shown.join(', ')}${extra > 0 ? ` … +${extra} more` : ''}`;
+  return formatIdList(ids.map(id => `${id} ${traced.has(id) ? '[in-trace]' : '[off-trace]'}`));
 }
 
 /** Formats one lineage side's add/prune affordances, surfacing the grayed-control reason. */

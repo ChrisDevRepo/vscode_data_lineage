@@ -11,7 +11,7 @@ import type { CustomNodeData, TraceNeighborOption, TraceNodeControls } from '../
 import type { NeighborSide } from '../engine/graphGuards';
 
 /** Whether the canvas zoom is low enough that a node should render as a plain, undecorated box. */
-export function isZoomBelowSimpleThreshold(zoom: number): boolean {
+function isZoomBelowSimpleThreshold(zoom: number): boolean {
   return zoom < SIMPLE_NODE_ZOOM_THRESHOLD;
 }
 

@@ -105,18 +105,10 @@ export function buildModel(
 
   const neighborIndex = buildNeighborIndex(edges, neighborPairs);
 
-  const warnings: string[] = [];
-  if (objects.length === 0) {
-    warnings.push('No objects found in data source.');
-  } else if (nodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found.');
-  }
-
   return {
     nodes, edges, schemas, catalog, neighborIndex,
     ...(identifierCaseSensitive && { identifierCaseSensitive }),
     parseStats: stats,
-    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
@@ -380,7 +372,7 @@ function groupDependencies(
     if (sourceId === targetId) continue;
 
     if (!nodeIds.has(sourceId)) {
-      if (allNodeIds.size > 0 && allNodeIds.has(sourceId) && nodeIds.has(targetId)) {
+      if (allNodeIds.has(sourceId) && nodeIds.has(targetId)) {
         inboundNeighborPairs.push({ source: targetId, target: sourceId });
       }
       continue;
@@ -389,7 +381,7 @@ function groupDependencies(
     if (nodeIds.has(targetId)) {
       if (!depsPerSource.has(sourceId)) depsPerSource.set(sourceId, []);
       depsPerSource.get(sourceId)!.push(targetId);
-    } else if (allNodeIds.size > 0 && allNodeIds.has(targetId)) {
+    } else if (allNodeIds.has(targetId)) {
       if (!crossSchemaDepsForNode.has(sourceId)) crossSchemaDepsForNode.set(sourceId, []);
       crossSchemaDepsForNode.get(sourceId)!.push(targetId);
     } else {
@@ -487,7 +479,7 @@ function processRegexRefs(
         const n = ctx.nodeMap.get(depId);
         const label = n ? `${n.schema}.${n.name}` : dep;
         outRefs.push(edgeType === 'exec' ? label + ' (exec)' : label);
-      } else if (ctx.allNodeIds.size > 0 && ctx.allNodeIds.has(depId)) {
+      } else if (ctx.allNodeIds.has(depId)) {
         if (direction === 'in') {
           ctx.neighborPairs.push({ source: depId, target: sourceId });
         } else {
@@ -552,7 +544,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
         ctx.stats.resolvedEdges++;
         const n = ctx.nodeMap.get(depId);
         spInRefs.push(n ? `${n.schema}.${n.name}` : dep);
-      } else if (ctx.allNodeIds.size > 0 && ctx.allNodeIds.has(depId)) {
+      } else if (ctx.allNodeIds.has(depId)) {
         ctx.neighborPairs.push({ source: depId, target: sourceId });
       } else {
         const parts = splitSqlName(dep);

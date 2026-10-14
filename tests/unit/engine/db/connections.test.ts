@@ -190,8 +190,8 @@ describe('connectDatabase — builtIn', () => {
     expect(host.showQuickPick).not.toHaveBeenCalled();
   });
 
-  it.each([[undefined, 1433], [1433, undefined]])('matches an omitted default port to1433 (stored %s, saved %s)', async (storedPort, savedPort) => {
-    host.settings['dataLineageViz.database.connections'] = [{ ...local, port: savedPort }];
+  it.each([[undefined, 1433, 'localhost'], [1433, undefined, 'localhost'], [undefined, undefined, 'tcp:localhost']])('matches an omitted default port to 1433 and ignores a tcp: prefix (stored %s, saved %s, %s)', async (storedPort, savedPort, server) => {
+    host.settings['dataLineageViz.database.connections'] = [{ ...local, server, port: savedPort }];
     await connectDatabase(env, { server: 'localhost', port: storedPort, database: 'AdventureWorks', user: 'sa', authenticationType: 'SqlLogin' });
     expect(host.openBuiltInSession).toHaveBeenCalledWith(expect.objectContaining({ id: local.id }), env, expect.anything());
     expect(host.showQuickPick).not.toHaveBeenCalled();

@@ -214,10 +214,10 @@ export interface IHopStateMachine {
    * @param nodeIds - Ids to append to the shared agenda. Tables and external objects receive their own hop.
    *   Ids outside the graph are dropped.
    * @param leadIds - Host-selected pending lead identifiers to schedule.
-   * @returns Counts agendaed, contracted, or skipped (unknown / duplicate), plus `skippedDetails`
+   * @returns Counts agendaed or skipped (unknown / duplicate), plus `skippedDetails`
    *   naming which id was dropped and why.
    */
-  supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection;
+  supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection;
 }
 
 /**
@@ -2429,13 +2429,13 @@ export class NavigationEngine implements IHopStateMachine {
    * fresh {@link NavigationInitParams} proposal is not blocked by a live-engine check.
    *
    * @param leadIds - Host-selected pending leads; never accepted from a model tool payload.
-   * @returns Counts for agendaed, contracted, and skipped ids, plus per-node `skippedDetails`
+   * @returns Counts for agendaed and skipped ids, plus per-node `skippedDetails`
    *   naming which id was dropped and why (`excluded` | `out_of_allowlist` | `unresolved` |
    *   `not_connected_to_trace`, the last two refusals carrying a `hint`), or a structured error. A
    *   partial admit — some ids agendaed, others skipped — is always `{ ok: true, ... }`, never
    *   silent: every skip is named.
    */
-  public supplementAgenda(nodeIds: string[], leadIds: string[] = [], chain?: SupplementChain): { ok: true; agendaed: number; contracted: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection {
+  public supplementAgenda(nodeIds: string[], leadIds: string[] = [], chain?: SupplementChain): { ok: true; agendaed: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection {
     if (this._status !== 'complete') {
       return makeRejection({
         code: REJECTION_CODES.supplementRequiresCompleteEngine,
@@ -2556,14 +2556,13 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const agendaed = this._agenda.length - agendaBefore;
-    const contracted = requested.length - agendaed - skipped;
 
     if (agendaed > 0) this._status = 'awaiting_findings';
 
     const modeLabel = this.tracer ? 'sm (ct)' : 'sm';
-    this.log('info', `[Supplement] added ${requested.length} requested tasks → agendaed=${agendaed} contracted=${contracted} skipped=${skipped}; mode=${modeLabel}, status=${this._status}`);
+    this.log('info', `[Supplement] added ${requested.length} requested tasks → agendaed=${agendaed} skipped=${skipped}; mode=${modeLabel}, status=${this._status}`);
 
-    return { ok: true, agendaed, contracted, skipped, skippedDetails };
+    return { ok: true, agendaed, skipped, skippedDetails };
   }
 
   /**
@@ -4174,8 +4173,7 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @param reachable - The reachability-bounded render set to classify.
    * @param columnBorder - Column-edge endpoints the render does not hold ({@link columnEndpointsOutsideRender}), classified against the
-   *   same contract with two differences from `reachable`: an engine-written `non_bodied_passthrough` on a committed edge is not retention
-   *   evidence (treated as absent), and a border node's membership bypasses `removedSet`, so a prune that pulled it out of the render can
+   *   same contract with one difference from `reachable`: a border node's membership bypasses `removedSet`, so a prune that pulled it out of the render can
    *   still leave it named on a committed edge — routed through the sink check here, the one case a prune verdict does not already answer.
    *   Off the border every in-scope node is inside the approved schema set, so a schema the approval opened through `excludeSchemas`
    *   is classified exactly like one the GUI filter ticked.
@@ -4187,9 +4185,8 @@ export class NavigationEngine implements IHopStateMachine {
       if (id === this.originNodeId) continue;
       const state = this.nodeStates.get(id);
       const onBorder = columnBorder.has(id);
-      const engineRecord = onBorder && state?.source === 'engine' && state.reason === 'non_bodied_passthrough';
       const borderPruned = onBorder && state?.action === 'prune';
-      if (state !== undefined && !engineRecord && !borderPruned) continue;
+      if (state !== undefined && !borderPruned) continue;
       if (this.taskLedger.investigationTasks.some(task => task.nodeId === id && task.status !== 'deferred')) continue;
       if (!onBorder && this.tracer?.edges.some(edge =>
         edge.from_node === id || edge.to_node === id || edge.hop_node === id)) continue;

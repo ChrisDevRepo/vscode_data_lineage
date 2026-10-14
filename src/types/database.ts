@@ -18,22 +18,6 @@ export interface IDbColumn {
    * Column name reported by the database.
    */
   columnName: string;
-  /**
-   * Database-specific type identifier.
-   */
-  dataType: string;
-  /**
-   * Display name of the SQL data type.
-   */
-  dataTypeName: string;
-  /**
-   * Whether the column allows `NULL` values.
-   */
-  allowDBNull?: boolean;
-  /**
-   * Ordinal position of the column in the result set.
-   */
-  columnOrdinal?: number;
 }
 
 /**
@@ -54,32 +38,8 @@ export interface SimpleExecuteResult {
   rows: DbCellValue[][];
 }
 
-/**
- * SQL Server metadata.
- */
+/** SQL Server metadata. */
 export interface IServerInfo {
-  /**
-   * Major SQL Server version number.
-   */
-  serverMajorVersion: number;
-  /**
-   * Minor SQL Server version number.
-   */
-  serverMinorVersion: number;
-  /**
-   * Full SQL Server version string.
-   */
-  serverVersion: string;
-  /**
-   * SQL engine edition identifier.
-   */
+  /** SQL engine edition identifier (`SERVERPROPERTY('EngineEdition')`). */
   engineEditionId: number;
-  /**
-   * Whether the server runs in a cloud environment.
-   */
-  isCloud: boolean;
-  /**
-   * Edition name reported by the server.
-   */
-  serverEdition: string;
 }

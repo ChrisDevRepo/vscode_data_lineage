@@ -224,9 +224,9 @@ export function registerCommands(
      * Command intended for testing/integration that forces a .dacpac file load into the active session.
      *
      * @remarks
-     * Installs the model through the same path the webview bridge uses, so the session it leaves
-     * behind is indistinguishable from a wizard load — including the `dataLineageViz.modelLoaded`
-     * context key. Renders into an already-open panel; it does not open one.
+     * Installs the model with the bridge's `applyModelToSession`, including the `dataLineageViz.modelLoaded`
+     * context key, but skips the file-size check and parse statistics of a wizard load. Renders into an
+     * already-open panel; it does not open one.
      */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
       configLogger.info(`Forcing project load from: ${uri.fsPath}`);

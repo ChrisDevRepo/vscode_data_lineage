@@ -244,7 +244,8 @@ describe('DACPAC load paths and three-part names', () => {
     const { handlers, output } = arrange(host, { type: 'dacpac', path: '/tmp/self.dacpac', displayName: 'Self', schemas: ['dbo'] });
     await handlers['load-project']({ type: 'load-project', id: 'p1' });
     expect(modelEdges(host)).toContain('[dbo].[t] -> [dbo].[usp_sync]');
-    expect(output.warn).toHaveBeenCalledWith('[Parse] Cursor not fully supported — loaded with the references the parser captures: [dbo].[usp_Sync]');
+    expect(output.warn).toHaveBeenCalledWith('[Parse] Cursor not fully supported — loaded with the references the parser captures: 1 module(s), named in the debug log');
+    expect(output.debug).toHaveBeenCalledWith('[Parse] Cursor not fully supported — loaded with the references the parser captures: [dbo].[usp_Sync]');
   });
 
   it('an opened DACPAC keeps the DACPAC database local after schema selection', async () => {

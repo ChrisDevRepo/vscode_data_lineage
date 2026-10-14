@@ -17,11 +17,11 @@ import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { notifyWarning } from '../utils/notifications';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
-import { DbConnectionError, type ConnectionErrorTarget, type DbSession } from './db/dbSession';
+import { DbConnectionError, type DbSession } from './db/dbSession';
 import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
-import { describeConnection, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
+import { describeConnection, dropTcpPrefix, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
-import { type ConnectionErrorHooks } from './db/connectionErrors';
+import { builtInTarget, type ConnectionErrorHooks } from './db/connectionErrors';
 
 const DmvQueriesConfigSchema = z.object({
   version: z.coerce.number().optional(),
@@ -317,7 +317,7 @@ function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnec
   const host = parseServerInput(stored.server) ?? { server: stored.server };
   const defaultPort = host.server.includes('\\') ? undefined : 1433;
   const port = stored.port ?? host.port ?? defaultPort;
-  const matches = connections.filter((c) => c.server.toLowerCase() === host.server.toLowerCase()
+  const matches = connections.filter((c) => dropTcpPrefix(c.server).toLowerCase() === host.server.toLowerCase()
     && (c.port ?? defaultPort) === port
     && (!kind || c.authenticationType === kind)
     && same(c.user, stored.user));
@@ -425,19 +425,6 @@ export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnecti
   } catch (err) {
     throw new DbConnectionError(builtInTarget(connection, database), err);
   }
-}
-
-function builtInTarget(connection: BuiltInConnection, database: string | undefined): ConnectionErrorTarget {
-  return {
-    name: connection.name,
-    server: connection.server,
-    port: connection.port,
-    database,
-    user: connection.user,
-    authenticationType: connection.authenticationType,
-    connectionId: connection.id,
-    tenantId: connection.tenantId,
-  };
 }
 
 /**
@@ -563,26 +550,8 @@ export async function executeDmvQueriesFiltered(
     if (warning) logger.warn(warning);
   }
 
-  const results = new Map<string, SimpleExecuteResult>();
-  const total = phase2Queries.length;
-
-  for (let i = 0; i < phase2Queries.length; i++) {
-    const query = phase2Queries[i];
-    const step = i + 1;
-    const sql = expandSchemaPlaceholder(query.sql, schemas);
-
-    onProgress?.(step, total, query.name);
-    logger.debug(`Executing ${query.name} (${step}/${total}) — SQL: ${trunc(sanitizeForLog(sql), 300)}`);
-
-    const start = Date.now();
-    const result = await runTimed(session, sql, queryTimeoutMs, dmvTimeoutMessage(query.name, queryTimeoutMs ?? 0));
-    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-
-    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
-    results.set(query.name, result);
-  }
-
-  return results;
+  const expanded = phase2Queries.map(query => ({ ...query, sql: expandSchemaPlaceholder(query.sql, schemas) }));
+  return executeDmvQueries(session, expanded, outputChannel, onProgress, queryTimeoutMs);
 }
 
 /**

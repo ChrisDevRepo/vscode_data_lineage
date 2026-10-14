@@ -226,42 +226,6 @@ function testFormatColumnType() {
   }
 }
 
-function testFallbackBodyDirection() {
-
-  const nodesCols = cols(...nodeFields);
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('WriteTarget'), cell('U '), nullCell()],
-    [cell('dbo'), cell('ReadSource'),  cell('U '), nullCell()],
-    [cell('dbo'), cell('TestFallbackSP'), cell('P '),
-      cell('CREATE PROCEDURE dbo.TestFallbackSP AS UPDATE WriteTarget SET x = 1; SELECT * FROM ReadSource')],
-  ];
-
-  const depsCols = cols(...dependencyFields);
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('TestFallbackSP'), cell('dbo'), cell('WriteTarget')],
-    [cell('dbo'), cell('TestFallbackSP'), cell('dbo'), cell('ReadSource')],
-  ];
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(cols(...columnFields), []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results);
-
-  const writeEdge = model.edges.find(e =>
-    e.source === '[dbo].[testfallbacksp]' && e.target === '[dbo].[writetarget]'
-  );
-  expect(writeEdge !== undefined, 'Fallback: unqualified UPDATE → WRITE edge (SP → table)').toBe(true);
-
-  const readEdge = model.edges.find(e =>
-    e.source === '[dbo].[readsource]' && e.target === '[dbo].[testfallbacksp]'
-  );
-  expect(readEdge !== undefined, 'Fallback: unqualified FROM → READ edge (table → SP)').toBe(true);
-}
-
-
 function testCrossSchemaUnresolved() {
 
   const nodesCols = cols(...nodeFields);
@@ -427,89 +391,21 @@ function testConstraintMapsEnrichColumns() {
 }
 
 
-function testCrossDbDepsFromDmv() {
-
-  const nodesCols = cols(...nodeFields);
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
-    [cell('dbo'), cell('spLoadFromArchive'), cell('P '),
-      cell('CREATE PROCEDURE [dbo].[spLoadFromArchive] AS\nINSERT INTO [dbo].[Sales]\nSELECT * FROM [ArchiveDB].[dbo].[ArchivedSales]')],
-  ];
-
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('Sales'), nullCell()],
-    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('ArchivedSales'), cell('ArchiveDB')],
-  ];
-
-  const emptyCols = cols(...columnFields);
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(emptyCols, []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results);
-
-  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
-  expect(crossDbNode !== undefined, 'CrossDB-DMV: virtual db node created from referenced_database').toBe(true);
-  expect(crossDbNode?.externalDatabase?.toLowerCase(), 'CrossDB-DMV: externalDatabase set correctly').toBe('archivedb');
-  expect(crossDbNode?.schema, 'CrossDB-DMV: virtual node has empty schema').toBe('');
-  expect(crossDbNode!.name.toLowerCase().includes('archivedsales'), 'CrossDB-DMV: virtual node name includes object name').toBe(true);
-
-  const crossDbEdge = model.edges.find(e =>
-    e.target === '[dbo].[sploadfromarchive]' && e.source === crossDbNode!.id
-  );
-  expect(crossDbEdge !== undefined,
-    `CrossDB-DMV: cross-DB → SP edge exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
-
-  const localEdge = model.edges.find(e =>
-    e.source === '[dbo].[sploadfromarchive]' && e.target === '[dbo].[sales]'
-  );
-  expect(localEdge !== undefined, 'CrossDB-DMV: local SP → Sales write edge exists').toBe(true);
-
-  expect(model.nodes.length, 'CrossDB-DMV: 2 real + 1 virtual = 3 nodes').toBe(3);
-}
-
-function testCrossDbSameDbSuppression() {
-
-  const nodesCols = cols(...nodeFields);
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
-    [cell('dbo'), cell('ArchivedSales'), cell('U '), nullCell()],
-    [cell('dbo'), cell('spLoad'), cell('P '),
-      cell('CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM [dbo].[ArchivedSales]')],
-  ];
-
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('ArchivedSales'), cell('MyDB')],
-    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('Sales'), nullCell()],
-  ];
-
-  const emptyCols = cols(...columnFields);
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(emptyCols, []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results, 'MyDB');
-  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
-  expect(crossDbNode === undefined, 'CrossDB-SameDB: no virtual node when referenced_database = currentDatabase').toBe(true);
-  expect(model.nodes.length, 'CrossDB-SameDB: only 3 real nodes').toBe(3);
-}
+it('maps referenced_database rows to three-part dependencies resolved against the current database', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [['dbo', 'Sales', 'U ', null], ['dbo', 'spLoad', 'P ', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT 1']]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult([...dependencyFields, 'referenced_database'], [['dbo', 'spLoad', 'dbo', 'ArchivedSales', 'ArchiveDB'], ['dbo', 'spLoad', 'dbo', 'Sales', 'MyDB']]),
+  }, 'MyDB');
+  expect(model.nodes.filter(n => n.externalType === 'db').map(n => n.id)).toEqual(['[archivedb].[dbo].[archivedsales]']);
+  expect(model.edges.map(e => `${e.source} -> ${e.target}`).sort()).toEqual(['[archivedb].[dbo].[archivedsales] -> [dbo].[spload]', '[dbo].[sales] -> [dbo].[spload]']);
+});
 
 it('builds a model from DMV results', testBuildModelFromDmv);
 it('validates query results against their required columns', testValidateQueryResult);
 it('formats column types', testFormatColumnType);
-it('falls back to body-derived edge direction', testFallbackBodyDirection);
 it('leaves an unresolved cross-schema reference unresolved', testCrossSchemaUnresolved);
 it('resolves a cross-schema reference known to the catalog', testCrossSchemaKnownViaCatalog);
-it('derives cross-database dependencies from DMV rows', testCrossDbDepsFromDmv);
-it('suppresses a cross-database reference to the current database', testCrossDbSameDbSuppression);
 it('enriches columns from constraint maps', testConstraintMapsEnrichColumns);
 
 

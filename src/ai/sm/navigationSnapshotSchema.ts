@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { SmState } from './smTypes';
+import type { SmNodeState, SmState } from './smTypes';
 import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
@@ -108,7 +108,7 @@ const NodeStateSchema = z.object({
     'submitted_prune',
     'bb_prune_neighbor',
     'user_pass_filter',
-    'non_bodied_passthrough',
+    'non_bodied_passthrough', // retired; read from older snapshots and dropped
   ]),
   columns: z.array(NonEmptyString).optional(),
   columnRole: z.enum(['carrier', 'row_role_only']).optional(),
@@ -301,7 +301,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   scopeNodeIds: z.array(NonEmptyString),
   visited: z.array(NonEmptyString),
   removedSet: z.array(NonEmptyString),
-  nodeStates: z.array(NodeStateSchema),
+  nodeStates: z.array(NodeStateSchema).transform(states => states.filter((state): state is SmNodeState => state.reason !== 'non_bodied_passthrough')),
   agendaSize: NonNegativeInt,
   agenda: z.array(AgendaEntrySchema),
   currentFocusNodeId: NonEmptyString.nullable(),

@@ -280,7 +280,24 @@ export function createMessageHandlers(
   reportDocumentRef: ReportDocumentRef = {}
 ): MessageHandlerBundle {
 
-  let cachedDacpac: Awaited<ReturnType<typeof extractSchemaPreview>> | null = null;
+  type DacpacPreview = Awaited<ReturnType<typeof extractSchemaPreview>>;
+  let cachedDacpac: DacpacPreview | null = null;
+  /** Builds the selected schemas of a DACPAC preview and installs the model; false when it is over the object limit. */
+  function installFilteredDacpac(dacpac: DacpacPreview, schemas: readonly string[], project: { id: string; name: string } | null, sourceName: string): boolean {
+    const config = readExtensionConfig(host);
+    const logger = Logger.create(outputChannel, 'Parse');
+    const model = extractDacpacFiltered(dacpac.elements, new Set(schemas), dacpac.dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+      externalRefsEnabled: config.externalRefs.enabled,
+      identifierCaseSensitive: dacpac.identifierCaseSensitive,
+      databaseName: dacpac.databaseName,
+    });
+    if (isModelOverLimit(model, config.maxNodes, logger, host)) return false;
+    logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
+    setCurrentModel(model, false, project);
+    if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
+    host.postMessage({ type: 'dacpac-model', model, config, sourceName });
+    return true;
+  }
   let lastConnectionInfo: StoredConnectionInfo | undefined;
   const dmvQueries = createDmvQueryCache(() => loadDmvQueries(outputChannel, context.extensionUri));
   const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: dmvQueries.get };
@@ -565,7 +582,6 @@ export function createMessageHandlers(
       const token = load.token;
       if (token.isCancellationRequested) return;
       host.log('info', 'Bridge', `Loading project: ${msg.id}`);
-      if (token.isCancellationRequested) return;
 
       const store = loadProjectStore(context);
       const project = store.projects.find(p => p.id === msg.id);
@@ -583,29 +599,19 @@ export function createMessageHandlers(
           if (token.isCancellationRequested) return;
           if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
 
-          const config = readExtensionConfig(host);
           const schemas = project.connection.schemas;
           const extracted = await extractSchemaPreview(data);
-          const { preview, elements, dspName, identifierCaseSensitive, databaseName } = extracted;
           if (token.isCancellationRequested) return;
 
           if (schemas && schemas.length > 0) {
             host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
-            const logger = Logger.create(outputChannel, 'Parse');
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-              externalRefsEnabled: config.externalRefs.enabled,
-              identifierCaseSensitive,
-              databaseName,
-            });
-            if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
-            logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
-            setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
-            if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-            host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
+            const name = project.connection.displayName;
+            if (!installFilteredDacpac(extracted, schemas, { id: project.id, name }, name)) return;
           } else {
             host.log('debug', 'Bridge', 'No schemas in project, showing preview');
             cachedDacpac = extracted;
-            host.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
+            const { preview } = extracted;
+            host.postMessage({ type: 'dacpac-schema-preview', preview, config: readExtensionConfig(host), sourceName: project.connection.displayName });
             host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
           }
           const latestStore = loadProjectStore(context);
@@ -629,7 +635,7 @@ export function createMessageHandlers(
         }
       } else if (project.connection.type === 'database') {
         const dbConn = project.connection;
-        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, token) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, token), async (session, _progress, token) => {
+        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, token) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, token), async (session, token) => {
           lastConnectionInfo = session.connectionInfo;
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
@@ -695,28 +701,15 @@ export function createMessageHandlers(
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
         return;
       }
-      const config = readExtensionConfig(host);
-      const logger = Logger.create(outputChannel, 'Parse');
-      let model: DatabaseModel;
+      const sess = getSession();
+      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
       try {
-        model = extractDacpacFiltered(cachedDacpac.elements, new Set(msg.schemas), cachedDacpac.dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-          externalRefsEnabled: config.externalRefs.enabled,
-          identifierCaseSensitive: cachedDacpac.identifierCaseSensitive,
-          databaseName: cachedDacpac.databaseName,
-        });
+        installFilteredDacpac(cachedDacpac, msg.schemas, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null, projectName);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         host.log('error', 'Dacpac', 'Dacpac visualize', err);
         host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}`, phase: 'extract' });
-        return;
       }
-      if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
-      logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
-      const sess = getSession();
-      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
-      setCurrentModel(model, false, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
-      if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-      host.postMessage({ type: 'dacpac-model', model, config, sourceName: projectName });
     },
     'db-visualize': async (msg) => {
       const load = beginLoad();
@@ -729,7 +722,7 @@ export function createMessageHandlers(
           return undefined;
         }
         return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, token);
-      }, async (conn, _progress, token) => {
+      }, async (conn, token) => {
         const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
         let pendingProject: ReturnType<typeof createProject> | null = null;
         if (msg.projectName) {
@@ -797,7 +790,7 @@ export function createMessageHandlers(
       const load = beginLoad();
       if (load.token.isCancellationRequested) return;
       host.log('debug', 'Bridge', 'Database connect requested');
-      return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn, _progress, token) => {
+      return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn, token) => {
         lastConnectionInfo = conn.connectionInfo;
         return runDbPhase1Host(host, conn, outputChannel, dmvQueries.reload, token);
       }, load, () => cancelLoad(load));
@@ -1191,11 +1184,11 @@ async function withDbProgressHost(
   env: DbConnectEnv,
   title: string,
   connectFn: (patch: Partial<StoredConnectionInfo> | undefined, token: vscode.CancellationToken) => Promise<DbSession | undefined>,
-  phaseFn: (session: DbSession, progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Promise<void>,
+  phaseFn: (session: DbSession, token: vscode.CancellationToken) => Promise<void>,
   load: vscode.CancellationTokenSource,
   onCancel: () => void,
 ) {
-  await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
+  await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_progress, token) => {
     let session: DbSession | undefined;
     let disconnected: Promise<void> | undefined;
     const disconnect = () => session ? disconnected ??= session.dispose().catch((err: unknown) =>
@@ -1208,7 +1201,7 @@ async function withDbProgressHost(
       session = await connectFn(undefined, load.token);
       if (load.token.isCancellationRequested) return;
       if (session) {
-        await phaseFn(session, progress, load.token);
+        await phaseFn(session, load.token);
       } else {
         host.log('info', 'DB', `${title} cancelled or failed to connect`);
         host.postMessage({ type: 'db-cancelled' });
@@ -1356,11 +1349,11 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
     }
   }
 
-  if (stats.unreadableDefinitions?.length) {
-    logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges: ${stats.unreadableDefinitions.join(', ')}`);
-  }
-  for (const [label, names] of Object.entries(stats.unsupported ?? {})) {
-    logger.warn(`${label} not fully supported — loaded with the references the parser captures: ${names.join(', ')}`);
+  const unsupported: Array<[string, string[]]> = [['Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges', stats.unreadableDefinitions ?? []],
+    ...Object.entries(stats.unsupported ?? {}).map(([label, names]): [string, string[]] => [`${label} not fully supported — loaded with the references the parser captures`, names])];
+  for (const [text, names] of unsupported) {
+    if (names.length) logger.warn(`${text}: ${names.length} module(s), named in the debug log`);
+    if (names.length) logger.debug(`${text}: ${trunc(names, LOG_TRUNC_LIST)}`);
   }
 
   if (spCount === 0) {

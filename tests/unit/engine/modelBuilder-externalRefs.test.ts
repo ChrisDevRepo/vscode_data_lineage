@@ -153,22 +153,6 @@ describe('cross-database references', () => {
     );
   });
 
-  const sameDbObjects = () => [
-    procedure('[dbo].[spLoad]', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM MyDB.dbo.Sales'),
-    table('[dbo].[Sales]'),
-  ];
-  const sameDbDeps = [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }];
-
-  it('resolves a same-database reference locally when the current database is known (DMV path)', () => {
-    const built = buildModel(sameDbObjects(), sameDbDeps, undefined, 'MyDB');
-    expect(built.nodes.find(node => node.externalType === 'db')).toBeUndefined();
-  });
-
-  it('keeps a three-part reference external when no current database is known', () => {
-    const built = buildModel(sameDbObjects(), sameDbDeps);
-    expect(built.nodes.find(node => node.externalType === 'db')?.id).toBe('[mydb].[dbo].[sales]');
-  });
-
   it('adds no node or edge for a catalog cross-database dependency of an out-of-scope object', () => {
     const built = buildModel(
       [table('[dbo].[T]')],
@@ -353,21 +337,20 @@ describe('three-part self-reference in the current database', () => {
   });
 });
 
-describe('three-part reference to another database that has a same-named local object', () => {
-  const body = `CREATE PROCEDURE [dbo].[pSync] AS
+describe('three-part references resolve locally only in the current database', () => {
+  const load = [procedure('[dbo].[spLoad]', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM MyDB.dbo.Sales'), table('[dbo].[Sales]')];
+  const sync = [procedure('[dbo].[pSync]', `CREATE PROCEDURE [dbo].[pSync] AS
     INSERT INTO OtherDb.dbo.T (a) SELECT a FROM OtherDb.dbo.X;
-    UPDATE o SET a = l.a FROM OtherDb.dbo.T o JOIN dbo.T l ON l.a = o.a`;
-  const objects = [procedure('[dbo].[pSync]', body), table('[dbo].[T]'), table('[dbo].[X]')];
-  const deps = [{ sourceName: '[dbo].[pSync]', targetName: '[dbo].[T]' }];
+    UPDATE o SET a = l.a FROM OtherDb.dbo.T o JOIN dbo.T l ON l.a = o.a`), table('[dbo].[T]'), table('[dbo].[X]')];
+  const syncEdges = ['[dbo].[psync] -> [otherdb].[dbo].[t]', '[dbo].[t] -> [dbo].[psync]', '[otherdb].[dbo].[t] -> [dbo].[psync]', '[otherdb].[dbo].[x] -> [dbo].[psync]'];
 
-  it.each([['a known current database', 'LocalDb'], ['no known current database', undefined]] as const)(
-    'keeps the other database external with %s', (_label, currentDatabase) => {
-      const edges = buildModel(objects, deps, undefined, currentDatabase).edges.map(edge => `${edge.source} -> ${edge.target}`).sort();
-      expect(edges).toEqual([
-        '[dbo].[psync] -> [otherdb].[dbo].[t]',
-        '[dbo].[t] -> [dbo].[psync]',
-        '[otherdb].[dbo].[t] -> [dbo].[psync]',
-        '[otherdb].[dbo].[x] -> [dbo].[psync]',
-      ]);
-    });
+  it.each([
+    ['resolves a same-database reference locally when the current database is known', load, 'MyDB', ['[dbo].[sales] -> [dbo].[spload]']],
+    ['keeps a three-part reference external when no current database is known', load, undefined, ['[dbo].[sales] -> [dbo].[spload]', '[mydb].[dbo].[sales] -> [dbo].[spload]']],
+    ['keeps another database external despite a same-named local object (known current database)', sync, 'LocalDb', syncEdges],
+    ['keeps another database external despite a same-named local object (no current database)', sync, undefined, syncEdges],
+  ] as const)('%s', (_label, objects, currentDatabase, expected) => {
+    const deps = [{ sourceName: objects[0].fullName, targetName: objects[1].fullName }];
+    expect(buildModel([...objects], deps, undefined, currentDatabase).edges.map(edge => `${edge.source} -> ${edge.target}`).sort()).toEqual(expected);
+  });
 });

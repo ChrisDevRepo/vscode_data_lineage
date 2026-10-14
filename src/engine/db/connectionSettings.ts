@@ -83,7 +83,8 @@ export async function readSavedPassword(
   return matches ? saved.data.password : undefined;
 }
 
-const MAX_TCP_PORT = 65535;
+/** Highest valid TCP port. */
+export const MAX_TCP_PORT = 65535;
 
 /** SQL Server `sysname` length: bounds logins and database names. */
 export const MAX_SYSNAME_LENGTH = 128;

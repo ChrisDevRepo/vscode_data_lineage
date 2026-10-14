@@ -92,9 +92,8 @@ function markedTransformClasses(transforms: readonly ColumnTransformClass[] | un
  * A `pass_through`-only edge never reaches here — it renders no chip, because identity is what an
  * unmarked line already says. `filter`/`combine` are INDIRECT: no value crosses the edge, so the
  * structural fallback says what the edge does to the row set rather than claiming a value changed.
- * Exported so the tooltip contract is testable without simulating hover.
  */
-export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
+function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
   const classes = markedTransformClasses(data.transforms);
   if (classes.length === 0) {
     return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
@@ -192,7 +191,7 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
  * direction is the primary semantic, and it stays unfilled because the object-type legend uses a
  * filled dot for a view. r=7 in the 24-unit box lands as a ~5.8px ring inside the 20px glyph box.
  */
-export function ColumnTransformGlyph() {
+function ColumnTransformGlyph() {
   return (
     <svg
       width={CHIP_GLYPH_SIZE}

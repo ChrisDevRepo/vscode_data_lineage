@@ -93,7 +93,7 @@ describe('Debug Dump Screen-State', () => {
     expect(out).toContain('IN  (41):');
     expect(out).toContain('in-0 [off-trace]');
     expect(out).toContain('in-39 [off-trace]');
-    expect(out).toContain('… +1 more');
+    expect(out).toContain('… [+1 more]');
     expect(out).not.toContain('in-40');
   });
 

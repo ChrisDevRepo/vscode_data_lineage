@@ -75,10 +75,10 @@ const RejectionShape = z.object({
  * @param toolName - Canonical tool name whose handler threw.
  * @returns Generic JSON rejection safe to project into graph attempt state.
  */
-export function buildToolExecutionError(toolName: string, detail?: string): string {
+export function buildToolExecutionError(toolName: string): string {
   return JSON.stringify(makeRejection({
     code: REJECTION_CODES.toolExecutionError,
-    reason: `${toolName} failed inside the extension.${detail ? ` Detail: ${detail}` : ''}`,
+    reason: `${toolName} failed inside the extension.`,
   }));
 }
 
