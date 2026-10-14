@@ -584,8 +584,8 @@ const ColumnFlowEntrySchema = z.object({
     'A column used only to join, filter, group, partition or order rows is not a source: omit it here and state it in sections. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
     'At a bodyless focus, upstream_columns names only writers supplying the tracked column, never readers. ' +
-    'For downstream passthrough, forward the arriving column task without declaring a reader as its source; ' +
-    'analyze with [] declares a terminal output.',
+    'For passthrough with column_flow: [], forward the arriving column task to downstream consumers or a bodyless focus\'s upstream writers without declaring an unconfirmed source; ' +
+    'analyze with upstream_columns: [] declares a terminal output.',
   ),
 }).strict();
 

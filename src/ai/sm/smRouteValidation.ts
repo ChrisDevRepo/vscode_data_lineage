@@ -18,7 +18,7 @@ import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope'
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
   return kind === 'absent_contributor'
     || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
-    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued' || kind === 'prune_noop_out_of_scope';
+    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued';
 }
 
 /**
@@ -64,7 +64,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_queued:
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_noop_out_of_scope:
-    'This node is outside the approved scope (schema, direction, exclusion, or depth) and was never loaded into the graph — there is nothing to prune. Remove it from prune_neighbors.',
+    'This node is outside the approved scope (schema, direction, exclusion, or depth) and cannot be pruned. Remove it from prune_neighbors.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
   prune_question_conflict:

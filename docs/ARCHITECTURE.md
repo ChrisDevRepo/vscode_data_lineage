@@ -54,7 +54,7 @@ A small question is answered directly in chat. A larger one becomes an explorati
 
 ### Exploration
 
-Each step is a **hop**: the AI reads one object's SQL or available metadata, records what it does, and supplies decisions and questions for its neighbors. The engine validates the submission before committing or advancing; an incomplete or invalid submission receives feedback so the AI can correct only the affected parts. Explicit passthrough forwards the incoming question within the approved scope. These checks do not establish that the AI interpreted the SQL correctly. If correction cannot produce a valid answer, the run stops with an error naming the object.
+Each step is a **hop**: the AI reads one object's SQL or available metadata, records what it does, and supplies decisions and questions for its neighbors. The engine validates the submission before committing or advancing; an incomplete or invalid submission receives feedback so the AI can correct only the affected parts. Explicit passthrough forwards the incoming question within the approved scope. At a bodyless upstream focus, it can also carry an unresolved qualified output to its writers without asserting a value edge; their SQL resolves that output. These checks do not establish that the AI interpreted the SQL correctly. If correction cannot produce a valid answer, the run stops with an error naming the object.
 
 An exploration can carry object-level or column-level work:
 

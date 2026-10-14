@@ -9,6 +9,7 @@ import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import type { ColumnFlowEntry } from '../../../src/ai/sm/smTypes';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
+import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import { makeGraph } from '../helpers/testUtils';
 import type { LineageNode, ObjectType } from '../../../src/engine/types';
 import { makeModel, makeNode } from './helpers/fixtures';
@@ -138,6 +139,88 @@ describe('lineage case catalog', () => {
 });
 
 describe('carrier value-edge orientation', () => {
+  it.each([
+    ...(['passthrough', 'analyze', 'terminal', 'terminated', 'delete-only', 'read-only', 'missing-index', 'pruned', 'out-of-scope', 'prune-depth', 'prune-direction', 'prune-excluded'] as const)
+      .map(mode => ({ direction: 'upstream' as const, mode })),
+    { direction: 'downstream' as const, mode: 'passthrough' as const },
+  ])('preserves only explicit unresolved carrier tasks: $direction/$mode', ({ direction, mode }) => {
+    const origin = '[d].[Origin]', carrier = '[d].[Stored]', nextId = mode === 'prune-excluded' ? '[x].[Next]' : '[d].[Next]';
+    const upstream = direction === 'upstream';
+    const invalidPrune = mode.startsWith('prune-');
+    const nodes = [origin, carrier, nextId].map(id => makeNode({ id, schema: id === nextId && mode === 'prune-excluded' ? 'x' : 'd', name: id,
+      type: id === carrier ? 'table' : (id === origin ? !upstream : upstream && mode !== 'read-only') ? 'procedure' : 'view',
+      columns: (id === nextId && upstream ? [] : ['Value']).map(column),
+    }));
+    const pairs: Array<[string, string]> = upstream ? [mode === 'prune-direction' ? [carrier, nextId] : [nextId, carrier], [carrier, origin]] : [[origin, carrier], [carrier, nextId]];
+    const model = makeModel(nodes, pairs, ['d', 'x']);
+    model.neighborIndex = Object.fromEntries(nodes.map(node => [node.id, {
+      in: pairs.filter(([, to]) => to === node.id).map(([from]) => from),
+      out: pairs.filter(([from]) => from === node.id).map(([, to]) => to),
+    }]));
+    if (mode === 'missing-index') model.neighborIndex = {};
+    if (mode === 'delete-only') model.edges[0].deleteOnly = true;
+    const engine = new NavigationEngine(model, makeGraph(nodes, pairs), () => {}, {});
+    const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'passthrough' as const,
+      summary: 'Inspect the requested stored value.', sections: [{ angle: 'technical' as const, text: 'Resolve the stored output at the next SQL hop.' }] });
+    expect(engine.init({ origin, question: 'Trace the stored Value.', analysisMode: 'ct', targetColumns: ['Value'], direction,
+      ...(mode === 'prune-excluded' ? { excludeSchemas: ['x'] } : {}),
+      depthIntent: { upstream: { levels: upstream ? mode === 'out-of-scope' || mode === 'prune-depth' ? 1 : 'all' : 0, exactness: 'exact' },
+        downstream: { levels: upstream ? 0 : 'all', exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...record(origin), column_flow: [{ out_col: 'Value', upstream_columns: upstream ? [{ node: carrier, col: 'Value' }] : [],
+      ...(!upstream ? { writes_to: { node: carrier, col: 'Value' } } : {}),
+    }] })).toHaveProperty('ok', true);
+    const carrierHop = engine.getHopContext();
+    expect(carrierHop).toMatchObject({ focus_node: { id: carrier }, analysis_mode: 'ct' });
+    if (invalidPrune) expect(carrierHop.neighbors?.find(n => n.id === nextId)).toMatchObject({ can_prune: false });
+    const edges = structuredClone(engine.columnAspect?.edges);
+    const incoming = engine.getCurrentTasks()[0];
+    if (!('sourceRefs' in incoming)) throw new Error('Expected a qualified column task');
+    const sourceRefs = structuredClone(incoming.sourceRefs), question = incoming.question;
+    const before = engine.toJSON(), slots = structuredClone(engine.getDetailSlots());
+    const result = engine.submitFindings({ ...record(carrier), verdict: mode === 'analyze' ? 'analyze' : 'passthrough',
+      column_flow: mode === 'terminal' ? [{ out_col: 'Value', upstream_columns: [] }] : [],
+      ...(mode === 'terminated' ? { terminated_inputs: [{ node: carrier, col: 'Value' }] } : {}),
+      ...(mode === 'analyze' ? { questions: [{ nodeId: nextId, question: 'Describe the writer.' }] } : {}),
+      ...(mode === 'pruned' || invalidPrune ? { prune_neighbors: [{ id: nextId, reason: 'The branch is explicitly outside this investigation.' }] } : {}),
+    });
+    if (invalidPrune) {
+      expect(result).toMatchObject({ code: 'route_validation_failed', issuePaths: ['prune_neighbors.0.id'] });
+      const after = engine.toJSON();
+      expect(after.agenda).toEqual(before.agenda);
+      expect(after.columnAspect).toEqual(before.columnAspect);
+      expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+      expect(engine.getDetailSlots()).toEqual(slots);
+      expect(engine.heldFindingFocus).toBe(carrier);
+      const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+      if (mode === 'prune-depth') {
+        const malformed = { focus_node_id: carrier, verdict: 'passthrough', prune_neighbors: [{ id: nextId, reason: 42 }] };
+        const parsed = schema.safeParse(malformed);
+        expect(parsed.success).toBe(false);
+        if (parsed.success) throw new Error('Expected the repair schema to reject a numeric prune reason');
+        const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: malformed, schema });
+        expect(rejection.issuePaths).toEqual(['prune_neighbors.0.reason']);
+        engine.holdRejectedSubmission(malformed, rejection.issuePaths ?? []);
+        expect(engine.heldColumnFlow, 'an unrelated malformed repair retains the explicitly held empty flow').toBe(true);
+      }
+      const repaired = engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: carrier, verdict: 'passthrough', prune_neighbors: [] })));
+      expect(repaired, JSON.stringify(repaired)).toHaveProperty('ok', true);
+      expect(engine.getDetailSlots().find(slot => slot.nodeId === carrier)?.sections).toEqual(record(carrier).sections);
+      expect(engine.columnAspect?.edges).toEqual(edges);
+      return;
+    }
+    expect(result).toHaveProperty('ok', true);
+    const next = engine.getHopContext();
+    if (mode === 'pruned' || mode === 'out-of-scope') expect(next).toMatchObject({ done: true });
+    else {
+      expect(next).toMatchObject({ focus_node: { id: nextId }, analysis_mode: mode === 'passthrough' ? 'ct' : 'bb' });
+      if (mode === 'passthrough') expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({
+        activeColumns: ['Value'], sourceRefs, traversalSide: direction, question,
+      }));
+    }
+    expect(engine.columnAspect?.edges).toEqual(edges);
+  });
   it.each(['direct', 'mixed transforms', 'mixed contributors'] as const)('rejects an indirect-only writer mapping while retaining %s and repairs only its qualified endpoint', roles => {
     const input = '[d].[Input]', writer = '[d].[Writer]', stored = '[d].[Stored]';
     const nodes = [input, writer, stored].map(id => makeNode({ id, schema: 'd', name: id,
@@ -177,28 +260,6 @@ describe('carrier value-edge orientation', () => {
       `${input}.Amount->${stored}.Total`, `${writer}.Amount->${stored}.Total`,
     ]);
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ activeColumns: ['Total'], question: 'Follow the stored Total value.' }));
-  });
-  it('forwards an explicit downstream passthrough without authoring another value edge', () => {
-    const origin = '[d].[Writer]', carrier = '[d].[Stored]', reader = '[d].[Reader]';
-    const nodes = [origin, carrier, reader].map(id => makeNode({ id, schema: 'd', name: id,
-      type: id === carrier ? 'table' : id === origin ? 'procedure' : 'view', columns: ['Value'].map(column) }));
-    const pairs: Array<[string, string]> = [[origin, carrier], [carrier, reader]];
-    const engine = new NavigationEngine(makeModel(nodes, pairs, ['d']), makeGraph(nodes, pairs), () => {}, {});
-    const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'passthrough' as const, summary: 'Forward the approved task.', sections: [{ angle: 'technical' as const, text: 'The value is stored for consumers.' }] });
-    expect(engine.init({ origin, question: 'Trace the stored value into consumers', analysisMode: 'ct', targetColumns: ['Value'], direction: 'downstream',
-      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
-    })).toHaveProperty('ok', true);
-    engine.getHopContext();
-    expect(engine.submitFindings({ ...record(origin), column_flow: [{ out_col: 'Value', upstream_columns: [], writes_to: { node: carrier, col: 'Value' } }] })).toHaveProperty('ok', true);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: carrier }, analysis_mode: 'ct' });
-    const edges = structuredClone(engine.columnAspect?.edges);
-    const incoming = engine.getCurrentTasks()[0];
-    if (!('sourceRefs' in incoming)) throw new Error('Expected a qualified column task');
-    const sourceRefs = structuredClone(incoming.sourceRefs);
-    expect(engine.submitFindings({ ...record(carrier), column_flow: [] })).toHaveProperty('ok', true);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: reader }, analysis_mode: 'ct' });
-    expect(engine.getCurrentTasks()[0]).toMatchObject({ question: 'Trace the stored value into consumers', sourceRefs });
-    expect(engine.columnAspect?.edges).toEqual(edges);
   });
   it.each(['upstream', 'downstream'] as const)('accepts writer inputs and rejects reversed reader inputs while exploring %s', direction => {
     const writer = '[d].[Writer]', carrier = '[d].[Stored]', reader = '[d].[Reader]';

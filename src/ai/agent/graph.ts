@@ -33,7 +33,7 @@ import {
   deriveStagePromptContext,
   type StagePromptContext,
 } from '../prompting/hostPrompts';
-import { PREVIEW_REQUEST_MARKER, STALE_GATE_TRIGGER_REPLY, TRACE_REQUEST_MARKER, buildGateReplySystemPrompt, buildGateReplyUserPrompt, parseGateTrigger } from '../prompting/prompts';
+import { PREVIEW_REQUEST_MARKER, STALE_GATE_TRIGGER_REPLY, TRACE_REQUEST_MARKER, buildDiscoveryFinalAnswerTask, buildGateReplySystemPrompt, buildGateReplyUserPrompt, parseGateTrigger } from '../prompting/prompts';
 import { renderScopeSummaryMd, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 import { buildChatAnswer } from '../support/chatAnswer';
 import { extractShortTermMemory } from '../support/smMemoryCore';
@@ -617,27 +617,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * When discovery's no-progress stop trips with at least one accepted observation already
-   * held, the material the phase needs to answer is not lost: one further generation, tool calls
-   * disabled (`toolChoice: 'none'`), asks the model to answer from what it already holds instead of
-   * ending the turn with no answer. Mirrors {@link renderHeldSynthesisDraft}'s "committed work
-   * survives a breaker trip" precedent for the phase whose committed work is a set of accepted
-   * observations rather than a held draft.
-   *
-   * @remarks
-   * A duplicate-read stop is the common trigger: the correction hint on every such rejection already
-   * tells the model its held observations answer the call it just repeated, but the model keeps
-   * re-issuing the read instead of answering, spending the phase's no-progress budget on repeats of a
-   * call it already paid for. `toolChoice: 'none'` removes the tool it kept reaching for, so this
-   * generation has no legal move but to answer from what {@link executeToolAttempt}'s own
-   * retry-context assembly already rendered into its messages from `nextAttempt`.
-   *
-   * @param nextAttempt - The phase's cumulative state at the moment the breaker tripped; its held
-   *   observations are what the salvage generation is asked to answer from.
-   * @param draft - The same phase draft the tripped attempt used, so the salvage call sees the same
-   *   system prompt, facts and messages.
-   * @returns The salvage generation's result when it produced a non-empty text-only answer;
-   *   `null` when the provider errored, was cancelled, or still did not answer in plain text.
+   * Builds the existing final discovery reply from retained evidence with tools disabled.
+   * The terminal task supersedes tool instructions in the system and follows the paired transcript;
+   * the request-local state suppresses duplicate replay without changing the breaker's stored state.
+   * @returns A non-empty text-only answer, or null when the final attempt cannot produce one.
    */
   const trySalvageDiscoveryAnswer = async (
     nextAttempt: ToolPhaseAttemptState,
@@ -647,15 +630,19 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       `[AI] [Salvage] phase=discover reason=no_progress observations=${nextAttempt.observations.length}`
       + ' — asking once more with tool calls disabled instead of discarding them.',
     );
+    const terminalTask = buildDiscoveryFinalAnswerTask();
+    const transcript = await renderToolAttemptContext(nextAttempt, deps.model, message => deps.logger?.debug(message));
     const plan = compileInstructionPlan({
       kind: 'converse',
       registry: deps.registry,
       sink: deps.sink,
       signal: deps.signal,
       ...draft,
+      system: `${draft.system ?? ''}\n\n${terminalTask}`,
+      messages: [...draft.messages, ...transcript, modelUserMessage(terminalTask)],
       toolChoice: 'none',
     });
-    const result = await withLmStage(draft.stage, () => runToolAttempt(plan, nextAttempt));
+    const result = await withLmStage(draft.stage, () => runToolAttempt(plan, { ...nextAttempt, messages: [] }));
     if (result.stop !== 'final' || result.text.trim().length === 0) {
       deps.logger?.debug(`[AI] [Salvage] phase=discover unusable — stop=${result.stop}`);
       return null;

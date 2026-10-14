@@ -17,8 +17,8 @@ describe('column contributor instructions', () => {
     expect(description).toContain('A column used only to join, filter, group, partition or order rows is not a source');
     expect(description).toContain('Exclude the entry’s own writes_to column and unused expressions');
     expect(description).toContain('upstream_columns names only writers supplying the tracked column, never readers');
-    expect(description).toContain('forward the arriving column task without declaring a reader as its source');
-    expect(description).toContain('analyze with [] declares a terminal output');
+    expect(description).toContain('forward the arriving column task to downstream consumers or a bodyless focus\'s upstream writers without declaring an unconfirmed source');
+    expect(description).toContain('analyze with upstream_columns: [] declares a terminal output');
   });
 
   it('distinguishes aggregate values from grouping and row-selection roles', () => {

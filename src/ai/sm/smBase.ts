@@ -748,7 +748,7 @@ export class NavigationEngine implements IHopStateMachine {
     const kept = ((held ?? []) as unknown[]).filter(entry => !named.has(this.heldEntryKey(list, entry) ?? ''));
     const sent = (resent[list] ?? []) as unknown[];
     const merged = resentFirst ? [...sent, ...kept] : [...kept, ...sent];
-    return (merged.length > 0 || resent[list] !== undefined ? merged : undefined) as HopFindingKept[L];
+    return (merged.length > 0 || resent[list] !== undefined || held !== undefined ? merged : undefined) as HopFindingKept[L];
   }
 
   /** A kept verdict whose summary is empty with no held summary to restore. */
@@ -840,7 +840,8 @@ export class NavigationEngine implements IHopStateMachine {
     for (const list of HELD_ENTRY_LISTS) {
       if (failed.has(list)) continue;
       const merged = this.mergeHeldEntries(list, restorable(list) ? held?.[list] : undefined, resent, dropped(list)) as unknown[] | undefined;
-      if (merged !== undefined && (merged.length > 0 || this.explicitEmptyFlow(list, resent))) Object.assign(draft, { [list]: merged });
+      if (merged !== undefined && (merged.length > 0 || this.explicitEmptyFlow(list, resent)
+        || (restorable(list) && this.explicitEmptyFlow(list, held ?? {})))) Object.assign(draft, { [list]: merged });
       else delete draft[list];
     }
     const restored = HELD_CARRIED_FIELDS.filter(field => draft[field] !== undefined && !failed.has(field));
@@ -2802,7 +2803,8 @@ export class NavigationEngine implements IHopStateMachine {
    * admitted neighbour the payload did not name in `prune_neighbors`, and `questions` attach a
    * check to one neighbour's queued hop; pruned neighbours and what only they reach are cut
    * ({@link cutUnreachable}). In CT the carry each
-   * neighbour is enqueued with is derived from this submit's own `column_flow`.
+   * neighbour is enqueued with is derived from this submit's own `column_flow`, or the qualified
+   * incoming target when an explicit bodyless passthrough asks its writer to resolve that target.
    *
    * The round and starting-column limits are checked only at admission (proposal, scope change,
    * supplement), against the same full-reach preview this hop loop then walks — nothing here stops
@@ -3007,6 +3009,22 @@ export class NavigationEngine implements IHopStateMachine {
       }));
       const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? this.identifierKey(t.raw)));
 
+      // Explicit bodyless passthrough carries the unresolved stored target, not an inferred value edge.
+      if (this.tracer && traceDirection === 'upstream' && finding.verdict === 'passthrough'
+        && finding.column_flow?.length === 0 && !SCRIPT_TYPES.has(this.nodeMap.get(focusId)!.type)
+        && this.currentReturnTargets().length === 0) {
+        const refs = (mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs)
+          .filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
+          && !terminated.has(endpointKey(ref.node, ref.col)));
+        for (const nid of this.model.neighborIndex[focusId]?.in ?? []) {
+          if (!this.scopeNodeIds.has(nid) || pruneNeighborIds.has(nid) || this.visited.has(nid)
+            || this.removedSet.has(nid) || this.isDeleteOnlyWrite(nid, focusId)
+            || !this.model.edges.some(edge => edge.source === nid && edge.target === focusId
+              && edgeApiType(edge.type, this.nodeMap.get(nid)?.type ?? '') === 'write')) continue;
+          for (const ref of refs) addCarry(nid, ref, 'upstream');
+        }
+      }
+
       const routeRequests: ValidatedHop['routeRequests'] = [];
       const incomingQuestion = [...new Set(this.getCurrentTasks().map(task => task.question).filter(Boolean))].join('\n');
       const requested = new Set<string>();
@@ -3103,7 +3121,7 @@ export class NavigationEngine implements IHopStateMachine {
             kind: 'prune_noop_out_of_scope',
             id: target.resolved,
             path: target.path,
-            reason: `\`${target.resolved}\` is outside the approved scope and was never loaded into the graph — there is nothing to prune.`,
+            reason: `\`${target.resolved}\` is outside the approved exploration scope and cannot be pruned.`,
           });
         }
       }
@@ -3996,8 +4014,8 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Derives one neighbor's continuation solely from the accepted flow or a qualified scalar
-   * obligation. Routing prose and historical evidence cannot reactivate a terminal arrival.
+   * Derives one neighbor's continuation from accepted flow, explicit qualified passthrough or a
+   * scalar obligation. Routing prose and historical evidence cannot reactivate a terminal arrival.
    */
   private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>, callerContext?: FunctionCallerContext): ColumnCarry {
     if (!this.tracer) return { kind: 'carry', columns: [] };
