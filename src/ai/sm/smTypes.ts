@@ -377,17 +377,15 @@ export interface RouteOutcome {
   /**
    * Reason for deferral:
    * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
-   * - `non_bodied_passthrough` — the in-scope non-bodied neighbor is retained without a separate analysis hop; no follow-up is created for it.
-   * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
    * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer.
    * - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer.
    * - `schema` — route target's schema is outside the session's GUI schema filter, not a
    *   user-authored exclusion; never loaded, so a named question is recorded as a follow-up offer
    *   that can be granted through a new proposal.
-   * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was already analyzed on an earlier hop; visit-once, no new hop.
+   * - `already_visited` — route target was already analyzed on an earlier hop; visit-once, no new hop.
    * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
    */
-  reason?: 'depth' | 'non_bodied_passthrough' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
+  reason?: 'depth' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
 }
 
 /** Route reasons for a target an earlier hop already settled (visit-once). */

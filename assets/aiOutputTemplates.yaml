@@ -161,7 +161,7 @@ structural_callouts:
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
 
-# ── Reduced capture for non-bodied starting points ───────────────────────────
+# ── Reduced capture for a non-bodied focus (table or external object) ────────
 
 structural_summary:
   stages: [active]

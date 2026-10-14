@@ -14,33 +14,6 @@ import type { ColumnEdge, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
 /**
- * Re-anchor sentence for a passthrough-inherited sub-question that lands on a bodied focus.
- *
- * @remarks
- * `enqueueHop` forwards the authored question verbatim and stores this sentence beside it on the
- * investigation task (`InvestigationTask.reAnchor`), never inside the question: the receiving hop's
- * `<current_task>` renders it on the line after the question, and synthesis receives the authored
- * question only. It names the passthrough provenance and re-anchors the question onto the new
- * focus. The column clause is gated on the branch: one carrying none of the traced columns has no
- * column to ground an answer in, and asking it for one is the dead-end instruction.
- *
- * @param passthroughId - The non-bodied node the question was inherited through.
- * @param focusId - The bodied neighbor the question re-anchors onto.
- * @param mode - The mode of the BRANCH this question is forwarded on, not of the session: the
- *   column clause is answerable only where a traced column is carried, and a CT session
- *   reaches branches that carry none.
- * @param questioned - Whether the forwarded question has text. When it has none, the sentence is
- *   the whole sub-question, so it names the original question instead of pointing at a question
- *   that is not there.
- * @returns The re-anchor sentence, without a leading newline.
- */
-export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct', questioned = true): string {
-  const anchor = questioned ? `re-anchor this question to ${focusId}` : `continue the original question at ${focusId}`;
-  const reAnchor = `(Inherited through passthrough ${passthroughId}; ${anchor}. ${focusId} applies its own logic — capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.`;
-  return mode === 'ct' ? `${reAnchor} Ground that in the traced column.)` : `${reAnchor})`;
-}
-
-/**
  * Builds the static active-phase SM protocol block: the column aspect of the hop, rendered only
  * when the hop carries tracked columns.
  *

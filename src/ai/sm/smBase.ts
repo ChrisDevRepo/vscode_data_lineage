@@ -21,7 +21,7 @@ import type { ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
-import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, SettledRouteReason, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
+import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
 import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
@@ -35,12 +35,12 @@ import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope'
  * A hop neighbour plus the engine decisions already taken about it.
  *
  * @remarks
- * The non-bodied carrier contracted into the current focus is already visited and cannot be
+ * A neighbor passed through on the route into the current focus is already visited and cannot be
  * pruned at that focus. Column evidence does not create additional retention protections.
  */
 export interface HopNeighborDisclosure extends HopNeighbor {
   /**
-   * The non-bodied carrier already contracted into this focus, protected by the visit-once rule.
+   * A neighbor already passed through on the route into this focus, protected by the visit-once rule.
    */
   prune_protected?: boolean;
   /** Already analyzed on an earlier hop; a prune cannot remove committed analysis. */
@@ -385,7 +385,7 @@ export class NavigationEngine implements IHopStateMachine {
   private committedHops = 0;
   /** Why the engine entered `error` on a live invariant failure, phrased for the user. */
   private _errorReason: string | null = null;
-  /** Total acknowledged bodied nodes: initialised to the bodied scope size at gate approval, +1 on out-of-scope expansion, −1 on prune. */
+  /** Total acknowledged nodes: initialised to the scope size at gate approval, +1 on out-of-scope expansion or reactivation, −1 on prune. */
   private _totalNodes = 0;
   /** Breadth-first search depth for nodes from the origin. */
   protected depthFromOrigin = new Map<string, number>();
@@ -852,12 +852,14 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Per-list sets of entry keys a rejection owes a correction for. The two neighbor lists share one
-   * set, since a neighbor's correction may move it between them; `column_flow` keys are its own.
+   * set, since a neighbor's correction may move it between them; `column_flow` and
+   * `terminated_inputs` keys each have their own.
    */
   private droppedEntryKeys(): (list: HeldEntryList) => Set<string> {
     const neighbors = new Set<string>();
     const flow = new Set<string>();
-    return list => (list === 'column_flow' ? flow : neighbors);
+    const terminated = new Set<string>();
+    return list => (list === 'column_flow' ? flow : list === 'terminated_inputs' ? terminated : neighbors);
   }
 
   /** Whether a held list resolves to a sent `column_flow: []`, which is held as "this node carries no tracked column". */
@@ -3235,7 +3237,6 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[Notice] hop=${this.hopCount} id=${notice.id} kind=${notice.kind} code=${ROUTE_REJECTION_CODE[notice.kind]}`);
       }
 
-
       return this.applyValidatedHop({
         focusId, finding, routeRequests, flowQuestionByNode, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
         carryByNode, routeContexts, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges,
@@ -3462,9 +3463,6 @@ export class NavigationEngine implements IHopStateMachine {
       }
 
       const agendaSizeBefore = this._agenda.length;
-      const targetNode = this.nodeMap.get(nid);
-      const targetIsBodied = !!targetNode && SCRIPT_TYPES.has(targetNode.type);
-      const wasAlreadyVisited = this.visited.has(nid);
       const isFreshExpansion = freshlyExpandedIds.delete(nid);
       const columnQuestions = lineageQuestionsByNode?.get(nid) ?? (flowQuestionByNode.has(nid) ? [flowQuestionByNode.get(nid)!] : undefined);
       const dispositions = new Map<string, RouteSkipDisposition>();
@@ -3485,28 +3483,14 @@ export class NavigationEngine implements IHopStateMachine {
       const added = this._agenda.length - agendaSizeBefore;
       this.lastRoutedNew += Math.max(0, added);
 
-      const settled = [...dispositions].filter((entry): entry is [string, SettledRouteReason] => entry[1] !== 'not_enqueued');
-      for (const [skippedId, reason] of settled) {
-        if (skippedId === nid || skippedId === focusId) continue;
-        if (routeOutcomes.some(o => o.nodeId === skippedId)) continue;
-        routeOutcomes.push({ nodeId: skippedId, accepted: false, reason });
-      }
+      // A target already queued merges into its pending hop and stays accepted; only a visit-once skip is reported.
       const directSkip = dispositions.get(nid);
-      const carrierSettled = added === 0 && !targetIsBodied && !wasAlreadyVisited
-        && settled.length > 0 && settled.length === dispositions.size;
-      const correctedReason: RouteOutcome['reason'] | undefined = directSkip && directSkip !== 'not_enqueued' && added === 0
-        ? directSkip
-        : carrierSettled
-          ? (settled.some(([, reason]) => reason === 'already_visited') ? 'already_visited' : 'already_pruned')
-          : undefined;
-      for (let i = routeOutcomes.length - 1; i >= 0; i--) {
-        if (routeOutcomes[i].nodeId !== nid || !routeOutcomes[i].accepted) continue;
-        if (correctedReason) {
-          routeOutcomes[i] = { nodeId: nid, accepted: false, reason: correctedReason };
-        } else if (added === 0 && !targetIsBodied && !wasAlreadyVisited) {
-          routeOutcomes[i] = { nodeId: nid, accepted: false, reason: 'non_bodied_passthrough' };
+      if (added === 0 && directSkip && directSkip !== 'not_enqueued') {
+        for (let i = routeOutcomes.length - 1; i >= 0; i--) {
+          if (routeOutcomes[i].nodeId !== nid || !routeOutcomes[i].accepted) continue;
+          routeOutcomes[i] = { nodeId: nid, accepted: false, reason: directSkip };
+          break;
         }
-        break;
       }
     }
 

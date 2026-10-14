@@ -188,4 +188,33 @@ describe('lineage_submit_findings boundary', () => {
       else expect(result).toHaveProperty('code', 'invalid_input');
       expect(input).toEqual(before);
     });
+
+  it('keeps a route to an already queued table accepted', () => {
+    const V = '[bb].[v]'; const W = '[bb].[w]'; const T = '[bb].[t]';
+    const nodes = [
+      makeNode({ id: V, schema: 'bb', name: 'v', type: 'view', bodyScript: 'SELECT 1 AS One;' }),
+      makeNode({ id: W, schema: 'bb', name: 'w', type: 'view', bodyScript: 'SELECT 1 AS One;' }),
+      makeNode({ id: T, schema: 'bb', name: 't', type: 'table' }),
+    ];
+    const pairs: Array<[string, string]> = [[T, V], [W, V], [T, W]];
+    const model = makeModel(nodes, pairs, ['bb']);
+    const graph = makeGraph(nodes, pairs);
+    const session = new AiSession();
+    session.model = model; session.graph = graph; session.setClassification('technical'); session.beginTurn();
+    const engine = new NavigationEngine(model, graph, () => {}, {});
+    engine.classification = 'technical';
+    expect(engine.init({ origin: V, question: 'What feeds v?', analysisMode: 'bb', direction: 'upstream',
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toMatchObject({ ok: true });
+    engine.getHopContext();
+    session.stateMachine = engine;
+    session.enterExploring(session.turnEpoch);
+    const { services } = stubToolServices({ session, model, graph });
+    const first = JSON.parse(executeSubmitFindings({ focus_node_id: V, verdict: 'analyze', summary: 'Reads t and w.',
+      sections: { technical: 'Selects from both sources.' },
+      questions: [{ nodeId: T, question: 'What does t hold?' }, { nodeId: W, question: 'What does w add?' }] }, services));
+    expect(first).toMatchObject({ ok: true, next_focus: W });
+    const second = JSON.parse(executeSubmitFindings({ focus_node_id: W, verdict: 'analyze', summary: 'Reads t.',
+      sections: { technical: 'Selects from t.' }, questions: [{ nodeId: T, question: 'Which rows does w read?' }] }, services));
+    expect(second).toMatchObject({ ok: true, next_focus: T, route_outcomes: [{ nodeId: T, accepted: true }] });
+  });
 });
