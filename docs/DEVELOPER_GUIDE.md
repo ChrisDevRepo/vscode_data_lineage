@@ -80,6 +80,17 @@ Both paths produce a `DatabaseModel`, through the same preprocessing, parse rule
 
 **AI run records** ([`src/ai/session/runStore.ts`](../src/ai/session/runStore.ts)). One record per AI-authored bookmark, in `globalState` under `dataLineageViz.aiRun.<bookmarkId>`. A bookmark save writes it only when the view is AI-authored and its run matches the captured presentation; a failed write logs a warning and the bookmark still saves. `delete-view` and `delete-project` clear it, and a new route that removes a saved view must clear it too. A record of another `schemaVersion` or with an invalid snapshot reads as absent.
 
+**Data from older builds.** A user's saved connections, projects and bookmarks keep opening after an upgrade. Each supported older shape has one test; removing a path removes its test and adds a CHANGELOG `Removed` entry.
+
+| Older shape | Behaviour | Test |
+|---|---|---|
+| Workspace-state keys from builds before the project store | Moved into a project once; the old keys are then cleared | [`legacyMigration.test.ts`](../tests/unit/engine/legacyMigration.test.ts) |
+| Project without `connectionId` (mssql-extension era) | Matched by server, port, sign-in type and user; otherwise a pre-filled picker once, then direct reconnect | [`connections.test.ts`](../tests/unit/engine/db/connections.test.ts) |
+| Connection fields an older build wrote (string `port`/`encrypt`, Integrated auth, extra keys) | Read; unknown keys dropped | [`projectStore.test.ts`](../tests/unit/engine/projectStore.test.ts), [`storedConnectionIntegrity.test.ts`](../tests/unit/engine/storedConnectionIntegrity.test.ts) |
+| 1.0.3-shaped saved views | Load and re-save unchanged | [`projectStore.test.ts`](../tests/unit/engine/projectStore.test.ts) |
+| Node IDs in views and bookmarks saved without `nodeIdEncodingVersion` | Resolved when the reference has a unique owner in the current model | [`node-id-resolution.test.ts`](../tests/unit/engine/node-id-resolution.test.ts), [`external-file-stability.test.ts`](../tests/unit/engine/external-file-stability.test.ts), [`identifier-checkpoint-review.test.ts`](../tests/unit/ai-core/identifier-checkpoint-review.test.ts) |
+
+
 ## SQL parsing
 
 ```mermaid
