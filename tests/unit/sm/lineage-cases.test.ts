@@ -39,8 +39,6 @@ interface CaseExpect {
   readonly invalid?: readonly unknown[];
   readonly invalid_kind?: string;
   readonly reason_contains?: string;
-  readonly log_contains?: readonly string[];
-  readonly log_matches?: string;
 }
 
 interface LineageCase {
@@ -133,14 +131,13 @@ function run(row: LineageCase, upstream: readonly FlowColumn[]) {
     id: node.id, schema: 'dbo', name: node.id, type: node.type,
     columns: (node.columns ?? []).map(column),
   }));
-  const lines: string[] = [];
   const result = new ColumnTracer([...row.active]).validateColumnFlow(
     row.focus,
     { verdict: 'analyze', summary: 's', sections: [], column_flow: [{ out_col: row.out, upstream_columns: upstream }] } as never,
     new Map<string, LineageNode>(nodes.map(node => [node.id, node])),
     makeModel(nodes, [], ['dbo']),
     null,
-    ((_level: string, message: string) => { lines.push(message); }) as never,
+    undefined,
     undefined,
     row.direction,
     undefined,
@@ -149,21 +146,16 @@ function run(row: LineageCase, upstream: readonly FlowColumn[]) {
     [],
     row.roots ?? [],
   );
-  return { result, lines };
+  return result;
 }
 
 function check(row: LineageCase, upstream: readonly FlowColumn[]) {
-  const { result, lines } = run(row, upstream);
+  const result = run(row, upstream);
   const wanted = row.expect;
   if (wanted.edges) expect(result.stagedEdges.map(edge => edge.from_col)).toEqual(wanted.edges);
   if (wanted.invalid) expect(result.invalidRoutes).toEqual(wanted.invalid);
   if (wanted.invalid_kind) expect(result.invalidRoutes[0]?.kind).toBe(wanted.invalid_kind);
   if (wanted.reason_contains) expect(result.invalidRoutes[0]?.reason).toContain(wanted.reason_contains);
-  for (const text of wanted.log_contains ?? []) expect(lines.join('\n')).toContain(text);
-  if (wanted.log_matches) {
-    const relevant = lines.filter(line => line.includes('row role only')).join('\n');
-    expect(relevant).toMatch(new RegExp(wanted.log_matches));
-  }
 }
 
 describe('lineage case catalog', () => {
@@ -315,8 +307,9 @@ describe('carrier value-edge orientation', () => {
       { out_col: 'Amount', upstream_columns: valueContributors, writes_to: { node: stored, col: 'Total' } },
       { out_col: 'Region', upstream_columns: [{ node: input, col: 'Region', transforms: ['filter'] }], writes_to: { node: stored, col: 'Total' } },
     ], questions: [{ nodeId: stored, question: 'Follow the stored Total value.' }] });
-    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: expect.arrayContaining(['column_flow.1.upstream_columns']) });
-    expect(JSON.stringify(rejected)).toContain('Row eligibility does not establish a written value');
+    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: roles === 'mixed contributors'
+      ? ['column_flow.0.upstream_columns.1', 'column_flow.1.upstream_columns.0', 'terminated_inputs.0'] : ['column_flow.1.upstream_columns.0', 'terminated_inputs.0'] });
+    expect(rejected).toMatchObject({ reason: expect.stringContaining(`"${input}.Region" is classified filter only`) });
     const after = engine.toJSON();
     expect(after.agenda).toEqual(before.agenda);
     expect(after.columnAspect).toEqual(before.columnAspect);
@@ -326,7 +319,7 @@ describe('carrier value-edge orientation', () => {
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
     expect(schema.safeParse({ focus_node_id: writer, verdict: 'analyze', terminated_inputs: [{ node: input, col: 'Region' }] }).success).toBe(false);
     expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: writer, verdict: 'analyze',
-      column_flow: [{ out_col: 'Amount', upstream_columns: valueContributors, writes_to: { node: stored, col: 'Total' } }],
+      column_flow: [{ out_col: 'Amount', upstream_columns: valueContributors.slice(0, 1), writes_to: { node: stored, col: 'Total' } }],
       terminated_inputs: [{ node: input, col: 'Region' }],
     })))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored }, analysis_mode: 'ct' });
@@ -408,7 +401,7 @@ describe('stored-column arrival admission and delivery', () => {
     engine.getHopContext();
     const task = engine.getCurrentTasks();
     expect(task).toContainEqual(expect.objectContaining({ nodeId: source, sourceRefs: [{ node: source, col: 'X' }], activeColumns: ['X'] }));
-    const instruction = buildCurrentTaskBlock(task, engine.columnAspect!.active_columns, engine.pendingLineageQuestions);
+    const instruction = buildCurrentTaskBlock(task.map(item => ({ ...item, endpoints: engine.taskEndpoints(item) })), engine.columnAspect!.active_columns, engine.pendingLineageQuestions);
     expect(instruction).toContain('<assigned_endpoints>');
     expect(instruction).not.toContain('<candidate_inputs>');
     const accepted = structuredClone(engine.columnAspect!.edges);
@@ -716,20 +709,21 @@ describe('downstream carried inputs and authored outputs', () => {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: next }, analysis_mode: 'bb' });
     expect(engine.columnAspect?.edges).toEqual([]);
   });
-  it('requires an explicit qualified endpoint for an arriving filter-only contributor without a write', () => {
+  it('rejects a filter-only contributor in column_flow and accepts it only as an explicit terminated input', () => {
     const engine = world();
     const before = engine.toJSON();
     const rejected = engine.submitFindings({ ...finding(focus), column_flow: [{ out_col: 'Mapped', writes_to: null, upstream_columns: [
       { node: origin, col: 'Value', transforms: ['compute'] }, { node: origin, col: 'Other', transforms: ['filter'] },
     ] }], questions: [{ nodeId: next, question: 'Follow the computed Mapped value.' }] });
-    expect(rejected).toMatchObject({ code: 'incomplete_task', issuePaths: expect.arrayContaining(['terminated_inputs.0']),
-      reason: expect.stringContaining(`${origin}.Other`) });
+    expect(rejected).toMatchObject({ issuePaths: expect.arrayContaining(['column_flow.0.upstream_columns.1']),
+      reason: expect.stringContaining(`"${origin}.Other" is classified filter only`) });
     const after = engine.toJSON();
     expect(after.agenda).toEqual(before.agenda);
     expect(after.columnAspect).toEqual(before.columnAspect);
     expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
     expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: focus, verdict: 'analyze',
+      column_flow: [{ out_col: 'Mapped', upstream_columns: [{ node: origin, col: 'Value', transforms: ['compute'] }] }],
       terminated_inputs: [{ node: origin, col: 'Other' }],
     })))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: next }, analysis_mode: 'ct' });
@@ -1023,5 +1017,128 @@ describe('result dispositions', () => {
     expect(result.node_states.find(state => state.nodeId === unused)).toMatchObject({ action: 'prune' });
     expect(result.edges.map(([from, to]) => `${from}->${to}`).sort()).toEqual([`${used}->${writer}`, `${writer}->${target}`]);
     expect(result.detail_slots.map(slot => slot.nodeId).sort()).toEqual(kept);
+  });
+});
+
+// CT carry guard: authored column decisions are ACKed or REJECTed and an accepted carry dispatches exactly as accepted.
+const guardRecord = (focus_node_id: string, verdict: 'analyze' | 'passthrough' = 'analyze') => ({ focus_node_id, verdict,
+  summary: 'Trace the requested value.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes this mapping.' }] });
+const upstreamAll = { upstream: { levels: 'all' as const, exactness: 'exact' as const }, downstream: { levels: 0, exactness: 'exact' as const } };
+
+function engineFor(nodes: LineageNode[], pairs: Array<[string, string]>, mutate?: (model: ReturnType<typeof makeIndexedModel>) => void) {
+  const model = makeIndexedModel(nodes, pairs);
+  mutate?.(model);
+  return new NavigationEngine(model, makeGraph(nodes, pairs), () => {}, {});
+}
+
+describe('CT dispatch keeps the accepted carry', () => {
+  const origin = '[d].[Report]', first = '[d].[First]', second = '[d].[Second]', writer = '[d].[Writer]';
+  const nodes = [
+    makeNode({ id: origin, schema: 'd', name: 'Report', type: 'view', columns: [column('A'), column('B')], bodyScript: 'CREATE VIEW d.Report AS SELECT 1;' }),
+    makeNode({ id: first, schema: 'd', name: 'First', type: 'table', columns: [column('X')] }),
+    makeNode({ id: second, schema: 'd', name: 'Second', type: 'table', columns: [column('Y')] }),
+    makeNode({ id: writer, schema: 'd', name: 'Writer', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.Writer AS SELECT 1;' }),
+  ];
+  const pairs: Array<[string, string]> = [[writer, first], [writer, second], [first, origin], [second, origin]];
+
+  /** Walks to the shared writer: one table passes its stored column to Writer, the other maps Writer.Out. */
+  function reachWriter() {
+    const engine = engineFor(nodes, pairs);
+    expect(engine.init({ origin, question: 'Trace A and B.', analysisMode: 'ct', targetColumns: ['A', 'B'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(origin), column_flow: [
+      { out_col: 'A', upstream_columns: [{ node: first, col: 'X' }] },
+      { out_col: 'B', upstream_columns: [{ node: second, col: 'Y' }] },
+    ], questions: [{ nodeId: first, question: 'Resolve X.' }, { nodeId: second, question: 'Resolve Y.' }] })).toHaveProperty('ok', true);
+    const passed = String(engine.getHopContext().focus_node!.id);
+    expect(engine.submitFindings({ ...guardRecord(passed, 'passthrough'), column_flow: [] })).toHaveProperty('ok', true);
+    const mapped = String(engine.getHopContext().focus_node!.id);
+    expect(engine.submitFindings({ ...guardRecord(mapped), column_flow: [{ out_col: mapped === first ? 'X' : 'Y', upstream_columns: [{ node: writer, col: 'Out' }] }],
+      questions: [{ nodeId: writer, question: 'Resolve Out.' }] })).toHaveProperty('ok', true);
+    return { engine, passed: passed === first ? { node: first, col: 'X' } : { node: second, col: 'Y' } };
+  }
+
+  it('dispatches every accepted column, not only the ones historical edges already bind', () => {
+    const { engine, passed } = reachWriter();
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer }, analysis_mode: 'ct' });
+    expect([...engine.columnAspect!.active_columns].sort()).toEqual(['Out', passed.col].sort());
+  });
+
+  it('stops the run when an accepted endpoint no longer resolves at dispatch', () => {
+    const { engine, passed } = reachWriter();
+    const stored = nodes.find(node => node.id === passed.node)!;
+    const declared = stored.columns;
+    stored.columns = [column('Renamed')];
+    try {
+      expect(engine.getHopContext()).toMatchObject({ done: false, sm_status: 'error' });
+      expect(engine.errorReason).toContain('no qualified source column');
+    } finally {
+      stored.columns = declared;
+    }
+  });
+});
+
+describe('CT boundary rejects instead of dropping a column reference', () => {
+  const origin = '[d].[Report]', source = '[d].[Source]', stranger = '[d].[Stranger]';
+  const nodes = [
+    makeNode({ id: origin, schema: 'd', name: 'Report', type: 'view', columns: [column('Total')], bodyScript: 'CREATE VIEW d.Report AS SELECT 1;' }),
+    makeNode({ id: source, schema: 'd', name: 'Source', type: 'table', columns: [column('Amount')] }),
+    makeNode({ id: stranger, schema: 'd', name: 'Stranger', type: 'table', columns: [column('Amount')] }),
+  ];
+  const start = (all = nodes, pairs: Array<[string, string]> = [[source, origin]], mutate?: (model: ReturnType<typeof makeIndexedModel>) => void) => {
+    const engine = engineFor(all, pairs, mutate);
+    expect(engine.init({ origin, question: 'Trace Total.', analysisMode: 'ct', targetColumns: ['Total'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    return engine;
+  };
+
+  it.each([
+    ['an object outside the loaded model', '[d].[Missing]', 'is absent from the loaded model'],
+    ['a loaded object that is not a neighbor', stranger, 'has no dependency edge'],
+  ])('rejects a contributor naming %s with its path and commits nothing', (_label, node, reason) => {
+    const engine = start();
+    const before = engine.toJSON();
+    const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: source, col: 'Amount' }, { node, col: 'Amount' }] }],
+      questions: [{ nodeId: source, question: 'Resolve Amount.' }] });
+    expect(rejected).toMatchObject({ issuePaths: ['column_flow.0.upstream_columns.1.node'], reason: expect.stringContaining(reason) });
+    expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
+    expect(engine.toJSON().agenda).toEqual(before.agenda);
+  });
+
+  it('rejects a mapping through a delete-only write', () => {
+    const purge = '[d].[Purge]';
+    const all = [...nodes, makeNode({ id: purge, schema: 'd', name: 'Purge', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.Purge AS DELETE FROM d.Report;' })];
+    const engine = start(all, [[source, origin], [purge, origin]], model => {
+      model.edges.find(edge => edge.source === purge)!.deleteOnly = true;
+    });
+    const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: purge, col: 'Total' }] }],
+      questions: [{ nodeId: source, question: 'Resolve Amount.' }, { nodeId: purge, question: 'Describe the purge.' }] });
+    expect(rejected).toMatchObject({ issuePaths: expect.arrayContaining(['column_flow.0.upstream_columns.0.node']), reason: expect.stringContaining('only by DELETE or TRUNCATE') });
+    expect(engine.columnAspect!.edges).toEqual([]);
+  });
+
+  it('rejects a column mapping from a function that metadata declares as the scalar return of that output', () => {
+    const fn = '[d].[Rate]';
+    const caller = makeNode({ ...nodes[0], columns: [{ ...column('Total'), expressionDependencies: [{ reference: fn, sourceElementType: 'SqlScalarFunction' }] }] });
+    const all = [caller, nodes[1], makeNode({ id: fn, schema: 'd', name: 'Rate', type: 'function', columns: [column('Value')], bodyScript: 'CREATE FUNCTION d.Rate() RETURNS int AS BEGIN RETURN 1 END;' })];
+    const engine = start(all, [[source, origin], [fn, origin]]);
+    const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: fn, col: 'Value' }] }],
+      questions: [{ nodeId: source, question: 'Resolve Amount.' }, { nodeId: fn, question: 'Resolve the rate.' }] });
+    expect(rejected).toMatchObject({ issuePaths: expect.arrayContaining(['column_flow.0.upstream_columns.0']), reason: expect.stringContaining('as the scalar return of') });
+    expect(engine.columnAspect!.edges).toEqual([]);
+  });
+});
+
+describe('current task endpoints come from the engine', () => {
+  it('renders the engine-qualified root endpoint and never treats bare active column names as endpoints', () => {
+    const origin = '[d].[Report]';
+    const nodes = [makeNode({ id: origin, schema: 'd', name: 'Report', type: 'view', columns: [column('Total')], bodyScript: 'CREATE VIEW d.Report AS SELECT 1 AS Total;' })];
+    const engine = engineFor(nodes, []);
+    expect(engine.init({ origin, question: 'Trace total.', analysisMode: 'ct', targetColumns: ['total'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    const [task] = engine.getCurrentTasks();
+    expect(engine.taskEndpoints(task)).toEqual({ assigned: [{ node: origin, col: 'Total' }], external: [] });
+    expect(buildCurrentTaskBlock([{ ...task, endpoints: engine.taskEndpoints(task) }], ['total'])).toContain(`<assigned_endpoints>${origin}.Total:`);
+    expect(buildCurrentTaskBlock([task], ['total'])).not.toContain('<assigned_endpoints>');
   });
 });

@@ -4,18 +4,17 @@
  * @remarks
  * Pure, engine-state-free: maps a structural {@link InvalidRouteKind} to its machine error code
  * and verb-led corrective order, and builds the content-error rejection envelope. The engine
- * consumes {@link isAbsentKind} and {@link buildRouteValidationRejection}. Absent/no-op references are
- * nonfatal notices and never reach the rejection envelope.
+ * consumes {@link isAbsentKind} and {@link buildRouteValidationRejection}. No-op prune references are
+ * nonfatal notices and never reach the rejection envelope; every column reference failure rejects.
  */
 
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
-/** True for nonfatal drop/refuse-with-notice kinds. */
+/** True for nonfatal refuse-with-notice prune kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
-  return kind === 'absent_contributor'
-    || kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
+  return kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
     || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued';
 }
 
@@ -32,7 +31,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   invalid_task_decision:
     'Correct the invalid mapping or input disposition. A write needs a value contribution or an explicit constant output; row-role-only inputs end through terminated_inputs when they have no value output. terminated_inputs must name an assigned incoming column that is not also mapped.',
   absent_contributor:
-    'Record it as an unresolved upstream source in your analysis and keep the upstream columns that resolve — it is not in the loaded model.',
+    'Name only loaded objects connected to this focus: a writes_to target this hop writes, and upstream_columns contributors that are its neighbors or, for a caller-context investigation, read suppliers of the function or its declared callers. Remove the named reference and describe an unresolved source in sections.',
   bad_out_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   untracked_out_col:

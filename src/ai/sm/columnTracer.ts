@@ -8,7 +8,6 @@ import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
 import { computeUnaccounted } from './smCompleteness';
 import { normalizeColName, schemaKey } from '../../utils/sql';
-import { sanitizeForLog } from '../../utils/log';
 import { DirectedGraph } from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 
@@ -218,7 +217,7 @@ export class ColumnTracer {
    * @param contributorIds - Canonical ids an `upstream_columns` contributor may name besides the
    *   focus: its object neighbors and the read suppliers of its declared scalar callers. A column the
    *   object does not declare, a literal, or a carrier continuation at a non-writer is refused wherever
-   *   the object sits; any other contributor is dropped with an `absent_contributor` notice, so no column edge joins an object
+   *   the object sits; any other contributor is rejected as `absent_contributor`, so no column edge joins an object
    *   unconnected to the hop; omitted, adjacency is not checked.
    * @returns Validation result containing any error, invalid routes, successfully staged edges and
    *   the accepted entry sides when separate downstream obligations were supplied.
@@ -259,9 +258,9 @@ export class ColumnTracer {
 
     const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
     // Exploration direction never reverses a value edge: upstream_columns are inputs.
+    const deleteOnlyWriters = new Set(model.edges.filter(edge => edge.deleteOnly && identifierKey(edge.target) === identifierKey(focusId)).map(edge => identifierKey(edge.source)));
     const continuationNeighbors = focusIsCarrier
-      ? new Set((model.neighborIndex[identifierKey(focusId)]?.in ?? []).map((id) => identifierKey(id))
-        .filter(id => !model.edges.some(edge => edge.deleteOnly && identifierKey(edge.source) === id && identifierKey(edge.target) === identifierKey(focusId))))
+      ? new Set((model.neighborIndex[identifierKey(focusId)]?.in ?? []).map((id) => identifierKey(id)).filter(id => !deleteOnlyWriters.has(id)))
       : null;
 
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
@@ -361,7 +360,6 @@ export class ColumnTracer {
       }
       const toNodeForEdge = toNodeId ?? focusId;
 
-      const rowRoleOnly: string[] = [];
       for (let refIndex = 0; refIndex < entry.upstream_columns.length; refIndex++) {
         const cont = entry.upstream_columns[refIndex];
         if (cont.col.trim().length === 0) {
@@ -389,6 +387,11 @@ export class ColumnTracer {
           continue;
         }
 
+        if (deleteOnlyWriters.has(identifierKey(neighbor.id))) {
+          invalidRoutes.push({ kind: 'invalid_task_decision', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `"${neighbor.id}" writes ${focusId} only by DELETE or TRUNCATE, which removes rows and supplies no column value. Remove it from upstream_columns and explain its row effect in sections.` });
+          continue;
+        }
+
         const fromNode = neighbor.id;
         if (fromNode === toNodeForEdge && this.columnKey(cont.col) === this.columnKey(toCol)) {
           invalidRoutes.push({
@@ -402,6 +405,11 @@ export class ColumnTracer {
 
         if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
           invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
+          continue;
+        }
+
+        if (neighbor.type === 'function' && resolveScalarReturnTarget(neighbor.id, { node: toNodeForEdge, col: toCol }, nodeMap, store, model.identifierCaseSensitive)) {
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`, reason: `Loaded metadata declares "${toNodeForEdge}.${toCol}" as the scalar return of "${neighbor.id}", not a column mapping from it. Remove this upstream_columns entry and ask "${neighbor.id}" with questions[].caller_context naming that output.` });
           continue;
         }
 
@@ -455,9 +463,10 @@ export class ColumnTracer {
           continue;
         }
 
-        // Direct lineage only: a column that just joins, filters, groups or orders rows is object lineage — its node is a row-role visit and the hop's sections explain the rule.
+        // Direct lineage only: a column that just joins, filters, groups or orders rows supplies no value.
         if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
-          rowRoleOnly.push(`${fromNode}.${cont.col} (${(cont.transforms ?? []).join('+')}${cont.note ? `: ${sanitizeForLog(cont.note)}` : ''})`);
+          invalidRoutes.push({ kind: 'invalid_task_decision', id: fromNode, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`,
+            reason: `"${fromNode}.${cont.col}" is classified ${(cont.transforms ?? []).join('+')} only: it selects rows and supplies no value to "${entry.out_col}". Remove it from upstream_columns and explain its row role in sections; name an assigned incoming column that stops here in terminated_inputs.` });
           continue;
         }
 
@@ -473,17 +482,8 @@ export class ColumnTracer {
         });
       }
 
-      if (rowRoleOnly.length > 0) {
-        log?.('debug', `[Normalize] column_flow.${entryIndex} into "${entry.out_col}" — row role only, not a column source: [${rowRoleOnly.join(', ')}]`);
-      }
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
-      if (writerEdge && rowRoleOnly.length > 0 && rowRoleOnly.length === entry.upstream_columns.length) {
-        invalidRoutes.push({
-          kind: 'invalid_task_decision', id: focusId, path: `column_flow.${entryIndex}.upstream_columns`,
-          reason: `column_flow.${entryIndex} names only row-role contributors but declares a value write to \`${writerEdge.toNode}.${writerEdge.toCol}\`. Row eligibility does not establish a written value. Correct this mapping, or end the assigned filter-only inputs explicitly in terminated_inputs and explain their row role in sections.`,
-        });
-      }
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
         && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry)) {
         stagedEdges.push({
