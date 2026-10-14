@@ -7,7 +7,7 @@
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
-import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
+import { toHopFinding, submitFindingsSchemaForMode, findingRepairOrder } from '../../tools/toolSchemas';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import {
   normalizeSubmitFindingsInputIds,
@@ -68,7 +68,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: normalized.input, schema });
         const held = engine.holdRejectedSubmission(normalized.input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, normalized.input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, normalized.input, schema), findingRepairOrder(held)].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, normalized.input);
       }
       const normalizedInput = parsed.data;

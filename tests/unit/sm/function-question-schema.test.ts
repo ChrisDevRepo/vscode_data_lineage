@@ -177,15 +177,18 @@ describe('qualified downstream input termination', () => {
     expect(engine.columnAspect?.edges.some(edge => edge.from_col === 'Other' || edge.to_col === 'Other')).toBe(false);
   });
 
-  it('reports a failed termination patch at its submitted index while retaining valid held inputs', () => {
+  it('reports a failed termination at its submitted index and owes the whole terminated_inputs list again', () => {
     const engine = downstream(['Value', 'Other', 'Extra']);
-    expect(engine.submitFindings({ ...mapped, terminated_inputs: [{ node: caller, col: 'Other' }] })).toHaveProperty('code');
-    const patch = (name: string) => toHopFinding(submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow)
-      .parse({ focus_node_id: source, verdict: 'analyze', terminated_inputs: [{ node: caller, col: name }] }));
+    const first = engine.submitFindings({ ...mapped, terminated_inputs: [{ node: caller, col: 'Other' }] });
+    expect(first).toMatchObject({ code: 'incomplete_task', hint: expect.stringContaining('Held: sections.technical, summary, questions, column_flow. Resend: terminated_inputs.') });
+    const patch = (...names: string[]) => toHopFinding(submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow)
+      .parse({ focus_node_id: source, verdict: 'analyze', terminated_inputs: names.map(name => ({ node: caller, col: name })) }));
     const refused = engine.submitFindings(patch('Value'));
     expect(refused).toMatchObject({ issuePaths: expect.arrayContaining(['terminated_inputs.0']) });
     expect(engine.currentFocus).toBe(source);
-    expect(engine.submitFindings(patch('Extra'))).toHaveProperty('ok', true);
+    expect(engine.submitFindings(patch('Extra')), 'a sent list replaces the held list; the first call\'s Other entry is not merged back')
+      .toMatchObject({ code: 'incomplete_task', reason: expect.stringContaining(`${caller}.Other`) });
+    expect(engine.submitFindings(patch('Other', 'Extra'))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'ct' });
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ activeColumns: ['Mapped'], sourceRefs: [{ node: source, col: 'Mapped' }] }));
   });

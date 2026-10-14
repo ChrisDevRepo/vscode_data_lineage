@@ -1,7 +1,7 @@
-import type { InvalidRoute, DepthIntent, HeldSubmissionParts, ColumnFlowEntry } from './smTypes';
-import { buildRouteValidationRejection, HELD_CORRECTION_ORDER, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, routeRejectionDetail, routeRejectionDirectives, routeRejectionReason } from './smRouteValidation';
+import type { InvalidRoute, DepthIntent, HeldSubmissionParts } from './smTypes';
+import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, routeRejectionDetail, routeRejectionDirectives, routeRejectionReason } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, heldEntriesRepairLine, heldSubmissionRepairHint, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, findingRepairOrder, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -17,7 +17,7 @@ import { analyzeRemoval, bfsReachable, type LogFn, type RemovalAnalysis } from '
 import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, type DetailSlot, type IncomingQuestion, type WorkingMemory } from '../session/memoryManager';
-import type { ClassificationValue } from '../session/classification';
+import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
@@ -102,54 +102,33 @@ const REMOVAL_REFUSAL: Record<NonNullable<RemovalAnalysis['rejection']>, string>
   'unknown-node': 'not removed — it is not in the loaded model, so there is nothing to prune.',
   'visited': 'not removed — it was already visited on an earlier hop and is retained.',
 };
-/** Fields a held finding draft restores when the retry omits them and the field did not fail; `column_flow` included, so a CT retry never retypes a valid flow. */
-const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions', 'column_flow', 'terminated_inputs'] as const;
-
-/** Held neighbor lists, each entry keyed by the neighbor id it names; naming a neighbor in one list drops its held entry from the other. */
-const NEIGHBOR_ENTRY_KEYS = { questions: 'nodeId', prune_neighbors: 'id' } as const;
-type NeighborEntryList = keyof typeof NEIGHBOR_ENTRY_KEYS;
-/** Held lists whose entries fail, hold and merge one by one: the neighbor lists and `column_flow`, keyed by `out_col`. */
-type HeldEntryList = NeighborEntryList | 'column_flow' | 'terminated_inputs';
-const HELD_ENTRY_LISTS: readonly HeldEntryList[] = ['questions', 'prune_neighbors', 'column_flow', 'terminated_inputs'];
-const isHeldEntryList = (field: string): field is HeldEntryList => (HELD_ENTRY_LISTS as readonly string[]).includes(field);
-/** Held fields restored or replaced as one value: a retry that sends one replaces the held value whole. */
-const HELD_WHOLE_FIELDS = HELD_CARRIED_FIELDS.filter((field): field is Exclude<typeof field, HeldEntryList> => !isHeldEntryList(field));
-
-/** A rejection's issue paths split into whole failed fields, failed neighbor-list entries and failed section angles. */
-interface FailedParts {
-  /** Top-level fields that failed as a whole and are not held. */
-  readonly fields: Set<string>;
-  /** Indexes of failed entries per neighbor list whose list did not fail as a whole. */
-  readonly entries: Map<HeldEntryList, Set<number>>;
-  /** Section angles that failed while `sections` itself did not. */
-  readonly angles: Set<string>;
-}
+/**
+ * Fields of a held finding draft besides its section angles. Each is one part: a retry that sends it
+ * replaces the held value whole (`[]` clears a held list), and a retry that omits it keeps the held
+ * value. An empty `summary` counts as omitted.
+ */
+const HELD_FIELDS = ['summary', 'badge_label', 'prune_neighbors', 'questions', 'column_flow', 'terminated_inputs'] as const;
+type HeldField = typeof HELD_FIELDS[number];
 
 /**
- * Splits dotted issue paths so a rejection fails the narrowest part it names: `questions.1.nodeId`
- * and `column_flow.0.upstream_columns.1.col` fail that entry only, `sections.technical` fails that
- * angle only, and any other path (`questions`, `column_flow`, `badge_label`) fails its whole
- * top-level field.
+ * Splits dotted issue paths into the parts a rejection fails: `sections.<angle>` fails that angle,
+ * and any other path fails its whole top-level field (`questions.1.nodeId` fails `questions`).
  */
-function splitFailedParts(paths: readonly string[]): FailedParts {
+function splitFailedParts(paths: readonly string[]): { readonly fields: Set<string>; readonly angles: Set<string> } {
   const fields = new Set<string>();
-  const entries = new Map<HeldEntryList, Set<number>>();
   const angles = new Set<string>();
   for (const path of paths) {
     const [top, second] = path.split('.');
     if (!top) continue;
-    if (isHeldEntryList(top) && second !== undefined && /^\d+$/.test(second)) {
-      entries.set(top, (entries.get(top) ?? new Set()).add(Number(second)));
-    } else if (top === 'sections' && (second === 'business' || second === 'technical')) {
-      angles.add(second);
-    } else {
-      fields.add(top);
-    }
+    if (top === 'sections' && (second === 'business' || second === 'technical')) angles.add(second);
+    else fields.add(top);
   }
-  for (const list of HELD_ENTRY_LISTS) if (fields.has(list)) entries.delete(list);
   if (fields.has('sections')) angles.clear();
-  return { fields, entries, angles };
+  return { fields, angles };
 }
+
+/** A section angle's merge key. */
+const angleKey = (section: { angle?: string }): string => section.angle ?? '';
 
 /**
  * Defines the core interface for the state machine handling exploration modes.
@@ -623,14 +602,9 @@ export class NavigationEngine implements IHopStateMachine {
     return Array.from(this.guiExcludedNodeIds);
   }
 
-  /**
-   * Whether the draft held for the current focus carries a `column_flow` that did not fail as a
-   * whole, so a retry may omit it or resend only the entries of the out_cols it changes.
-   */
+  /** Whether the draft held for the current focus carries a `column_flow`, so a retry may omit it to keep the held list. */
   public get heldColumnFlow(): boolean {
-    const held = this.heldFindingDraft.get();
-    return this.heldFindingFocus !== null && held?.column_flow !== undefined
-      && !(this.heldFindingDraft.getAuthorization()?.failed ?? []).includes('column_flow');
+    return this.heldFindingFocus !== null && this.heldFindingDraft.get()?.column_flow !== undefined;
   }
 
   /**
@@ -647,18 +621,15 @@ export class NavigationEngine implements IHopStateMachine {
     return authorization.focusId;
   }
 
+  /** The draft held for the current focus, or `null`. */
+  private heldDraftOfCurrentFocus(): HopFindingKept | null {
+    return this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
+  }
+
   /**
-   * Overlays a correction retry on the held draft of the same focus: sections merge by angle
-   * ({@link RepairDraftStore.mergeByKey}), so an angle the retry omits keeps its held body, and an
-   * empty summary keeps the held one.
-   *
-   * A held `badge_label` is restored when the retry omits it. Held list entries merge by their key
-   * ({@link mergeHeldEntries}): `questions` and `prune_neighbors` by the neighbor they name, where a
-   * neighbor resent in one list also drops its held entry from the other, and `column_flow` by
-   * `out_col`, where `column_flow: []` clears the held entries. A resent entry replaces the held
-   * entries of its key and an unnamed held entry is kept. A field the rejection that held it named
-   * as failed as a whole is never restored. Merging is idempotent: a retry that already carries the
-   * held entries merges to the same list.
+   * Overlays a retry on the draft held for the same focus by the one held-draft rule: each part the
+   * retry sends — a section angle or a {@link HELD_FIELDS} field — replaces the held part whole, and
+   * each part it omits keeps the held part. Nothing else is restored, dropped or combined.
    *
    * @returns The submission to apply, or a `missing_field` rejection when a kept verdict carries no
    *   sections and no summary and no held draft of this focus supplies them, or when neither the
@@ -666,14 +637,9 @@ export class NavigationEngine implements IHopStateMachine {
    *   pass on: a revisit credits the angles already archived.
    */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
-    const held = this.heldFindingDraft.get();
     const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(incoming.focus_node_id);
-    const heldForFocus = this.heldFindingFocus === inFocus && held
-      && (resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id)) === inFocus
-      && inFocus === this.currentFocusNodeId
-      ? held
-      : null;
-    if (!heldForFocus) {
+    const held = inFocus === this.currentFocusNodeId ? this.heldDraftOfCurrentFocus() : null;
+    if (!held) {
       if (incoming.sections.length === 0 && !incoming.summary.trim()) {
         return makeRejection({
           code: REJECTION_CODES.missingField,
@@ -682,79 +648,19 @@ export class NavigationEngine implements IHopStateMachine {
       }
       return incoming.summary.trim() ? incoming : this.emptySummaryRejection();
     }
-    this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
-    const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
-    const carried: Partial<HopFindingKept> = {};
-    for (const field of HELD_WHOLE_FIELDS) {
-      if (incoming[field] === undefined && heldForFocus[field] !== undefined && !failed.includes(field)) {
-        Object.assign(carried, { [field]: heldForFocus[field] });
-      }
-    }
-    for (const list of HELD_ENTRY_LISTS) {
-      if (failed.includes(list)) continue;
-      const merged = this.mergeHeldEntries(list, heldForFocus[list], incoming, new Set());
-      if (merged !== undefined) Object.assign(carried, { [list]: structuredClone(merged) });
-    }
-    const summary = incoming.summary.trim() ? incoming.summary : heldForFocus.summary;
-    if (!summary.trim()) return this.emptySummaryRejection();
-    return {
-      ...incoming,
-      ...carried,
-      sections: RepairDraftStore.mergeByKey(heldForFocus.sections, incoming.sections, section => section.angle ?? ''),
-      summary,
-    };
+    this.log('debug', `[Hold] held parts restored hop=${this.hopCount} focus=${inFocus}`);
+    const merged = this.overlayHeld(held, incoming);
+    return merged.summary.trim() ? merged : this.emptySummaryRejection();
   }
 
-  /**
-   * What identifies an entry of a held list, or `null` when the entry names nothing: the canonical
-   * neighbor id of a `questions` / `prune_neighbors` entry, and the `out_col` of a `column_flow`
-   * entry, compared under the model's identifier policy. Every `column_flow` entry of one out_col
-   * shares its key, so a resent or failed entry replaces or drops all of them, as the served
-   * contract states.
-   */
-  private heldEntryKey(list: HeldEntryList, entry: unknown): string | null {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
-    const record = entry as Record<string, unknown>;
-    if (list === 'column_flow') {
-      return typeof record.out_col === 'string' && record.out_col.trim() !== '' ? this.columnKey(record.out_col) : null;
+  /** Applies the held-draft rule ({@link applyHeldContent}) to `sent` over `held`. */
+  private overlayHeld(held: HopFindingKept, sent: HopFindingKept): HopFindingKept {
+    const merged: HopFindingKept = { ...sent, sections: RepairDraftStore.mergeByKey(held.sections, sent.sections, angleKey) };
+    for (const field of HELD_FIELDS) {
+      const omitted = field === 'summary' ? !sent.summary.trim() : sent[field] === undefined;
+      if (omitted && held[field] !== undefined) Object.assign(merged, { [field]: structuredClone(held[field]) });
     }
-    if (list === 'terminated_inputs') {
-      return typeof record.node === 'string' && typeof record.col === 'string'
-        ? columnEndpointKeyFactory(this.nodeMap, this.identifierCaseSensitive)(record.node, record.col) : null;
-    }
-    const raw = record[NEIGHBOR_ENTRY_KEYS[list]];
-    if (typeof raw !== 'string' || raw.trim() === '') return null;
-    return resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw);
-  }
-
-  /**
-   * Merges one held list of a retry over its held entries: a held entry survives unless the retry
-   * names its key (for a neighbor list, in either neighbor list) or `dropped` holds that key; the
-   * retry's own entries follow, as sent, or lead with `resentFirst` so that an issue path into the
-   * merged list indexes the entry the model sent. A resent `column_flow: []` clears the held flow.
-   *
-   * @returns The merged list, or `undefined` when neither side leaves an entry and the retry sent no list.
-   */
-  private mergeHeldEntries<L extends HeldEntryList>(
-    list: L,
-    held: HopFindingKept[L],
-    resent: Pick<HopFindingKept, HeldEntryList>,
-    dropped: ReadonlySet<string>,
-    resentFirst = false,
-  ): HopFindingKept[L] {
-    if ((list === 'column_flow' || list === 'terminated_inputs') && resent[list]?.length === 0) return [] as unknown as HopFindingKept[L];
-    const sides: readonly HeldEntryList[] = list === 'questions' || list === 'prune_neighbors' ? [list, list === 'questions' ? 'prune_neighbors' : 'questions'] : [list];
-    const named = new Set<string>(dropped);
-    for (const side of sides) {
-      for (const entry of (resent[side] ?? []) as unknown[]) {
-        const key = this.heldEntryKey(side, entry);
-        if (key !== null) named.add(key);
-      }
-    }
-    const kept = ((held ?? []) as unknown[]).filter(entry => !named.has(this.heldEntryKey(list, entry) ?? ''));
-    const sent = (resent[list] ?? []) as unknown[];
-    const merged = resentFirst ? [...sent, ...kept] : [...kept, ...sent];
-    return (merged.length > 0 || resent[list] !== undefined || held !== undefined ? merged : undefined) as HopFindingKept[L];
+    return merged;
   }
 
   /** A kept verdict whose summary is empty with no held summary to restore. */
@@ -762,29 +668,19 @@ export class NavigationEngine implements IHopStateMachine {
     const held = this.heldPartsOfCurrentFocus();
     return makeRejection({
       code: REJECTION_CODES.missingField,
-      hint: `summary is empty and no summary is held for this node; ${held ? 'send only summary plus focus_node_id and verdict' : 'resend the full call with summary'}: one sentence on what this node does to the data and hands on.${held ? ` ${heldSubmissionRepairHint(held)}` : ''}`,
+      hint: `summary is empty and no summary is held for this node; ${held ? 'send summary plus focus_node_id and verdict' : 'resend the full call with summary'}: one sentence on what this node does to the data and hands on.${held ? ` ${findingRepairOrder(held)}` : ''}`,
       issuePaths: ['summary'],
     });
   }
 
   /**
-   * Holds the valid parts of a `submit_findings` call its handler's schema check rejected, merged
-   * over a held draft of the same focus, so {@link applyHeldContent} restores them on the retry.
-   *
-   * @remarks
-   * A failure is held at the narrowest part its issue path names: `sections.<angle>` fails that
-   * angle, `questions.<i>…` / `prune_neighbors.<i>…` / `column_flow.<i>…` fail that entry, and any
-   * other path fails its whole top-level field. The valid entries of a list merge over the held
-   * entries as a retry does ({@link mergeHeldEntries}); a failed entry is never held, and the held
-   * entries of its key (neighbor or out_col) are dropped, since the model's correction for that key
-   * is still owed. A list whose every entry failed is not held.
+   * Holds the valid parts of a `submit_findings` call its handler's schema check rejected, overlaid
+   * on a draft already held for the same focus by the held-draft rule ({@link applyHeldContent}).
    *
    * @param input - The rejected payload as the model sent it.
    * @param failedPaths - Dotted Zod issue paths of the rejection.
-   * @returns What the retry gets restored — held `sections` angles, whether a held `summary`, the
-   *   other held field names (a field this call failed as a whole excluded) and the neighbor ids of
-   *   held list entries. Any call that is not a kept verdict of the current focus holds nothing new
-   *   and reports the draft already held for the current focus; `null` when nothing is held.
+   * @returns What the draft now holds and what must be resent. A call that is not a kept verdict of
+   *   the current focus holds nothing new and reports the draft already held; `null` when nothing is held.
    */
   public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): HeldSubmissionParts | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
@@ -792,154 +688,60 @@ export class NavigationEngine implements IHopStateMachine {
     if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id);
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
-    const parts = splitFailedParts(failedPaths);
-    const failed = parts.fields;
-    const sections = failed.has('sections')
-      ? []
-      : extractRawSectionAngles(raw.sections).filter(section => !parts.angles.has(section.angle ?? ''));
-    const summary = !failed.has('summary') && typeof raw.summary === 'string' ? raw.summary.trim() : '';
-    const resent: Pick<HopFindingKept, HeldEntryList> = {};
-    const dropped = this.droppedEntryKeys();
-    // Collect every failed key of every list first, so a valid entry sharing a key with a failed
-    // entry (another entry of the same out_col, or the same neighbor in the other neighbor list) is
-    // owed with it rather than held, whatever the order of the entries.
-    for (const list of HELD_ENTRY_LISTS) {
-      const value = raw[list];
-      if (failed.has(list) || !Array.isArray(value)) continue;
-      const failedIndexes = parts.entries.get(list) ?? new Set<number>();
-      value.forEach((entry, index) => {
-        const key = this.heldEntryKey(list, entry);
-        if (failedIndexes.has(index) && key !== null) dropped(list).add(key);
-      });
-    }
-    for (const list of HELD_ENTRY_LISTS) {
-      const value = raw[list];
-      if (failed.has(list) || !Array.isArray(value)) continue;
-      const failedIndexes = parts.entries.get(list) ?? new Set<number>();
-      const valid = value.filter((entry, index) => {
-        const key = this.heldEntryKey(list, entry);
-        return !failedIndexes.has(index) && key !== null && !dropped(list).has(key);
-      }).map(entry => structuredClone(entry));
-      // A list whose every entry failed resends nothing: it neither clears nor names a held entry.
-      if (valid.length > 0 || value.length === 0) Object.assign(resent, { [list]: valid });
-    }
-    const prior = this.heldFindingDraft.get();
-    const held = prior !== null && (resolveModelNodeId(prior.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(prior.focus_node_id)) === focus
-      ? prior
-      : null;
-    const priorFailed = held ? this.heldFindingDraft.getAuthorization()?.failed ?? [] : [];
-    const restorable = (field: string): boolean => held !== null && !priorFailed.includes(field);
-    const draft: HopFindingKept = {
-      ...(held ?? {}),
+    const sent: HopFindingKept = {
       focus_node_id: raw.focus_node_id,
       verdict: raw.verdict,
-      sections: held
-        ? RepairDraftStore.mergeByKey(held.sections.filter(section => !parts.angles.has(section.angle ?? '')), sections, section => section.angle ?? '')
-        : sections,
-      summary: summary || (held?.summary ?? ''),
+      sections: extractRawSectionAngles(raw.sections),
+      summary: typeof raw.summary === 'string' ? raw.summary : '',
     };
-    for (const field of HELD_WHOLE_FIELDS) {
-      const value = raw[field];
-      if (!failed.has(field) && value !== undefined && value !== null) Object.assign(draft, { [field]: structuredClone(value) });
-      else if (!restorable(field)) delete draft[field];
+    for (const field of HELD_FIELDS) {
+      if (field !== 'summary' && raw[field] !== undefined && raw[field] !== null) Object.assign(sent, { [field]: structuredClone(raw[field]) });
     }
-    for (const list of HELD_ENTRY_LISTS) {
-      if (failed.has(list)) continue;
-      const merged = this.mergeHeldEntries(list, restorable(list) ? held?.[list] : undefined, resent, dropped(list)) as unknown[] | undefined;
-      if (merged !== undefined && (merged.length > 0 || this.explicitEmptyFlow(list, resent)
-        || (restorable(list) && this.explicitEmptyFlow(list, held ?? {})))) Object.assign(draft, { [list]: merged });
-      else delete draft[list];
-    }
-    const restored = HELD_CARRIED_FIELDS.filter(field => draft[field] !== undefined && !failed.has(field));
-    if (draft.sections.length === 0 && !draft.summary.trim() && restored.length === 0) return null;
-    this.holdFinding(draft, [...failed]);
-    return this.heldParts(draft, [...failed]);
+    const held = this.heldDraftOfCurrentFocus();
+    return this.holdValidParts(held ? this.overlayHeld(held, sent) : sent, failedPaths);
   }
 
   /**
-   * Per-list sets of entry keys a rejection owes a correction for. The two neighbor lists share one
-   * set, since a neighbor's correction may move it between them; `column_flow` and
-   * `terminated_inputs` keys each have their own.
+   * Holds a rejected finding minus the parts the rejection's issue paths fail ({@link splitFailedParts}):
+   * a failed section angle or field is left out whole and named as owed in the next retry.
+   *
+   * @returns The held parts, or `null` (and nothing held) when no valid part remains.
    */
-  private droppedEntryKeys(): (list: HeldEntryList) => Set<string> {
-    const neighbors = new Set<string>();
-    const flow = new Set<string>();
-    const terminated = new Set<string>();
-    return list => (list === 'column_flow' ? flow : list === 'terminated_inputs' ? terminated : neighbors);
-  }
-
-  /** Whether a held list resolves to a sent `column_flow: []`, which is held as "this node carries no tracked column". */
-  private explicitEmptyFlow(list: HeldEntryList, resent: Pick<HopFindingKept, HeldEntryList>): boolean {
-    return (list === 'column_flow' || list === 'terminated_inputs') && resent[list]?.length === 0;
-  }
-
-  /**
-   * Holds a finding the engine rejected, minus the parts the rejection's issue paths name
-   * ({@link splitFailedParts}): a failed section angle is removed from the held draft, a failed
-   * list entry is removed with every held entry of the same key (a `column_flow` out_col, or a
-   * neighbor in either neighbor list), since the correction for that key is still owed; a list left
-   * empty that way is not held. A whole failed field is held but marked failed so a retry never
-   * restores it.
-   */
-  private holdValidParts(finding: HopFindingKept, issuePaths: readonly string[]): void {
-    const parts = splitFailedParts(issuePaths);
-    const draft: HopFindingKept = { ...finding, sections: finding.sections.filter(section => !parts.angles.has(section.angle ?? '')) };
-    const dropped = this.droppedEntryKeys();
-    for (const [list, failedIndexes] of parts.entries) {
-      ((draft[list] ?? []) as unknown[]).forEach((entry, index) => {
-        const key = this.heldEntryKey(list, entry);
-        if (failedIndexes.has(index) && key !== null) dropped(list).add(key);
-      });
+  private holdValidParts(finding: HopFindingKept, issuePaths: readonly string[]): HeldSubmissionParts | null {
+    const { fields, angles } = splitFailedParts(issuePaths);
+    const draft: HopFindingKept = {
+      focus_node_id: finding.focus_node_id,
+      verdict: finding.verdict,
+      sections: fields.has('sections') ? [] : finding.sections.filter(section => !angles.has(angleKey(section))),
+      summary: fields.has('summary') ? '' : finding.summary.trim(),
+    };
+    for (const field of HELD_FIELDS) {
+      if (field !== 'summary' && !fields.has(field) && finding[field] !== undefined) Object.assign(draft, { [field]: structuredClone(finding[field]) });
     }
-    for (const list of HELD_ENTRY_LISTS) {
-      const failedIndexes = parts.entries.get(list) ?? new Set<number>();
-      const value = draft[list] as unknown[] | undefined;
-      if (!value || (failedIndexes.size === 0 && dropped(list).size === 0)) continue;
-      const kept = value.filter((entry, index) => !failedIndexes.has(index) && !dropped(list).has(this.heldEntryKey(list, entry) ?? ''));
-      if (kept.length === value.length) continue;
-      if (kept.length > 0) Object.assign(draft, { [list]: kept });
-      else delete draft[list];
+    const resend = [...[...angles].map(angle => `sections.${angle}`), ...fields];
+    const parts = this.heldParts(draft, resend);
+    if (!this.currentFocusNodeId || (parts.sections.length === 0 && !parts.summary && parts.fields.length === 0)) {
+      this.heldFindingDraft.clear();
+      return null;
     }
-    this.holdFinding(draft, [...parts.fields]);
+    this.heldFindingDraft.hold(draft, { failed: resend, focusId: this.currentFocusNodeId, hop: this.hopCount, mode: this.currentHopAnalysisMode });
+    return parts;
   }
 
-  /** Holds repair content under the exact dispatched contract that authorized it. */
-  private holdFinding(finding: HopFindingKept, failed: readonly string[]): void {
-    if (!this.currentFocusNodeId) return;
-    this.heldFindingDraft.hold(structuredClone(finding), { failed: failed.filter(Boolean), focusId: this.currentFocusNodeId, hop: this.hopCount, mode: this.currentHopAnalysisMode });
-  }
-
-  /** The restorable parts of a held draft, as a rejection names them to the model. */
-  private heldParts(held: HopFindingKept, failed: readonly string[]): HeldSubmissionParts {
-    const fields = HELD_CARRIED_FIELDS.filter(field => held[field] !== undefined && !failed.includes(field));
-    const entries: { questions?: string[]; prune_neighbors?: string[]; column_flow?: string[]; terminated_inputs?: string[] } = {};
-    for (const list of HELD_ENTRY_LISTS) {
-      if (!(fields as readonly string[]).includes(list)) continue;
-      const labels = new Map<string, string>();
-      for (const entry of (held[list] ?? []) as unknown[]) {
-        const key = this.heldEntryKey(list, entry);
-        if (key !== null && !labels.has(key)) labels.set(key, list === 'column_flow' ? this.columnFlowEntryLabel(entry as ColumnFlowEntry) : key);
-      }
-      if (labels.size > 0) entries[list] = [...labels.values()];
-    }
+  /** The parts of a held draft, as a rejection names them to the model. */
+  private heldParts(held: HopFindingKept, resend: readonly string[]): HeldSubmissionParts {
     return {
-      sections: held.sections.map(section => section.angle ?? ''),
+      sections: held.sections.map(angleKey),
       summary: held.summary.trim().length > 0,
-      fields,
-      ...(Object.keys(entries).length > 0 ? { entries } : {}),
+      fields: HELD_FIELDS.filter((field): field is Exclude<HeldField, 'summary'> => field !== 'summary' && held[field] !== undefined),
+      resend,
     };
   }
 
-  /** A held `column_flow` entry as a rejection names it: its `out_col` as authored, with its `returns_to` target when named. */
-  private columnFlowEntryLabel(entry: ColumnFlowEntry): string {
-    return entry.returns_to ? `${entry.out_col} -> ${entry.returns_to.node}.${entry.returns_to.col}` : entry.out_col;
-  }
-
-  /** The parts a draft already held for the current focus still restores, unchanged; `null` when none is held. */
+  /** The parts the draft held for the current focus restores, unchanged; `null` when none is held. */
   private heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
-    const held = this.heldFindingDraft.get();
-    if (held === null || (resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id)) !== this.currentFocusNodeId) return null;
-    return this.heldParts(held, this.heldFindingDraft.getAuthorization()?.failed ?? []);
+    const held = this.heldDraftOfCurrentFocus();
+    return held ? this.heldParts(held, this.heldFindingDraft.getAuthorization()?.failed ?? []) : null;
   }
 
   /** Projection of unresolved scope-boundary leads; feeds the follow-up suggestions after synthesis. */
@@ -2903,14 +2705,10 @@ export class NavigationEngine implements IHopStateMachine {
     const focusId = this.validateCurrentHopFocus(params?.focus_node_id);
     if (typeof focusId !== 'string') return focusId;
 
-    const submitted = params;
     const archivedAngles = this.memory.getArchivedAngles(focusId);
-    // A retry keeps the held, already admitted flow entries of every out_col it does not resend; the
-    // merged flow is then validated as strictly as a fresh call. The resent entries lead, so a
-    // rejection's `column_flow.<i>` path names the entry the model sent.
-    if (this.heldColumnFlow) {
-      const heldFlow = structuredClone(this.heldFindingDraft.get()!.column_flow);
-      params = { ...params, column_flow: this.mergeHeldEntries('column_flow', heldFlow, params, new Set(), true) };
+    // An omitted CT flow is restored from the held draft before the shape check requires one.
+    if (params.column_flow === undefined && this.heldColumnFlow) {
+      params = { ...params, column_flow: structuredClone(this.heldFindingDraft.get()!.column_flow) };
     }
     const shape = validateHopSubmissionShape(params, this.currentHopAnalysisMode, this.classification,
       this.heldFindingFocus !== this.currentFocusNodeId && archivedAngles.size === 0);
@@ -3289,7 +3087,7 @@ export class NavigationEngine implements IHopStateMachine {
 
       const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
       if (classViolation || lengthViolations.length > 0 || fatalRoutes.length > 0) {
-        return this.rejectFinding(focusId, finding, submitted, classViolation, lengthViolations, fatalRoutes, pruneTargets);
+        return this.rejectFinding(focusId, finding, classViolation, lengthViolations, fatalRoutes, pruneTargets);
       }
 
       const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
@@ -3318,8 +3116,8 @@ export class NavigationEngine implements IHopStateMachine {
    * One rejection for every engine-side fault of a submission — a missing locked section angle, an
    * over-cap `badge_label` or `column_flow` note, and each fatal route/column failure — so one round
    * corrects them all. Nothing is committed: the valid parts are held ({@link holdValidParts}) and
-   * the failed ones named. A missing angle fails no sent part; a failed list entry fails only that
-   * entry and the held entries of its key.
+   * the failed ones named for resending. A missing locked angle is owed without failing a sent
+   * angle; a failed list entry fails its whole list.
    *
    * @returns A single-category rejection keeps that category's code and wording; a mixed one is
    *   `invalid_input` with every reason line, every directive and the shared held-parts sentence.
@@ -3327,27 +3125,20 @@ export class NavigationEngine implements IHopStateMachine {
   private rejectFinding(
     focusId: string,
     finding: HopFindingKept,
-    submitted: HopSubmission,
     classViolation: string | null | undefined,
     lengthViolations: ReadonlyArray<{ path: string; chars: number; limit: number }>,
     fatalRoutes: InvalidRoute[],
     pruneTargets: ReadonlyArray<{ raw: string; resolved: ReturnType<typeof resolveModelNodeId>; path: string }>,
   ): ToolRejection {
-    // Retention uses merged indexes; resent-entry diagnostics use submitted indexes.
     const conflictPrunePaths = fatalRoutes.flatMap(route => route.kind === 'prune_question_conflict'
       ? pruneTargets.filter(target => (target.resolved ?? this.identifierKey(target.raw)) === route.id).map(target => target.path)
       : []);
-    this.holdValidParts(finding, [...lengthViolations.map(v => v.path), ...fatalRoutes.flatMap(route => route.path ? [route.path] : []), ...conflictPrunePaths]);
-    const submittedPath = (path: string): string => {
-      const match = /^(questions|prune_neighbors|terminated_inputs)\.(\d+)(.*)$/.exec(path);
-      if (!match) return path;
-      const list = match[1] as HeldEntryList;
-      const count = submitted[list]?.length ?? 0;
-      const index = Number(match[2]) - ((finding[list]?.length ?? 0) - count);
-      return index >= 0 && index < count ? `${list}.${index}${match[3]}` : path;
-    };
-    lengthViolations = lengthViolations.map(v => ({ ...v, path: submittedPath(v.path) }));
-    fatalRoutes = fatalRoutes.map(route => ({ ...route, ...(route.path ? { path: submittedPath(route.path) } : {}) }));
+    const archived = this.memory.getArchivedAngles(focusId);
+    const owedAngles = !classViolation ? [] : this.classification
+      ? CLASSIFICATION_KEPT_ANGLES[this.classification].filter(angle => !archived.has(angle) && !finding.sections.some(section => section.angle === angle)).map(angle => `sections.${angle}`)
+      : ['sections'];
+    const held = this.holdValidParts(finding, [...owedAngles, ...lengthViolations.map(v => v.path), ...fatalRoutes.flatMap(route => route.path ? [route.path] : []), ...conflictPrunePaths]);
+    const repairOrder = findingRepairOrder(held);
     const measured = lengthViolations.map(v => `${v.path}: ${v.chars} chars, limit ${v.limit}`).join('; ');
     if (measured) this.memory.recordRejection(focusId, `${REJECTION_CODES.fieldLengthExceeded}: ${measured}`, this.hopCount);
     if (fatalRoutes.length > 0) {
@@ -3355,26 +3146,25 @@ export class NavigationEngine implements IHopStateMachine {
       for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
     }
     const lengthPaths = lengthViolations.map(v => v.path);
-    const routePaths = [...fatalRoutes.flatMap(route => route.path ? [route.path] : []), ...conflictPrunePaths.map(submittedPath)];
-    const held = this.heldPartsOfCurrentFocus();
+    const routePaths = [...fatalRoutes.flatMap(route => route.path ? [route.path] : []), ...conflictPrunePaths];
     const sectionReason = classViolation ? `sections: ${classViolation}` : '';
     const issuePaths = [...(sectionReason ? ['sections'] : []), ...lengthPaths, ...routePaths];
     const lengthDetail = lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit }));
     const categories = [sectionReason !== '', lengthViolations.length > 0, fatalRoutes.length > 0].filter(Boolean).length;
     if (categories === 1 && sectionReason) {
-      return makeRejection({ code: REJECTION_CODES.invalidInput, reason: sectionReason, ...(held ? { hint: heldSubmissionRepairHint(held) } : {}), issuePaths });
+      return makeRejection({ code: REJECTION_CODES.invalidInput, reason: sectionReason, hint: repairOrder, issuePaths });
     }
     if (categories === 1 && measured) {
       return makeRejection({
         code: REJECTION_CODES.fieldLengthExceeded,
-        hint: `${measured}. Nothing was committed. Shorten the listed field(s) for ${focusId}. ${held ? heldSubmissionRepairHint(held) : HELD_CORRECTION_ORDER}`,
+        hint: `${measured}. Nothing was committed. Shorten the listed field(s) for ${focusId}. ${repairOrder}`,
         detail: lengthDetail,
         issuePaths,
       });
     }
     if (categories === 1) {
-      const rejection = buildRouteValidationRejection(fatalRoutes, held ? heldEntriesRepairLine(held) : '');
-      return { ...rejection, issuePaths: [...new Set([...(rejection.issuePaths ?? []), ...conflictPrunePaths.map(submittedPath)])] };
+      const rejection = buildRouteValidationRejection(fatalRoutes, repairOrder);
+      return { ...rejection, issuePaths: [...new Set([...(rejection.issuePaths ?? []), ...conflictPrunePaths])] };
     }
     return makeRejection({
       code: REJECTION_CODES.invalidInput,
@@ -3383,7 +3173,7 @@ export class NavigationEngine implements IHopStateMachine {
         measured ? `Shorten the listed field(s) for ${focusId}.` : '',
         fatalRoutes.length > 0 ? routeRejectionDirectives(fatalRoutes) : '',
         'Nothing was committed.',
-        held ? heldSubmissionRepairHint(held) : `${HELD_CORRECTION_ORDER}.`,
+        repairOrder,
       ].filter(Boolean).join(' '),
       detail: [...lengthDetail, ...routeRejectionDetail(fatalRoutes)],
       issuePaths,

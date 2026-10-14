@@ -16,7 +16,6 @@ import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorE
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
-import { keyedResendRule } from '../support/repairDraftStore';
 
 /**
  * A column identifier named by the user. Wildcards are rejected at the boundary: a
@@ -979,7 +978,7 @@ export function submitFindingsSchemaForMode(
   classification?: ClassificationValue,
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
-  /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held entries. */
+  /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held list. */
   heldColumnFlow = false,
 ): z.ZodType<FlatSubmitFindings> {
   const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}:${JSON.stringify(hop.incomingRefs ?? null)}:${!!hop.identifierCaseSensitive}` : '';
@@ -1003,7 +1002,7 @@ export function submitFindingsSchemaForMode(
     // A held retry keeps a valid flow by omission, like every other held field; the engine rejects
     // a CT finding that ends up with no flow at all.
     narrowed = narrowed.extend({
-      column_flow: (narrowed.shape.column_flow as z.ZodType).optional().describe(`${COLUMN_FLOW_DESCRIPTION} Omit to keep the held entries; a resent entry replaces the held entries of its out_col.`),
+      column_flow: (narrowed.shape.column_flow as z.ZodType).optional().describe(`${COLUMN_FLOW_DESCRIPTION} Omit to keep the held list; a sent column_flow replaces it whole.`),
     }).strict() as unknown as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
@@ -1072,63 +1071,19 @@ export function validateHopSubmissionShape(
     : { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
 }
 
-/** Required call envelope retained by every held findings repair. */
-export const HELD_FINDING_CALL_ORDER =
-  'Resend focus_node_id and verdict with only the missing or corrected fields; omit valid held content';
-
-type HeldEntryField = keyof NonNullable<HeldSubmissionParts['entries']>;
-const HELD_ENTRY_FIELDS: readonly HeldEntryField[] = ['questions', 'prune_neighbors', 'column_flow', 'terminated_inputs'];
-
-/** A held entry list's label with the keys its held entries name, e.g. `questions ([dbo].[a])` or `column_flow (out_col: A, B)`. */
-function heldListLabel(field: string, held: Pick<HeldSubmissionParts, 'entries'>): string {
-  const ids = held.entries?.[field as HeldEntryField];
-  if (!ids || ids.length === 0) return field;
-  return field === 'column_flow' ? `${field} (out_col: ${ids.join(', ')})` : `${field} (${ids.join(', ')})`;
-}
-
-/** The merge rules of the held entry lists that hold at least one entry. */
-function heldEntryRules(held: Pick<HeldSubmissionParts, 'entries'>): string {
-  const listed = (field: HeldEntryField): boolean => (held.entries?.[field]?.length ?? 0) > 0;
-  return [
-    ...(listed('questions') || listed('prune_neighbors') ? [HELD_NEIGHBOR_LIST_RULE] : []),
-    ...(listed('column_flow') ? [HELD_COLUMN_FLOW_RULE] : []),
-    ...(listed('terminated_inputs') ? ['terminated_inputs: resend only endpoints you add or change; unnamed held endpoints are kept, and terminated_inputs: [] clears them.'] : []),
-  ].join(' ');
-}
+/** The one held-draft rule of a findings retry, applied by `NavigationEngine.applyHeldContent`. */
+export const HELD_FINDING_MERGE_RULE =
+  'Resend focus_node_id and verdict with only the parts to correct: a sent part (a sections angle, summary, badge_label or a whole list) replaces its held value, an omitted part keeps it, and a sent [] clears a held list.';
 
 /**
- * The resend rules for held `questions` / `prune_neighbors` / `column_flow` entries (merged in
- * `NavigationEngine.applyHeldContent`); empty when no entry of any list is held.
+ * The repair order of a rejected finding: which parts are held and which must be resent.
  *
- * @param held - The held parts; only `entries` is read.
- * @returns `Held: …` naming each held list with its entry keys, then each list's merge rule, or `''`.
+ * @param held - The held parts, or `null` when nothing is held.
  */
-export function heldEntriesRepairLine(held: Pick<HeldSubmissionParts, 'entries'>): string {
-  const lists = HELD_ENTRY_FIELDS.filter(field => (held.entries?.[field]?.length ?? 0) > 0);
-  if (lists.length === 0) return '';
-  return `Held: ${lists.map(field => heldListLabel(field, held)).join(', ')}. ${heldEntryRules(held)}`;
-}
-
-/** How a resent `questions` / `prune_neighbors` list combines with the held entries of the same focus. */
-const HELD_NEIGHBOR_LIST_RULE = 'questions, prune_neighbors: resend only the entries you add or change; a held entry for a neighbor you do not name again is kept, a resent entry replaces the held entry for its neighbor, and naming a neighbor in one list drops its held entry from the other.';
-
-/** How a resent `column_flow` combines with the held entries of the same focus. */
-const HELD_COLUMN_FLOW_RULE = 'column_flow: resend only the entries of an out_col you add or change; held entries of an out_col you do not resend are kept, resent entries replace every held entry of their out_col, and column_flow: [] clears the held entries.';
-
-/** The shared resend rule for a finding rejection whose schema-valid content remains held. */
-export function heldSubmissionRepairHint(held: HeldSubmissionParts): string {
-  const labels = [
-    ...(held.sections.length > 0 ? [`sections (${held.sections.join(', ')})`] : []),
-    ...(held.summary ? ['summary'] : []),
-    ...held.fields.map(field => heldListLabel(field, held)),
-  ].join(', ');
-  const omittable = [...(held.summary ? ['summary'] : []), ...held.fields];
-  const rules = heldEntryRules(held);
-  return `Held: ${labels}. ${HELD_FINDING_CALL_ORDER}`
-    + (omittable.length > 0 ? `; omit ${omittable.join(', ')} to keep the held ${omittable.length > 1 ? 'values' : 'value'}` : '')
-    + '.'
-    + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '')
-    + (rules ? ` ${rules}` : '');
+export function findingRepairOrder(held: HeldSubmissionParts | null): string {
+  if (!held) return 'Nothing is held: resend the full call.';
+  const kept = [...held.sections.map(angle => `sections.${angle}`), ...(held.summary ? ['summary'] : []), ...held.fields];
+  return `Held: ${kept.join(', ')}. Resend: ${held.resend.join(', ') || 'only what the reason names'}. ${HELD_FINDING_MERGE_RULE}`;
 }
 
 /**
