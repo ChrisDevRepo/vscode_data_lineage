@@ -99,7 +99,8 @@ These constructs can lose references in SQL-body parsing, or are left unresolved
 
 | Construct | Behaviour | Where it applies |
 |---|---|---|
-| Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) | SQL assembled or held in strings is not parsed for object dependencies: the cleansing pass neutralises string literals and does not evaluate variables or concatenation. Static statements elsewhere in the same body can still contribute edges. | Any supported platform; the extension does not execute a body to discover dependencies |
+| Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) | SQL assembled or held in strings is not parsed for object dependencies: the cleansing pass neutralises string literals and does not evaluate variables or concatenation. Static statements elsewhere in the same body can still contribute edges. The output log warns `Dynamic SQL not fully supported` and names the module. | Any supported platform; the extension does not execute a body to discover dependencies |
+| Cursors (`DECLARE c CURSOR FOR ...`, `FETCH`, cursor variables) | Not analysed as cursors. Tables in the cursor query and in the loop are read and written like any other statement. The output log warns `Cursor not fully supported` and names the module. | Any supported platform |
 | `FREETEXTTABLE(dbo.T, ...)` / `CONTAINSTABLE(dbo.T, ...)` | The table is not captured. | Where full-text table functions are available |
 | `OPENDATASOURCE(...)...` | Nothing is captured, including the four-part table name. | Where the SQL dialect supports this syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | Neither table is captured. | Partition switching is DDL, not DML; no edge is modelled either way |

@@ -167,7 +167,10 @@ export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promi
 }
 
 /** Builds a dacpac shaped like an SDK-style build: a procedure that reads and writes the local and a same-named other-database table. */
-export async function buildThreePartDacpac(dacMetadata: string | undefined): Promise<Uint8Array> {
+export async function buildThreePartDacpac(
+  dacMetadata: string | undefined,
+  body = 'INSERT INTO SelfDb.dbo.X (a) SELECT a FROM OtherDb.dbo.X; INSERT INTO OtherDb.dbo.T (a) SELECT a FROM dbo.T;',
+): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file('model.xml', `<?xml version="1.0"?>
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
@@ -175,7 +178,7 @@ export async function buildThreePartDacpac(dacMetadata: string | undefined): Pro
         <Element Type="SqlTable" Name="[dbo].[T]" />
         <Element Type="SqlTable" Name="[dbo].[X]" />
         <Element Type="SqlProcedure" Name="[dbo].[usp_Sync]">
-          <Property Name="BodyScript" Value="INSERT INTO SelfDb.dbo.X (a) SELECT a FROM OtherDb.dbo.X; INSERT INTO OtherDb.dbo.T (a) SELECT a FROM dbo.T;" />
+          <Property Name="BodyScript" Value="${body}" />
           <Relationship Name="BodyDependencies">
             <Entry><References Name="[dbo].[T]" /></Entry>
             <Entry><References ExternalSource="OtherDb.dacpac" Name="[$(OtherDb)]|[dbo].[X]" /></Entry>

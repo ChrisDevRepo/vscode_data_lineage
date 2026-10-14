@@ -16,7 +16,7 @@ it('consumes external_ref rules only as external references', () => {
   }] }).loaded).toBe(1);
   const sql = 'SELECT * FROM dbo.FileSource;';
   expect(extractExternalRefs(sql)).toEqual([{ url: 'dbo.FileSource', kind: 'file' }]);
-  expect(parseSqlBody(sql)).toEqual({ sources: [], targets: [], execCalls: [], crossDbSources: [], crossDbTargets: [], mutations: [] });
+  expect(parseSqlBody(sql)).toEqual({ sources: [], targets: [], execCalls: [], crossDbSources: [], crossDbTargets: [], mutations: [], unsupported: [] });
 });
 
 it.each([false, true])('keeps unreadable procedure dependencies unresolved while retaining its callers (CS=%s)', cs => {

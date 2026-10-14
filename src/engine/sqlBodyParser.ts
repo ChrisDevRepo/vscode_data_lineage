@@ -58,7 +58,15 @@ interface ParsedDependencies {
   crossDbTargets: string[];
   /** Physical mutations on decoded, qualified components; catalog binding decides identity. */
   mutations: Array<{ parts: string[]; kind: 'write' | 'delete' }>;
+  /** Labels of {@link PARTIAL_SUPPORT} constructs in the body. */
+  unsupported: string[];
 }
+
+/** Body constructs that are not analysed; the references the other rules capture around them still count. */
+const PARTIAL_SUPPORT: ReadonlyArray<readonly [label: string, pattern: RegExp]> = [
+  ['Cursor', /(?<!\[)\bCURSOR\b(?!\])/i],
+  ['Dynamic SQL', /\bEXEC(?:UTE)?\s*\(|\bsp_executesql\b/i],
+];
 
 /**
  * Defines a single regex-based extraction rule for SQL parsing.
@@ -750,6 +758,7 @@ export function parseSqlBody(
   });
 
   clean = clean.replace(NAME_PERIOD_SPACING_RE, (_match, bracketed: string | undefined) => bracketed ?? '.');
+  const unsupported = PARTIAL_SUPPORT.filter(([, pattern]) => pattern.test(clean)).map(([label]) => label);
 
   clean = neutraliseOperandFrom(clean);
 
@@ -824,6 +833,7 @@ export function parseSqlBody(
     crossDbSources: Array.from(crossDbSources),
     crossDbTargets: Array.from(crossDbTargets),
     mutations,
+    unsupported,
   };
 }
 

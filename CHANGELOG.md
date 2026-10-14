@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.2.6] - 2026-10-08
 
+### Added
+- The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, and names the module; the references the parser captures still load.
+
 ### Removed
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Password…**.
 

@@ -134,6 +134,8 @@ export interface ParseStats {
   spDetails: SpParseDetail[];
   /** Full names of modules loaded without edges because their definition is not readable. */
   unreadableDefinitions?: string[];
+  /** Full names of modules per construct that is not fully supported, such as a cursor. */
+  unsupported?: Record<string, string[]>;
 }
 
 /**

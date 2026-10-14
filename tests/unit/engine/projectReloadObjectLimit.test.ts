@@ -1,7 +1,8 @@
 /**
  * Pins that reopening a saved project whose source grew past `dataLineageViz.maxNodes` loads nothing
  * and reports the one object-limit message — for a DACPAC project and for a database project alike —
- * and that every DACPAC load path resolves three-part names against the DACPAC name.
+ * and that every DACPAC load path resolves three-part names against the DACPAC name and logs a
+ * construct that is not fully supported as a warning.
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
@@ -87,18 +88,19 @@ function arrange(host: BridgeHost, connection: Record<string, unknown>) {
     projects: [{ id: 'p1', name: 'Sales', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', connection }],
   } as unknown as ProjectStore;
   const session = { model: null, uiState: {}, renderState: null, isDbSession: false, columnStore: new ColumnStore(), clearDiscoveryTranscript: vi.fn() };
+  const output = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn(), appendLine: vi.fn() };
   const { handlers } = createMessageHandlers(
     host,
     { globalState: { get: () => undefined, update: () => Promise.resolve() }, secrets: {} } as never,
     () => session as never,
-    { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn(), appendLine: vi.fn() } as never,
+    output as never,
     () => store,
     vi.fn(async (_context, updated: ProjectStore) => { store = updated; }),
     vi.fn(),
     false,
     vi.fn(),
   );
-  return { handlers, readStore: () => store };
+  return { handlers, readStore: () => store, output };
 }
 
 async function reload(host: BridgeHost, connection: Record<string, unknown>): Promise<Array<{ type: string; message?: string }>> {
@@ -235,6 +237,14 @@ describe('DACPAC load paths and three-part names', () => {
     const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA));
     await arrange(host, { type: 'dacpac', path: '/tmp/self.dacpac', displayName: 'Self', schemas: ['dbo'] }).handlers['load-project']({ type: 'load-project', id: 'p1' });
     expect(modelEdges(host)).toEqual(expected);
+  });
+
+  it('logs a construct that is not fully supported as a warning and still loads', async () => {
+    const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA, 'DECLARE c CURSOR FOR SELECT a FROM dbo.T; OPEN c;'));
+    const { handlers, output } = arrange(host, { type: 'dacpac', path: '/tmp/self.dacpac', displayName: 'Self', schemas: ['dbo'] });
+    await handlers['load-project']({ type: 'load-project', id: 'p1' });
+    expect(modelEdges(host)).toContain('[dbo].[t] -> [dbo].[usp_sync]');
+    expect(output.warn).toHaveBeenCalledWith('[Parse] Cursor not fully supported — loaded with the references the parser captures: [dbo].[usp_Sync]');
   });
 
   it('an opened DACPAC keeps the DACPAC database local after schema selection', async () => {

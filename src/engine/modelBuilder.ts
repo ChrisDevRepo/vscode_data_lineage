@@ -521,8 +521,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 
   if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
-    const onRuleFire = makeParseTraceCallback(node, ctx);
-    const parsed = parseSqlBody(node.bodyScript, onRuleFire, ctx.identifierCaseSensitive);
+    const parsed = parseNode(node, ctx);
     const spLabel = `${node.schema}.${node.name}`;
     const spInRefs: string[] = [];
     const spUnrelated: string[] = [];
@@ -579,6 +578,13 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 }
 
+/** Parses a module body and records each construct that is not fully supported. */
+function parseNode(node: LineageNode, ctx: EdgeContext): ReturnType<typeof parseSqlBody> {
+  const parsed = parseSqlBody(node.bodyScript!, makeParseTraceCallback(node, ctx), ctx.identifierCaseSensitive);
+  for (const label of parsed.unsupported) ((ctx.stats.unsupported ??= {})[label] ??= []).push(node.fullName);
+  return parsed;
+}
+
 /**
  * Orchestrates edge creation for stored procedures using regex-based script analysis.
  *
@@ -588,8 +594,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
  */
 function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
-  const onRuleFire = makeParseTraceCallback(node, ctx);
-  const parsed = parseSqlBody(node.bodyScript!, onRuleFire, ctx.identifierCaseSensitive);
+  const parsed = parseNode(node, ctx);
   ctx.mutationsByNode.set(sourceId, parsed.mutations);
   const spLabel = `${node.schema}.${node.name}`;
   const spInRefs: string[] = [];

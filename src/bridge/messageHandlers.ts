@@ -1359,6 +1359,9 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   if (stats.unreadableDefinitions?.length) {
     logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges: ${stats.unreadableDefinitions.join(', ')}`);
   }
+  for (const [label, names] of Object.entries(stats.unsupported ?? {})) {
+    logger.warn(`${label} not fully supported — loaded with the references the parser captures: ${names.join(', ')}`);
+  }
 
   if (spCount === 0) {
     logger.debug('No scripted objects (procedures/views) with valid definitions found for parsing.');
