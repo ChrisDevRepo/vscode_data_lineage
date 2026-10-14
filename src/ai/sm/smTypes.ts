@@ -423,8 +423,9 @@ export interface SupplementSkip {
    *   session allowlist) — including a schema the user also typed, since the GUI hides it anyway.
    *   `hint` always accompanies this reason.
    * - `not_connected_to_trace` — node exists and is not excluded, but has no dependency path to the
-   *   traced graph — the wire form of `REJECTION_CODES.notConnectedToTrace`. `hint` always
-   *   accompanies this reason.
+   *   retained trace through retained objects or ids named in the same request — the wire form of
+   *   `REJECTION_CODES.notConnectedToTrace`. `hint` always accompanies this reason and names any
+   *   pruned or untraced connectors the request must name to join it.
    *
    * Both `excluded` and `out_of_allowlist` are a hard wall for every supplement id, named directly
    * or chain-reached: a follow-up asking for an out-of-filter object does not itself widen the
@@ -432,8 +433,8 @@ export interface SupplementSkip {
    */
   reason: 'excluded' | 'out_of_allowlist' | 'unresolved' | 'not_connected_to_trace';
   /**
-   * Recovery text for the model, populated for `not_connected_to_trace` — a separate exploration on
-   * the id directly is the repair. Also populated for `out_of_allowlist` — starting a new
+   * Recovery text for the model, populated for `not_connected_to_trace` — naming the listed
+   * connectors, or a separate exploration on the id directly, is the repair. Also populated for `out_of_allowlist` — starting a new
    * `lineage_start_exploration` proposal that names it reopens the `confirm_sm_start` gate for the
    * user's approval.
    */

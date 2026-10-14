@@ -2202,8 +2202,8 @@ export class NavigationEngine implements IHopStateMachine {
    * Multi-source BFS seeded from `scopeNodeIds ∪ visited` minus `removedSet` — the retained trace,
    * the same support {@link removalSupport} requires of every visited node — and walking
    * only into nodes already seeded or named in `batchIds`. A batch id whose only path back runs
-   * through a pruned object or one outside both sets is never discovered here; the pruned case is
-   * bridged by {@link prunedConnectorsTo}.
+   * through a pruned object or one outside both sets is never discovered here; the refusal names
+   * those connectors ({@link connectorsTo}).
    *
    * @param batchIds - Candidate ids from one `supplement` call, so a chain within the same request
    *   can connect through each other even before any of them is itself admitted.
@@ -2230,61 +2230,56 @@ export class NavigationEngine implements IHopStateMachine {
    *
    * @remarks
    * Unresolvable and excluded ids are left to the caller, which reports them with their own
-   * reasons ({@link checkBorder} is the same test). A target is connected when the retained trace
-   * reaches it ({@link tracedGraphReachable}) or when pruned connectors bridge it
-   * ({@link prunedConnectorsTo}): a target the user names is their decision and wins over the AI's
-   * earlier prune, and the connectors on its path come back with it so the render needs no repair.
-   * A resolved, non-excluded id with no path even through pruned objects is refused here rather than
-   * admitted into a view `present_result`'s closed-graph invariant could never close.
+   * reasons ({@link checkBorder} is the same test). A target is connected only when the retained
+   * trace reaches it through retained objects and the request's own ids ({@link tracedGraphReachable}).
+   * An earlier prune is never undone implicitly: a target joined only through objects outside the
+   * retained trace is refused with those connectors named ({@link connectorsTo}), so the request
+   * must name them itself.
    *
    * @param nodeIds - Follow-up targets, canonical or free-cased.
-   * @returns The connected ids (logged), the pruned connectors to restore with them, plus one
-   *   {@link SupplementSkip} per unconnected id.
+   * @returns The connected ids (logged), plus one {@link SupplementSkip} per unconnected id.
    */
-  private admitSupplementTargets(nodeIds: readonly string[]): { admitted: string[]; connectors: string[]; skipped: SupplementSkip[] } {
+  private admitSupplementTargets(nodeIds: readonly string[]): { admitted: string[]; skipped: SupplementSkip[] } {
     const admitted: string[] = [];
-    const connectors = new Set<string>();
     const skipped: SupplementSkip[] = [];
-    const candidates: Array<{ raw: string; node: LineageNode }> = [];
+    const candidates: LineageNode[] = [];
     for (const raw of nodeIds) {
       const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
       const node = id ? this.nodeMap.get(id) : undefined;
-      if (!node) continue;
-      const border = this.checkBorder(node.id, node, 'supplement');
-      if (border.kind === 'excluded') continue;
-      candidates.push({ raw, node });
+      if (node && this.checkBorder(node.id, node, 'supplement').kind !== 'excluded') candidates.push(node);
     }
-    const batchIds = new Set(candidates.map(c => c.node.id));
+    const batchIds = new Set(candidates.map(node => node.id));
     const tracedReachable = this.tracedGraphReachable(batchIds);
-    for (const { node } of candidates) {
-      const bridge = tracedReachable.has(node.id) ? [] : this.prunedConnectorsTo(node.id, batchIds);
-      if (!bridge) {
-        skipped.push({
-          nodeId: node.id,
-          reason: REJECTION_CODES.notConnectedToTrace,
-          hint: `${node.id} is not connected to this trace; trace it on its own with lineage_start_exploration origin=${node.id}.`,
-        });
-        this.log('debug', `[Border] supplement refuse hop=${this.hopCount} id=${node.id} reason=${REJECTION_CODES.notConnectedToTrace}`);
+    for (const node of candidates) {
+      if (tracedReachable.has(node.id)) {
+        admitted.push(node.id);
         continue;
       }
-      for (const id of bridge) connectors.add(id);
-      admitted.push(node.id);
+      const connectors = this.connectorsTo(node.id, batchIds);
+      skipped.push({
+        nodeId: node.id,
+        reason: REJECTION_CODES.notConnectedToTrace,
+        hint: connectors?.length
+          ? `${node.id} joins this trace only through ${connectors.join(', ')}, outside the retained trace; name ${connectors.length === 1 ? 'it' : 'them'} in supplement.nodeIds together with ${node.id}, or trace ${node.id} on its own with lineage_start_exploration origin=${node.id}.`
+          : `${node.id} is not connected to this trace; trace it on its own with lineage_start_exploration origin=${node.id}.`,
+      });
+      this.log('debug', `[Border] supplement refuse hop=${this.hopCount} id=${node.id} reason=${REJECTION_CODES.notConnectedToTrace}${connectors?.length ? ` connectors=[${connectors.join(',')}]` : ''}`);
     }
     if (admitted.length > 0) this.log('debug', `[Border] supplement admit ids=[${admitted.join(',')}]`);
-    return { admitted, connectors: [...connectors], skipped };
+    return { admitted, skipped };
   }
 
   /**
-   * The pruned objects on the shortest scope-bounded path between a supplement target and the
-   * retained trace, or null when no such path exists.
+   * The objects outside the retained trace on the shortest scope-bounded path between a supplement
+   * target and the trace, or null when no such path clears the border.
    *
    * @remarks
-   * Reuses {@link scopeBoundedPathToOrigin}, along the approved legs first so the target keeps the
-   * directed support ordinary exploration requires, else undirected (a follow-up crossing the initial
-   * direction); the connectors are the path objects after the last retained one (scope and visited minus `removedSet`). Every connector must clear the border, so a
-   * user exclusion stays a wall. Objects named in the same batch are admitted on their own.
+   * Reuses {@link scopeBoundedPathToOrigin}, along the approved legs first, else undirected (a
+   * follow-up crossing the initial direction). The connectors are the path objects after the last
+   * retained one (scope and visited minus `removedSet`) that the request did not already name. Every
+   * connector must clear the border, so a user exclusion is never offered as a connector.
    */
-  private prunedConnectorsTo(nodeId: string, batchIds: ReadonlySet<string>): string[] | null {
+  private connectorsTo(nodeId: string, batchIds: ReadonlySet<string>): string[] | null {
     const path = this.scopeBoundedPathToOrigin(nodeId, this.allowedNoteSides()) ?? this.scopeBoundedPathToOrigin(nodeId);
     if (!path) return null;
     const towardTrace = path.slice(0, -1).reverse();
@@ -2295,13 +2290,6 @@ export class NavigationEngine implements IHopStateMachine {
       const node = this.nodeMap.get(id);
       return !!node && this.checkBorder(id, node, 'supplement').kind === 'in_border';
     }) ? connectors : null;
-  }
-
-  /** Returns pruned connectors to the kept set, so a named target arrives with the path that joins it to the trace. */
-  private restoreConnectors(ids: readonly string[]): void {
-    const restored = ids.filter(id => this.removedSet.has(id));
-    for (const id of restored) this.unprune(id);
-    if (restored.length > 0) this.log('debug', `[Supplement] restore pruned connector(s) ids=[${restored.join(', ')}] — on the path joining the named target to the trace; state prune → kept`);
   }
 
   /**
@@ -2366,66 +2354,42 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * The qualified continuation a follow-up starts from, without inferring new callers or columns.
+   * The carry a follow-up starts from, read only from the request itself.
    *
    * @remarks
-   * A selected task keeps its own qualified context. A follow-up named by object continues from
-   * the committed endpoints that object owns on the traced spine
-   * ({@link ColumnTracer.spineEndpointsFor}); with none it is an object visit, never a column task
-   * bound by a requested column name. Established scalar obligations are recovered from the task ledger.
+   * An object request, or a selected object task, is an object visit. A selected column task
+   * continues as CT only from its own qualified endpoints ({@link qualifiedTaskRefs}); a scalar
+   * function continues only from the task's own return targets. Nothing is recovered from
+   * historical edges, other ledger tasks or column names.
    *
-   * @returns The carry and qualified leg, or `null` when a recorded scalar binding no longer resolves.
+   * @returns The carry, `'no_qualified_task'` for a column task without qualified endpoints, or
+   *   `'scalar_binding_unresolved'` when one of the task's return targets no longer resolves.
    */
-  private supplementCarryFor(nodeId: string, selectedTask?: InvestigationTask): { carry: ColumnCarry; leg?: ContinuationLeg } | null {
-    if (!this.tracer) return { carry: { kind: 'carry', columns: [] } };
-    const scalar = this.supplementScalarCarryFor(nodeId, selectedTask);
-    if (scalar === 'unbound') return null;
-    if (scalar) return { carry: scalar };
-    if (selectedTask?.kind === 'column_lineage' && (selectedTask.callerContext || this.qualifiedTaskRefs(selectedTask)?.length)) {
-      return { carry: { kind: 'carry', columns: selectedTask.activeColumns } };
+  private supplementCarryFor(nodeId: string, task?: InvestigationTask): ColumnCarry | 'no_qualified_task' | 'scalar_binding_unresolved' {
+    if (!this.tracer) return { kind: 'carry', columns: [] };
+    if (task?.kind !== 'column_lineage') return { kind: 'row_role_only' };
+    if (!this.qualifiedTaskRefs(task)?.length) return 'no_qualified_task';
+    if (this.nodeMap.get(nodeId)?.type !== 'function' || getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length) {
+      return { kind: 'carry', columns: task.activeColumns };
     }
-    if (selectedTask) return { carry: { kind: 'row_role_only' } };
-    const side = this.columnTraceDirection();
-    const refs = this.tracer.spineEndpointsFor(nodeId, this.writtenCarrierIds(nodeId), side);
-    if (refs.length === 0) return { carry: { kind: 'row_role_only' } };
-    return {
-      carry: { kind: 'carry', columns: [...new Map(refs.map(ref => [this.columnKey(ref.col), ref.col])).values()] },
-      leg: { sourceRefs: refs, traversalSide: side },
-    };
-  }
-
-  /**
-   * Recovers established scalar obligations for a follow-up without inferring new callers.
-   *
-   * @returns The scalar or row-only carry, `null` when the function has no scalar obligation, or
-   *   `'unbound'` when a recorded caller binding no longer resolves in the loaded model.
-   */
-  private supplementScalarCarryFor(nodeId: string, selectedTask?: InvestigationTask): ColumnCarry | 'unbound' | null {
-    if (!this.tracer || this.nodeMap.get(nodeId)?.type !== 'function') return null;
-    const targets = uniqueScalarReturnTargets(
-      selectedTask?.kind === 'column_lineage' && selectedTask.returnTargets
-        ? selectedTask.returnTargets
-        : this.taskLedger.investigationTasks.flatMap(task =>
-          task.nodeId === nodeId && task.kind === 'column_lineage' ? task.returnTargets ?? [] : []), this.model.identifierCaseSensitive);
-    if (targets.length) {
-      const outputs = targets.flatMap(target => {
-        const bound = this.resolveReturnTarget(nodeId, target);
-        return bound && this.scopeNodeIds.has(bound.node) ? [bound] : [];
-      });
-      return outputs.length === targets.length ? { kind: 'scalar_return', outputs } : 'unbound';
-    }
-    return getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length
-      ? null
-      : { kind: 'row_role_only' };
+    const targets = uniqueScalarReturnTargets(task.returnTargets ?? [], this.model.identifierCaseSensitive);
+    if (!targets.length) return 'no_qualified_task';
+    const outputs = targets.flatMap(target => {
+      const bound = this.resolveReturnTarget(nodeId, target);
+      return bound && this.scopeNodeIds.has(bound.node) ? [bound] : [];
+    });
+    return outputs.length === targets.length ? { kind: 'scalar_return', outputs } : 'scalar_binding_unresolved';
   }
 
   /**
    * Extends a completed exploration with additional nodes for analysis.
    *
    * @remarks
-   * Only callable when `status === 'complete'`. A prune this run made is not a veto here (see
-   * {@link unprune}) — the exclusion sets, a GUI-hidden schema included, remain a hard wall, whether
-   * the id is named directly or reached only through a chain walk. Status moves to `awaiting_findings`
+   * Only callable when `status === 'complete'`. A pruned id the request names is returned to the
+   * analysable set ({@link unprune}); a pruned connector it does not name refuses the target. The
+   * exclusion sets, a GUI-hidden schema included, remain a hard wall, whether the id is named
+   * directly or reached only through a chain walk. A selected column task without qualified
+   * endpoints rejects the whole call before any change. Status moves to `awaiting_findings`
    * only when at least one id was agendaed; an all-refused call leaves `status` at `complete` so a
    * fresh {@link NavigationInitParams} proposal is not blocked by a live-engine check.
    *
@@ -2464,47 +2428,38 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
     const requested = [
-      ...nodeIds.flatMap(nodeId => {
-        const id = resolveModelNodeId(nodeId, this.nodeMap, this.model.identifierCaseSensitive);
-        const contexts = this.taskLedger.investigationTasks.filter(task => task.nodeId === id && task.callerContext);
-        return contexts.length ? contexts.map(task => ({ nodeId, question: task.question, taskId: task.id as string | undefined, leadId: undefined as string | undefined }))
-          : [{ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined }];
-      }),
-      ...leadEntries.map(entry => ({ nodeId: entry!.lead.nodeId, question: entry!.task.question, taskId: entry!.task.id, leadId: entry!.lead.id })),
+      ...nodeIds.map(nodeId => ({ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined })),
+      ...leadEntries.map(entry => ({ nodeId: entry!.lead.nodeId, question: entry!.task.question, taskId: entry!.task.id as string | undefined, leadId: entry!.lead.id as string | undefined })),
     ];
 
     const admission = this.admitSupplementTargets(requested.map(request => request.nodeId));
     const unconnectedIds = new Set(admission.skipped.map(skip => this.identifierKey(skip.nodeId)));
     const admittedIds = new Set(admission.admitted);
-    // Validate every recovered binding before any target is unpruned or queued.
-    const unbound: string[] = [];
+    // Validate every selected task before any target is unpruned or queued.
+    const refused: string[] = [];
     const prepared = requested.map(request => {
       const id = resolveModelNodeId(request.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
       const selectedTask = request.taskId ? this.taskLedger.getTask(request.taskId) : undefined;
-      const recovered = id && admittedIds.has(id)
-        ? this.supplementCarryFor(id, selectedTask)
-        : { carry: { kind: 'row_role_only' } as ColumnCarry, leg: undefined };
-      if (!recovered) unbound.push(id!);
-      const { carry, leg } = recovered ?? { carry: { kind: 'row_role_only' } as ColumnCarry, leg: undefined };
-      const replaceTask = !!selectedTask && (carry.kind === 'row_role_only'
-        || (carry.kind === 'scalar_return' && !(selectedTask.kind === 'column_lineage' && selectedTask.returnTargets)));
+      const recovered = id && admittedIds.has(id) ? this.supplementCarryFor(id, selectedTask) : { kind: 'row_role_only' } as ColumnCarry;
+      if (typeof recovered === 'string') refused.push(`${id} (${recovered === 'no_qualified_task' ? 'no qualified task' : 'scalar binding unresolved'})`);
+      const carry = typeof recovered === 'string' ? { kind: 'row_role_only' } as ColumnCarry : recovered;
+      const replaceTask = !!selectedTask && carry.kind === 'row_role_only';
       return {
         ...request,
         carry,
-        leg,
         existingTaskId: replaceTask ? undefined : request.taskId,
         parentTaskId: replaceTask ? request.taskId : undefined,
       };
     });
 
-    if (unbound.length > 0) {
-      this.log('debug', `[Supplement] refuse hop=${this.hopCount} ids=[${unbound.join(',')}] reason=scalar_binding_unresolved`);
+    if (refused.length > 0) {
+      this.log('debug', `[Supplement] refuse hop=${this.hopCount} ids=[${refused.join(',')}]`);
       return makeRejection({
         code: REJECTION_CODES.routeValidationFailed,
-        hint: `The recorded scalar caller binding of ${unbound.join(', ')} no longer resolves in the loaded model, so this follow-up cannot continue it. Nothing was changed; start a new exploration for that function.`,
+        reason: `Supplement refused: ${refused.join(', ')}`,
+        hint: 'A follow-up continues a column trace only from a selected task with qualified endpoints, and a scalar function only from that task\'s resolvable return targets. Nothing was changed; name the object without the task for an object visit, or start a new exploration.',
       });
     }
-    this.restoreConnectors(admission.connectors);
     const agendaBefore = this._agenda.length;
     let skipped = admission.skipped.length;
     const skippedDetails: SupplementSkip[] = [...admission.skipped];
@@ -2546,8 +2501,6 @@ export class NavigationEngine implements IHopStateMachine {
       }
       this.enqueueHop(id, request.question, depth, 3, {
         carry: request.carry,
-        sourceRefs: request.leg?.sourceRefs,
-        traversalSide: request.leg?.traversalSide,
         freshScopeExpansion: wasNewToScope,
         reactivated: wasVisited,
         existingTaskId: request.existingTaskId,
