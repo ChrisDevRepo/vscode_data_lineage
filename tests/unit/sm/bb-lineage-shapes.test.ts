@@ -58,10 +58,11 @@ describe('BB lineage by shape', () => {
     const origin = Object.keys(shape.types)[0];
     const w = world(shape.types, shape.edges, origin, shape.up, shape.down);
     const before = w.scope();
-    drain(w.engine, forwarding(shape.types, shape.script));
+    const order = drain(w.engine, forwarding(shape.types, shape.script));
     const result = delivered(w.engine);
     expect(result.nodes).toEqual(shape.nodes);
     expect(result.pruned).toEqual(shape.pruned ?? []);
+    expect(result.pruned.filter(id => order.includes(id))).toEqual([]);
     expect(w.leads()).toEqual(shape.leads ?? []);
     expect(withoutDirectedPath(w.engine, origin, { upstream: shape.up.levels !== 0, downstream: shape.down.levels !== 0 })).toEqual([]);
     const kept = new Set(result.nodes);
@@ -73,53 +74,62 @@ describe('BB lineage by shape', () => {
 
 describe('BB lineage: a prune inside a cycle through the origin', () => {
   // origin -> d -> j -> origin, j -> x. The origin and j both prune d: the upstream leg still holds j,
-  // and x, whose only directed path ran origin -> d -> j -> x, leaves with d.
-  const cycleWorld = () => {
+  // and x, whose only directed path ran origin -> d -> j -> x, can no longer be routed by j.
+  it('a sender cannot route a continuation its own prune disconnects; naming both removes both', () => {
     const w = world(v('origin', 'd', 'j', 'x'), [['origin', 'd'], ['d', 'j'], ['j', 'origin'], ['j', 'x']], 'origin', ALL, ALL);
     expect(w.engine.getHopContext()).toMatchObject({ focus_node: { id: 'origin' } });
-    expect(submit(w.engine, 'origin', { verdict: 'passthrough', prune: ['d'] })).toMatchObject({ ok: true });
+    expect(submit(w.engine, 'origin', { verdict: 'passthrough', prune: ['d'] })).not.toHaveProperty('pruned');
     expect(w.engine.getHopContext()).toMatchObject({ focus_node: { id: 'j' } });
-    expect(submit(w.engine, 'j', { verdict: 'passthrough', prune: ['d'] })).toMatchObject({ ok: true });
-    expect(w.engine.toJSON().nodeStates.filter(state => state.action === 'prune').map(state => state.nodeId)).toContain('d');
-    return w;
-  };
-
-  it('a continuation behind a join kept only by the other leg does not stay in the answer', () => {
-    const w = cycleWorld();
-    drain(w.engine, forwarding(v('origin', 'd', 'j', 'x')));
+    const before = w.engine.toJSON();
+    expect(submit(w.engine, 'j', { verdict: 'passthrough', prune: ['d'] })).toMatchObject({
+      code: 'route_validation_failed', issuePaths: ['prune_neighbors.0.id'],
+      reason: 'prune_neighbors.0.id: `d`: Removing it would disconnect committed analysis of x.',
+    });
+    expect(w.engine.toJSON().removedSet).toEqual(before.removedSet);
+    const ack = submit(w.engine, 'j', { verdict: 'passthrough', prune: ['d', 'x'] });
+    expect(ack).toMatchObject({ ok: true, pruned: ['d', 'x'] });
+    expect(ack).not.toHaveProperty('cut_ids');
+    expect(w.engine.getHopContext()).toMatchObject({ done: true });
+    expect(delivered(w.engine)).toMatchObject({ nodes: ['j', 'origin'], pruned: ['d', 'x'] });
     expect(withoutDirectedPath(w.engine, 'origin', { upstream: true, downstream: true })).toEqual([]);
   });
 });
 
-describe('BB lineage: refused prune', () => {
+describe('BB lineage: a prune reports what it removed', () => {
+  it('the acknowledgement names the pruned neighbour and the readers cut with it', () => {
+    const w = world({ o: 'view', t: 'table', b: 'view', c: 'view' }, [['o', 't'], ['t', 'b'], ['b', 'c']], 'o', CLOSED, ALL);
+    expect(w.engine.getHopContext()).toMatchObject({ focus_node: { id: 'o' } });
+    expect(submit(w.engine, 'o', { verdict: 'passthrough', prune: ['t'] })).toMatchObject({ ok: true, pruned: ['t'], cut_ids: ['b', 'c'] });
+    expect(w.engine.commitRemovals).toEqual({ pruned: ['t'], cut_ids: ['b', 'c'] });
+  });
+});
+
+describe('BB lineage: a prune without support is rejected at submission', () => {
   // Both sides open. d reads the origin's downstream table and is dispatched before s, the origin's
-  // upstream source; d routes u, which lies upstream of the origin only through s. Every sender then
-  // prunes s, the removal is refused because it would disconnect visited u, and s stays in the answer
-  // and must still get its hop.
-  it('an object kept by a refused prune still gets its hop', () => {
-    const types: Record<string, ObjectType> = { o: 'view', t: 'table', u: 'view', s: 'view', d: 'view', b: 'table' };
-    const w = world(types, [['s', 'd'], ['u', 't'], ['d', 't'], ['s', 'u'], ['b', 'd'], ['u', 'd'], ['o', 'b'], ['s', 'o'], ['t', 's']], 'o', ALL, ALL);
-    const order = drain(w.engine, forwarding(types, { o: { prune: ['s'] }, d: { prune: ['s', 't'] }, u: { prune: ['s', 't'] } }));
-    const result = delivered(w.engine);
-    expect(result.nodes.filter(id => types[id] !== 'table' && !order.includes(id))).toEqual([]);
+  // upstream source; d routes u, which lies upstream of the origin only through s. A prune of s by
+  // d would disconnect u, so d's submission is rejected and nothing is enqueued for s on its behalf.
+  const types: Record<string, ObjectType> = { o: 'view', t: 'table', u: 'view', s: 'view', d: 'view', b: 'table' };
+  const edges: Array<[string, string]> = [['s', 'd'], ['u', 't'], ['d', 't'], ['s', 'u'], ['b', 'd'], ['u', 'd'], ['o', 'b'], ['s', 'o'], ['t', 's']];
+
+  it('rejects the prune entry with the analysis it would disconnect', () => {
+    const w = world(types, edges, 'o', ALL, ALL);
+    expect(() => drain(w.engine, forwarding(types, { o: { prune: ['s'] }, d: { prune: ['s', 't'] } })))
+      .toThrow('prune_neighbors.0.id: `s`: Removing it would disconnect committed analysis of u.');
+    expect(w.engine.toJSON().agenda.map(entry => entry.nodeId)).not.toContain('s');
   });
 
-  it('a table kept by a refused prune carries the same column role as a routed table', () => {
-    const types: Record<string, ObjectType> = { o: 'view', t: 'table', u: 'view', s: 'table', d: 'view', b: 'table' };
-    const w = world(types, [['s', 'd'], ['u', 't'], ['d', 't'], ['s', 'u'], ['b', 'd'], ['u', 'd'], ['o', 'b'], ['s', 'o'], ['t', 's']], 'o', ALL, ALL);
-    drain(w.engine, forwarding(types, { o: { prune: ['s'] }, d: { prune: ['s', 't'] }, u: { prune: ['s', 't'] } }));
-    const roles = Object.fromEntries(w.engine.toJSON().nodeStates.map(state => [state.nodeId, state.columnRole ?? null]));
-    expect(roles).toMatchObject({ s: roles.b });
-    expect(w.logs.some(line => line.includes('[Prune] reject id=s'))).toBe(true);
+  it('a kept neighbour is forwarded only by the corrected passthrough, and no accepted vote is refused later', () => {
+    const w = world(types, edges, 'o', ALL, ALL);
+    const order = drain(w.engine, forwarding(types, { o: { prune: ['s'] } }));
+    expect(order).toContain('s');
+    expect(w.logs.some(line => line.includes('[Prune] reject'))).toBe(false);
+    expect(delivered(w.engine).pruned).toEqual([]);
   });
 
-  // The ballots on b and e are still pending when the agenda empties (each is the other's unheard
-  // sender); the run-end resolution refuses both removals, and the kept objects must still get their hop.
-  it('an object kept by a refused prune at the end of the run still gets its hop', () => {
+  it('rejects a vote whose removal, together with pending prunes, would disconnect committed analysis', () => {
     const w = world(v('o', 'a', 'b', 'c', 'd', 'e'), [['o', 'a'], ['o', 'e'], ['a', 'b'], ['b', 'o'], ['b', 'c'], ['c', 'd'], ['d', 'a'], ['e', 'o'], ['e', 'b'], ['e', 'c']], 'o', ALL, ALL);
-    const order = drain(w.engine, forwarding(v('o', 'a', 'b', 'c', 'd', 'e'), { o: { prune: ['b', 'c', 'e'] }, a: { prune: ['o', 'b', 'e'] }, b: { prune: ['a', 'e'] }, c: { prune: ['b', 'e'] }, d: { prune: ['o', 'a', 'b'] }, e: { prune: ['o', 'a', 'b', 'c', 'd'] } }));
-    expect(w.logs.some(line => line.includes('resolve at run end id=b'))).toBe(true);
-    expect(delivered(w.engine).nodes.filter(id => !order.includes(id))).toEqual([]);
+    expect(() => drain(w.engine, forwarding(v('o', 'a', 'b', 'c', 'd', 'e'), { o: { prune: ['b', 'c', 'e'] }, a: { prune: ['o', 'b', 'e'] } })))
+      .toThrow(/hop a rejected: .*`b`: Removing it would disconnect committed analysis of d\..*`e`: Removing it would disconnect committed analysis of d\./);
   });
 });
 

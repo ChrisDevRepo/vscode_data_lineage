@@ -15,7 +15,7 @@ import { StartExplorationInputSchema, PruneCurrentInputSchema, presentResultSche
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv';
 import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { makeIndexedModel, makeModel, makeNode } from './helpers/fixtures';
 import { stubToolServices } from './helpers/toolServices';
 
 const ORIGIN = '[hop].[origin]';
@@ -56,8 +56,7 @@ function passthroughWorld(mode: 'bb' | 'ct') {
     makeNode({ id: OTHER, schema: 'hop', name: 'other', type: 'view', bodyScript: `SELECT Other FROM ${BRANCH};` }),
   ];
   const pairs: Array<[string, string]> = [[ORIGIN, BRANCH], [BRANCH, OTHER]];
-  const model = makeModel(nodes, pairs, ['hop']);
-  model.neighborIndex = { [ORIGIN]: { in: [], out: [BRANCH] }, [BRANCH]: { in: [ORIGIN], out: [OTHER] }, [OTHER]: { in: [BRANCH], out: [] } };
+  const model = makeIndexedModel(nodes, pairs);
   const graph = makeGraph(nodes, pairs);
   const session = new AiSession();
   session.model = model; session.graph = graph; session.setClassification('technical'); session.beginTurn();
@@ -82,7 +81,7 @@ describe('lineage_prune_current boundary', () => {
     const before = structuredClone(input);
     expect(engine.canPruneCurrent).toBe(true);
     const result = JSON.parse(executePruneCurrent(input, services));
-    expect(result).toMatchObject({ ok: true, done: true });
+    expect(result).toMatchObject({ ok: true, done: true, pruned: [BRANCH], cut_ids: [OTHER] });
     expect(engine.status).toBe('complete');
     expect(engine.getResult().fullNodes.map(node => node.id)).toEqual([ORIGIN]);
     expect(session.resultGraph?.nodeIds).toEqual([ORIGIN]);

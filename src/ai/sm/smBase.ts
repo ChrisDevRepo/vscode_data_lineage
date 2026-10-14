@@ -366,6 +366,8 @@ export class NavigationEngine implements IHopStateMachine {
    * accepted ballots so resuming does not change a shared node's fate.
    */
   private pruneBallots = new Map<string, Map<string, 'prune' | 'keep'>>();
+  /** Removals since the last hop commit began, reported in that commit's acknowledgement ({@link commitRemovals}). */
+  private hopRemovals: { pruned: string[]; cut_ids: string[] } = { pruned: [], cut_ids: [] };
   /**
    * Nodes the last {@link getResult} removed from the render as undispositioned sinks, surfaced as
    * `renderDroppedNodeIds` so the render states its own disposition explicitly.
@@ -1882,17 +1884,22 @@ export class NavigationEngine implements IHopStateMachine {
     return { rules: rules.filter(rule => rule.count > 0), named };
   }
 
-  /** Applies the shared graph removal policy with this session's scope, anchors and direction legs. */
-  private removalSupport(removedBefore: ReadonlySet<string>, removedAfter: ReadonlySet<string>): RemovalAnalysis {
+  /**
+   * Applies the shared graph removal policy with this session's scope, anchors and direction legs.
+   *
+   * @param anchors - Committed analysis the removal must not disconnect: the visited nodes, plus
+   *   the routes a submission under validation commits.
+   */
+  private removalSupport(removedBefore: ReadonlySet<string>, removedAfter: ReadonlySet<string>, anchors: ReadonlySet<string> = this.visited): RemovalAnalysis {
     const analysis = analyzeRemoval(this.graph, {
       originId: this.originNodeId ?? '', scope: this.scopeNodeIds, removedBefore, removedAfter,
-      visited: this.visited, currentNodeId: this.currentFocusNodeId ?? undefined, sides: this.allowedNoteSides(),
+      visited: anchors, currentNodeId: this.currentFocusNodeId ?? undefined, sides: this.allowedNoteSides(),
     });
     if (analysis.rejection || !this.originNodeId || this.supplementNodeIds.size === 0) return analysis;
     const connectedBefore = bfsReachable(this.graph, this.originNodeId, removedBefore, undefined, this.scopeNodeIds);
     const connectedAfter = bfsReachable(this.graph, this.originNodeId, removedAfter, undefined, this.scopeNodeIds);
     for (const id of this.supplementNodeIds) {
-      if (!this.visited.has(id)) continue;
+      if (!anchors.has(id)) continue;
       if (connectedBefore.has(id)) analysis.before.add(id);
       if (connectedAfter.has(id)) analysis.after.add(id);
       if (!removedAfter.has(id) && connectedBefore.has(id) && !connectedAfter.has(id)
@@ -2628,8 +2635,6 @@ export class NavigationEngine implements IHopStateMachine {
 
     if (!entry) {
       this.resolvePendingPrunes(true);
-      // A prune refused at run end routes its object: the hop it enqueued is dispatched before the run completes.
-      if (this._agenda.length > 0) return this.getHopContext();
       this._status = 'complete';
       this._totalNodes = this.hopCount;
       this.logLabelDiversity();
@@ -2810,7 +2815,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
     if (this._status !== 'awaiting_findings') return makeRejection({
       code: REJECTION_CODES.invalidStatus,
-      reason: `Findings arrived while the engine is in status '${this._status}', not 'awaiting_findings'.`,
+      reason: `A hop decision arrived while the engine is in status '${this._status}', not 'awaiting_findings'.`,
       detail: { current_status: this._status },
     });
     const focusId = typeof rawFocusId === 'string'
@@ -2833,12 +2838,25 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** True while an active hop carries at least one route through explicit passthrough. */
   public get canPruneCurrent(): boolean {
-    return this._status === 'awaiting_findings' && this.getCurrentTasks().some(task => task.passthroughFromNodeId !== undefined);
+    return this.passthroughSender() !== undefined;
+  }
+
+  /** The visited sender whose passthrough routed the active hop, or undefined when no current task arrived through passthrough. */
+  private passthroughSender(): string | undefined {
+    if (this._status !== 'awaiting_findings') return undefined;
+    return this.getCurrentTasks().find(task => task.passthroughFromNodeId !== undefined)?.passthroughFromNodeId;
   }
 
   /**
-   * Removes a whole unrelated hop reached through passthrough and its exclusively supported open
-   * work. Uses the ordinary structural removal policy in BB and CT; unaffected branches remain.
+   * Removes a whole unrelated hop reached through passthrough and the open nodes the shared
+   * directed pruning rule cuts with it. Uses the ordinary structural removal policy in BB and CT;
+   * unaffected branches remain.
+   *
+   * @remarks
+   * The command is rejected when the removal would disconnect committed analysis — counting
+   * neighbor prunes still pending resolution — or when a committed column mapping names the focus
+   * or a node the cut would remove. The acknowledgement lists the removed focus in `pruned` and the
+   * cut nodes in `cut_ids`; committed column mappings are never removed.
    */
   public pruneCurrent(focusNodeId: string, reason: string): SubmitResult {
     const focusId = this.validateCurrentHopFocus(focusNodeId);
@@ -2846,42 +2864,80 @@ export class NavigationEngine implements IHopStateMachine {
     if (typeof reason !== 'string' || !reason.trim()) return makeRejection({
       code: REJECTION_CODES.invalidInput, reason: 'A non-empty reason must explain why this object is unrelated.',
     });
-    if (!this.canPruneCurrent) return makeRejection({
-      code: REJECTION_CODES.invalidInput, reason: 'The current hop was not reached through passthrough.',
-      hint: 'Use lineage_submit_findings to resolve this hop.',
+    const fromNodeId = this.passthroughSender();
+    const hint = 'Use lineage_submit_findings to resolve this hop.';
+    if (fromNodeId === undefined) return makeRejection({
+      code: REJECTION_CODES.invalidInput, reason: 'The current hop was not reached through passthrough.', hint,
     });
+    const refusal = this.pruneRefusal([focusId]);
+    if (refusal) return makeRejection({ code: REJECTION_CODES.invalidInput, reason: refusal, hint });
     const removal = this.removalSupport(this.removedSet, new Set([...this.removedSet, focusId]));
-    if (removal.rejection || removal.disconnectedVisited.length > 0) return makeRejection({
+    const removed = new Set([focusId, ...removal.cutIds]);
+    const mapped = (this.tracer?.edges ?? []).filter(edge => removed.has(edge.from_node) || removed.has(edge.to_node));
+    if (mapped.length > 0) return makeRejection({
       code: REJECTION_CODES.invalidInput,
-      reason: removal.rejection ? REMOVAL_REFUSAL[removal.rejection] : 'Removing this object would disconnect previously committed analysis.',
+      reason: `Committed column mappings name ${[...new Set(mapped.flatMap(edge => [edge.from_node, edge.to_node]).filter(id => removed.has(id)))].join(', ')}; pruning would remove them.`,
+      hint,
     });
 
-    const fromNodeId = this.getCurrentTasks().find(task => task.passthroughFromNodeId !== undefined)!.passthroughFromNodeId!;
-    this.committedHops++;
-    this.lastRoutedNew = 0;
-    this.lastRoutedRejected = 0;
-    this.lastRoutedDeferred = 0;
-    this.lastHopColumnFlowEntries = 0;
-    this._pendingLineageQuestions = [];
+    this.beginHopCommit(0);
     this.lastHopDetailChars = 0;
     this.lastHopSummaryChars = reason.length;
     this.archiveChars += reason.length;
     this.memory.storeDetail(this.nodeMap.get(focusId)!, [], reason, { incoming_questions: this.currentIncomingQuestions() });
     this.removedSet.add(focusId);
+    this.hopRemovals.pruned.push(focusId);
     this.pruneBallots.delete(focusId);
     this.markNodeState(focusId, 'prune', 'ai', 'submitted_prune', { viaNodeId: fromNodeId, atHop: this.hopCount });
     this.lastHopVerdict = 'prune';
     this.completeTasks(this.currentFocusTaskIds);
     this.recordPruneLead(focusId, fromNodeId, reason);
     this.cutUnreachable(focusId, removal);
-    const cut = new Set([focusId, ...removal.cutIds]);
-    if (this.tracer) this.tracer.edges.splice(0, this.tracer.edges.length,
-      ...this.tracer.edges.filter(edge => !cut.has(edge.from_node) && !cut.has(edge.to_node) && !cut.has(edge.hop_node)));
-    this.heldFindingDraft.clear();
-    this.resolvePendingPrunes();
-    this._status = 'exploring';
+    this.finishHopCommit();
     this.log('debug', `[Self-Prune] hop=${this.hopCount} id=${focusId}`);
-    return { ok: true };
+    return { ok: true, ...this.commitRemovals };
+  }
+
+  /**
+   * The removals since the current hop commit began: `pruned` for nodes a prune named, `cut_ids`
+   * for the open nodes the directed pruning rule cut with them. Includes a pending neighbor prune
+   * resolved when the agenda empties after the commit. Empty lists are omitted.
+   */
+  public get commitRemovals(): Pick<Extract<SubmitResult, { ok: true }>, 'pruned' | 'cut_ids'> {
+    const { pruned, cut_ids } = this.hopRemovals;
+    return { ...(pruned.length > 0 ? { pruned: [...pruned] } : {}), ...(cut_ids.length > 0 ? { cut_ids: [...cut_ids] } : {}) };
+  }
+
+  /** Starts the bookkeeping shared by every committed hop decision. */
+  private beginHopCommit(columnFlowEntries: number): void {
+    this.committedHops++;
+    this.lastRoutedNew = 0;
+    this.lastRoutedRejected = 0;
+    this.lastRoutedDeferred = 0;
+    this.lastHopColumnFlowEntries = columnFlowEntries;
+    this._pendingLineageQuestions = [];
+    this.hopRemovals = { pruned: [], cut_ids: [] };
+  }
+
+  /** Ends every committed hop decision: resolves ready neighbor prunes and returns to exploring. */
+  private finishHopCommit(): void {
+    this.resolvePendingPrunes();
+    this.heldFindingDraft.clear();
+    this._status = 'exploring';
+  }
+
+  /**
+   * Why removing `nodeIds` now is refused, or undefined when the removal is supported. The check
+   * counts every neighbor prune still pending resolution, since removing fewer of those nodes never
+   * disconnects more, and protects `routed` — the neighbors the same submission routes — as
+   * committed analysis.
+   */
+  private pruneRefusal(nodeIds: readonly string[], routed: ReadonlySet<string> = new Set()): string | undefined {
+    const pending = [...this.pruneBallots].filter(([, ballots]) => [...ballots.values()].every(vote => vote === 'prune')).map(([id]) => id);
+    const analysis = this.removalSupport(this.removedSet, new Set([...this.removedSet, ...pending, ...nodeIds]), new Set([...this.visited, ...routed]));
+    if (analysis.rejection) return REMOVAL_REFUSAL[analysis.rejection];
+    if (analysis.disconnectedVisited.length > 0) return `Removing it would disconnect committed analysis of ${analysis.disconnectedVisited.join(', ')}.`;
+    return undefined;
   }
 
   /**
@@ -3250,9 +3306,15 @@ export class NavigationEngine implements IHopStateMachine {
         if (!this.scopeNodeIds.has(nid)) scopeAddNids.add(nid);
         this.log('debug', `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${trunc(req.question, 80)}`);
       }
-      for (const nid of actionPolicy.acceptedPruneIds) {
-        prunedNeighborNids.add(nid);
+      const pruneIds = actionPolicy.acceptedPruneIds;
+      const aloneRefusals = new Map(pruneIds.map(id => [id, this.pruneRefusal([id], acceptedNids)]));
+      const jointRefusal = pruneIds.length > 1 && ![...aloneRefusals.values()].some(Boolean) ? this.pruneRefusal(pruneIds, acceptedNids) : undefined;
+      for (const target of pruneTargets) {
+        if (!target.resolved || !aloneRefusals.has(target.resolved)) continue;
+        const refusal = aloneRefusals.get(target.resolved) ?? (jointRefusal && `${jointRefusal} (together with the other prune_neighbors entries)`);
+        if (refusal) invalidRoutes.push({ kind: 'prune_unsupported', id: target.resolved, path: target.path, reason: `\`${target.resolved}\`: ${refusal}` });
       }
+      for (const nid of pruneIds) prunedNeighborNids.add(nid);
 
       const stagedSections: ValidatedHop['stagedSections'] = finding.sections ?? [];
       const stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
@@ -3414,6 +3476,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private cutUnreachable(cutNodeId: string, removal: RemovalAnalysis): void {
     const dropped = removal.cutIds;
+    this.hopRemovals.cut_ids.push(...dropped);
     for (const id of dropped) {
       this.removedSet.add(id);
       this.pruneBallots.delete(id);
@@ -3440,12 +3503,7 @@ export class NavigationEngine implements IHopStateMachine {
       stagedColumnFlowEntries, unaccountedColumns,
     } = staged;
     let lineageQuestionsByNode: Map<string, string[]> | undefined;
-    this.committedHops++;
-    this.lastRoutedNew = 0;
-    this.lastRoutedRejected = 0;
-    this.lastRoutedDeferred = 0;
-    this.lastHopColumnFlowEntries = stagedColumnFlowEntries;
-    this._pendingLineageQuestions = [];
+    this.beginHopCommit(stagedColumnFlowEntries);
 
     for (const deferred of deferredRoutes) {
       this.deferQuestion({
@@ -3560,14 +3618,11 @@ export class NavigationEngine implements IHopStateMachine {
       if (o.accepted) continue;
       this.log('debug', `[Agenda] route outcome hop=${this.hopCount} focus=${focusId} id=${o.nodeId} accepted=false reason=${o.reason ?? 'none'}${o.deferred ? ' deferred=true' : ''}`);
     }
-    this.resolvePendingPrunes();
-
-    this._status = 'exploring';
-    this.heldFindingDraft.clear();
+    this.finishHopCommit();
     const outcomes = routeOutcomes.length > 0 ? { route_outcomes: routeOutcomes } : {};
     const columnStatus = unaccountedColumns.length > 0 ? { unaccounted_columns: unaccountedColumns } : {};
 
-    return { ok: true, ...outcomes, ...columnStatus };
+    return { ok: true, ...outcomes, ...columnStatus, ...this.commitRemovals };
   }
 
   /**
@@ -3792,9 +3847,12 @@ export class NavigationEngine implements IHopStateMachine {
    * @remarks
    * `cutUnreachable` runs here, at resolution, never at vote time. The ballot
    * map is read fresh at every attempt, so a sender's ballot decides the outcome for as long as it
-   * stands, and a later, different sender's opposite vote never overrides it. A node whose removal
-   * alone would disconnect visited analysis is retained; the rest are analysed together by
-   * {@link removalSupport}, the same atomic proposal shape the shared cut policy defines.
+   * stands, and a later, different sender's opposite vote never overrides it. Submission already
+   * rejected a vote whose removal lacked support ({@link pruneRefusal}); a node that still lacks it
+   * here, because a later hop committed analysis that depends on it, is retained unrouted and the
+   * refusal is recorded in working memory. The rest are analysed together by
+   * {@link removalSupport}, the same atomic proposal shape the shared cut policy defines; the
+   * removed and cut ids are reported in the commit acknowledgement ({@link commitRemovals}).
    *
    * @param runEnded - The agenda is empty, so no remaining sender can be dispatched; the vote
    *   resolves on the ballots cast and the unheard senders are named in the log.
@@ -3834,8 +3892,6 @@ export class NavigationEngine implements IHopStateMachine {
       this.memory.recordRejection(nodeId, `\`${nodeId}\`: ${refusal}`, this.hopCount);
       this.log('debug', `[Prune] reject id=${nodeId} reason=${analysis.rejection ?? 'visited_support'} count=${analysis.disconnectedVisited.length}`);
       this.taskLedger.dismissNodeLeads(nodeId, 'pruned_by_ai');
-      // A refused prune leaves the object in scope: it is routed like any other kept neighbour (visit-once and scope checks stay in enqueueHop).
-      this.enqueueHop(nodeId, this.memory.getUserQuestion() ?? '', 0, 2, { carry: this.tracer ? { kind: 'row_role_only' } : { kind: 'carry', columns: [] } });
     };
     const batch = ready.filter(({ nodeId }) => {
       const alone = this.removalSupport(this.removedSet, new Set([...this.removedSet, nodeId]));
@@ -3851,6 +3907,7 @@ export class NavigationEngine implements IHopStateMachine {
     const first = [...batch].sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1))[0];
     for (const { nodeId, voters } of batch) {
       this.removedSet.add(nodeId);
+      this.hopRemovals.pruned.push(nodeId);
       this.markNodeState(nodeId, 'prune', 'ai', 'bb_prune_neighbor', { viaNodeId: voters.at(-1) ?? nodeId, atHop: this.hopCount });
       if (!this.visited.has(nodeId) && this.scopeNodeIds.has(nodeId)) {
         this._totalNodes--;
@@ -4205,7 +4262,7 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(nodeId);
     const open = !!node && !this.visited.has(nodeId) && !this.removedSet.has(nodeId);
     return { can_question: open,
-      can_prune: open && this.admitsRoute(nodeId, node!, focusId).admitted
+      can_prune: open && this.scopeNodeIds.has(nodeId) && this.admitsRoute(nodeId, node!, focusId).admitted
         && !this._agenda.has(nodeId) && !this.memory.notedNodeIds.includes(nodeId)
         && nodeId !== this.originNodeId && !this.isCarrierInto(nodeId, focusId),
     };

@@ -461,6 +461,10 @@ export type SubmitResult =
        * decision. Absent when every active column was accounted for, or in BB.
        */
       unaccounted_columns?: string[];
+      /** Nodes this commit removed because a prune named them: a resolved `prune_neighbors` entry or the pruned current node. Absent when none. */
+      pruned?: string[];
+      /** Open nodes this commit removed only because every directed path from the origin to them ran through a pruned node. Absent when none. */
+      cut_ids?: string[];
     }
   | ToolRejection;
 
@@ -1064,6 +1068,7 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_analyzed'
       | 'prune_noop_queued'
       | 'prune_noop_out_of_scope'
+      | 'prune_unsupported'
       | 'prune_question_conflict'
       | 'question_not_neighbor'
       | 'question_closed'

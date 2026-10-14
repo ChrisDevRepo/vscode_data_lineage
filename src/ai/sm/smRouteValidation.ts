@@ -65,6 +65,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and cannot be pruned. Remove it from prune_neighbors.',
+  prune_unsupported:
+    'Removing this node would disconnect analysis already committed, or it is not an approved-scope node the prune can remove. Remove it from prune_neighbors and decide it as a kept neighbor.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
   prune_question_conflict:
@@ -110,6 +112,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_analyzed: REJECTION_CODES.routeValidationFailed,
   prune_noop_queued: REJECTION_CODES.routeValidationFailed,
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
+  prune_unsupported: REJECTION_CODES.routeValidationFailed,
   question_not_neighbor: REJECTION_CODES.routeValidationFailed,
   prune_question_conflict: REJECTION_CODES.routeValidationFailed,
   question_closed: REJECTION_CODES.routeValidationFailed,

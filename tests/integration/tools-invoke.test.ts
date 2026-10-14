@@ -36,6 +36,7 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
   const CHAT_ONLY_TOOLS = [
     'lineage_start_exploration',
     'lineage_submit_findings',
+    'lineage_prune_current',
     'lineage_get_scope_bundle',
     'lineage_present_result',
   ];

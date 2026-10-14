@@ -272,8 +272,6 @@ export interface ToolAttemptResult {
   readonly replyStreamed?: true;
 }
 
-const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
-const PRUNE_CURRENT_TOOL = 'lineage_prune_current';
 
 /**
  * The held `lineage_present_result` repair draft as the model sees it on a present_result
@@ -583,11 +581,18 @@ export async function renderToolAttemptContext(
 /** The one tool whose rejected draft the session holds for repair (`presentResultRepairDraft`). */
 const PRESENT_RESULT_TOOL = 'lineage_present_result';
 
+/** The once-per-reply slot every registered `hop_commit` tool shares. */
+const HOP_COMMIT_SLOT = 'hop_commit';
+
 /**
- * Tools a reply carries once. Hop findings and candidate removal share one slot: a second commit
- * in the same reply competes with the first instead of adding to its held draft.
+ * The slot of a tool a reply carries once, or undefined for any other tool. Every hop commit
+ * command shares one slot: a second commit in the same reply competes with the first instead of
+ * adding to its held draft. `lineage_present_result` has its own.
  */
-const ONE_CALL_PER_REPLY_TOOLS: ReadonlySet<string> = new Set([SUBMIT_FINDINGS_TOOL, PRUNE_CURRENT_TOOL, PRESENT_RESULT_TOOL]);
+function oncePerReplySlot(toolName: string, registry: IToolRegistry<string>): string | undefined {
+  if (registry.get(toolName)?.effect === 'hop_commit') return HOP_COMMIT_SLOT;
+  return toolName === PRESENT_RESULT_TOOL ? toolName : undefined;
+}
 
 /**
  * Embeds the labels of the session's held `lineage_present_result` draft into a present_result
@@ -1048,8 +1053,8 @@ interface ToolCallDispatchLoopResult {
  * The reusable-observation map and the prior-observation-key set are explicit inputs, and every
  * outcome is returned in the accumulated result. Once `closedBy` closes the batch, every remaining sibling is recorded as
  * `phase_closed` without dispatch — that closure state is internal to this one
- * batch and does not survive past the return. A second call of a {@link ONE_CALL_PER_REPLY_TOOLS}
- * tool is recorded the same way, whatever became of the first, so it can neither be held as the
+ * batch and does not survive past the return. A second call in one {@link oncePerReplySlot}
+ * slot is recorded the same way, whatever became of the first, so it can neither be held as the
  * repair draft nor answer the first call's rejection inside the same reply. A call whose text
  * values carry tool-call notation ({@link toolCallNotationFault}) is rejected before dispatch and
  * none of its fields is held: no schema has checked them. A backend-fault rejection closes the
@@ -1101,15 +1106,15 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       continue;
     }
     // Findings and candidate removal are competing ways to commit this same hop.
-    const onceKey = call.toolName === PRUNE_CURRENT_TOOL ? SUBMIT_FINDINGS_TOOL : call.toolName;
-    const evaluatedCallId = evaluatedOncePerReply.get(onceKey);
+    const onceKey = oncePerReplySlot(call.toolName, input.registry);
+    const evaluatedCallId = onceKey === undefined ? undefined : evaluatedOncePerReply.get(onceKey);
     if (evaluatedCallId !== undefined) {
       const outcome = recordToolOutcome(call, {
         status: 'phase_closed',
         closedByCallId: evaluatedCallId,
         rejection: makeRejection({
           code: 'extra_call_not_evaluated',
-          reason: onceKey === SUBMIT_FINDINGS_TOOL
+          reason: onceKey === HOP_COMMIT_SLOT
             ? 'Not evaluated: a reply carries one hop commit command, and an earlier findings or candidate-removal command in this reply was evaluated.'
             : `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
           hint: "Answer that call's result with one call in your next reply.",
@@ -1121,7 +1126,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         `evaluated callId ${evaluatedCallId}`);
       continue;
     }
-    if (ONE_CALL_PER_REPLY_TOOLS.has(call.toolName)) evaluatedOncePerReply.set(onceKey, call.callId);
+    if (onceKey !== undefined) evaluatedOncePerReply.set(onceKey, call.callId);
     if (!call.valid) {
       const rejected = rejectionFromInvalid(call, input.registry);
       const argumentRejected = isArgumentRejection(call.code);

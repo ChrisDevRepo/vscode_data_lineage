@@ -229,8 +229,8 @@ cases:
       edges: [[Current, Origin], [Tail, Current]]
     expect: { eligible: false, pruned: [] }
 
-  - id: ct-mapped-node-after-passthrough-can-self-prune
-    story: Whole-node pruning after passthrough removes the node and its column evidence.
+  - id: ct-mapped-node-after-passthrough-cannot-self-prune
+    story: Whole-node pruning after passthrough is refused while a committed column mapping names the node.
     runners: [scripted]
     contract: self-prune
     mode: ct
@@ -238,7 +238,7 @@ cases:
     sender_verdict: passthrough
     graph:
       edges: [[Current, Origin], [Tail, Current]]
-    expect: { eligible: true, unvisited: [Tail], pruned: ["[d].[Current]", "[d].[Tail]"], inspected: [], kept: [Origin], edges: [], column_edges: [] }
+    expect: { eligible: true, refused: true, pruned: [] }
 
   - id: ct-function-obligation-cannot-self-prune
     story: A direct function investigation without passthrough offers no self-prune command.

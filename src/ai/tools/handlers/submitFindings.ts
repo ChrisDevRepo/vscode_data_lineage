@@ -5,19 +5,13 @@
  * Known identity encodings are normalized before raw arguments are parsed once against the
  * current hop's served contract and converted to the internal finding. Turn-lease validation and effect serialization remain in the registry.
  */
-import { NavigationEngine } from '../../sm/smBase';
-import { sanitizeForLog } from '../../../utils/log';
 import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
-import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
-import {
-  normalizeSubmitFindingsInputIds,
-  type SubmitFindingsInputObject,
-} from '../../support/inputNormalization';
+import { rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import type { ColumnFlowEntry } from '../../sm/smTypes';
 import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
-import { type ToolServices, getModelNodeMap } from './toolServices';
-import { acknowledgeCommittedHop } from './hopCommit';
+import type { ToolServices } from './toolServices';
+import { acknowledgeCommittedHop, prepareHopCommit } from './hopCommit';
 
 /**
  * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
@@ -45,31 +39,19 @@ export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefin
  */
 export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
+      const prepared = prepareHopCommit('lineage_submit_findings', input, s);
+      if (typeof prepared === 'string') return prepared;
+      const { engine } = prepared;
       const sess = s.getSession();
-      const engine = sess.stateMachine as NavigationEngine | null;
-      if (!engine) return s.logAndReturn('lineage_submit_findings', makeRejection({
-        code: REJECTION_CODES.noActiveSession,
-        reason: 'No exploration is active.',
-      }), input);
-
-      const model = s.requireModel();
-      const normalized = input !== null && typeof input === 'object' && !Array.isArray(input)
-        ? normalizeSubmitFindingsInputIds(input as SubmitFindingsInputObject, getModelNodeMap(model), model.identifierCaseSensitive)
-        : { input, normalizations: [] };
-      for (const event of normalized.normalizations) {
-        s.logger.debug(
-          `[Normalize] tool=submit_findings field=${event.field} from=${sanitizeForLog(event.from)} to=${sanitizeForLog(event.to)}`,
-        );
-      }
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
       const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldColumnFlow);
-      const parsed = schema.safeParse(normalized.input);
+      const parsed = schema.safeParse(prepared.input);
       if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: normalized.input, schema });
-        const held = engine.holdRejectedSubmission(normalized.input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, normalized.input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
-        return s.logAndReturn('lineage_submit_findings', rejection, normalized.input);
+        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: prepared.input, schema });
+        const held = engine.holdRejectedSubmission(prepared.input, rejection.issuePaths ?? []);
+        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, prepared.input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        return s.logAndReturn('lineage_submit_findings', rejection, prepared.input);
       }
       const normalizedInput = parsed.data;
       const finding = toHopFinding(normalizedInput);
