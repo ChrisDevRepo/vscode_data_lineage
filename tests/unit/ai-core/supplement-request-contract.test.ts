@@ -131,6 +131,38 @@ describe('supplement request contract', () => {
     expect(engine.status).toBe('complete');
   });
 
+  it.each(['bb', 'ct'] as const)('brings a stored %s lead\'s next object along, so its question reaches analysed SQL', analysisMode => {
+    const VIEW = '[s].[view]', LOADER = '[s].[loader]';
+    const nodes = [
+      makeNode({ id: ORIGIN, schema: 's', name: 'origin', type: 'view', columns: [col('Value')], bodyScript: `SELECT Value FROM ${VIEW};` }),
+      makeNode({ id: VIEW, schema: 's', name: 'view', type: 'view', columns: [col('Value')], bodyScript: `SELECT Value FROM ${BRANCH};` }),
+      makeNode({ id: BRANCH, schema: 's', name: 'branch', type: 'table', columns: [col('Value')] }),
+      makeNode({ id: LOADER, schema: 's', name: 'loader', type: 'procedure', bodyScript: `INSERT ${BRANCH}(Value) SELECT 1;` }),
+    ];
+    const engine = engineFor(nodes, [[VIEW, ORIGIN], [BRANCH, VIEW], [LOADER, BRANCH]], { origin: ORIGIN, question: 'Explain the load.', analysisMode, direction: 'upstream',
+      ...(analysisMode === 'ct' ? { targetColumns: ['Value'] } : {}),
+      depthIntent: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
+    const flow = (node?: string) => analysisMode === 'ct' ? { column_flow: node ? [{ out_col: 'Value', upstream_columns: [{ node, col: 'Value' }] }] : [] } : {};
+    const question = 'How is branch loaded?';
+    expect(engine.submitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'Reads view.', sections, ...flow(VIEW),
+      questions: [{ nodeId: VIEW, question: 'Resolve Value.' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: VIEW } });
+    expect(engine.submitFindings({ focus_node_id: VIEW, verdict: 'analyze', summary: 'Reads branch.', sections, ...flow(),
+      questions: [{ nodeId: BRANCH, question }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toHaveProperty('done', true);
+    const lead = engine.pendingLeads.find(item => item.nodeId === BRANCH)!;
+    expect(engine.measureSupplementScope([BRANCH]).nodes - engine.measureAdmissionScope().nodes).toBe(2);
+    expect(engine.supplementAgenda([], [lead.id])).toMatchObject({ ok: true, agendaed: 2, skipped: 0 });
+    // A lead without a qualified column task is an object visit in either mode.
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: BRANCH }, analysis_mode: 'bb' });
+    expect(engine.submitFindings({ focus_node_id: BRANCH, verdict: 'passthrough', summary: 'Stores rows.', sections })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: LOADER }, analysis_mode: 'bb' });
+    expect(engine.getCurrentTasks().map(task => task.question)).toContain(question);
+    expect(engine.submitFindings({ focus_node_id: LOADER, verdict: 'analyze', summary: 'Inserts a literal.', sections })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toHaveProperty('done', true);
+    expect(engine.pendingLeads.filter(item => item.status === 'pending')).toEqual([]);
+  });
+
   it('admits the target when the request names the pruned connector explicitly', () => {
     const engine = completedPrunedPath();
     expect(engine.supplementAgenda([OTHER, BRANCH])).toMatchObject({ ok: true, agendaed: 2, skipped: 0 });

@@ -1149,6 +1149,8 @@ describe('bodyless passthrough forwards to every writer', () => {
     expect(engine.submitFindings({ ...guardRecord(stored, 'passthrough'), column_flow: [] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: loader }, analysis_mode: 'ct' });
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ sourceRefs: [{ node: stored, col: 'C' }] }));
+    // A candidate asks whether the writer touches the endpoint at all; it is not an assignment.
+    expect(engine.toJSON().lineageQuestionsLastHop).toEqual([`Determine whether ${loader} writes ${stored}.C; map confirmed value contributions and end unused inputs on this branch.`]);
   });
 });
 

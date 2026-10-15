@@ -1386,7 +1386,8 @@ export class NavigationEngine implements IHopStateMachine {
    * @remarks
    * {@link checkBorder} owns only the border axis; a candidate inside the border but past a fixed
    * depth ceiling still clears it and is deferred as a lead rather than accepted. This is the single
-   * statement of both axes so the route path and {@link requiredNeighborIds} cannot drift on either.
+   * statement of both axes so the route path and {@link openNeighbors} cannot drift on either. An
+   * object a supplement admitted is inside the approved scope whatever its depth.
    *
    * @param focusId - Hop the route is issued from, supplying the hop-relative depth fallback when
    *   no directed path from the origin resolves.
@@ -1397,7 +1398,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (candidateDepth === undefined) {
       candidateDepth = (this.depthFromOrigin.get(focusId) ?? 0) + 1;
     }
-    const depthBreach = this.depthBorderBreach(nodeId, candidateDepth);
+    const depthBreach = this.supplementNodeIds.has(nodeId) ? null : this.depthBorderBreach(nodeId, candidateDepth);
     return {
       border,
       depthBreach,
@@ -2178,6 +2179,40 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * The object ids a supplement queues: the named ids, the chain walk, and the next objects of
+   * each stored target.
+   *
+   * @remarks
+   * A table, or any object without SQL, cannot answer a follow-up itself; it passes through and
+   * forwards the question to its next objects. Those objects come along one level in the approved
+   * direction, so the forwarded question reaches an object that is analysed instead of ending as a
+   * new pending lead. Already visited objects and ids requested elsewhere in the call are left out.
+   *
+   * @param nodeIds - Ids named by the request.
+   * @param chain - Optional chain walk from the named ids.
+   * @param leadNodeIds - Nodes of the selected pending leads; their stored targets expand too.
+   * @returns Object ids to request, without the lead nodes themselves.
+   */
+  private supplementTargetIds(nodeIds: readonly string[], chain?: SupplementChain, leadNodeIds: readonly string[] = []): string[] {
+    const named = chain ? this.expandSupplementChain(nodeIds, chain) : [...nodeIds];
+    const stored = [...named, ...leadNodeIds].flatMap(raw => {
+      const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
+      const node = id ? this.nodeMap.get(id) : undefined;
+      return id && node && !SCRIPT_TYPES.has(node.type) ? [id] : [];
+    });
+    const seen = new Set([...named, ...leadNodeIds].map(id => this.identifierKey(id)));
+    const sides: Array<'upstream' | 'downstream'> = this._direction === 'bidirectional' ? ['upstream', 'downstream'] : [this._direction];
+    const next = stored.length === 0 ? [] : sides.flatMap(direction => this.expandSupplementChain(stored, { direction, depth: 1 }).slice(stored.length))
+      .filter(id => this.isReachableInApprovedDirection(id));
+    for (const id of next) {
+      if (seen.has(this.identifierKey(id))) continue;
+      seen.add(this.identifierKey(id));
+      named.push(id);
+    }
+    return named;
+  }
+
+  /**
    * The carry a follow-up starts from, read only from the request itself.
    *
    * @remarks
@@ -2250,7 +2285,7 @@ export class NavigationEngine implements IHopStateMachine {
       });
     }
 
-    if (chain) nodeIds = this.expandSupplementChain(nodeIds, chain);
+    nodeIds = this.supplementTargetIds(nodeIds, chain, leadEntries.map(entry => entry!.lead.nodeId));
     const requested = [
       ...nodeIds.map(nodeId => ({ nodeId, question: '', taskId: undefined as string | undefined, leadId: undefined as string | undefined })),
       ...leadEntries.map(entry => ({ nodeId: entry!.lead.nodeId, question: entry!.task.question, taskId: entry!.task.id as string | undefined, leadId: entry!.lead.id as string | undefined })),
@@ -2499,46 +2534,36 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Unvisited, un-queued, un-removed directional neighbors of `focusId` that the router would
-   * currently admit a route to — analyze must account for each; passthrough forwards undecided ones.
+   * Unvisited, un-removed directional neighbours of `focusId` inside the exclusion, direction and
+   * schema borders — the open routes a submit accounts for.
    *
    * @remarks
-   * Single source for that set: the submit path and the per-hop envelope render both read it, so
-   * the rendered list can never drift from what the engine enqueues. No prior
-   * {@link scopeNodeIds} membership is required — a route the router would accept commits the
-   * neighbor into scope itself, so "in scope" is an outcome of routing here, never a precondition.
-   * The set is budget-blind: the scope budget is checked only at admission (proposal, scope change,
-   * supplement), never per route.
+   * Single source for both verdicts: an analysed hop owes a question or prune decision for each
+   * un-queued neighbour the router admits; a passthrough forwards its inherited question to every
+   * entry, a queued one included (the route merges into its task) and one past a user-stated depth
+   * ceiling deferred as a follow-up. No prior {@link scopeNodeIds} membership is required — an
+   * accepted route commits the neighbour into scope itself. The set is budget-blind: the scope
+   * budget is checked only at admission (proposal, scope change, supplement), never per route.
    *
-   * @returns Directional neighbor ids that must be routed or accounted for before the walk advances.
+   * @param focusId - The hop the neighbours hang off.
+   * @returns Open neighbours, each marked `deferred` when only the depth border holds it back.
    */
-  private requiredNeighborIds(focusId: string): string[] {
-    return Array.from(this.directionalNeighbors(focusId, this._direction))
-      .filter(nid => !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
-      .filter(nid => {
-        const node = this.nodeMap.get(nid);
-        return node !== undefined && this.admitsRoute(nid, node, focusId).admitted;
-      });
+  private openNeighbors(focusId: string): Array<{ id: string; queued: boolean; deferred: boolean }> {
+    return this.directionalNeighbors(focusId, this._direction).flatMap(id => {
+      const node = this.nodeMap.get(id);
+      if (!node || this.visited.has(id) || this.removedSet.has(id)) return [];
+      const admission = this.admitsRoute(id, node, focusId);
+      if (!admission.admitted && (admission.border.kind !== 'in_border' || admission.depthBreach === null)) return [];
+      return [{ id, queued: this._agenda.has(id), deferred: !admission.admitted }];
+    });
   }
 
   /**
-   * Unvisited, un-queued, un-removed directional neighbours of `focusId` that sit inside the
-   * exclusion, direction and schema borders but past a user-stated depth ceiling — the open
-   * neighbours a submit defers as follow-ups rather than enqueues.
-   *
-   * @param focusId - The hop the neighbours hang off.
-   * @returns Neighbour ids {@link requiredNeighborIds} leaves out only because the depth border defers them.
+   * The metadata-driven question a passthrough candidate carries to the next object: whether that
+   * object touches the forwarded endpoints at all, not an assignment to map them.
    */
-  private borderDeferredNeighborIds(focusId: string): string[] {
-    return Array.from(this.directionalNeighbors(focusId, this._direction))
-      .filter(nid => !this.visited.has(nid) && !this._agenda.has(nid) && !this.removedSet.has(nid))
-      .filter(nid => {
-        const node = this.nodeMap.get(nid);
-        if (node === undefined) return false;
-        const admission = this.admitsRoute(nid, node, focusId);
-        if (admission.admitted) return false;
-        return admission.border.kind === 'in_border' && admission.depthBreach !== null;
-      });
+  private candidateQuestion(nid: string, side: 'upstream' | 'downstream', refs: ReadonlyArray<{ node: string; col: string }>): string {
+    return `Determine whether ${nid} ${side === 'upstream' ? 'writes' : 'uses'} ${refs.map(ref => `${ref.node}.${ref.col}`).join(', ')}; map confirmed value contributions and end unused inputs on this branch.`;
   }
 
   /**
@@ -2876,10 +2901,9 @@ export class NavigationEngine implements IHopStateMachine {
               || passedInputs.has(key(ref.node, ref.col)));
             for (const ref of routed) addCarry(nid, ref, 'downstream');
             if (routed.length > 0) {
-              const endpoints = routed.map(ref => `${ref.node}.${ref.col}`).join(', ');
               flowQuestionByNode.set(nid, assigned.length
-                ? `Resolve the assigned endpoints ${endpoints} in ${nid}; continue their trace or establish their final endpoint.`
-                : `Determine whether ${nid} uses ${endpoints}; map confirmed value contributions and end unused inputs on this branch.`);
+                ? `Resolve the assigned endpoints ${routed.map(ref => `${ref.node}.${ref.col}`).join(', ')} in ${nid}; continue their trace or establish their final endpoint.`
+                : this.candidateQuestion(nid, 'downstream', routed));
             }
           }
         }
@@ -2899,19 +2923,12 @@ export class NavigationEngine implements IHopStateMachine {
         const refs = (mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs)
           .filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
           && !terminated.has(endpointKey(ref.node, ref.col)));
-        for (const nid of this.model.neighborIndex[focusId]?.in ?? []) {
-          if (refs.length > 0 && (this.visited.has(nid) || this.removedSet.has(nid))) {
-            this.log('debug', `[CT] passthrough candidates not forwarded hop=${this.hopCount} focus=${focusId} writer=${nid} — already ${this.removedSet.has(nid) ? 'removed' : 'visited'}`);
-            continue;
-          }
-          if (!this.scopeNodeIds.has(nid) || pruneNeighborIds.has(nid) || this.visited.has(nid)
-            || this.removedSet.has(nid)
-            || !this.model.edges.some(edge => edge.source === nid && edge.target === focusId
-              && edgeApiType(edge.type, this.nodeMap.get(nid)?.type ?? '') === 'write')) continue;
-          if (refs.length === 0) continue;
+        // Candidates go to every writer of the stored object; a closed writer ends them in the forwarding loop.
+        for (const nid of refs.length > 0 ? this.model.neighborIndex[focusId]?.in ?? [] : []) {
+          if (pruneNeighborIds.has(nid) || !this.model.edges.some(edge => edge.source === nid && edge.target === focusId
+            && edgeApiType(edge.type, this.nodeMap.get(nid)?.type ?? '') === 'write')) continue;
           for (const ref of refs) addCarry(nid, ref, 'upstream');
-          // A writer already queued from an earlier hop receives the forwarded endpoints as its own route request.
-          flowQuestionByNode.set(nid, `Resolve the stored endpoints ${refs.map(ref => `${ref.node}.${ref.col}`).join(', ')} written by ${nid}.`);
+          flowQuestionByNode.set(nid, this.candidateQuestion(nid, 'upstream', refs));
         }
       }
 
@@ -2969,7 +2986,10 @@ export class NavigationEngine implements IHopStateMachine {
         requested.add(nid);
         routeRequests.push({ nodeId: nid, question: q.question, ...(callerContext ? { callerContext } : {}) });
       });
-      for (const nid of finding.verdict === 'passthrough' ? flowQuestionByNode.keys() : []) {
+      // Passthrough forwards the inherited question to every open neighbour and candidate target alike, in BB and CT.
+      const open = this.openNeighbors(focusId);
+      const forwarded = finding.verdict === 'passthrough' ? new Set([...flowQuestionByNode.keys(), ...open.map(neighbor => neighbor.id)]) : [];
+      for (const nid of forwarded) {
         if (this.visited.has(nid) || this.removedSet.has(nid)) {
           this.log('debug', `[CT] passthrough candidates not forwarded hop=${this.hopCount} focus=${focusId} next=${nid} — already ${this.removedSet.has(nid) ? 'removed' : 'visited'}`);
           continue;
@@ -2977,22 +2997,12 @@ export class NavigationEngine implements IHopStateMachine {
         if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid)) continue;
         requested.add(nid);
         routeRequests.push({ nodeId: nid, question: incomingQuestion });
+        this.log('debug', `[Agenda] passthrough forward hop=${this.hopCount} focus=${focusId} id=${nid}`);
       }
-      for (const nid of this.requiredNeighborIds(focusId)) {
+      for (const { id: nid } of finding.verdict === 'analyze' ? open.filter(neighbor => !neighbor.queued && !neighbor.deferred) : []) {
         if (requested.has(nid) || pruneNeighborIds.has(nid)) continue;
-        if (finding.verdict === 'analyze') {
-          invalidRoutes.push({ kind: 'missing_task_decision', id: nid, path: `questions.${finding.questions?.length ?? 0}`,
-            reason: `Eligible neighbor \`${nid}\` has no authored investigation question or prune decision. A column mapping supplies its trace context, not its investigation purpose.`, available_routes: [nid] });
-          continue;
-        }
-        requested.add(nid);
-        routeRequests.push({ nodeId: nid, question: incomingQuestion });
-        this.log('debug', `[Agenda] open neighbor hop=${this.hopCount} focus=${focusId} id=${nid} — routed, not pruned`);
-      }
-      for (const nid of finding.verdict === 'passthrough' ? this.borderDeferredNeighborIds(focusId) : []) {
-        if (requested.has(nid) || pruneNeighborIds.has(nid)) continue;
-        requested.add(nid);
-        routeRequests.push({ nodeId: nid, question: incomingQuestion });
+        invalidRoutes.push({ kind: 'missing_task_decision', id: nid, path: `questions.${finding.questions?.length ?? 0}`,
+          reason: `Eligible neighbor \`${nid}\` has no authored investigation question or prune decision. A column mapping supplies its trace context, not its investigation purpose.`, available_routes: [nid] });
       }
       const outOfScopePruneIds = new Set<string>();
       for (const target of pruneTargets) {
@@ -3432,8 +3442,7 @@ export class NavigationEngine implements IHopStateMachine {
    * supplement would admit — without changing the engine. A supplement selects no starting columns.
    */
   public measureSupplementScope(nodeIds: readonly string[], chain?: SupplementChain): ProposedScope {
-    const named = chain ? this.expandSupplementChain(nodeIds, chain) : nodeIds;
-    return { ...this.measureAdmissionScope(this.admitSupplementTargets(named).admitted), columns: 0 };
+    return { ...this.measureAdmissionScope(this.admitSupplementTargets(this.supplementTargetIds(nodeIds, chain)).admitted), columns: 0 };
   }
 
   /**
