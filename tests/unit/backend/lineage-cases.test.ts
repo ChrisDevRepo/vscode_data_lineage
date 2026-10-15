@@ -78,7 +78,6 @@ interface StoredArrivalCase {
     receiver_rows: string[];
     sink_mode: 'ct' | 'bb';
     sink_columns: string[];
-    incomplete_code?: string;
   };
 }
 
@@ -431,7 +430,6 @@ describe('stored-column arrival admission and delivery', () => {
         expect(engine.submitFindings({ ...record(id),
           column_flow: reader.used.map(col => ({ out_col: `Result${col}`, upstream_columns: [{ node: stored, col }],
             ...(reader.type === 'procedure' ? { writes_to: { node: reader.sink, col: `Result${col}` } } : {}) })),
-          ...(reader.used.length === 1 ? { terminated_inputs: [{ node: stored, col: 'Y' }] } : {}),
           questions: [{ nodeId: reader.sink, question: 'Follow confirmed outputs or explain the remaining object dependency.' }],
         })).toHaveProperty('ok', true);
         expect(engine.columnAspect!.edges.slice(0, before.length)).toEqual(before);
@@ -471,12 +469,6 @@ describe('stored-column arrival admission and delivery', () => {
     }));
     const submission = { ...record(receiver), column_flow: row.column_flow,
       questions: [{ nodeId: sink, question: 'Inspect the retained result, or explain the object dependency if no traced input is used.' }] };
-    if (row.expect.incomplete_code) {
-      const before = engine.toJSON();
-      expect(engine.submitFindings(submission)).toMatchObject({ code: row.expect.incomplete_code });
-      expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
-      expect(engine.toJSON().agenda).toEqual(before.agenda);
-    }
     const admitted = engine.submitFindings({ ...submission,
       ...(row.terminated_inputs ? { terminated_inputs: row.terminated_inputs } : {}),
     });
@@ -1057,6 +1049,34 @@ describe('CT dispatch keeps the accepted carry', () => {
     } finally {
       stored.columns = declared;
     }
+  });
+});
+
+describe('passthrough candidates at the next object', () => {
+  it('maps the used candidate and ends an unmapped one at this node without a rejection', () => {
+    const a = '[d].[A]', b = '[d].[B]', c = '[d].[C]', t = '[d].[T]';
+    const nodes = [
+      makeNode({ id: a, schema: 'd', name: 'A', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.A AS INSERT d.B(X, Y) SELECT 1, 2;' }),
+      makeNode({ id: b, schema: 'd', name: 'B', type: 'table', columns: [column('X'), column('Y')] }),
+      makeNode({ id: c, schema: 'd', name: 'C', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.C AS INSERT d.T(Z) SELECT X FROM d.B;' }),
+      makeNode({ id: t, schema: 'd', name: 'T', type: 'table', columns: [column('Z')] }),
+    ];
+    const logs: string[] = [];
+    const pairs: Array<[string, string]> = [[a, b], [b, c], [c, t]];
+    const engine = new NavigationEngine(makeIndexedModel(nodes, pairs), makeGraph(nodes, pairs), (_level, message) => logs.push(message), {});
+    expect(engine.init({ origin: a, question: 'Where do X and Y go?', analysisMode: 'ct', targetColumns: ['X', 'Y'], direction: 'downstream',
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(a), column_flow: ['X', 'Y'].map(col => ({ out_col: col, upstream_columns: [], writes_to: { node: b, col } })),
+      questions: [{ nodeId: b, question: 'Where are X and Y read?' }] })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(b, 'passthrough'), column_flow: [] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: c }, analysis_mode: 'ct' });
+    expect(engine.submitFindings({ ...guardRecord(c), column_flow: [{ out_col: 'X', upstream_columns: [{ node: b, col: 'X' }], writes_to: { node: t, col: 'Z' } }],
+      questions: [{ nodeId: t, question: 'Describe T.' }] })).toHaveProperty('ok', true);
+    expect(logs.some(message => message.includes('unmapped candidates end') && message.includes(`${b}.Y`))).toBe(true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: t }, analysis_mode: 'ct' });
+    expect(engine.columnAspect!.edges.some(edge => edge.from_node === b && edge.from_col === 'Y')).toBe(false);
   });
 });
 

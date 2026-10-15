@@ -24,5 +24,7 @@ The engine stores an accepted mapping exactly as declared, including the model's
 ## Events
 
 - Only an explicit `passthrough` forwards the incoming question to neighbours. At a bodyless upstream focus it forwards the qualified stored endpoints to every writer, including one already queued.
+- Forwarded columns are candidates. The next object is asked whether its SQL uses them: a mapped candidate continues; an unmapped one ends at that object (debug log), without a REJECT. Example: procedure A writes table B, B passes through, procedure C reads B. C maps the B columns it uses; the others end at C.
+- An endpoint assigned by a direct mapping is the model's own claim. When some of a hop's assigned endpoints continue, every other one needs a mapping or a `terminated_inputs` entry, else REJECT; an empty `column_flow` ends them all.
 - `prune_neighbors` and `lineage_prune_current` are explicit events. A prune is rejected when the named node is outside the approved scope or when removing it would disconnect committed analysis from the origin.
 - The engine never rebuilds column lineage from historical edges, matching names or prose. A queued task dispatches with the endpoints it was accepted with.

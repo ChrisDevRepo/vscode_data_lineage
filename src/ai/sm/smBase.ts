@@ -3114,7 +3114,13 @@ export class NavigationEngine implements IHopStateMachine {
         }
         // An explicit empty flow on an ordinary arrival still declares that no input is carried.
         const wholeStop = submittedFlow.length === 0 && focusId !== this.originNodeId && this.currentReturnTargets().length === 0;
-        const missing = wholeStop ? [] : incomingRefs.filter(ref => !accounted.has(endpointKey(ref.node, ref.col)));
+        // A passthrough-forwarded candidate (an endpoint on another object) is a question, not an assignment: left unmapped, its CT ends at this node.
+        const candidates = new Set(this.getCurrentTasks().flatMap(task => task.passthroughFromNodeId === undefined ? []
+          : (this.qualifiedTaskRefs(task) ?? []).filter(ref => this.identifierKey(ref.node) !== this.identifierKey(focusId)).map(ref => endpointKey(ref.node, ref.col))));
+        const unaccounted = wholeStop ? [] : incomingRefs.filter(ref => !accounted.has(endpointKey(ref.node, ref.col)));
+        const endedCandidates = unaccounted.filter(ref => candidates.has(endpointKey(ref.node, ref.col)));
+        if (endedCandidates.length) this.log('debug', `[CT] unmapped candidates end hop=${this.hopCount} focus=${focusId} refs=[${endedCandidates.map(ref => `${ref.node}.${ref.col}`).join(', ')}]`);
+        const missing = unaccounted.filter(ref => !candidates.has(endpointKey(ref.node, ref.col)));
         if (missing.length) invalidRoutes.push({ kind: 'missing_task_decision', id: focusId,
           path: focusId === this.originNodeId ? `column_flow.${submittedFlow.length}` : `terminated_inputs.${finding.terminated_inputs?.length ?? 0}`,
           reason: `Assigned column targets [${missing.map(ref => `${ref.node}.${ref.col}`).join(', ')}] have no mapping or explicit endpoint. Supply the missing mapping, or name an incoming column that stops in terminated_inputs.`, available_columns: [...new Set(missing.map(ref => ref.col))] });
