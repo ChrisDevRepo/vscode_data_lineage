@@ -4,19 +4,13 @@
  * @remarks
  * Pure, engine-state-free: maps a structural {@link InvalidRouteKind} to its machine error code
  * and verb-led corrective order, and builds the content-error rejection envelope. The engine
- * consumes {@link isAbsentKind} and {@link buildRouteValidationRejection}. No-op prune references are
- * nonfatal notices and never reach the rejection envelope; every column reference failure rejects.
+ * consumes {@link buildRouteValidationRejection}. Every invalid column reference or refused prune
+ * rejects the submission atomically.
  */
 
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
-
-/** True for nonfatal refuse-with-notice prune kinds. */
-export function isAbsentKind(kind: InvalidRouteKind): boolean {
-  return kind === 'prune_absent' || kind === 'prune_noop_removed' || kind === 'prune_noop_visited'
-    || kind === 'prune_noop_analyzed' || kind === 'prune_noop_queued';
-}
 
 /**
  * Per-kind corrective order. Keyed by {@link InvalidRouteKind} so a new kind is a compile
@@ -55,7 +49,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_removed:
     'This node was already pruned on an earlier hop. Remove it from prune_neighbors.',
   prune_noop_visited:
-    'This node was already visited on an earlier hop — analyzed, or passed through as the carrier that led to this focus — and is retained; a prune cannot remove it. Remove it from prune_neighbors.',
+    'This origin or visited node anchors the retained answer path. Remove it from prune_neighbors.',
   prune_noop_analyzed:
     'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
   prune_noop_queued:
@@ -81,8 +75,6 @@ const DETACHED_LINK_DIRECTIVE =
 /**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the
  * model gets a specific, structured classification; mixed kinds fall back to the generic code.
- * Exported so a nonfatal (absent-kind) notice can be logged to `host.log` with the same code the
- * model would have received had the kind been fatal — one machine-code source for both surfaces.
  */
 export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   missing_task_decision: REJECTION_CODES.incompleteTask,
@@ -119,7 +111,7 @@ function routeErrorLine(error: InvalidRoute): string {
 }
 
 /**
- * Builds the content/action rejection envelope after nonfatal notices were removed.
+ * Builds the atomic content/action rejection envelope.
  *
  * @remarks
  * Each kind is emitted by one policy owner, so no message-text inference or mode branch is needed.

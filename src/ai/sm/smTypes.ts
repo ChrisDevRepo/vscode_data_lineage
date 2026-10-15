@@ -1029,8 +1029,8 @@ export interface HopLogEntry {
  * Kinds of invalid routes during exploration.
  *
  * @remarks
- * Absent and no-op prune kinds are nonfatal notices. Content, completeness, action-conflict, origin, and
- * topology kinds reject atomically. The pure current-hop policy owns route/prune classification;
+ * Every invalid route, including absent or refused prune targets, rejects atomically.
+ * The pure current-hop policy owns route/prune classification;
  * ColumnTracer owns indexed CT content paths.
  */
 export type InvalidRouteKind = | 'absent_contributor'

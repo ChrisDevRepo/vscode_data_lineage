@@ -2,7 +2,7 @@ import type { InvalidRoute } from './smTypes';
 
 /** One model-authored prune target after identifier resolution. */
 export interface CurrentHopActionTarget {
-  /** Verbatim model-authored identifier used in notices. */
+  /** Verbatim model-authored identifier used in rejection details. */
   raw: string;
   /** Canonical model id, or null when the reference is unresolved. */
   resolved: string | null;
@@ -28,8 +28,8 @@ export interface CurrentHopActionPolicyInput {
 
 /** Pure action classification consumed atomically by NavigationEngine. */
 export interface CurrentHopActionPolicyResult {
-  /** Nonfatal refused/unknown actions recorded for the next hop. */
-  notices: InvalidRoute[];
+  /** Refused or unknown actions that reject this submission atomically. */
+  invalidRoutes: InvalidRoute[];
   /** Resolved prune targets that are not the origin and not already visited, queued, noted or removed. */
   acceptedPruneIds: string[];
 }
@@ -38,37 +38,36 @@ export interface CurrentHopActionPolicyResult {
  * Classifies current-hop prune actions without mutating engine state.
  *
  * @remarks
- * Unresolved and no-op prunes are notices. The origin, queued, visited and removed targets are
- * protected rather than turned into a retry-loop rejection.
+ * Every refused prune rejects the submission; the agent must explicitly remove or correct it.
  */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
-  const notices: InvalidRoute[] = [];
+  const invalidRoutes: InvalidRoute[] = [];
   const acceptedPruneIds: string[] = [];
 
   for (const target of input.pruneTargets) {
     const id = target.resolved;
     if (!id) {
-      notices.push({ kind: 'prune_absent', id: target.raw, path: target.path, reason: `\`${target.raw}\` is not in the loaded model.` });
+      invalidRoutes.push({ kind: 'prune_absent', id: target.raw, path: target.path, reason: `\`${target.raw}\` is not in the loaded model.` });
       continue;
     }
     if (id === input.originId) {
-      notices.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` is the origin node and anchors the lineage; a prune cannot remove it.` });
+      invalidRoutes.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` is the origin node and anchors the lineage; a prune cannot remove it.` });
       continue;
     }
     if (input.removedIds.has(id)) {
-      notices.push({ kind: 'prune_noop_removed', id, path: target.path, reason: `\`${id}\` was already pruned on an earlier hop.` });
+      invalidRoutes.push({ kind: 'prune_noop_removed', id, path: target.path, reason: `\`${id}\` was already pruned on an earlier hop.` });
       continue;
     }
     if (input.visitedIds.has(id)) {
-      notices.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` was already visited on an earlier hop and stays on the answer path.` });
+      invalidRoutes.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` was already visited on an earlier hop and stays on the answer path.` });
       continue;
     }
     if (input.notedIds.has(id)) {
-      notices.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: `\`${id}\` is already recorded as an analyzed node.` });
+      invalidRoutes.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: `\`${id}\` is already recorded as an analyzed node.` });
       continue;
     }
     if (input.agendaIds.has(id)) {
-      notices.push({
+      invalidRoutes.push({
         kind: 'prune_noop_queued',
         id,
         path: target.path,
@@ -79,5 +78,5 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
     acceptedPruneIds.push(id);
   }
 
-  return { notices, acceptedPruneIds };
+  return { invalidRoutes, acceptedPruneIds };
 }

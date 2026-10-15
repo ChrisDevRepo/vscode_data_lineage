@@ -328,7 +328,7 @@ cases:
       - { node: bare, col: "1.5" }
     expect:
       edges: []
-      reason_contains: "is a literal, not a column reference"
+      invalid_kind: bad_contributor_col
 
   - id: ct-row-role-stored-as-declared
     runners: [scripted]

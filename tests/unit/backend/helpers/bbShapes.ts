@@ -5,6 +5,8 @@
  * derived from the depth exactly as the tool boundary derives it, so no test can state a
  * direction the product never forwards.
  */
+import { expect } from 'vitest';
+import { submitFindingsSchemaForMode, toHopFinding } from '../../../../src/ai/tools/toolSchemas';
 import { NavigationEngine, type HopNeighborDisclosure } from '../../../../src/ai/sm/smBase';
 import type { DepthIntent } from '../../../../src/ai/sm/smTypes';
 import { directionFromDepth } from '../../../../src/engine/shared/explorationDepthContract';
@@ -15,7 +17,7 @@ import { makeGraph, makeIndexedModel, makeNode } from '../../helpers/modelFixtur
 export type DepthSide = DepthIntent['upstream'];
 
 /** What one scripted hop tells the engine about its neighbours. */
-export interface HopScript { prune?: string[]; ask?: string[] }
+export interface HopScript { prune?: string[]; ask?: string[]; rejectPrune?: boolean }
 
 /** A built world: the engine after `init`, its runtime handles and the captured host log. */
 export interface BbWorld {
@@ -85,7 +87,18 @@ export function drain(engine: NavigationEngine, graph: BbWorld['graph'], script:
     const neighbors = context.neighbors as readonly HopNeighborDisclosure[] | undefined;
     const ask = decision.ask ?? neighbors?.filter(neighbor => next.has(neighbor.id) && neighbor.can_question
       && !neighbor.out_of_direction && !decision.prune?.includes(neighbor.id)).map(neighbor => neighbor.id);
-    const result = submit(engine, focus, { ...decision, ask });
+    const before = decision.rejectPrune ? engine.toJSON() : undefined;
+    let result = submit(engine, focus, { ...decision, ask });
+    if (before) {
+      expect(result).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining('prune_neighbors.0.id'),
+        hint: expect.stringContaining('Remove it from prune_neighbors') });
+      const after = engine.toJSON();
+      expect(after.agenda).toEqual(before.agenda);
+      expect(after.columnAspect).toEqual(before.columnAspect);
+      expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+      expect(engine.currentFocus).toBe(focus);
+      result = engine.submitFindings(toHopFinding(submitFindingsSchemaForMode('bb').parse({ focus_node_id: focus, prune_neighbors: [] })));
+    }
     if (!('ok' in result)) throw new Error(`hop ${focus} rejected: ${JSON.stringify(result)}`);
   }
   throw new Error('hop loop did not end');

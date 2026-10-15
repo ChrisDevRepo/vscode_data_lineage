@@ -192,7 +192,7 @@ export class ColumnTracer {
    *   {@link columnAttachment} in the hop's direction (both sides at a mixed-side hop).
    * @param contributorIds - Canonical ids an `upstream_columns` contributor may name besides the
    *   focus: its object neighbors and the read suppliers of its declared scalar callers. A column the
-   *   object does not declare, a literal, or a carrier continuation at a non-writer is refused wherever
+   *   object with metadata does not declare, or a carrier continuation at a non-writer is refused wherever
    *   the object sits; any other contributor is rejected as `absent_contributor`, so no column edge joins an object
    *   unconnected to the hop; omitted, adjacency is not checked.
    * @returns Validation result containing any error, invalid routes, successfully staged edges and
@@ -376,11 +376,6 @@ export class ColumnTracer {
           continue;
         }
 
-        if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
-          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
-          continue;
-        }
-
         const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map(c => this.columnKey(c.name)));
         if (validNeighborCols.size > 0 && !validNeighborCols.has(this.columnKey(cont.col))) {
           invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort(), ...(neighbor.type !== 'procedure' ? { actual_columns: (getNodeColumns(neighbor.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
@@ -391,17 +386,6 @@ export class ColumnTracer {
             ? 'This function declares no real columns; formal parameters and return_value are not upstream model columns. Its supplied scalar-return task records contributors at the real caller output.'
             : `Column metadata is unavailable for ${neighbor.type} "${neighbor.id}"; upstream column "${cont.col}" cannot be verified.` });
           continue;
-        }
-        if (validNeighborCols.size === 0 && neighbor.type === 'procedure' && !continuationNeighbors) {
-          const spInbound = model.neighborIndex[identifierKey(neighbor.id)]?.in ?? [];
-          const inboundCols = new Set<string>();
-          for (const inId of spInbound) {
-            (getNodeColumns(inId, nodeMap, store ?? undefined) || []).forEach(c => inboundCols.add(this.columnKey(c.name)));
-          }
-          if (inboundCols.size > 0 && !inboundCols.has(this.columnKey(cont.col))) {
-            invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is not in any inbound source of procedure "${cont.node}"`, available_columns: Array.from(inboundCols).sort() });
-            continue;
-          }
         }
         if (validNeighborCols.size === 0) {
           log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — ${neighbor.type} metadata fallback`);
@@ -425,7 +409,7 @@ export class ColumnTracer {
           }
         }
 
-        // Adjacency is judged last, after the column and the carrier's continuation: a nonexistent column or a literal is refused wherever the object sits, and a non-writer continuation keeps its own refusal.
+        // Adjacency is judged last, after the column and the carrier's continuation: a column absent from declared metadata is refused wherever the object sits, and a non-writer continuation keeps its own refusal.
         if (contributorIds && neighbor.id !== focusId && !contributorIds.has(neighbor.id)) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" has no dependency edge to ${focusId}; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.` });
           continue;

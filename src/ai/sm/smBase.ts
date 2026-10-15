@@ -1,5 +1,5 @@
 import type { InvalidRoute, DepthIntent, HeldSubmissionParts } from './smTypes';
-import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE, routeRejectionDetail, routeRejectionDirectives, routeRejectionReason } from './smRouteValidation';
+import { buildRouteValidationRejection, routeRejectionDetail, routeRejectionDirectives, routeRejectionReason } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
 import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, findingRepairOrder, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
@@ -3007,6 +3007,7 @@ export class NavigationEngine implements IHopStateMachine {
             reason: `\`${nid}\` is out of scope (${outside}); the column trace cannot continue there.` });
         }
       }
+      invalidRoutes.push(...actionPolicy.invalidRoutes);
       const pruneIds = actionPolicy.acceptedPruneIds;
       const aloneRefusals = new Map(pruneIds.map(id => [id, this.pruneRefusal([id], acceptedNids, stagedColumnEdges)]));
       const jointRefusal = pruneIds.length > 1 && ![...aloneRefusals.values()].some(Boolean) ? this.pruneRefusal(pruneIds, acceptedNids, stagedColumnEdges) : undefined;
@@ -3051,15 +3052,8 @@ export class NavigationEngine implements IHopStateMachine {
           reason: `Assigned column targets [${missing.map(ref => `${ref.node}.${ref.col}`).join(', ')}] have no mapping or explicit endpoint. Supply the missing mapping, or name an incoming column that stops in terminated_inputs.`, available_columns: [...new Set(missing.map(ref => ref.col))] });
       }
 
-      const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
-      if (classViolation || lengthViolations.length > 0 || fatalRoutes.length > 0) {
-        return this.rejectFinding(focusId, finding, classViolation, lengthViolations, fatalRoutes, pruneTargets);
-      }
-
-      const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
-      for (const notice of notices) {
-        this.memory.recordRejection(notice.id, `\`${notice.id}\`: ${ROUTE_REJECTION_DIRECTIVE[notice.kind]}`, this.hopCount);
-        this.log('debug', `[Notice] hop=${this.hopCount} id=${notice.id} kind=${notice.kind} code=${ROUTE_REJECTION_CODE[notice.kind]}`);
+      if (classViolation || lengthViolations.length > 0 || invalidRoutes.length > 0) {
+        return this.rejectFinding(focusId, finding, classViolation, lengthViolations, invalidRoutes, pruneTargets);
       }
 
       return this.applyValidatedHop({
@@ -3728,7 +3722,8 @@ export class NavigationEngine implements IHopStateMachine {
    * Single funnel for all writes to the agenda.
    *
    * @remarks
-   * Every object receives the same explicit hop; only user pass-tags bypass analysis.
+   * SQL objects receive explicit hops; storage objects forward tasks automatically and user
+   * pass-tags bypass analysis.
    * Scope admission is settled by the caller before an object enters the agenda.
    *
    * @param targetId - Node to enqueue.

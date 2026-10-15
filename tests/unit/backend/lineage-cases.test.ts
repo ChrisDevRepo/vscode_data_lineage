@@ -162,6 +162,26 @@ function check(row: LineageCase, upstream: readonly FlowColumn[]) {
   if (wanted.reason_contains) expect(result.invalidRoutes[0]?.reason).toContain(wanted.reason_contains);
 }
 
+describe('declared contributor identities', () => {
+  it.each(['123', "'quoted'"])('accepts metadata column %s without interpreting it as SQL', name => {
+    const result = run({ id: 'declared-identity', active: ['Value'], focus: 'root', out: 'Value', direction: 'upstream', roots: [{ node: 'root', col: 'Value' }],
+      nodes: [{ id: 'root', type: 'view', columns: ['Value'] }, { id: 'source', type: 'table', columns: [name] }], expect: {},
+    }, [{ node: 'source', col: name }]);
+    expect(result.invalidRoutes).toEqual([]);
+    expect(result.stagedEdges.map(edge => edge.from_col)).toEqual([name]);
+  });
+  it.each(['Total', '123', "'quoted'"])('accepts unverified procedure output %s without inferring its meaning', output => {
+    const nodes = [makeNode({ id: 'root', name: 'root', schema: 'dbo', type: 'view', columns: [column(output)] }),
+      makeNode({ id: 'proc', name: 'proc', schema: 'dbo', type: 'procedure', bodyScript: `SELECT SourceAmount * 2 AS [${output}] FROM source;` }),
+      makeNode({ id: 'source', name: 'source', schema: 'dbo', type: 'table', columns: [column('SourceAmount')] })];
+    const result = new ColumnTracer([output]).validateColumnFlow('root',
+      { focus_node_id: 'root', summary: 'Calculated output', sections: [], column_flow: [{ out_col: output, upstream_columns: [{ node: 'proc', col: output }] }] },
+      new Map(nodes.map(node => [node.id, node])), makeIndexedModel(nodes, [['source', 'proc'], ['proc', 'root']]), null, undefined, undefined, 'upstream', undefined, [], [], [], [{ node: 'root', col: output }]);
+    expect(result.invalidRoutes).toEqual([]);
+    expect(result.stagedEdges.map(edge => edge.from_col)).toEqual([output]);
+  });
+});
+
 describe('lineage case catalog', () => {
   it('gives Playwright, Electron, and headless their own rows and expected output', () => {
     const rows = loadCases();
@@ -686,6 +706,24 @@ describe('current task completeness before advancement', () => {
   }
   const finding = { focus_node_id: root, summary: 'Constant outputs.', sections: [{ angle: 'technical' as const, text: 'Both outputs are constants.' }] };
   const terminal = (out_col: string) => ({ out_col, upstream_columns: [] });
+  it.each([root, '[d].[Absent]'])('rejects a refused prune of %s atomically and accepts an explicit repair', id => {
+    const engine = world();
+    const before = engine.toJSON();
+    const result = engine.submitFindings({ ...finding, column_flow: [terminal('Value'), terminal('Other')],
+      questions: [{ nodeId: neighbor, question: 'Explain Source rows.' }],
+      prune_neighbors: [{ id, reason: 'Not relevant to this investigation.' }],
+    });
+    expect(result).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining('prune_neighbors.0'),
+      hint: expect.stringContaining('Remove it from prune_neighbors') });
+    const after = engine.toJSON();
+    expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+    expect(after.agenda).toEqual(before.agenda);
+    expect(after.columnAspect).toEqual(before.columnAspect);
+    expect(engine.currentFocus).toBe(root);
+    const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: root, prune_neighbors: [] })))).toHaveProperty('ok', true);
+    expect(engine.toJSON().agenda.map(entry => entry.nodeId)).toEqual([neighbor]);
+  });
   it.each(['target', 'neighbor'] as const)('rejects an omitted %s decision without completing the current task', missing => {
     const engine = world();
     const before = engine.toJSON();
