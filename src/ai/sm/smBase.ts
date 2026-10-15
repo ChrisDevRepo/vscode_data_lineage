@@ -2897,6 +2897,10 @@ export class NavigationEngine implements IHopStateMachine {
           .filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
           && !terminated.has(endpointKey(ref.node, ref.col)));
         for (const nid of this.model.neighborIndex[focusId]?.in ?? []) {
+          if (refs.length > 0 && (this.visited.has(nid) || this.removedSet.has(nid))) {
+            this.log('debug', `[CT] passthrough candidates not forwarded hop=${this.hopCount} focus=${focusId} writer=${nid} — already ${this.removedSet.has(nid) ? 'removed' : 'visited'}`);
+            continue;
+          }
           if (!this.scopeNodeIds.has(nid) || pruneNeighborIds.has(nid) || this.visited.has(nid)
             || this.removedSet.has(nid)
             || !this.model.edges.some(edge => edge.source === nid && edge.target === focusId
@@ -2963,7 +2967,11 @@ export class NavigationEngine implements IHopStateMachine {
         routeRequests.push({ nodeId: nid, question: q.question, ...(callerContext ? { callerContext } : {}) });
       });
       for (const nid of finding.verdict === 'passthrough' ? flowQuestionByNode.keys() : []) {
-        if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid) || this.visited.has(nid) || this.removedSet.has(nid)) continue;
+        if (this.visited.has(nid) || this.removedSet.has(nid)) {
+          this.log('debug', `[CT] passthrough candidates not forwarded hop=${this.hopCount} focus=${focusId} next=${nid} — already ${this.removedSet.has(nid) ? 'removed' : 'visited'}`);
+          continue;
+        }
+        if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid)) continue;
         requested.add(nid);
         routeRequests.push({ nodeId: nid, question: incomingQuestion });
       }
