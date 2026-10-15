@@ -12,10 +12,11 @@ describe('fresh kept required-field projection', () => {
     expect(fresh).not.toHaveProperty('if');
     expect(fresh).not.toHaveProperty('then');
     expect(fresh).not.toHaveProperty('anyOf');
-    expect(fresh.required).toEqual(expect.arrayContaining(['focus_node_id', 'verdict', 'column_flow', 'summary', 'sections']));
+    expect(fresh.required).toEqual(expect.arrayContaining(['focus_node_id', 'column_flow', 'summary', 'sections']));
     expect((fresh.properties as any).sections.required).toEqual(['business', 'technical']);
     const props = fresh.properties as any;
-    expect(JSON.stringify(props.verdict.enum)).toBe(JSON.stringify(['analyze', 'passthrough']));
+    expect(props).not.toHaveProperty('verdict');
+    expect(props).not.toHaveProperty('reason');
     expect(props.prune_neighbors.description).toContain('dead end');
     expect(held).not.toHaveProperty('anyOf');
     expect(held).not.toHaveProperty('if');
@@ -25,7 +26,7 @@ describe('fresh kept required-field projection', () => {
   it.each(['bb', 'ct'] as const)('rejects missing fresh kept fields at both boundaries in %s', mode => {
     const schema = submitFindingsSchemaForMode(mode, 'technical', true);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    const accepted = { focus_node_id: 'source', verdict: 'analyze', summary: 'Supplies the amount.',
+    const accepted = { focus_node_id: 'source', summary: 'Supplies the amount.',
       sections: { technical: 'Amount is supplied unchanged.' }, ...(mode === 'ct' ? { column_flow: [] } : {}) };
     expect(schema.safeParse(accepted).success).toBe(true);
     expect(wire(accepted)).toBe(true);
@@ -33,7 +34,7 @@ describe('fresh kept required-field projection', () => {
       const invalid: Record<string, unknown> = { ...accepted };
       delete invalid[missing];
       expect(schema.safeParse(invalid).success).toBe(false);
-      expect(wire(invalid), `${missing} must be advertised as required for a fresh kept verdict`).toBe(false);
+      expect(wire(invalid), `${missing} must be advertised as required for a fresh finding`).toBe(false);
     }
     const missingAngle = { ...accepted, sections: {} };
     expect(schema.safeParse(missingAngle).success).toBe(false);
@@ -46,7 +47,7 @@ describe('fresh kept required-field projection', () => {
     expect(JSON.stringify(projected)).not.toContain('minProperties');
     const wire = new Ajv({ strict: false }).compile(projected);
     for (const sections of [{}, { business: 'Business rule.' }, { technical: 'Execution rule.' }]) {
-      const input = { focus_node_id: 'source', verdict: 'analyze', summary: 'Supplies the amount.', column_flow: [], sections };
+      const input = { focus_node_id: 'source', summary: 'Supplies the amount.', column_flow: [], sections };
       const before = structuredClone(input);
       expect(wire(input)).toBe(Object.keys(sections).length > 0);
       expect(schema.safeParse(input).success).toBe(Object.keys(sections).length > 0);
@@ -54,14 +55,10 @@ describe('fresh kept required-field projection', () => {
     }
   });
 
-  it.each(['business', 'technical', 'both'] as const)('rejects end_branch and keeps a fully pruned focus under %s', classification => {
+  it.each(['business', 'technical', 'both'] as const)('rejects obsolete verdicts and keeps a fully pruned focus under %s', classification => {
     const schema = submitFindingsSchemaForMode('ct', classification, true);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    const cut = { focus_node_id: 'unrelated', verdict: 'end_branch', reason: 'Off the requested path.',
-      column_flow: [], sections: {} };
-    expect(schema.safeParse(cut).success).toBe(false);
-    expect(wire(cut)).toBe(false);
-    const deadEnd = { focus_node_id: 'unrelated', verdict: 'analyze', summary: 'Stops here.',
+    const deadEnd = { focus_node_id: 'unrelated', summary: 'Stops here.',
       column_flow: [], sections: classification === 'business'
         ? { business: 'Nothing continues.' }
         : classification === 'technical'
@@ -70,12 +67,16 @@ describe('fresh kept required-field projection', () => {
       prune_neighbors: [{ id: 'next', reason: 'Off the path.' }] };
     expect(schema.safeParse(deadEnd).success).toBe(true);
     expect(wire(deadEnd)).toBe(true);
+    for (const obsolete of [{ verdict: 'analyze' }, { verdict: 'passthrough' }, { verdict: 'end_branch' }, { reason: 'Unused legacy field.' }]) {
+      expect(schema.safeParse({ ...deadEnd, ...obsolete }).success).toBe(false);
+      expect(wire({ ...deadEnd, ...obsolete })).toBe(false);
+    }
   });
 
-  it.each(['analyze', 'passthrough'] as const)('accepts %s held patches without resending held content', verdict => {
+  it('accepts held patches without resending held content', () => {
     const schema = submitFindingsSchemaForMode('ct', 'both', false);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    const patch = { focus_node_id: 'source', verdict, column_flow: [] };
+    const patch = { focus_node_id: 'source', column_flow: [] };
     expect(schema.safeParse(patch).success).toBe(true);
     expect(wire(patch)).toBe(true);
     const oneAngle = { ...patch, sections: { technical: 'Corrected mechanics.' } };
@@ -89,7 +90,7 @@ describe('fresh kept required-field projection', () => {
     const ajv = new Ajv({ strict: false });
     const wire = ajv.compile(toModelJsonSchema(held));
     const unheldWire = ajv.compile(toModelJsonSchema(unheld));
-    const envelope = { focus_node_id: 'source', verdict: 'analyze' };
+    const envelope = { focus_node_id: 'source' };
     const corrections = [
       { summary: 'Corrected summary.' },
       { sections: { technical: 'Corrected mechanics.' } },
@@ -120,18 +121,16 @@ describe('fresh kept required-field projection', () => {
     expect(fresh).not.toBe(held);
     expect(submitFindingsSchemaForMode(mode, 'both', false)).toBe(held);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(fresh));
-    for (const verdict of ['analyze', 'passthrough']) {
-      for (const sections of [{ business: 'Business rule.' }, { technical: 'Execution rule.' }]) {
-        const partial = { focus_node_id: 'source', verdict, summary: 'Supplies the amount.', ...(mode === 'ct' ? { column_flow: [] } : {}), sections };
-        const before = structuredClone(partial);
-        expect(fresh.safeParse(partial).success).toBe(false);
-        expect(wire(partial)).toBe(false);
-        expect(held.safeParse(partial).success).toBe(true);
-        expect(new Ajv({ strict: false }).compile(toModelJsonSchema(held))(partial)).toBe(true);
-        expect(partial).toEqual(before);
-      }
+    for (const sections of [{ business: 'Business rule.' }, { technical: 'Execution rule.' }]) {
+      const partial = { focus_node_id: 'source', summary: 'Supplies the amount.', ...(mode === 'ct' ? { column_flow: [] } : {}), sections };
+      const before = structuredClone(partial);
+      expect(fresh.safeParse(partial).success).toBe(false);
+      expect(wire(partial)).toBe(false);
+      expect(held.safeParse(partial).success).toBe(true);
+      expect(new Ajv({ strict: false }).compile(toModelJsonSchema(held))(partial)).toBe(true);
+      expect(partial).toEqual(before);
     }
-    const complete = { focus_node_id: 'source', verdict: 'analyze', summary: 'Supplies the amount.',
+    const complete = { focus_node_id: 'source', summary: 'Supplies the amount.',
       ...(mode === 'ct' ? { column_flow: [] } : {}), sections: { business: 'Business rule.', technical: 'Execution rule.' } };
     expect(fresh.safeParse(complete).success).toBe(true);
     expect(wire(complete)).toBe(true);
@@ -142,7 +141,7 @@ describe('fresh kept required-field projection', () => {
     const fresh = submitFindingsSchemaForMode(mode, undefined, true);
     expect(held).not.toBe(fresh);
     expect(submitFindingsSchemaForMode(mode, undefined, false)).toBe(held);
-    const patch = { focus_node_id: 'source', verdict: 'analyze', ...(mode === 'ct' ? { column_flow: [] } : {}) };
+    const patch = { focus_node_id: 'source', ...(mode === 'ct' ? { column_flow: [] } : {}) };
     expect(held.safeParse(patch).success).toBe(true);
     expect(fresh.safeParse(patch).success).toBe(false);
   });

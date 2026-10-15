@@ -29,20 +29,24 @@ try {
 
 const browser = await chromium.connectOverCDP(session.endpoint, { timeout: 10_000 });
 try {
-  const pages = browser.contexts().flatMap((context) => context.pages());
   let workbench;
-  for (const page of pages) {
-    const title = await page.title().catch(() => '');
-    if (isIsolatedWorkbenchPage({ title, url: page.url() }, session, resolve('.vscode-test'))) {
-      workbench = page;
-      break;
+  const workbenchDeadline = Date.now() + 15_000;
+  while (!workbench && Date.now() < workbenchDeadline) {
+    for (const page of browser.contexts().flatMap((context) => context.pages())) {
+      const title = await page.title().catch(() => '');
+      if (isIsolatedWorkbenchPage({ title, url: page.url() }, session, resolve('.vscode-test'))) {
+        workbench = page;
+        break;
+      }
     }
+    if (!workbench) await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
   }
   assert.ok(
     workbench,
     `The CDP endpoint did not expose the isolated ${session.workspaceName} VS Code workbench.`,
   );
   await workbench.locator('.monaco-workbench').waitFor({ state: 'visible', timeout: 15_000 });
+  await workbench.getByRole('tab', { name: 'Data Lineage', exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
   const rows = loadCases('playwright');
   assert.ok(rows.length > 0, 'tests/cases/lineage-cases.yaml has no playwright row.');
   for (const row of rows) {

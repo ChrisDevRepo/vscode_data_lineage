@@ -213,7 +213,7 @@ describe('operator runner configuration', () => {
     // Explicit DB_TEST_AUTH_TYPE
     const explicitEntra = databaseConfig({ ...env, DB_TEST_AUTH_TYPE: 'entraId', DB_TEST_TENANT_ID: 'custom-tenant-guid', DB_TEST_TOKEN: 'access-token' });
     expect(explicitEntra).toMatchObject({ authenticationType: 'entraId', tenantId: 'custom-tenant-guid' });
-    // Entra ID uses a supplied access token only; there is no username/password token flow.
+    // The launcher supplies any noninteractive token before this configuration boundary.
     expect(() => databaseConfig({ ...env, DB_TEST_AUTH_TYPE: 'entraId', DB_TEST_TOKEN: '' })).toThrow('Set DB_TEST_TOKEN');
 
     const explicitSql = databaseConfig({ ...env, DB_TEST_USER: 'admin@company.com', DB_TEST_AUTH_TYPE: 'sqlLogin' });

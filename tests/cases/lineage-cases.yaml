@@ -140,7 +140,7 @@ cases:
     contract: self-prune
     mode: bb
     route: authored
-    sender_verdict: passthrough
+    through_storage: true
     graph:
       edges: [[Origin, Current], [Current, Tail]]
     expect: *exclusive_tail_expect
@@ -161,10 +161,10 @@ cases:
     contract: self-prune
     mode: ct
     route: mapped
-    sender_verdict: passthrough
+    through_storage: true
     graph:
       edges: [[Current, Origin], [Tail, Current]]
-    expect: { eligible: true, refused: true, pruned: [] }
+    expect: { eligible: false, pruned: [] }
 
   - id: ct-function-obligation-cannot-self-prune
     story: A direct function investigation without passthrough offers no self-prune command.
@@ -176,15 +176,15 @@ cases:
       edges: [[Current, Origin]]
     expect: { eligible: false, pruned: [] }
 
-  - id: bb-merged-arrival-after-passthrough-can-self-prune
-    story: A node reached through passthrough can be declared irrelevant even with another authored arrival.
+  - id: bb-merged-direct-and-storage-arrival-cannot-self-prune
+    story: A direct authored arrival protects a node even when storage also forwards a candidate.
     runners: [scripted]
     contract: self-prune
     mode: bb
     route: mixed
     graph:
       edges: [[Origin, Left], [Origin, Right], [Left, Current], [Right, Current], [Current, Tail]]
-    expect: { eligible: true, unvisited: [Tail], pruned: ["[d].[Current]", "[d].[Tail]"], inspected: [], kept: [Origin, Left, Right], edges: [[Origin, Left], [Origin, Right]] }
+    expect: { eligible: false, unvisited: [Tail], pruned: [] }
 
   - id: ct-held-mapping-after-passthrough-can-self-prune
     story: Whole-node pruning after passthrough clears held findings and cuts the unvisited tail.
@@ -212,7 +212,7 @@ cases:
     contract: self-prune
     mode: ct
     route: function
-    sender_verdict: passthrough
+    through_storage: true
     graph:
       edges: [[Current, Origin]]
     expect: { eligible: true, unvisited: [], pruned: ["[d].[Current]"], inspected: [], kept: [Origin], edges: [] }

@@ -990,15 +990,11 @@ export function GraphCanvas({
           columnNames: columnNamesByNode.get(identifierKey(node.id)),
         });
       }
-      const verdicts = activeAiMetadata?.nodeVerdicts?.length
-        ? new Map(activeAiMetadata.nodeVerdicts.map(v => [identifierKey(v.nodeId), v.verdict]))
-        : undefined;
       return buildColumnTraceView({
         identifierCaseSensitive: model?.identifierCaseSensitive,
         relations,
         objects,
         objectEdges: flowEdges,
-        verdicts,
         config,
         layoutDirection: activeAiMetadata?.layoutDirection,
       });

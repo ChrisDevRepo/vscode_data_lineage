@@ -105,6 +105,7 @@ const NodeStateSchema = z.object({
   reason: z.enum([
     'submitted_analyze',
     'submitted_passthrough',
+    'storage_passthrough',
     'submitted_prune',
     'bb_prune_neighbor',
     'user_pass_filter',
@@ -237,6 +238,17 @@ const AgendaEntrySchema = z.object({
   lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
 
+/** Retires the old model verdict only when decoding an existing saved finding. */
+function savedHeldFinding(mode: 'bb' | 'ct') {
+  return z.preprocess(input => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+    const legacy = input as Record<string, unknown>;
+    if (legacy.verdict !== 'analyze' && legacy.verdict !== 'passthrough') return input;
+    const { verdict: _legacyVerdict, ...finding } = legacy;
+    return finding;
+  }, heldHopFindingSchemaForMode(mode));
+}
+
 const EngineInternalsSchema = z.object({
   originNodeId: NonEmptyString.nullable(),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']),
@@ -281,8 +293,8 @@ const EngineInternalsSchema = z.object({
     votes: z.array(z.object({ senderId: NonEmptyString, vote: z.enum(['prune', 'keep']) }).strict()).min(1),
   }).strict()).optional(),
   heldFinding: z.discriminatedUnion('mode', [
-    z.object({ mode: z.literal('bb'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: heldHopFindingSchemaForMode('bb') }).strict(),
-    z.object({ mode: z.literal('ct'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: heldHopFindingSchemaForMode('ct') }).strict(),
+    z.object({ mode: z.literal('bb'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: savedHeldFinding('bb') }).strict(),
+    z.object({ mode: z.literal('ct'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: savedHeldFinding('ct') }).strict(),
   ]).nullable().optional(),
 }).strict().transform(({
   qualityGuards: _legacyQualityGuards,

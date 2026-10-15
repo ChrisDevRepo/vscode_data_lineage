@@ -60,7 +60,7 @@ function discoveryPlan(registry: IToolRegistry<string>) {
 const toolMessage = (messages: readonly unknown[]): ToolMessage => messages.find(item => item instanceof ToolMessage) as ToolMessage;
 const call = (id: string, input: unknown, tool = 'lineage_search_objects') => new vscode.LanguageModelToolCallPart(id, tool, input as object);
 
-describe('optional passthrough hop command delivery', () => {
+describe('optional table-arrival prune command delivery', () => {
   it.each([
     { mode: 'bb', accepted: true }, { mode: 'ct', accepted: true },
     { mode: 'bb', accepted: false }, { mode: 'ct', accepted: false },

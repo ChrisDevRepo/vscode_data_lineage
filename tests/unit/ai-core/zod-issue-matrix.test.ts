@@ -101,8 +101,8 @@ describe('Zod issue matrix', () => {
   });
 
   it('custom with its own hint: the refinement\'s repair leads', () => {
-    const r = reject(SubmitFindingsBbInputSchema, { focus_node_id: 'dbo.a', verdict: 'analyze', summary: 'S.' });
-    expect(r.reason).toContain('required with verdict analyze');
+    const r = reject(SubmitFindingsBbInputSchema, { focus_node_id: 'dbo.a', summary: 'S.' });
+    expect(r.reason).toContain('Required for a fresh finding.');
     expect(r.hint!.startsWith('Send sections: the section body keyed by angle.')).toBe(true);
   });
 

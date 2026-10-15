@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadTestEnv } from './load-test-env.mjs';
+import { loadTestEnv, prepareDatabaseToken } from './load-test-env.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -21,7 +21,16 @@ const shim = require(resolve(root, 'out/test-headless/tests/harness/vscodeHostSh
 Module._load = function(request, parent, isMain) {
   return request === 'vscode' ? shim : originalLoad.call(this, request, parent, isMain);
 };
-const { main } = require(resolve(root, 'out/test-headless/tests/harness/cli.js'));
+const { main, parseOptions } = require(resolve(root, 'out/test-headless/tests/harness/cli.js'));
+if (kind === 'db' && !args.includes('--help')) {
+  try {
+    const options = parseOptions(kind, args);
+    await prepareDatabaseToken(process.env, undefined, options.timeoutMs);
+  } catch (error) {
+    console.error(`FAIL: database test setup: ${error instanceof Error ? error.message : 'invalid configuration'}`);
+    process.exit(2);
+  }
+}
 try {
   process.exitCode = await main(kind, args);
 } catch {

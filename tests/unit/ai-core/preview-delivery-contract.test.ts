@@ -251,7 +251,7 @@ describe('terminal chat text through the real runtime', () => {
           const engine = session.stateMachine!;
           if (!(engine instanceof NavigationEngine)) throw new Error('Active phase requires the production navigation engine.');
           const focus = engine.currentFocus!;
-          payload = { focus_node_id: focus, verdict: 'analyze', summary: `Records ${focus}.`, sections: { technical: `Observed ${focus}.` },
+          payload = { focus_node_id: focus, summary: `Records ${focus}.`, sections: { technical: `Observed ${focus}.` },
             ...(focus === normalizeName('dbo.Report', false) ? { questions: [{ nodeId: normalizeName('dbo.Source', false), question: 'Describe the source supplying Report.' }] } : {}),
           };
         } else {

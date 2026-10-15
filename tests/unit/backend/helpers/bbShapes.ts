@@ -5,7 +5,7 @@
  * derived from the depth exactly as the tool boundary derives it, so no test can state a
  * direction the product never forwards.
  */
-import { NavigationEngine } from '../../../../src/ai/sm/smBase';
+import { NavigationEngine, type HopNeighborDisclosure } from '../../../../src/ai/sm/smBase';
 import type { DepthIntent } from '../../../../src/ai/sm/smTypes';
 import { directionFromDepth } from '../../../../src/engine/shared/explorationDepthContract';
 import type { DatabaseModel, ObjectType } from '../../../../src/engine/types';
@@ -15,7 +15,7 @@ import { makeGraph, makeIndexedModel, makeNode } from '../../helpers/modelFixtur
 export type DepthSide = DepthIntent['upstream'];
 
 /** What one scripted hop tells the engine about its neighbours. */
-export interface HopScript { prune?: string[]; ask?: string[]; verdict?: 'analyze' | 'passthrough' }
+export interface HopScript { prune?: string[]; ask?: string[] }
 
 /** A built world: the engine after `init`, its runtime handles and the captured host log. */
 export interface BbWorld {
@@ -64,22 +64,28 @@ export function world(
 /** Submits one kept hop for the current focus. */
 export function submit(engine: NavigationEngine, focus: string, script: HopScript = {}): ReturnType<NavigationEngine['submitFindings']> {
   return engine.submitFindings({
-    focus_node_id: focus, verdict: script.verdict ?? 'analyze', summary: `Observed ${focus}`,
+    focus_node_id: focus, summary: `Observed ${focus}`,
     sections: [{ angle: 'technical', text: `SQL at ${focus}` }],
     ...(script.prune?.length ? { prune_neighbors: script.prune.map(id => ({ id, reason: 'off the answer' })) } : {}),
-    ...(script.ask?.length ? { questions: script.ask.map(nodeId => ({ nodeId, question: 'check this' })) } : {}),
+    ...(script.ask !== undefined ? { questions: script.ask.map(nodeId => ({ nodeId, question: 'check this' })) } : {}),
   });
 }
 
 /** Runs the hop loop to its end with `script` per focus and returns the dispatch order; throws on a rejected hop. */
-export function drain(engine: NavigationEngine, script: Record<string, HopScript> = {}): string[] {
+export function drain(engine: NavigationEngine, graph: BbWorld['graph'], script: Record<string, HopScript> = {}): string[] {
   const order: string[] = [];
   for (let guard = 0; guard < 100; guard++) {
     const context = engine.getHopContext();
     if (context.done || !context.focus_node) return order;
     const focus = String(context.focus_node.id);
     order.push(focus);
-    const result = submit(engine, focus, script[focus]);
+    const decision = script[focus] ?? {};
+    const next = new Set(engine.currentDirection === 'upstream' ? graph.inNeighbors(focus)
+      : engine.currentDirection === 'downstream' ? graph.outNeighbors(focus) : graph.neighbors(focus));
+    const neighbors = context.neighbors as readonly HopNeighborDisclosure[] | undefined;
+    const ask = decision.ask ?? neighbors?.filter(neighbor => next.has(neighbor.id) && neighbor.can_question
+      && !neighbor.out_of_direction && !decision.prune?.includes(neighbor.id)).map(neighbor => neighbor.id);
+    const result = submit(engine, focus, { ...decision, ask });
     if (!('ok' in result)) throw new Error(`hop ${focus} rejected: ${JSON.stringify(result)}`);
   }
   throw new Error('hop loop did not end');

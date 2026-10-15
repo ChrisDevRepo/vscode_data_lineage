@@ -43,7 +43,7 @@ export function validateSectionsAgainstClassification(
 ): string | null {
   const list = sections ?? [];
   if (!classification) {
-    return list.length === 0 ? 'sections must contain at least one of sections.business or sections.technical when verdict is analyze or passthrough.' : null;
+    return list.length === 0 ? 'sections must contain at least one of sections.business or sections.technical.' : null;
   }
   const rule = SECTION_RULES[classification];
   const angles = new Set(list.map(s => s.angle));
@@ -85,8 +85,7 @@ export function extractRawSectionAngles(rawSections: unknown): CapturedSection[]
  * Returns phase-valid recovery guidance for an active-hop `submit_findings` focus rejection.
  *
  * @remarks
- * Active SM exposes only `lineage_submit_findings` and `lineage_get_neighbor_columns`.
- * The hint therefore never points at discovery tools; an unresolved focus must be
+ * Active hops do not expose discovery tools; an unresolved focus must be
  * corrected from the current-hop focus ID already in the worker context.
  *
  * @param expectedFocusNodeId - Expected focus id for focus mismatch errors.

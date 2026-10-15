@@ -188,7 +188,7 @@ function buildDiscoveryPrompt(): string {
 
 /**
  * The active hop's task and deliverable, the same with or without tracked columns; field meanings
- * — the verdict words, `prune_neighbors`, `questions` and the CT carry — live in the
+ * — `prune_neighbors`, `questions` and the CT carry — live in the
  * `submit_findings` schema, their one home.
  *
  * @remarks
@@ -200,14 +200,13 @@ function buildDiscoveryPrompt(): string {
 function buildActivePhasePrompt(): string {
   return [
     '# Active hop',
-    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
+    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present, the way a reviewer reads code. `storage_context` carries related table metadata and stored DDL, not loading SQL. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
     'Answer each `<sub_question>` from the focus\'s own evidence in the section it belongs to, or state that this hop cannot answer it.',
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
     'Complete this hop with one available hop-completion command. For a kept hop, use `lineage_submit_findings`:',
-    '1. `verdict` for the focus node, judged from the focus itself.',
-    '2. With `analyze` or `passthrough`: `sections` and a one-sentence `summary`.',
-    '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
+    '1. `sections` and a one-sentence `summary` from the supplied evidence.',
+    '2. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     '',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.',
   ].join('\n');
@@ -799,13 +798,13 @@ export function buildCurrentTaskBlock(
     const endpoints = (values: readonly ScalarReturnTarget[]) => values.map(ref => escapePromptText(`${ref.node}.${ref.col}`)).join(', ');
     if (assigned.length) lines.push(
       nonBodied
-        ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints on a focus without a SQL body. Use neighbor metadata for explicit passthrough in the approved direction, without inventing value edges. The receiving SQL objects resolve whether and how those values continue.</assigned_endpoints>`
+        ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints. The engine carries them to connected SQL objects in the approved direction without inventing value edges; those SQL objects resolve whether and how the values continue.</assigned_endpoints>`
         : `  <assigned_endpoints>${endpoints(assigned)}: resolve these endpoints from this object's SQL in the approved direction. Record their qualified continuation or establish their final endpoint.</assigned_endpoints>`,
     );
     if (external.length) lines.push(task.traversalSide === 'upstream'
       ? `  <writer_targets>${endpoints(external)}: determine whether this writer's SQL supplies these stored outputs. Record confirmed write mappings and their value contributors; end targets this writer does not supply on this branch.</writer_targets>`
       : task.traversalSide === 'downstream'
-        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, state join, filter and grouping roles in sections, and leave unused inputs unmapped; they end here. If none contributes a value, submit analyze with column_flow: [] (passthrough would forward them). If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
+        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, state join, filter and grouping roles in sections, and leave unused inputs unmapped; they end here. If none contributes a value, submit column_flow: []. If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
         : `  <incoming_endpoints>${endpoints(external)}: resolve these qualified arrivals from this object's SQL in the approved direction. Record confirmed mappings or establish where this branch ends; do not assume consumption from object adjacency.</incoming_endpoints>`);
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {

@@ -13,7 +13,12 @@ interface SessionProjection {
   memory: {getResult(): {detail_slots: unknown[]}};
   pendingExploration: {revision:number; init:{depthIntent:DepthProjection}; classification:'business'|'technical'|'both'; summary:{scopeCount:number}} | null;
   lastPresentResultDescription: string | null;
-  stateMachine: {deferredQuestions: unknown} | null;
+  stateMachine: {
+    deferredQuestions: unknown;
+    columnAspect: {edges:Array<{hop_node:string;from_node:string;from_col:string;to_node:string;to_col:string}>} | null;
+    getResult(): unknown;
+    toJSON(): unknown;
+  } | null;
 }
 import { chromium, type Browser, type Page, type Locator } from 'playwright-core';
 
@@ -109,6 +114,13 @@ suite('Native chat confirmations — actual UI', () => {
     mkdirSync(artifactDir,{recursive:true});
     writeFileSync(`${artifactDir}/${name}.txt`,await page.locator('.interactive-session').last().innerText());
     await page.screenshot({path:`${artifactDir}/${name}.png`});
+  };
+  const captureCompletedResult = (name:string) => {
+    const machine = exports.getSession().stateMachine;
+    assert.ok(machine,'a completed trace must retain its state machine');
+    mkdirSync(artifactDir,{recursive:true});
+    writeFileSync(`${artifactDir}/${name}-sm-state.json`,JSON.stringify(machine.toJSON(),null,2));
+    writeFileSync(`${artifactDir}/${name}-result.json`,JSON.stringify(machine.getResult(),null,2));
   };
   const newChat = async () => {
     firstErrorIndex=fixture.uiErrors.length;
@@ -233,6 +245,7 @@ suite('Native chat confirmations — actual UI', () => {
     assert.equal(exports.getSession().pendingExploration,null);
     assert.ok(exports.getSession().memory.getResult().detail_slots.length>0);
     assert.ok(exports.getSession().lastPresentResultDescription,'typed approval must synthesize a visible result');
+    captureCompletedResult('typed-approve');
     await capture('typed-approve');
   });
   suiteTeardown(async()=>{
@@ -301,6 +314,7 @@ suite('Native chat confirmations — actual UI', () => {
     console.log('[chat-ui] Approve clicked with only the visible action label');
     await deadlineWait(()=>exports.getSession().phase.kind==='completed','approved real analysis must complete');
     assert.equal(exports.getSession().resultGraph?.nodeIds.length,8,'the completed graph must retain the approved eight-node scope');
+    captureCompletedResult('live-trace');
     const suggestion = page.getByRole('button',{name:/What could I explore next/}).last();
     await waitForControl(suggestion);
 
@@ -355,6 +369,7 @@ suite('Native chat confirmations — actual UI', () => {
     await idleInput();
     await approveOnce();
     await deadlineWait(()=>exports.getSession().phase.kind==='completed','approved column trace must complete');
+    captureCompletedResult('column-trace');
     const fullReport = page.getByRole('button',{name:/Show (the )?full description/}).last();
     await waitForControl(fullReport);
     await fullReport.click();
@@ -382,6 +397,16 @@ suite('Native chat confirmations — actual UI', () => {
     assert.ok(sources.some(row=>row.includes('costprice')),`Column Chain must list the value input CostPrice; rows: ${JSON.stringify(chainSources)}`);
     assert.ok(!sources.some(row=>row.includes('currencyconfig')),`join/filter-only CurrencyConfig must not be a Column Chain source; rows: ${JSON.stringify(chainSources)}`);
     assert.match(normalized(reportText),/currencyconfig/,'the join/filter object stays in the report');
+    const aspect = exports.getSession().stateMachine?.columnAspect;
+    assert.ok(aspect,'the completed column trace must retain its column edges');
+    const valueSources = [...new Set(aspect.edges.filter(edge=>
+      normalized(edge.hop_node)==='ai.sprefreshprices'
+      && normalized(edge.to_node)==='ai.pricemaster'
+      && normalized(edge.to_col)==='listprice'
+      && normalized(edge.from_node)!=='ai.sprefreshprices',
+    ).map(edge=>`${normalized(edge.from_node)}.${normalized(edge.from_col)}`))].sort();
+    assert.deepEqual(valueSources,['ai.markuprules.markuppct','ai.supplierprices.costprice'],
+      'ListPrice must have exactly its two arithmetic value sources; row and MERGE keys are not value inputs');
     assert.ok(!(await reply.locator('.rendered-markdown').allInnerTexts()).join('\n').includes('```'),'no literal code fence may render as text');
     const listStarts = await reply.locator('.rendered-markdown ol').evaluateAll(lists=>lists.map(list=>list.getAttribute('start') ?? '1'));
     assert.deepEqual(listStarts.filter(start=>start!=='1'),[],'an ordered list that restarts above 1 was split by an interrupting block');

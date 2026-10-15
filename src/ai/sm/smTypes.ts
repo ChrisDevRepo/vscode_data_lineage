@@ -33,6 +33,7 @@ export type SmNodeStateSource = 'ai' | 'engine' | 'user';
 export type SmNodeStateReason =
   | 'submitted_analyze'
   | 'submitted_passthrough'
+  | 'storage_passthrough'
   | 'submitted_prune'
   | 'bb_prune_neighbor'
   | 'user_pass_filter';
@@ -248,6 +249,8 @@ export interface HopContext {
   current_task?: string;
   /** Implementation-specific state carried across hops. */
   working_memory?: unknown;
+  /** Metadata of storage objects traversed before this SQL hop, without inferred column mappings. */
+  storage_context?: ReadonlyArray<Record<string, unknown>>;
   /**
    * Canonical mission statement — AI-composed at discovery, delivered verbatim every hop.
    * Survives sliding-memory wipes. Anchors verdicts and respects NL filters the user expressed.
@@ -274,12 +277,11 @@ export interface NeighborQuestion {
 }
 
 /**
- * A kept (`analyze` / `passthrough`) finding for a focus node.
+ * Findings for the current SQL object.
  *
  * @remarks
- * Neighbor decisions are exceptions only: the engine enqueues every open in-scope neighbor not
- * named in `prune_neighbors`, and `questions` attaches a check to one of them. In CT the column
- * carry each neighbor receives is derived from this finding's own `column_flow`.
+ * Every admitted open neighbor needs an authored question or an explicit prune decision,
+ * including queued work. CT mappings carry qualified endpoints; storage routing belongs to the engine.
  */
 export interface HopFindingKept {
   /** ID of the node that was analyzed. */
@@ -291,11 +293,9 @@ export interface HopFindingKept {
   sections: CapturedSection[];
   /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
   summary: string;
-  /** The relevance verdict for the focus node. */
-  verdict: 'analyze' | 'passthrough';
   /** Unvisited neighbors removed on this node's SQL alone, each with its reason; the cut takes what only they lead to. */
   prune_neighbors?: PruneNeighbor[];
-  /** Optional per-neighbor checks, attached to that neighbor's queued hop. */
+  /** Authored purpose for each open kept neighbor; merged with any existing tasks at that object. */
   questions?: NeighborQuestion[];
   /** Optional hop-time role hint for synthesis; not rendered directly. */
   badge_label?: string;
@@ -706,7 +706,7 @@ interface InvestigationTaskBase {
   nodeId?: string;
   /** Parent task for a routed or contracted continuation. */
   parentTaskId?: string;
-  /** Engine-owned sender of this task's route through explicit passthrough. */
+  /** Engine-owned storage object through which this task arrived. */
   passthroughFromNodeId?: string;
   /** Directed routing leg retained through table and user-pass contraction. */
   traversalSide?: 'upstream' | 'downstream';

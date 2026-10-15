@@ -48,7 +48,7 @@ function ctWorld(options: { deferred?: boolean; scalar?: boolean; caseSensitive?
 }
 
 /** An inherited investigation reaches a reader that does not use the table's Value. */
-function passthroughWorld(mode: 'bb' | 'ct') {
+function tableArrivalWorld(mode: 'bb' | 'ct') {
   const nodes = [
     makeNode({ id: ORIGIN, schema: 'hop', name: 'origin', type: 'table', columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }] }),
     makeNode({ id: BRANCH, schema: 'hop', name: 'branch', type: 'view', bodyScript: `SELECT Other FROM ${ORIGIN};` }),
@@ -64,18 +64,19 @@ function passthroughWorld(mode: 'bb' | 'ct') {
   expect(engine.init({ origin: ORIGIN, question: 'Follow the Value investigation.', analysisMode: mode,
     ...(mode === 'ct' ? { targetColumns: ['Value'] } : {}), direction: 'downstream',
     depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
-  engine.getHopContext();
+  const hop = engine.getHopContext();
+  expect(hop).toMatchObject({ focus_node: { id: BRANCH } });
+  expect(engine.toJSON().visited).toContain(ORIGIN);
+  expect(engine.columnAspect?.edges ?? []).toEqual([]);
   session.stateMachine = engine;
   session.enterExploring(session.turnEpoch);
   const { services } = stubToolServices({ session, model, graph });
-  expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'passthrough', summary: 'Stores values.',
-    sections: { technical: 'Its readers must establish relevance.' }, ...(mode === 'ct' ? { column_flow: [] } : {}) }, services))).toMatchObject({ ok: true, next_focus: BRANCH });
   return { engine, session, services };
 }
 
 describe('lineage_prune_current boundary', () => {
   it.each(['bb', 'ct'] as const)('normalizes the current %s focus and completes through the shared acknowledgement', mode => {
-    const { engine, session, services } = passthroughWorld(mode);
+    const { engine, session, services } = tableArrivalWorld(mode);
     const input = { focus_node_id: 'HOP.BRANCH', reason: 'The supplied SQL uses only Other and does not answer the inherited purpose.' };
     const before = structuredClone(input);
     expect(engine.canPruneCurrent).toBe(true);
@@ -90,7 +91,7 @@ describe('lineage_prune_current boundary', () => {
   it.each([null, {}, { focus_node_id: BRANCH, reason: '' }, { focus_node_id: BRANCH, reason: 1 },
     { focus_node_id: BRANCH, reason: 'Off path.', column_flow: [] }, { focus_node_id: OTHER, reason: 'Wrong focus.' }])(
     'rejects malformed or stale commands without mutation: %j', input => {
-      const { engine, services } = passthroughWorld('ct');
+      const { engine, services } = tableArrivalWorld('ct');
       const before = engine.toJSON();
       expect(JSON.parse(executePruneCurrent(input, services))).toHaveProperty('code');
       expect(engine.toJSON()).toEqual(before);
@@ -107,7 +108,7 @@ describe('lineage_prune_current boundary', () => {
   it('refuses self-pruning on a direct analyzed arrival and leaves its evidence intact', () => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
-    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'Value comes from branch.',
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Value comes from branch.',
       sections: { technical: 'The source endpoint is assigned.' }, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
       questions: [{ nodeId: BRANCH, question: 'Resolve the source endpoint.' }] }, services))).toHaveProperty('next_focus', BRANCH);
     expect(engine.canPruneCurrent).toBe(false);
@@ -202,12 +203,12 @@ describe('lineage_submit_findings boundary', () => {
   it.each([false, true])('preserves explicit route dispositions when done=%s', done => {
     const { session, model, graph } = ctWorld({ deferred: true });
     const { services } = stubToolServices({ session, model, graph });
-    const first = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'analyze',
+    const first = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN,
       summary: 'Supplies Value.', sections: { technical: 'Value comes from branch.' },
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
       questions: [{ nodeId: BRANCH, question: 'Establish the source of Value.' }],
     }, services));
-    const result = done ? JSON.parse(executeSubmitFindings({ focus_node_id: BRANCH, verdict: 'analyze',
+    const result = done ? JSON.parse(executeSubmitFindings({ focus_node_id: BRANCH,
       summary: 'Value is constant.', sections: { technical: 'The value is defined locally.' },
       column_flow: [{ out_col: 'Value', upstream_columns: [] }],
       questions: [{ nodeId: OTHER, question: 'Inspect this source if the depth is expanded.' }],
@@ -225,13 +226,13 @@ describe('lineage_submit_findings boundary', () => {
   ])('resolves only permitted qualified terminal input identity: %j', options => {
     const { session, model, graph, engine } = ctWorld({ caseSensitive: options.caseSensitive });
     const { services } = stubToolServices({ session, model, graph });
-    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, verdict: 'analyze',
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN,
       summary: 'Branch supplies Value.', sections: { technical: 'Inspect its source.' },
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
       questions: [{ nodeId: BRANCH, question: 'Establish Value provenance.' }],
     }, services))).toHaveProperty('ok', true);
     const edges = structuredClone(engine.columnAspect?.edges);
-    const input = { focus_node_id: BRANCH, verdict: 'analyze', summary: 'No further input.',
+    const input = { focus_node_id: BRANCH, summary: 'No further input.',
       sections: { technical: 'The input ends here.' }, column_flow: [],
       terminated_inputs: [{ node: options.node, col: '[value]', ...(options.extra ? { transforms: [] } : {}) }],
     };
@@ -248,7 +249,7 @@ describe('lineage_submit_findings boundary', () => {
     'normalizes only permitted caller-neighbor identity before strict validation: %j', options => {
       const { session, model, graph } = ctWorld({ scalar: true, caseSensitive: options.caseSensitive });
       const { services } = stubToolServices({ session, model, graph });
-      const input = { focus_node_id: ORIGIN, verdict: 'analyze', summary: 'The function computes Value.',
+      const input = { focus_node_id: ORIGIN, summary: 'The function computes Value.',
         sections: { technical: 'Inspect its supplied caller argument.' }, column_flow: [],
         questions: [{ nodeId: '[HOP].[BRANCH]', question: 'Establish Value from the caller argument.', caller_context: { node: ORIGIN, col: 'Value' } }],
         ...(options.extra ? { undeclared: true } : {}),
@@ -281,12 +282,14 @@ describe('lineage_submit_findings boundary', () => {
     session.stateMachine = engine;
     session.enterExploring(session.turnEpoch);
     const { services } = stubToolServices({ session, model, graph });
-    const first = JSON.parse(executeSubmitFindings({ focus_node_id: V, verdict: 'analyze', summary: 'Reads t and w.',
+    const first = JSON.parse(executeSubmitFindings({ focus_node_id: V, summary: 'Reads t and w.',
       sections: { technical: 'Selects from both sources.' },
       questions: [{ nodeId: T, question: 'What does t hold?' }, { nodeId: W, question: 'What does w add?' }] }, services));
     expect(first).toMatchObject({ ok: true, next_focus: W });
-    const second = JSON.parse(executeSubmitFindings({ focus_node_id: W, verdict: 'analyze', summary: 'Reads t.',
+    const second = JSON.parse(executeSubmitFindings({ focus_node_id: W, summary: 'Reads t.',
       sections: { technical: 'Selects from t.' }, questions: [{ nodeId: T, question: 'Which rows does w read?' }] }, services));
-    expect(second).toMatchObject({ ok: true, next_focus: T, route_outcomes: [{ nodeId: T, accepted: true }] });
+    expect(second).toMatchObject({ ok: true, done: true, route_outcomes: [{ nodeId: T, accepted: true }] });
+    expect(engine.toJSON().visited).toContain(T);
+    expect(session.resultGraph?.nodeIds).toEqual(expect.arrayContaining([V, W, T]));
   });
 });

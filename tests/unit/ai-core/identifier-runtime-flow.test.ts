@@ -99,7 +99,7 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
               : [{ node: cs ? 'Sales.Calc' : 'SALES.CALC', col: cs ? 'Value' : '[vALuE]' }, { node: cs ? 'Sales.Source' : 'sales.source', col: cs ? 'Value' : 'VALUE' }, ...(cs ? [{ node: 'sales.Source', col: 'Value' }] : [])])
             : [{ node: focus === id('Sales.calc') && cs ? 'Sales.source' : (cs ? 'Sales.Source' : 'SALES.SOURCE'), col: cs ? col : '[VALUE]' }],
           }));
-          payload = { focus_node_id: cs ? focus : focus.toUpperCase(), verdict: 'analyze', summary: `Records ${focus}.`, sections: { technical: `Observed ${focus} from its supplied definition.` },
+          payload = { focus_node_id: cs ? focus : focus.toUpperCase(), summary: `Records ${focus}.`, sections: { technical: `Observed ${focus} from its supplied definition.` },
             ...(engine.currentHopAnalysisMode === 'ct' ? { column_flow: flow } : {}),
             questions: model.edges.filter(edge => edge.target === focus && !visited.includes(edge.source))
               .map(edge => ({ nodeId: edge.source, question: `Inspect ${edge.source} for the catalog identity investigation.` })),
@@ -137,7 +137,8 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
     expect(events.filter(event => event.type === 'gate')).toHaveLength(1);
     expect(session.phase.kind).toBe('completed');
     expect(new Set(session.presentationArtifact?.nodeIds)).toEqual(new Set(model.nodes.map(node => node.id)));
-    expect(new Set(visited)).toEqual(new Set(model.nodes.map(node => node.id)));
+    expect(new Set(visited)).toEqual(new Set(model.nodes.filter(node => node.type !== 'table').map(node => node.id)));
+    expect(new Set(session.stateMachine!.toJSON().visited)).toEqual(new Set(model.nodes.map(node => node.id)));
     expect(calls.some(call => call.instructionContext?.classification === 'technical' && call.tools.some(tool => tool.name === 'lineage_submit_findings'))).toBe(true);
     expect(calls.some(call => call.instructionContext?.classification === 'technical' && call.tools.some(tool => tool.name === 'lineage_present_result'))).toBe(true);
     for (const call of calls) expect(call.system?.includes('Identifiers are case-sensitive.')).toBe(cs);

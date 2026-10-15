@@ -27,7 +27,7 @@ export function isAbsentKind(kind: InvalidRouteKind): boolean {
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   missing_task_decision:
-    'Account for each listed target with its mapping or explicit endpoint; terminated_inputs names arriving columns that stop without a local output. With analyze, supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it. Only passthrough forwards the incoming question automatically.',
+    'Account for each listed assigned endpoint with its mapping or terminated_inputs entry. Supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it.',
   invalid_task_decision:
     'terminated_inputs may name only an assigned incoming column (listed in the reason) that is not also mapped; remove or correct the entry.',
   absent_contributor:
@@ -35,11 +35,11 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_out_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   untracked_out_col:
-    'Set column_flow[].out_col to a tracked column from the `<column_trace> Active columns` list supplied for this hop — the named column exists on this node but the trace does not follow it — or submit column_flow: [] if this node carries no tracked column.',
+    'Set column_flow[].out_col to an output connected to the qualified column tasks supplied for this hop, or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   non_writer_continuation:
-    'upstream_columns always name value inputs, independent of exploration direction. For a bodyless focus, name only its recorded writers. Do not name downstream readers as inputs. An explicit passthrough can forward the arriving qualified task and question with column_flow: [] without adding a value edge.',
+    'upstream_columns always name value inputs, independent of exploration direction. Do not name downstream readers as inputs; remove unconfirmed contributors and describe the uncertainty in sections.',
   self_loop_column:
     'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in sections.',
   bad_return_target:
@@ -47,7 +47,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_caller_context:
     'Use questions[].caller_context only for a neighboring function with supplied caller SQL and an active real caller output; otherwise omit caller_context and keep the question.',
   bad_writes_to_target:
-    'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
+    'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table. A downstream reader is never a write destination: remove that node from writes_to.',
   pruned_contributor:
     'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
   prune_absent:

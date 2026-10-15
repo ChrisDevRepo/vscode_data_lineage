@@ -153,7 +153,6 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
           focus_node_id: engine.currentFocus!,
           sections: [{ angle: 'business', text: isOrigin ? LONG_SUMMARY : leafCommittedSummary }],
           summary: isOrigin ? LONG_SUMMARY : leafCommittedSummary,
-          verdict: 'analyze',
           ...(isOrigin ? { questions: leaves.map(id => ({ nodeId: id, question: `origin of ${id}?` })) } : {}),
         };
         return JSON.stringify(submitAndAdvance(engine, finding));
@@ -164,8 +163,8 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
 
   const script = [
     { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
-    { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: LONG_SUMMARY, verdict: 'analyze' })] },
-    { toolCalls: [validCall('submit-leaf-0', 'lineage_submit_findings', { summary: leafCallSummary, verdict: 'analyze' })] },
+    { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: LONG_SUMMARY })] },
+    { toolCalls: [validCall('submit-leaf-0', 'lineage_submit_findings', { summary: leafCallSummary })] },
     { toolCalls: [validCall('present-1', 'lineage_present_result', {})] },
   ];
   const model = new ScriptedModelPort(script);

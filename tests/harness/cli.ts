@@ -69,6 +69,8 @@ default provider.
 DB uses DB_TEST_SERVER, DB_TEST_DATABASE, DB_TEST_USER, DB_TEST_PASSWORD,
 optional DB_TEST_AUTH_TYPE (sqlLogin, or entraId with a DB_TEST_TOKEN access token), DB_TEST_TENANT_ID,
 DB_TEST_PORT, DB_TEST_ENCRYPT and DB_TEST_TRUST_SERVER_CERTIFICATE.
+For noninteractive Entra test login, set DB_TEST_CLIENT_ID, DB_TEST_TENANT_ID,
+DB_TEST_USER and DB_TEST_PASSWORD; the launcher acquires a token only in memory.
 Langfuse uses LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.
 All services require explicit setup. Artifacts are written only under ignored
 test-results/headless. AI gates are simulated approvals; this runner does not

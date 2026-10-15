@@ -17,7 +17,7 @@ function record(id: string, current: boolean): StoredAiRun {
   const engine = new NavigationEngine(model, makeGraph([node], []), () => {}, {});
   expect(engine.init({ origin: id, question: 'Inspect output', direction: 'upstream', analysisMode: 'bb', depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toMatchObject({ ok: true });
   engine.getHopContext();
-  expect(engine.submitFindings({ focus_node_id: id, verdict: 'analyze', summary: 'Historical output.', sections: [{ angle: 'technical', text: 'Historical SQL.' }] })).toMatchObject({ ok: true });
+  expect(engine.submitFindings({ focus_node_id: id, summary: 'Historical output.', sections: [{ angle: 'technical', text: 'Historical SQL.' }] })).toMatchObject({ ok: true });
   return { schemaVersion: 1, runId: 'saved', savedAt: '2026-01-01', origin: id, ddlHashes: { [id]: hashDdl(ddl) }, snapshot: engine.toJSON(), ...(current ? { nodeIdEncodingVersion: 2 } : {}) };
 }
 async function recall(raw: string, ids: string[], current = false, model?: DatabaseModel) {

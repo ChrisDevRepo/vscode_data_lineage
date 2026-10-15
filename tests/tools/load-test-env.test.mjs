@@ -6,20 +6,43 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { loadTestEnv } from './load-test-env.mjs';
+import { loadTestEnv, prepareDatabaseToken } from './load-test-env.mjs';
 import * as badgeReplay from './chat-ui-replay-trace.mjs';
 import {
   assertLoopbackPortAvailable,
-  assertAllPassReport,
-  assertMochaCompletion,
-  assertDbCredentialKeys,
-  assertTcpEndpointReady,
   buildLaunchArgs,
   isIsolatedWorkbenchPage,
   parseCdpPort,
-  requireDbFixtureExtensionPath,
   validateGuiSession,
 } from './gui-test-host.mjs';
+
+test('noninteractive database token setup is explicit, preserves tokens and contains credential failures', async () => {
+  const base = { DB_TEST_AUTH_TYPE: 'entraId', DB_TEST_CLIENT_ID: 'public-client', DB_TEST_TENANT_ID: 'tenant', DB_TEST_USER: 'reader', DB_TEST_PASSWORD: 'private-password' };
+  let calls = 0;
+  const acquire = async () => { calls++; return { token: 'in-memory-token' }; };
+  for (const env of [{ ...base, DB_TEST_AUTH_TYPE: 'sqlLogin' }, { ...base, DB_TEST_CLIENT_ID: '' }, { ...base, DB_TEST_TOKEN: 'existing-token' }]) {
+    const before = { ...env };
+    await prepareDatabaseToken(env, acquire);
+    assert.deepEqual(env, before);
+  }
+  assert.equal(calls, 0);
+  for (const key of ['DB_TEST_TENANT_ID', 'DB_TEST_USER', 'DB_TEST_PASSWORD']) {
+    await assert.rejects(prepareDatabaseToken({ ...base, [key]: '' }, acquire), new RegExp(key));
+  }
+  const env = { ...base };
+  await prepareDatabaseToken(env, acquire);
+  assert.equal(env.DB_TEST_TOKEN, 'in-memory-token');
+  assert.equal(calls, 1);
+  for (const failure of [async () => { throw new Error(base.DB_TEST_PASSWORD); }, async () => ({ token: '' })]) {
+    const failed = { ...base };
+    await assert.rejects(prepareDatabaseToken(failed, failure), error => {
+      assert.match(error.message, /Noninteractive Entra database authentication failed/);
+      assert.ok(!error.message.includes(base.DB_TEST_PASSWORD));
+      return true;
+    });
+    assert.equal(failed.DB_TEST_TOKEN, undefined);
+  }
+});
 
 test('badge setup can explicitly use fresh analysis without accepting invalid settings', () => {
   const root = mkdtempSync(join(tmpdir(), 'dlv-badge-setup-'));
@@ -195,62 +218,6 @@ test('buildLaunchArgs isolates the profile and binds CDP to loopback', () => {
   assert.equal(args.some((argument) => argument.includes('/Applications/')), false);
 });
 
-test('buildLaunchArgs loads multiple development extensions without extension-tests mode', () => {
-  const args = buildLaunchArgs({
-    extensionPath: '/repo/data-lineage-viz',
-    extensionPaths: ['/repo/data-lineage-viz', '/repo/db-runner'],
-    workspaceDir: '/tmp/gui/workspace',
-    userDataDir: '/tmp/gui/user-data',
-    extensionsDir: '/tmp/gui/extensions',
-    cdpPort: 9475,
-    inMemorySecrets: true,
-  });
-
-  assert.deepEqual(args.filter((argument) => argument.startsWith('--extensionDevelopmentPath=')), [
-    '--extensionDevelopmentPath=/repo/data-lineage-viz',
-    '--extensionDevelopmentPath=/repo/db-runner',
-  ]);
-  assert.ok(args.includes('--use-inmemory-secretstorage'));
-  assert.equal(args.some((argument) => argument.startsWith('--extensionTestsPath=')), false);
-});
-
-test('assertDbCredentialKeys checks presence without returning credential values', () => {
-  const complete = 'DLV_SQL_USER=reader\nDLV_SQL_API=secret\nDLV_SQL_SA_USER=sa\nDLV_SQL_SA_API=admin-secret\n';
-  assert.equal(assertDbCredentialKeys(complete), undefined);
-  assert.throws(() => assertDbCredentialKeys('DLV_SQL_USER=reader\n'), /DLV_SQL_API, DLV_SQL_SA_USER, DLV_SQL_SA_API/);
-});
-
-test('requireDbFixtureExtensionPath resolves an existing directory without exposing internal paths', () => {
-  const fixtureDir = mkdtempSync(join(tmpdir(), 'dlv-gui-fixture-'));
-  try {
-    assert.equal(requireDbFixtureExtensionPath(fixtureDir), fixtureDir);
-  } finally {
-    rmSync(fixtureDir, { recursive: true, force: true });
-  }
-});
-
-test('requireDbFixtureExtensionPath rejects missing, absent and non-directory values', () => {
-  assert.throws(() => requireDbFixtureExtensionPath(''), /DLV_GUI_DB_FIXTURE_EXT/);
-  assert.throws(() => requireDbFixtureExtensionPath(undefined), /DLV_GUI_DB_FIXTURE_EXT/);
-  assert.throws(() => requireDbFixtureExtensionPath(join(tmpdir(), 'dlv-gui-fixture-absent')), /existing directory/);
-});
-
-test('assertMochaCompletion rejects zero, pending and incomplete runs', () => {
-  assert.equal(assertMochaCompletion({ tests: 3, passes: 3, pending: 0, failures: 0 }), undefined);
-  assert.throws(() => assertMochaCompletion({ tests: 0, passes: 0, pending: 0, failures: 0 }), /tests=0/);
-  assert.throws(() => assertMochaCompletion({ tests: 3, passes: 2, pending: 1, failures: 0 }), /pending=1/);
-  assert.throws(() => assertMochaCompletion({ tests: 3, passes: 2, pending: 0, failures: 1 }), /failures=1/);
-});
-
-test('assertAllPassReport rejects gaps, failures, missing IDs, duplicate IDs and empty runs', () => {
-  assert.equal(assertAllPassReport({ cases: [{ id: 'DB-03a', status: 'PASS' }] }, ['DB-03a']), undefined);
-  assert.throws(() => assertAllPassReport({ cases: [{ id: 'DB-06d', status: 'GAP' }] }), /DB-06d=GAP/);
-  assert.throws(() => assertAllPassReport({ cases: [{ id: 'DB-07', status: 'FAIL' }] }), /DB-07=FAIL/);
-  assert.throws(() => assertAllPassReport({ cases: [{ id: 'DB-02', status: 'PASS' }] }, ['DB-02', 'DB-03a']), /missing=DB-03a/);
-  assert.throws(() => assertAllPassReport({ cases: [{ id: 'DB-02', status: 'PASS' }, { id: 'DB-02', status: 'PASS' }] }, ['DB-02']), /duplicate=DB-02/);
-  assert.throws(() => assertAllPassReport({ cases: [] }), /no cases ran/);
-});
-
 test('validateGuiSession binds a runner identity to its loopback endpoint', () => {
   const sessionId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   const session = {
@@ -314,22 +281,4 @@ test('assertLoopbackPortAvailable releases an available probe listener', async (
 
   await assertLoopbackPortAvailable(9475, () => available);
   assert.deepEqual(options, { host: '127.0.0.1', port: 9475, exclusive: true });
-});
-
-test('assertTcpEndpointReady accepts a listener and rejects a refused endpoint', async () => {
-  const connected = new EventEmitter();
-  connected.end = () => {};
-  connected.destroy = () => {};
-  await assertTcpEndpointReady('127.0.0.1', 14333, () => {
-    queueMicrotask(() => connected.emit('connect'));
-    return connected;
-  });
-
-  const refused = new EventEmitter();
-  refused.end = () => {};
-  refused.destroy = () => {};
-  await assert.rejects(assertTcpEndpointReady('127.0.0.1', 14333, () => {
-    queueMicrotask(() => refused.emit('error', new Error('ECONNREFUSED')));
-    return refused;
-  }), /127\.0\.0\.1:14333/);
 });

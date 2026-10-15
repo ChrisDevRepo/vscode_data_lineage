@@ -28,11 +28,11 @@ function completedColumnTrace() {
   ];
   const engine = engineFor(nodes, [[BRANCH, ORIGIN]], { origin: ORIGIN, question: 'Trace Value.', analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream',
     depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
-  expect(engine.submitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'Value comes from branch.', sections,
+  expect(engine.submitFindings({ focus_node_id: ORIGIN, summary: 'Value comes from branch.', sections,
     column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
     questions: [{ nodeId: BRANCH, question: 'Resolve the source endpoint.' }] })).toHaveProperty('ok', true);
   expect(engine.getHopContext()).toMatchObject({ focus_node: { id: BRANCH }, analysis_mode: 'ct' });
-  expect(engine.submitFindings({ focus_node_id: BRANCH, verdict: 'analyze', summary: 'Value is a literal.', sections,
+  expect(engine.submitFindings({ focus_node_id: BRANCH, summary: 'Value is a literal.', sections,
     column_flow: [{ out_col: 'Value', upstream_columns: [] }] })).toHaveProperty('ok', true);
   expect(engine.getHopContext()).toHaveProperty('done', true);
   expect(engine.status).toBe('complete');
@@ -56,17 +56,17 @@ function completedCallerContextTrace() {
   ];
   const engine = engineFor(nodes, [[fn, ORIGIN]], { origin: ORIGIN, question: 'Trace Value.', analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream',
     depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
-  expect(engine.submitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'The function computes Value.', sections, column_flow: [],
+  expect(engine.submitFindings({ focus_node_id: ORIGIN, summary: 'The function computes Value.', sections, column_flow: [],
     questions: [{ nodeId: fn, question: 'Establish Value from the caller argument.', caller_context: { node: ORIGIN, col: 'Value' } }] })).toHaveProperty('ok', true);
   expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn } });
-  const result = engine.submitFindings({ focus_node_id: fn, verdict: 'analyze', summary: 'Value doubles the argument.', sections,
+  const result = engine.submitFindings({ focus_node_id: fn, summary: 'Value doubles the argument.', sections,
     column_flow: [{ out_col: 'Value', returns_to: { node: ORIGIN, col: 'Value' }, upstream_columns: [] }] });
   expect(result).toHaveProperty('ok', true);
   expect(engine.getHopContext()).toHaveProperty('done', true);
   return engine;
 }
 
-/** A completed downstream BB run whose passthrough reader BRANCH was pruned with its only reader OTHER. */
+/** A completed downstream BB run whose automatically reached reader BRANCH was pruned with its only reader OTHER. */
 function completedPrunedPath() {
   const nodes = [
     makeNode({ id: ORIGIN, schema: 's', name: 'origin', type: 'table', columns: [col('Value')] }),
@@ -75,8 +75,8 @@ function completedPrunedPath() {
   ];
   const engine = engineFor(nodes, [[ORIGIN, BRANCH], [BRANCH, OTHER]], { origin: ORIGIN, question: 'Follow the Value investigation.', analysisMode: 'bb', direction: 'downstream',
     depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } });
-  expect(engine.submitFindings({ focus_node_id: ORIGIN, verdict: 'passthrough', summary: 'Stores values.', sections })).toHaveProperty('ok', true);
-  expect(engine.getHopContext()).toMatchObject({ focus_node: { id: BRANCH } });
+  expect(engine.peekHopContext()).toMatchObject({ focus_node: { id: BRANCH } });
+  expect(engine.toJSON().visited).toContain(ORIGIN);
   expect(engine.pruneCurrent(BRANCH, 'The supplied SQL does not use Value.')).toHaveProperty('ok', true);
   expect(engine.getHopContext()).toHaveProperty('done', true);
   expect(engine.status).toBe('complete');
@@ -85,6 +85,26 @@ function completedPrunedPath() {
 }
 
 describe('supplement request contract', () => {
+  it('does not count a writer behind an excluded storage request even when a read-back cycle connects it', () => {
+    const nodes = [
+      makeNode({ id: ORIGIN, schema: 's', name: 'origin', type: 'view', bodyScript: `CREATE VIEW ${ORIGIN} AS SELECT Value FROM ${BRANCH};` }),
+      makeNode({ id: BRANCH, schema: 's', name: 'branch', type: 'table', columns: [col('Value')] }),
+      makeNode({ id: OTHER, schema: 's', name: 'other', type: 'procedure', bodyScript: `INSERT ${BRANCH}(Value) SELECT Value FROM ${ORIGIN};` }),
+    ];
+    const engine = engineFor(nodes, [[BRANCH, ORIGIN], [OTHER, BRANCH], [ORIGIN, OTHER]], {
+      origin: ORIGIN, question: 'Explain origin.', analysisMode: 'bb', direction: 'upstream', excludeNodeIds: [BRANCH],
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
+    });
+    expect(engine.submitFindings({ focus_node_id: ORIGIN, summary: 'The source is excluded.', sections })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toHaveProperty('done', true);
+    const before = engine.toJSON();
+    expect(engine.measureSupplementScope([BRANCH])).toEqual({ ...engine.measureAdmissionScope(), columns: 0 });
+    expect(engine.toJSON()).toEqual(before);
+    expect(engine.supplementAgenda([BRANCH])).toMatchObject({ ok: true, agendaed: 0, skipped: 1,
+      skippedDetails: [{ nodeId: BRANCH, reason: 'excluded' }] });
+    expect(engine.toJSON()).toEqual(before);
+  });
+
   it('visits an object named without a task as BB, without carry from its committed endpoints', () => {
     const engine = completedColumnTrace();
     expect(engine.supplementAgenda([BRANCH])).toMatchObject({ ok: true, agendaed: 1, skipped: 0 });
@@ -144,21 +164,21 @@ describe('supplement request contract', () => {
       depthIntent: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
     const flow = (node?: string) => analysisMode === 'ct' ? { column_flow: node ? [{ out_col: 'Value', upstream_columns: [{ node, col: 'Value' }] }] : [] } : {};
     const question = 'How is branch loaded?';
-    expect(engine.submitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'Reads view.', sections, ...flow(VIEW),
+    expect(engine.submitFindings({ focus_node_id: ORIGIN, summary: 'Reads view.', sections, ...flow(VIEW),
       questions: [{ nodeId: VIEW, question: 'Resolve Value.' }] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: VIEW } });
-    expect(engine.submitFindings({ focus_node_id: VIEW, verdict: 'analyze', summary: 'Reads branch.', sections, ...flow(),
+    expect(engine.submitFindings({ focus_node_id: VIEW, summary: 'Reads branch.', sections, ...flow(),
       questions: [{ nodeId: BRANCH, question }] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
     const lead = engine.pendingLeads.find(item => item.nodeId === BRANCH)!;
     expect(engine.measureSupplementScope([BRANCH]).nodes - engine.measureAdmissionScope().nodes).toBe(2);
-    expect(engine.supplementAgenda([], [lead.id])).toMatchObject({ ok: true, agendaed: 2, skipped: 0 });
-    // A lead without a qualified column task is an object visit in either mode.
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: BRANCH }, analysis_mode: 'bb' });
-    expect(engine.submitFindings({ focus_node_id: BRANCH, verdict: 'passthrough', summary: 'Stores rows.', sections })).toHaveProperty('ok', true);
+    expect(engine.supplementAgenda([], [lead.id])).toMatchObject({ ok: true, agendaed: 1, skipped: 0 });
+    // A lead without a qualified column task reaches SQL as BB after automatic table forwarding.
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: LOADER }, analysis_mode: 'bb' });
+    expect(engine.toJSON().visited).toContain(BRANCH);
+    expect(engine.toJSON().nodeStates).toContainEqual(expect.objectContaining({ nodeId: BRANCH, action: 'passthrough', source: 'engine' }));
     expect(engine.getCurrentTasks().map(task => task.question)).toContain(question);
-    expect(engine.submitFindings({ focus_node_id: LOADER, verdict: 'analyze', summary: 'Inserts a literal.', sections })).toHaveProperty('ok', true);
+    expect(engine.submitFindings({ focus_node_id: LOADER, summary: 'Inserts a literal.', sections })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
     expect(engine.pendingLeads.filter(item => item.status === 'pending')).toEqual([]);
   });
@@ -172,11 +192,10 @@ describe('supplement request contract', () => {
     ];
     const engine = engineFor(nodes, [[BRANCH, ORIGIN], [LOADER, BRANCH]], { origin: ORIGIN, question: 'Explain the load.', analysisMode: 'bb', direction: 'upstream',
       depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
-    expect(engine.submitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'Reads branch.', sections,
+    expect(engine.submitFindings({ focus_node_id: ORIGIN, summary: 'Reads branch.', sections,
       questions: [{ nodeId: BRANCH, question: 'How is branch kept?' }] })).toHaveProperty('ok', true);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: BRANCH } });
-    expect(engine.submitFindings({ focus_node_id: BRANCH, verdict: 'analyze', summary: 'Stores rows.', sections,
-      prune_neighbors: [{ id: LOADER, reason: 'The load is outside this question.' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: LOADER } });
+    expect(engine.pruneCurrent(LOADER, 'The load is outside this question.')).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
     expect(engine.supplementAgenda([BRANCH])).toMatchObject({ ok: true, agendaed: 1, skipped: 0 });
     expect(engine.toJSON().removedSet).toContain(LOADER);

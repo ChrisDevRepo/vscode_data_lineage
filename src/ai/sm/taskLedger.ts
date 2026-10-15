@@ -17,7 +17,7 @@ export type InvestigationTaskInput = {
   nodeId?: string;
   /** Task this one was split from, so a resolved child rolls up to its parent. */
   parentTaskId?: string;
-  /** Explicit passthrough on the route that created this task. */
+  /** Engine-owned storage object traversed before this task; retained in task identity. */
   passthroughFromNodeId?: string;
   traversalSide?: InvestigationTask['traversalSide'];
   /** Initial status; defaults to pending. */

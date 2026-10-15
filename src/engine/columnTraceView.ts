@@ -5,13 +5,13 @@
  * The column view is a second rendering of a scope the object view already shows: each traced
  * column becomes a row inside its object, and each recorded column relation becomes an edge between
  * two row handles. Every value here is derived from `AIViewMetadata.columnAspect.edges` and the
- * node verdicts that accompany them — this module never asks the host for more data and never
+ * per-relation transform classes — this module never asks the host for more data and never
  * mutates the object-view model.
  */
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
-import type { ColumnAspectEdge, ColumnTransformClass, NodeVerdict } from './shared/bridgeContract';
+import type { ColumnAspectEdge, ColumnTransformClass } from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
 
 /**
@@ -20,7 +20,7 @@ import type { ExtensionConfig } from './types';
  * @remarks
  * A property of the two endpoint tuples, never of the path between them: a chain of several
  * mechanisms inside a CTE is still, at the endpoints, a `transformation`. `unknown` is the honest
- * result when neither a per-line label nor a node verdict settles it, and renders no glyph.
+ * result when the recorded transform classes do not settle whether the value changes.
  */
 export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';
 
@@ -118,7 +118,7 @@ export interface ColumnTraceViewEdge {
   /**
    * Transform classes the model recorded for the relation, absent on an unclassified edge. The
    * marker chip keys its per-class glyphs off this; when a classification exists it, not the
-   * verdict-derived {@link state}, decides what the chip shows.
+   * {@link state}, decides what the chip shows.
    */
   transforms?: ColumnTransformClass[];
   /**
@@ -209,15 +209,6 @@ export interface ColumnTraceViewInput {
    * self edges are ignored.
    */
   objectEdges?: ReadonlyArray<{ source: string; target: string }>;
-  /**
-   * Per-node trace verdict, keyed by {@link schemaKey} under the source policy.
-   *
-   * @remarks
-   * `passthrough` means the node applied no logic to the columns flowing through it, so every
-   * relation whose hop node carries that verdict is a `passthrough` line. Absent entries yield
-   * `unknown`, which renders no glyph.
-   */
-  verdicts?: Map<string, NodeVerdict['verdict']>;
   /**
    * Live extension configuration, supplying the layout separations and the default direction.
    *
@@ -392,25 +383,21 @@ export function columnThread(index: ColumnThreadIndex, startKey: string): Set<st
 }
 
 /**
- * Resolves a column edge's {@link ColumnLineState} from its hop node's trace verdict.
+ * Resolves whether a relation changes its value from its recorded transform classes.
  *
  * @remarks
- * Verdict-only resolution: `passthrough` yields `passthrough`, `analyze` yields `transformation`,
- * and a `prune` verdict or no verdict at all yields `unknown`. Exported for its own unit test only —
- * a per-edge state resolved anywhere else would be a second governor of the same glyph.
+ * Compute and aggregate change values; pass_through preserves them even alongside row-selection
+ * roles. Missing classes and indirect-only roles do not establish a value change. A node's
+ * investigation status supplies no evidence about an individual relation's values.
  *
- * @param hopNode - Hop node id from the relation, compared under the source identifier policy.
- * @param verdicts - Per-node trace verdicts, keyed by {@link schemaKey} under that policy.
+ * @param transforms - Recorded classes, including merged classes on a shared leg.
  * @returns The resolved line state.
  */
-export function resolveVerdictLineState(
-  hopNode: string,
-  verdicts?: Map<string, NodeVerdict['verdict']>,
-  identifierCaseSensitive = false,
+export function resolveColumnLineState(
+  transforms?: readonly ColumnTransformClass[],
 ): ColumnLineState {
-  const verdict = verdicts?.get(schemaKey(hopNode, identifierCaseSensitive));
-  if (verdict === 'passthrough') return 'passthrough';
-  if (verdict === 'analyze') return 'transformation';
+  if (transforms?.some(transform => transform === 'compute' || transform === 'aggregate')) return 'transformation';
+  if (transforms?.includes('pass_through')) return 'passthrough';
   return 'unknown';
 }
 
@@ -419,8 +406,8 @@ export function resolveVerdictLineState(
  *
  * @remarks
  * A transforming contributor makes the value arriving at the row a transformation; `passthrough`
- * requires every contributor to agree; a disagreement with no transformation is `unknown`, which
- * renders no glyph — the honest-unknown rule {@link resolveVerdictLineState} applies per edge.
+ * requires every contributor to agree; a disagreement with no transformation is `unknown` — the
+ * honest-unknown rule {@link resolveColumnLineState} applies per edge.
  *
  * @param edges - The view's per-column edges.
  * @returns Line state keyed by the {@link columnRowKey} of each edge's target row.
@@ -576,7 +563,7 @@ function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
  * relation touches is appended as a node with no rows, joined by `input.objectEdges`; a column
  * trace is the object trace plus columns, so it never loses an object.
  *
- * @param input - Recorded column relations, object identities, and verdicts for one trace.
+ * @param input - Recorded column relations and object identities for one trace.
  * @returns Positioned nodes and per-column edges ready to render.
  */
 export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceView {
@@ -598,7 +585,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     sourceCol: string;
     targetId: string;
     targetCol: string;
-    hopNode: string;
     /** Rendered hop node the relation is drawn through; unset when the hop is an endpoint. */
     viaId?: string;
     /** Transform classes the model recorded, carried to every leg the relation is drawn as. */
@@ -676,7 +662,6 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       sourceCol: relation.fromCol,
       targetId: targetObj.id,
       targetCol: relation.toCol,
-      hopNode: relation.hopNode,
       viaId,
       transforms: relation.transforms,
       note: relation.note,
@@ -721,6 +706,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const shared = edgeByLeg.get(legKey);
     if (shared) {
       if (transforms) shared.transforms = [...new Set([...(shared.transforms ?? []), ...transforms])];
+      shared.state = resolveColumnLineState(shared.transforms);
       if (note && !shared.note?.split('\n').includes(note)) shared.note = shared.note ? `${shared.note}\n${note}` : note;
       return;
     }
@@ -741,7 +727,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   }
 
   for (const relation of normalized) {
-    const state = resolveVerdictLineState(relation.hopNode, input.verdicts, input.identifierCaseSensitive);
+    const state = resolveColumnLineState(relation.transforms);
     if (relation.viaId) {
       pushEdge(relation.index, 'a', relation.sourceId, relation.sourceCol, relation.viaId, relation.sourceCol, state, relation.transforms, relation.note);
       pushEdge(relation.index, 'b', relation.viaId, relation.targetCol, relation.targetId, relation.targetCol, state, relation.transforms, relation.note);

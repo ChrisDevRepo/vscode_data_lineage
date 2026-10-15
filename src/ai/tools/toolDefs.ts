@@ -88,12 +88,12 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_submit_findings', title: 'Submit Findings', inputSchema: SubmitFindingsModelSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
     userDescription: 'Submit analysis of the current node and each neighbor\'s prune or question decision.',
-    modelDescription: 'Commits this hop: the focus node\'s verdict and analysis, and its neighbor decisions.',
+    modelDescription: 'Commits this hop: the focus node\'s SQL findings and its neighbor decisions.',
   },
   {
     name: 'lineage_prune_current', title: 'Prune Current Node', inputSchema: PruneCurrentInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
-    userDescription: 'Remove the current irrelevant node after passthrough routing.',
-    modelDescription: 'Optional alternative to submit_findings, available only on a hop reached through passthrough. If this whole node is irrelevant to the investigation, hard-cut it and the unvisited nodes removed by the normal pruning rules; the result lists the node in `pruned` and the nodes cut with it in `cut_ids`. It is rejected when committed analysis or column mappings depend on the node. This removes the object, rather than ending a column continuation. BB and CT use the same command. Send one hop commit command per reply.',
+    userDescription: 'Remove the current irrelevant SQL node reached through a storage carrier.',
+    modelDescription: 'Optional alternative to submit_findings, available only on a SQL hop reached through an automatically forwarded storage carrier. Prune purely technical backup, temporary or archive sidecars only when supplied SQL shows they are irrelevant to the requested analysis; names such as bak, tmp or archive alone are insufficient. When in doubt, keep the node. If this whole node is irrelevant to the investigation, hard-cut it and the unvisited nodes removed by the normal pruning rules; the result lists the node in `pruned` and the nodes cut with it in `cut_ids`. It is rejected when committed analysis or column mappings depend on the node. This removes the object, rather than ending a column continuation. BB and CT use the same command. Send one hop commit command per reply.',
   },
   {
     name: 'lineage_present_result', title: 'Present Lineage View', inputSchema: PresentResultModelSchema, tags: ['lineage-presentation'], effect: 'presentation_commit',

@@ -16,6 +16,28 @@ const PROVIDER_PROFILES = {
   ],
 };
 
+/** Acquires an explicitly configured noninteractive Entra test token in memory; existing tokens win. */
+export async function prepareDatabaseToken(env = process.env, acquireToken, timeoutMs = 300_000) {
+  if (env.DB_TEST_AUTH_TYPE !== 'entraId' || hasValue(env.DB_TEST_TOKEN) || !hasValue(env.DB_TEST_CLIENT_ID)) return;
+  for (const key of ['DB_TEST_TENANT_ID', 'DB_TEST_USER', 'DB_TEST_PASSWORD']) {
+    if (!hasValue(env[key])) throw new Error(`Set ${key} for noninteractive Entra database testing.`);
+  }
+  try {
+    const acquire = acquireToken ?? (async () => {
+      const { UsernamePasswordCredential } = await import('@azure/identity');
+      const credential = new UsernamePasswordCredential(
+        env.DB_TEST_TENANT_ID, env.DB_TEST_CLIENT_ID, env.DB_TEST_USER, env.DB_TEST_PASSWORD,
+      );
+      return credential.getToken('https://database.windows.net/.default', { abortSignal: AbortSignal.timeout(timeoutMs) });
+    });
+    const token = await acquire();
+    if (!hasValue(token?.token)) throw new Error('No access token returned.');
+    env.DB_TEST_TOKEN = token.token;
+  } catch {
+    throw new Error('Noninteractive Entra database authentication failed; no interactive sign-in was attempted.');
+  }
+}
+
 /**
  * Loads optional test environment values and resolves a selected AI provider profile.
  *

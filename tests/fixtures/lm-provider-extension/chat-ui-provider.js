@@ -42,10 +42,13 @@ async function respond(request, progress) {
   }
   if (names.includes('lineage_submit_findings')) {
     call('lineage_submit_findings', {
-      // Explicit forwarding exercises the approved UI lifecycle, not SQL interpretation.
-      focus_node_id: session.stateMachine.currentFocus, verdict: 'passthrough',
+      // Authored neighbor questions exercise the approved UI lifecycle.
+      focus_node_id: session.stateMachine.currentFocus,
       summary: 'Calculates the dealer price from the effective list price.', badge_label: 'Dealer price',
-      sections: { technical: 'The function returns sixty percent of the effective list price.' }, questions: [],
+      sections: { technical: 'The function returns sixty percent of the effective list price.' },
+      questions: session.stateMachine.peekHopContext().neighbors
+        .filter(neighbor => neighbor.can_question && neighbor.in_approved_scope)
+        .map(neighbor => ({ nodeId: neighbor.id, question: 'Explain this object’s contribution to the dealer price.' })),
     });
     return;
   }

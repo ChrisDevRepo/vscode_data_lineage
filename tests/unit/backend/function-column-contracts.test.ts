@@ -23,7 +23,7 @@ function world(functionReadsCaller = true, declaredDependency = false) {
   engine.getHopContext();
   return { engine };
 }
-const finding = { focus_node_id: caller, verdict: 'analyze' as const, summary: 'Function computes Value.', sections: { technical: 'Value is twice Amount.' }, column_flow: [] };
+const finding = { focus_node_id: caller, summary: 'Function computes Value.', sections: { technical: 'Value is twice Amount.' }, column_flow: [] };
 
 describe('neighbor-specific function caller context', () => {
   it('serves the function declaration and refuses it on an ordinary neighbor in both Zod and JSON Schema', () => {
@@ -52,7 +52,7 @@ describe('neighbor-specific function caller context', () => {
   it('keeps semantic caller-output validation atomic for an eligible function', () => {
     const { engine } = world();
     const before = engine.toJSON();
-    const refused = engine.submitFindings({ ...finding, verdict: 'analyze', sections: [{ angle: 'technical' as const, text: finding.sections.technical }],
+    const refused = engine.submitFindings({ ...finding, sections: [{ angle: 'technical' as const, text: finding.sections.technical }],
       questions: [{ nodeId: fn, question: 'Determine the output.', caller_context: { node: caller, col: 'Missing' } }, { nodeId: source, question: 'Explain the source rows.' }] });
     expect(refused).toMatchObject({ code: 'route_validation_failed', issuePaths: expect.arrayContaining(['questions.0.caller_context']) });
     expect(JSON.stringify(refused)).toContain(`Active outputs of \`${caller}\`: Value.`);
@@ -64,7 +64,7 @@ describe('neighbor-specific function caller context', () => {
   it('retains qualified output and supplied caller SQL at the function hop, without inventing value edges', () => {
     const { engine } = world();
     const question = { nodeId: fn, question: 'Determine Value from the actual caller argument.', caller_context: { node: caller, col: 'Value' } };
-    const accepted = engine.submitFindings({ ...finding, verdict: 'analyze', sections: [{ angle: 'technical' as const, text: finding.sections.technical }], questions: [question, { nodeId: source, question: 'Explain the source rows.' }] });
+    const accepted = engine.submitFindings({ ...finding, sections: [{ angle: 'technical' as const, text: finding.sections.technical }], questions: [question, { nodeId: source, question: 'Explain the source rows.' }] });
     expect(accepted).toHaveProperty('ok', true);
     expect(accepted).not.toHaveProperty('unaccounted_columns');
     const hop = engine.getHopContext();
@@ -73,6 +73,24 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.columnAspect?.edges ?? []).toEqual([]);
     const task = engine.getCurrentTasks().find(t => t.callerContext);
     expect(task?.callerContext).toMatchObject({ node: caller, col: 'Value', callerTaskId: expect.any(String), ddlHash: expect.any(String) });
+    const contextBeforeRetry = engine.peekHopContext();
+    const tasksBeforeRetry = structuredClone(engine.getCurrentTasks());
+    expect(JSON.stringify(contextBeforeRetry!.focus_node)).toContain(`CREATE FUNCTION ${fn}(@Amount int)`);
+    const rejected = engine.submitFindings({ focus_node_id: fn, summary: 'Value is computed from the caller argument.',
+      sections: [{ angle: 'technical', text: 'The supplied function multiplies the bound Amount by two.' }],
+      column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Missing' }, upstream_columns: [{ node: source, col: 'Amount' }] }],
+    });
+    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: expect.arrayContaining(['column_flow.0.returns_to']) });
+    expect(engine.peekHopContext()).toEqual(contextBeforeRetry);
+    expect(engine.getCurrentTasks()).toEqual(tasksBeforeRetry);
+    expect(engine.columnAspect!.edges).toEqual([]);
+    const repair = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow).parse({
+      focus_node_id: fn,
+      column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Value' }, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }],
+    });
+    expect(engine.submitFindings(toHopFinding(repair))).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Amount', to_node: caller, to_col: 'Value' }));
+    expect(engine.columnAspect!.edges.some(edge => edge.from_col === '@Amount' || edge.to_col === '@Amount')).toBe(false);
   });
 
   it.each([false, true])('keeps a terminal caller output in BB despite scalar metadata=%s', declaredDependency => {
@@ -88,14 +106,17 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.columnAspect?.edges).toEqual([]);
   });
 
-  it('preserves the incoming purpose when explicit passthrough forwards a function visit', () => {
+  it('preserves an authored function purpose without reviving a terminal caller output', () => {
     const { engine } = world();
-    expect(engine.submitFindings({ ...finding, verdict: 'passthrough',
-      sections: [{ angle: 'technical', text: 'The output terminates here; continue the original investigation.' }],
+    const purpose = 'Trace Value by explaining the function role separately from its terminal caller output.';
+    expect(engine.submitFindings({ ...finding,
+      sections: [{ angle: 'technical', text: 'The output terminates here; continue the authored investigation.' }],
       column_flow: [{ out_col: 'Value', upstream_columns: [] }],
+      questions: [{ nodeId: fn, question: purpose }, { nodeId: source, question: 'Explain source row eligibility.' }],
     })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'bb' });
-    expect(engine.getCurrentTasks().some(task => task.question.includes('Trace Value'))).toBe(true);
+    expect(engine.getCurrentTasks()).toHaveLength(1);
+    expect(engine.getCurrentTasks()[0].question).toContain(purpose);
     expect(engine.columnAspect?.edges).toEqual([]);
   });
 
@@ -119,7 +140,7 @@ describe('neighbor-specific function caller context', () => {
       questions: [{ nodeId: source, question: 'Explain source eligibility.' }],
     })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: source }, analysis_mode: 'bb' });
-    expect(engine.submitFindings({ focus_node_id: source, verdict: 'analyze', summary: 'A function supplies the source.', sections,
+    expect(engine.submitFindings({ focus_node_id: source, summary: 'A function supplies the source.', sections,
       questions: [{ nodeId: fn, question: 'Explain the function role in source eligibility.' }],
     })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'bb' });
@@ -144,14 +165,14 @@ describe('qualified downstream input termination', () => {
       depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
     })).toHaveProperty('ok', true);
     engine.getHopContext();
-    expect(engine.submitFindings({ focus_node_id: caller, verdict: 'analyze', summary: 'Both columns originate here.', sections,
+    expect(engine.submitFindings({ focus_node_id: caller, summary: 'Both columns originate here.', sections,
       column_flow: targets.map(out_col => ({ out_col, upstream_columns: [] })),
       questions: [{ nodeId: source, question: 'Determine downstream use of both inputs.' }],
     })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: source }, analysis_mode: 'ct' });
     return engine;
   }
-  const mapped = { focus_node_id: source, verdict: 'analyze' as const, summary: 'Only Value continues.', sections,
+  const mapped = { focus_node_id: source, summary: 'Only Value continues.', sections,
     column_flow: [{ out_col: 'Mapped', upstream_columns: [{ node: caller, col: 'Value' }] }],
     questions: [{ nodeId: fn, question: 'Follow Mapped while preserving its input provenance.' }],
   };
@@ -170,7 +191,7 @@ describe('qualified downstream input termination', () => {
     expect(after.agenda).toEqual(before.agenda);
     expect(after.columnAspect).toEqual(before.columnAspect);
     const repairSchema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
-    const repair = repairSchema.parse({ focus_node_id: source, verdict: 'analyze', terminated_inputs: [{ node: caller, col: 'Other' }] });
+    const repair = repairSchema.parse({ focus_node_id: source, terminated_inputs: [{ node: caller, col: 'Other' }] });
     expect(engine.submitFindings(toHopFinding(repair))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'ct' });
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ kind: 'column_lineage', activeColumns: ['Mapped'], sourceRefs: [{ node: source, col: 'Mapped' }] }));
@@ -182,7 +203,7 @@ describe('qualified downstream input termination', () => {
     const first = engine.submitFindings({ ...mapped, terminated_inputs: [{ node: caller, col: 'Other' }] });
     expect(first).toMatchObject({ code: 'incomplete_task', hint: expect.stringContaining('Held: sections.technical, summary, questions, column_flow. Resend: terminated_inputs.') });
     const patch = (...names: string[]) => toHopFinding(submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow)
-      .parse({ focus_node_id: source, verdict: 'analyze', terminated_inputs: names.map(name => ({ node: caller, col: name })) }));
+      .parse({ focus_node_id: source, terminated_inputs: names.map(name => ({ node: caller, col: name })) }));
     const refused = engine.submitFindings(patch('Value'));
     expect(refused).toMatchObject({ issuePaths: expect.arrayContaining(['terminated_inputs.0']) });
     expect(engine.currentFocus).toBe(source);
