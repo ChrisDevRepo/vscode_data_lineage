@@ -2186,7 +2186,9 @@ export class NavigationEngine implements IHopStateMachine {
    * A table, or any object without SQL, cannot answer a follow-up itself; it passes through and
    * forwards the question to its next objects. Those objects come along one level in the approved
    * direction, so the forwarded question reaches an object that is analysed instead of ending as a
-   * new pending lead. Already visited objects and ids requested elsewhere in the call are left out.
+   * new pending lead. Only open objects come along: a visited, pruned or border-refused next object
+   * is left out (debug log), so this implicit step never unprunes or reports what the request did
+   * not name; ids requested elsewhere in the call are not repeated.
    *
    * @param nodeIds - Ids named by the request.
    * @param chain - Optional chain walk from the named ids.
@@ -2206,6 +2208,11 @@ export class NavigationEngine implements IHopStateMachine {
       .filter(id => this.isReachableInApprovedDirection(id));
     for (const id of next) {
       if (seen.has(this.identifierKey(id))) continue;
+      const node = this.nodeMap.get(id);
+      if (!node || this.removedSet.has(id) || this.checkBorder(id, node, 'supplement').kind !== 'in_border') {
+        this.log('debug', `[Supplement] next object not added id=${id} — ${this.removedSet.has(id) ? 'pruned' : 'outside the approved border'}`);
+        continue;
+      }
       seen.add(this.identifierKey(id));
       named.push(id);
     }
@@ -2923,7 +2930,7 @@ export class NavigationEngine implements IHopStateMachine {
         const refs = (mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs)
           .filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
           && !terminated.has(endpointKey(ref.node, ref.col)));
-        // Candidates go to every writer of the stored object; a closed writer ends them in the forwarding loop.
+        // Candidates go to every writer of the stored object; the forwarding loop drops a writer that is not open.
         for (const nid of refs.length > 0 ? this.model.neighborIndex[focusId]?.in ?? [] : []) {
           if (pruneNeighborIds.has(nid) || !this.model.edges.some(edge => edge.source === nid && edge.target === focusId
             && edgeApiType(edge.type, this.nodeMap.get(nid)?.type ?? '') === 'write')) continue;
@@ -2986,15 +2993,17 @@ export class NavigationEngine implements IHopStateMachine {
         requested.add(nid);
         routeRequests.push({ nodeId: nid, question: q.question, ...(callerContext ? { callerContext } : {}) });
       });
-      // Passthrough forwards the inherited question to every open neighbour and candidate target alike, in BB and CT.
+      // Passthrough forwards the inherited question, and CT candidates, to exactly the open neighbours, in BB and CT.
       const open = this.openNeighbors(focusId);
-      const forwarded = finding.verdict === 'passthrough' ? new Set([...flowQuestionByNode.keys(), ...open.map(neighbor => neighbor.id)]) : [];
+      const openIds = new Set(open.map(neighbor => neighbor.id));
+      const forwarded = finding.verdict === 'passthrough' ? new Set([...flowQuestionByNode.keys(), ...this.directionalNeighbors(focusId, this._direction)]) : [];
       for (const nid of forwarded) {
-        if (this.visited.has(nid) || this.removedSet.has(nid)) {
-          this.log('debug', `[CT] passthrough candidates not forwarded hop=${this.hopCount} focus=${focusId} next=${nid} — already ${this.removedSet.has(nid) ? 'removed' : 'visited'}`);
+        const closed = this.removedSet.has(nid) ? 'removed' : this.visited.has(nid) ? 'visited' : openIds.has(nid) ? undefined : 'outside the approved border';
+        if (closed) {
+          this.log('debug', `[Agenda] passthrough not forwarded hop=${this.hopCount} focus=${focusId} next=${nid} — ${closed}`);
           continue;
         }
-        if (requested.has(nid) || pruneNeighborIds.has(nid) || !this.nodeMap.has(nid)) continue;
+        if (requested.has(nid) || pruneNeighborIds.has(nid)) continue;
         requested.add(nid);
         routeRequests.push({ nodeId: nid, question: incomingQuestion });
         this.log('debug', `[Agenda] passthrough forward hop=${this.hopCount} focus=${focusId} id=${nid}`);
@@ -3009,9 +3018,7 @@ export class NavigationEngine implements IHopStateMachine {
         if (!target.resolved || target.resolved === this.originNodeId) continue;
         const targetNode = this.nodeMap.get(target.resolved);
         if (!targetNode) continue;
-        const { border, depthBreach } = this.admitsRoute(target.resolved, targetNode, focusId);
-        if (border.kind === 'excluded' || border.kind === 'out_of_direction'
-          || depthBreach !== null) {
+        if (!this.admitsRoute(target.resolved, targetNode, focusId).admitted) {
           outOfScopePruneIds.add(target.resolved);
           invalidRoutes.push({
             kind: 'prune_noop_out_of_scope',

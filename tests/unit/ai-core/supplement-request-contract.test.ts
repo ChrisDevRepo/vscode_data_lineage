@@ -163,6 +163,26 @@ describe('supplement request contract', () => {
     expect(engine.pendingLeads.filter(item => item.status === 'pending')).toEqual([]);
   });
 
+  it('keeps a pruned next object pruned when a follow-up names only its table', () => {
+    const LOADER = '[s].[loader]';
+    const nodes = [
+      makeNode({ id: ORIGIN, schema: 's', name: 'origin', type: 'view', columns: [col('Value')], bodyScript: `SELECT Value FROM ${BRANCH};` }),
+      makeNode({ id: BRANCH, schema: 's', name: 'branch', type: 'table', columns: [col('Value')] }),
+      makeNode({ id: LOADER, schema: 's', name: 'loader', type: 'procedure', bodyScript: `INSERT ${BRANCH}(Value) SELECT 1;` }),
+    ];
+    const engine = engineFor(nodes, [[BRANCH, ORIGIN], [LOADER, BRANCH]], { origin: ORIGIN, question: 'Explain the load.', analysisMode: 'bb', direction: 'upstream',
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
+    expect(engine.submitFindings({ focus_node_id: ORIGIN, verdict: 'analyze', summary: 'Reads branch.', sections,
+      questions: [{ nodeId: BRANCH, question: 'How is branch kept?' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: BRANCH } });
+    expect(engine.submitFindings({ focus_node_id: BRANCH, verdict: 'analyze', summary: 'Stores rows.', sections,
+      prune_neighbors: [{ id: LOADER, reason: 'The load is outside this question.' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toHaveProperty('done', true);
+    expect(engine.supplementAgenda([BRANCH])).toMatchObject({ ok: true, agendaed: 1, skipped: 0 });
+    expect(engine.toJSON().removedSet).toContain(LOADER);
+    expect(engine.toJSON().agenda.map(entry => entry.nodeId)).toEqual([BRANCH]);
+  });
+
   it('admits the target when the request names the pruned connector explicitly', () => {
     const engine = completedPrunedPath();
     expect(engine.supplementAgenda([OTHER, BRANCH])).toMatchObject({ ok: true, agendaed: 2, skipped: 0 });

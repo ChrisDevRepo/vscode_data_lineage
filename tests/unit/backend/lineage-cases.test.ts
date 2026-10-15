@@ -1154,6 +1154,28 @@ describe('bodyless passthrough forwards to every writer', () => {
   });
 });
 
+describe('passthrough treats a writer outside the border alike in BB and CT', () => {
+  it.each(['bb', 'ct'] as const)('%s forwards neither the question nor a candidate to an excluded writer', analysisMode => {
+    const origin = '[d].[Report]', stored = '[d].[Stored]', loader = '[x].[Loader]';
+    const nodes = [
+      makeNode({ id: origin, schema: 'd', name: 'Report', type: 'view', columns: [column('A')], bodyScript: 'CREATE VIEW d.Report AS SELECT A FROM d.Stored;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column('A')] }),
+      makeNode({ id: loader, schema: 'x', name: 'Loader', type: 'procedure', bodyScript: 'CREATE PROCEDURE x.Loader AS INSERT d.Stored(A) SELECT 1;' }),
+    ];
+    const engine = engineFor(nodes, [[stored, origin], [loader, stored]]);
+    expect(engine.init({ origin, question: 'Trace A.', analysisMode, ...(analysisMode === 'ct' ? { targetColumns: ['A'] } : {}), direction: 'upstream',
+      depthIntent: upstreamAll, excludeSchemas: ['x'] })).toHaveProperty('ok', true);
+    const flow = (value: object) => analysisMode === 'ct' ? value : {};
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(origin), ...flow({ column_flow: [{ out_col: 'A', upstream_columns: [{ node: stored, col: 'A' }] }] }),
+      questions: [{ nodeId: stored, question: 'Resolve A.' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored }, analysis_mode: analysisMode });
+    expect(engine.submitFindings({ ...guardRecord(stored, 'passthrough'), ...flow({ column_flow: [] }) })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toHaveProperty('done', true);
+    expect(engine.pendingLeads).toEqual([]);
+  });
+});
+
 describe('CT boundary rejects instead of dropping a column reference', () => {
   const origin = '[d].[Report]', source = '[d].[Source]', stranger = '[d].[Stranger]';
   const nodes = [

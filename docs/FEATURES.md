@@ -127,7 +127,7 @@ When a run finds column mappings, the preview offers an **Objects / Detail** swi
 
 ### Depth
 
-Depth 0 turns a direction off, and a number you give is a hard limit. With none, the assistant picks a start and may go further within the approved scope. The graph's trace-level settings do not affect AI depth. Review depth, schemas and exclusions before approval. Out-of-scope objects can be offered as follow-up leads; naming one object in a follow-up does not select its whole schema.
+Depth 0 turns a direction off, and a number you give is a hard limit. With none, the assistant picks a start and may go further: every loaded object in the approved direction stays reachable, including the objects behind a table. A follow-up on a table also brings in the objects that load or read it in the approved direction. The graph's trace-level settings do not affect AI depth. Review depth, schemas and exclusions before approval. Out-of-scope objects can be offered as follow-up leads; naming one object in a follow-up does not select its whole schema.
 
 ### Requirements and turning it off
 
