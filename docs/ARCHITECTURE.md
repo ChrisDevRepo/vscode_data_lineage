@@ -54,7 +54,7 @@ A small question is answered directly in chat. A larger one becomes an explorati
 
 ### Exploration
 
-Each step is a **hop**: the AI reads one object's SQL or available metadata, records what it does, and supplies decisions and questions for its neighbors. The engine validates the submission before committing or advancing; an incomplete or invalid submission receives feedback so the AI can correct only the affected parts. Explicit passthrough forwards the incoming question within the approved scope. At a bodyless upstream focus, it can also carry an unresolved qualified output to its writers without asserting a value edge; their SQL resolves that output. These checks do not establish that the AI interpreted the SQL correctly. If correction cannot produce a valid answer, the run stops with an error naming the object.
+Each step is a **hop**: the AI reads one object's SQL or available metadata, records what it does, and supplies decisions and questions for its neighbors. The engine validates the submission with deterministic checks and answers ACK or REJECT; a REJECT names the failing part and how to repair it ([backend contract](../.agents/rules/backend-contract.md)). Explicit passthrough forwards the incoming question within the approved scope. At a bodyless upstream focus, it can also carry an unresolved qualified output to its writers without asserting a value edge; their SQL resolves that output. These checks do not establish that the AI interpreted the SQL correctly. If correction cannot produce a valid answer, the run stops with an error naming the object.
 
 Kept hops preserve accepted column mappings in the trace. The receiving hop resolves the assigned endpoint's continuation or finality; a final endpoint retains the accepted mapping. A table's downstream passthrough instead sends its qualified stored columns to each eligible reader as consumption candidates. Each reader's SQL establishes which values contribute, where they continue, and which inputs stop on that branch. An unused candidate creates no reader column edge and does not remove the table's columns or another reader's mappings. A declared write assigns only the destination's endpoints to that destination; the producer's output ports remain evidence, not additional tasks for the table's readers.
 
@@ -63,7 +63,7 @@ BB and CT use one optional `lineage_prune_current` command on a hop reached thro
 An exploration can carry object-level or column-level work:
 
 - **BB** (object lineage) follows whole objects: which procedures and views feed a table, and what they do.
-- **CT** (column trace) carries the columns relevant to the question: the AI reads each object's SQL and reports copied, computed or aggregated value contributions, separately explaining columns used only to join or filter. The engine validates qualified endpoints, allowed dependencies and active trace tasks; it does not derive the column links itself. Check the AI’s column links against the SQL.
+- **CT** (column trace) carries the columns relevant to the question: the AI reads each object's SQL and reports column contributions with their transforms; links that only join or filter are drawn dashed. The engine checks that each link targets an in-scope neighbour, names a declared column where metadata exists, and connects to a qualified input; it does not derive or reclassify the column links itself. Check the AI’s column links against the SQL.
 
 ### Large graphs and memory
 

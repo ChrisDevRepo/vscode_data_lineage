@@ -277,57 +277,14 @@ describe('carrier value-edge orientation', () => {
     const next = engine.getHopContext();
     if (mode === 'pruned' || mode === 'out-of-scope') expect(next).toMatchObject({ done: true });
     else {
-      expect(next).toMatchObject({ focus_node: { id: nextId }, analysis_mode: mode === 'passthrough' ? 'ct' : 'bb' });
-      if (mode === 'passthrough') expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({
+      // A delete-only write is still a writer: passthrough forwards to it without classifying the SQL.
+      const forwards = mode === 'passthrough' || mode === 'delete-only';
+      expect(next).toMatchObject({ focus_node: { id: nextId }, analysis_mode: forwards ? 'ct' : 'bb' });
+      if (forwards) expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({
         activeColumns: ['Value'], sourceRefs, traversalSide: direction, question,
       }));
     }
     expect(engine.columnAspect?.edges).toEqual(edges);
-  });
-  it.each(['direct', 'mixed transforms', 'mixed contributors'] as const)('rejects an indirect-only writer mapping while retaining %s and repairs only its qualified endpoint', roles => {
-    const input = '[d].[Input]', writer = '[d].[Writer]', stored = '[d].[Stored]';
-    const nodes = [input, writer, stored].map(id => makeNode({ id, schema: 'd', name: id,
-      type: id === writer ? 'procedure' : 'table', columns: (id === stored ? ['Total'] : ['Amount', 'Region']).map(column) }));
-    const pairs: Array<[string, string]> = [[input, writer], [writer, stored]];
-    const engine = new NavigationEngine(makeModel(nodes, pairs, ['d']), makeGraph(nodes, pairs), () => {}, {});
-    const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'analyze' as const, summary: 'Amount supplies Total; Region selects rows.',
-      sections: [{ angle: 'technical' as const, text: 'Only Amount contributes to the stored value.' }] });
-    expect(engine.init({ origin: input, question: 'Trace Amount and Region downstream', analysisMode: 'ct', targetColumns: ['Amount', 'Region'], direction: 'downstream',
-      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
-    })).toHaveProperty('ok', true);
-    engine.getHopContext();
-    expect(engine.submitFindings({ ...record(input), column_flow: ['Amount', 'Region'].map(out_col => ({ out_col, upstream_columns: [] })),
-      questions: [{ nodeId: writer, question: 'Determine how each supplied input is used.' }] })).toHaveProperty('ok', true);
-    engine.getHopContext();
-    const before = engine.toJSON();
-    const valueContributors: ColumnFlowEntry['upstream_columns'] = [
-      { node: input, col: 'Amount', transforms: roles === 'mixed transforms' ? ['aggregate', 'filter'] : ['aggregate'] },
-    ];
-    if (roles === 'mixed contributors') valueContributors.push({ node: input, col: 'Region', transforms: ['filter'] });
-    const rejected = engine.submitFindings({ ...record(writer), column_flow: [
-      { out_col: 'Amount', upstream_columns: valueContributors, writes_to: { node: stored, col: 'Total' } },
-      { out_col: 'Region', upstream_columns: [{ node: input, col: 'Region', transforms: ['filter'] }], writes_to: { node: stored, col: 'Total' } },
-    ], questions: [{ nodeId: stored, question: 'Follow the stored Total value.' }] });
-    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: roles === 'mixed contributors'
-      ? ['column_flow.0.upstream_columns.1', 'column_flow.1.upstream_columns.0', 'terminated_inputs.0'] : ['column_flow.1.upstream_columns.0', 'terminated_inputs.0'] });
-    expect(rejected).toMatchObject({ reason: expect.stringContaining(`"${input}.Region" is classified filter only`) });
-    const after = engine.toJSON();
-    expect(after.agenda).toEqual(before.agenda);
-    expect(after.columnAspect).toEqual(before.columnAspect);
-    expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
-    expect(JSON.stringify(rejected)).toContain('Held: sections.technical, summary, questions. Resend: column_flow, terminated_inputs.');
-    expect(engine.heldColumnFlow, 'a failed column_flow entry fails the whole list; its valid entries are not held').toBe(false);
-    const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
-    expect(schema.safeParse({ focus_node_id: writer, verdict: 'analyze', terminated_inputs: [{ node: input, col: 'Region' }] }).success).toBe(false);
-    expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: writer, verdict: 'analyze',
-      column_flow: [{ out_col: 'Amount', upstream_columns: valueContributors.slice(0, 1), writes_to: { node: stored, col: 'Total' } }],
-      terminated_inputs: [{ node: input, col: 'Region' }],
-    })))).toHaveProperty('ok', true);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored }, analysis_mode: 'ct' });
-    expect(engine.columnAspect?.edges.map(edge => `${edge.from_node}.${edge.from_col}->${edge.to_node}.${edge.to_col}`)).toEqual([
-      `${input}.Amount->${stored}.Total`, `${writer}.Amount->${stored}.Total`,
-    ]);
-    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ activeColumns: ['Total'], question: 'Follow the stored Total value.' }));
   });
   it.each(['upstream', 'downstream'] as const)('accepts writer inputs and rejects reversed reader inputs while exploring %s', direction => {
     const writer = '[d].[Writer]', carrier = '[d].[Stored]', reader = '[d].[Reader]';
@@ -698,27 +655,6 @@ describe('downstream carried inputs and authored outputs', () => {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: next }, analysis_mode: 'bb' });
     expect(engine.columnAspect?.edges).toEqual([]);
   });
-  it('rejects a filter-only contributor in column_flow and accepts it only as an explicit terminated input', () => {
-    const engine = world();
-    const before = engine.toJSON();
-    const rejected = engine.submitFindings({ ...finding(focus), column_flow: [{ out_col: 'Mapped', writes_to: null, upstream_columns: [
-      { node: origin, col: 'Value', transforms: ['compute'] }, { node: origin, col: 'Other', transforms: ['filter'] },
-    ] }], questions: [{ nodeId: next, question: 'Follow the computed Mapped value.' }] });
-    expect(rejected).toMatchObject({ issuePaths: expect.arrayContaining(['column_flow.0.upstream_columns.1']),
-      reason: expect.stringContaining(`"${origin}.Other" is classified filter only`) });
-    const after = engine.toJSON();
-    expect(after.agenda).toEqual(before.agenda);
-    expect(after.columnAspect).toEqual(before.columnAspect);
-    expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
-    const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
-    expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: focus, verdict: 'analyze',
-      column_flow: [{ out_col: 'Mapped', upstream_columns: [{ node: origin, col: 'Value', transforms: ['compute'] }] }],
-      terminated_inputs: [{ node: origin, col: 'Other' }],
-    })))).toHaveProperty('ok', true);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: next }, analysis_mode: 'ct' });
-    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ activeColumns: ['Mapped'], question: 'Follow the computed Mapped value.' }));
-    expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({ from_node: origin, from_col: 'Value', to_node: focus, to_col: 'Mapped' })]);
-  });
   it('does not invent an out-of-scope follow-up after analyze', () => {
     const engine = world(1);
     expect(engine.submitFindings({ ...finding(focus), column_flow: [] })).toHaveProperty('ok', true);
@@ -988,7 +924,7 @@ describe('result dispositions', () => {
   const record = (focus_node_id: string) => ({ focus_node_id, verdict: 'analyze' as const,
     summary: 'Record the supplied definition.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes this hop.' }] });
 
-  it('delivers a committed write edge whose destination lies outside the approved border', () => {
+  it('rejects a write edge into an out-of-scope destination and keeps that object as a follow-up question', () => {
     const producer = '[d].[Producer]', stored = '[d].[Stored]';
     const nodes = [
       makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [], bodyScript: 'INSERT d.Stored(X) SELECT 10;' }),
@@ -999,14 +935,19 @@ describe('result dispositions', () => {
       depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } }, excludeNodeIds: [stored],
     })).toHaveProperty('ok', true);
     engine.getHopContext();
-    expect(engine.submitFindings({ ...record(producer),
-      column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: stored, col: 'X' } }] })).toHaveProperty('ok', true);
+    const before = engine.toJSON();
+    const rejected = engine.submitFindings({ ...record(producer),
+      column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: stored, col: 'X' } }] });
+    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
+      reason: expect.stringContaining(`\`${stored}\` is out of scope (excluded)`), hint: expect.stringContaining('kept as a follow-up question') });
+    expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
+    expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
+      questions: [{ nodeId: stored, question: 'Where is the stored X read?' }] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ done: true });
-    const committed = structuredClone(engine.columnAspect!.edges);
-    expect(committed).toHaveLength(1);
+    expect(engine.deferredQuestions.map(question => question.nodeId)).toEqual([stored]);
     const result = engine.getResult();
     expect(result.fullNodes.map(node => node.id)).toEqual([producer]);
-    expect(result.columnAspect!.edges).toEqual(committed);
+    expect(result.columnAspect!.edges.some(edge => edge.to_node === stored)).toBe(false);
   });
 
   it('renders exactly the dispositioned nodes and reports a pruned neighbor through its state', () => {
@@ -1100,6 +1041,43 @@ describe('CT dispatch keeps the accepted carry', () => {
       stored.columns = declared;
     }
   });
+
+  it('applies the same endpoint invariant when the queued node is a user pass node', () => {
+    const engine = engineFor(nodes, pairs);
+    expect(engine.init({ origin, question: 'Trace A.', analysisMode: 'ct', targetColumns: ['A'], direction: 'upstream', depthIntent: upstreamAll, passNodeIds: [first] })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'A', upstream_columns: [{ node: first, col: 'X' }] }],
+      questions: [{ nodeId: first, question: 'Resolve X.' }], prune_neighbors: [{ id: second, reason: 'B ends at the report.' }] })).toHaveProperty('ok', true);
+    const stored = nodes.find(node => node.id === first)!;
+    const declared = stored.columns;
+    stored.columns = [column('Renamed')];
+    try {
+      expect(engine.getHopContext()).toMatchObject({ done: false, sm_status: 'error' });
+      expect(engine.errorReason).toContain('no qualified source column');
+    } finally {
+      stored.columns = declared;
+    }
+  });
+});
+
+describe('bodyless passthrough forwards to every writer', () => {
+  it('adds the stored endpoint to a writer already queued from an earlier hop', () => {
+    const origin = '[d].[Report]', stored = '[d].[Stored]', loader = '[d].[Loader]';
+    const nodes = [
+      makeNode({ id: origin, schema: 'd', name: 'Report', type: 'view', columns: [column('A')], bodyScript: 'CREATE VIEW d.Report AS SELECT 1;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column('C')] }),
+      makeNode({ id: loader, schema: 'd', name: 'Loader', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.Loader AS INSERT d.Stored(C) SELECT 1;' }),
+    ];
+    const engine = engineFor(nodes, [[stored, origin], [loader, origin], [loader, stored]]);
+    expect(engine.init({ origin, question: 'Trace A.', analysisMode: 'ct', targetColumns: ['A'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'A', upstream_columns: [{ node: stored, col: 'C' }] }],
+      questions: [{ nodeId: stored, question: 'Resolve C.' }, { nodeId: loader, question: 'Describe the load.' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: stored } });
+    expect(engine.submitFindings({ ...guardRecord(stored, 'passthrough'), column_flow: [] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: loader }, analysis_mode: 'ct' });
+    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ sourceRefs: [{ node: stored, col: 'C' }] }));
+  });
 });
 
 describe('CT boundary rejects instead of dropping a column reference', () => {
@@ -1129,27 +1107,20 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     expect(engine.toJSON().agenda).toEqual(before.agenda);
   });
 
-  it('rejects a mapping through a delete-only write', () => {
-    const purge = '[d].[Purge]';
-    const all = [...nodes, makeNode({ id: purge, schema: 'd', name: 'Purge', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.Purge AS DELETE FROM d.Report;' })];
-    const engine = start(all, [[source, origin], [purge, origin]], model => {
-      model.edges.find(edge => edge.source === purge)!.deleteOnly = true;
+  it.each(['a delete-only write', 'a metadata-declared scalar return'])('stores a mapping through %s as declared, without classifying the SQL', via => {
+    const contributor = via === 'a delete-only write' ? '[d].[Purge]' : '[d].[Rate]';
+    const all = via === 'a delete-only write'
+      ? [...nodes, makeNode({ id: contributor, schema: 'd', name: 'Purge', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.Purge AS DELETE FROM d.Report;' })]
+      : [makeNode({ ...nodes[0], columns: [{ ...column('Total'), expressionDependencies: [{ reference: contributor, sourceElementType: 'SqlScalarFunction' }] }] }), nodes[1],
+        makeNode({ id: contributor, schema: 'd', name: 'Rate', type: 'function', columns: [column('Value')], bodyScript: 'CREATE FUNCTION d.Rate() RETURNS int AS BEGIN RETURN 1 END;' })];
+    const col = via === 'a delete-only write' ? 'Total' : 'Value';
+    const engine = start(all, [[source, origin], [contributor, origin]], model => {
+      if (via === 'a delete-only write') model.edges.find(edge => edge.source === contributor)!.deleteOnly = true;
     });
-    const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: purge, col: 'Total' }] }],
-      questions: [{ nodeId: source, question: 'Resolve Amount.' }, { nodeId: purge, question: 'Describe the purge.' }] });
-    expect(rejected).toMatchObject({ issuePaths: expect.arrayContaining(['column_flow.0.upstream_columns.0.node']), reason: expect.stringContaining('only by DELETE or TRUNCATE') });
-    expect(engine.columnAspect!.edges).toEqual([]);
-  });
-
-  it('rejects a column mapping from a function that metadata declares as the scalar return of that output', () => {
-    const fn = '[d].[Rate]';
-    const caller = makeNode({ ...nodes[0], columns: [{ ...column('Total'), expressionDependencies: [{ reference: fn, sourceElementType: 'SqlScalarFunction' }] }] });
-    const all = [caller, nodes[1], makeNode({ id: fn, schema: 'd', name: 'Rate', type: 'function', columns: [column('Value')], bodyScript: 'CREATE FUNCTION d.Rate() RETURNS int AS BEGIN RETURN 1 END;' })];
-    const engine = start(all, [[source, origin], [fn, origin]]);
-    const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: fn, col: 'Value' }] }],
-      questions: [{ nodeId: source, question: 'Resolve Amount.' }, { nodeId: fn, question: 'Resolve the rate.' }] });
-    expect(rejected).toMatchObject({ issuePaths: expect.arrayContaining(['column_flow.0.upstream_columns.0']), reason: expect.stringContaining('as the scalar return of') });
-    expect(engine.columnAspect!.edges).toEqual([]);
+    const accepted = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: contributor, col }] }],
+      questions: [{ nodeId: source, question: 'Resolve Amount.' }, { nodeId: contributor, question: 'Describe its role.' }] });
+    expect(accepted, JSON.stringify(accepted)).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges).toEqual([expect.objectContaining({ from_node: contributor, from_col: col, to_node: origin, to_col: 'Total' })]);
   });
 });
 

@@ -334,27 +334,7 @@ cases:
       edges: []
       reason_contains: "is a literal, not a column reference"
 
-  - id: ct-row-role-rejects-beside-value-column
-    runners: [scripted]
-    active: [Total]
-    nodes:
-      - { id: rpt, type: view, columns: [Total] }
-      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
-    focus: rpt
-    out: Total
-    direction: upstream
-    roots: [{ node: rpt, col: Total }]
-    upstream:
-      - { node: src, col: Amount, transforms: [aggregate] }
-      - { node: src, col: IsOpen, transforms: [filter] }
-      - { node: src, col: StoreId, transforms: [combine, filter] }
-    expect:
-      edges: [Amount]
-      invalid:
-        - { kind: invalid_task_decision, id: src, path: "column_flow.0.upstream_columns.1", reason: '"src.IsOpen" is classified filter only: it selects rows and supplies no value to "Total". Remove it from upstream_columns and explain its row role in sections; name an assigned incoming column that stops here in terminated_inputs.' }
-        - { kind: invalid_task_decision, id: src, path: "column_flow.0.upstream_columns.2", reason: '"src.StoreId" is classified combine+filter only: it selects rows and supplies no value to "Total". Remove it from upstream_columns and explain its row role in sections; name an assigned incoming column that stops here in terminated_inputs.' }
-
-  - id: ct-row-role-rejects-each-ref
+  - id: ct-row-role-stored-as-declared
     runners: [scripted]
     active: [Total]
     nodes:
@@ -367,12 +347,9 @@ cases:
     upstream:
       - { node: src, col: Amount, transforms: [aggregate] }
       - { node: src, col: IsOpen, transforms: [filter], note: "WHERE IsOpen = 1" }
-      - { node: src, col: StoreId, transforms: [combine] }
+      - { node: src, col: StoreId, transforms: [combine, filter] }
     expect:
-      edges: [Amount]
-      invalid:
-        - { kind: invalid_task_decision, id: src, path: "column_flow.0.upstream_columns.1", reason: '"src.IsOpen" is classified filter only: it selects rows and supplies no value to "Total". Remove it from upstream_columns and explain its row role in sections; name an assigned incoming column that stops here in terminated_inputs.' }
-        - { kind: invalid_task_decision, id: src, path: "column_flow.0.upstream_columns.2", reason: '"src.StoreId" is classified combine only: it selects rows and supplies no value to "Total". Remove it from upstream_columns and explain its row role in sections; name an assigned incoming column that stops here in terminated_inputs.' }
+      edges: [Amount, IsOpen, StoreId]
 
   - id: ct-row-role-keeps-value-and-filter
     runners: [scripted]
@@ -404,7 +381,7 @@ cases:
     expect:
       edges: [Amount]
 
-  - id: ct-row-role-only-rejected
+  - id: ct-row-role-only-stored
     runners: [scripted]
     active: [Total]
     nodes:
@@ -417,9 +394,7 @@ cases:
     upstream:
       - { node: src, col: IsOpen, transforms: [filter] }
     expect:
-      edges: []
-      invalid:
-        - { kind: invalid_task_decision, id: src, path: "column_flow.0.upstream_columns.0", reason: '"src.IsOpen" is classified filter only: it selects rows and supplies no value to "Total". Remove it from upstream_columns and explain its row role in sections; name an assigned incoming column that stops here in terminated_inputs.' }
+      edges: [IsOpen]
 
   - id: ct-row-role-missing-key-column
     runners: [scripted]

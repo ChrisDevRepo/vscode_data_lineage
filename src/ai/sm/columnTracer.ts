@@ -1,7 +1,6 @@
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
-import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
@@ -235,9 +234,8 @@ export class ColumnTracer {
 
     const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
     // Exploration direction never reverses a value edge: upstream_columns are inputs.
-    const deleteOnlyWriters = new Set(model.edges.filter(edge => edge.deleteOnly && identifierKey(edge.target) === identifierKey(focusId)).map(edge => identifierKey(edge.source)));
     const continuationNeighbors = focusIsCarrier
-      ? new Set((model.neighborIndex[identifierKey(focusId)]?.in ?? []).map((id) => identifierKey(id)).filter(id => !deleteOnlyWriters.has(id)))
+      ? new Set((model.neighborIndex[identifierKey(focusId)]?.in ?? []).map((id) => identifierKey(id)))
       : null;
 
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
@@ -364,11 +362,6 @@ export class ColumnTracer {
           continue;
         }
 
-        if (deleteOnlyWriters.has(identifierKey(neighbor.id))) {
-          invalidRoutes.push({ kind: 'invalid_task_decision', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `"${neighbor.id}" writes ${focusId} only by DELETE or TRUNCATE, which removes rows and supplies no column value. Remove it from upstream_columns and explain its row effect in sections.` });
-          continue;
-        }
-
         const fromNode = neighbor.id;
         if (fromNode === toNodeForEdge && this.columnKey(cont.col) === this.columnKey(toCol)) {
           invalidRoutes.push({
@@ -382,11 +375,6 @@ export class ColumnTracer {
 
         if (/^(N?'[^']*')$/.test(cont.col.trim()) || /^[+-]?(\d+\.?\d*|\.\d+)$/.test(cont.col.trim())) {
           invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" is a literal, not a column reference — explain literals in sections, remove that upstream column, or use upstream_columns: [] when the active column terminates here` });
-          continue;
-        }
-
-        if (neighbor.type === 'function' && resolveScalarReturnTarget(neighbor.id, { node: toNodeForEdge, col: toCol }, nodeMap, store, model.identifierCaseSensitive)) {
-          invalidRoutes.push({ kind: 'bad_contributor_col', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`, reason: `Loaded metadata declares "${toNodeForEdge}.${toCol}" as the scalar return of "${neighbor.id}", not a column mapping from it. Remove this upstream_columns entry and ask "${neighbor.id}" with questions[].caller_context naming that output.` });
           continue;
         }
 
@@ -437,13 +425,6 @@ export class ColumnTracer {
         // Adjacency is judged last, after the column and the carrier's continuation: a nonexistent column or a literal is refused wherever the object sits, and a non-writer continuation keeps its own refusal.
         if (contributorIds && neighbor.id !== focusId && !contributorIds.has(neighbor.id)) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" has no dependency edge to ${focusId}; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.` });
-          continue;
-        }
-
-        // Direct lineage only: a column that just joins, filters, groups or orders rows supplies no value.
-        if (!continuationNeighbors && isIndirectOnly(cont.transforms)) {
-          invalidRoutes.push({ kind: 'invalid_task_decision', id: fromNode, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`,
-            reason: `"${fromNode}.${cont.col}" is classified ${(cont.transforms ?? []).join('+')} only: it selects rows and supplies no value to "${entry.out_col}". Remove it from upstream_columns and explain its row role in sections; name an assigned incoming column that stops here in terminated_inputs.` });
           continue;
         }
 

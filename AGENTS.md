@@ -45,6 +45,7 @@ docs/             product architecture, developer and testing documentation
 
 - Before changing TypeScript or layering, read `.agents/rules/typescript.md`.
 - Before changing trust boundaries, credentials, logging, or model/provider handling, read `.agents/rules/security.md`.
+- Before changing hop submission checks, rejections, routing or CT validation, read `.agents/rules/backend-contract.md`.
 - Before adding, changing, selecting or diagnosing tests, read `.agents/rules/testing.md` and `.agents/skills/testing/SKILL.md`; tiers and commands are in `docs/testing/README.md`.
 - Before changing SQL parsing, graph traversal, or runtime contracts, read `docs/ARCHITECTURE.md` and the relevant `docs/` contract.
 - For database connection behavior, read `docs/DEVELOPER_GUIDE.md` database sections and `.agents/skills/testing/SKILL.md`.

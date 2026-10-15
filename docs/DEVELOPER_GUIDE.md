@@ -140,7 +140,7 @@ Every message crossing the boundary is parsed with the Zod schemas in [`src/engi
 | Prompt builders | [`src/ai/prompting/`](../src/ai/prompting/); stage assembly in [`stagePrompts.ts`](../src/ai/agent/stagePrompts.ts), one-call planning in [`instructionPlan.ts`](../src/ai/agent/instructionPlan.ts) |
 | Tool registry, phase policy, Zod dispatcher | [`src/ai/tools/`](../src/ai/tools/) |
 
-The model writes findings and structured presentation fields. The engine validates structure and graph consistency, keeps the result graph connected to its origin, and assembles the rendered answer from the structured parts. Validation does not prove that the model interpreted the SQL correctly. After changing the tool catalog, run `npm run generate:tool-manifest`.
+The model writes findings and structured presentation fields. The engine validates structure and graph consistency ([backend contract](../.agents/rules/backend-contract.md)), rejects a prune that would disconnect committed analysis from the origin, and assembles the rendered answer from the structured parts. Validation does not prove that the model interpreted the SQL correctly. After changing the tool catalog, run `npm run generate:tool-manifest`.
 
 During development `@lineage` was tested with several models, such as Claude, ChatGPT, DeepSeek Flash, Gemini Flash, GLM Flash and Qwen, through providers such as Azure OpenAI, Fireworks, OpenRouter and local OpenAI-compatible servers; this is not a list of supported models.
 

@@ -60,6 +60,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'This node is already recorded as an analyzed (noted) node and is retained. Remove it from prune_neighbors.',
   prune_noop_queued:
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
+  column_out_of_scope:
+    'This object is outside the approved scope, so the column trace does not reach it. Remove the reference from column_flow, record the finding in sections, and name the object in questions: a question to an out-of-scope object is kept as a follow-up question.',
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and cannot be pruned. Remove it from prune_neighbors.',
   prune_unsupported:
@@ -100,6 +102,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_visited: REJECTION_CODES.routeValidationFailed,
   prune_noop_analyzed: REJECTION_CODES.routeValidationFailed,
   prune_noop_queued: REJECTION_CODES.routeValidationFailed,
+  column_out_of_scope: REJECTION_CODES.routeValidationFailed,
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
   prune_unsupported: REJECTION_CODES.routeValidationFailed,
   question_not_neighbor: REJECTION_CODES.routeValidationFailed,

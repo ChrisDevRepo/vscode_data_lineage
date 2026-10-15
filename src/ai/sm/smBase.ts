@@ -296,8 +296,6 @@ export class NavigationEngine implements IHopStateMachine {
   protected readonly model: DatabaseModel;
   /** The graphology instance for topological operations. */
   protected readonly graph: Graph;
-  /** Lazily built keys (`writer→target`) of the model's delete-only write edges. */
-  private deleteOnlyWrites?: Set<string>;
   /** Optional column store for deep column-level metadata. */
   protected readonly store: ColumnStore | null;
   /** Logging function for tracing engine activity. */
@@ -2361,6 +2359,10 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
+      // Engine invariant: every accepted column task names qualified endpoints, so no dispatch, pass node included, reads bare names.
+      if (candidate.taskIds.some(taskId => { const task = this.taskLedger.getTask(taskId); return task && !this.taskRefsResolve(task); })) {
+        return this.failInvariant(candidate.nodeId, 'sourceRefs', COLUMN_SOURCE_MISSING);
+      }
       if (this.passNodeIds.has(this.identifierKey(candidate.nodeId))) {
         this.visited.add(candidate.nodeId);
         this.markNodeState(candidate.nodeId, 'passthrough', 'user', 'user_pass_filter', {
@@ -2378,9 +2380,6 @@ export class NavigationEngine implements IHopStateMachine {
         const task = this.taskLedger.getTask(taskId);
         if (task?.callerContext && (task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(candidate.nodeId, task.callerContext))) {
           return this.failInvariant(candidate.nodeId, 'callerContext', CALLER_CONTEXT_CHANGED);
-        }
-        if (task && !this.taskRefsResolve(task)) {
-          return this.failInvariant(candidate.nodeId, 'sourceRefs', COLUMN_SOURCE_MISSING);
         }
       }
       if (candidate.columnCarry?.kind === 'scalar_return') {
@@ -2899,10 +2898,13 @@ export class NavigationEngine implements IHopStateMachine {
           && !terminated.has(endpointKey(ref.node, ref.col)));
         for (const nid of this.model.neighborIndex[focusId]?.in ?? []) {
           if (!this.scopeNodeIds.has(nid) || pruneNeighborIds.has(nid) || this.visited.has(nid)
-            || this.removedSet.has(nid) || this.isDeleteOnlyWrite(nid, focusId)
+            || this.removedSet.has(nid)
             || !this.model.edges.some(edge => edge.source === nid && edge.target === focusId
               && edgeApiType(edge.type, this.nodeMap.get(nid)?.type ?? '') === 'write')) continue;
+          if (refs.length === 0) continue;
           for (const ref of refs) addCarry(nid, ref, 'upstream');
+          // A writer already queued from an earlier hop receives the forwarded endpoints as its own route request.
+          flowQuestionByNode.set(nid, `Resolve the stored endpoints ${refs.map(ref => `${ref.node}.${ref.col}`).join(', ')} written by ${nid}.`);
         }
       }
 
@@ -3059,6 +3061,23 @@ export class NavigationEngine implements IHopStateMachine {
         routeOutcomes.push({ nodeId: nNode.id, accepted: true });
         if (!this.scopeNodeIds.has(nid)) scopeAddNids.add(nid);
         this.log('debug', `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${trunc(req.question, 80)}`);
+      }
+      // CT check 1: a column reference names an object the approved scope reaches; anything else is rejected, never dropped.
+      for (const [entryIndex, entry] of (this.tracer ? finding.column_flow ?? [] : []).entries()) {
+        const refs = [
+          ...(entry.writes_to ? [{ node: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node` }] : []),
+          ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node` })),
+        ];
+        for (const ref of refs) {
+          const nid = resolveModelNodeId(ref.node, this.nodeMap, this.model.identifierCaseSensitive);
+          const node = nid ? this.nodeMap.get(nid) : undefined;
+          if (!nid || !node || nid === focusId || this.scopeNodeIds.has(nid) || this.visited.has(nid) || acceptedNids.has(nid)) continue;
+          const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
+          const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
+          if (!outside) continue;
+          invalidRoutes.push({ kind: 'column_out_of_scope', id: nid, path: ref.path,
+            reason: `\`${nid}\` is out of scope (${outside}); the column trace cannot continue there.` });
+        }
       }
       const pruneIds = actionPolicy.acceptedPruneIds;
       const aloneRefusals = new Map(pruneIds.map(id => [id, this.pruneRefusal([id], acceptedNids)]));
@@ -3329,8 +3348,7 @@ export class NavigationEngine implements IHopStateMachine {
       const isFreshExpansion = freshlyExpandedIds.delete(nid);
       const columnQuestions = lineageQuestionsByNode?.get(nid) ?? (flowQuestionByNode.has(nid) ? [flowQuestionByNode.get(nid)!] : undefined);
       const dispositions = new Map<string, RouteSkipDisposition>();
-      // A ref names an endpoint inside the active scope; a written destination the depth or border left out is not an input to carry.
-      const legs = (routeContexts.get(nid) ?? [undefined]).map(leg => leg && { ...leg, sourceRefs: leg.sourceRefs.filter(ref => this.scopeNodeIds.has(ref.node)) });
+      const legs = routeContexts.get(nid) ?? [undefined];
       for (const leg of legs) {
         const legCarry = leg ? new Map([[nid, new Set(leg.sourceRefs.map(ref => ref.col))]]) : carryByNode;
         this.enqueueHop(nid, req.question, 0, 2, {
@@ -3691,7 +3709,7 @@ export class NavigationEngine implements IHopStateMachine {
         const validCaller = continues && task.callerContext && this.validFunctionCallerContext(nid, task.callerContext) ? task.callerContext : undefined;
         const targets = continues && task.kind === 'column_lineage' ? task.returnTargets?.filter(target => this.resolveReturnTarget(nid, target, [task.id])) : undefined;
         const unresolved = continues && task.kind === 'column_lineage' && !targets?.length
-          ? this.passNodeUnresolvedQuestion(entry.nodeId, this.qualifiedTaskRefs(task) ?? task.activeColumns.map(col => ({ node: entry.nodeId, col })))
+          ? this.passNodeUnresolvedQuestion(entry.nodeId, this.qualifiedTaskRefs(task) ?? [])
           : '';
         this.enqueueHop(nid, unresolved ? `${task.question}${task.question ? '\n' : ''}${unresolved}` : task.question, entry.depth + 1, entry.priority, {
           carry: targets?.length ? { kind: 'scalar_return', outputs: targets } : { kind: 'row_role_only' },
@@ -3820,15 +3838,6 @@ export class NavigationEngine implements IHopStateMachine {
     if (!alreadyQueued && (freshScopeExpansion || reactivated)) this._totalNodes++;
   }
 
-  /**
-   * Whether `writerId` writes `targetId` only by DELETE or TRUNCATE (the engine's `deleteOnly` edge
-   * mark): the write removes rows and supplies no column data, so it owes no source for any column of
-   * `targetId`. The node stays reachable and is analysed for its business logic.
-   */
-  private isDeleteOnlyWrite(writerId: string, targetId: string): boolean {
-    this.deleteOnlyWrites ??= new Set(this.model.edges.filter(edge => edge.deleteOnly).map(edge => `${edge.source}→${edge.target}`));
-    return this.deleteOnlyWrites.has(`${writerId}→${targetId}`);
-  }
 
   /**
    * Derives one neighbor's continuation from accepted flow, explicit qualified passthrough or a
