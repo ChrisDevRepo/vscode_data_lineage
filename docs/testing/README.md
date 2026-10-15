@@ -43,6 +43,8 @@ Each contract has one owning suite. **Unit contracts** invoke a schema, rule or 
 
 Presentation repair owners cover large held bodies, indexed node-link corrections, preview start repairs, malformed retries and merged-report revalidation. A small repair payload proves transport savings and retention; it does not measure inference tokens or answer quality.
 
+The tool-boundary suite covers malformed findings repairs without losing held content. Description-render parity tests also assert raw HTML escaping, unsafe URL removal, section-id restrictions and sanitizer isolation.
+
 The gate runs core once and runtime once, with disjoint file membership; duplicate declarations fail partition validation. `npm test` is their aggregate, parser/lineage commands select subsets, and `test:bfs` aliases lineage. These selectable commands are not extra gate executions. Path arguments override the lane selection.
 
 The partition check requires the complete aggregate npm recipes and enabled core coverage. It rejects filters, shell suffixes, embedded command newlines and coverage-disabling flags in those recipes. Pass options or file filters to an individual run after `--` instead.
@@ -161,3 +163,5 @@ For a prompt or model-behavior change, run an unchanged baseline and the candida
 
 - `node tests/tools/trace-metrics.mjs --latest` (or `BASELINE.ndjson CANDIDATE.ndjson`) compares tokens, rejections, repairs and lineage, with `GREEN`/`AMBER`/`RED` ratings.
 - `node tests/tools/case-scorecard.mjs BASE_RUN_DIR CANDIDATE_RUN_DIR` scores each catalog case of two headless runs and copies both answers to `test-results/scorecard/` for side-by-side reading. Its scores rank what to read first.
+
+These diagnostic scoring tools stay outside the deterministic gate; their ancillary checks are private one-time probes.

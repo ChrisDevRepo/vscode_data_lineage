@@ -75,6 +75,26 @@ function tableArrivalWorld(mode: 'bb' | 'ct') {
 }
 
 describe('large findings repairs', () => {
+  it.each([
+    { questions: 42 }, { sections: { technical: 42 } }, { column_flow: 42 }, { summary: 42 },
+  ])('preserves the held draft after a malformed repair %j', malformed => {
+    const { engine, session, model, graph } = ctWorld();
+    const { services } = stubToolServices({ session, model, graph });
+    const sections = { technical: 'Branch supplies Value unchanged.' };
+    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }];
+    const questions = [{ nodeId: BRANCH, question: 'Establish the origin of Value.' }];
+    const submit = (input: object) => JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, ...input }, services));
+    expect(submit({ sections, column_flow, questions })).toMatchObject({ code: 'invalid_input', issuePaths: ['summary'] });
+    const before = engine.toJSON();
+    const rejected = submit({ summary: 'An unvalidated replacement.', ...malformed });
+    expect(rejected).toHaveProperty('code', 'invalid_input');
+    expect(rejected.hint).toContain('Held: sections.technical, questions, column_flow. Resend: summary.');
+    expect(engine.toJSON()).toEqual(before);
+    expect(submit({ summary: 'Branch supplies Value.' })).toMatchObject({ ok: true, next_focus: BRANCH });
+    expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)?.sections).toEqual([{ angle: 'technical', text: sections.technical }]);
+    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ question: questions[0].question }));
+  });
+
   it('holds long valid prose through repeated column errors and accepts only the corrected list', () => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });

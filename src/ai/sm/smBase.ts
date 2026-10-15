@@ -667,8 +667,8 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Holds the valid parts of a `submit_findings` call its handler's schema check rejected, overlaid
-   * on a draft already held for the same focus by the held-draft rule ({@link applyHeldContent}).
+   * Holds valid parts of an initially schema-rejected finding; malformed repairs leave an existing
+   * draft and its required repair fields unchanged.
    *
    * @param input - The rejected payload as the model sent it.
    * @param failedPaths - Dotted Zod issue paths of the rejection.
@@ -681,6 +681,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = raw.focus_node_id;
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
+    if (this.heldDraftOfCurrentFocus()) return this.heldPartsOfCurrentFocus();
     const sent: HopFindingKept = {
       focus_node_id: raw.focus_node_id,
       sections: extractRawSectionAngles(raw.sections),
@@ -689,8 +690,7 @@ export class NavigationEngine implements IHopStateMachine {
     for (const field of HELD_FIELDS) {
       if (field !== 'summary' && raw[field] !== undefined && raw[field] !== null) Object.assign(sent, { [field]: structuredClone(raw[field]) });
     }
-    const held = this.heldDraftOfCurrentFocus();
-    return this.holdValidParts(held ? this.overlayHeld(held, sent) : sent, failedPaths);
+    return this.holdValidParts(sent, failedPaths);
   }
 
   /**

@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Malformed findings repairs preserve held questions, column mappings and sections until a valid correction is submitted.
 - Report and preview rejections retain valid content and request only defective section fields; malformed retries preserve the draft, and correction choices remain available during escalation.
 - Distinct investigation questions retain SQL literal case and whitespace when tasks merge.
 - Repeated tool-call IDs fail before execution through a shared native/headless transport guard.

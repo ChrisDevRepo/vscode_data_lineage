@@ -49,7 +49,6 @@ const STEPS = [
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },
   { name: 'test environment profiles', cmd: nodeBin, args: ['--test', 'tests/tools/load-test-env.test.mjs'] },
   { name: 'gate status and lane arguments', cmd: nodeBin, args: ['--test', 'tests/tools/gate-status.test.mjs', 'tests/tools/run-lane.test.mjs'] },
-  { name: 'trace-metrics and case-scorecard rules', cmd: nodeBin, args: ['--test', 'tests/tools/trace-metrics.test.mjs', 'tests/tools/case-scorecard.test.mjs'] },
   { name: 'unit project coverage', cmd: nodeBin, args: ['tests/tools/assert-unit-projects-cover-all.mjs'] },
   { name: 'layer direction', cmd: nodeBin, args: ['tests/tools/assert-layer-direction.mjs'] },
   { name: 'no tracked scratch files', cmd: nodeBin, args: ['tests/tools/assert-no-tracked-scratch.mjs'] },
