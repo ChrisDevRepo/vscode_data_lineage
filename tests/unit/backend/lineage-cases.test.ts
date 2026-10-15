@@ -890,7 +890,7 @@ describe('current task completeness before advancement', () => {
       expect(engine.currentFocus).toBe(root);
       expect(engine.heldColumnFlow).toBe(true);
       const repair = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
-      expect(engine.submitFindings(toHopFinding(repair.parse({ focus_node_id: root, verdict: 'analyze', questions: input.questions })))).toHaveProperty('ok', true);
+      expect(engine.submitFindings(toHopFinding(repair.parse({ focus_node_id: root, verdict: 'analyze', questions: input.questions, prune_neighbors: [prune] })))).toHaveProperty('ok', true);
     } else expect(submitted).toHaveProperty('ok', true);
     expect(engine.toJSON().removedSet).toEqual([other]);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'ct' });

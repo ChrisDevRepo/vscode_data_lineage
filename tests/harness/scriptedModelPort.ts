@@ -17,6 +17,7 @@ import type {
 } from '../../src/ai/model/modelPort';
 import type { ProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { StructuredOutputError } from '../../src/ai/providers/structuredOutput';
+import { TOOL_DEFS } from '../../src/ai/tools/toolDefs';
 import {
   DEFAULT_TURN_TOKEN_BUDGET,
   estimateTokens,
@@ -212,6 +213,7 @@ export interface ScriptedTool {
   /** Canonical JSON result text the handler returns, or a function of the dispatched input. */
   readonly result: string | ((input: unknown) => string);
   readonly progressLabel?: string;
+  /** Overrides the production contract's effect; a production tool name otherwise keeps its own. */
   readonly effect?: RegisteredTool<string>['effect'];
   /** Thrown instead of returning, to exercise the dispatcher's failure envelope. */
   readonly thrown?: unknown;
@@ -222,7 +224,8 @@ export interface ScriptedTool {
  *
  * @remarks
  * The production registry is used unchanged so lookup, duplicate-name guarding, and dispatch stay
- * authoritative; only the bound handlers are test-owned.
+ * authoritative; only the bound handlers are test-owned. A production tool name keeps its
+ * production effect, so effect-keyed dispatch (one hop commit per reply) runs as in production.
  * @param tools - Ordered tool entries to register.
  * @returns The registry plus the live ordered dispatch log.
  */
@@ -232,13 +235,15 @@ export function scriptedRegistry(tools: readonly ScriptedTool[]): {
 } {
   const registry = new ToolRegistry<string>();
   const invocations: RecordedInvocation[] = [];
+  const productionEffects = new Map<string, RegisteredTool<string>['effect']>(TOOL_DEFS.map(def => [def.name, def.effect]));
   for (const tool of tools) {
+    const effect = tool.effect ?? productionEffects.get(tool.name);
     const registered: RegisteredTool<string> = {
       name: tool.name,
       inputSchema: z.object({}).passthrough(),
       modelDescription: `Scripted ${tool.name}`,
       ...(tool.progressLabel ? { progressLabel: tool.progressLabel } : {}),
-      ...(tool.effect ? { effect: tool.effect } : {}),
+      ...(effect ? { effect } : {}),
       execute: (input: unknown): string => {
         invocations.push({ toolName: tool.name, input });
         if (tool.thrown !== undefined) throw tool.thrown;
