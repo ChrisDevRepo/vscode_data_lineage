@@ -806,6 +806,20 @@ export function rejectionFromZodError(
   opts: { code: string; hint?: string; input?: unknown; schema?: z.ZodType },
 ): ToolRejection {
   const issuePaths: string[] = [];
+  const choices = new Map<string, { path: string; allowed_values: unknown[]; when?: unknown }>();
+  const collectChoices = (issues: readonly z.core.$ZodIssue[], prefix: readonly PropertyKey[] = []): void => {
+    for (const issue of issues) {
+      const path = [...prefix, ...issue.path];
+      if (issue.code === 'invalid_union') {
+        for (const branch of issue.errors) collectChoices(branch, path);
+      } else if (issue.code === 'custom' && Array.isArray(issue.params?.allowed_values)) {
+        const choice = { path: path.join('.'), allowed_values: issue.params.allowed_values,
+          ...(issue.params.when ? { when: issue.params.when } : {}) };
+        choices.set(JSON.stringify(choice), choice);
+      }
+    }
+  };
+  collectChoices(error.issues);
   const shown = new Map<string, { issue: z.core.$ZodIssue; message: string; others: string[] }>();
   const mistyped = new Set(error.issues.filter(issue => issue.code === 'invalid_type').map(issue => dottedPath(issue.path)));
   for (const issue of error.issues) {
@@ -838,5 +852,6 @@ export function rejectionFromZodError(
     reason: z.prettifyError(new z.ZodError(collapsed)),
     hint: opts.hint ?? [zodFieldRepairHint(error, opts.input, opts.schema), INVALID_TOOL_INPUT_REPAIR_HINT].filter(Boolean).join(' '),
     issuePaths,
+    ...(choices.size ? { detail: [...choices.values()] } : {}),
   });
 }

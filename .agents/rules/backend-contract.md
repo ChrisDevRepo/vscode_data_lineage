@@ -2,13 +2,19 @@
 
 This file is the single definition of what the engine does with a hop submission. Other documents link here instead of restating it.
 
+## Ownership and action scope
+
+- The backend owns the agenda, task merging, routing order, visit-once scheduling, scope and prune protection. The AI supplies SQL findings and local decisions; it does not select the next hop or declare the traversal complete.
+- An active AI hop receives the current focus, arriving tasks, neighbor metadata and bounded supporting context. Findings belong to that focus. Questions and neighbor prunes may target only its eligible unvisited neighbors; visited or removed neighbors receive no new work. A reference to a visited neighbor as evidence does not authorize another visit or change its committed findings.
+- Keep each rule at its owner: schemas define field shapes, the engine defines state and topology checks, and prompts define SQL reasoning. Reuse the existing BB/CT path and rejection envelope; do not add parallel policies or repeat field contracts in prompts.
+
 ## ACK or REJECT
 
 - The engine guards a submission with deterministic checks only. Every submission gets ACK (commit) or REJECT (nothing committed). There is no third outcome and no silent change.
 - Tool arguments keep their supplied types and content. Object references must copy exact IDs from metadata; aliases, changed casing, invisible-character stripping and numeric or JSON-string coercion are not accepted repairs. Invalid input is returned to the agent with its field path.
 - A check never interprets SQL and never rejects on an assumption, such as "the answer looks truncated" or "this column only filters". It checks that the named objects and columns are valid and connected.
-- Every REJECT names the rule broken, the failing path and a self-repair hint. Each repeat of the same step adds detail. The step ends as a logged error only when its reply limit is spent.
-- A REJECT holds the valid parts of the submission. The hint lists `Held:` and `Resend:` parts; a resent part replaces its held value whole.
+- Every REJECT names the rule broken, the failing path and a self-repair hint. The first rejection identifies the fault without a column inventory; from the second, include the relevant verified columns or schema choices, qualified by object where needed. Supply those choices earlier if only one reply remains. Diagnostic size limits must not discard model-facing repair information. The step ends as a logged error only when its reply limit is spent.
+- A REJECT holds the valid parts of the submission. The hint lists held parts and the parts to resend; never request regeneration of held prose. Findings repairs send focus_node_id and failed parts only; a resent list replaces that list whole. Report repairs use the authorized fields or indexed text/label replacements. If no draft can be held safely, state that the complete call must be resent.
 - A fault the model cannot correct (engine state changed under a queued task, a thrown exception) stops the run as a logged error. Anything the model can correct is a REJECT, never a stop.
 - Whatever the engine does besides ACK or REJECT (routing, deferral, removal) is written to the debug log at least.
 
@@ -17,7 +23,7 @@ This file is the single definition of what the engine does with a hop submission
 A `column_flow` reference passes when all three hold; any failure is a REJECT:
 
 1. **Target.** The referenced object is a loaded neighbour of the focus, is not removed, and is inside the approved scope. An object outside the scope (excluded, out of direction or beyond depth) is rejected as `column_out_of_scope`: remove the reference, record the finding in `sections`, and name the object in `questions`, which keeps it as a follow-up question.
-2. **Attribute.** For an object type that carries column metadata, the column is one of its declared columns, even when its name resembles a SQL literal. Procedures and external objects carry none, so their columns are accepted and the debug log says they were not verified. Procedure output names are not inferred from inbound columns or interpreted as SQL expressions.
+2. **Attribute.** For an object type that carries column metadata, the column matches a declared column, even when its name resembles a SQL literal. Use the shared column comparison helper: trim surrounding whitespace, decode SQL identifier quoting, and fold case only under the source's CI identifier policy; CS preserves case. The submitted spelling is retained, while routing uses the matched metadata column. Unknown columns, SQL expressions and guesses are rejected rather than interpreted. Procedures and external objects carry none, so their columns are accepted and the debug log says they were not verified. Procedure output names are not inferred from inbound columns or interpreted as SQL expressions.
 3. **Link.** The mapping connects to one of the hop's qualified input columns (the requested root on the origin, the task's endpoints afterwards), directly or through another mapping in the same submission. A procedure that writes a table and reads it back declares that internal write on its first visit (`out_col` names the written column), because a visited object is not visited again.
 
 The engine stores an accepted mapping exactly as declared, including the model's `transforms`. It does not drop or reject a contributor because of how the SQL uses it; which columns count as contributors is defined only in the prompt.

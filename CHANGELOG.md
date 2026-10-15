@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - AI rejection, retry and cancellation handling, including a cancel while a graph preview is drawn.
+- Column-name comparison is consistent across trace admission and hop schemas, accepting identifier quoting and outer whitespace while respecting source case sensitivity.
+- Neighbor pruning rejects non-adjacent targets atomically. Repeated AI rejections preserve complete repair choices for large objects and retain valid findings or report text for focused repairs.
 - Database query timeouts, live import metadata and saved-project timestamps.
 - A DACPAC three-part name to another database no longer resolves to a local object with the same schema and name; the DACPAC name is its current database, as on a live connection.
 - Reconnecting a database project by server now matches a saved connection whose server is written with a `tcp:` prefix.

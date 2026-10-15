@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import { resolveModelNodeId } from '../support/modelReferences';
+import { normalizeColName } from '../../utils/sql';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -855,8 +856,17 @@ function columnSourceNodeSchema(sources: readonly string[]) {
   const resolvable = new Map(sources.map(id => [id, id] as const));
   return z.string().refine(
     value => resolveModelNodeId(value, resolvable) !== null,
-    { message: 'upstream_columns[].node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
+    { message: 'upstream_columns[].node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.',
+      params: { allowed_values: [...sources] } },
   ).meta({ enum: [...sources] });
+}
+
+/** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. */
+function columnNameSchema(names: readonly string[], identifierCaseSensitive = false, node?: string) {
+  const keys = new Set(names.map(name => normalizeColName(name, identifierCaseSensitive)));
+  return z.string().refine(value => keys.has(normalizeColName(value, identifierCaseSensitive)),
+    { message: 'Name a supplied column under the source identifier comparison policy.',
+      params: { allowed_values: [...names], ...(node ? { when: { node } } : {}) } }).meta({ enum: [...names] });
 }
 
 /** Restricts explicit input termination to the hop's qualified arrivals, without inventing local outputs. */
@@ -864,8 +874,9 @@ function terminatedInputsSchemaForHop(hop?: SubmitFindingsHopColumns) {
   if (!hop?.incomingRefs) return TerminatedInputsSchema;
   const nodes = new Map(hop.incomingRefs.map(ref => [ref.node, ref.node]));
   const endpoints = hop.incomingRefs.map(ref => ColumnFlowWritesToObject.extend({
-    node: z.string().refine(value => resolveModelNodeId(value, nodes) === ref.node, 'Name this incoming object.').meta({ enum: [ref.node] }),
-    col: z.string().refine(value => value === ref.col, 'Name this incoming column.').meta({ enum: [ref.col] }),
+    node: z.string().refine(value => resolveModelNodeId(value, nodes) === ref.node,
+      { message: 'Name this incoming object.', params: { allowed_values: [ref.node] } }).meta({ enum: [ref.node] }),
+    col: columnNameSchema([ref.col], hop.identifierCaseSensitive, ref.node),
   }));
   if (endpoints.length === 0) return TerminatedInputsSchema.max(0);
   const endpoint = endpoints.length === 1 ? endpoints[0]! : z.union(endpoints as [typeof endpoints[number], typeof endpoints[number], ...Array<typeof endpoints[number]>]);
@@ -874,10 +885,9 @@ function terminatedInputsSchemaForHop(hop?: SubmitFindingsHopColumns) {
 
 /** Projects {@link ColumnFlowSchema} onto one hop: `out_col` as the hop's tracked-column enum, `writes_to` only for a procedure focus. */
 function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
-  const [first, ...rest] = hop.outCols ?? [];
-  const outCol = first === undefined
+  const outCol = !hop.outCols?.length
     ? ColumnFlowEntrySchema.shape.out_col
-    : z.enum([first, ...rest]).describe(OUT_COL_DESCRIPTION);
+    : columnNameSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
   const upstreamColumns = hop.columnSourceNodeIds
     ? z.array(ColumnRefSchema.extend({ node: columnSourceNodeSchema(hop.columnSourceNodeIds) }).strict()).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
     : ColumnFlowEntrySchema.shape.upstream_columns;
@@ -888,8 +898,8 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   };
   if (hop.returnTargets?.length) {
     const destinations = hop.returnTargets.map(target => z.object({
-      out_col: z.literal(target.col),
-      returns_to: z.object({ node: z.literal(target.node), col: z.literal(target.col) }).strict(),
+      out_col: columnNameSchema([target.col], hop.identifierCaseSensitive, target.node),
+      returns_to: z.object({ node: z.literal(target.node), col: columnNameSchema([target.col], hop.identifierCaseSensitive, target.node) }).strict(),
       upstream_columns: shape.upstream_columns,
     }).strict());
     const entry = destinations.length === 1 ? destinations[0]! : z.union(destinations as [typeof destinations[number], typeof destinations[number], ...Array<typeof destinations[number]>]);

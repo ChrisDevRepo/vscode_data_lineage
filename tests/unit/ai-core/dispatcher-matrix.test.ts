@@ -13,6 +13,7 @@ import {
   initialToolPhaseAttemptState,
   MAX_TOOL_PROVIDER_CALLS,
   recordToolAttempt,
+  renderToolAttemptContext,
   type ToolAttemptObservation,
 } from '../../../src/ai/agent/toolAttempt';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
@@ -21,7 +22,7 @@ import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
 import { makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
-import { PruneCurrentInputSchema } from '../../../src/ai/tools/toolSchemas';
+import { PruneCurrentInputSchema, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 
 const SearchSchema = z.object({ query: z.string().min(1) }).strict();
 
@@ -216,6 +217,77 @@ describe('a tool call whose arguments are not a JSON object', () => {
 });
 
 describe('model-facing rejection text', () => {
+  it('keeps the latest large rejected call paired with its complete repair message over the retry-context budget', async () => {
+    const newest = [new AIMessage({ content: '', tool_calls: [{ id: 'large', name: 'lineage_present_result', args: {
+      sections: [{ label: 'Sources', text: 'SQL-supported finding. '.repeat(12000) }],
+    } }] }), new ToolMessage({ tool_call_id: 'large', name: 'lineage_present_result', status: 'error',
+      content: 'sections.0.label is invalid. All report text is held. Resend only sections: [{index: 0, label: "Source"}]. Last reply for this step.' })];
+    const state = { ...initialToolPhaseAttemptState('synthesis'), messages: [
+      new AIMessage({ content: '', tool_calls: [{ id: 'old', name: 'lineage_present_result', args: {} }] }),
+      new ToolMessage({ tool_call_id: 'old', content: 'The earlier call was incomplete.' }), ...newest,
+    ] };
+    const logs: string[] = [];
+    const context = await renderToolAttemptContext(state, { budget: createTurnTokenBudget({ modelWindowTokens: 1024 }),
+      getNumTokens: async text => Math.ceil(text.length / 4) }, line => logs.push(line));
+    expect(context).toEqual(newest);
+    assertToolPairingWellFormed(context);
+    expect(logs).toEqual([expect.stringContaining('tool-attempt-context-oversize-newest-kept')]);
+  });
+
+  it('escalates schema-level column failures with choices for each failed field', async () => {
+    const columns = Array.from({ length: 400 }, (_, i) => `Column${i}`);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', true, {
+      outCols: columns, writesTo: false, incomingRefs: [{ node: 'source', col: 'IncomingA' }, { node: 'other', col: 'IncomingB' }],
+    });
+    const input = { focus_node_id: 'focus', summary: 'A valid summary.', sections: { technical: 'A long valid finding. '.repeat(5000) },
+      column_flow: [{ out_col: 'Missing', upstream_columns: [] }, { out_col: 'AlsoMissing', upstream_columns: [] }],
+      terminated_inputs: [{ node: 'source', col: 'MissingInput' }] };
+    const parsed = schema.safeParse(input);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) throw new Error('Expected invalid columns');
+    const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+    const { registry } = registryWith(() => JSON.stringify(rejection));
+    const plan = discoveryPlan(registry);
+    let state = initialToolPhaseAttemptState('discover');
+    const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'Missing' })]).port, plan, { priorState: state });
+    expect(String(toolMessage(first.messages).content)).not.toContain('Allowed values for');
+    state = recordToolAttempt(state, first);
+    const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'MissingInput' })]).port, plan, { priorState: state });
+    const content = String(toolMessage(second.messages).content);
+    expect(content).toContain(`Allowed values for column_flow.0.out_col, column_flow.1.out_col: ${columns.map(value => JSON.stringify(value)).join(', ')}.`);
+    expect(content.match(/"Column399"/g)).toHaveLength(1);
+    expect(content).toContain('Allowed values for terminated_inputs.0.col when node="source": "IncomingA"');
+    expect(content).toContain('Allowed values for terminated_inputs.0.col when node="other": "IncomingB"');
+    expect(content).not.toContain(input.sections.technical);
+  });
+
+  it.each([3, 400])('escalates on the second rejection with all %s verified columns and the held repair order', async count => {
+    const columns = Array.from({ length: count }, (_, i) => `VerifiedColumn${i}`);
+    const hint = 'Held: sections.technical, summary. Resend: column_flow. Resend focus_node_id with only the parts to correct.';
+    const { registry } = registryWith(() => JSON.stringify(makeRejection({
+      code: REJECTION_CODES.contributorColNotOnSource,
+      reason: 'column_flow.0.upstream_columns.0.col: column Missing is not declared on Source.', hint,
+      issuePaths: ['column_flow.0.upstream_columns.0.col'],
+      detail: [{ id: 'Source', actual_columns: columns }],
+    })));
+    const plan = discoveryPlan(registry);
+    let state = initialToolPhaseAttemptState('discover');
+    const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'Missing' })]).port, plan, { priorState: state });
+    expect(String(toolMessage(first.messages).content)).not.toContain('Actual columns of');
+    expect(String(toolMessage(first.messages).content)).toContain(hint);
+    state = recordToolAttempt(state, first);
+    const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'StillMissing' })]).port, plan, { priorState: state });
+    const content = String(toolMessage(second.messages).content);
+    expect(content).toContain(`Actual columns of Source: ${columns.join(', ')}.`);
+    expect(content).toContain(hint);
+    expect(content).toContain('Fields to correct in this reply: column_flow.');
+    expect(content).toContain('Last reply for this step.');
+    state = recordToolAttempt(state, second);
+    const third = await executeToolAttempt(nativePort(() => [call('third', { query: 'StillMissing' })]).port, plan, { priorState: state });
+    expect(recordToolAttempt(state, third).stopReason).toBe('no_progress');
+    if (count === 400) expect(second.rejections[0].detail).toMatchObject({ omitted: true });
+  });
+
   it('never shows a bare machine code when a hint states the fault', async () => {
     const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'off_policy', hint: 'Call lineage_get_object_detail for one object.' })));
     const model = nativePort(() => [call('c1', { query: 'Orders' })]);

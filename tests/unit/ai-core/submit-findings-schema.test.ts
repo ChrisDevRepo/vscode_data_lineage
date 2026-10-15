@@ -6,6 +6,32 @@ import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode } from '../../
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 
 describe('fresh kept required-field projection', () => {
+  it.each([
+    { caseSensitive: false, name: ' value ', accepted: true },
+    { caseSensitive: true, name: ' Value ', accepted: true },
+    { caseSensitive: true, name: ' value ', accepted: false },
+    { caseSensitive: false, name: '[Value]', accepted: true },
+    { caseSensitive: true, name: '"Value"', accepted: true },
+    { caseSensitive: false, name: 'LTRIM(Value)', accepted: false },
+  ])('uses column comparison consistently for $name under caseSensitive=$caseSensitive', ({ caseSensitive, name, accepted }) => {
+    for (const scalar of [false, true]) {
+      const schema = submitFindingsSchemaForMode('ct', undefined, false, {
+        outCols: ['Value'], writesTo: false, identifierCaseSensitive: caseSensitive,
+        incomingRefs: [{ node: 'source', col: 'Value' }],
+        ...(scalar ? { returnTargets: [{ node: 'caller', col: 'Value' }] } : {}),
+      });
+      const input = { focus_node_id: 'focus', column_flow: [{ out_col: name, upstream_columns: [],
+        ...(scalar ? { returns_to: { node: 'caller', col: name } } : {}) }],
+        terminated_inputs: [{ node: 'source', col: name }] };
+      const before = structuredClone(input);
+      const parsed = schema.safeParse(input);
+      expect(parsed.success).toBe(accepted);
+      if (parsed.success) expect(parsed.data).toEqual(before);
+      expect(input).toEqual(before);
+      expect(schema.safeParse({ ...input, terminated_inputs: [{ node: 'SOURCE', col: name }] }).success).toBe(false);
+    }
+  });
+
   it('projects fresh requirements directly without composition or changing held schemas', () => {
     const fresh = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'both', true));
     const held = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'both', false));

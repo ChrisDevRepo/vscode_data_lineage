@@ -1032,13 +1032,17 @@ export class NavigationEngine implements IHopStateMachine {
     return this.tracer?.state ?? null;
   }
 
-  /** Matches exact declared column names; missing metadata cannot justify rewriting a target. */
+  /** Matches declared columns under the source comparison policy, preserving exact matches and rejecting ambiguous aliases. */
   private matchColumnsToNode(nodeId: string, columns: string[]): { resolved: string[]; unmatched: string[] } {
     const declared = new Set((getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name));
-    return {
-      resolved: columns.filter(column => declared.size === 0 || declared.has(column)),
-      unmatched: columns.filter(column => declared.size > 0 && !declared.has(column)),
-    };
+    const resolved: string[] = [], unmatched: string[] = [];
+    for (const column of columns) {
+      if (declared.size === 0 || declared.has(column)) { resolved.push(column); continue; }
+      const matches = [...declared].filter(name => this.columnKey(name) === this.columnKey(column));
+      if (matches.length === 1) resolved.push(matches[0]!);
+      else unmatched.push(column);
+    }
+    return { resolved, unmatched };
   }
 
   /**
@@ -1773,13 +1777,17 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] offending=[${offending.join(',')}] not on origin ${originNode.id} — rejecting (no partial-trace fallback)`);
         return makeRejection({
           code: 'unknown_columns',
-          reason: 'targetColumns must name exact declared columns of the origin.',
+          reason: 'targetColumns must match declared columns of the origin under its identifier comparison policy.',
           issuePaths: effectiveTargetColumns.flatMap((column, index) => offending.includes(column) ? [`targetColumns.${index}`] : []),
+          detail: [{ id: originNode.id, actual_columns: declaredNames }],
           hint: declaredNames.length > 0
-            ? `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}. Its columns are: [${declaredNames.join(', ')}]. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
+            ? `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
             : `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}, which exposes no column metadata of its own. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`,
         });
       }
+      effectiveTargetColumns.forEach((column, index) => {
+        if (column !== resolved[index]) this.log('debug', `[CT] target column matched from=${JSON.stringify(column)} to=${JSON.stringify(resolved[index])}`);
+      });
       this.log('debug', `[Admit] guard=ct_target_columns phase=init focus=${originNode.id} active=${resolved.length} — tracing [${resolved.join(', ')}]`);
       resolvedActiveColumns = resolved;
     }
@@ -2848,6 +2856,12 @@ export class NavigationEngine implements IHopStateMachine {
       const outOfScopePruneIds = new Set<string>();
       for (const target of pruneTargets) {
         if (!target.resolved || target.resolved === this.originNodeId) continue;
+        if (!focusNeighborIds.has(target.resolved)) {
+          outOfScopePruneIds.add(target.resolved);
+          invalidRoutes.push({ kind: 'prune_unsupported', id: target.resolved, path: target.path,
+            reason: `\`${target.resolved}\` is not a neighbor of the focus \`${focusId}\`; prune_neighbors may name only this hop's neighbors.` });
+          continue;
+        }
         const targetNode = this.nodeMap.get(target.resolved);
         if (!targetNode) continue;
         if (!this.admitsRoute(target.resolved, targetNode, focusId).admitted) {

@@ -698,7 +698,7 @@ function rejectionFromResult(resultText: string): ToolOutcomeData | null {
     code: rejection.code,
     message: rejection.reason,
     ...(rejection.detail !== undefined
-      ? { detail: boundStructuredValue(rejection.detail, MAX_REJECTION_DETAIL_BYTES) }
+      ? { detail: rejection.detail }
       : {}),
     correction: {
       ...(rejection.hint ? { hint: rejection.hint } : {}),
@@ -726,8 +726,8 @@ interface RecordedToolOutcome {
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
- * reason states the identity fault; verified object-column inventories and the top-level fields to
- * correct are disclosed on the rejection the last budgeted reply answers. A repairable
+ * reason states the identity fault; verified choices are disclosed from the second rejection,
+ * or earlier when only one reply remains. The top-level fields to correct are repeated before the final reply. A repairable
  * rejection's last line states the replies the step has left. A backend fault states
  * none: the run ends, and a reply budget would be a retry request. The code, issue
  * paths and detail stay on the paired `ToolMessage.artifact`; the reason line follows {@link rejectionReasonLines}, so the model
@@ -738,9 +738,25 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
     ? undefined
     : repliesLeftAfter(priorState);
   const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
-  const inventories = finalRejection && Array.isArray(rejection.detail)
-    ? rejection.detail.flatMap((fault: { id?: string; actual_columns?: string[] }) => fault.actual_columns
-      ? [`Actual columns of ${fault.id}: ${fault.actual_columns.join(', ') || '(none)'}.`] : []) : [];
+  const expanded = finalRejection || (priorState?.rejections.length ?? 0) > 0;
+  const valueChoices = new Map<string, { paths: Set<string>; values: unknown[]; when?: Record<string, unknown> }>();
+  const choices = expanded && Array.isArray(rejection.detail)
+    ? rejection.detail.flatMap((fault: { id?: string; path?: string; actual_columns?: string[]; available_columns?: string[]; allowed_values?: unknown[]; when?: Record<string, unknown> }) => {
+      if (fault.allowed_values && fault.path) {
+        const key = JSON.stringify([fault.allowed_values, fault.when]);
+        const group = valueChoices.get(key) ?? { paths: new Set<string>(), values: fault.allowed_values, when: fault.when };
+        group.paths.add(fault.path);
+        valueChoices.set(key, group);
+      }
+      return [
+        ...(fault.actual_columns ? [`Actual columns of ${fault.id}: ${fault.actual_columns.join(', ') || '(none)'}.`]
+          : fault.available_columns ? [`Allowed columns for ${fault.path ?? fault.id}: ${fault.available_columns.join(', ') || '(none)'}.`] : []),
+      ];
+    }) : [];
+  for (const { paths, values, when } of valueChoices.values()) {
+    const condition = when ? ` when ${Object.entries(when).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ')}` : '';
+    choices.push(`Allowed values for ${[...paths].join(', ')}${condition}: ${values.map(value => JSON.stringify(value)).join(', ') || '(none)'}.`);
+  }
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
@@ -748,7 +764,7 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     ...rejectionReasonLines(rejection),
-    ...inventories,
+    ...new Set(choices),
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
     ...(owed.length > 0 ? [`Fields to correct in this reply: ${owed.join(', ')}.`] : []),
@@ -810,14 +826,18 @@ function recordToolOutcome(
       ...(outcome.inputKey ? { inputKey: outcome.inputKey } : {}),
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
-    rejections.push(rejection);
+    // Bound diagnostic bookkeeping separately from the complete model-facing correction.
+    const recorded = rejection.detail === undefined ? rejection : {
+      ...rejection, detail: boundStructuredValue(rejection.detail, MAX_REJECTION_DETAIL_BYTES),
+    };
+    rejections.push(recorded);
     trace?.({
       toolName: outcome.toolName,
       code: outcome.code,
       status: 'rejected',
       ...(rejection.issuePaths?.length ? { issuePaths: rejection.issuePaths } : {}),
     });
-    return { resultText: rejectionText(rejection, priorState), status: 'error', rejection, artifact: rejection };
+    return { resultText: rejectionText(rejection, priorState), status: 'error', rejection: recorded, artifact: rejection };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
   trace?.({ toolName: outcome.toolName, code: outcome.rejection.code, status: 'not_evaluated' });

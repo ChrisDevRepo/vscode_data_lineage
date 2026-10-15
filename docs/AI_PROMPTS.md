@@ -6,6 +6,8 @@ The first part is for users who change how `@lineage` writes answers; the second
 
 Tools validate arguments without rewriting them. Copy object IDs exactly from tool results, send arrays and objects as JSON values rather than strings, and use numeric values for numeric depth fields. Rejections identify the field to repair; accepted prose is retained verbatim.
 
+Column names use the shared SQL comparison helper: surrounding whitespace and identifier quotes are normalized for comparison, and case follows the loaded source's CI/CS policy. The submitted spelling stays intact; routing uses the matched metadata name.
+
 Output templates control the tone, structure and detail of `@lineage` answers, not which objects it visits or how results are validated.
 
 1. Run **Data Lineage: Create AI Output Templates** from the Command Palette. It copies the built-in templates to `aiOutputTemplates.yaml` in the first workspace folder.
@@ -62,6 +64,8 @@ Each SQL hop submits findings, confirmed mappings and neighbor questions or prun
 Only a SQL hop whose arriving work came through storage forwarding can receive `lineage_prune_current`. It takes `focus_node_id` and `reason`; one reply evaluates one hop-completion command. Existing committed mappings and independent direct tasks remain protected. Explicit pruning removes an irrelevant branch, while ending a column continuation with kept findings retains the node.
 
 BB and CT share the same validation and correction path, defined in the [backend contract](../.agents/rules/backend-contract.md). CT can explicitly end an arriving input through `terminated_inputs` when other inputs continue; terminated branches cannot restart from later object-only work. Generated CT instructions describe accepted mappings alongside the AI's neighbor question.
+
+Rejections retain valid findings and report content and name the parts to repair. Repeated failures add verified choices before the last reply; shared choices are listed once for their affected paths. Large diagnostic records cannot suppress those model-facing corrections. Findings resend the focus ID and failed parts, replacing a failed list whole; report repairs can replace authorized text or labels by index. A call with no safely held draft requires a complete resend. See the backend contract for escalation and stop rules.
 
 Static SQL can suggest a performance pattern, but cannot establish actual index benefit, join strategy, parameter sniffing or statistics freshness without catalog or runtime evidence. Custom templates cannot give the assistant evidence absent from the loaded model.
 

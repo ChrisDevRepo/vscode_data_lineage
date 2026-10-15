@@ -17,7 +17,7 @@ import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope'
  * error. Each value is a self-contained, **verb-led imperative** — positive, with the
  * legitimate alternative built in so the model never has to guess the nearest match. Used for
  * the content-error hint. The offending value
- * is stated in the rejection reason; column inventories remain machine-only until the final rejection.
+ * is stated in the rejection reason; the dispatcher discloses column choices from the second rejection.
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   missing_task_decision:

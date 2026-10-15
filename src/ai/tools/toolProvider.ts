@@ -48,9 +48,8 @@ import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
 import { createSavedReferenceResolver } from '../../engine/shared/nodeIdResolution';
-import { resolveModelNodeId } from '../support/modelReferences';
 import { cursorOffset } from '../support/text';
-import { getModelNodeMap, type AiViewPreviewMessage, type ToolCaller, type ToolServices } from './handlers/toolServices';
+import { type AiViewPreviewMessage, type ToolCaller, type ToolServices } from './handlers/toolServices';
 import type { PreviewDelivery } from '../support/chatAnswer';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
@@ -474,14 +473,7 @@ class ToolHandler implements ToolServices {
       if (!parsed.ok) return this.logAndReturn('lineage_get_neighbor_columns', parsed.error, input);
 
       const model = this.requireModel();
-      const nodeMap = getModelNodeMap(model);
-      const ids = parsed.data.ids.map((raw, index) => {
-        const canonical = resolveModelNodeId(raw, nodeMap);
-        if (canonical && canonical !== raw) {
-          this.logger.debug(`[Normalize] tool=get_neighbor_columns field=ids.${index} from=${sanitizeForLog(raw)} to=${sanitizeForLog(canonical)}`);
-        }
-        return canonical ?? raw;
-      });
+      const ids = parsed.data.ids;
       const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({

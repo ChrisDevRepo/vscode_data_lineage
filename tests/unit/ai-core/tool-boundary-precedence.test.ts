@@ -74,6 +74,31 @@ function tableArrivalWorld(mode: 'bb' | 'ct') {
   return { engine, session, services };
 }
 
+describe('large findings repairs', () => {
+  it('holds long valid prose through repeated column errors and accepts only the corrected list', () => {
+    const { engine, session, model, graph } = ctWorld();
+    const { services } = stubToolServices({ session, model, graph });
+    const text = 'The supplied SQL establishes this business and technical finding. '.repeat(3000);
+    const valid = { focus_node_id: ORIGIN, summary: 'Branch supplies Value.', sections: { technical: text },
+      questions: [{ nodeId: BRANCH, question: 'Establish the origin of Value.' }] };
+    for (const [index, col] of ['Missing', 'StillMissing'].entries()) {
+      const rejected = JSON.parse(executeSubmitFindings({ ...(index === 0 ? valid : { focus_node_id: ORIGIN }),
+        column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col }] }] }, services));
+      expect(rejected).toMatchObject({ code: 'contributor_col_not_on_source',
+        issuePaths: ['column_flow.0.upstream_columns.0.col'] });
+      expect(rejected.hint).toContain('Held: sections.technical, summary, questions.');
+      expect(rejected.hint).toContain('Resend: column_flow.');
+      expect(rejected.hint).not.toContain('resend the full call');
+      expect(JSON.stringify(rejected)).not.toContain(text);
+      expect(engine.getDetailSlots()).toEqual([]);
+    }
+    const accepted = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN,
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] }, services));
+    expect(accepted).toMatchObject({ ok: true, accepted_focus: ORIGIN, next_focus: BRANCH });
+    expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)?.sections).toEqual([{ angle: 'technical', text }]);
+  });
+});
+
 describe('lineage_prune_current boundary', () => {
   it.each(['HOP.BRANCH', ' [hop].[branch] ', '[hop].[bran\u200bch]'])('rejects altered focus identity %s before changing state', focus_node_id => {
     const { engine, services } = tableArrivalWorld('ct');

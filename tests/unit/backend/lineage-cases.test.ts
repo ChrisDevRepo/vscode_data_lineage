@@ -163,7 +163,28 @@ function check(row: LineageCase, upstream: readonly FlowColumn[]) {
 }
 
 describe('declared contributor identities', () => {
-  it.each([' value ', '[Value]', 'source.Value'])('rejects target column alias %s without rewriting it', target => {
+  it.each([
+    { target: ' value ', caseSensitive: false, accepted: true },
+    { target: ' Value ', caseSensitive: true, accepted: true },
+    { target: '[Value]', caseSensitive: false, accepted: true },
+    { target: '"Value"', caseSensitive: true, accepted: true },
+    { target: ' value ', caseSensitive: true, accepted: false },
+    { target: 'LTRIM(Value)', caseSensitive: false, accepted: false },
+  ])('compares CT target $target under caseSensitive=$caseSensitive without interpreting SQL', ({ target, caseSensitive, accepted }) => {
+    const nodes = [makeNode({ id: 'root', name: 'root', schema: 'dbo', type: 'view', columns: [column('Value')] })];
+    const model = { ...makeIndexedModel(nodes, []), identifierCaseSensitive: caseSensitive };
+    const engine = new NavigationEngine(model, makeGraph(nodes, []), () => {}, {});
+    const result = engine.init({ origin: 'root', question: 'Trace Value', direction: 'upstream', depthIntent: upstreamAll, analysisMode: 'ct', targetColumns: [target] });
+    expect(result).toHaveProperty(accepted ? 'ok' : 'code', accepted ? true : 'unknown_columns');
+    if (accepted) {
+      expect(engine.columnAspect?.target_columns).toEqual([target]);
+      expect(engine.columnAspect?.active_columns).toEqual(['Value']);
+    } else {
+      expect(result).toMatchObject({ detail: [{ id: 'root', actual_columns: ['Value'] }] });
+      expect(result).toHaveProperty('hint', expect.not.stringContaining('Its columns are:'));
+    }
+  });
+  it.each(['source.Value'])('rejects target column alias %s without rewriting it', target => {
     const nodes = [makeNode({ id: 'root', name: 'root', schema: 'dbo', type: 'view', columns: [column('Value')] })];
     const engine = navigationFor(nodes, []);
     expect(engine.init({ origin: 'root', question: 'Trace Value', direction: 'upstream', depthIntent: upstreamAll, analysisMode: 'ct', targetColumns: [target] })).toHaveProperty('code', 'unknown_columns');
@@ -707,6 +728,33 @@ describe('TaskLedger qualified references', () => {
 });
 
 describe('current task completeness before advancement', () => {
+  it.each(['bb', 'ct'] as const)('rejects a non-neighbor prune before committing %s findings', analysisMode => {
+    const root = '[d].[Root]', middle = '[d].[Middle]', leaf = '[d].[Leaf]';
+    const nodes = [root, middle, leaf].map(id => makeNode({ id, schema: 'd', name: id, type: 'view',
+      columns: [column('Value')], bodyScript: 'SELECT 1 AS Value;' }));
+    const engine = navigationFor(nodes, [[leaf, middle], [middle, root]]);
+    expect(engine.init({ origin: root, question: 'Explain Value', analysisMode, targetColumns: analysisMode === 'ct' ? ['Value'] : undefined,
+      direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: root } });
+    const before = engine.toJSON();
+    const result = engine.submitFindings({ focus_node_id: root, summary: 'A constant value.',
+      sections: [{ angle: 'technical', text: 'The output is a constant.' }],
+      ...(analysisMode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [] }] } : {}),
+      questions: [{ nodeId: middle, question: 'Explain the source.' }],
+      prune_neighbors: [{ id: leaf, reason: 'This distant object is irrelevant.' }],
+    });
+    expect(result).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining('prune_neighbors.0.id') });
+    const after = engine.toJSON();
+    expect(after.removedSet).toEqual(before.removedSet);
+    expect(after.agenda).toEqual(before.agenda);
+    expect(after.columnAspect).toEqual(before.columnAspect);
+    expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+    const schema = submitFindingsSchemaForMode(analysisMode, undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: root, prune_neighbors: [] })))).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: middle } });
+    expect(engine.toJSON().removedSet).toEqual([]);
+  });
+
   const root = '[d].[Root]', neighbor = '[d].[Source]', other = '[d].[OtherSource]';
   function world(twoNeighbors = false, rootSql = 'SELECT 1 AS Value, 2 AS Other;') {
     const nodes = [root, neighbor, ...(twoNeighbors ? [other] : [])].map(id => makeNode({ id, schema: 'd', name: id, type: 'view',

@@ -37,7 +37,7 @@ describe('held present_result fields', () => {
       title: 't'.repeat(500),
       intro: 'Intro. '.repeat(200),
       closing: 'Closing. '.repeat(200),
-      sections: Array.from({ length: 6 }, (_, index) => ({ label: `Section ${index}`, node_ids: ['dbo.a'], text: 'Body. '.repeat(150) })),
+      sections: Array.from({ length: 6 }, (_, index) => ({ label: `Section ${index}`, node_ids: ['dbo.a'], text: 'Body. '.repeat(5000) })),
       notes: [{ node_id: 'dbo.a', caption: 'A caption.' }],
     };
     const parsed = PresentResultModelSchema.safeParse(report);
@@ -46,6 +46,8 @@ describe('held present_result fields', () => {
     const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
     const sentence = holdRejectedPresentResult(store, report, rejection.issuePaths ?? [], 'synthesis');
     expect(sentence).toContain('only these corrected fields: title');
+    expect(sentence).not.toContain('Resend the full tool call');
+    expect(sentence).not.toContain(report.sections[0].text);
     const patch = { title: 'Orders lineage' };
     const authorization = store.getAuthorization()!;
     expect(presentResultRepairPatchSchemaForFields(authorization.fields, 'synthesis').safeParse(patch).success).toBe(true);

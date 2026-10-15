@@ -124,7 +124,8 @@ describe('BB lineage: a prune without support is rejected at submission', () => 
   });
 
   it('rejects a vote whose removal, together with pending prunes, would disconnect committed analysis', () => {
-    const w = world(v('o', 'a', 'b', 'c', 'd', 'e'), [['o', 'a'], ['o', 'e'], ['a', 'b'], ['b', 'o'], ['b', 'c'], ['c', 'd'], ['d', 'a'], ['e', 'o'], ['e', 'b'], ['e', 'c']], 'o', ALL, ALL);
+    // Each prune target is adjacent to its sender, so this exercises protection of d rather than adjacency rejection.
+    const w = world(v('o', 'a', 'b', 'c', 'd', 'e'), [['o', 'a'], ['o', 'e'], ['a', 'b'], ['b', 'o'], ['b', 'c'], ['c', 'd'], ['d', 'a'], ['e', 'o'], ['e', 'b'], ['e', 'c'], ['o', 'c'], ['e', 'a']], 'o', ALL, ALL);
     expect(() => drain(w.engine, w.graph, { o: { prune: ['b', 'c', 'e'] }, a: { prune: ['o', 'b', 'e'] } }))
       .toThrow(/hop a rejected: .*`b`: Removing it would disconnect committed analysis of d\..*`e`: Removing it would disconnect committed analysis of d\./);
   });
