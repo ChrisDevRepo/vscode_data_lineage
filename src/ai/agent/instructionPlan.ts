@@ -146,8 +146,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
   /** Held highlight indexes whose labels alone are authorized for repair; read live with the fields. */
   readonly presentResultRepairHighlightLabelIndexes?: () => readonly number[] | null;
-  /** Held section text leaves authorized for indexed repair; read live with the fields. */
-  readonly presentResultRepairSectionTextLeaves?: () => PresentResultRepairAuthorization['sectionTextLeaves'] | null;
+  /** Held section fields authorized for indexed repair; read live with the fields. */
+  readonly presentResultRepairSectionLeaves?: () => PresentResultRepairAuthorization['sectionLeaves'] | null;
   /** Whether a committed report from this run exists for `present_result` to amend; read live. */
   readonly presentResultRetainableSections?: () => boolean;
   /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
@@ -334,7 +334,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     toolSchemaOverrides,
     presentResultRepairFields,
     presentResultRepairHighlightLabelIndexes,
-    presentResultRepairSectionTextLeaves,
+    presentResultRepairSectionLeaves,
     freshSubmission,
     hopColumns,
     heldColumnFlow,
@@ -383,7 +383,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
         presentResultRetainableSections?.() ?? false,
         presentResultPreviewBlockCount,
         presentResultRepairHighlightLabelIndexes?.() ?? undefined,
-        presentResultRepairSectionTextLeaves?.() ?? undefined,
+        presentResultRepairSectionLeaves?.() ?? undefined,
       ),
     );
   }

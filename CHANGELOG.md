@@ -3,6 +3,16 @@
 All notable user-facing changes to Data Lineage Viz are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Report and preview rejections retain valid content and request only defective section fields; malformed retries preserve the draft, and correction choices remain available during escalation.
+- Distinct investigation questions retain SQL literal case and whitespace when tasks merge.
+- Repeated tool-call IDs fail before execution through a shared native/headless transport guard.
+
+### Changed
+- Indexed report repairs share field detection, schemas and merging, with shorter correction instructions.
+
 ## [1.2.6] - 2026-10-08
 
 ### Added

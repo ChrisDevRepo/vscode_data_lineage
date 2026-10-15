@@ -146,7 +146,6 @@ describe('rejection classification', () => {
     [REJECTION_CODES.staleTurn, 'backend_fault'],
     [REJECTION_CODES.explorationComplete, 'correction'],
     [REJECTION_CODES.staleProposalRevision, 'correction'],
-    [REJECTION_CODES.duplicateCallId, 'correction'],
     ['a_code_no_one_mapped', 'correction'],
   ])('%s is %s', (code, group) => {
     expect(classifyRejectionCode(code)).toBe(group);
@@ -163,6 +162,17 @@ describe('rejection classification', () => {
 });
 
 describe('a tool call whose arguments are not a JSON object', () => {
+  it.each([{ query: 'Sales' }, null])('refuses ambiguous call IDs before dispatch, including malformed arguments: %j', async input => {
+    const { registry, invoke } = registryWith(() => JSON.stringify({ results: [] }));
+    const model = nativePort(() => [call('same-id', { query: 'Orders' }), call('same-id', input)]);
+    const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
+    expect(attempt.stop).toBe('error');
+    expect(invoke).not.toHaveBeenCalled();
+    expect(attempt.calls).toEqual([]);
+    expect(attempt.messages).toEqual([]);
+    expect(model.sendRequest).toHaveBeenCalledOnce();
+  });
+
   it.each([{ input: null }, { input: 'Orders' }, { input: [] }])('keeps an unavailable malformed call replayable for correction: $input', async ({ input }) => {
     const { registry, invoke } = registryWith(() => JSON.stringify({ results: [] }));
     const model = nativePort(() => [call('unavailable', input, 'unavailable_tool')]);
@@ -218,6 +228,30 @@ describe('a tool call whose arguments are not a JSON object', () => {
 });
 
 describe('model-facing rejection text', () => {
+  it('keeps schema correction choices when a rejected report also has held sections', async () => {
+    const schema = z.object({ start: z.enum(['B1', 'B2']) });
+    const parsed = schema.safeParse({ start: 'Missing' });
+    if (parsed.success) throw new Error('Expected invalid block');
+    const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, schema });
+    const registry = new ToolRegistry<string>();
+    registry.register({ name: 'lineage_present_result', inputSchema: schema, effect: 'presentation_commit',
+      execute: () => JSON.stringify(rejection) });
+    const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'synthesis' }, registry,
+      messages: [new HumanMessage('Present the findings.')], sink: new TurnEventSink(() => {}),
+      facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }) });
+    const model = nativePort(() => [call('report', { start: 'Missing' }, 'lineage_present_result')]);
+    const options = { presentResultRepairDraftContext: () => ({ sections: [{ label: 'Sources', start: 'B1' }] }) };
+    const first = await executeToolAttempt(model.port, plan, { ...options, priorState: initialToolPhaseAttemptState('synthesis') });
+    expect(String(toolMessage(first.messages).content)).toContain('Held sections: "Sources" (from B1).');
+    expect(String(toolMessage(first.messages).content)).not.toContain('Allowed values for');
+    const second = await executeToolAttempt(model.port, plan, {
+      ...options, priorState: recordToolAttempt(initialToolPhaseAttemptState('synthesis'), first),
+    });
+    expect(String(toolMessage(second.messages).content)).toContain('Allowed values for start: "B1", "B2".');
+    expect(String(toolMessage(second.messages).content)).toContain('Held sections: "Sources" (from B1).');
+    assertToolPairingWellFormed(second.messages);
+  });
+
   it('keeps the latest large rejected call paired with its complete repair message over the retry-context budget', async () => {
     const newest = [new AIMessage({ content: '', tool_calls: [{ id: 'large', name: 'lineage_present_result', args: {
       sections: [{ label: 'Sources', text: 'SQL-supported finding. '.repeat(12000) }],

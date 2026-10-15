@@ -52,6 +52,56 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
     }
     return [...byKey.values()];
   }
+
+  /** Replaces only authorized indexed fields, preserving other entries, fields and order. */
+  public static mergeIndexed<T extends object>(
+    held: readonly T[],
+    patch: readonly ({ index: number } & object)[],
+    leaves: readonly IndexedRepairFields[],
+  ): T[] {
+    const allowed = new Map(leaves.map(leaf => [leaf.index, new Set(leaf.fields)]));
+    const replacements = new Map<number, object>();
+    for (const { index, ...fields } of patch) {
+      const keys = Object.keys(fields);
+      const permitted = allowed.get(index);
+      if (!permitted || !held[index] || replacements.has(index)
+        || keys.length !== permitted.size || keys.some(key => !permitted.has(key))
+        || Object.values(fields).some(value => value === undefined)) {
+        throw new Error(`Invalid indexed repair at index ${index}; send each authorized index and its fields exactly once.`);
+      }
+      replacements.set(index, fields);
+    }
+    if (replacements.size !== allowed.size) throw new Error('Indexed repair omitted an authorized index.');
+    return held.map((entry, index) => replacements.has(index) ? { ...entry, ...replacements.get(index) } : entry);
+  }
+}
+
+/** An indexed entry and the fields a held-draft rejection permits replacing. */
+export interface IndexedRepairFields<Field extends string = string> {
+  readonly index: number;
+  readonly fields: readonly Field[];
+}
+
+/** Projects field paths onto safe indexed repairs; structural or unknown entry faults need a list repair. */
+export function indexedRepairFields<Field extends string>(
+  paths: readonly string[],
+  list: string,
+  entries: unknown,
+  allowed: readonly Field[],
+): IndexedRepairFields<Field>[] | undefined {
+  const relevant = paths.filter(path => path === list || path.startsWith(`${list}.`));
+  if (!relevant.length || !Array.isArray(entries)) return undefined;
+  const byIndex = new Map<number, Set<Field>>();
+  for (const path of relevant) {
+    const [, rawIndex, field] = path.split('.');
+    const index = Number(rawIndex);
+    if (!/^\d+$/.test(rawIndex ?? '') || !entries[index] || typeof entries[index] !== 'object'
+      || Array.isArray(entries[index]) || !allowed.includes(field as Field)) return undefined;
+    const fields = byIndex.get(index) ?? new Set<Field>();
+    fields.add(field as Field);
+    byIndex.set(index, fields);
+  }
+  return [...byIndex].sort(([a], [b]) => a - b).map(([index, fields]) => ({ index, fields: [...fields].sort() }));
 }
 
 /**

@@ -11,7 +11,7 @@ import type { InvestigationTask, PendingLead, ScalarReturnTarget } from './smTyp
 export type InvestigationTaskInput = {
   /** Who raised the task — the user's question, the engine, or the model. */
   source: InvestigationTask['source'];
-  /** The question this task exists to answer, compared by normalized identity. */
+  /** The question this task exists to answer, compared verbatim so SQL literals stay distinct. */
   question: string;
   /** Object the task is pinned to, when it concerns one node rather than the walk. */
   nodeId?: string;
@@ -34,11 +34,6 @@ export type InvestigationTaskInput = {
   | { kind: 'column_lineage'; activeColumns: [string, ...string[]]; returnTargets?: ScalarReturnTarget[]; sourceRefs?: ScalarReturnTarget[] }
 );
 
-/** Normalizes authored questions for exact identity comparison without substring matching. */
-function normalizeText(value: string): string {
-  return value.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
 function leadIdentity(input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId' | 'reason'>, caseSensitive = false): string {
   return JSON.stringify([input.taskId, schemaKey(input.nodeId, caseSensitive), schemaKey(input.fromNodeId, caseSensitive), input.reason]);
 }
@@ -56,7 +51,7 @@ function stableId(prefix: 'task' | 'lead', identity: string): string {
  * Engine-owned registry for investigation questions and post-run leads.
  *
  * @remarks
- * Task identity is the exact normalized tuple, not a node-only or substring match. This keeps
+ * Task identity compares question text verbatim and object/column identities by source policy. This keeps
  * two different questions about the same node distinct while making retries idempotent.
  */
 export class TaskLedger {
@@ -118,7 +113,7 @@ export class TaskLedger {
   }
 
   /**
-   * Creates or returns the task with the same normalized identity tuple.
+   * Creates or returns the task with the same question and qualified identity tuple.
    * @param input - Typed task content without its derived ID.
   */
   public ensureTask(input: InvestigationTaskInput): InvestigationTask {
@@ -137,7 +132,7 @@ export class TaskLedger {
     const identity = JSON.stringify([
       input.kind,
       input.source,
-      normalizeText(input.question),
+      input.question,
       input.nodeId === undefined ? '' : this.identifierKey(input.nodeId),
       input.parentTaskId ?? '',
       identityColumns ?? [],

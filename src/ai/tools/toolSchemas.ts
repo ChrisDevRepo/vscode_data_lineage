@@ -13,6 +13,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
+import type { IndexedRepairFields } from '../support/repairDraftStore';
 import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
 
 /**
@@ -1045,7 +1046,7 @@ export function validateHopSubmissionShape(
 
 /** The one held-draft rule of a findings retry, applied by `NavigationEngine.applyHeldContent`. */
 export const HELD_FINDING_MERGE_RULE =
-  'Resend focus_node_id with only the parts to correct: a sent part (a sections angle, summary, badge_label or a whole list) replaces its held value, an omitted part keeps it, and a sent [] clears a held list.';
+  'Resend focus_node_id with only the parts to correct. Sent fields and section angles replace held values; omissions keep them. Lists replace whole; [] clears one.';
 
 /**
  * The repair order of a rejected finding: which parts are held and which must be resent.
@@ -1244,7 +1245,7 @@ const HighlightGroupSchema = z.object({
  * nodes it explains, and its detail body.
  */
 const PresentResultSectionSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).regex(/\S/, 'Section label must not be blank.').min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
+  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).regex(/\S/, 'Section label must not be blank.').min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names. Unique after trimming, whitespace collapse and lowercasing.'),
   node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
   text: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
 }, {
@@ -1252,6 +1253,9 @@ const PresentResultSectionSchema = z.object({
     ? 'A section holds only label, node_ids and text. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
     : undefined,
 }).strict();
+
+/** Section fields whose defect can be repaired without resending the other content. */
+export type PresentResultSectionRepairField = keyof typeof PresentResultSectionSchema.shape | 'start';
 
 /**
  * One section of a held repair draft: `node_ids` and `text` may each be omitted to keep the held
@@ -1311,7 +1315,7 @@ function buildPreviewSchemas(blockCount: number) {
     ),
   }).strict();
   const patchSections = sectionList(patch).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
-  return { model, patchSections };
+  return { model, patchSections, section };
 }
 
 function previewSchemas(blockCount: number) {
@@ -1394,7 +1398,7 @@ function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T)
  * @param previewBlockCount - Served `answer_blocks` count; the preview stage's block ids are
  *   exactly `B1`..`B<count>`.
  * @param highlightLabelIndexes - Held highlight entries whose labels alone may be replaced.
- * @param sectionTextLeaves - Held section indexes and text leaves that alone may be replaced.
+ * @param sectionLeaves - Held section indexes and fields that alone may be replaced.
  * @returns The schema this stage offers the model.
  */
 export function presentResultSchemaForPhase(
@@ -1403,9 +1407,9 @@ export function presentResultSchemaForPhase(
   retainable = false,
   previewBlockCount = 0,
   highlightLabelIndexes?: readonly number[],
-  sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
+  sectionLeaves?: readonly IndexedRepairFields<PresentResultSectionRepairField>[],
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionTextLeaves, retainable);
+  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionLeaves, retainable);
   if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
   const synthesis = phase === 'synthesis';
   const schema = retainable
@@ -1425,6 +1429,11 @@ const PresentResultNotePatchSchema = z.union([
     remove: z.literal(true).describe('true drops the held note for this node id.'),
   }).strict(),
 ]);
+
+/** Validates assembled sections against their stage's original schema after a repair merge. */
+export function mergedSectionsSchemaForPhase(phase: string, previewBlockCount: number): z.ZodType {
+  return phase === 'visual_preview' ? z.object({ sections: previewSchemas(previewBlockCount).model.shape.sections }) : MergedSectionsSchema;
+}
 
 /**
  * Strict patch schema for repairing a held `present_result` draft.
@@ -1508,6 +1517,22 @@ export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[numbe
  */
 const repairPatchSchemaCache = new Map<string, z.ZodType>();
 
+/** Strict indexed replacements derived from the original field schemas for both held lists. */
+function indexedRepairList(leaves: readonly IndexedRepairFields[], shape: z.ZodRawShape, list: string) {
+  const entries = leaves.map(leaf => z.object({ index: z.literal(leaf.index),
+    ...Object.fromEntries(leaf.fields.map(field => [field, shape[field]])),
+  }).strict());
+  const entry = entries.length === 1 ? entries[0]!
+    : z.union(entries as [typeof entries[number], typeof entries[number], ...Array<typeof entries[number]>]);
+  return z.array(entry).length(leaves.length).superRefine((values, ctx) => {
+    const seen = new Set<number>();
+    for (const [index, value] of values.entries()) {
+      if (seen.has(value.index)) ctx.addIssue({ code: 'custom', path: [index, 'index'], message: `Send each authorized ${list} index once.` });
+      seen.add(value.index);
+    }
+  }).describe(`Replace only indexed fields: ${leaves.map(leaf => `${leaf.index} (${leaf.fields.join(', ')})`).join('; ')}. Other fields and entries stay held.`);
+}
+
 /**
  * Builds the strict provider/runtime patch schema for a held-draft repair.
  *
@@ -1526,7 +1551,7 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * @param phase - Stage serving the repair schema.
  * @param previewBlockCount - Number of engine-served preview blocks.
  * @param highlightLabelIndexes - Highlight entries restricted to `{index, label}` leaf repair.
- * @param sectionTextLeaves - Section entries restricted to indexed `label`/`text` leaf repair.
+ * @param sectionLeaves - Section entries restricted to the indexed fields named by the rejection.
  * @param retainable - Whether a committed report exists whose sections an omitted `sections` keeps.
  * @returns A strict schema owing the authorized fields and accepting every other presentation field.
  */
@@ -1535,15 +1560,15 @@ export function presentResultRepairPatchSchemaForFields(
   phase?: string,
   previewBlockCount = 0,
   highlightLabelIndexes?: readonly number[],
-  sectionTextLeaves?: readonly { readonly index: number; readonly fields: readonly ('label' | 'text')[] }[],
+  sectionLeaves?: readonly IndexedRepairFields<PresentResultSectionRepairField>[],
   retainable = false,
 ): z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>> {
   const keys = [...new Set<PresentResultRepairField>(fields)].sort();
   const preview = phase === 'visual_preview';
   const labelIndexes = highlightLabelIndexes ? [...new Set(highlightLabelIndexes)].sort((left, right) => left - right) : undefined;
-  const sectionLeaves = sectionTextLeaves?.map(leaf => ({ index: leaf.index, fields: [...new Set(leaf.fields)].sort() }))
+  const sectionRepairs = sectionLeaves?.map(leaf => ({ index: leaf.index, fields: [...new Set(leaf.fields)].sort() }))
     .sort((left, right) => left.index - right.index);
-  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionLeaves ? `:sectionText=${sectionLeaves.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
+  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionRepairs ? `:sections=${sectionRepairs.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
   const sendable = preview ? keys : [...PRESENT_RESULT_REPAIR_FIELDS, ...keys];
@@ -1554,50 +1579,11 @@ export function presentResultRepairPatchSchemaForFields(
   let staged = (preview && keys.includes('sections')
     ? picked.extend({ sections: previewSchemas(previewBlockCount).patchSections })
     : picked) as z.ZodObject<z.ZodRawShape>;
-  if (labelIndexes) {
-    const entrySchemas = labelIndexes.map(index => z.object({
-      index: z.literal(index).describe('Zero-based index of the held highlight group named by the rejection.'),
-      label: HighlightGroupSchema.shape.label.describe('Replacement containing only this held group\'s short shared role or status, ending before any dash, colon, example or member list.'),
-    }).strict());
-    const entrySchema = entrySchemas.length === 1
-      ? entrySchemas[0]!
-      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
-    staged = staged.extend({
-      highlight_groups: z.array(entrySchema).length(labelIndexes.length).superRefine((entries, ctx) => {
-        const seen = new Set<number>();
-        for (const [entryIndex, entry] of entries.entries()) {
-          if (seen.has(entry.index)) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Highlight label index ${entry.index} is duplicated. Send each index once.` });
-          }
-          seen.add(entry.index);
-        }
-      }).describe(`Correct only the held overlong highlight labels at zero-based indexes ${labelIndexes.join(', ')}. Send one {index, label} entry per listed index; colors, node_ids, other labels and group order remain held.`),
-    });
-  }
-  if (sectionLeaves) {
-    const entrySchemas = sectionLeaves.map(leaf => z.object({
-      index: z.literal(leaf.index).describe('Zero-based index of the held section named by the rejection.'),
-      ...(leaf.fields.includes('label') ? {
-        label: PresentResultSectionSchema.shape.label.describe('Corrected held section label; unique after trimming, whitespace collapse and lowercasing.'),
-      } : {}),
-      ...(leaf.fields.includes('text') ? {
-        text: PresentResultSectionSchema.shape.text.describe('Corrected held section body.'),
-      } : {}),
-    }).strict());
-    const entrySchema = entrySchemas.length === 1
-      ? entrySchemas[0]!
-      : z.union(entrySchemas as [typeof entrySchemas[number], typeof entrySchemas[number], ...Array<typeof entrySchemas[number]>]);
-    staged = staged.extend({
-      sections: z.array(entrySchema).length(sectionLeaves.length).superRefine((entries, ctx) => {
-        const seen = new Set<number>();
-        for (const [entryIndex, entry] of entries.entries()) {
-          if (seen.has(entry.index)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [entryIndex, 'index'], message: `Section text index ${entry.index} is duplicated. Send each index once.` });
-          seen.add(entry.index);
-        }
-      }).describe(`Correct only rejected text leaves on held sections: ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Node links, other text and order remain held.`),
-    });
-  }
-  const declared = labelIndexes || sectionLeaves
+  if (labelIndexes) staged = staged.extend({ highlight_groups: indexedRepairList(
+    labelIndexes.map(index => ({ index, fields: ['label'] })), HighlightGroupSchema.shape, 'highlight_groups') });
+  if (sectionRepairs) staged = staged.extend({ sections: indexedRepairList(sectionRepairs,
+    preview ? previewSchemas(previewBlockCount).section.shape : PresentResultSectionSchema.shape, 'sections') });
+  const declared = labelIndexes || sectionRepairs
     ? staged.required(Object.fromEntries(keys.map(key => [key, true])) as Record<string, true>)
     // A committed report keeps its sections when the repair omits them, so a lone `sections` field is optional then.
     : keys.length === 1 && !(retainable && keys[0] === 'sections')

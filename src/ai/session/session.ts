@@ -265,9 +265,9 @@ export class AiSession {
     return this.presentResultRepairDraft.getAuthorization()?.highlightLabelIndexes ?? null;
   }
 
-  /** Held section text leaves authorized for indexed repair, or `null` for ordinary section repair. */
-  public get presentResultRepairSectionTextLeaves(): PresentResultRepairAuthorization['sectionTextLeaves'] | null {
-    return this.presentResultRepairDraft.getAuthorization()?.sectionTextLeaves ?? null;
+  /** Held section fields authorized for indexed repair, or `null` for ordinary section repair. */
+  public get presentResultRepairSectionLeaves(): PresentResultRepairAuthorization['sectionLeaves'] | null {
+    return this.presentResultRepairDraft.getAuthorization()?.sectionLeaves ?? null;
   }
 
   /**

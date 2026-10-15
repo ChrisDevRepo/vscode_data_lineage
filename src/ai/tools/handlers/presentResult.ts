@@ -32,7 +32,7 @@ import {
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
+import { mergedSectionsSchemaForPhase, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeIds } from '../../support/modelReferences';
@@ -178,18 +178,18 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const schema = presentResultSchemaForPhase(
           presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
           previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
-          sess.presentResultRepairSectionTextLeaves ?? undefined,
+          sess.presentResultRepairSectionLeaves ?? undefined,
         );
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const repair = isVisualPreview ? null : holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
+        const repair = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
         const authorization = drafts.getAuthorization();
         const held = drafts.get();
         if (held && authorization) rejection.hint = [
           zodFieldRepairHint(parsed.error, input, schema),
           repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionTextLeaves),
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves),
         ].filter(Boolean).join(' ');
         return reject(rejection);
       }
@@ -200,7 +200,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let presentInput: PresentResultInput;
       if (held && authorization) {
         const patch = input as PresentResultRepairPatch;
-        const textlessNewLabels = authorization.sectionTextLeaves
+        const textlessNewLabels = authorization.sectionLeaves
           ? []
           : findTextlessNewSectionLabels(
             held.sections,
@@ -222,21 +222,20 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         presentInput = mergePresentResultRepairPatch(held, patch, authorization, model.identifierCaseSensitive);
         const merged = presentInput.sections === undefined && retainableSections
           ? { success: true as const }
-          : MergedSectionsSchema.safeParse({ sections: presentInput.sections });
+          : mergedSectionsSchemaForPhase(presentResultStage, previewNarrative?.blocks.length ?? 0).safeParse({ sections: presentInput.sections });
         if (!merged.success) {
-          const owed = new Set<string>(['sections', ...authorization.fields.filter(field => presentInput[field] === undefined)]);
-          const fields = PRESENT_RESULT_REPAIR_FIELDS.filter(field => owed.has(field));
-          const sectionsHeld = (presentInput.sections?.length ?? 0) > 0;
-          const sectionTextLeaves = sectionsHeld
-            ? sectionTextLeavesFromIssues(merged.error.issues)
-            : undefined;
-          drafts.hold(presentInput, { fields, ...(sectionTextLeaves ? { sectionTextLeaves } : {}) });
+          const paths = [...merged.error.issues.map(issue => issue.path.join('.')),
+            ...authorization.fields.filter(field => presentInput[field] === undefined)];
+          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true);
           return reject(rejectionFromZodError(merged.error, {
             code: REJECTION_CODES.validation,
-            hint: presentResultRepairInstruction(fields, presentResultStage, sectionsHeld, undefined, sectionTextLeaves),
+            ...(hint ? { hint } : {}),
           }));
         }
-      } else if (isVisualPreview) {
+      } else {
+        presentInput = input as PresentResultInput;
+      }
+      if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
           ? sess.discoveryScopeArtifact
           : null;
@@ -246,9 +245,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: 'Run the discovery question again, then request its graph preview.',
           }));
         }
-        presentInput = { ...(input as PresentResultInput), summary: previewNarrative.summary, title: previewNarrative.title };
-      } else {
-        presentInput = input as PresentResultInput;
+        presentInput = { ...presentInput, summary: previewNarrative.summary, title: previewNarrative.title };
       }
 
       const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
@@ -260,12 +257,13 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (previewNarrative) {
         const partition = findStartOrderIssues(presentInput.sections ?? []);
         if (partition.length > 0) {
-          drafts.hold(presentInput, { fields: ['sections'] });
+          const paths = partition.map(issue => `sections.${issue.index}.start`);
+          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, null, true);
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: partition.map(issue => issue.message).join('\n'),
-            hint: presentResultRepairInstruction(['sections'], 'visual_preview'),
-            issuePaths: partition.map(issue => `sections.${issue.index}.start`),
+            hint: hint ?? presentResultRepairInstruction(['sections'], 'visual_preview'),
+            issuePaths: paths,
           }));
         }
       }
@@ -522,9 +520,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          const scopedHint = malformedEvidence.length > 0
-            ? holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage)
-            : null;
+          const scopedHint = holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage, retainableSections, true);
           if (scopedHint) validation.rejection.hint = scopedHint;
           else drafts.hold(presentInput, { fields: validation.repairFields });
         }
@@ -634,30 +630,4 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (isCancellationOutcome(err, s.signal)) throw err;
       return s.toolError('present_result', err);
     }
-}
-
-/**
- * Maps merged-sections validation issues to the indexed `label`/`text` leaves a repair may replace.
- *
- * @remarks
- * Only issues under `sections[<number>]` qualify; the leaf is `text` when the issue path names it,
- * otherwise `label` (the only other leaf the merged schema validates). Leaves are deduped per index.
- *
- * @returns The leaves, or `undefined` when no issue addresses an indexed section, so the caller
- * holds a fields-only repair instead of an indexless/NaN leaf.
- */
-function sectionTextLeavesFromIssues(
-  issues: readonly { readonly path: readonly PropertyKey[] }[],
-): Array<{ index: number; fields: Array<'label' | 'text'> }> | undefined {
-  const byIndex = new Map<number, Set<'label' | 'text'>>();
-  for (const { path } of issues) {
-    const index = path[1];
-    if (path[0] !== 'sections' || typeof index !== 'number' || !Number.isInteger(index) || index < 0) continue;
-    const field = path[2] === 'text' ? 'text' : 'label';
-    const fields = byIndex.get(index) ?? new Set();
-    fields.add(field);
-    byIndex.set(index, fields);
-  }
-  if (byIndex.size === 0) return undefined;
-  return [...byIndex].sort(([a], [b]) => a - b).map(([index, fields]) => ({ index, fields: [...fields].sort() }));
 }

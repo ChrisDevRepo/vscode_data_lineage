@@ -58,6 +58,31 @@ function firstCall(origin: string) {
   };
 }
 
+it.each(['Missing', 42])('holds a preview with start %j and repairs only that field through the handler', async start => {
+  const { session, services, origin, source, deliverPreview } = world(false);
+  session.activeLmStage = { kind: 'visual_preview' };
+  session.lastDiscoveryAnswer = 'Price report.\n\nSource prices feed the report.';
+  session.storeDiscoveryScope({ turnEpoch: session.turnEpoch, origin, direction: 'upstream',
+    nodeIds: [origin, source], edges: [[source, origin, 'read']] }, session.turnEpoch);
+  const raw = { name: 'Price lineage', sections: [{ label: 'Prices', node_ids: [origin, source], start }],
+    highlight_groups: [{ label: 'Output', color: 'target', node_ids: [origin] }] };
+  const rejected = JSON.parse(await executePresentResult(raw, services));
+  expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: ['sections.0.start'] });
+  expect(session.presentResultRepairDraft.get()?.sections).toEqual(raw.sections);
+  expect(deliverPreview).not.toHaveBeenCalled();
+  const held = structuredClone(session.presentResultRepairDraft.get());
+  expect(JSON.parse(await executePresentResult({ sections: [{ index: 0, start: 'B99' }] }, services))).toHaveProperty('code', 'invalid_input');
+  expect(session.presentResultRepairDraft.get()).toEqual(held);
+  const empty = JSON.parse(await executePresentResult({}, services));
+  expect(empty.hint).not.toContain('send the complete call again');
+  expect(empty.hint).toContain('only these corrected fields: sections');
+  expect(session.presentResultRepairDraft.get()).toEqual(held);
+  const repaired = JSON.parse(await executePresentResult({ sections: [{ index: 0, start: 'B1' }] }, services));
+  expect(repaired).toMatchObject({ success: true });
+  expect(deliverPreview).toHaveBeenCalledOnce();
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('Source prices feed the report.');
+});
+
 describe.each([false, true])('result origin closure (CS=%s)', cs => {
   it('rejects removing a connector while retaining the origin without delivering islands', async () => {
     const { session, services, deliverPreview, origin, source, sibling } = world(cs);
@@ -158,7 +183,7 @@ describe('CT chain-coverage rejection', () => {
       expect(rejected.hint).not.toContain('resend every field');
     }
     expect(second.hint).toBe(third.hint);
-    expect(second.hint).toContain(first.hint);
+    expect(first.hint).toContain('only these corrected fields: sections, notes.');
     expect(session.presentResultRepairDraft.get()?.sections).toHaveLength(1);
   });
 

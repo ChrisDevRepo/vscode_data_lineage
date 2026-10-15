@@ -9,9 +9,10 @@ import {
   PRESENT_RESULT_DEFINED_FIELDS,
   PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
+  type PresentResultSectionRepairField,
 } from './toolSchemas';
 import { quoteIds } from '../support/text';
-import { RepairDraftStore, keyedResendRule } from '../support/repairDraftStore';
+import { RepairDraftStore, keyedResendRule, indexedRepairFields, type IndexedRepairFields } from '../support/repairDraftStore';
 import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
@@ -135,11 +136,13 @@ export interface PresentResultHighlightLabelPatch {
   readonly label: string;
 }
 
-/** Repair-only text leaves for one held section. */
-export interface PresentResultSectionTextPatch {
+/** Repair-only fields for one held section, leaving its other content intact. */
+export interface PresentResultSectionPatch {
   readonly index: number;
   readonly label?: string;
   readonly text?: string;
+  readonly node_ids?: string[];
+  readonly start?: string;
 }
 
 /**
@@ -149,7 +152,7 @@ export interface PresentResultSectionTextPatch {
  */
 export type PresentResultRepairPatch = Omit<PresentResultBaseRepairPatch, 'highlight_groups' | 'sections'> & {
   readonly highlight_groups?: PresentResultBaseRepairPatch['highlight_groups'] | readonly PresentResultHighlightLabelPatch[];
-  readonly sections?: PresentResultBaseRepairPatch['sections'] | readonly PresentResultSectionTextPatch[];
+  readonly sections?: PresentResultBaseRepairPatch['sections'] | readonly PresentResultSectionPatch[];
 };
 
 /** What a held-draft rejection authorized: the presentation fields a resend may patch. */
@@ -157,11 +160,8 @@ export interface PresentResultRepairAuthorization {
   readonly fields: readonly PresentResultRepairField[];
   /** Zero-based highlight entries whose overlong labels may be replaced without resending the list. */
   readonly highlightLabelIndexes?: readonly number[];
-  /** Zero-based held sections and their text leaves authorized for replacement. */
-  readonly sectionTextLeaves?: readonly {
-    readonly index: number;
-    readonly fields: readonly ('label' | 'text')[];
-  }[];
+  /** Zero-based held sections and the fields authorized for replacement. */
+  readonly sectionLeaves?: readonly IndexedRepairFields<PresentResultSectionRepairField>[];
 }
 
 /** A preview section carries the served block id it starts at instead of a body. */
@@ -370,19 +370,19 @@ export function presentResultRepairInstruction(
   stage: PresentResultStage,
   sectionsHeld = true,
   highlightLabelIndexes?: readonly number[],
-  sectionTextLeaves?: PresentResultRepairAuthorization['sectionTextLeaves'],
+  sectionLeaves?: PresentResultRepairAuthorization['sectionLeaves'],
 ): string {
   const wholeFields = resendList.filter(field => field === 'highlight_groups' && !highlightLabelIndexes);
   return [
     `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
-    resendList.includes('sections') && !sectionTextLeaves
+    resendList.includes('sections') && !sectionLeaves
       ? (sectionsHeld ? keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids']) : 'No section is held: resend every section.')
       : '',
     highlightLabelIndexes
-      ? `Repair only the overlong highlight label${highlightLabelIndexes.length === 1 ? '' : 's'}: highlight_groups accepts {index, label} for zero-based ${highlightLabelIndexes.join(', ')}. Replace each rejected label with only its short shared role or status, ending before any dash, colon, example or member list. Leave generous headroom below the served maxLength rather than trimming to its edge. Every color, node_ids list, other label and group position stays held.`
+      ? `highlight_groups: send {index, label} for indexes ${highlightLabelIndexes.join(', ')}. Use a short shared role or status with headroom below maxLength. Other fields and entries stay held.`
       : '',
-    sectionTextLeaves
-      ? `Repair only the rejected section text leaves: sections accepts one indexed object containing exactly the listed replacement field or fields for ${sectionTextLeaves.map(leaf => `zero-based ${leaf.index} (${leaf.fields.join(' + ')})`).join(', ')}. Every node_ids list, other section field and section position stays held.`
+    sectionLeaves
+      ? `sections: send {index, corrected fields} for ${sectionLeaves.map(leaf => `${leaf.index} (${leaf.fields.join(', ')})`).join('; ')}. Other fields and entries stay held.`
       : '',
     resendList.includes('notes') ? `${keyedResendRule('notes', 'node_id')} {node_id: …, remove: true} drops a held note.` : '',
     wholeFields.length > 0 ? `${wholeFields.join(', ')}: a resend replaces the held list whole, so send every entry, corrected.` : '',
@@ -399,6 +399,7 @@ export function presentResultRepairInstruction(
  * @param stage - The stage the call was made in.
  * @param committed - Sections of the committed report an update call may keep text for, or `null`. A
  *   keep-text section (label, no text) whose label has no committed body is invalid, so `sections` is not held.
+ * @param replaceHeld - True only for a full draft assembled from a validated patch; retains content while recalculating failed fields.
  * @remarks
  * Only top-level fields the tool defines are held; any other key, whether or not the rejection could
  * name it by path, is left out of the held draft and does not stop the call's valid fields from being held.
@@ -413,62 +414,48 @@ export function holdRejectedPresentResult(
   failedPaths: readonly string[],
   stage: PresentResultStage,
   committed: ReadonlyArray<{ label: string; text?: string }> | null = null,
+  replaceHeld = false,
 ): string | null {
-  if (store.get() || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
+  if ((!replaceHeld && store.get()) || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
   const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
   const failedKeys = [...new Set(failedPaths.map(path => path.split('.')[0]))];
   const failed = failedKeys.filter(key => PRESENT_RESULT_DEFINED_FIELDS.has(key));
   if (failed.length === 0 || !failed.every(field => repairable.has(field))) return null;
-  const highlightGroupPaths = failedPaths.filter(path => path.startsWith('highlight_groups'));
-  const highlightLabelPaths = highlightGroupPaths.filter(path => /^highlight_groups\.\d+\.label$/.test(path));
-  const rawHighlightGroups = (input as Record<string, unknown>).highlight_groups;
-  const highlightLabelIndexes = highlightLabelPaths.length > 0
-    && highlightLabelPaths.length === highlightGroupPaths.length
-    && Array.isArray(rawHighlightGroups)
-    && highlightLabelPaths.every(path => Number(path.split('.')[1]) < rawHighlightGroups.length)
-    ? [...new Set(highlightLabelPaths.map(path => Number(path.split('.')[1])))].sort((left, right) => left - right)
-    : undefined;
-  const sectionPaths = failedPaths.filter(path => path.startsWith('sections'));
-  const sectionLeafPaths = sectionPaths.filter(path => /^sections\.\d+\.(label|text)$/.test(path));
-  const rawSections = (input as Record<string, unknown>).sections;
-  const sectionTextLeaves = sectionLeafPaths.length > 0
-    && sectionLeafPaths.length === sectionPaths.length
-    && Array.isArray(rawSections)
-    && sectionLeafPaths.every(path => Number(path.split('.')[1]) < rawSections.length)
-    ? [...new Set(sectionLeafPaths.map(path => Number(path.split('.')[1])))].sort((left, right) => left - right).map(index => ({
-      index,
-      fields: [...new Set(sectionLeafPaths.filter(path => Number(path.split('.')[1]) === index).map(path => path.split('.')[2] as 'label' | 'text'))].sort(),
-    }))
-    : undefined;
-  const hasLeafRepair = highlightLabelIndexes || sectionTextLeaves;
+  const raw = input as Record<string, unknown>;
+  const highlightLabelIndexes = indexedRepairFields(failedPaths, 'highlight_groups', raw.highlight_groups, ['label'])?.map(leaf => leaf.index);
+  const rawSections = raw.sections;
+  let sectionLeaves = indexedRepairFields<PresentResultSectionRepairField>(failedPaths, 'sections', rawSections, stage === 'visual_preview'
+    ? ['label', 'node_ids', 'start'] : ['label', 'node_ids', 'text']);
   const bodies = new Set((committed ?? []).filter(sec => sec.text).map(sectionKey));
   const unkept = Array.isArray(rawSections) && committed
-    ? (rawSections as PresentSectionPatch[]).filter(sec => !('text' in sec && sec.text?.trim()) && !bodies.has(sectionKey(sec))).map(sec => sec.label)
+    ? (rawSections as PresentSectionPatch[]).filter(sec => sec && typeof sec === 'object' && typeof sec.label === 'string'
+      && !('text' in sec && typeof sec.text === 'string' && sec.text.trim()) && !sec.start && !bodies.has(sectionKey(sec))).map(sec => sec.label)
     : [];
+  if (unkept.length > 0) sectionLeaves = undefined;
+  const hasLeafRepair = highlightLabelIndexes || sectionLeaves;
   if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
   // Only fields the tool defines are held: a key the schema does not know never rides the draft,
   // whether or not the rejection could name it by path.
-  const kept = hasLeafRepair
-    ? Object.fromEntries(Object.entries(input).filter(([key]) => PRESENT_RESULT_DEFINED_FIELDS.has(key) && (
-      (key === 'highlight_groups' && highlightLabelIndexes)
-      || (key === 'sections' && sectionTextLeaves)
-      || !failed.includes(key)
-    )))
-    : Object.fromEntries(Object.entries(input).filter(([key]) => PRESENT_RESULT_DEFINED_FIELDS.has(key) && !failed.includes(key)));
+  const kept = Object.fromEntries(Object.entries(input).filter(([key]) => PRESENT_RESULT_DEFINED_FIELDS.has(key) && (
+    replaceHeld || !failed.includes(key)
+    || (key === 'highlight_groups' && highlightLabelIndexes)
+    || (key === 'sections' && sectionLeaves)
+  )));
   if (Object.keys(kept).length === 0) return null;
   const fields = failed as PresentResultRepairField[];
   store.hold(kept as PresentResultInput, {
     fields,
     ...(highlightLabelIndexes ? { highlightLabelIndexes } : {}),
-    ...(sectionTextLeaves ? { sectionTextLeaves } : {}),
+    ...(sectionLeaves ? { sectionLeaves } : {}),
   });
-  const heldDescription = hasLeafRepair
-    ? 'Held from this call: every valid report field and the complete affected lists; only the offending text is replaceable.'
+  const heldDescription = hasLeafRepair || replaceHeld
+    ? 'Held: all report content; replace only the named defective fields.'
     : `Held from this call: every field except ${fields.join(', ')}.`;
   const unheld = unkept.length > 0 && !hasLeafRepair
     ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them. Its sections are ${quoteIds((committed ?? []).map(sec => sec.label))}; omit sections to keep the committed report.`
     : '';
-  return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage, false, highlightLabelIndexes, sectionTextLeaves)}`;
+  return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage,
+    Array.isArray(kept.sections) && kept.sections.length > 0, highlightLabelIndexes, sectionLeaves)}`;
 }
 
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];
@@ -487,9 +474,8 @@ function noteKey(note: Partial<PresentNote>, identifierCaseSensitive: boolean): 
  * `sections` merge by label ({@link RepairDraftStore.mergeByKey}); a preview list, whose sections
  * each carry a `start`, is then ordered by its effective start (the held first section at B1), so a new mid-answer section never trips the
  * ascending-starts check (two sections sharing a start still do). `notes` merge by node id, so one
- * missing caption is one resent entry; an ordinary `highlight_groups` repair replaces its list whole. A parse rejection confined to overlong
- * highlight labels instead authorizes `{index, label}` leaves. Likewise, a rejection confined to a
- * section's `label` or `text` authorizes only those indexed leaves. Each narrow merge preserves the
+ * missing caption is one resent entry; an ordinary `highlight_groups` repair replaces its list whole. A highlight-label rejection authorizes `{index, label}`; a section-field rejection authorizes
+ * indexed replacements for its label, text, node links or preview start. Each narrow merge preserves the
  * rest of the held list, and the normal validation/assembly path checks the restored full draft.
  * A presentation field the rejection did not name is accepted too and replaces the held value, so
  * a repair that also carries a field the draft never had (`notes`, `closing`) is merged, not refused.
@@ -513,37 +499,12 @@ export function mergePresentResultRepairPatch(
     if (key === 'is_update') continue;
     if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
     if (key === 'highlight_groups' && authorization.highlightLabelIndexes && Array.isArray(value)) {
-      const authorized = new Set(authorization.highlightLabelIndexes);
-      const labels = new Map<number, string>();
-      for (const entry of value as unknown as Array<{ index: number; label: string }>) {
-        if (!authorized.has(entry.index)) throw new Error(`Unauthorized present_result highlight label index: ${entry.index}`);
-        if (labels.has(entry.index)) throw new Error(`Duplicate present_result highlight label index: ${entry.index}`);
-        labels.set(entry.index, entry.label);
-      }
-      if (labels.size !== authorized.size) throw new Error('Present_result highlight label repair omitted an authorized index.');
-      updates.highlight_groups = (draft.highlight_groups ?? []).map((group, index) => (
-        labels.has(index) ? { ...group, label: labels.get(index)! } : group
-      ));
+      updates.highlight_groups = RepairDraftStore.mergeIndexed(draft.highlight_groups ?? [],
+        value as PresentResultHighlightLabelPatch[], authorization.highlightLabelIndexes.map(index => ({ index, fields: ['label'] })));
       continue;
     }
-    if (key === 'sections' && authorization.sectionTextLeaves && Array.isArray(value)) {
-      const authorized = new Map(authorization.sectionTextLeaves.map(leaf => [leaf.index, new Set(leaf.fields)]));
-      const replacements = new Map<number, PresentResultSectionTextPatch>();
-      for (const entry of value as unknown as readonly PresentResultSectionTextPatch[]) {
-        const fields = authorized.get(entry.index);
-        if (!fields) throw new Error(`Unauthorized present_result section text index: ${entry.index}`);
-        if (replacements.has(entry.index)) throw new Error(`Duplicate present_result section text index: ${entry.index}`);
-        for (const field of ['label', 'text'] as const) {
-          if (entry[field] !== undefined && !fields.has(field)) throw new Error(`Unauthorized present_result section text leaf: ${entry.index}.${field}`);
-        }
-        if ([...fields].some(field => entry[field] === undefined)) throw new Error(`Present_result section text repair omitted an authorized leaf at index ${entry.index}.`);
-        replacements.set(entry.index, entry);
-      }
-      if (replacements.size !== authorized.size) throw new Error('Present_result section text repair omitted an authorized index.');
-      updates.sections = (draft.sections ?? []).map((section, index) => {
-        const replacement = replacements.get(index);
-        return replacement ? { ...section, ...(replacement.label !== undefined ? { label: replacement.label } : {}), ...(replacement.text !== undefined ? { text: replacement.text } : {}) } : section;
-      });
+    if (key === 'sections' && authorization.sectionLeaves && Array.isArray(value)) {
+      updates.sections = RepairDraftStore.mergeIndexed(draft.sections ?? [], value as PresentResultSectionPatch[], authorization.sectionLeaves);
       continue;
     }
     if (key === 'sections' && Array.isArray(value)) {

@@ -31,6 +31,30 @@ const render = {
 };
 
 describe('held present_result fields', () => {
+  it('repairs malformed section links without resending large held bodies', () => {
+    const body = 'SQL-supported explanation. '.repeat(5000);
+    const report = { ...render, sections: [
+      { label: 'Sources', node_ids: [42], text: body },
+      { label: 'Operations', node_ids: [], text: body },
+    ] };
+    const parsed = PresentResultModelSchema.safeParse(report);
+    expect(parsed.success).toBe(false);
+    const rejection = rejectionFromZodError(parsed.error!, { code: 'invalid_input', input: report, schema: PresentResultModelSchema });
+    const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
+    const hint = holdRejectedPresentResult(store, report, rejection.issuePaths!, 'synthesis');
+    expect(store.get()?.sections).toEqual(report.sections);
+    const auth = store.getAuthorization()!;
+    const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionLeaves);
+    const patch = { sections: [{ index: 0, node_ids: ['dbo.a'] }] };
+    expect(schema.safeParse(patch).success).toBe(true);
+    expect(schema.safeParse({ sections: [{ ...patch.sections[0], text: 'Unrequested rewrite' }] }).success).toBe(false);
+    const merged = mergePresentResultRepairPatch(store.get()!, schema.parse(patch), auth);
+    expect(merged.sections).toEqual([{ ...report.sections[0], node_ids: ['dbo.a'] }, report.sections[1]]);
+    expect(PresentResultModelSchema.safeParse(merged).success).toBe(true);
+    expect(hint).not.toContain(body);
+    expect(JSON.stringify(patch).length * 100).toBeLessThan(JSON.stringify(report).length);
+  });
+
   it('a large report rejected on one field is repaired by resending that field alone', () => {
     const report = {
       ...render,
@@ -201,7 +225,7 @@ function indexedRepair(draft: PresentResultInput, paths: string[]) {
   const instruction = holdRejectedPresentResult(store, draft, paths, 'synthesis');
   const authorization = store.getAuthorization()!;
   const schema = presentResultRepairPatchSchemaForFields(authorization.fields, 'synthesis', 0,
-    authorization.highlightLabelIndexes, authorization.sectionTextLeaves);
+    authorization.highlightLabelIndexes, authorization.sectionLeaves);
   return { store, instruction, authorization, schema };
 }
 
@@ -223,7 +247,7 @@ describe('indexed repair transactions', () => {
       };
     }).items;
 
-    expect(instruction).toContain('only the offending text is replaceable');
+    expect(instruction).toContain('replace only the named defective fields');
     expect(servedItems?.anyOf?.map(item => item.properties?.index?.const)).toEqual([0, 2]);
     expect(servedItems?.anyOf?.map(item => item.required)).toEqual([
       ['index', 'label'],
@@ -278,7 +302,7 @@ describe('indexed repair transactions', () => {
     } as PresentResultInput;
     const { store, instruction, authorization, schema } = indexedRepair(draft, ['sections.0.text']);
 
-    expect(instruction).toContain('one indexed object containing exactly the listed replacement field or fields');
+    expect(instruction).toContain('sections: send {index, corrected fields} for 0 (text)');
     expect(instruction).not.toContain('resend every section');
     expect(store.get()?.sections).toEqual(draft.sections);
     expect(schema.safeParse({ sections: draft.sections }).success).toBe(false);
@@ -339,7 +363,7 @@ describe('indexed repair transactions', () => {
     const outOfRange = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
 
     expect(holdRejectedPresentResult(malformed, draft, ['sections.bad.text'], 'synthesis')).toContain('resend every section');
-    expect(malformed.getAuthorization()?.sectionTextLeaves).toBeUndefined();
+    expect(malformed.getAuthorization()?.sectionLeaves).toBeUndefined();
     expect(malformed.get()?.sections).toBeUndefined();
     expect(holdRejectedPresentResult(outOfRange, draft, ['highlight_groups.9.label'], 'synthesis')).toContain('every field except highlight_groups');
     expect(outOfRange.getAuthorization()?.highlightLabelIndexes).toBeUndefined();
@@ -349,8 +373,8 @@ describe('indexed repair transactions', () => {
     const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
     holdRejectedPresentResult(store, labelDraft, ['sections.1.label'], 'synthesis');
     const auth = store.getAuthorization()!;
-    expect(auth.sectionTextLeaves).toEqual([{ index: 1, fields: ['label'] }]);
-    const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionTextLeaves);
+    expect(auth.sectionLeaves).toEqual([{ index: 1, fields: ['label'] }]);
+    const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionLeaves);
     expect(schema.safeParse({ sections: [{ index: 0, label: 'Wrong' }] }).success).toBe(false);
     expect(schema.safeParse({ sections: [{ index: 1, label: 'Source Beta', text: 'Rewrite' }] }).success).toBe(false);
     const merged = mergePresentResultRepairPatch(store.get()!, schema.parse({ sections: [{ index: 1, label: 'Source Beta' }] }), auth);

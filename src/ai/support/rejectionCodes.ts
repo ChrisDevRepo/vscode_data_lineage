@@ -11,8 +11,6 @@ export const REJECTION_CODES = {
   offPolicy: 'off_policy',
   /** `start_exploration` while the session's exploration is already live (one-shot per turn). */
   alreadyStarted: 'already_started',
-  /** Provider/SDK emitted the same tool-call id twice in one generation — a transport artifact outside the chat retry groups; a reply carrying only it still stores nothing, so it counts toward the reply limit. */
-  duplicateCallId: 'duplicate_call_id',
   /** Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport artifact outside the chat retry groups; the reply stores nothing, so it counts toward the reply limit. */
   emptyGeneration: 'empty_generation',
   /** A read call identical (after key canonicalization) to one accepted in an earlier attempt of the same phase; its result is already in the observations. Never charged. */

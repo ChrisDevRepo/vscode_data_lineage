@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent, type ToolCall } from '@langchain/core/messages';
 import {
+  assertToolCallIds,
   type CompleteTextInput,
   type GeneratedToolCall,
   type GenerateStructuredInput,
@@ -167,7 +168,6 @@ export class VscodeModelPort implements ModelPort {
       const providerParts = messageProviderParts(message);
       const content: ToolGenerationContent[] = text ? [{ type: 'text', text }] : [];
       const toolCalls: GeneratedToolCall[] = [];
-      const callIds = new Set<string>();
       /** The calls as the transcript replays them; `{}` stands in for arguments that were no object. */
       const replayed: Array<{ callId: string; toolName: string; input: unknown }> = [];
       let rebuilt = false;
@@ -177,20 +177,9 @@ export class VscodeModelPort implements ModelPort {
         // Malformed calls need a replay anchor regardless of which rejection takes precedence.
         if ('malformedArgs' in emittedCall) rebuilt = true;
         const args = 'args' in emittedCall ? emittedCall.args : emittedCall.malformedArgs;
-        const duplicate = callIds.has(callId);
-        callIds.add(callId);
         const definition = definitionsByName.get(toolName);
         let call: GeneratedToolCall;
-        if (duplicate) {
-          call = {
-            valid: false,
-            callId,
-            toolName,
-            input: args,
-            code: REJECTION_CODES.duplicateCallId,
-            reason: 'The provider repeated a tool call identifier.',
-          };
-        } else if (!definition) {
+        if (!definition) {
           call = {
             valid: false,
             callId,
@@ -422,14 +411,15 @@ export type EmittedToolCall = { readonly id: string; readonly name: string } & (
  * `invalid_tool_calls` (arguments that were no JSON object) back onto the bridge's one chunk per
  * call.
  *
- * @throws {@link ModelPortError} `unsupported_response` when a call carries no id: nothing can
- *   answer it, so the generation is incomplete as a whole.
+ * @throws {@link ModelPortError} `unsupported_response` when a call ID is missing or repeated:
+ *   results cannot be correlated safely, so no call in the generation may dispatch.
  */
 export function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
   const valid: ToolCall[] = [...(message.tool_calls ?? [])];
   const invalid = [...(message.invalid_tool_calls ?? [])];
   const incomplete = (): ModelPortError => new ModelPortError('unsupported_response', 'Language model returned an incomplete tool call.');
-  if (invalid.some((call) => !call.id)) throw incomplete();
+  const ids = [...valid, ...invalid].map(call => call.id);
+  assertToolCallIds(ids);
   const take = <T extends { id?: string }>(list: T[], id: string | undefined): T | undefined => {
     const at = list.findIndex((call) => call.id === id);
     return at < 0 ? undefined : list.splice(at, 1)[0];
@@ -444,7 +434,6 @@ export function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
   };
   const chunks = [...(message.tool_call_chunks ?? [])].sort((left, right) => Number(left.index ?? 0) - Number(right.index ?? 0));
   if (chunks.length === valid.length + invalid.length) return chunks.map((chunk) => toEmitted(chunk.id));
-  const ids = [...valid, ...invalid].map((call) => call.id);
   return ids.map(toEmitted);
 }
 

@@ -58,7 +58,7 @@ Each SQL step is a **hop**: the AI reads the current object's definition, record
 
 The backend owns routing and visit-once scheduling. One neighbor projection supplies action capabilities to context, schemas, routing and rejection choices. A hop can change only its current findings and propose actions for its eligible unvisited neighbors; a distant object is not a valid neighbor prune target. Visited neighbors remain available as evidence but receive no new work or changes to their committed findings.
 
-The neighbor projection and submission guard share the same prune action-state policy. Final prune validation also protects committed mappings and graph connectivity. Agenda column merging uses the shared SQL identifier comparison policy, preserving the first spelling and each task's identity; prose questions are not compared as column names.
+The neighbor projection and submission guard share the same prune action-state policy. Final prune validation also protects committed mappings and graph connectivity. Agenda column merging uses the shared SQL identifier comparison policy, preserving the first spelling and each task's identity. Question text is compared verbatim in both the task ledger and the agenda: case and whitespace inside a SQL literal can change the question even when catalog identifiers are case-insensitive. Identical resends reuse the same task.
 
 The engine retains tables and external storage objects in the result and forwards their incoming questions automatically to eligible neighbors in the approved direction. The same route handles a table named by an approved follow-up. Qualified column endpoints travel as unconfirmed candidates, without invented value edges: each receiving SQL object establishes which values it writes or uses. Unused candidates end independently at that object, preserving table evidence and sibling branches. Stored DDL and column expressions remain available as metadata; a procedure, view or function with unavailable SQL still needs an explicit uncertainty finding.
 
@@ -78,6 +78,32 @@ The engine keeps open work as a list of hops, one per object, each holding its m
 Discovery catalog requests limit the graph material returned to the AI using `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; exploration admission is limited by `dataLineageViz.ai.maxRounds` hops.
 
 Each hop uses sliding memory: the question and approved scope, the current object, its neighbors' columns, and short summaries of the last three hops. After each committed hop, the conversation restarts with continuation context rather than replaying every prior tool exchange. Prompt size still varies with SQL, scope and task context. The findings are kept by the engine and read once at the end to write the answer.
+
+### Model messages and commit boundaries
+
+```mermaid
+flowchart TD
+    PLAN[LangGraph phase and instruction plan] --> MODEL[LangChain bridge to selected VS Code model]
+    MODEL --> CORRELATE[Model port: complete, unique call IDs]
+    CORRELATE --> DISPATCH[Ordered phase-filtered dispatcher]
+    DISPATCH --> SCHEMA[Receiving handler: strict Zod shape]
+    SCHEMA --> ENGINE[NavigationEngine: topology, scope and qualified endpoints]
+    ENGINE -->|ACK| COMMIT[Commit findings and fan out tasks]
+    ENGINE -->|REJECT| REPAIR[Hold valid parts and return field repairs]
+    SCHEMA -->|REJECT| REPAIR
+    REPAIR --> BUDGET[LangGraph bounded repair budget]
+    BUDGET --> PLAN
+    COMMIT --> AGENDA[Merge by object; dispatch when structurally ready]
+    AGENDA --> PLAN
+```
+
+Graph fan-out creates qualified investigation tasks; tool batches execute in provider order. Each call gets one correlated result. A successful gate, route change or phase completion closes the batch, so later siblings receive a non-execution result. Hop-completion commands share one slot per reply, including when the first command is rejected. Cancellation ends the turn without replaying a partially answered batch.
+
+Missing or repeated call IDs fail the model response before any tool executes: an ambiguous transport envelope cannot carry a safe per-call repair. Native and headless transports share this guard. Correctable argument and domain failures use the shared rejection renderer and existing reply budget. Field choices appear from the second rejection. Held-section labels are added only for keyed repairs; indexed repairs identify their entries directly.
+
+Report schema and runtime failures share indexed-field detection, strict patch schemas and held-list merging. A broken node-link list or preview start can be replaced without resending section bodies. The merged sections are checked against their original stage schema before rendering, and preview prose is reassembled from the cached discovery answer. Backend faults end the run rather than requesting a model repair.
+
+The bridge translates messages and tools; it neither executes tools nor retries requests. Zod owns shape, the engine owns state and lineage validity, and LangGraph owns phase transitions and retries. Column endpoints and their authoring hop remain evidence provenance; valid recorded links do not establish exhaustive SQL analysis.
 
 ## Design boundaries
 

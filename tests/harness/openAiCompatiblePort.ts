@@ -13,6 +13,7 @@ import {
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
+  assertToolCallIds,
   cancelledError,
   cancelledToolTurnResult,
   errorToolTurnResult,
@@ -535,7 +536,6 @@ export class OpenAiCompatiblePort implements ModelPort {
       const content: ToolGenerationContent[] = [];
       const toolCalls: GeneratedToolCall[] = [];
       const replayed: Array<{ callId: string; toolName: string; input: unknown }> = [];
-      const callIds = new Set<string>();
       let text = '';
 
       for (const part of response.parts) {
@@ -544,21 +544,10 @@ export class OpenAiCompatiblePort implements ModelPort {
           content.push({ type: 'text', text: part.text });
           continue;
         }
-        const duplicate = callIds.has(part.callId);
-        callIds.add(part.callId);
         const definition = definitionsByName.get(part.toolName);
         let call: GeneratedToolCall;
         let replayInput: unknown = part.input;
-        if (duplicate) {
-          call = {
-            valid: false,
-            callId: part.callId,
-            toolName: part.toolName,
-            input: part.input,
-            code: REJECTION_CODES.duplicateCallId,
-            reason: 'The provider repeated a tool call identifier.',
-          };
-        } else if (!definition) {
+        if (!definition) {
           call = {
             valid: false,
             callId: part.callId,
@@ -1150,6 +1139,7 @@ function readCompletion(body: unknown): ReadCompletion {
       ...parseArguments(rawArguments),
     });
   }
+  assertToolCallIds(parts.flatMap(part => part.type === 'tool-call' ? [part.callId] : []));
   const reasoning = typeof message.reasoning_content === 'string' && message.reasoning_content
     ? message.reasoning_content
     : undefined;

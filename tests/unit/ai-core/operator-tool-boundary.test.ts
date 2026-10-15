@@ -25,6 +25,21 @@ import { modelUserMessage } from '../../../src/ai/model/modelPort';
 
 const secret = 'synthetic-secret';
 
+describe('headless tool-call correlation', () => {
+  it.each(['{"query":"Sales"}', 'null'])('refuses repeated IDs with arguments %s as a transport error', async raw => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: {
+      tool_calls: ['{"query":"Orders"}', raw].map(args => ({ id: 'same-id', type: 'function',
+        function: { name: 'lineage_search_objects', arguments: args } })),
+    } }] })));
+    const port = new OpenAiCompatiblePort({ baseUrl: 'https://provider.example/v1', apiKey: secret, model: 'synthetic-model' }, { fetchImpl });
+    const result = await port.generateToolTurn({ messages: [modelUserMessage('Inspect orders.')],
+      tools: [{ name: 'lineage_search_objects', description: 'Search.', inputSchema: z.object({ query: z.string() }) }], phase: 'discover' });
+    expect(result.status).toBe('error');
+    expect(result.toolCalls).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+});
+
 describe('operator runner configuration', () => {
   it.each([
     ['ok', false, 'prompt'],

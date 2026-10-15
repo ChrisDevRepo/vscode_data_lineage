@@ -500,7 +500,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       debugLog: message => deps.logger?.debug(message),
       traceSyntheticRejection: deps.traceSyntheticRejection,
       presentResultRepairDraftContext: () => {
-        const held = deps.getSession().presentResultRepairDraft.get();
+        const drafts = deps.getSession().presentResultRepairDraft;
+        const authorization = drafts.getAuthorization();
+        if (!authorization?.fields.includes('sections') || authorization.sectionLeaves) return null;
+        const held = drafts.get();
         return held ? { sections: heldSectionsForRepair(held.sections) } : null;
       },
     });
@@ -909,7 +912,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       stage: { kind: 'visual_preview' },
       presentResultRepairFields: () => sess.presentResultRepairFields,
       presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
-      presentResultRepairSectionTextLeaves: () => sess.presentResultRepairSectionTextLeaves,
+      presentResultRepairSectionLeaves: () => sess.presentResultRepairSectionLeaves,
       presentResultPreviewBlockCount: narrative.blocks.length,
       facts: { memorySections: ['discovery_answer', 'discovery_scope'] },
       messages,
@@ -1360,7 +1363,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       stage: { kind: 'synthesis' },
       presentResultRepairFields: () => sess.presentResultRepairFields,
       presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
-      presentResultRepairSectionTextLeaves: () => sess.presentResultRepairSectionTextLeaves,
+      presentResultRepairSectionLeaves: () => sess.presentResultRepairSectionLeaves,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: explorationFacts(engine.currentAnalysisMode, engine.currentTargetColumns ?? undefined, {
         classification,
@@ -1413,7 +1416,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationCompletedProviderInputSchema]]),
       presentResultRepairFields: () => sess.presentResultRepairFields,
       presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
-      presentResultRepairSectionTextLeaves: () => sess.presentResultRepairSectionTextLeaves,
+      presentResultRepairSectionLeaves: () => sess.presentResultRepairSectionLeaves,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: { memorySections: ['conversation_history'] },
       messages,

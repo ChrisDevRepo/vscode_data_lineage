@@ -570,9 +570,7 @@ export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z
 }
 
 /**
- * Diagnosis for a call that arrived with no arguments at all: the VS Code host hands an extension
- * `{}` when the model's argument text could not be read (a call cut off at the output limit, for
- * one), so the model is told that the whole call was lost, not that it chose to omit fields.
+ * Names an empty argument object without guessing a transport cause or overriding a held draft's resend rule.
  *
  * @returns The diagnosis when `input` is an empty object and the schema reported a missing field;
  * `undefined` otherwise.
@@ -580,7 +578,7 @@ export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z
 function emptyArgumentsHint(error: z.ZodError, input: unknown): string | undefined {
   if (input === null || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length > 0) return undefined;
   const missing = error.issues.some((issue) => issue.code === 'invalid_type' && issue.path.length > 0);
-  return missing ? 'The call arrived with no arguments at all, as happens when its text was cut off; send the complete call again in one reply.' : undefined;
+  return missing ? 'The call arrived with no arguments at all; supply the required fields named below.' : undefined;
 }
 
 /** Whether `issue` is a present value outside its accepted values, the issue kind {@link invalidValueRepairHint} states. */
@@ -718,12 +716,6 @@ function issueOwnedRepairHint(error: z.ZodError): string | undefined {
  * stays one fixed sentence regardless of how many tools the phase offers.
  */
 export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered in this response.';
-
-/**
- * Standing repair instruction for a provider-emitted duplicate tool-call id. The duplicate is a
- * transport artifact, not a content mistake, so the repair is a fresh id rather than a resend.
- */
-export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
 
 /** Longest object key quoted whole; a longer key is reported by length alone, never as a prefix. */
 const KEY_ECHO_MAX_CHARS = 120;

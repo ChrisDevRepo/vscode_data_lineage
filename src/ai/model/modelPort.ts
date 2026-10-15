@@ -141,6 +141,19 @@ export class ModelPortError extends Error {
 }
 
 /**
+ * Validates a generation's correlation IDs before any of its calls can dispatch.
+ * @throws {@link ModelPortError} when a missing or repeated ID prevents one-to-one tool results.
+ */
+export function assertToolCallIds(ids: readonly (string | undefined)[]): void {
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (!id) throw new ModelPortError('unsupported_response', 'Language model returned an incomplete tool call.');
+    if (seen.has(id)) throw new ModelPortError('unsupported_response', 'Language model returned repeated tool call identifiers.');
+    seen.add(id);
+  }
+}
+
+/**
  * Whether a thrown value is a port-level cancellation ({@link ModelPortError}
  * with code `'cancelled'`).
  *
@@ -281,12 +294,11 @@ export interface InvalidGeneratedToolCall {
    * the same tool would be indistinguishable. Never dispatched, replayed, or logged raw.
    */
   readonly input?: unknown;
-  /** Rejection category — schema-invalid input, tool-call notation in a text value, unknown tool, or a duplicate call id. */
+  /** Rejection category — schema-invalid input, tool-call notation in a text value, or unknown tool. */
   readonly code:
     | typeof REJECTION_CODES.invalidToolInput
     | typeof REJECTION_CODES.toolCallNotation
-    | typeof REJECTION_CODES.unknownTool
-    | typeof REJECTION_CODES.duplicateCallId;
+    | typeof REJECTION_CODES.unknownTool;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
   /**

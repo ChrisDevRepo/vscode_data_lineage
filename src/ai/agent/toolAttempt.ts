@@ -44,7 +44,6 @@ import type {
 } from '../model/modelPort';
 import {
   buildToolExecutionError,
-  DUPLICATE_CALL_ID_REPAIR_HINT,
   INVALID_TOOL_INPUT_REPAIR_HINT,
   makeRejection,
   readToolErrorText,
@@ -607,6 +606,7 @@ function withHeldDraftDetail(
   if (data.status !== 'rejected' || toolName !== PRESENT_RESULT_TOOL) return data;
   const held = draftContext?.();
   if (!held) return data;
+  if (Array.isArray(data.detail)) return { ...data, detail: [...data.detail, { held_draft: held }] };
   const baseDetail = data.detail && typeof data.detail === 'object' && !Array.isArray(data.detail)
     ? data.detail as Record<string, unknown>
     : {};
@@ -681,7 +681,6 @@ function rejectionFromInvalid(
     correction: {
       ...(isArgumentRejection(call.code) && call.hint !== undefined ? { hint: call.hint } : {}),
       ...(call.code === REJECTION_CODES.unknownTool ? { hint: UNKNOWN_TOOL_REPAIR_HINT } : {}),
-      ...(call.code === REJECTION_CODES.duplicateCallId ? { hint: DUPLICATE_CALL_ID_REPAIR_HINT } : {}),
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
     },
     ...(call.code === REJECTION_CODES.unknownTool
@@ -755,8 +754,11 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
     const condition = when ? ` when ${Object.entries(when).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ')}` : '';
     choices.push(`Allowed values for ${[...paths].join(', ')}${condition}: ${values.map(value => JSON.stringify(value)).join(', ') || '(none)'}.`);
   }
-  const held = rejection.detail && typeof rejection.detail === 'object'
-    ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
+  const heldDetail = Array.isArray(rejection.detail)
+    ? rejection.detail.find((detail: { held_draft?: HeldDraftRepairContent }) => detail?.held_draft)
+    : rejection.detail;
+  const held = heldDetail && typeof heldDetail === 'object'
+    ? (heldDetail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
   const owed = finalRejection ? [...new Set((rejection.issuePaths ?? []).map(path => path.split('.')[0]))] : [];
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');

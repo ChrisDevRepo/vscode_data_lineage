@@ -2,7 +2,7 @@ import Graph from 'graphology';
 import { stronglyConnectedComponents } from 'graphology-components';
 import type { ColumnCarry } from './smTypes';
 import { uniqueScalarReturnTargets } from './scalarReturnBinding';
-import { normalizeColName, schemaKey } from '../../utils/sql';
+import { normalizeColName } from '../../utils/sql';
 
 /**
  * Represents an entry in the navigation agenda.
@@ -264,7 +264,7 @@ export class AgendaManager {
         existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns, column => normalizeColName(column, this.identifierCaseSensitive));
       }
       if (entry.lineageQuestions) {
-        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions, question => schemaKey(question, this.identifierCaseSensitive));
+        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions, question => question);
       }
       existing.priority = Math.max(existing.priority, entry.priority);
       existing.depth = Math.min(existing.depth, entry.depth);
