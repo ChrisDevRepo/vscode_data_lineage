@@ -1080,6 +1080,58 @@ describe('passthrough candidates at the next object', () => {
   });
 });
 
+describe('a procedure that writes and reads back the same table', () => {
+  const origin = '[d].[O]', staged = '[d].[S2]', proc = '[d].[P]', work = '[d].[T]', source = '[d].[W]', other = '[d].[U]';
+  const nodes = [
+    makeNode({ id: origin, schema: 'd', name: 'O', type: 'view', columns: [column('X')], bodyScript: 'CREATE VIEW d.O AS SELECT X FROM d.S2;' }),
+    makeNode({ id: staged, schema: 'd', name: 'S2', type: 'table', columns: [column('X')] }),
+    makeNode({ id: proc, schema: 'd', name: 'P', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.P AS MERGE d.T USING d.W ON 1 = 1 WHEN NOT MATCHED THEN INSERT (Y) VALUES (W.Z); INSERT d.U(V) SELECT Z FROM d.W; INSERT d.S2(X) SELECT Y FROM d.T;' }),
+    makeNode({ id: work, schema: 'd', name: 'T', type: 'table', columns: [column('Y')] }),
+    makeNode({ id: source, schema: 'd', name: 'W', type: 'table', columns: [column('Z')] }),
+    makeNode({ id: other, schema: 'd', name: 'U', type: 'table', columns: [column('V')] }),
+  ];
+  const pairs: Array<[string, string]> = [[staged, origin], [proc, staged], [work, proc], [proc, work], [source, proc], [proc, other]];
+  const readBack = { out_col: 'X', upstream_columns: [{ node: work, col: 'Y' }], writes_to: { node: staged, col: 'X' } };
+  const atProc = () => {
+    const engine = engineFor(nodes, pairs);
+    expect(engine.init({ origin, question: 'Trace X.', analysisMode: 'ct', targetColumns: ['X'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'X', upstream_columns: [{ node: staged, col: 'X' }] }],
+      questions: [{ nodeId: staged, question: 'Resolve X.' }] })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(staged, 'passthrough'), column_flow: [] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: proc }, analysis_mode: 'ct' });
+    return engine;
+  };
+  const questions = [{ nodeId: work, question: 'Resolve Y.' }, { nodeId: source, question: 'Resolve Z.' }, { nodeId: other, question: 'Describe U.' }];
+
+  it('maps its own write into the read-back table on the first visit and traces the write source', () => {
+    const engine = atProc();
+    const served = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns).parse({ focus_node_id: proc, verdict: 'analyze',
+      summary: 'Trace X.', sections: { technical: 'P merges W into T and loads S2 from T.' }, questions,
+      column_flow: [readBack, { out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: work, col: 'Y' } }] });
+    expect(engine.submitFindings(toHopFinding(served)), 'internal write is declared').toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Z', to_node: work, to_col: 'Y', hop_node: proc }));
+    const visits: string[] = [];
+    for (let context = engine.getHopContext(); context?.focus_node; context = engine.getHopContext()) {
+      const id = String(context.focus_node.id);
+      visits.push(`${id}:${context.analysis_mode}:${engine.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' ? task.sourceRefs ?? [] : []).map(ref => `${ref.node}.${ref.col}`).join(',')}`);
+      const ct = context.analysis_mode === 'ct';
+      expect(engine.submitFindings({ ...guardRecord(id, ct ? 'passthrough' : 'analyze'), ...(ct ? { column_flow: [] } : {}) })).toHaveProperty('ok', true);
+    }
+    expect(visits.sort()).toEqual([`${work}:ct:${work}.Y`, `${source}:ct:${source}.Z`].sort());
+  });
+
+  it.each([
+    ['a write into a table the procedure does not read', { out_col: 'V', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: other, col: 'V' } }, 'column_flow.1.out_col'],
+    ['a read-back write that feeds no tracked column', { out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: work, col: 'Y' } }, 'column_flow.1.upstream_columns'],
+  ])('rejects %s', (label, entry, path) => {
+    const engine = atProc();
+    const flow = label.startsWith('a read-back') ? [{ ...readBack, upstream_columns: [{ node: source, col: 'Z' }] }, entry] : [readBack, entry];
+    expect(engine.submitFindings({ ...guardRecord(proc), questions, column_flow: flow })).toMatchObject({ issuePaths: expect.arrayContaining([path]) });
+  });
+});
+
 describe('bodyless passthrough forwards to every writer', () => {
   it('adds the stored endpoint to a writer already queued from an earlier hop', () => {
     const origin = '[d].[Report]', stored = '[d].[Stored]', loader = '[d].[Loader]';

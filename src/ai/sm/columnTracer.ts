@@ -241,6 +241,7 @@ export class ColumnTracer {
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
     const activeNorm = this.aspect.active_columns.map(this.columnKey);
     const entryEdges = new Map<number, ColumnEdge[]>();
+    const readBackTargets = readBackWriteTargets(focusId, nodeMap, model);
     const endpointKey = columnEndpointKeyFactory(nodeMap, model.identifierCaseSensitive);
     const committedRefs = this.aspect.edges.flatMap(edge => [
       { node: edge.from_node, col: edge.from_col },
@@ -271,7 +272,9 @@ export class ColumnTracer {
         }
       }
 
-      if (traceDirection === 'upstream' && incomingDownstreamRefs.length === 0 && !activeNorm.includes(outNorm)) {
+      const readBackWrite = !!entry.writes_to && this.columnKey(entry.writes_to.col) === outNorm
+        && readBackTargets.has(resolveModelNodeId(entry.writes_to.node, nodeMap, model.identifierCaseSensitive) ?? '');
+      if (traceDirection === 'upstream' && incomingDownstreamRefs.length === 0 && !activeNorm.includes(outNorm) && !readBackWrite) {
         const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
         invalidRoutes.push(existsOnNode
           ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, available_columns: [...this.aspect.active_columns] }
@@ -725,6 +728,35 @@ export function resolveColumnFlowTarget(
     };
   }
   return { attributionTo: focusId, attributionCol: entry.out_col, writerEdge: null };
+}
+
+/**
+ * Canonical ids of the objects a procedure both writes and reads: the tables it fills and then
+ * reads back within its own body.
+ *
+ * @remarks
+ * Such a write is an internal step of the procedure's own data flow, so an upstream hop may declare
+ * it as `out_col` alongside the tracked columns; {@link columnAttachment} still requires the
+ * written column to feed a tracked endpoint.
+ *
+ * @param focusId - Canonical id of the focus node; a non-procedure focus has none.
+ * @returns Canonical ids of the read-back write targets, empty when the focus is not a procedure.
+ */
+export function readBackWriteTargets(focusId: string, nodeMap: Map<string, LineageNode>, model: DatabaseModel): Set<string> {
+  const focus = nodeMap.get(focusId);
+  if (focus?.type !== 'procedure') return new Set();
+  const key = (id: string) => schemaKey(id, model.identifierCaseSensitive);
+  const focusKey = key(focusId);
+  const writes = new Map<string, string>();
+  const reads = new Set<string>();
+  const id = (ref: string) => resolveModelNodeId(ref, nodeMap, model.identifierCaseSensitive);
+  for (const edge of model.edges) {
+    const target = id(edge.target);
+    if (key(edge.source) === focusKey && target && edgeApiType(edge.type, focus.type) === 'write') writes.set(key(target), target);
+    const source = nodeMap.get(id(edge.source) ?? '');
+    if (key(edge.target) === focusKey && source && edgeApiType(edge.type, source.type) === 'read') reads.add(key(source.id));
+  }
+  return new Set([...writes].filter(([written]) => reads.has(written)).map(([, target]) => target));
 }
 
 /** Missing catalogs do not prove columns on ordinary tables, views or functions. */

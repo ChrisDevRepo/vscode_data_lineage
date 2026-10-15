@@ -572,7 +572,7 @@ const ColumnFlowWritesToObject = z.object({
 /**
  * One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys.
  */
-const OUT_COL_DESCRIPTION = 'Output column resolved from this hop\'s column task; for a procedure, the column it writes to writes_to.';
+const OUT_COL_DESCRIPTION = 'Output column resolved from this hop\'s column task; for a procedure, the column it writes to writes_to, including a write into a table it reads back that feeds a tracked column.';
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),

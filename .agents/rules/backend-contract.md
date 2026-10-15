@@ -17,14 +17,14 @@ A `column_flow` reference passes when all three hold; any failure is a REJECT:
 
 1. **Target.** The referenced object is a loaded neighbour of the focus, is not removed, and is inside the approved scope. An object outside the scope (excluded, out of direction or beyond depth) is rejected as `column_out_of_scope`: remove the reference, record the finding in `sections`, and name the object in `questions`, which keeps it as a follow-up question.
 2. **Attribute.** For an object type that carries column metadata, the column is one of its declared columns; a literal is not a column. Procedures and external objects carry none, so their columns are accepted and the debug log says they were not verified.
-3. **Link.** The mapping connects to one of the hop's qualified input columns (the requested root on the origin, the task's endpoints afterwards).
+3. **Link.** The mapping connects to one of the hop's qualified input columns (the requested root on the origin, the task's endpoints afterwards), directly or through another mapping in the same submission. A procedure that writes a table and reads it back declares that internal write on its first visit (`out_col` names the written column), because a visited object is not visited again.
 
 The engine stores an accepted mapping exactly as declared, including the model's `transforms`. It does not drop or reject a contributor because of its classification (filter-only, delete-only write, metadata scalar return).
 
 ## Events
 
 - Only an explicit `passthrough` forwards the incoming question to neighbours. At a bodyless upstream focus it forwards the qualified stored endpoints to every writer, including one already queued.
-- Forwarded columns are candidates. The next object is asked whether its SQL uses them: a mapped candidate continues; an unmapped one ends at that object (debug log), without a REJECT. Example: procedure A writes table B, B passes through, procedure C reads B. C maps the B columns it uses; the others end at C.
+- Forwarded columns are candidates. The next object is asked whether its SQL uses them: a mapped candidate continues; an unmapped one ends at that object (debug log), without a REJECT. Example: procedure A writes table B, B passes through, procedure C reads B. C maps the B columns it uses; the others end at C. The scheduler visits an object only after every unfinished object that can reach it, so a candidate reaches a visited object only inside a cycle; it ends there (debug log), because that object declared its read-back writes on its first visit.
 - An endpoint assigned by a direct mapping is the model's own claim. When some of a hop's assigned endpoints continue, every other one needs a mapping or a `terminated_inputs` entry, else REJECT; an empty `column_flow` ends them all.
 - `prune_neighbors` and `lineage_prune_current` are explicit events. A prune is rejected when the named node is outside the approved scope or when removing it would disconnect committed analysis from the origin.
 - The engine never rebuilds column lineage from historical edges, matching names or prose. A queued task dispatches with the endpoints it was accepted with.

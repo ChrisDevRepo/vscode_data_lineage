@@ -23,7 +23,7 @@ import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
-import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
+import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, readBackWriteTargets, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
@@ -1446,8 +1446,9 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * The column facts that narrow this hop's served `column_flow`: the tracked columns when an
-   * upstream trace accepts only those as `out_col`, and whether the focus is a procedure (the one
+   * The column facts that narrow this hop's served `column_flow`: the tracked columns, plus the
+   * columns of tables a procedure focus writes and reads back, when an upstream trace accepts only
+   * those as `out_col`, and whether the focus is a procedure (the one
    * node that may name a `writes_to` target). Eligible function neighbors narrow caller-context questions;
    * stored column metadata narrows the admissible `upstream_columns` sources.
    */
@@ -1456,7 +1457,9 @@ export class NavigationEngine implements IHopStateMachine {
     const active = this.tracer?.activeColumns.filter(Boolean) ?? [];
     return {
       outCols: this.columnTraceDirection() === 'upstream' && !this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.traversalSide === 'downstream') && active.length > 0
-        ? this.resolveActiveColumnsForNode(focus?.id ?? '', active) ?? [...active] : null,
+        ? [...new Set([...this.resolveActiveColumnsForNode(focus?.id ?? '', active) ?? active,
+          ...(focus ? [...readBackWriteTargets(focus.id, this.nodeMap, this.model)] : [])
+            .flatMap(id => (getNodeColumns(id, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name))])] : null,
       writesTo: focus?.type === 'procedure',
       callerContextNodeIds: focus && this.graph.hasNode(focus.id) && getNodeDdl(focus.id, this.nodeMap, this.store ?? undefined)
         ? this.graph.neighbors(focus.id).filter(id => this.neighborCapabilities(focus.id, id).can_question
