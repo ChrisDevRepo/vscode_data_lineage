@@ -126,7 +126,7 @@ business_capture:
     1. Purpose: the domain role and the decision it serves.
     2. Transformations: logic, status transitions, branches, and column mappings in order. Detail each mode/status switch branch. Explain calculations within the transformation they implement, with their formula, business meaning, terms, and consequences.
     3. Grain: distinguish input rows from surviving rows at each cardinality-changing step. For conditional eligibility, evaluate the complete predicate with declared defaults and overrides separately. For grouping or ranked-row removal, derive survivors per grouping or partition key from retained count or rank. Quote the deciding SQL.
-    4. Operations: loading patterns (target replacement, extension, or purge; none for a view or function), error handling, and material gaps. After a caught failure, a value the failed statement would have set keeps the value from the statement that last set it before the failure; follow that value through the later statements and the target's column constraints.
+    4. Operations: loading patterns (target replacement, extension, or purge; none for a view or function), error handling, and material gaps.
 
     <scope_relevance>
     A sink that records the run itself — which procedure ran, when, with
@@ -145,7 +145,7 @@ technical_capture:
     1. Purpose: the execution role.
     2. Transformations: a numbered walk of SQL statements, calculations, and branches. Explain each switch branch and calculation with its formula and deciding SQL. Do not invent physical access or execution steps from SQL syntax: describe a join hint as a requested strategy, not an observed operator; without a plan, do not label a step scan, seek, hash build or probe.
     3. Grain: JOIN and WHERE predicates and join hints. Distinguish input rows from surviving rows at each cardinality-changing step. For grouping or ranked-row removal, derive survivors per grouping or partition key from retained count or rank. Quote the deciding SQL with the explanation.
-    4. Operations: loading mechanics (`reload`, `append`, `upsert`, `purge`), error handling (TRY/CATCH, locking), and material gaps. After a caught failure, a value the failed statement would have set keeps the value from the statement that last set it before the failure; follow that value through the later statements and the target's column constraints.
+    4. Operations: loading mechanics (`reload`, `append`, `upsert`, `purge`), error handling (TRY/CATCH, locking), and material gaps.
   example: ""
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────

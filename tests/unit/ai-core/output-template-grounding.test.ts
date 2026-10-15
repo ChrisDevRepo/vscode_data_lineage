@@ -59,15 +59,4 @@ describe('capture evidence at the rendered model boundary', () => {
       expect(recipe).not.toContain('naming the computation');
     }
   });
-
-  it.each([['business', 1], ['technical', 1], ['both', 2]] as const)('states the caught-failure rule in each Operations item for %s', (classification, copies) => {
-    const rule = 'After a caught failure, a value the failed statement would have set keeps the value from the statement that last set it';
-    const rendered = resolveStagePrompt(templates, 'active', classification, undefined, false,
-      { scope: 'per_focus', focusKind: 'bodied' }, EMPTY_AI_SECTIONS);
-    expect(rendered.prompt.split(rule).length - 1).toBe(copies);
-    expect(templates.business_capture).toMatch(new RegExp(`4\\. Operations: [^\\n]*${rule}`));
-    expect(templates.technical_capture).toMatch(new RegExp(`4\\. Operations: [^\\n]*${rule}`));
-    expect(templates.structural_callouts).not.toContain(rule);
-    expect(templates.structural_callouts).toContain('Comments and messages state intent, not behavior.');
-  });
 });
