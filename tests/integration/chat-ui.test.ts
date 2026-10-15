@@ -15,7 +15,7 @@ interface SessionProjection {
   lastPresentResultDescription: string | null;
   stateMachine: {
     deferredQuestions: unknown;
-    columnAspect: {edges:Array<{hop_node:string;from_node:string;from_col:string;to_node:string;to_col:string}>} | null;
+    columnAspect: {edges:Array<{hop_node:string;from_node:string;from_col:string;to_node:string;to_col:string;transforms?:string[]}>} | null;
     getResult(): unknown;
     toJSON(): unknown;
   } | null;
@@ -350,7 +350,7 @@ suite('Native chat confirmations — actual UI', () => {
   //   INNER JOIN [ai].[CurrencyConfig] cc ON sp.Currency = cc.Code WHERE cc.IsBase = 1 ... LEFT JOIN [ai].[MarkupRules] m ON RegionCode.
   // Value input: [ai].[SupplierPrices].[CostPrice] (also MarkupPct). Key/filter-only: [ai].[CurrencyConfig].[Code] (join key) and
   // [ai].[CurrencyConfig].[IsBase] (filter); the procedure comment itself says "CurrencyConfig: FILTER ONLY".
-  if (real) test('live column trace → value inputs only, rendered report intact',async function () {
+  if (real) test('live column trace → arithmetic and contextual dependencies, rendered report intact',async function () {
     const column = '[ai].[PriceMaster].[ListPrice]';
     const normalized = (text:string|null) => (text ?? '').replace(/[\[\]`]/g,'').toLowerCase();
     await newChat();
@@ -395,18 +395,38 @@ suite('Native chat confirmations — actual UI', () => {
     });
     const sources = chainSources.map(normalized);
     assert.ok(sources.some(row=>row.includes('costprice')),`Column Chain must list the value input CostPrice; rows: ${JSON.stringify(chainSources)}`);
-    assert.ok(!sources.some(row=>row.includes('currencyconfig')),`join/filter-only CurrencyConfig must not be a Column Chain source; rows: ${JSON.stringify(chainSources)}`);
+    assert.ok(sources.some(row=>row.includes('markuppct')),`Column Chain must list the value input MarkupPct; rows: ${JSON.stringify(chainSources)}`);
     assert.match(normalized(reportText),/currencyconfig/,'the join/filter object stays in the report');
     const aspect = exports.getSession().stateMachine?.columnAspect;
     assert.ok(aspect,'the completed column trace must retain its column edges');
-    const valueSources = [...new Set(aspect.edges.filter(edge=>
+    const pricingInputs = aspect.edges.filter(edge=>
       normalized(edge.hop_node)==='ai.sprefreshprices'
       && normalized(edge.to_node)==='ai.pricemaster'
       && normalized(edge.to_col)==='listprice'
       && normalized(edge.from_node)!=='ai.sprefreshprices',
-    ).map(edge=>`${normalized(edge.from_node)}.${normalized(edge.from_col)}`))].sort();
-    assert.deepEqual(valueSources,['ai.markuprules.markuppct','ai.supplierprices.costprice'],
-      'ListPrice must have exactly its two arithmetic value sources; row and MERGE keys are not value inputs');
+    );
+    const arithmeticSources = ['ai.supplierprices.costprice','ai.markuprules.markuppct'];
+    // Supplied SQL uses these additional columns to select source rows, markup rules or MERGE targets.
+    // Those effects may appear as CT dependencies or in the report; they are not arithmetic operands.
+    const contextualSources = [
+      'ai.supplierprices.currency','ai.currencyconfig.code','ai.currencyconfig.isbase',
+      'ai.supplierprices.effectiveto','ai.markuprules.validto','ai.markuprules.regioncode',
+      'ai.regionlookup.regioncode','ai.supplierprices.productcode','ai.supplierprices.effectivefrom',
+    ];
+    for (const edge of pricingInputs) {
+      const source = `${normalized(edge.from_node)}.${normalized(edge.from_col)}`;
+      assert.ok(arithmeticSources.includes(source) || contextualSources.includes(source),
+        `ListPrice dependency must occur in the supplied pricing SQL: ${source}`);
+      if (contextualSources.includes(source)) {
+        assert.ok(!edge.transforms?.some(role=>role==='compute' || role==='aggregate'),
+          `ListPrice contextual input is not a numeric operand or aggregate: ${source}`);
+      }
+    }
+    for (const source of arithmeticSources) {
+      assert.ok(pricingInputs.some(edge=>
+        `${normalized(edge.from_node)}.${normalized(edge.from_col)}`===source && edge.transforms?.includes('compute')),
+      `ListPrice must retain its arithmetic operand with compute role: ${source}`);
+    }
     assert.ok(!(await reply.locator('.rendered-markdown').allInnerTexts()).join('\n').includes('```'),'no literal code fence may render as text');
     const listStarts = await reply.locator('.rendered-markdown ol').evaluateAll(lists=>lists.map(list=>list.getAttribute('start') ?? '1'));
     assert.deepEqual(listStarts.filter(start=>start!=='1'),[],'an ordered list that restarts above 1 was split by an interrupting block');
