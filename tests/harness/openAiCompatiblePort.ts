@@ -37,9 +37,7 @@ import {
 } from '../../src/ai/support/text';
 import { REJECTION_CODES } from '../../src/ai/support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../../src/ai/support/tokenBudget';
-import { coerceStringifiedArguments } from '../../src/ai/support/inputNormalization';
 import { toolCallNotationFault } from '../../src/ai/support/toolCallNotation';
-import { sanitizeForLog, trunc } from '../../src/utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
   STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
@@ -610,13 +608,6 @@ export class OpenAiCompatiblePort implements ModelPort {
               + `analysisMode=${was}->bb droppedTargetColumns=[${droppedTargetColumns.join(',')}]`,
             );
           }
-          const decoded = coerceStringifiedArguments(effectiveInput, toModelJsonSchema(definition.inputSchema));
-          if (decoded.paths.length > 0) {
-            effectiveInput = decoded.value;
-            this.options.debugLog?.(
-              `[AI] provider-port decoded stringified arguments tool=${part.toolName} paths=${trunc(sanitizeForLog(decoded.paths.join(',')), 200)}`,
-            );
-          }
           replayInput = effectiveInput;
           call = { valid: true, callId: part.callId, toolName: part.toolName, input: effectiveInput };
         }
@@ -682,16 +673,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         part.type === 'tool-call' && part.toolName === STRUCTURED_OUTPUT_TOOL,
     );
     const single = calls.length === 1 ? calls[0] : undefined;
-    let structuredInput: unknown = single?.input;
-    if (single && !single.argumentsIssue) {
-      const decoded = coerceStringifiedArguments(single.input, toModelJsonSchema(input.schema));
-      if (decoded.paths.length > 0) {
-        structuredInput = decoded.value;
-        this.options.debugLog?.(
-          `[AI] provider-port decoded stringified arguments tool=${STRUCTURED_OUTPUT_TOOL} paths=${trunc(sanitizeForLog(decoded.paths.join(',')), 200)}`,
-        );
-      }
-    }
+    const structuredInput: unknown = single?.input;
     const notation = toolCallNotationFault(structuredInput);
     if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
     const parsed = single && !single.argumentsIssue

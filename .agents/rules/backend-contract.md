@@ -5,6 +5,7 @@ This file is the single definition of what the engine does with a hop submission
 ## ACK or REJECT
 
 - The engine guards a submission with deterministic checks only. Every submission gets ACK (commit) or REJECT (nothing committed). There is no third outcome and no silent change.
+- Tool arguments keep their supplied types and content. Object references must copy exact IDs from metadata; aliases, changed casing, invisible-character stripping and numeric or JSON-string coercion are not accepted repairs. Invalid input is returned to the agent with its field path.
 - A check never interprets SQL and never rejects on an assumption, such as "the answer looks truncated" or "this column only filters". It checks that the named objects and columns are valid and connected.
 - Every REJECT names the rule broken, the failing path and a self-repair hint. Each repeat of the same step adds detail. The step ends as a logged error only when its reply limit is spent.
 - A REJECT holds the valid parts of the submission. The hint lists `Held:` and `Resend:` parts; a resent part replaces its held value whole.

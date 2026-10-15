@@ -8,12 +8,12 @@ const objects=[{fullName:'[dbo].[CaseTab]',type:'table' as const,columns:[{name:
 const model=(cs?:boolean)=>buildModel(objects,[{sourceName:'[dbo].[Reader]',targetName:'[dbo].[CaseTab]'},{sourceName:'[dbo].[Reader]',targetName:'[dbo].[casetab]'}],objects,undefined,true,undefined,cs);
 describe('source-authoritative retrieval identifiers',()=>{
  it('gets the exact CS object and refuses guessed schema/object casing',()=>{
-  const m=model(true);expect(getObjectDetail(m,'dbo.CaseTab')).toMatchObject({id:'[dbo].[CaseTab]',columns:[{n:'Upper'}]});
-  expect(getObjectDetail(m,'dbo.casetab')).toMatchObject({id:'[dbo].[casetab]',columns:[{n:'lower'}]});
+  const m=model(true);expect(getObjectDetail(m,'[dbo].[CaseTab]')).toMatchObject({id:'[dbo].[CaseTab]',columns:[{n:'Upper'}]});
+  expect(getObjectDetail(m,'[dbo].[casetab]')).toMatchObject({id:'[dbo].[casetab]',columns:[{n:'lower'}]});
   expect(getObjectDetail(m,'DBO.CaseTab')).toMatchObject({code:'not_found'});
  });
  it('BFS returns both exact CS twins and their real edges',()=>{
-  const m=model(true),graph=buildGraphologyGraph(m);const r=getScopeBundle(m,graph,{origin:'dbo.Reader',direction:'upstream',depth:1,include_ddl:false},DEFAULT_TURN_TOKEN_BUDGET);
+  const m=model(true),graph=buildGraphologyGraph(m);const r=getScopeBundle(m,graph,{origin:'[dbo].[Reader]',direction:'upstream',depth:1,include_ddl:false},DEFAULT_TURN_TOKEN_BUDGET);
   expect(r).toMatchObject({origin:'[dbo].[Reader]'});
   expect((r as any).nodes.map((node:any)=>node.id).sort()).toEqual(['[dbo].[CaseTab]','[dbo].[Reader]','[dbo].[casetab]'].sort());
   expect((r as any).edges).toHaveLength(2);
@@ -28,13 +28,13 @@ describe('source-authoritative retrieval identifiers',()=>{
   expect(await searchObjects(m,'*',undefined,['Sales'],'substring',{schemas:['Sales']} as any)).toMatchObject({total:1,results:[{id:'[Sales].[Orders]',in_user_filter:true}],filter_context:{visible_node_count:1}});
  });
  it.each([undefined,false])('default/explicit CI detail, scope and exact-name resolution remain compatible (%s)',async flag=>{
-  const m=model(flag);expect(getObjectDetail(m,'DBO.CASETAB')).toMatchObject({id:'[dbo].[casetab]'});
-  expect(getScopeBundle(m,buildGraphologyGraph(m),{origin:'DBO.READER',direction:'upstream',depth:1},DEFAULT_TURN_TOKEN_BUDGET)).toMatchObject({origin:'[dbo].[reader]',nodes:expect.arrayContaining([expect.objectContaining({id:'[dbo].[casetab]'})])});
+  const m=model(flag);expect(getObjectDetail(m,'[dbo].[casetab]')).toMatchObject({id:'[dbo].[casetab]'});
+  expect(getScopeBundle(m,buildGraphologyGraph(m),{origin:'[dbo].[reader]',direction:'upstream',depth:1},DEFAULT_TURN_TOKEN_BUDGET)).toMatchObject({origin:'[dbo].[reader]',nodes:expect.arrayContaining([expect.objectContaining({id:'[dbo].[casetab]'})])});
   expect(await searchObjects(m,'*',undefined,['DBO'])).toMatchObject({total:2});
   expect(await searchObjects(m,'CASETAB')).toMatchObject({name_match:{status:'unique',ids:['[dbo].[casetab]']}});
  });
 });
-describe('retrieval id normalization logging',()=>{
+describe('retrieval exact ID boundary',()=>{
  async function invoke(tool:'lineage_get_object_detail'|'lineage_get_scope_bundle',input:object){
   const { AiSession }=await import('../../../src/ai/session/session');
   const { buildAiToolRegistry }=await import('../../../src/ai/tools/toolProvider');
@@ -44,16 +44,16 @@ describe('retrieval id normalization logging',()=>{
   const result=JSON.parse(await buildAiToolRegistry(()=>session,channel,()=>undefined).invoke(tool,input));
   return { result, normalize:debug.filter(line=>line.includes('[Normalize]')) };
  }
- it('logs the resolved get_object_detail id and stays silent for a canonical id',async()=>{
+ it('rejects an altered get_object_detail id and accepts a canonical id',async()=>{
   const rewritten=await invoke('lineage_get_object_detail',{id:'DBO.CASETAB'});
-  expect(rewritten.result).toMatchObject({id:'[dbo].[casetab]'});
-  expect(rewritten.normalize).toEqual([expect.stringContaining('[Normalize] tool=get_object_detail field=id from=DBO.CASETAB to=[dbo].[casetab]')]);
+  expect(rewritten.result).toMatchObject({code:'not_found'});
+  expect(rewritten.normalize).toEqual([]);
   expect((await invoke('lineage_get_object_detail',{id:'[dbo].[casetab]'})).normalize).toEqual([]);
  });
- it('logs the resolved get_scope_bundle origin and stays silent for a canonical origin',async()=>{
+ it('rejects an altered scope origin and accepts a canonical origin',async()=>{
   const rewritten=await invoke('lineage_get_scope_bundle',{origin:'DBO.READER',direction:'upstream',depth:1});
-  expect(rewritten.result).toMatchObject({origin:'[dbo].[reader]'});
-  expect(rewritten.normalize).toEqual([expect.stringContaining('[Normalize] tool=get_scope_bundle field=origin from=DBO.READER to=[dbo].[reader]')]);
+  expect(rewritten.result).toMatchObject({code:'not_found'});
+  expect(rewritten.normalize).toEqual([]);
   expect((await invoke('lineage_get_scope_bundle',{origin:'[dbo].[reader]',direction:'upstream',depth:1})).normalize).toEqual([]);
  });
 });

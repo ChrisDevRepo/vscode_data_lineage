@@ -42,7 +42,7 @@ describe('scope summary identifier comparison', () => {
     const objects = ['Main', 'Order.Items', 'Excluded'].map(name => ({ fullName: qualified(name), type: 'view' as const }));
     const model = buildModel(objects, [{ sourceName: qualified('Main'), targetName: qualified('Order.Items') }], objects, undefined, true, undefined, cs);
     const engine = new NavigationEngine(model, buildGraphologyGraph(model), () => {}, {});
-    expect(engine.init({ ...init, origin: qualified('Main'), direction: 'upstream', analysisMode: 'bb', passNodeIds: [qualified('Order.Items')], excludeNodeIds: [qualified('Excluded')] })).toMatchObject({ ok: true });
+    expect(engine.init({ ...init, origin: normalizeName(qualified('Main'), cs), direction: 'upstream', analysisMode: 'bb', passNodeIds: [normalizeName(qualified('Order.Items'), cs)], excludeNodeIds: [normalizeName(qualified('Excluded'), cs)] })).toMatchObject({ ok: true });
     const summary = engine.getScopeSummary();
     expect(summary.activeFilters.passNodeIds).toEqual([qualified('Order.Items')]);
     expect(summary.activeFilters.nodeIds).toEqual([qualified('Excluded')]);
@@ -205,8 +205,8 @@ describe('approval card and full plan exclusions', () => {
       activeFilter: { ...NO_FILTER, exclusionPatterns: ['%uspGet%', '%_Archive', '%nomatch%'] },
     });
     expect(engine.init({
-      ...init, origin: qualified('Main'), direction: 'upstream', analysisMode: 'bb',
-      excludeNodeIds: [...engine.getGuiExcludedNodeIds(), qualified('Legacy')],
+      ...init, origin: normalizeName(qualified('Main')), direction: 'upstream', analysisMode: 'bb',
+      excludeNodeIds: [...engine.getGuiExcludedNodeIds(), normalizeName(qualified('Legacy'))],
     })).toMatchObject({ ok: true });
     const { exclusions } = engine.getScopeSummary();
     expect(exclusions?.rules.map(rule => [rule.pattern, rule.count])).toEqual([['%uspGet%', 2]]);
@@ -226,7 +226,7 @@ describe('approval card and full plan exclusions', () => {
       activeFilter: { ...NO_FILTER, exclusionPatterns: ['%uspGet%'] },
     });
     expect(engine.init({
-      ...init, origin: '[etl].[Main]', direction: 'upstream', analysisMode: 'bb',
+      ...init, origin: '[etl].[main]', direction: 'upstream', analysisMode: 'bb',
       excludeNodeIds: engine.getGuiExcludedNodeIds(), excludeSchemas: ['bak'], excludeTypes: ['function'],
     })).toMatchObject({ ok: true });
     const { exclusions } = engine.getScopeSummary();

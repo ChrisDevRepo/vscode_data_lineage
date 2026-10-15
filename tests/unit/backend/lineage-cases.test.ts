@@ -163,6 +163,21 @@ function check(row: LineageCase, upstream: readonly FlowColumn[]) {
 }
 
 describe('declared contributor identities', () => {
+  it.each([' value ', '[Value]', 'source.Value'])('rejects target column alias %s without rewriting it', target => {
+    const nodes = [makeNode({ id: 'root', name: 'root', schema: 'dbo', type: 'view', columns: [column('Value')] })];
+    const engine = navigationFor(nodes, []);
+    expect(engine.init({ origin: 'root', question: 'Trace Value', direction: 'upstream', depthIntent: upstreamAll, analysisMode: 'ct', targetColumns: [target] })).toHaveProperty('code', 'unknown_columns');
+    expect(engine.init({ origin: 'root', question: 'Trace Value', direction: 'upstream', depthIntent: upstreamAll, analysisMode: 'ct', targetColumns: ['Value'] })).toHaveProperty('ok', true);
+    expect(engine.columnAspect?.target_columns).toEqual(['Value']);
+  });
+  it('preserves a dotted procedure output when metadata cannot verify it', () => {
+    const nodes = [makeNode({ id: 'proc', name: 'proc', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT 1 AS [A.B];' })];
+    const engine = navigationFor(nodes, []);
+    expect(engine.init({ origin: 'proc', question: 'Trace the result', direction: 'upstream', depthIntent: upstreamAll, analysisMode: 'ct', targetColumns: ['A.B'] })).toHaveProperty('ok', true);
+    expect(engine.columnAspect?.target_columns).toEqual(['A.B']);
+    expect(engine.columnAspect?.active_columns).toEqual(['A.B']);
+  });
+
   it.each(['123', "'quoted'"])('accepts metadata column %s without interpreting it as SQL', name => {
     const result = run({ id: 'declared-identity', active: ['Value'], focus: 'root', out: 'Value', direction: 'upstream', roots: [{ node: 'root', col: 'Value' }],
       nodes: [{ id: 'root', type: 'view', columns: ['Value'] }, { id: 'source', type: 'table', columns: [name] }], expect: {},
@@ -1415,7 +1430,7 @@ describe('current task endpoints come from the engine', () => {
     const origin = '[d].[Report]';
     const nodes = [makeNode({ id: origin, schema: 'd', name: 'Report', type: 'view', columns: [column('Total')], bodyScript: 'CREATE VIEW d.Report AS SELECT 1 AS Total;' })];
     const engine = engineFor(nodes, []);
-    expect(engine.init({ origin, question: 'Trace total.', analysisMode: 'ct', targetColumns: ['total'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    expect(engine.init({ origin, question: 'Trace total.', analysisMode: 'ct', targetColumns: ['Total'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
     engine.getHopContext();
     const [task] = engine.getCurrentTasks();
     expect(engine.taskEndpoints(task)).toEqual({ assigned: [{ node: origin, col: 'Total' }], external: [] });

@@ -24,6 +24,12 @@ const labelDraft = { name: 'Pair', summary: 'Distinct sources.', highlight_group
 ] } as PresentResultInput;
 
 describe('present-result schema and provider contract', () => {
+  it('preserves authored whitespace instead of trimming valid content', () => {
+    const payload = { ...resultWith([{ label: ' Sources ', color: 'source', node_ids: [nodeId] }]),
+      name: ' Result ', summary: ' Summary. ', sections: [{ label: ' Detail ', text: ' Body. ', node_ids: [nodeId] }] };
+    expect(PresentResultModelSchema.parse(payload)).toEqual(payload);
+  });
+
   it('delivers every structurally valid group without a group-count cap', () => {
     const highlightGroups = Array.from({ length: 6 }, (_, index) => ({
       label: `Group ${index + 1}`,
@@ -39,13 +45,14 @@ describe('present-result schema and provider contract', () => {
     );
   });
 
-  it('accepts 60 trimmed characters whole and rejects 61', () => {
+  it('counts all authored characters against the label limit', () => {
     const sixty = 'x'.repeat(60);
     const accepted = PresentResultModelSchema.parse(resultWith([
-      { label: `  ${sixty}  `, color: 'source', node_ids: [nodeId] },
+      { label: sixty, color: 'source', node_ids: [nodeId] },
     ]));
 
     expect(accepted.highlight_groups[0]?.label).toBe(sixty);
+    expect(PresentResultModelSchema.safeParse(resultWith([{ label: ` ${sixty} `, color: 'source', node_ids: [nodeId] }])).success).toBe(false);
     expect(PresentResultModelSchema.safeParse(resultWith([
       { label: 'x'.repeat(61), color: 'source', node_ids: [nodeId] },
     ])).success).toBe(false);
@@ -76,7 +83,7 @@ describe('present-result schema and provider contract', () => {
     const repairSchema = presentResultRepairPatchSchemaForFields(['highlight_groups']);
     const sixty = 'x'.repeat(60);
     const groups = Array.from({ length: 6 }, (_, index) => ({
-      label: index === 0 ? ` ${sixty} ` : `Group ${index + 1}`,
+      label: index === 0 ? sixty : `Group ${index + 1}`,
       color: 'source' as const,
       node_ids: [nodeId],
     }));

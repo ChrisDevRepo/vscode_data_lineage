@@ -8,46 +8,11 @@ import { z } from 'zod';
  */
 export const ASYMMETRIC_DEPTH_BOTH_ZERO = 'asymmetric_depth_both_zero';
 
-/** Canonical unsigned-integer string shape a depth scalar decodes from. */
-const CANONICAL_DEPTH_DIGITS = /^(?:0|[1-9]\d*)$/;
-
-/**
- * Decodes a JSON-string-encoded non-negative integer (`"2"`) into its number before validation.
- *
- * @remarks
- * Only a canonical unsigned integer literal is unwrapped; every other value (`"1.5"`, `"-1"`,
- * `""`, a boolean, an object) passes through untouched so the wrapped schema's own rejection
- * surfaces unchanged. Deliberately NOT `z.coerce.number()` — that also turns `true` and `null`
- * into `1`/`0`, accepting an input whose intent was never a depth.
- * The wrapped bounds still decide the value: a top-level `"0"` remains rejected by `.min(1)`.
- *
- * @remarks
- * Callers wrap the full `levels`/`all` union with this function — never one union member alone
- * (`z.union([numericStringDepth(z.number()), z.literal('all')])`) — because Zod 4's `io: 'input'`
- * JSON Schema projection reads a union's own required-ness from the raw `optin` of each member: a
- * preprocess member's `optin` is its transform's ("optional", since a transform function accepts
- * any input), so one preprocess-wrapped member marks the whole union optional in the served schema
- * even though every member, including the wrapped one, still resolves to a required value.
- * Wrapping the union as a single preprocess input keeps the field's own `optin` resolved past the
- * transform straight to the union's members (`false`), and is transparent to `z.toJSONSchema`
- * (`io: 'input'`): the preprocess only ever forwards a canonical unsigned-integer string to the
- * number branch, so the served `anyOf` shape is unchanged.
- *
- * @param schema - The `levels`-shaped schema (a numeric bound, or a `number | 'all'` union) to wrap.
- * @returns The preprocess-wrapped schema; output type is identical to the wrapped schema.
- */
-export function numericStringDepth<T extends z.ZodType>(schema: T) {
-  return z.preprocess(
-    (value) => (typeof value === 'string' && CANONICAL_DEPTH_DIGITS.test(value) ? Number(value) : value),
-    schema,
-  );
-}
-
 /**
  * One AI-selected depth limit for a post-synthesis supplement chain — the only surviving scalar
  * depth field; `lineage_start_exploration` depth is always the per-side shape below.
  */
-export const ExplorationDepthLimitSchema = numericStringDepth(z.union([z.number().int().min(1), z.literal('all')]));
+export const ExplorationDepthLimitSchema = z.union([z.number().int().min(1), z.literal('all')]);
 
 /** One side's depth verdict: how far to start, and whether that count is a border. */
 export interface DepthSideValue {
@@ -69,7 +34,7 @@ export interface DepthSideValue {
  * the graph's own edge admit on that side.
  */
 const DepthSideSchema: z.ZodType<DepthSideValue> = z.object({
-  levels: numericStringDepth(z.union([z.number().int().min(0), z.literal('all')]))
+  levels: z.union([z.number().int().min(0), z.literal('all')])
     .describe('Starting level count for this side, or "all" for the full chain.'),
   exactness: z.enum(['exact', 'approximate'])
     .describe('"exact" is a limit the user stated, enforced as a border. "approximate" is your own estimate, shown on the plan; above 0 it does not bound the scope, which runs until the filters or the border stop it.'),

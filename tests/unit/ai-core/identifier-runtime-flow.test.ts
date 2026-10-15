@@ -79,9 +79,9 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
         let payload: Record<string, unknown>;
         if (input.tools.some(tool => tool.name === 'lineage_start_exploration')) {
           toolName = 'lineage_start_exploration';
-          payload = { origin: cs ? 'dbo.Report' : 'DBO.REPORT', analysisMode: mode, classification: 'technical',
+          payload = { origin: root, analysisMode: mode, classification: 'technical',
             depth: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
-            ...(mode === 'ct' ? { targetColumns: cs ? ['Value', 'value'] : ['[VALUE]'] } : {}),
+            ...(mode === 'ct' ? { targetColumns: cs ? ['Value', 'value'] : ['Value'] } : {}),
           };
         } else if (input.tools.some(tool => tool.name === 'lineage_submit_findings')) {
           toolName = 'lineage_submit_findings';
@@ -95,11 +95,11 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
           const active = [...new Map((engine.columnAspect?.active_columns ?? []).map(col => [normalizeColName(col, cs), col])).values()];
           const isTable = model.nodes.find(node => node.id === focus)?.type === 'table';
           const flow: ColumnFlowEntry[] = active.map(col => ({ out_col: col, upstream_columns: isTable ? [] : focus === root
-            ? (cs && col === 'value' ? [{ node: 'Sales.calc', col: 'value' }, { node: 'Sales.source', col: 'value' }]
-              : [{ node: cs ? 'Sales.Calc' : 'SALES.CALC', col: cs ? 'Value' : '[vALuE]' }, { node: cs ? 'Sales.Source' : 'sales.source', col: cs ? 'Value' : 'VALUE' }, ...(cs ? [{ node: 'sales.Source', col: 'Value' }] : [])])
-            : [{ node: focus === id('Sales.calc') && cs ? 'Sales.source' : (cs ? 'Sales.Source' : 'SALES.SOURCE'), col: cs ? col : '[VALUE]' }],
+            ? (cs && col === 'value' ? [{ node: id('Sales.calc'), col: 'value' }, { node: id('Sales.source'), col: 'value' }]
+              : [{ node: id('Sales.Calc'), col: 'Value' }, { node: id('Sales.Source'), col: 'Value' }, ...(cs ? [{ node: id('sales.Source'), col: 'Value' }] : [])])
+            : [{ node: id(focus === id('Sales.calc') && cs ? 'Sales.source' : 'Sales.Source'), col }],
           }));
-          payload = { focus_node_id: cs ? focus : focus.toUpperCase(), summary: `Records ${focus}.`, sections: { technical: `Observed ${focus} from its supplied definition.` },
+          payload = { focus_node_id: focus, summary: `Records ${focus}.`, sections: { technical: `Observed ${focus} from its supplied definition.` },
             ...(engine.currentHopAnalysisMode === 'ct' ? { column_flow: flow } : {}),
             questions: model.edges.filter(edge => edge.target === focus && !visited.includes(edge.source))
               .map(edge => ({ nodeId: edge.source, question: `Inspect ${edge.source} for the catalog identity investigation.` })),
@@ -115,7 +115,7 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
           toolName = 'lineage_present_result';
           const ids = session.resultGraph!.nodeIds;
           payload = { name: 'Catalog lineage', summary: 'Catalog dependencies and columns.',
-            sections: ids.map((nodeId, i) => ({ label: `Object ${i + 1}`, node_ids: [cs ? nodeId : nodeId.toUpperCase()], text: session.memory.getResult().detail_slots.find(slot => slot.nodeId === nodeId)?.sections.map(section => section.text).join('\n') ?? 'Source structure.' })),
+            sections: ids.map((nodeId, i) => ({ label: `Object ${i + 1}`, node_ids: [nodeId], text: session.memory.getResult().detail_slots.find(slot => slot.nodeId === nodeId)?.sections.map(section => section.text).join('\n') ?? 'Source structure.' })),
             highlight_groups: [{ label: 'Lineage', color: 'source', node_ids: ids }],
           };
         }

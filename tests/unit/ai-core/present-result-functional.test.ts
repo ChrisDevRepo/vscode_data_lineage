@@ -77,7 +77,7 @@ describe.each([false, true])('result origin closure (CS=%s)', cs => {
     const { session, services, deliverPreview, origin, source, sibling } = world(cs);
     const before = structuredClone(session.resultGraph);
     const result = JSON.parse(await executePresentResult({ name: 'Report lineage', summary: 'Report sources.', is_update: true,
-      prune_node_ids: selection === 'all' ? [origin, source, sibling] : [cs ? 'dbo.Report' : 'DBO.REPORT'],
+      prune_node_ids: selection === 'all' ? [origin, source, sibling] : [origin],
       sections: [{ label: 'Sources', node_ids: selection === 'all' ? [] : [source, sibling], text: 'Recorded report sources.' }], highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }],
     }, services));
     expect(result).toMatchObject({ code: 'validation' });

@@ -55,6 +55,24 @@ const config: ConfigFixture = {
 const emptyRequest = (): RequestFixture => ({ messages: [], tools: [], toolMode: 'auto' });
 
 describe('live provider adapter', () => {
+  it.each(['api-key', 'authorization'])('refuses cross-origin redirects before sending %s to the destination', async header => {
+    let destinationRequests = 0;
+    const destination = createServer((_req, res) => { destinationRequests++; res.end('{}'); });
+    await new Promise<void>(resolve => destination.listen(0, '127.0.0.1', resolve));
+    const target = `http://127.0.0.1:${(destination.address() as { port: number }).port}/other`;
+    const source = createServer((_req, res) => { res.writeHead(307, { location: target }); res.end(); });
+    await new Promise<void>(resolve => source.listen(0, '127.0.0.1', resolve));
+    try {
+      const endpoint = `http://127.0.0.1:${(source.address() as { port: number }).port}/provider`;
+      await expect(adapter.createProviderFetch(1000)(endpoint, { method: 'POST', headers: { [header]: 'synthetic-key' }, body: '{}' }))
+        .rejects.toThrow('Cross-origin provider redirects are not allowed');
+      expect(destinationRequests).toBe(0);
+    } finally {
+      source.closeAllConnections(); destination.closeAllConnections();
+      await Promise.all([source, destination].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
+    }
+  });
+
   it.each(['azure', 'openrouter'].flatMap(provider => ['plain', 'gzip', 'redirect'].map(response => ({ provider, response }))))(
     'uses explicit long HTTP budgets and preserves $provider authentication for $response', async ({ provider, response }) => {
     const server = createServer((req, res) => {

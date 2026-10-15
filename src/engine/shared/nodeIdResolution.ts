@@ -5,7 +5,7 @@
  * This lives under `src/engine/shared/` — the VS Code-free surface both bundles may import —
  * because the webview's AI-view reconciler needs it too. Keeping it here stops the Vite build
  * from reaching into `src/ai/**`, which is extension-host-only territory.
- * `src/ai/support/inputNormalization.ts` re-exports it so existing AI callers are unaffected.
+ * AI tool inputs use exact metadata IDs; this resolver serves catalog and saved-reference identity.
  */
 import { normalizeName } from './sqlIdentifier';
 import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';

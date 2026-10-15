@@ -79,7 +79,14 @@ function createProviderFetch(timeoutMs) {
   // Use request rather than global fetch so its hidden header deadline cannot cap slow models.
   const { Agent, request, interceptors } = require('undici');
   return async (url, init) => {
+    const allowedOrigin = new URL(url).origin;
     const dispatcher = new Agent({ connect: { timeout: Math.min(timeoutMs, 30_000) } }).compose(
+      dispatch => (options, handler) => {
+        if (new URL(options.origin).origin !== allowedOrigin) {
+          throw new Error('Cross-origin provider redirects are not allowed. Configure the final provider endpoint.');
+        }
+        return dispatch(options, handler);
+      },
       interceptors.redirect({ maxRedirections: 20 }),
       interceptors.decompress({ skipErrorResponses: false }),
     );

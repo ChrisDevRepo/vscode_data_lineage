@@ -73,6 +73,12 @@ describe('fresh kept required-field projection', () => {
     }
   });
 
+  it.each(['', '   '])('rejects an explicitly blank repair summary %j instead of retaining an older summary silently', summary => {
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false);
+    expect(schema.safeParse({ focus_node_id: 'source', summary, column_flow: [] }).success).toBe(false);
+    expect(schema.safeParse({ focus_node_id: 'source', column_flow: [] }).success).toBe(true);
+  });
+
   it('accepts held patches without resending held content', () => {
     const schema = submitFindingsSchemaForMode('ct', 'both', false);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));

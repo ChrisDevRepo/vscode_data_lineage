@@ -92,7 +92,7 @@ describe('presentation SQL-reference fence boundary', () => {
     expect(String(result.reason)).toContain('Unclosed SQL fence');
     expect(String(result.reason)).toContain('a bare triple-backtick line right after it');
     expect(session.presentationArtifact).toBeFalsy();
-    expect(session.presentResultRepairDraft.get()?.sections?.[0]?.text).toBe(malformed.trim());
+    expect(session.presentResultRepairDraft.get()?.sections?.[0]?.text).toBe(malformed);
   });
 
   it('repairs only the malformed section text in the same turn and preserves all held report controls', async () => {

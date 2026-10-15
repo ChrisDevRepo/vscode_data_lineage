@@ -5,11 +5,11 @@
  * Provider-neutral validation and assembly helpers remain in the sibling
  * `presentResult.ts`; this handler owns session persistence and the validated
  * webview effect. Raw arguments are admitted once against the same live stage/repair schema the
- * provider sees, before normalization or held-content merge. Turn-lease validation and effect
+ * provider sees, before held-content merge. Turn-lease validation and effect
  * serialization remain in the registry wrapper.
  */
 import { type AiSession } from '../../session/session';
-import { trunc, sanitizeForLog } from '../../../utils/log';
+import { trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
 import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
@@ -35,7 +35,7 @@ import {
 import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
-import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
+import { resolveModelNodeIds } from '../../support/modelReferences';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
@@ -293,44 +293,13 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // A graph edit changes the rendered view, so its ids and edges commit with it.
       let graphEdited = false;
 
-      const canonicalNodeId = (id: string, field: string): string => {
-        const resolved = resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ?? id;
-        if (resolved !== id) {
-          s.logger.debug(
-            `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(id)} to=${sanitizeForLog(resolved)}`,
-          );
-        }
-        return resolved;
-      };
-      if (Array.isArray(presentInput.sections) && presentInput.sections.length > 0) {
-        presentInput.sections = presentInput.sections.map((sec, secIndex) => {
-          if (!Array.isArray(sec.node_ids) || sec.node_ids.length === 0) return sec;
-          const normalizedNodeIds = sec.node_ids.map((id, idIndex) =>
-            canonicalNodeId(id, `sections.${secIndex}.node_ids.${idIndex}`));
-          return { ...sec, node_ids: normalizedNodeIds };
-        });
-      }
-      if (Array.isArray(presentInput.notes) && presentInput.notes.length > 0) {
-        presentInput.notes = presentInput.notes.map((note, noteIndex) => ({
-          ...note,
-          node_id: canonicalNodeId(note.node_id, `notes.${noteIndex}.node_id`),
-        }));
-      }
-      if (Array.isArray(presentInput.highlight_groups) && presentInput.highlight_groups.length > 0) {
-        presentInput.highlight_groups = presentInput.highlight_groups.map((group, groupIndex) => ({
-          ...group,
-          node_ids: group.node_ids.map((id, idIndex) =>
-            canonicalNodeId(id, `highlight_groups.${groupIndex}.node_ids.${idIndex}`)),
-        }));
-      }
-
       if (graphEditable && presentInput.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
-        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
+        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap);
         if (addResolution.unresolved.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
+            reason: `Unknown add_node_ids (copy exact metadata IDs): ${quoteIds(addResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['add_node_ids'],
           }));
@@ -357,11 +326,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       if (graphEditable && presentInput.prune_node_ids?.length) {
-        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
+        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap);
         if (pruneResolution.unresolved.length > 0) {
           return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
+            reason: `Unknown prune_node_ids (copy exact metadata IDs): ${quoteIds(pruneResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['prune_node_ids'],
           }));

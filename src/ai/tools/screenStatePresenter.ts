@@ -18,7 +18,6 @@ import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } fro
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
-import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { schemaKey } from '../../utils/sql';
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
@@ -59,8 +58,6 @@ export interface RunRecallInput {
   readonly getDdl?: (id: string, nodeIdEncodingVersion?: 2) => string | undefined;
   /** Predicate telling whether an id still exists in the loaded model. */
   readonly isInModel?: (id: string, nodeIdEncodingVersion?: 2) => boolean;
-  /** Debug sink for identifier normalization under the selected historical run's policy. */
-  readonly onIdNormalized?: (raw: string, canonical: string) => void;
   /** Whether the session holds an exploration proposal awaiting approval or refinement. */
   readonly hasPendingProposal?: boolean;
 }
@@ -355,11 +352,8 @@ function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unkn
   const snapshot = asRecord(run.snapshot);
   const slots = asRecord(asRecord(snapshot?.memory)?.detailSlots) ?? {};
   const hashes = storedHashes(run);
-  const historicalIds = new Map([...states.keys(), ...Object.keys(slots), ...Object.keys(hashes)].map(id => [id, undefined]));
   const stale = new Set(staleIds(run, input.getDdl));
-  return (input.ids ?? []).map(raw => {
-    const id = resolveModelNodeId(raw, historicalIds, snapshot?.identifierCaseSensitive === true) ?? raw;
-    if (id !== raw) input.onIdNormalized?.(raw, id);
+  return (input.ids ?? []).map(id => {
     const state = states.get(id);
     const slot = asRecord(slots[id]);
     if (!state && !slot && hashes[id] === undefined) return { id, decision: 'not_in_run' };

@@ -244,7 +244,7 @@ describe('terminal chat text through the real runtime', () => {
           payload = present(SUMMARY);
         } else if (input.tools.some(tool => tool.name === 'lineage_start_exploration')) {
           toolName = 'lineage_start_exploration';
-          payload = { origin: 'DBO.REPORT', analysisMode: 'bb', classification: 'technical',
+          payload = { origin: '[dbo].[report]', analysisMode: 'bb', classification: 'technical',
             depth: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
         } else if (input.tools.some(tool => tool.name === 'lineage_submit_findings')) {
           toolName = 'lineage_submit_findings';

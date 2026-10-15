@@ -3,8 +3,8 @@
  * Retrieval functions invoked through the shared tool registry.
  * CT and BB lifecycle tools are handled by `NavigationEngine` through `toolProvider.ts`.
  *
- * This file owns RETRIEVAL ONLY. Payload formatting lives in aiPresenter.ts; input normalization in
- * inputNormalization.ts.
+ * This file owns RETRIEVAL ONLY. Payload formatting lives in aiPresenter.ts; exact model references in
+ * modelReferences.ts.
  */
 import { bfsFromNode } from 'graphology-traversal';
 import type Graph from 'graphology';
@@ -16,15 +16,13 @@ import {
   type AnalysisType,
   type NeighborIndex,
 } from '../../engine/types';
-import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
+import { resolveModelNodeId } from '../support/modelReferences';
 import { schemaKey } from '../../utils/sql';
-import { sanitizeForLog } from '../../utils/log';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { applyIsolationFilter } from '../../engine/shared/modelFilters';
 import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
 import { executeIsolatedRegexSearch, RegexSearchExecutionError } from '../support/isolatedRegexSearch';
-import { normalizeSearchQueryInput } from '../support/inputNormalization';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import {
   strip, edgeApiType,
@@ -293,8 +291,6 @@ function validateQuery(query: string): ToolRejection | null {
  * @param schemas - Optional filter for schemas.
  * @param mode - Search mode ('substring' or 'regex').
  * @param activeFilter - Current UI filter state to tag results.
- * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `normalizeSearchQueryInput`
- * rewrites the query (e.g. `[dbo].[FactSales]` into the schema hint `dbo` and the name `FactSales`).
  * @returns A list of matches with metadata, the `by_type` breakdown of that list, and AI hints.
  */
 export async function searchObjects(
@@ -304,28 +300,19 @@ export async function searchObjects(
   schemas?: string[],
   mode: 'substring' | 'regex' = 'substring',
   activeFilter?: SerializedFilterState | null,
-  onDebug?: (msg: string) => void,
   cursor?: string,
   signal?: AbortSignal,
 ) {
   const isRegex = mode === 'regex';
-  const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
-  if (normalizedQuery.schemaHint || normalizedQuery.query !== query.trim()) {
-    onDebug?.(`[Normalize] tool=search_objects field=query from=${JSON.stringify(query)} to=${JSON.stringify(normalizedQuery.query)}${normalizedQuery.schemaHint ? ` schema_hint=${JSON.stringify(normalizedQuery.schemaHint)}` : ''}`);
-  }
-  const normalizedSchemas =
-    schemas && schemas.length > 0
-      ? schemas
-      : (normalizedQuery.schemaHint ? [normalizedQuery.schemaHint] : undefined);
-  const appliedSchemaFilter: string[] | null = normalizedSchemas && normalizedSchemas.length > 0 ? [...normalizedSchemas] : null;
+  const appliedSchemaFilter = schemas?.length ? [...schemas] : null;
   const isWildcardAllQuery = (appliedSchemaFilter?.length ?? 0) > 0
-    && WILDCARD_ALL_TOKENS.has((isRegex ? query : normalizedQuery.query).trim());
+    && WILDCARD_ALL_TOKENS.has(query);
 
-  if (!isWildcardAllQuery && normalizedQuery.query.length > REGEX_MAX_LENGTH) {
+  if (!isWildcardAllQuery && query.length > REGEX_MAX_LENGTH) {
     return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
   }
 
-  const effectiveQuery = isWildcardAllQuery ? '' : (isRegex ? normalizedQuery.query : normalizedQuery.query.trim());
+  const effectiveQuery = isWildcardAllQuery ? '' : query;
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
@@ -335,7 +322,7 @@ export async function searchObjects(
   const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
 
   if (!isRegex && !listAllInSchemas) {
-    const rejection = validateQuery(normalizedQuery.query);
+    const rejection = validateQuery(query);
     if (rejection) return rejection;
   }
 
@@ -487,11 +474,9 @@ const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact objec
  * with `cursor`; DDL and column lists are always delivered in full on the first page.
  *
  * @param model - The full database model.
- * @param id - The unique identifier of the object (e.g., "schema.name").
+ * @param id - The exact canonical identifier of the object (e.g., "[schema].[name]").
  * @param store - Optional column store for high-fidelity metadata.
  * @param cursor - Neighbour page cursor from a previous call.
- * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `id` resolves to a different
- * canonical spelling.
  * @returns A detailed object representation or a "not_found" error.
  */
 export function getObjectDetail(
@@ -499,26 +484,22 @@ export function getObjectDetail(
   id: string,
   store?: import('../../engine/columnStore').ColumnStore,
   cursor?: string,
-  onDebug?: (msg: string) => void,
 ): object {
   const nodeMap = getModelNodeMap(model);
-  const normalizedId = resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? '';
-  if (normalizedId && normalizedId !== id) {
-    onDebug?.(`[Normalize] tool=get_object_detail field=id from=${sanitizeForLog(id)} to=${sanitizeForLog(normalizedId)}`);
-  }
-  const node      = nodeMap.get(normalizedId);
+  const resolvedId = resolveModelNodeId(id, nodeMap) ?? '';
+  const node      = nodeMap.get(resolvedId);
   if (!node) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { id } });
   }
 
-  const neighbors = model.neighborIndex[normalizedId] ?? { in: [], out: [] };
+  const neighbors = model.neighborIndex[resolvedId] ?? { in: [], out: [] };
   const edgeMap   = getModelEdgeTypeMap(model);
 
   const upRaw  = neighbors.in;
   const dnRaw  = neighbors.out;
   const offset = cursorOffset(cursor);
-  const up     = upRaw.slice(offset, offset + NEIGHBOR_PAGE).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, true));
-  const dn     = dnRaw.slice(offset, offset + NEIGHBOR_PAGE).map(nid => presentNeighbor(nid, normalizedId, nodeMap, edgeMap, false));
+  const up     = upRaw.slice(offset, offset + NEIGHBOR_PAGE).map(nid => presentNeighbor(nid, resolvedId, nodeMap, edgeMap, true));
+  const dn     = dnRaw.slice(offset, offset + NEIGHBOR_PAGE).map(nid => presentNeighbor(nid, resolvedId, nodeMap, edgeMap, false));
   const upMore = Math.max(0, upRaw.length - offset - NEIGHBOR_PAGE);
   const dnMore = Math.max(0, dnRaw.length - offset - NEIGHBOR_PAGE);
   const neighborCursor = nextCursor(offset + NEIGHBOR_PAGE, Math.max(upRaw.length, dnRaw.length));
@@ -577,8 +558,6 @@ export function getObjectDetail(
  * @param input - The scope bundle input payload.
  * @param budget - The calling turn's budget, which the discovery guard is measured against.
  * @param store - Optional column store for high-fidelity metadata.
- * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `origin` resolves to a
- * different canonical spelling.
  * @returns The requested scope bundle.
  */
 export function getScopeBundle(
@@ -587,13 +566,9 @@ export function getScopeBundle(
   input: GetScopeBundleInput,
   budget: TurnTokenBudget,
   store?: import('../../engine/columnStore').ColumnStore,
-  onDebug?: (msg: string) => void,
 ): object {
   const nodeMap = getModelNodeMap(model);
-  const origin = resolveModelNodeId(input.origin, nodeMap, model.identifierCaseSensitive) ?? '';
-  if (origin && origin !== input.origin) {
-    onDebug?.(`[Normalize] tool=get_scope_bundle field=origin from=${sanitizeForLog(input.origin)} to=${sanitizeForLog(origin)}`);
-  }
+  const origin = resolveModelNodeId(input.origin, nodeMap) ?? '';
   const originNode = nodeMap.get(origin);
   if (!originNode) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: 'Call lineage_search_objects to resolve the canonical origin ID.', detail: { origin: input.origin } });
@@ -904,7 +879,7 @@ const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_
  * @param budget - The calling turn's budget, which the discovery guard is measured against.
  * @param types - Optional filter for scriptable object types.
  * @param store - Optional column store for high-fidelity DDL.
- * @param onDebug - Optional sink for a debug line when `query` is rewritten, or the result is over budget.
+ * @param onDebug - Optional sink for a debug line when the result is over budget.
  * @returns Every matching line with its object metadata, plus the per-object `by_object` counts, or
  * the empty/invalid/over-budget fact.
  */
@@ -921,7 +896,7 @@ export async function searchDdl(
     return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
   }
 
-  const compiled = compileSearchRegex(query, onDebug);
+  const compiled = compileSearchRegex(query);
   if (!compiled.ok) {
     return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(query, compiled) });
   }

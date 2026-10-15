@@ -101,17 +101,18 @@ describe('model search', () => {
     expect(invalid.ok === false && invalid.reason).toBe('syntax');
   });
 
-  it('strips a redundant leading "(?i)" and compiles the remainder', () => {
+  it('rejects an unsupported leading "(?i)" and accepts the explicit correction', () => {
     const result = compileSearchRegex('(?i)raworderimport');
-    expect(result.ok).toBe(true);
-    expect(result.ok && result.regex.test('RawOrderImport')).toBe(true);
+    expect(result.ok).toBe(false);
+    const corrected = compileSearchRegex('raworderimport');
+    expect(corrected.ok && corrected.regex.test('RawOrderImport')).toBe(true);
   });
 
-  it('strips a redundant "(?m)" or "(?im)" too, and still rejects a flag group beyond the grep flags', () => {
+  it('rejects unsupported inline flag groups without changing the pattern', () => {
     const multiline = compileSearchRegex('(?m)foo');
-    expect(multiline.ok && multiline.regex.source).toBe('foo');
+    expect(multiline.ok).toBe(false);
     const mixed = compileSearchRegex('(?im)foo');
-    expect(mixed.ok && mixed.regex.flags).toBe('im');
+    expect(mixed.ok).toBe(false);
 
     const dotAll = compileSearchRegex('(?s)foo');
     expect(dotAll.ok).toBe(false);
@@ -119,9 +120,7 @@ describe('model search', () => {
   });
 
   it('leaves the scoped "(?i:...)" form untouched — it is a different construct, not a no-op prefix', () => {
-    const normalizations: string[] = [];
-    const scoped = compileSearchRegex('(?i:foo)', msg => normalizations.push(msg));
-    expect(normalizations, 'the scoped form is not a redundant prefix — there is nothing to strip').toEqual([]);
+    const scoped = compileSearchRegex('(?i:foo)');
 
     if (MODIFIER_GROUPS_SUPPORTED) {
       expect(scoped.ok, 'this engine supports modifier groups, so the untouched pattern compiles').toBe(true);
@@ -138,15 +137,11 @@ describe('model search', () => {
     expect(bare.ok === false && bare.reason).toBe('syntax');
   });
 
-  it('reports the normalization through the provided sink instead of rewriting silently', () => {
-    const messages: string[] = [];
-    compileSearchRegex('(?i)raworderimport', msg => messages.push(msg));
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toContain('(?i)');
-
-    const unchanged: string[] = [];
-    compileSearchRegex('order', msg => unchanged.push(msg));
-    expect(unchanged).toHaveLength(0);
+  it('returns actionable syntax guidance instead of repairing the pattern', () => {
+    const pattern = '(?i)raworderimport';
+    const result = compileSearchRegex(pattern);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(regexRejectHint(pattern, result)).toContain('Remove the inline flag group');
   });
 
   it('searches and ranks catalog names case-insensitively', () => {
@@ -191,7 +186,7 @@ describe('model search', () => {
   });
 
   it('matches a compiled regex against bodies — the lineage_search_ddl contract', () => {
-    for (const pattern of ['(?i)totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
+    for (const pattern of ['totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
       const compiled = compileSearchRegex(pattern);
       expect(compiled.ok).toBe(true);
       if (!compiled.ok) return;
@@ -236,7 +231,7 @@ describe('model search', () => {
     expect(count('d.OrderID$'), '$ matches a line end').toBe(1);
     expect(count('AS.SELECT'), '. never crosses a line break').toBe(0);
     const inline = compileSearchRegex('(?im)^select');
-    expect(inline.ok && inline.regex.source, 'a redundant (?im) group is stripped, not rejected').toBe('^select');
+    expect(inline.ok).toBe(false);
   });
 
   it('does not skip a body whose first match is empty', () => {

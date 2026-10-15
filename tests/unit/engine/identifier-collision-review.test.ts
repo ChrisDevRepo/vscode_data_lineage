@@ -40,7 +40,8 @@ describe.each([false, true])('escaped identifier ownership (CS=%s)', cs => {
   });
   it('resolves current tool requests to the correct bracketed and unescaped objects', () => {
     const model = buildModel([table(escaped), table(plain)], [], undefined, undefined, true, undefined, cs);
-    expect(getObjectDetail(model, '"dbo"."a]b"')).toMatchObject({ id: escaped, name: 'a]b' });
+    expect(getObjectDetail(model, '"dbo"."a]b"')).toHaveProperty('code', 'not_found');
+    expect(getObjectDetail(model, escaped)).toMatchObject({ id: escaped, name: 'a]b' });
     expect(getObjectDetail(model, plain)).toMatchObject({ id: plain, name: 'ab' });
   });
   it('does not treat a valid current canonical ID as a legacy alias', () => {

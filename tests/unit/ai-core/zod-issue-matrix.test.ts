@@ -43,6 +43,14 @@ describe('Zod issue matrix', () => {
     expect(r.hint).toContain('Send "highlight_groups" as an array.');
   });
 
+  it('rejects valid JSON encoded as a string with type guidance, not a syntax accusation', () => {
+    const r = reject(PresentResultModelSchema, { ...render, sections: JSON.stringify(render.sections) });
+    expect(r.reason).toContain('expected array, received string');
+    expect(r.reason).not.toContain('not valid JSON');
+    expect(r.hint).toContain('Send "sections" as an array.');
+    expect(r.issuePaths).toEqual(['sections']);
+  });
+
   it('invalid_type on text that is not valid JSON: never completed, named as cut-off text', () => {
     const r = reject(PresentResultModelSchema, { ...render, sections: '[{"label":"Sources","node_ids":["dbo.a"' });
     expect(r.reason).toMatch(/received \d+ characters of text that is not valid JSON/);

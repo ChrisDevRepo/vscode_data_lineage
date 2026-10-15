@@ -41,35 +41,35 @@ function neighborWorld(cs: boolean) {
 }
 
 describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs => {
-  it('normalizes neighbor-column IDs once at the registry boundary and keeps original input', async () => {
+  it('rejects noncanonical neighbor IDs and accepts an explicit canonical retry', async () => {
     const { session, registry } = neighborWorld(cs);
     const input = { ids: cs
       ? ['Sales.Orders', '"Sales"."Orders"', '[Sales].[Orders]', 'Sales.orders']
       : ['SALES.ORDERS', '"sALES"."oRDERS"', '[SALES].[ORDERS]', 'Sales.orders'] };
     const before = structuredClone(input);
-    const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', input)));
+    expect(JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', input)))).toHaveProperty('code', 'out_of_scope_or_not_neighbor');
+    const corrected = { ids: input.ids.map(id => normalizeName(id, cs)) };
+    const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', corrected)));
     expect(result).toMatchObject({ total: 4, results: input.ids.map(id => ({ id: normalizeName(id, cs) })) });
     expect(result.results.every((entry: { error?: string }) => !entry.error)).toBe(true);
     if (cs) expect(result.results.map((entry: { columns: { n: string }[] }) => entry.columns[0].n)).toEqual(['Upper', 'Upper', 'Upper', 'lower']);
     expect(input).toEqual(before);
-    expect(session.hopLog.at(-1)?.input).toBe(input);
+    expect(session.hopLog.at(-1)?.input).toBe(corrected);
   });
 
-  it.each([['[Other].[Orders]', true], ['[Sales].[Missing]', false]] as const)('rejects unresolved or out-of-scope neighbor %s without returning columns', async (raw, found) => {
+  it.each([['[Other].[Orders]'], ['[Sales].[Missing]']] as const)('rejects unresolved or out-of-scope neighbor %s without returning columns', async (raw) => {
     const { registry } = neighborWorld(cs);
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor' });
     expect(result).not.toHaveProperty('results');
-    expect(result.detail.invalid_ids).toEqual([found ? normalizeName(raw, cs) : raw]);
+    expect(result.detail.invalid_ids).toEqual([raw]);
   });
 
-  it('preserves unresolved CS spelling in the refusal while CI accepts the case variant', async () => {
+  it('preserves the refused spelling under either catalog case policy', async () => {
     const { registry } = neighborWorld(cs);
     const raw = 'SALES.ORDERS';
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
-    expect(result).toMatchObject(cs
-      ? { code: 'out_of_scope_or_not_neighbor', detail: { invalid_ids: [raw] } }
-      : { results: [{ id: '[sales].[orders]' }] });
+    expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor', detail: { invalid_ids: [raw] } });
   });
 
   it('selects the current object type without substituting an earlier case twin', () => {
@@ -97,7 +97,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
       { fullName: '[dbo].[Report]', type: 'table' },
       { fullName: '[dbo].[report]', type: 'table' },
     ], [], undefined, undefined, true, undefined, cs);
-    const observations = ['dbo.Report', 'dbo.report', 'dbo.Report'].map((id, i) => ({
+    const observations = ['dbo.Report', 'dbo.report', 'dbo.Report'].map(id => normalizeName(id, cs)).map((id, i) => ({
       callId: `call-${i}`, toolName: 'lineage_get_object_detail', input: { id },
       result: JSON.stringify(getObjectDetail(model, id)),
     }));
@@ -166,7 +166,10 @@ it.each([undefined, false, true])('recalls historical identities using the saved
   const registry = buildAiToolRegistry(() => session, channel, () => undefined, undefined, { getStoredRun: () => run });
   const input = { ids: ['Sales.Orders', '"Sales"."orders"', 'SALES.ORDERS', 'Sales.Missing'] };
   const before = structuredClone(input);
-  const result = JSON.parse(String(await registry.invoke('lineage_get_screen_state', input)));
+  const refused = JSON.parse(String(await registry.invoke('lineage_get_screen_state', input)));
+  expect(refused.objects).toEqual(input.ids.map(id => ({ id, decision: 'not_in_run' })));
+  const corrected = { ids: historicalCs ? ['[Sales].[Orders]', '[Sales].[orders]', 'SALES.ORDERS', 'Sales.Missing'] : ['[sales].[orders]', '[sales].[orders]', '[sales].[orders]', 'Sales.Missing'] };
+  const result = JSON.parse(String(await registry.invoke('lineage_get_screen_state', corrected)));
   expect(result.objects).toEqual(historicalCs ? [
     { id: '[Sales].[Orders]', decision: 'analyze', reason: 'Upper object.', stale: false, in_current_model: false },
     { id: '[Sales].[orders]', decision: 'prune', reason: 'Lower object.', stale: false, in_current_model: false },
@@ -177,8 +180,8 @@ it.each([undefined, false, true])('recalls historical identities using the saved
     { id: 'Sales.Missing', decision: 'not_in_run' },
   ]);
   expect(input).toEqual(before);
-  expect(session.hopLog.at(-1)?.input).toBe(input);
-  expect(logs).toEqual(expect.arrayContaining([expect.stringContaining('get_screen_state id resolved raw=Sales.Orders')]));
+  expect(session.hopLog.at(-1)?.input).toBe(corrected);
+  expect(logs.some(log => log.includes('id resolved'))).toBe(false);
 });
 
 it('gives one repair per id: a highlighted id an external violation already places is not listed again', () => {

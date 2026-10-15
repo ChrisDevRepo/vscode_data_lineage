@@ -31,9 +31,7 @@ import {
 } from '../support/text';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
-import { coerceStringifiedArguments } from '../support/inputNormalization';
 import { toolCallNotationFault } from '../support/toolCallNotation';
-import { sanitizeForLog, trunc } from '../../utils/log';
 import {
   STRUCTURED_OUTPUT_TOOL,
   StructuredOutputError,
@@ -212,8 +210,7 @@ export class VscodeModelPort implements ModelPort {
             reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON,
           };
         } else {
-          const decodedArgs = this.decodeStringifiedArguments(toolName, args, toModelJsonSchema(definition.inputSchema));
-          call = { valid: true, callId, toolName, input: decodedArgs };
+          call = { valid: true, callId, toolName, input: args };
         }
         replayed.push({ callId, toolName, input: 'malformedArgs' in emittedCall ? {} : args });
         toolCalls.push(call);
@@ -275,12 +272,12 @@ export class VscodeModelPort implements ModelPort {
     if (calls.length === 0 && (message.invalid_tool_calls ?? []).some((call) => call.name === STRUCTURED_OUTPUT_TOOL)) {
       throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`);
     }
-    const decoded = calls.length === 1
-      ? this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema)
+    const payload = calls.length === 1
+      ? calls[0].args
       : undefined;
-    const notation = toolCallNotationFault(decoded);
+    const notation = toolCallNotationFault(payload);
     if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
-    const parsed = calls.length === 1 ? input.schema.safeParse(decoded) : undefined;
+    const parsed = calls.length === 1 ? input.schema.safeParse(payload) : undefined;
     if (parsed?.success) return parsed.data;
     const emptyRequiredPayload = calls.length === 1
       && isEmptyRecord(calls[0].args);
@@ -293,19 +290,8 @@ export class VscodeModelPort implements ModelPort {
     if (calls.length > 1) {
       throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`);
     }
-    const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, decoded, input.schema);
+    const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, payload, input.schema);
     throw new StructuredOutputError(reason, REJECTION_CODES.invalidStructuredOutput, hint);
-  }
-
-  /** Decodes JSON-string array/object arguments against the tool's schema and logs each decode. */
-  private decodeStringifiedArguments(toolName: string, args: unknown, jsonSchema: unknown): unknown {
-    const decoded = coerceStringifiedArguments(args, jsonSchema);
-    if (decoded.paths.length > 0) {
-      this.options.debugLog?.(
-        `[AI] tool-input-decoded tool=${toolName} paths=${trunc(sanitizeForLog(decoded.paths.join(',')), 200)}`,
-      );
-    }
-    return decoded.value;
   }
 
   /** Completes text without exposing tools. */

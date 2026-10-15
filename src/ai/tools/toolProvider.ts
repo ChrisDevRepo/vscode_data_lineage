@@ -47,7 +47,8 @@ import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/toke
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
-import { createSavedReferenceResolver, resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
+import { createSavedReferenceResolver } from '../../engine/shared/nodeIdResolution';
+import { resolveModelNodeId } from '../support/modelReferences';
 import { cursorOffset } from '../support/text';
 import { getModelNodeMap, type AiViewPreviewMessage, type ToolCaller, type ToolServices } from './handlers/toolServices';
 import type { PreviewDelivery } from '../support/chatAnswer';
@@ -324,7 +325,6 @@ class ToolHandler implements ToolServices {
           filter,
           getDdl,
           isInModel: (id, version) => savedId(id, version) !== null,
-          onIdNormalized: (raw, canonical) => this.logger.debug(`[AI] get_screen_state id resolved raw=${sanitizeForLog(raw)} resolved=${sanitizeForLog(canonical)}`),
           hasPendingProposal: sess.pendingExploration !== null,
         }), input);
       }
@@ -347,7 +347,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
       const { query, types, schemas, mode, cursor } = parsed.data;
-      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor, this.signal), input);
+      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter, cursor, this.signal), input);
     } catch (err) {
       if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
       if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
@@ -360,7 +360,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetScopeBundleInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_scope_bundle', parsed.error, input);
       const sess = this.getSession();
-      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore, msg => this.logger.debug(msg)) as Record<string, unknown>;
+      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore) as Record<string, unknown>;
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
@@ -417,7 +417,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(GetObjectDetailInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_get_object_detail', parsed.error, input);
       const { id, cursor } = parsed.data;
-      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore, cursor, msg => this.logger.debug(msg)) as Record<string, unknown>;
+      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore, cursor) as Record<string, unknown>;
 
       return this.logAndReturn('lineage_get_object_detail', detail, input);
     } catch (err) { return this.toolError('get_object_detail', err); }
@@ -476,7 +476,7 @@ class ToolHandler implements ToolServices {
       const model = this.requireModel();
       const nodeMap = getModelNodeMap(model);
       const ids = parsed.data.ids.map((raw, index) => {
-        const canonical = resolveModelNodeId(raw, nodeMap, model.identifierCaseSensitive);
+        const canonical = resolveModelNodeId(raw, nodeMap);
         if (canonical && canonical !== raw) {
           this.logger.debug(`[Normalize] tool=get_neighbor_columns field=ids.${index} from=${sanitizeForLog(raw)} to=${sanitizeForLog(canonical)}`);
         }

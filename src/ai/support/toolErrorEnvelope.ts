@@ -216,6 +216,7 @@ function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): strin
     return describeSizeIssue(issue, received) ?? issue.message;
   }
   if (issue.code === 'invalid_type' && typeof received === 'string' && /^\s*[[{]/.test(received)) {
+    try { JSON.parse(received); return baseIssueMessage(issue); } catch { /* Malformed JSON text still needs syntax guidance. */ }
     const kind = received.trimStart().startsWith('[') ? 'array' : 'object';
     return `received ${received.length} characters of text that is not valid JSON. Send it again as one complete JSON ${kind}, with line breaks inside strings written as \\n.`;
   }

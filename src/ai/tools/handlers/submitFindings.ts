@@ -2,7 +2,7 @@
  * Executes active-hop submissions for the `lineage_submit_findings` tool.
  *
  * @remarks
- * Known identity encodings are normalized before raw arguments are parsed once against the
+ * Raw arguments are parsed unchanged against the
  * current hop's served contract and converted to the internal finding. Turn-lease validation and effect serialization remain in the registry.
  */
 import { toHopFinding, submitFindingsSchemaForMode, findingRepairOrder } from '../../tools/toolSchemas';
@@ -53,8 +53,8 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         if (held) rejection.hint = [zodFieldRepairHint(parsed.error, prepared.input, schema), findingRepairOrder(held)].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, prepared.input);
       }
-      const normalizedInput = parsed.data;
-      const finding = toHopFinding(normalizedInput);
+      const validatedInput = parsed.data;
+      const finding = toHopFinding(validatedInput);
 
       const result = engine.submitFindings(finding);
       if ('code' in result) {
@@ -64,7 +64,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
             if (d.reason) s.logger.debug(`[CT] rejection: id=${d.id ?? '?'} — ${d.reason}`);
           }
         }
-        return s.logAndReturn('lineage_submit_findings', result, normalizedInput);
+        return s.logAndReturn('lineage_submit_findings', result, validatedInput);
       }
 
       const diag = engine.getHopDiagnostics();
@@ -78,6 +78,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         `tally=R${diag.tally.analyze}/P${diag.tally.passthrough}/I${diag.tally.prune} expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}${ctSuffix}`
       );
 
-      return s.logAndReturn('lineage_submit_findings', acknowledgeCommittedHop(engine, s, finding.focus_node_id, result), normalizedInput);
+      return s.logAndReturn('lineage_submit_findings', acknowledgeCommittedHop(engine, s, finding.focus_node_id, result), validatedInput);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

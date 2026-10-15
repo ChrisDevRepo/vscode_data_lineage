@@ -4,6 +4,8 @@ The first part is for users who change how `@lineage` writes answers; the second
 
 ## Customize output templates
 
+Tools validate arguments without rewriting them. Copy object IDs exactly from tool results, send arrays and objects as JSON values rather than strings, and use numeric values for numeric depth fields. Rejections identify the field to repair; accepted prose is retained verbatim.
+
 Output templates control the tone, structure and detail of `@lineage` answers, not which objects it visits or how results are validated.
 
 1. Run **Data Lineage: Create AI Output Templates** from the Command Palette. It copies the built-in templates to `aiOutputTemplates.yaml` in the first workspace folder.

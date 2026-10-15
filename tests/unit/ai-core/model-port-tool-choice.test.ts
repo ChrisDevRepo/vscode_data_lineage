@@ -70,6 +70,28 @@ describe('VscodeModelPort tool-choice projection', () => {
   });
 });
 
+describe('model payload identity', () => {
+  it.each(['["A","B"]', 'null', '{"name":"A"}', '{"name":"cut', '{"name":"raw\nline"}', '{"name":"A"', '["A","B"', '{"name":"A"} trailing', 'nul'])('passes %s unchanged to the tool validator and rejects it as structured data', async raw => {
+    const schema = z.object({ values: z.union([z.array(z.string()), z.object({ name: z.string() })]).nullable(), name: z.string().nullable() }).strict();
+    const payload = { values: raw, name: 'null' };
+    const sendRequest = vi.fn(async (_messages: unknown, options: { tools?: Array<{ name: string }> }) => ({
+      stream: { async *[Symbol.asyncIterator]() {
+        yield new vscode.LanguageModelToolCallPart('call-1', options.tools![0].name, payload);
+      } },
+    }));
+    const port = new VscodeModelPort({ id: 'synthetic', name: 'synthetic', vendor: 'test', family: 'test', version: '1',
+      maxInputTokens: 128000, countTokens: async () => 1, sendRequest } as never);
+    const result = await port.generateToolTurn({ messages: [new HumanMessage('question')],
+      tools: [{ name: 'lineage_example', description: 'Example.', inputSchema: schema }], toolChoice: 'auto', phase: 'test' });
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.toolCalls[0].input).toEqual(payload);
+      expect(schema.safeParse(result.toolCalls[0].input).success).toBe(false);
+    }
+    await expect(port.generateStructured({ messages: [new HumanMessage('question')], schema })).rejects.toMatchObject({ code: 'invalid_structured_output' });
+  });
+});
+
 describe('emittedToolCalls', () => {
   it('keeps every call in order when the stream chunks cannot be paired with the calls', () => {
     const message = {

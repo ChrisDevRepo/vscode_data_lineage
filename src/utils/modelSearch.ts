@@ -117,47 +117,18 @@ export interface OversizedLineHit {
 const SEARCH_REGEX_FLAGS = 'im';
 
 /**
- * Strips a leading inline-flag group whose flags are a subset of {@link SEARCH_REGEX_FLAGS}.
- *
- * @param pattern - The raw regex string as received.
- * @returns The pattern with the redundant group removed, or `null` when there is nothing to strip.
- *
- * @remarks
- * `compileSearchRegex` always compiles with `i` and `m`, so a leading `(?i)`, `(?m)` or `(?im)` asks
- * for behavior already in force — a lossless no-op to strip. Any other flag letter, and the scoped
- * form `(?i:...)`, are left untouched and reach the engine byte-for-byte, since rewriting the scoped
- * form would require re-deriving the subgroup boundary. When the group is the entire pattern,
- * stripping it would leave an empty regex that matches every string, so that case is left unstripped
- * on purpose and falls through to the normal syntax rejection below.
- */
-function stripRedundantInlineFlags(pattern: string): string | null {
-  const match = /^\(\?([im]+)\)/.exec(pattern);
-  if (!match) return null;
-  const rest = pattern.slice(match[0].length);
-  return rest.length > 0 ? rest : null;
-}
-
-/**
  * Compiles the syntax of a search pattern into a regular expression with grep's flags ({@link SEARCH_REGEX_FLAGS}).
  *
  * @param pattern - The raw regex string to compile.
- * @param onNormalize - Optional sink for a debug line when a redundant flag group is stripped.
  * @returns The compiled regex, or the rejection reason {@link regexRejectHint} turns into advice.
  *
  * @remarks
- * Does not execute the pattern or classify its runtime cost. A
- * redundant leading `(?i)`/`(?m)`/`(?im)` is normalized away before compiling rather than rejected —
- * see {@link stripRedundantInlineFlags} for what qualifies and why.
+ * Compiles the supplied pattern unchanged. Unsupported syntax is returned for agent repair.
  */
-export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) => void): SearchRegexResult {
-  const stripped = stripRedundantInlineFlags(pattern);
-  const effectivePattern = stripped ?? pattern;
-  if (stripped !== null) {
-    onNormalize?.(`compileSearchRegex: stripped redundant inline flag group (flags "${SEARCH_REGEX_FLAGS}" are already in force) — pattern="${pattern}" -> "${stripped}"`);
-  }
+export function compileSearchRegex(pattern: string): SearchRegexResult {
   let regex: RegExp;
   try {
-    regex = new RegExp(effectivePattern, SEARCH_REGEX_FLAGS);
+    regex = new RegExp(pattern, SEARCH_REGEX_FLAGS);
   } catch (err) {
     return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
   }
@@ -171,11 +142,6 @@ export function compileSearchRegex(pattern: string, onNormalize?: (msg: string) 
  * @param rejection - The refusal, carrying the reason and — for a syntax failure — V8's `SyntaxError`.
  * @returns A hint describing the concrete repair.
  *
- * @remarks
- * A redundant `(?i)`/`(?m)`/`(?im)` never reaches this function: `compileSearchRegex` strips it
- * before compiling, so what lands here asks for semantics the engine does not otherwise apply, or
- * syntax it does not recognize at all — which forms those are is the engine's answer, not a fixed
- * list, so the advice below is keyed on V8's own message.
  */
 export function regexRejectHint(pattern: string, rejection: SearchRegexRejection): string {
   const message = rejection.error.message;

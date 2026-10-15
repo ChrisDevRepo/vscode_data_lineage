@@ -15,11 +15,11 @@ import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../suppo
 import { edgeApiType, presentColumnCompact } from '../support/aiPresenter';
 import { analyzeRemoval, bfsReachable, type LogFn, type RemovalAnalysis } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
-import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
+import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey } from '../../utils/sql';
 import { AiMemoryManager, type DetailSlot, type IncomingQuestion, type WorkingMemory } from '../session/memoryManager';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
-import { resolveModelNodeId } from '../support/inputNormalization';
+import { resolveModelNodeId } from '../support/modelReferences';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
@@ -630,7 +630,7 @@ export class NavigationEngine implements IHopStateMachine {
    *   pass on: a revisit credits the angles already archived.
    */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
-    const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(incoming.focus_node_id);
+    const inFocus = incoming.focus_node_id;
     const held = inFocus === this.currentFocusNodeId ? this.heldDraftOfCurrentFocus() : null;
     if (!held) {
       if (incoming.sections.length === 0 && !incoming.summary.trim()) {
@@ -679,7 +679,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
     const raw = input as Record<string, unknown> & { focus_node_id?: unknown };
     if (typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
-    const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id);
+    const focus = raw.focus_node_id;
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
     const sent: HopFindingKept = {
       focus_node_id: raw.focus_node_id,
@@ -704,7 +704,7 @@ export class NavigationEngine implements IHopStateMachine {
     const draft: HopFindingKept = {
       focus_node_id: finding.focus_node_id,
       sections: fields.has('sections') ? [] : finding.sections.filter(section => !angles.has(angleKey(section))),
-      summary: fields.has('summary') ? '' : finding.summary.trim(),
+      summary: fields.has('summary') ? '' : finding.summary,
     };
     for (const field of HELD_FIELDS) {
       if (field !== 'summary' && !fields.has(field) && finding[field] !== undefined) Object.assign(draft, { [field]: structuredClone(finding[field]) });
@@ -904,7 +904,7 @@ export class NavigationEngine implements IHopStateMachine {
     reason: SmNodeStateReason,
     meta: { columns?: string[]; columnRole?: SmNodeColumnRole; viaNodeId?: string; atHop?: number } = {},
   ): void {
-    const id = resolveModelNodeId(nodeId, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(nodeId);
+    const id = resolveModelNodeId(nodeId, this.nodeMap) ?? this.identifierKey(nodeId);
     if (!this.nodeMap.has(id)) return;
 
     const rank = (a: SmNodeAction): number => {
@@ -1032,106 +1032,13 @@ export class NavigationEngine implements IHopStateMachine {
     return this.tracer?.state ?? null;
   }
 
-  /**
-   * Engine code for a CT target list that names objects instead of columns, emitted by the
-   * CT-target adoption site {@link init}.
-   */
-  private static readonly TARGET_COLUMNS_NAME_OBJECTS = 'target_columns_name_objects';
-
-  /**
-   * CT target entries that resolve to loaded-model node ids — object references, never columns.
-   *
-   * @remarks
-   * An object id adopted as a tracked column locks an unwinnable CT session (every real column
-   * submitted is rejected `out_col_not_on_node`). Detection is exact: {@link resolveModelNodeId}
-   * only matches schema-qualified two-part spellings, so bare/three-part column names never false-match.
-   */
-  private nodeRefColumnTargets(columns: readonly string[]): string[] {
-    return columns.filter((column) => resolveModelNodeId(column, this.nodeMap, this.model.identifierCaseSensitive) !== null);
-  }
-
-  /**
-   * Reject envelope for a CT target list containing object references. Verb-led, with both
-   * legitimate alternatives built in so the model never has to guess: BB for the object, real
-   * columns for CT.
-   */
-  private rejectNodeRefColumnTargets(nodeRefs: string[]): ToolRejection {
-    return makeRejection({
-      code: NavigationEngine.TARGET_COLUMNS_NAME_OBJECTS,
-      hint: `targetColumns [${nodeRefs.join(', ')}] resolve to objects in the loaded model, not columns. To trace an object, resend without targetColumns and analysisMode "bb". To trace columns, name the user-named columns of the origin instead.`,
-    });
-  }
-
-  /**
-   * Matches requested CT column strings against a node's declared columns (case/bracket-insensitive
-   * exact name or dotted-suffix). When the node exposes no column metadata, every requested entry
-   * is accepted as a bare, deduped name — procedures/functions may write columns elsewhere, so
-   * absence of local columns is not proof that the target is absent there, and `unmatched` stays
-   * empty in that case. `unmatched` is populated only when the node *does* declare columns and a
-   * requested entry matches none of them — the signal a fresh CT origin uses to reject a foreign
-   * column instead of silently dropping it.
-   */
+  /** Matches exact declared column names; missing metadata cannot justify rewriting a target. */
   private matchColumnsToNode(nodeId: string, columns: string[]): { resolved: string[]; unmatched: string[] } {
-    const nodeColumns = getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? [];
-    if (nodeColumns.length === 0) {
-      const bare: string[] = [];
-      const seen = new Set<string>();
-      for (const requested of columns) {
-        const name = stripBrackets(splitSqlName(requested).pop() ?? requested).trim();
-        const key = this.columnKey(name);
-        if (name.length === 0 || seen.has(key)) continue;
-        seen.add(key);
-        bare.push(name);
-      }
-      return { resolved: bare, unmatched: [] };
-    }
-    const byNorm = new Map<string, string>(nodeColumns.map((c) => [this.columnKey(c.name), c.name]));
-    const resolved: string[] = [];
-    const unmatched: string[] = [];
-    for (const requested of columns) {
-      const exact = byNorm.get(this.columnKey(requested));
-      const lastSegment = requested.split('.').pop() ?? requested;
-      const suffix = exact === undefined ? byNorm.get(this.columnKey(lastSegment)) : undefined;
-      const match = exact ?? suffix;
-      if (match !== undefined) {
-        if (!resolved.includes(match)) resolved.push(match);
-      } else {
-        unmatched.push(requested);
-      }
-    }
-    return { resolved, unmatched };
-  }
-
-  /**
-   * Names a requested CT target explicitly qualified to a *different* loaded node
-   * (`Table.Column`, `[schema].[Table].[Column]`, …) — proof the model itself named another
-   * object, not merely a bare name that happens to also appear elsewhere. Used only by the
-   * fresh/refine CT origin validation in {@link init}; a bare, unqualified name keeps
-   * {@link matchColumnsToNode}'s charitable bare-acceptance for a column-metadata-less origin
-   * untouched — a procedure may legitimately write out a column declared on a table it reads.
-   * A qualifier the origin itself satisfies (its name, and its schema when one is given) is never
-   * foreign, even when another schema holds a same-named object.
-   */
-  private explicitlyForeignColumns(originNodeId: string, requested: readonly string[]): string[] {
-    const origin = this.nodeMap.get(originNodeId);
-    const foreign: string[] = [];
-    for (const raw of requested) {
-      const parts = splitSqlName(raw).map((part) => stripBrackets(part).trim()).filter((part) => part.length > 0);
-      if (parts.length < 2) continue;
-      const qualifier = this.columnKey(parts[parts.length - 2]);
-      const schemaQualifier = parts.length >= 3 ? this.columnKey(parts[parts.length - 3]) : null;
-      const names = (node: LineageNode): boolean => this.columnKey(node.name) === qualifier
-        && (schemaQualifier === null || this.columnKey(node.schema) === schemaQualifier);
-      if (origin && names(origin)) continue;
-      for (const [otherId, node] of this.nodeMap) {
-        if (otherId === originNodeId) continue;
-        if (names(node)) {
-          foreign.push(raw);
-          break;
-        }
-      }
-    }
-    return foreign;
+    const declared = new Set((getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name));
+    return {
+      resolved: columns.filter(column => declared.size === 0 || declared.has(column)),
+      unmatched: columns.filter(column => declared.size > 0 && !declared.has(column)),
+    };
   }
 
   /**
@@ -1627,7 +1534,7 @@ export class NavigationEngine implements IHopStateMachine {
     const originNode = this.originNodeId ? this.nodeMap.get(this.originNodeId) : undefined;
     const originLabel = originNode ? `${originNode.schema}.${originNode.name}` : (this.originNodeId ?? '');
     const canonicalNodeId = (id: string): string => {
-      const key = resolveModelNodeId(id, this.nodeMap, this.model.identifierCaseSensitive) ?? id;
+      const key = resolveModelNodeId(id, this.nodeMap) ?? id;
       const node = this.nodeMap.get(key);
       return node ? `${quoteIdentifier(node.schema)}.${quoteIdentifier(node.name)}` : key;
     };
@@ -1679,7 +1586,7 @@ export class NavigationEngine implements IHopStateMachine {
     const rules = this.guiExclusionRules.map(rule => ({ pattern: rule.pattern, ...group() }));
     const named = group();
     for (const id of this.excludedNodeIds) {
-      const node = this.nodeMap.get(resolveModelNodeId(id, this.nodeMap, this.model.identifierCaseSensitive) ?? id);
+      const node = this.nodeMap.get(resolveModelNodeId(id, this.nodeMap) ?? id);
       if (!node) continue;
       if (this.excludedSchemas.has(this.identifierKey(node.schema))) continue;
       if (node.type && this.excludedTypes.has(node.type.toLowerCase())) continue;
@@ -1815,7 +1722,7 @@ export class NavigationEngine implements IHopStateMachine {
     const wasRefine = this.initSnapshot !== null;
     const prevScopeSize = this.scopeNodeIds.size;
 
-    const resolveId = (raw: string): string | null => resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
+    const resolveId = (raw: string): string | null => resolveModelNodeId(raw, this.nodeMap);
     const partition = (raws: string[]): { resolved: string[]; unresolved: string[] } => {
       const resolved: string[] = [];
       const unresolved: string[] = [];
@@ -1835,7 +1742,7 @@ export class NavigationEngine implements IHopStateMachine {
           ...(excludeIds.unresolved.length > 0 ? [`excludeNodeIds not in the loaded model: ${excludeIds.unresolved.join(', ')}`] : []),
           ...(passIds.unresolved.length > 0 ? [`passNodeIds not in the loaded model: ${passIds.unresolved.join(', ')}`] : []),
         ].join('; '),
-        hint: "These ids don't exist in the loaded model after bracket/case normalization. Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
+        hint: "These exact ids don't exist in the loaded model. Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
         detail: { unresolved_excludeNodeIds: excludeIds.unresolved, unresolved_passNodeIds: passIds.unresolved },
       });
     }
@@ -1843,11 +1750,13 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[NL] excludeNodeIds resolved=[${trunc(excludeIds.resolved, LOG_TRUNC_LIST)}] passNodeIds resolved=[${trunc(passIds.resolved, LOG_TRUNC_LIST)}]`);
     }
 
-    const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap, this.model.identifierCaseSensitive);
+    const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap);
     const originNode = resolvedOriginId ? this.nodeMap.get(resolvedOriginId) : null;
     if (!originNode) {
       return makeRejection({
         code: 'origin_not_found',
+        reason: 'origin must exactly match a loaded object ID.',
+        issuePaths: ['origin'],
         hint: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns.',
       });
     }
@@ -1856,20 +1765,16 @@ export class NavigationEngine implements IHopStateMachine {
     const effectiveTargetColumns = analysisMode === 'ct' ? params.targetColumns : undefined;
     let resolvedActiveColumns: string[] = [];
     if (analysisMode === 'ct' && effectiveTargetColumns && effectiveTargetColumns.length > 0) {
-      const nodeRefs = this.nodeRefColumnTargets(effectiveTargetColumns);
-      if (nodeRefs.length > 0) {
-        this.log('debug', `[AI] [CT] target columns [${trunc(nodeRefs.join(','), 120)}] resolve to objects, not columns — rejecting start`);
-        return this.rejectNodeRefColumnTargets(nodeRefs);
-      }
       const declared = getNodeColumns(originNode.id, this.nodeMap, this.store ?? undefined) ?? [];
       const { resolved, unmatched } = this.matchColumnsToNode(originNode.id, effectiveTargetColumns);
-      const explicitlyForeign = this.explicitlyForeignColumns(originNode.id, effectiveTargetColumns);
-      if (resolved.length === 0 || unmatched.length > 0 || explicitlyForeign.length > 0) {
+      if (resolved.length === 0 || unmatched.length > 0) {
         const declaredNames = declared.map((c) => c.name);
-        const offending = unmatched.length > 0 ? unmatched : (explicitlyForeign.length > 0 ? explicitlyForeign : effectiveTargetColumns);
+        const offending = unmatched.length > 0 ? unmatched : effectiveTargetColumns;
         this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] offending=[${offending.join(',')}] not on origin ${originNode.id} — rejecting (no partial-trace fallback)`);
         return makeRejection({
           code: 'unknown_columns',
+          reason: 'targetColumns must name exact declared columns of the origin.',
+          issuePaths: effectiveTargetColumns.flatMap((column, index) => offending.includes(column) ? [`targetColumns.${index}`] : []),
           hint: declaredNames.length > 0
             ? `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}. Its columns are: [${declaredNames.join(', ')}]. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
             : `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}, which exposes no column metadata of its own. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`,
@@ -2068,7 +1973,7 @@ export class NavigationEngine implements IHopStateMachine {
     const skipped: SupplementSkip[] = [];
     const candidates: LineageNode[] = [];
     for (const raw of nodeIds) {
-      const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
+      const id = resolveModelNodeId(raw, this.nodeMap);
       const node = id ? this.nodeMap.get(id) : undefined;
       if (node && this.checkBorder(node.id, node, 'supplement').kind !== 'excluded') candidates.push(node);
     }
@@ -2153,7 +2058,7 @@ export class NavigationEngine implements IHopStateMachine {
     const result: string[] = [...nodeIds];
     const seen = new Set(nodeIds.map(id => this.identifierKey(id)));
     for (const raw of nodeIds) {
-      const start = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
+      const start = resolveModelNodeId(raw, this.nodeMap);
       if (!start || !this.graph.hasNode(start)) continue;
       bfsFromNode(this.graph, start, (key, _attr, depth) => {
         if (key === start) return false;
@@ -2262,7 +2167,7 @@ export class NavigationEngine implements IHopStateMachine {
     // Validate every selected task before any target is unpruned or queued.
     const refused: string[] = [];
     const prepared = requested.map(request => {
-      const id = resolveModelNodeId(request.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
+      const id = resolveModelNodeId(request.nodeId, this.nodeMap);
       const selectedTask = request.taskId ? this.taskLedger.getTask(request.taskId) : undefined;
       const recovered = id && admittedIds.has(id) ? this.supplementCarryFor(id, selectedTask) : { kind: 'row_role_only' } as ColumnCarry;
       if (typeof recovered === 'string') refused.push(`${id} (${recovered === 'no_qualified_task' ? 'no qualified task' : 'scalar binding unresolved'})`);
@@ -2289,7 +2194,7 @@ export class NavigationEngine implements IHopStateMachine {
     const skippedDetails: SupplementSkip[] = [...admission.skipped];
     for (const request of prepared) {
       const raw = request.nodeId;
-      const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
+      const id = resolveModelNodeId(raw, this.nodeMap);
       if (!id) {
         this.log('debug', `[Supplement] refuse hop=${this.hopCount} id=${raw} reason=unresolved`);
         skippedDetails.push({ nodeId: raw, reason: 'unresolved' });
@@ -2575,7 +2480,7 @@ export class NavigationEngine implements IHopStateMachine {
       detail: { current_status: this._status },
     });
     const focusId = typeof rawFocusId === 'string'
-      ? resolveModelNodeId(rawFocusId, this.nodeMap, this.identifierCaseSensitive) ?? this.identifierKey(rawFocusId) : undefined;
+      ? resolveModelNodeId(rawFocusId, this.nodeMap) ?? undefined : undefined;
     if (!focusId || !this.nodeMap.has(focusId)) return makeRejection({
       code: REJECTION_CODES.invalidInput,
       reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
@@ -2824,7 +2729,7 @@ export class NavigationEngine implements IHopStateMachine {
           for (const [index, entry] of finding.column_flow.entries()) {
             if (entrySides && !entrySides.some(side => side.index === index && side.upstream)) continue;
             for (const ref of entry.upstream_columns) {
-              const nid = resolveModelNodeId(ref.node, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(ref.node);
+              const nid = resolveModelNodeId(ref.node, this.nodeMap) ?? this.identifierKey(ref.node);
               if (!attachedUpstream.has(endpointKey(nid, ref.col)) || terminated.has(endpointKey(nid, ref.col))) continue;
               addCarry(nid, { node: nid, col: ref.col }, 'upstream');
               if (!flowQuestionByNode.has(nid)) {
@@ -2844,7 +2749,7 @@ export class NavigationEngine implements IHopStateMachine {
             if (focusId !== this.originNodeId && entry.upstream_columns.length === 0) {
               continue;
             }
-            const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.model.identifierCaseSensitive);
+            const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
             if (!resolved) continue;
             const output = { node: resolved.attributionTo, col: resolved.attributionCol };
             const outputKey = endpointKey(output.node, output.col);
@@ -2877,7 +2782,7 @@ export class NavigationEngine implements IHopStateMachine {
 
       const pruneTargets = (finding.prune_neighbors ?? []).map((prune, index) => ({
         raw: prune.id,
-        resolved: resolveModelNodeId(prune.id, this.nodeMap, this.model.identifierCaseSensitive),
+        resolved: resolveModelNodeId(prune.id, this.nodeMap),
         path: `prune_neighbors.${index}.id`,
       }));
       const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? this.identifierKey(t.raw)));
@@ -2886,7 +2791,7 @@ export class NavigationEngine implements IHopStateMachine {
       const requested = new Set<string>();
       const focusNeighborIds = this.graph.hasNode(focusId) ? new Set(this.graph.neighbors(focusId)) : new Set<string>();
       (finding.questions ?? []).forEach((q, index) => {
-        const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
+        const nid = resolveModelNodeId(q.nodeId, this.nodeMap);
         if (!nid) {
           invalidRoutes.push({ kind: 'question_not_neighbor', id: q.nodeId, path: `questions.${index}.nodeId`, reason: `Object \`${q.nodeId}\` is not in the loaded model.` });
           return;
@@ -2997,7 +2902,7 @@ export class NavigationEngine implements IHopStateMachine {
           ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node` })),
         ];
         for (const ref of refs) {
-          const nid = resolveModelNodeId(ref.node, this.nodeMap, this.model.identifierCaseSensitive);
+          const nid = resolveModelNodeId(ref.node, this.nodeMap);
           const node = nid ? this.nodeMap.get(nid) : undefined;
           if (!nid || !node || nid === focusId || this.scopeNodeIds.has(nid) || this.visited.has(nid) || acceptedNids.has(nid)) continue;
           const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
@@ -3027,7 +2932,7 @@ export class NavigationEngine implements IHopStateMachine {
         const accounted = new Set(terminated);
         for (const entry of submittedFlow) {
           accounted.add(endpointKey(focusId, entry.out_col));
-          const target = entry.returns_to ?? resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive);
+          const target = entry.returns_to ?? resolveColumnFlowTarget(entry, focusId, this.nodeMap);
           if (target) accounted.add('node' in target ? endpointKey(target.node, target.col) : endpointKey(target.attributionTo, target.attributionCol));
           for (const ref of entry.upstream_columns) {
             const key = endpointKey(ref.node, ref.col);
@@ -3216,8 +3121,8 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const pruneReasons = new Map((finding.prune_neighbors ?? []).flatMap(prune => {
-      const id = resolveModelNodeId(prune.id, this.nodeMap, this.model.identifierCaseSensitive);
-      return id && prune.reason.trim() ? [[id, prune.reason.trim()] as const] : [];
+      const id = resolveModelNodeId(prune.id, this.nodeMap);
+      return id && prune.reason.trim() ? [[id, prune.reason] as const] : [];
     }));
     for (const nid of prunedNeighborNids) {
       const reason = pruneReasons.get(nid);
@@ -3339,7 +3244,7 @@ export class NavigationEngine implements IHopStateMachine {
    * supplement would admit — without changing the engine. A supplement selects no starting columns.
    */
   public measureSupplementScope(nodeIds: readonly string[], chain?: SupplementChain): ProposedScope {
-    const ids = (chain ? this.expandSupplementChain(nodeIds, chain) : [...nodeIds]).map(raw => resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive) ?? raw);
+    const ids = (chain ? this.expandSupplementChain(nodeIds, chain) : [...nodeIds]).map(raw => resolveModelNodeId(raw, this.nodeMap) ?? raw);
     const seen = new Set(ids);
     for (let index = 0; index < ids.length; index++) {
       const node = this.nodeMap.get(ids[index]!);

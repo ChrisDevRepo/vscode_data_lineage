@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { edgeApiType } from '../support/aiPresenter';
 import { normalizeColName, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { getNodeColumns } from '../support/graphUtils';
-import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
+import { resolveModelNodeId } from '../support/modelReferences';
 import type { ScalarReturnTarget } from './smTypes';
 
 /** Keeps every qualified part, so a remote reference cannot collapse onto a local scalar identity. */
@@ -21,7 +21,7 @@ export function resolveScalarReturnTarget(
 ): ScalarReturnTarget | null {
   const identity = (name: string): string => referenceKey(name, identifierCaseSensitive);
   const fn = nodeMap.get(functionId);
-  const callerId = resolveModelNodeId(target.node, nodeMap, identifierCaseSensitive);
+  const callerId = resolveModelNodeId(target.node, nodeMap);
   if (fn?.type !== 'function' || !callerId || callerId === functionId || identity(target.node) !== identity(callerId)) return null;
   const column = getNodeColumns(callerId, nodeMap, store ?? undefined)?.find(value => normalizeColName(value.name, identifierCaseSensitive) === normalizeColName(target.col, identifierCaseSensitive));
   if (!column?.expressionDependencies?.some(dependency =>
@@ -39,7 +39,7 @@ export function uniqueScalarReturnTargets(targets: readonly ScalarReturnTarget[]
 export function resolveFunctionCallerTarget(functionId: string, target: ScalarReturnTarget, nodeMap: Parameters<typeof getNodeColumns>[1], model: { readonly identifierCaseSensitive?: boolean; readonly edges: readonly { readonly source: string; readonly target: string; readonly type: Parameters<typeof edgeApiType>[0] }[] }, store?: Parameters<typeof getNodeColumns>[2] | null): ScalarReturnTarget | null {
   const identity = (name: string): string => referenceKey(name, model.identifierCaseSensitive === true);
   const fn = nodeMap.get(functionId);
-  const callerId = resolveModelNodeId(target.node, nodeMap, model.identifierCaseSensitive);
+  const callerId = resolveModelNodeId(target.node, nodeMap);
   if (fn?.type !== 'function' || !callerId || callerId === functionId || identity(target.node) !== identity(callerId)) return null;
   if (!model.edges.some(edge => edge.source === functionId && edge.target === callerId && edgeApiType(edge.type, fn.type) === 'read')) return null;
   const column = getNodeColumns(callerId, nodeMap, store ?? undefined)?.find(value => normalizeColName(value.name, model.identifierCaseSensitive) === normalizeColName(target.col, model.identifierCaseSensitive));

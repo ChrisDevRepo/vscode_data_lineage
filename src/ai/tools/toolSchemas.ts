@@ -3,13 +3,11 @@
  * Zero VS Code imports — pure schema definitions.
  */
 import { z } from 'zod';
-import { resolveModelNodeId } from '../support/inputNormalization';
-import { normalizeColName } from '../../utils/sql';
+import { resolveModelNodeId } from '../support/modelReferences';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
   ExplorationDepthSelectionSchema,
-  numericStringDepth,
 } from '../../engine/shared/explorationDepthContract';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
@@ -21,7 +19,7 @@ import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } f
  * A column identifier named by the user. Wildcards are rejected at the boundary: a
  * wildcard target column locks an unwinnable CT session because no real column can match it.
  */
-export const ColumnIdentifierSchema = z.string().trim().min(1).regex(/^[^*%?]+$/, 'wildcards are not column identifiers').describe(
+export const ColumnIdentifierSchema = z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1).regex(/^[^*%?]+$/, 'wildcards are not column identifiers').describe(
   'A field of a table or view that the user named verbatim; a column trace starts only when at least one such column is named. Wildcards are rejected at the boundary.',
 );
 
@@ -367,8 +365,8 @@ export const StartExplorationProviderInputSchema = z.union([
   StartRefineProviderSchema,
   StartSupplementProviderSchema,
 ]);
-/** A `get_scope_bundle` depth: a non-negative integer, a canonical digit string, or `"all"`. */
-const ScopeDepthSchema = numericStringDepth(z.union([z.number().int().min(0), z.literal('all')]));
+/** A `get_scope_bundle` depth: a non-negative integer or `"all"`. */
+const ScopeDepthSchema = z.union([z.number().int().min(0), z.literal('all')]);
 const ScopeOriginSchema = z.string().min(1).describe('Canonical object ID at the center of the requested lineage scope.');
 const ScopeIncludeDdlSchema = z.boolean().optional().describe('Whether to include SQL bodies for nodes in the returned scope.');
 
@@ -753,7 +751,9 @@ function finalizeSubmitFindingsSchema(
         : { anyOf: CLASSIFICATION_KEPT_ANGLES.both.map(angle => ({ required: [angle] })) })
         .optional().describe(schema.shape.sections.description ?? ''),
     }).strict()
-    : schema;
+    : schema.extend({
+      summary: schema.shape.summary.unwrap().regex(/\S/, 'A supplied summary must contain non-whitespace text.').optional(),
+    }).strict();
   const validated = source
     .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification))) as z.ZodType<FlatSubmitFindings>;
   if (!fresh) return validated;
@@ -849,8 +849,7 @@ export interface SubmitFindingsHopColumns {
 
 /**
  * Advertises the hop's metadata-eligible contributor ids as the served `node` enum while
- * admitting the equivalent spellings ({@link resolveModelNodeId}) the engine itself resolves,
- * so normalized object references keep passing the boundary a columnless function cannot.
+ * requiring the exact supplied spelling; a columnless function is not a column source.
  */
 function columnSourceNodeSchema(sources: readonly string[]) {
   const resolvable = new Map(sources.map(id => [id, id] as const));
@@ -865,8 +864,8 @@ function terminatedInputsSchemaForHop(hop?: SubmitFindingsHopColumns) {
   if (!hop?.incomingRefs) return TerminatedInputsSchema;
   const nodes = new Map(hop.incomingRefs.map(ref => [ref.node, ref.node]));
   const endpoints = hop.incomingRefs.map(ref => ColumnFlowWritesToObject.extend({
-    node: z.string().refine(value => resolveModelNodeId(value, nodes, hop.identifierCaseSensitive) === ref.node, 'Name this incoming object.').meta({ enum: [ref.node] }),
-    col: z.string().refine(value => normalizeColName(value, hop.identifierCaseSensitive) === normalizeColName(ref.col, hop.identifierCaseSensitive), 'Name this incoming column.').meta({ enum: [ref.col] }),
+    node: z.string().refine(value => resolveModelNodeId(value, nodes) === ref.node, 'Name this incoming object.').meta({ enum: [ref.node] }),
+    col: z.string().refine(value => value === ref.col, 'Name this incoming column.').meta({ enum: [ref.col] }),
   }));
   if (endpoints.length === 0) return TerminatedInputsSchema.max(0);
   const endpoint = endpoints.length === 1 ? endpoints[0]! : z.union(endpoints as [typeof endpoints[number], typeof endpoints[number], ...Array<typeof endpoints[number]>]);
@@ -1174,16 +1173,15 @@ export const MergedSectionsSchema = z.object({ sections: sectionList(z.looseObje
 const HighlightSchemeSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 /**
- * One model-supplied node id: trimmed, required non-empty.
+ * One model-supplied node id, preserved verbatim and required non-empty.
  *
  * @remarks
  * A blank or whitespace-only entry would otherwise pass this boundary, resolve to nothing, and
  * surface as an "unknown IDs" rejection whose offender list renders empty. Rejecting it here names
- * the exact array index instead, which is a field path a repair can act on. Invisible-character
- * stripping belongs to `resolveModelNodeId` (`src/engine/shared/nodeIdResolution.ts`).
+ * the exact array index instead, which is a field path a repair can act on.
  */
 const NodeIdSchema = z.string()
-  .trim()
+  .regex(/\S/, 'Node ID must not be blank.')
   .min(1, 'Node ID must not be blank.');
 
 /**
@@ -1192,7 +1190,7 @@ const NodeIdSchema = z.string()
  */
 const NoteSchema = z.object({
   node_id: NodeIdSchema.describe('Node ID the caption sits below.'),
-  caption: z.string().trim().min(1, 'Note is missing its caption').describe('One-sentence caption, grounded in the evidence supplied for this stage.'),
+  caption: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Note is missing its caption').describe('One-sentence caption, grounded in the evidence supplied for this stage.'),
 }).strict();
 
 /**
@@ -1224,7 +1222,7 @@ const NotesModelSchema = notesListSchema(NoteSchema);
  * Schema for a visual highlight group, grouping nodes by a shared role or status.
  */
 const HighlightGroupSchema = z.object({
-  label: z.string().trim().min(1, 'Group label is required').max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
+  label: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Group label is required').max(PRESENT_RESULT_HIGHLIGHT_LABEL_MAX).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
   color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
@@ -1234,9 +1232,9 @@ const HighlightGroupSchema = z.object({
  * nodes it explains, and its detail body.
  */
 const PresentResultSectionSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
+  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).regex(/\S/, 'Section label must not be blank.').min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
   node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
-  text: z.string().trim().min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
+  text: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
 }, {
   error: (issue) => issue.code === 'unrecognized_keys'
     ? 'A section holds only label, node_ids and text. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
@@ -1317,8 +1315,8 @@ function previewSchemas(blockCount: number) {
  * Schema defining the shape of the final generated presentation result.
  */
 export const PresentResultModelSchema = z.object({
-  name: z.string().max(PRESENT_RESULT_NAME_MAX).trim().min(1, 'name is required').describe('Short name for the generated lineage view — aim for ~60 chars.'),
-  summary: z.string().trim().min(1, 'summary is required — one-line graph purpose (~120 chars)').describe('One-line summary shown with the generated view.'),
+  name: z.string().max(PRESENT_RESULT_NAME_MAX).regex(/\S/, 'Name must not be blank.').min(1, 'name is required').describe('Short name for the generated lineage view — aim for ~60 chars.'),
+  summary: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'summary is required — one-line graph purpose (~120 chars)').describe('One-line summary shown with the generated view.'),
   title: z.string().max(PRESENT_RESULT_TITLE_MAX).optional().describe('Optional report heading.'),
   intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
   closing: z.string().optional().describe('Closing synthesis. Length is never a rejection axis.'),
