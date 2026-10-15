@@ -59,10 +59,12 @@ docs/             product architecture, developer and testing documentation
 
 ## Change constraints
 
+- Long-term size goal: at most 100,000 lines of maintained code across application source, tests and tooling, excluding generated output, vendored dependencies and data fixtures. Reach it through simpler ownership, removal of dead code and consolidation of duplication, without reducing features, supported scenarios or stability. This is a maintenance target, not a reason to compress formatting or weaken validation.
+- Keep solutions lean: use the existing owning layer and shared contracts; avoid speculative abstractions, parallel implementations and fallback behavior that hides invalid input.
 - Fix a reproduced defect at its root cause in the layer that owns the contract. Establish a supported trigger and failing evidence before changing production code. No hack, workaround, retry-until-green, weakened or skipped test, or fixture-specific path in production code. A fix that cannot be made cleanly is not pushed.
 - Validate untrusted inputs at their boundary with the existing schema and error handling. Preserve input identity where the API contract requires it.
 - Use public APIs from VS Code and installed libraries.
-- Extend existing owning tests only for changed key features or reproduced stability/security defects, including relevant failure paths. Use private one-time checks for cleanup equivalence, reference audits, assets, documentation and ancillary tooling probes. Preserve distinct parser and lineage scenarios and coverage floors.
+- Add permanent tests only for core behavior: parsing, lineage, AI middleware contracts and critical stability/security boundaries. Extend existing owning tests or case catalogs for changed contracts or reproduced defects, including relevant failure paths. Use private one-time checks for cleanup equivalence, reference audits, assets, documentation and ancillary tooling probes. Preserve existing feature coverage, distinct parser and lineage scenarios and coverage floors; do not delete coverage merely to meet the size goal.
 - Documents are part of the change: before a push, check that every changed behavior, command, path and count named in a `.md` file is true, and remove statements that are no longer.
 - Never include credentials, customer database content, raw conversations, or generated test artifacts in tracked files.
 - Keep generated reviews, audit reports, inventories and session notes in `.audit/` or outside the repository. Never commit or publish them, or put them under `docs/`. Update existing public documentation only for supported behavior changes.
