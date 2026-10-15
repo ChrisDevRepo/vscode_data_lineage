@@ -3,7 +3,6 @@
  * Zero VS Code imports — pure schema definitions.
  */
 import { z } from 'zod';
-import { resolveModelNodeId } from '../support/modelReferences';
 import { normalizeColName } from '../../utils/sql';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
@@ -823,7 +822,7 @@ function capturedSectionSchemaForClassification(
 }
 
 /**
- * The per-hop column facts that narrow the served CT `column_flow` entry.
+ * Backend-owned neighbor and column choices that narrow the served hop schema.
  *
  * @remarks
  * `outCols` is the hop's active tracked columns when the validator accepts nothing else as
@@ -831,6 +830,8 @@ function capturedSectionSchemaForClassification(
  * for a procedure focus, the one node that writes a column elsewhere.
  */
 export interface SubmitFindingsHopColumns {
+  /** Backend-owned current-hop neighbors, including closed evidence-only neighbors. */
+  readonly neighbors?: readonly { readonly id: string; readonly can_question: boolean; readonly can_prune: boolean }[];
   readonly outCols: readonly string[] | null;
   readonly writesTo: boolean;
   readonly returnTargets?: readonly { readonly node: string; readonly col: string }[];
@@ -849,33 +850,27 @@ export interface SubmitFindingsHopColumns {
 }
 
 /**
- * Advertises the hop's metadata-eligible contributor ids as the served `node` enum while
- * requiring the exact supplied spelling; a columnless function is not a column source.
+ * One choice schema for supplied identifiers, with an optional comparison key for column names.
+ * The provider enum and rejection choices share the same values; parsing preserves input.
  */
-function columnSourceNodeSchema(sources: readonly string[]) {
-  const resolvable = new Map(sources.map(id => [id, id] as const));
-  return z.string().refine(
-    value => resolveModelNodeId(value, resolvable) !== null,
-    { message: 'upstream_columns[].node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.',
-      params: { allowed_values: [...sources] } },
-  ).meta({ enum: [...sources] });
+function suppliedValueSchema(values: readonly string[], key: (value: string) => string = value => value, node?: string) {
+  if (values.length === 0) return z.never();
+  const keys = new Set(values.map(key));
+  return z.string().refine(value => keys.has(key(value)),
+    { message: 'Name a supplied value.',
+      params: { allowed_values: [...values], ...(node ? { when: { node } } : {}) } }).meta({ enum: [...values] });
 }
 
 /** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. */
 function columnNameSchema(names: readonly string[], identifierCaseSensitive = false, node?: string) {
-  const keys = new Set(names.map(name => normalizeColName(name, identifierCaseSensitive)));
-  return z.string().refine(value => keys.has(normalizeColName(value, identifierCaseSensitive)),
-    { message: 'Name a supplied column under the source identifier comparison policy.',
-      params: { allowed_values: [...names], ...(node ? { when: { node } } : {}) } }).meta({ enum: [...names] });
+  return suppliedValueSchema(names, name => normalizeColName(name, identifierCaseSensitive), node);
 }
 
 /** Restricts explicit input termination to the hop's qualified arrivals, without inventing local outputs. */
 function terminatedInputsSchemaForHop(hop?: SubmitFindingsHopColumns) {
   if (!hop?.incomingRefs) return TerminatedInputsSchema;
-  const nodes = new Map(hop.incomingRefs.map(ref => [ref.node, ref.node]));
   const endpoints = hop.incomingRefs.map(ref => ColumnFlowWritesToObject.extend({
-    node: z.string().refine(value => resolveModelNodeId(value, nodes) === ref.node,
-      { message: 'Name this incoming object.', params: { allowed_values: [ref.node] } }).meta({ enum: [ref.node] }),
+    node: suppliedValueSchema([ref.node]),
     col: columnNameSchema([ref.col], hop.identifierCaseSensitive, ref.node),
   }));
   if (endpoints.length === 0) return TerminatedInputsSchema.max(0);
@@ -889,7 +884,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     ? ColumnFlowEntrySchema.shape.out_col
     : columnNameSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
   const upstreamColumns = hop.columnSourceNodeIds
-    ? z.array(ColumnRefSchema.extend({ node: columnSourceNodeSchema(hop.columnSourceNodeIds) }).strict()).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
+    ? z.array(ColumnRefSchema.extend({ node: suppliedValueSchema(hop.columnSourceNodeIds) }).strict()).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
     : ColumnFlowEntrySchema.shape.upstream_columns;
   const shape = {
     out_col: outCol,
@@ -937,7 +932,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
  * @param classification - Locked output classification; omitted callers get the mode-only schema.
  * @param freshSubmission - Refuse `{}` sections and an empty `summary` on a fresh finding; unset
  * so a held draft or an archived angle still validates.
- * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col`, offers
+ * @param hop - The active hop's neighbor choices for both modes and CT column facts; narrows `column_flow[].out_col`, offers
  * `writes_to` for a procedure focus alone, and — when column-source metadata is supplied —
  * restricts `upstream_columns[].node` to the hop's column-carrying sources.
  * @returns The strict provider schema for that mode and classification. A pure validator — its
@@ -952,7 +947,7 @@ export function submitFindingsSchemaForMode(
   /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held list. */
   heldColumnFlow = false,
 ): z.ZodType<FlatSubmitFindings> {
-  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}:${JSON.stringify(hop.incomingRefs ?? null)}:${!!hop.identifierCaseSensitive}` : '';
+  const hopKey = hop ? JSON.stringify(hop) : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
@@ -960,11 +955,18 @@ export function submitFindingsSchemaForMode(
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
-  if (hopKey && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop), terminated_inputs: terminatedInputsSchemaForHop(hop).optional() }).strict() as typeof HopFindingCtBaseSchema;
+  const baseQuestion = hop?.neighbors
+    ? NeighborQuestionSchema.extend({ nodeId: suppliedValueSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id)) })
+    : NeighborQuestionSchema;
+  if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop), terminated_inputs: terminatedInputsSchemaForHop(hop).optional() }).strict() as typeof HopFindingCtBaseSchema;
+  if (hop?.neighbors) narrowed = narrowed.extend({
+    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: suppliedValueSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id)) })).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
+    questions: z.array(baseQuestion).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
+  }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
     const [first, ...rest] = hop.callerContextNodeIds;
-    const question = first === undefined ? NeighborQuestionSchema : z.union([
-      NeighborQuestionSchema,
+    const question = first === undefined ? baseQuestion : z.union([
+      baseQuestion,
       CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NeighborQuestionSchema.shape.nodeId.description ?? '') }),
     ]);
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;

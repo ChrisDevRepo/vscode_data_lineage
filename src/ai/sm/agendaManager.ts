@@ -2,7 +2,7 @@ import Graph from 'graphology';
 import { stronglyConnectedComponents } from 'graphology-components';
 import type { ColumnCarry } from './smTypes';
 import { uniqueScalarReturnTargets } from './scalarReturnBinding';
-import { schemaKey } from '../../utils/sql';
+import { normalizeColName, schemaKey } from '../../utils/sql';
 
 /**
  * Represents an entry in the navigation agenda.
@@ -60,7 +60,7 @@ function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCar
     return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets(outputs, identifierCaseSensitive) };
   }
   if (existing?.kind === 'carry' || incoming?.kind === 'carry') {
-    return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : [], identifierCaseSensitive) };
+    return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : [], column => normalizeColName(column, identifierCaseSensitive)) };
   }
   return incoming ?? existing;
 }
@@ -73,11 +73,11 @@ function ordinaryColumnsBeside(existing: ColumnCarry | undefined, incoming: Colu
 }
 
 /** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
-function mergeUnique(existing: readonly string[] | undefined, incoming: readonly string[], identifierCaseSensitive = false): string[] {
+function mergeUnique(existing: readonly string[] | undefined, incoming: readonly string[], keyOf: (value: string) => string): string[] {
   const merged: string[] = [];
   const seen = new Set<string>();
   for (const value of [...(existing ?? []), ...incoming]) {
-    const key = schemaKey(value, identifierCaseSensitive);
+    const key = keyOf(value);
     if (!seen.has(key)) {
       seen.add(key);
       merged.push(value);
@@ -259,12 +259,12 @@ export class AgendaManager {
       if (carry?.kind === 'row_role_only') {
         existing.activeColumns = [];
       } else if (carry?.kind === 'scalar_return') {
-        existing.activeColumns = mergeUnique(carry.outputs.map(o => o.col), [], this.identifierCaseSensitive);
+        existing.activeColumns = mergeUnique(carry.outputs.map(o => o.col), [], column => normalizeColName(column, this.identifierCaseSensitive));
       } else if (entry.activeColumns) {
-        existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns, this.identifierCaseSensitive);
+        existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns, column => normalizeColName(column, this.identifierCaseSensitive));
       }
       if (entry.lineageQuestions) {
-        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions, this.identifierCaseSensitive);
+        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions, question => schemaKey(question, this.identifierCaseSensitive));
       }
       existing.priority = Math.max(existing.priority, entry.priority);
       existing.depth = Math.min(existing.depth, entry.depth);

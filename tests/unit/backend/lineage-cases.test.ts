@@ -6,6 +6,7 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { TaskLedger } from '../../../src/ai/sm/taskLedger';
+import { AgendaManager } from '../../../src/ai/sm/agendaManager';
 import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import type { ColumnEdge, ColumnFlowEntry, ScalarReturnTarget } from '../../../src/ai/sm/smTypes';
 import { NavigationEngine, type HopNeighborDisclosure } from '../../../src/ai/sm/smBase';
@@ -163,6 +164,21 @@ function check(row: LineageCase, upstream: readonly FlowColumn[]) {
 }
 
 describe('declared contributor identities', () => {
+  it.each([false, true])('merges queued column aliases under the shared CS=%s policy without normalizing questions', caseSensitive => {
+    const agenda = new AgendaManager(caseSensitive);
+    for (const [index, name] of ['Value', '[Value]', ' "Value" ', 'value'].entries()) {
+      agenda.push({ nodeId: 'focus', taskIds: [`task${index}`], priority: 0, depth: 1,
+        activeColumns: [name], columnCarry: { kind: 'carry', columns: [name] }, lineageQuestions: [`Explain ${name}`] });
+    }
+    const expected = caseSensitive ? ['Value', 'value'] : ['Value'];
+    expect(agenda.length).toBe(1);
+    expect(agenda.get('focus')).toMatchObject({ taskIds: ['task0', 'task1', 'task2', 'task3'],
+      activeColumns: expected, columnCarry: { kind: 'carry', columns: expected } });
+    expect(agenda.get('focus')?.lineageQuestions).toEqual(caseSensitive
+      ? ['Explain Value', 'Explain [Value]', 'Explain  "Value" ', 'Explain value']
+      : ['Explain Value', 'Explain [Value]', 'Explain  "Value" ']);
+  });
+
   it.each([
     { target: ' value ', caseSensitive: false, accepted: true },
     { target: ' Value ', caseSensitive: true, accepted: true },
@@ -180,7 +196,7 @@ describe('declared contributor identities', () => {
       expect(engine.columnAspect?.target_columns).toEqual([target]);
       expect(engine.columnAspect?.active_columns).toEqual(['Value']);
     } else {
-      expect(result).toMatchObject({ detail: [{ id: 'root', actual_columns: ['Value'] }] });
+      expect(result).toMatchObject({ detail: [{ path: 'targetColumns.0', allowed_values: ['Value'], when: { node: 'root' } }] });
       expect(result).toHaveProperty('hint', expect.not.stringContaining('Its columns are:'));
     }
   });
@@ -735,7 +751,9 @@ describe('current task completeness before advancement', () => {
     const engine = navigationFor(nodes, [[leaf, middle], [middle, root]]);
     expect(engine.init({ origin: root, question: 'Explain Value', analysisMode, targetColumns: analysisMode === 'ct' ? ['Value'] : undefined,
       direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
-    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: root } });
+    const context = engine.getHopContext();
+    expect(context).toMatchObject({ focus_node: { id: root } });
+    expect(engine.hopSubmitColumns.neighbors).toEqual((context.neighbors as HopNeighborDisclosure[]).map(({ id, can_question, can_prune }) => ({ id, can_question, can_prune })));
     const before = engine.toJSON();
     const result = engine.submitFindings({ focus_node_id: root, summary: 'A constant value.',
       sections: [{ angle: 'technical', text: 'The output is a constant.' }],
@@ -744,6 +762,8 @@ describe('current task completeness before advancement', () => {
       prune_neighbors: [{ id: leaf, reason: 'This distant object is irrelevant.' }],
     });
     expect(result).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining('prune_neighbors.0.id') });
+    expect(result).toMatchObject({ detail: expect.arrayContaining([{ id: leaf, path: 'prune_neighbors.0.id',
+      reason: expect.any(String), allowed_values: [middle] }]) });
     const after = engine.toJSON();
     expect(after.removedSet).toEqual(before.removedSet);
     expect(after.agenda).toEqual(before.agenda);
@@ -1002,7 +1022,7 @@ describe('shared object dispatch', () => {
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('Expected a numeric prune reason to be rejected');
     const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: malformed, schema });
-    expect(rejection.issuePaths).toEqual(['prune_neighbors.0.reason']);
+    expect(rejection.issuePaths).toEqual(['prune_neighbors.0.id', 'prune_neighbors.0.reason']);
     engine.holdRejectedSubmission(malformed, rejection.issuePaths ?? []);
     expect(engine.heldColumnFlow).toBe(true);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);

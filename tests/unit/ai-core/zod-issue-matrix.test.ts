@@ -76,11 +76,13 @@ describe('Zod issue matrix', () => {
     expect(r.hint).toContain('is a field of a notes[] entry: send it there');
   });
 
-  it('invalid_value: lists the accepted values once, in the hint', () => {
+  it('invalid_value: holds accepted values for the shared escalation', () => {
     const r = reject(PresentResultModelSchema, { ...render, highlight_groups: [{ label: 'S', color: 'blue', node_ids: ['dbo.a'] }] });
     expect(r.reason).toContain('Invalid value');
     expect(r.reason).not.toContain('"source"');
-    expect(r.hint).toContain('Set "highlight_groups[].color" to one of "source"');
+    expect(r.hint).toContain('Set "highlight_groups[].color" to an allowed value');
+    expect(r.hint).not.toContain('"source"');
+    expect(r.detail).toEqual([{ path: 'highlight_groups.0.color', allowed_values: expect.arrayContaining(['source']) }]);
   });
 
   it('too_small on an array: counts the items and asks for the missing ones', () => {
@@ -144,7 +146,7 @@ describe('Zod issue matrix', () => {
     expect(hint).toContain('Shorten "title" to at most 120 characters');
     expect(hint).toContain('Shorten "highlight_groups.0.label" to at most 60 characters');
     expect(hint).toMatch(/Send ("sections", "highlight_groups\.0\.node_ids"|"highlight_groups\.0\.node_ids", "sections") as an array\./);
-    expect(hint).toContain('Set "highlight_groups[].color" to one of');
+    expect(hint).toContain('Set "highlight_groups[].color" to an allowed value');
     expect(hint).toContain('Field "notes.0.caption" is missing entirely from this call');
     expect(hint.endsWith(INVALID_TOOL_INPUT_REPAIR_HINT)).toBe(true);
   });

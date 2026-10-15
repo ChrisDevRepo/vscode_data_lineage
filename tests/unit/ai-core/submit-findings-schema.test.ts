@@ -6,6 +6,34 @@ import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode } from '../../
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 
 describe('fresh kept required-field projection', () => {
+  it.each(['bb', 'ct'] as const)('serves an empty neighbor choice set safely in %s', mode => {
+    const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, writesTo: false, neighbors: [] });
+    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+    const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}), questions: [], prune_neighbors: [] };
+    expect(schema.safeParse(input).success).toBe(true);
+    expect(wire(input)).toBe(true);
+    expect(wire({ ...input, questions: [{ nodeId: 'unknown', question: 'Check it.' }] })).toBe(false);
+  });
+
+  it.each(['bb', 'ct'] as const)('uses the same hop neighbor choices for model and runtime in %s', mode => {
+    const schema = submitFindingsSchemaForMode(mode, undefined, false, {
+      outCols: null, writesTo: false,
+      neighbors: [{ id: 'open', can_question: true, can_prune: true },
+        { id: 'queued', can_question: true, can_prune: false },
+        { id: 'visited', can_question: false, can_prune: false }],
+    });
+    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+    for (const id of ['open', 'queued', 'visited', 'distant']) {
+      for (const prune of [false, true]) {
+        const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}),
+          ...(prune ? { prune_neighbors: [{ id, reason: 'Off path.' }] } : { questions: [{ nodeId: id, question: 'Check it.' }] }) };
+        const accepted = id === 'open' || (!prune && id === 'queued');
+        expect(schema.safeParse(input).success, `${id} prune=${prune}`).toBe(accepted);
+        expect(wire(input), `${id} prune=${prune}`).toBe(accepted);
+      }
+    }
+  });
+
   it.each([
     { caseSensitive: false, name: ' value ', accepted: true },
     { caseSensitive: true, name: ' Value ', accepted: true },

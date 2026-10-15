@@ -21,6 +21,7 @@ import { ToolRegistry, type IToolRegistry } from '../../../src/ai/tools/registry
 import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
 import { makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
+import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import { PruneCurrentInputSchema, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 
@@ -261,26 +262,29 @@ describe('model-facing rejection text', () => {
     expect(content).not.toContain(input.sections.technical);
   });
 
-  it.each([3, 400])('escalates on the second rejection with all %s verified columns and the held repair order', async count => {
+  it.each([3, 400].flatMap(count => ['column', 'neighbor', 'enum'].map(kind => ({ count, kind }))))('escalates $kind choices on the second rejection with all $count values', async ({ count, kind }) => {
     const columns = Array.from({ length: count }, (_, i) => `VerifiedColumn${i}`);
     const hint = 'Held: sections.technical, summary. Resend: column_flow. Resend focus_node_id with only the parts to correct.';
-    const { registry } = registryWith(() => JSON.stringify(makeRejection({
-      code: REJECTION_CODES.contributorColNotOnSource,
-      reason: 'column_flow.0.upstream_columns.0.col: column Missing is not declared on Source.', hint,
-      issuePaths: ['column_flow.0.upstream_columns.0.col'],
-      detail: [{ id: 'Source', actual_columns: columns }],
-    })));
+    const path = kind === 'column' ? 'column_flow.0.upstream_columns.0.col' : kind === 'neighbor' ? 'questions.0.nodeId' : 'query';
+    const invalidEnum = z.object({ query: z.enum(columns as [string, ...string[]]) }).safeParse({ query: 'Missing' });
+    if (invalidEnum.success) throw new Error('Expected invalid enum');
+    const rejection = kind === 'enum' ? rejectionFromZodError(invalidEnum.error, { code: 'invalid_tool_input', input: { query: 'Missing' }, hint })
+      : buildRouteValidationRejection([{ kind: kind === 'column' ? 'bad_contributor_col' : 'question_not_neighbor', id: 'Source', path,
+        reason: 'The supplied value is not allowed here.',
+        allowed_values: columns, ...(kind === 'column' ? { when: { node: 'Source' } } : {}) }], hint);
+    const { registry } = registryWith(() => JSON.stringify(rejection));
     const plan = discoveryPlan(registry);
     let state = initialToolPhaseAttemptState('discover');
     const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'Missing' })]).port, plan, { priorState: state });
-    expect(String(toolMessage(first.messages).content)).not.toContain('Actual columns of');
+    expect(String(toolMessage(first.messages).content)).toContain(path);
+    expect(String(toolMessage(first.messages).content)).not.toContain(columns[0]);
     expect(String(toolMessage(first.messages).content)).toContain(hint);
     state = recordToolAttempt(state, first);
     const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'StillMissing' })]).port, plan, { priorState: state });
     const content = String(toolMessage(second.messages).content);
-    expect(content).toContain(`Actual columns of Source: ${columns.join(', ')}.`);
+    expect(content).toContain(`Allowed values for ${path}${kind === 'column' ? ' when node="Source"' : ''}: ${columns.map(value => JSON.stringify(value)).join(', ')}.`);
     expect(content).toContain(hint);
-    expect(content).toContain('Fields to correct in this reply: column_flow.');
+    expect(content).toContain(`Fields to correct in this reply: ${path.split('.')[0]}.`);
     expect(content).toContain('Last reply for this step.');
     state = recordToolAttempt(state, second);
     const third = await executeToolAttempt(nativePort(() => [call('third', { query: 'StillMissing' })]).port, plan, { priorState: state });

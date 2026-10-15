@@ -1069,12 +1069,10 @@ export interface InvalidRoute {
     reason: string;
     /** Exact submit_findings field path that must be corrected. */
     path?: string;
-    /** Valid column set for a column-content failure, or the tracked columns a refused prune carries; emitted in `detail`. */
-    available_columns?: string[];
-    /** Complete catalog column names of this object, never tracked subsets or procedure input unions. */
-    actual_columns?: string[];
-    /** Carrier-side neighbours a body-less focus may name (`non_writer_continuation`); emitted in `detail`. */
-    available_routes?: string[];
+    /** Possible values for the failing field, disclosed by the shared rejection escalation. */
+    allowed_values?: string[];
+    /** Object qualifier for column choices. */
+    when?: { node: string };
 }
 
 /**

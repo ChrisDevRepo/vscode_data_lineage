@@ -62,14 +62,16 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor' });
     expect(result).not.toHaveProperty('results');
-    expect(result.detail.invalid_ids).toEqual([raw]);
+    expect(result.issuePaths).toEqual(['ids.0']);
+    expect(result.detail).toEqual([{ path: 'ids.0', allowed_values: expect.any(Array) }]);
   });
 
   it('preserves the refused spelling under either catalog case policy', async () => {
     const { registry } = neighborWorld(cs);
     const raw = 'SALES.ORDERS';
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
-    expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor', detail: { invalid_ids: [raw] } });
+    expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor', issuePaths: ['ids.0'],
+      detail: [{ path: 'ids.0', allowed_values: expect.any(Array) }] });
   });
 
   it('selects the current object type without substituting an earlier case twin', () => {

@@ -480,7 +480,9 @@ class ToolHandler implements ToolServices {
           code: 'out_of_scope_or_not_neighbor',
           reason: `Not a direct neighbor of the current object, or outside the scope: ${invalidIds.join(', ')}.`,
           hint: 'Send only ids listed as neighbors of the current object.',
-          detail: { invalid_ids: invalidIds },
+          issuePaths: ids.flatMap((id, index) => invalidIds.includes(id) ? [`ids.${index}`] : []),
+          detail: ids.flatMap((id, index) => invalidIds.includes(id)
+            ? [{ path: `ids.${index}`, allowed_values: engine.neighborColumnIds }] : []),
         }), input);
       }
 

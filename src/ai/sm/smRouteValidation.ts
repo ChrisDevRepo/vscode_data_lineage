@@ -102,14 +102,6 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   question_closed: REJECTION_CODES.routeValidationFailed,
 };
 
-/** One model-facing reason line for a validation failure: the offending path, what was wrong, without column inventories. */
-function routeErrorLine(error: InvalidRoute): string {
-  return [
-    error.path ? `${error.path}: ${error.reason}` : error.reason,
-    ...(error.available_routes ? [`available routes: ${error.available_routes.join(', ') || '(none)'}`] : []),
-  ].join('; ');
-}
-
 /**
  * Builds the atomic content/action rejection envelope.
  *
@@ -117,8 +109,8 @@ function routeErrorLine(error: InvalidRoute): string {
  * Each kind is emitted by one policy owner, so no message-text inference or mode branch is needed.
  * `code` is the specific per-kind code when one kind dominates; `hint` is the verb-led
  * order(s) followed by the engine's repair order (`findingRepairOrder`), since the engine holds the draft of every
- * rejected submission; `reason` states each failure with its valid set as one line per error;
- * `detail` carries the same facts as data.
+ * rejected submission; `reason` states each failure without choices as one line per error;
+ * `detail` carries possible values for the dispatcher's shared escalation.
  *
  * @param errors - Field-resolved validation failures accumulated before commit; at least one.
  * @param repairOrder - The engine's sentence naming the held parts and the parts to resend.
@@ -152,9 +144,9 @@ export function routeRejectionDirectives(errors: readonly InvalidRoute[]): strin
   ].filter(Boolean).join(' ');
 }
 
-/** One reason line per route/column failure: its path, what was wrong and any valid routes. */
+/** One reason line per route/column failure: its path and what was wrong. */
 export function routeRejectionReason(errors: readonly InvalidRoute[]): string {
-  return errors.map(routeErrorLine).join('\n');
+  return errors.map(error => error.path ? `${error.path}: ${error.reason}` : error.reason).join('\n');
 }
 
 /** The route/column failures as rejection `detail` data. */
@@ -163,9 +155,8 @@ export function routeRejectionDetail(errors: readonly InvalidRoute[]): Array<Rec
     id: e.id,
     ...(e.path ? { path: e.path } : {}),
     reason: e.reason,
-    ...(e.available_columns ? { available_columns: e.available_columns } : {}),
-    ...(e.actual_columns ? { actual_columns: e.actual_columns } : {}),
-    ...(e.available_routes ? { available_routes: e.available_routes } : {}),
+    ...(e.allowed_values !== undefined ? { allowed_values: e.allowed_values } : {}),
+    ...(e.when ? { when: e.when } : {}),
   }));
 }
 

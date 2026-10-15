@@ -65,7 +65,9 @@ Only a SQL hop whose arriving work came through storage forwarding can receive `
 
 BB and CT share the same validation and correction path, defined in the [backend contract](../.agents/rules/backend-contract.md). CT can explicitly end an arriving input through `terminated_inputs` when other inputs continue; terminated branches cannot restart from later object-only work. Generated CT instructions describe accepted mappings alongside the AI's neighbor question.
 
-Rejections retain valid findings and report content and name the parts to repair. Repeated failures add verified choices before the last reply; shared choices are listed once for their affected paths. Large diagnostic records cannot suppress those model-facing corrections. Findings resend the focus ID and failed parts, replacing a failed list whole; report repairs can replace authorized text or labels by index. A call with no safely held draft requires a complete resend. See the backend contract for escalation and stop rules.
+One backend neighbor projection supplies the hop context and the BB/CT question and prune schemas. Column references may still use visited neighbors as evidence; schemas do not offer them new actions.
+
+Rejections retain valid findings and report content and name the parts to repair. The first rejection states the issue and field path; from the second, one shared renderer adds possible neighbor ids, column names or enum values. Shared choices are listed once for their affected paths and qualified by object where needed. Large diagnostic records cannot suppress those model-facing corrections. Findings resend the focus ID and failed parts, replacing a failed list whole; report repairs can replace authorized text or labels by index. A call with no safely held draft requires a complete resend. See the backend contract for escalation and stop rules.
 
 Static SQL can suggest a performance pattern, but cannot establish actual index benefit, join strategy, parameter sniffing or statistics freshness without catalog or runtime evidence. Custom templates cannot give the assistant evidence absent from the loaded model.
 

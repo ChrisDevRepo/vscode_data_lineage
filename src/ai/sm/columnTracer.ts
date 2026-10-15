@@ -277,8 +277,8 @@ export class ColumnTracer {
       if (traceDirection === 'upstream' && incomingDownstreamRefs.length === 0 && !activeNorm.includes(outNorm) && !readBackWrite) {
         const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
         invalidRoutes.push(existsOnNode
-          ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, available_columns: [...this.aspect.active_columns] }
-          : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, available_columns: [...this.aspect.active_columns], ...(validFocusCols.size > 0 && focusNode.type !== 'procedure' ? { actual_columns: (getNodeColumns(focusNode.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
+          ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, allowed_values: [...this.aspect.active_columns], when: { node: focusId } }
+          : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, allowed_values: [...this.aspect.active_columns], when: { node: focusId } });
         continue;
       }
 
@@ -287,7 +287,7 @@ export class ColumnTracer {
         continue;
       }
       if (!entry.returns_to && validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
-          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, available_columns: Array.from(validFocusCols).sort(), ...(focusNode.type !== 'procedure' ? { actual_columns: (getNodeColumns(focusNode.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
+          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, allowed_values: (getNodeColumns(focusId, nodeMap, store ?? undefined) ?? []).map(column => column.name), when: { node: focusId } });
         continue;
       }
 
@@ -332,7 +332,7 @@ export class ColumnTracer {
           continue;
         }
         if (toCols.size > 0 && !toCols.has(this.columnKey(toCol))) {
-          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `to_col "${toCol}" does not exist on ${toNodeObj.id}`, available_columns: Array.from(toCols).sort(), ...(toNodeObj.type !== 'procedure' ? { actual_columns: (getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
+          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `to_col "${toCol}" does not exist on ${toNodeObj.id}`, allowed_values: (getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) ?? []).map(column => column.name), when: { node: toNodeObj.id } });
           continue;
         }
       }
@@ -378,7 +378,7 @@ export class ColumnTracer {
 
         const validNeighborCols = new Set<string>((getNodeColumns(neighbor.id, nodeMap, store ?? undefined) || []).map(c => this.columnKey(c.name)));
         if (validNeighborCols.size > 0 && !validNeighborCols.has(this.columnKey(cont.col))) {
-          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, available_columns: Array.from(validNeighborCols).sort(), ...(neighbor.type !== 'procedure' ? { actual_columns: (getNodeColumns(neighbor.id, nodeMap, store ?? undefined) ?? []).map(column => column.name) } : {}) });
+          invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, allowed_values: (getNodeColumns(neighbor.id, nodeMap, store ?? undefined) ?? []).map(column => column.name), when: { node: neighbor.id } });
           continue;
         }
         if (validNeighborCols.size === 0 && !allowsMissingColumnMetadata(neighbor)) {
@@ -401,7 +401,7 @@ export class ColumnTracer {
                 id: cont.node,
                 path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`,
                 reason: `focus "${focusId}" has no body of its own, so upstream_columns name nodes that write it — "${cont.node}" is not one of them. Downstream readers consume this column; they are not its inputs.`,
-                available_routes: Array.from(continuationNeighbors).sort(),
+                allowed_values: Array.from(continuationNeighbors).sort(),
               });
               continue;
             }
@@ -465,7 +465,7 @@ export class ColumnTracer {
         reason: detached.length > 0
           ? `column_flow.${entryIndex} into "${entry.out_col}" links ${[...new Set(detached.map(edge => `${edge.from_node}.${edge.from_col} -> ${edge.to_node}.${edge.to_col}`))].join(', ')}, which attach to no tracked endpoint [${tracked}].`
           : `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${tracked}].`,
-        available_columns: [...this.aspect.active_columns],
+        allowed_values: [...this.aspect.active_columns], when: { node: focusId },
       });
     };
 

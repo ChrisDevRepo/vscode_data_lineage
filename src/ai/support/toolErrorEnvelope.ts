@@ -361,6 +361,8 @@ function zodUnrecognizedKeys(error: z.ZodError): string[] {
  * The message of one Zod issue, with an `unrecognized_keys` echo of every offending key whole.
  */
 function baseIssueMessage(issue: z.core.$ZodIssue): string {
+  if (issue.code === 'invalid_value') return INVALID_VALUE_REASON;
+  if (issue.code === 'invalid_type' && issue.expected === 'never') return 'No values are allowed here.';
   return issue.code === 'unrecognized_keys'
     ? `Unrecognized key${issue.keys.length > 1 ? 's' : ''}: ${issue.keys.map(quoteKey).join(', ')}`
     : issue.message;
@@ -587,17 +589,17 @@ function isPresentInvalidValue(issue: z.core.$ZodIssue, input: unknown): boolean
     && (input === undefined || resolveAtPath(input, issue.path) !== undefined);
 }
 
-/** Reason line of an issue whose accepted values the repair hint states; the values are named once, in the hint. */
+/** Value faults disclose choices through structured detail, never in the first reason or hint. */
 const INVALID_VALUE_REASON = 'Invalid value';
 
 /**
  * Repair hint for a present value outside the values its field accepts (an enum or literal).
  *
  * @remarks
- * Names the accepted values and the repairs the call allows: set the field to one of them, or, for a
+ * Names the repairs the call allows: set the field to an allowed value, or, for a
  * field inside an array element, drop that entry when the array stays within its served minimum
  * with every flagged entry of that array dropped.
- * Issues sharing a field shape and accepted values are one clause. An absent field belongs to
+ * Issues sharing a field shape are one clause. An absent field belongs to
  * {@link missingFieldRepairHint}.
  *
  * @returns The value-directed hint; `undefined` when no `invalid_value` issue names a present value.
@@ -616,7 +618,7 @@ function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
   const clauses = new Set<string>();
   for (const issue of issues) {
     const field = issue.path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[]` : acc ? `${acc}.${String(key)}` : String(key)), '');
-    const set = `Set "${field}" to one of ${issue.values.map((value) => JSON.stringify(value)).join(', ')}`;
+    const set = `Set "${field}" to an allowed value`;
     const index = entryDepth(issue.path);
     if (index < 0) {
       clauses.add(`${set}.`);
@@ -791,9 +793,8 @@ function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecogn
  * names the other indices, so one defect repeated across N entries is one line. A size issue at a
  * path that also fails its type is dropped: the bound belongs to the declared type. Only STRUCTURAL
  * bounds reach this function; a content cap is enforced and reported separately by the validator
- * or engine. A present value outside its accepted values names them in the default hint
- * ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves the
- * reason carrying them.
+ * or engine. Possible values from enums, literals and custom refinements are carried in structured
+ * detail; the shared dispatcher discloses them from the second rejection.
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
  * {@link zodFieldRepairHint}, followed by the one generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input`
@@ -812,9 +813,12 @@ export function rejectionFromZodError(
       const path = [...prefix, ...issue.path];
       if (issue.code === 'invalid_union') {
         for (const branch of issue.errors) collectChoices(branch, path);
-      } else if (issue.code === 'custom' && Array.isArray(issue.params?.allowed_values)) {
-        const choice = { path: path.join('.'), allowed_values: issue.params.allowed_values,
-          ...(issue.params.when ? { when: issue.params.when } : {}) };
+      } else if (issue.code === 'invalid_type' && issue.expected === 'never') {
+        const choice = { path: path.join('.'), allowed_values: [] };
+        choices.set(JSON.stringify(choice), choice);
+      } else if (issue.code === 'invalid_value' || (issue.code === 'custom' && Array.isArray(issue.params?.allowed_values))) {
+        const choice = { path: path.join('.'), allowed_values: issue.code === 'invalid_value' ? issue.values : issue.params!.allowed_values,
+          ...(issue.code === 'custom' && issue.params?.when ? { when: issue.params.when } : {}) };
         choices.set(JSON.stringify(choice), choice);
       }
     }
@@ -833,11 +837,9 @@ export function rejectionFromZodError(
       const path = issue.path.join('.');
       if (issue.code === 'unrecognized_keys') issuePaths.push(...unrecognizedKeyPaths(issue));
       else if (path) issuePaths.push(path);
-      message = opts.hint === undefined && isPresentInvalidValue(issue, opts.input)
-        ? INVALID_VALUE_REASON
-        : opts.input !== undefined
-          ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
-          : baseIssueMessage(issue);
+      message = opts.input !== undefined
+        ? enrichedIssueMessage(issue, resolveAtPath(opts.input, issue.path))
+        : baseIssueMessage(issue);
     }
     const shape = `${issue.code}|${message}|${issue.path.map(key => (typeof key === 'number' ? '*' : String(key))).join('.')}`;
     const first = shown.get(shape);

@@ -726,8 +726,8 @@ interface RecordedToolOutcome {
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
  * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
- * reason states the identity fault; verified choices are disclosed from the second rejection,
- * or earlier when only one reply remains. The top-level fields to correct are repeated before the final reply. A repairable
+ * reason states the identity fault; verified choices are disclosed from the second rejection.
+ * The top-level fields to correct are repeated before the final reply. A repairable
  * rejection's last line states the replies the step has left. A backend fault states
  * none: the run ends, and a reply budget would be a retry request. The code, issue
  * paths and detail stay on the paired `ToolMessage.artifact`; the reason line follows {@link rejectionReasonLines}, so the model
@@ -738,21 +738,19 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
     ? undefined
     : repliesLeftAfter(priorState);
   const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
-  const expanded = finalRejection || (priorState?.rejections.length ?? 0) > 0;
+  const expanded = (priorState?.rejections.length ?? 0) > 0;
   const valueChoices = new Map<string, { paths: Set<string>; values: unknown[]; when?: Record<string, unknown> }>();
-  const choices = expanded && Array.isArray(rejection.detail)
-    ? rejection.detail.flatMap((fault: { id?: string; path?: string; actual_columns?: string[]; available_columns?: string[]; allowed_values?: unknown[]; when?: Record<string, unknown> }) => {
+  if (expanded && Array.isArray(rejection.detail)) {
+    for (const fault of rejection.detail as Array<{ path?: string; allowed_values?: unknown[]; when?: Record<string, unknown> }>) {
       if (fault.allowed_values && fault.path) {
         const key = JSON.stringify([fault.allowed_values, fault.when]);
         const group = valueChoices.get(key) ?? { paths: new Set<string>(), values: fault.allowed_values, when: fault.when };
         group.paths.add(fault.path);
         valueChoices.set(key, group);
       }
-      return [
-        ...(fault.actual_columns ? [`Actual columns of ${fault.id}: ${fault.actual_columns.join(', ') || '(none)'}.`]
-          : fault.available_columns ? [`Allowed columns for ${fault.path ?? fault.id}: ${fault.available_columns.join(', ') || '(none)'}.`] : []),
-      ];
-    }) : [];
+    }
+  }
+  const choices: string[] = [];
   for (const { paths, values, when } of valueChoices.values()) {
     const condition = when ? ` when ${Object.entries(when).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ')}` : '';
     choices.push(`Allowed values for ${[...paths].join(', ')}${condition}: ${values.map(value => JSON.stringify(value)).join(', ') || '(none)'}.`);

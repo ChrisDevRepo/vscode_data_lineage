@@ -226,6 +226,7 @@ describe('lineage_get_neighbor_columns boundary', () => {
     const { registry } = ctWorld();
     const result = JSON.parse(await registry.invoke('lineage_get_neighbor_columns', { ids: [id] }));
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor' });
+    expect(result).toMatchObject({ issuePaths: ['ids.0'], detail: [{ path: 'ids.0', allowed_values: [BRANCH] }] });
     expect(result).not.toHaveProperty('results');
   });
 
