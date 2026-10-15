@@ -63,7 +63,7 @@ BB and CT use one optional `lineage_prune_current` command on a hop reached thro
 An exploration can carry object-level or column-level work:
 
 - **BB** (object lineage) follows whole objects: which procedures and views feed a table, and what they do.
-- **CT** (column trace) carries the columns relevant to the question: the AI reads each object's SQL and reports column contributions with their transforms; links that only join or filter are drawn dashed. The engine checks that each link targets an in-scope neighbour, names a declared column where metadata exists, and connects to a qualified input; it does not derive or reclassify the column links itself. Check the AI’s column links against the SQL.
+- **CT** (column trace) carries the columns relevant to the question: the AI reads each object's SQL and reports column contributions with their transforms. The engine checks that each link targets an in-scope neighbour, names a declared column where metadata exists, and connects to a qualified input; it does not derive or reclassify the column links itself. Check the AI’s column links against the SQL.
 
 ### Routing order
 

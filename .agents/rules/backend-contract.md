@@ -19,7 +19,7 @@ A `column_flow` reference passes when all three hold; any failure is a REJECT:
 2. **Attribute.** For an object type that carries column metadata, the column is one of its declared columns; a literal is not a column. Procedures and external objects carry none, so their columns are accepted and the debug log says they were not verified.
 3. **Link.** The mapping connects to one of the hop's qualified input columns (the requested root on the origin, the task's endpoints afterwards), directly or through another mapping in the same submission. A procedure that writes a table and reads it back declares that internal write on its first visit (`out_col` names the written column), because a visited object is not visited again.
 
-The engine stores an accepted mapping exactly as declared, including the model's `transforms`. It does not drop or reject a contributor because of its classification (filter-only, delete-only write, metadata scalar return).
+The engine stores an accepted mapping exactly as declared, including the model's `transforms`. It does not drop or reject a contributor because of how the SQL uses it; which columns count as contributors is defined only in the prompt.
 
 ## Events
 
