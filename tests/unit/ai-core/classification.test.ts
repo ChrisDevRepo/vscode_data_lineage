@@ -65,7 +65,6 @@ function gatingEngine(): NavigationEngine {
     columnAspect: undefined,
     getCurrentTasks: () => [],
     pendingLineageQuestions: [],
-    requiredNeighborIds: () => [],
     peekHopContext: () => null,
   } as unknown as NavigationEngine;
 }

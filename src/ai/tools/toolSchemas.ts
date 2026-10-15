@@ -66,7 +66,7 @@ const SupplementSchema = z.object({
   nodeIds: SupplementNodeIdsSchema,
   chain: SupplementChainSchema.optional().describe(
     'Set when the user asks to follow the named objects further, e.g. "all the way to the source": every object '
-    + 'reachable in that direction inside the approved schema selection is analysed and joins the same graph. Omit to add the named objects only.',
+    + 'reachable in that direction inside the approved schema selection is analysed and joins the same graph. Omit to add the named objects only; a named table also brings in its next objects in the approved direction.',
   ),
 }).strict().describe(
   'Completed-session analysis extension, sent alone: a supplement call carries no other field — it runs in the '

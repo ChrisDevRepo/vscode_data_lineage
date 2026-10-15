@@ -2823,10 +2823,11 @@ export class NavigationEngine implements IHopStateMachine {
       const incomingRefs = this.incomingColumnRefs();
       const taskSides = new Set(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' && task.traversalSide ? [task.traversalSide] : []));
       const mixedSides = taskSides.size > 1;
+      const upstreamRefs = mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs;
       const downstreamRefs = mixedSides ? this.incomingColumnRefs('downstream') : incomingRefs;
       let entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> | undefined;
       if (this.tracer && (finding.column_flow || this.currentReturnTargets().length)) {
-        const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs, this.currentReturnTargets(), this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext) ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []), mixedSides ? downstreamRefs : [], this.columnRoots(), this.columnContributorIds(focusId));
+        const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, upstreamRefs, this.currentReturnTargets(), this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext) ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []), mixedSides ? downstreamRefs : [], this.columnRoots(), this.columnContributorIds(focusId));
         invalidRoutes.push(...validated.invalidRoutes);
         entrySides = validated.entrySides;
         for (const edge of validated.stagedEdges) edge.hop = this.hopCount;
@@ -2845,16 +2846,15 @@ export class NavigationEngine implements IHopStateMachine {
       }
       if (this.tracer && finding.column_flow) {
         // A column is carried only when the one closure of the requested outputs holds it.
-        const key = columnEndpointKeyFactory(this.nodeMap, this.model.identifierCaseSensitive);
         const closureEdges = [...this.tracer.edges, ...stagedColumnEdges];
-        const attachedUpstream = columnClosure(this.columnRoots(), closureEdges, 'upstream', key);
-        const flowingDownstream = columnAttachment(this.columnRoots(), closureEdges, 'downstream', key).flowing;
+        const attachedUpstream = columnClosure(this.columnRoots(), closureEdges, 'upstream', endpointKey);
+        const flowingDownstream = columnAttachment(this.columnRoots(), closureEdges, 'downstream', endpointKey).flowing;
         if (traceDirection === 'upstream') {
           for (const [index, entry] of finding.column_flow.entries()) {
             if (entrySides && !entrySides.some(side => side.index === index && side.upstream)) continue;
             for (const ref of entry.upstream_columns) {
               const nid = resolveModelNodeId(ref.node, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(ref.node);
-              if (!attachedUpstream.has(key(nid, ref.col)) || terminated.has(key(nid, ref.col))) continue;
+              if (!attachedUpstream.has(endpointKey(nid, ref.col)) || terminated.has(endpointKey(nid, ref.col))) continue;
               addCarry(nid, { node: nid, col: ref.col }, 'upstream');
               if (!flowQuestionByNode.has(nid)) {
                 flowQuestionByNode.set(nid, `Trace ${nid}.${ref.col} as upstream input for ${focusId}.${entry.out_col}.`);
@@ -2867,7 +2867,7 @@ export class NavigationEngine implements IHopStateMachine {
         // upstream while its origin still owes the declared column downstream.
         if (this.onDownstreamSide(focusId) && this.graph.hasNode(focusId)
           && (finding.verdict === 'passthrough' || finding.column_flow.length > 0 || focusId === this.originNodeId || this.currentReturnTargets().length > 0)) {
-          const links = stagedColumnEdges.map(edge => ({ from: key(edge.from_node, edge.from_col), to: key(edge.to_node, edge.to_col) }));
+          const links = stagedColumnEdges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) }));
           const outputs = new Map<string, { node: string; col: string }>();
           const terminalColumns = new Set<string>();
           for (const [index, entry] of finding.column_flow.entries()) {
@@ -2879,7 +2879,7 @@ export class NavigationEngine implements IHopStateMachine {
             const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.model.identifierCaseSensitive);
             if (!resolved) continue;
             const output = { node: resolved.attributionTo, col: resolved.attributionCol };
-            const outputKey = key(output.node, output.col);
+            const outputKey = endpointKey(output.node, output.col);
             if (flowingDownstream.has(outputKey)) {
               outputs.set(outputKey, output);
               const writer = resolved.writerEdge;
@@ -2887,25 +2887,25 @@ export class NavigationEngine implements IHopStateMachine {
                 && this.columnKey(edge.from_col) === this.columnKey(entry.out_col)
                 && edge.to_node === writer.toNode && this.columnKey(edge.to_col) === this.columnKey(writer.toCol))) {
                 const localOutput = { node: focusId, col: entry.out_col };
-                if (flowingDownstream.has(key(localOutput.node, localOutput.col))) outputs.set(key(localOutput.node, localOutput.col), localOutput);
+                if (flowingDownstream.has(endpointKey(localOutput.node, localOutput.col))) outputs.set(endpointKey(localOutput.node, localOutput.col), localOutput);
               }
             }
           }
           const mappedInputs = new Set(links.map(link => link.from));
           for (const ref of finding.verdict === 'passthrough' ? downstreamRefs : []) {
-            const endpoint = key(ref.node, ref.col);
+            const endpoint = endpointKey(ref.node, ref.col);
             if (!mappedInputs.has(endpoint) && !terminated.has(endpoint) && !terminalColumns.has(this.columnKey(ref.col)) && flowingDownstream.has(endpoint)) {
               outputs.set(endpoint, ref);
             }
           }
-          const continuation = [...outputs.values()].filter(ref => !terminated.has(key(ref.node, ref.col)));
-          const passedInputs = new Set(finding.verdict === 'passthrough' ? downstreamRefs.map(ref => key(ref.node, ref.col)) : []);
+          const continuation = [...outputs.values()].filter(ref => !terminated.has(endpointKey(ref.node, ref.col)));
+          const passedInputs = new Set(finding.verdict === 'passthrough' ? downstreamRefs.map(ref => endpointKey(ref.node, ref.col)) : []);
           for (const nid of this.graph.outNeighbors(focusId)) {
             if (!this.onDownstreamSide(nid)) continue;
             // A declared write assigns the destination's endpoints, not the producer's borrowed ports.
             const assigned = continuation.filter(ref => this.identifierKey(ref.node) === this.identifierKey(nid));
             const routed = assigned.length ? assigned : continuation.filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
-              || passedInputs.has(key(ref.node, ref.col)));
+              || passedInputs.has(endpointKey(ref.node, ref.col)));
             for (const ref of routed) addCarry(nid, ref, 'downstream');
             if (routed.length > 0) {
               flowQuestionByNode.set(nid, assigned.length
@@ -2927,8 +2927,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (this.tracer && traceDirection === 'upstream' && finding.verdict === 'passthrough'
         && finding.column_flow?.length === 0 && !SCRIPT_TYPES.has(this.nodeMap.get(focusId)!.type)
         && this.currentReturnTargets().length === 0) {
-        const refs = (mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs)
-          .filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
+        const refs = upstreamRefs.filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId)
           && !terminated.has(endpointKey(ref.node, ref.col)));
         // Candidates go to every writer of the stored object; the forwarding loop drops a writer that is not open.
         for (const nid of refs.length > 0 ? this.model.neighborIndex[focusId]?.in ?? [] : []) {
@@ -3044,44 +3043,17 @@ export class NavigationEngine implements IHopStateMachine {
         const nid = req.nodeId;
         const nNode = this.nodeMap.get(nid);
         if (!nNode) continue;
-        const admission = this.admitsRoute(nid, nNode, focusId);
-        const routeBorder = admission.border;
-        if (routeBorder.kind === 'excluded') {
-          const isAllowlistBoundary = this.isGuiHiddenSchemaBorder(routeBorder, nNode);
-          const deferReason = isAllowlistBoundary ? 'schema' as const : 'excluded' as const;
-          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: deferReason });
-          deferredRoutes.push({
-            nodeId: nNode.id,
-            schema: nNode.schema,
-            question: req.question,
-            reason: deferReason,
-            depth: isAllowlistBoundary ? admission.depthBreach ?? undefined : undefined,
-          });
-          this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=${deferReason}`);
-          continue;
-        }
-        if (routeBorder.kind === 'out_of_direction') {
-          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: 'out_of_direction' });
-          deferredRoutes.push({ nodeId: nNode.id, schema: nNode.schema, question: req.question, reason: 'direction', depth: undefined });
-          this.log('debug', `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=out_of_direction direction=${this._direction}`);
-          continue;
-        }
-
-        const { depthBreach } = admission;
-        if (depthBreach !== null) {
-          deferredRoutes.push({
-            nodeId: nNode.id,
-            schema: nNode.schema,
-            question: req.question,
-            reason: 'depth',
-            depth: depthBreach,
-          });
-          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason: 'depth' });
-          this.log(
-            'debug',
-            `[Depth] border reached hop=${this.hopCount} id=${nNode.id} ← ${focusId} `
-            + `depth=${depthBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`,
-          );
+        const { admitted, border, depthBreach } = this.admitsRoute(nid, nNode, focusId);
+        if (!admitted) {
+          const schemaBorder = border.kind === 'excluded' && this.isGuiHiddenSchemaBorder(border, nNode);
+          const reason = border.kind === 'excluded' ? schemaBorder ? 'schema' as const : 'excluded' as const
+            : border.kind === 'out_of_direction' ? 'out_of_direction' as const : 'depth' as const;
+          routeOutcomes.push({ nodeId: nNode.id, accepted: false, deferred: true, reason });
+          deferredRoutes.push({ nodeId: nNode.id, schema: nNode.schema, question: req.question, reason: reason === 'out_of_direction' ? 'direction' : reason,
+            depth: reason === 'depth' || schemaBorder ? depthBreach ?? undefined : undefined });
+          this.log('debug', reason === 'depth'
+            ? `[Depth] border reached hop=${this.hopCount} id=${nNode.id} ← ${focusId} depth=${depthBreach} cap=up:${this.depthLimits.upstream}/down:${this.depthLimits.downstream}`
+            : `[Agenda] route ignore hop=${this.hopCount} id=${nNode.id} ← ${focusId} reason=${reason}${reason === 'out_of_direction' ? ` direction=${this._direction}` : ''}`);
           continue;
         }
 

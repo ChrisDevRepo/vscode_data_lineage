@@ -39,7 +39,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_contributor_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   non_writer_continuation:
-    'upstream_columns always name value inputs, independent of exploration direction. For a bodyless focus, name only its recorded writers. Do not name downstream readers as inputs. An explicit downstream passthrough can forward the arriving qualified task and question with column_flow: [] without adding a value edge.',
+    'upstream_columns always name value inputs, independent of exploration direction. For a bodyless focus, name only its recorded writers. Do not name downstream readers as inputs. An explicit passthrough can forward the arriving qualified task and question with column_flow: [] without adding a value edge.',
   self_loop_column:
     'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in sections.',
   bad_return_target:
