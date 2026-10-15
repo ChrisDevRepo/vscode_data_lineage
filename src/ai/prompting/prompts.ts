@@ -805,7 +805,7 @@ export function buildCurrentTaskBlock(
     if (external.length) lines.push(task.traversalSide === 'upstream'
       ? `  <writer_targets>${endpoints(external)}: determine whether this writer's SQL supplies these stored outputs. Record confirmed write mappings and their value contributors; end targets this writer does not supply on this branch.</writer_targets>`
       : task.traversalSide === 'downstream'
-        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, explain join/filter-only roles separately, and end unused inputs on this branch. If none contributes a value, stop CT continuation here. If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
+        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, state join, filter and grouping roles in sections, and end unused inputs on this branch. If none contributes a value, stop CT continuation here. If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
         : `  <incoming_endpoints>${endpoints(external)}: resolve these qualified arrivals from this object's SQL in the approved direction. Record confirmed mappings or establish where this branch ends; do not assume consumption from object adjacency.</incoming_endpoints>`);
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {

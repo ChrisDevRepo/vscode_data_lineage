@@ -14,7 +14,9 @@ describe('column contributor instructions', () => {
     expect(description).toContain('caller-bound value inputs');
     expect(description).toContain('only the real source columns whose value flows into out_col');
     expect(description).toContain('Resolve parameters and computed aliases to their source columns');
-    expect(description).toContain('A column used only to join, filter, group, partition or order rows is not a source');
+    expect(description).toContain('A column used only to join, filter, group, partition or order rows is a dataset operation, not a source');
+    expect(description).toContain('each set-operation (UNION) branch’s column at that position');
+    expect(description).toContain('a predicate column whose value out_col takes directly');
     expect(description).toContain('Exclude the entry’s own writes_to column and unused expressions');
     expect(description).toContain('upstream_columns names only writers supplying the tracked column, never readers');
     expect(description).toContain('forward the arriving column task to downstream consumers or a bodyless focus\'s upstream writers without declaring an unconfirmed source');
@@ -25,8 +27,8 @@ describe('column contributor instructions', () => {
     const description = flow.shape.upstream_columns.element.shape.transforms.description!;
     expect(description).toContain('aggregate: value summarised by an aggregate');
     expect(description).toContain('compute: expression input, including a CASE condition operand');
-    expect(description).toContain('combine: join, grouping, partition or ordering key');
-    expect(description).toContain('filter: predicate selecting contributing rows');
+    expect(description).toContain('combine: the value source is also a join, grouping, partition or ordering key');
+    expect(description).toContain('never list a column for combine or filter alone');
     expect(description).toContain('omit when SQL does not determine it');
   });
 

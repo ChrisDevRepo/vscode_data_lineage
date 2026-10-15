@@ -555,8 +555,8 @@ const ColumnRefSchema = z.object({
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
     'pass_through: unchanged value. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
-    'combine: join, grouping, partition or ordering key. filter: predicate ' +
-    'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
+    'combine: the value source is also a join, grouping, partition or ordering key. filter: the value source also ' +
+    'selects contributing rows; never list a column for combine or filter alone. Grouping, partition and ordering keys are not aggregate value inputs; ' +
     'display-only sorting contributes no role.',
   ),
   note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(
@@ -580,8 +580,9 @@ const ColumnFlowEntrySchema = z.object({
   returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
     'At a bodied focus, only the real source columns whose value flows into out_col: operands of its expression, ' +
-    'an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. ' +
-    'A column used only to join, filter, group, partition or order rows is not a source: omit it here and state it in sections. ' +
+    'an aggregate’s argument, each set-operation (UNION) branch’s column at that position, a predicate column whose value out_col takes directly ' +
+    '(an equality that fixes the output to that column), caller-bound value inputs. ' +
+    'A column used only to join, filter, group, partition or order rows is a dataset operation, not a source: omit it here and state it in sections. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
     'At a bodyless focus, upstream_columns names only writers supplying the tracked column, never readers. ' +
     'For passthrough with column_flow: [], forward the arriving column task to downstream consumers or a bodyless focus\'s upstream writers without declaring an unconfirmed source; ' +
