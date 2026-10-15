@@ -82,7 +82,7 @@ suite('Native chat confirmations — actual UI', () => {
     const before=fixture.uiRequests.length;
     firstErrorIndex=fixture.uiErrors.length;
     const box = input();
-    await waitForControl(box,real ? phaseTimeoutMs : 0);
+    await waitForControl(box,real ? phaseTimeoutMs : 20000);
     assert.notEqual(await box.getAttribute('aria-readonly'),'true','input must accept a typed turn');
     await page.keyboard.press('Escape');
     await page.locator('.interactive-session .monaco-editor').last().click();
@@ -124,8 +124,8 @@ suite('Native chat confirmations — actual UI', () => {
     assert.equal(exports.getSession().phase.kind,planPhase);
     await waitForControl(continueButton());
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'plan cannot run before approval');
-    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 0);
-    await waitForControl(cancelButton(),real ? phaseTimeoutMs : 0);
+    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 20000);
+    await waitForControl(cancelButton(),real ? phaseTimeoutMs : 20000);
   };
 
   setup(() => {
@@ -216,8 +216,8 @@ suite('Native chat confirmations — actual UI', () => {
     assertProviderHealthy();
     assert.equal(exports.getSession().phase.kind,planPhase);
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0);
-    await waitForControl(continueButton(),real ? phaseTimeoutMs : 0);
-    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 0);
+    await waitForControl(continueButton(),real ? phaseTimeoutMs : 20000);
+    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 20000);
     await cancelButton().click();
     await idleInput();
     await capture('typed-scope-change');

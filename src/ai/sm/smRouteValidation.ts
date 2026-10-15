@@ -29,7 +29,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   missing_task_decision:
     'Account for each listed target with its mapping or explicit endpoint; terminated_inputs names arriving columns that stop without a local output. With analyze, supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it. Only passthrough forwards the incoming question automatically.',
   invalid_task_decision:
-    'Correct the invalid mapping or input disposition. A write needs a value contribution or an explicit constant output; row-role-only inputs end through terminated_inputs when they have no value output. terminated_inputs must name an assigned incoming column that is not also mapped.',
+    'terminated_inputs may name only an assigned incoming column (listed in the reason) that is not also mapped; remove or correct the entry.',
   absent_contributor:
     'Name only loaded objects connected to this focus: a writes_to target this hop writes, and upstream_columns contributors that are its neighbors or, for a caller-context investigation, read suppliers of the function or its declared callers. Remove the named reference and describe an unresolved source in sections.',
   bad_out_col:
@@ -61,7 +61,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_queued:
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   column_out_of_scope:
-    'This object is outside the approved scope, so the column trace does not reach it. Remove the reference from column_flow, record the finding in sections, and name the object in questions: a question to an out-of-scope object is kept as a follow-up question.',
+    'This object is outside the approved scope, so the column trace does not reach it. Remove the reference from column_flow, record the finding in sections, and, if it is a listed neighbor, name the object in questions: a question to an out-of-scope object is kept as a follow-up question.',
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and cannot be pruned. Remove it from prune_neighbors.',
   prune_unsupported:

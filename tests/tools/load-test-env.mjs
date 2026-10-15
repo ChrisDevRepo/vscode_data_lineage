@@ -39,10 +39,16 @@ export function loadTestEnv({ env = process.env, envFile = ENV_FILE, requireAiPr
   }
 
   if (requireAiProvider) {
-    env.AI_TEST_TIMEOUT_MS = String(testTimeout.parse(env.AI_TEST_TIMEOUT_MS?.trim() || 7_200_000));
-    env.AI_TEST_REQUEST_TIMEOUT_MS = String(testTimeout.parse(env.AI_TEST_REQUEST_TIMEOUT_MS?.trim() || env.AI_TEST_TIMEOUT_MS));
+    env.AI_TEST_TIMEOUT_MS = timeoutSetting('AI_TEST_TIMEOUT_MS', env.AI_TEST_TIMEOUT_MS?.trim() || 7_200_000);
+    env.AI_TEST_REQUEST_TIMEOUT_MS = timeoutSetting('AI_TEST_REQUEST_TIMEOUT_MS', env.AI_TEST_REQUEST_TIMEOUT_MS?.trim() || env.AI_TEST_TIMEOUT_MS);
   }
   return applyProviderProfile(env, requireAiProvider);
+}
+
+function timeoutSetting(name, value) {
+  const parsed = testTimeout.safeParse(value);
+  if (!parsed.success) throw new Error(`${name} must be a whole number of milliseconds from 1 to 2147423647.`);
+  return String(parsed.data);
 }
 
 function parseEnv(source) {
@@ -51,8 +57,9 @@ function parseEnv(source) {
     const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/u);
     if (!match) continue;
     let value = match[2];
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
+    const quoted = value.match(/^(["'])(.*?)\1(?:\s+#.*)?$/u);
+    if (quoted) {
+      value = quoted[2];
     } else {
       value = value.replace(/\s+#.*$/u, '').trim();
     }

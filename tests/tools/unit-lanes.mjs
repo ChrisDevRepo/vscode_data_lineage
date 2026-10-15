@@ -18,6 +18,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 /** Fixed aggregate recipes: filters or disabling flags would silently narrow a gate lane. */
 const laneScriptCommands = {
   test: 'node tests/tools/run-lane.mjs gate',
+  'test:parser': 'node tests/tools/run-vitest.mjs run tests/unit/parser',
   'test:core': 'node tests/tools/run-lane.mjs core',
   'test:lineage': 'node tests/tools/run-lane.mjs lineage',
   'test:bfs': 'node tests/tools/run-lane.mjs lineage',

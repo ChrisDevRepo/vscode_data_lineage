@@ -167,6 +167,10 @@ describe('lineage case catalog', () => {
     expect(new Set(rows.map(row => row.id)).size).toBe(rows.length);
     expect(scriptedCases.length).toBeGreaterThan(0);
     expect(storedArrivalCases.length).toBeGreaterThan(0);
+    for (const row of scriptedCases) {
+      const keys = Object.keys(row.expect);
+      expect(keys.length > 0 && keys.every(key => ['edges', 'invalid', 'invalid_kind', 'reason_contains'].includes(key)), row.id).toBe(true);
+    }
     expect(selfPruneCases.length).toBeGreaterThan(0);
     expect(new Set(selfPruneCases.map(row => row.id)).size).toBe(selfPruneCases.length);
     expect(selfPruneCases.every(row => typeof row.story === 'string' && row.story.trim().length > 0)).toBe(true);

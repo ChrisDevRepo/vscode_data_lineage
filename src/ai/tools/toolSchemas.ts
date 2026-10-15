@@ -580,8 +580,8 @@ const ColumnFlowEntrySchema = z.object({
   returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
     'At a bodied focus, only the real source columns whose value flows into out_col: operands of its expression, ' +
-    'an aggregate’s argument, each set-operation (UNION) branch’s column at that position, a predicate column whose value out_col takes directly ' +
-    '(an equality that fixes the output to that column), caller-bound value inputs. ' +
+    'an aggregate’s argument, each set-operation (UNION) branch’s column at that position, a column equated to the projected column by an inner join or WHERE equality, ' +
+    'so out_col equals its value on every row (not an outer-join key), caller-bound value inputs. ' +
     'A column used only to join, filter, group, partition or order rows is a dataset operation, not a source: omit it here and state it in sections. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
     'At a bodyless focus, upstream_columns names only writers supplying the tracked column, never readers. ' +

@@ -799,13 +799,13 @@ export function buildCurrentTaskBlock(
     const endpoints = (values: readonly ScalarReturnTarget[]) => values.map(ref => escapePromptText(`${ref.node}.${ref.col}`)).join(', ');
     if (assigned.length) lines.push(
       nonBodied
-        ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints on a focus without a SQL body. Preserve accepted mappings and use neighbor metadata for explicit passthrough in the approved direction, without inventing value edges. The receiving SQL objects resolve whether and how those values continue.</assigned_endpoints>`
-        : `  <assigned_endpoints>${endpoints(assigned)}: resolve these endpoints from this object's SQL in the approved direction. Record their qualified continuation or establish their final endpoint; preserve accepted mappings.</assigned_endpoints>`,
+        ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints on a focus without a SQL body. Use neighbor metadata for explicit passthrough in the approved direction, without inventing value edges. The receiving SQL objects resolve whether and how those values continue.</assigned_endpoints>`
+        : `  <assigned_endpoints>${endpoints(assigned)}: resolve these endpoints from this object's SQL in the approved direction. Record their qualified continuation or establish their final endpoint.</assigned_endpoints>`,
     );
     if (external.length) lines.push(task.traversalSide === 'upstream'
       ? `  <writer_targets>${endpoints(external)}: determine whether this writer's SQL supplies these stored outputs. Record confirmed write mappings and their value contributors; end targets this writer does not supply on this branch.</writer_targets>`
       : task.traversalSide === 'downstream'
-        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, state join, filter and grouping roles in sections, and end unused inputs on this branch. If none contributes a value, stop CT continuation here. If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
+        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, state join, filter and grouping roles in sections, and leave unused inputs unmapped; they end here. If none contributes a value, submit analyze with column_flow: [] (passthrough would forward them). If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
         : `  <incoming_endpoints>${endpoints(external)}: resolve these qualified arrivals from this object's SQL in the approved direction. Record confirmed mappings or establish where this branch ends; do not assume consumption from object adjacency.</incoming_endpoints>`);
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {

@@ -73,7 +73,7 @@ test('non-empty environment values win over .env and provider aliases', () => {
   const directory = mkdtempSync(join(tmpdir(), 'lineage-env-'));
   const envFile = join(directory, '.env');
   writeFileSync(envFile, [
-    'AI_TEST_PROVIDER=fireworks',
+    'AI_TEST_PROVIDER="fireworks" # selected profile',
     'AI_TEST_ENDPOINT=https://file.example/v1',
     'AI_TEST_API_KEY=file-secret',
     'AI_TEST_MODEL=file-model',
@@ -156,7 +156,7 @@ test('native AI budgets allow slow local models and reject invalid timer values'
   }
   for (const key of ['AI_TEST_TIMEOUT_MS', 'AI_TEST_REQUEST_TIMEOUT_MS']) {
     for (const value of ['0', '-1', 'NaN', '1.5', '2147423648']) {
-      assert.throws(() => loadTestEnv({ env: { ...base, [key]: value }, envFile: join(tmpdir(), 'missing-lineage-env'), requireAiProvider: true }), { name: 'ZodError' });
+      assert.throws(() => loadTestEnv({ env: { ...base, [key]: value }, envFile: join(tmpdir(), 'missing-lineage-env'), requireAiProvider: true }), new RegExp(`^Error: ${key} must be`));
     }
   }
 });

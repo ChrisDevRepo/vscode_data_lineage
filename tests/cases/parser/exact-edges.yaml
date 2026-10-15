@@ -1311,6 +1311,11 @@ cases:
     sources:
       - dbo.mytable
       - dbo.other
+  - id: ci-cte-alias-capitalization-variant
+    description: a CTE alias named in another capitalization resolves to its base table when identifiers are case insensitive
+    sql: with MixedAlias as (select * from dbo.CaseTab) update MIXEDALIAS set x=1
+    sources: [dbo.CaseTab]
+    targets: [dbo.CaseTab]
   - id: mixed-keyword-case-join
     description: JOIN with mixed keyword casing
     sql: sElEcT s.Value fRoM Sales.Source s lEfT jOiN Sales.Target t ON s.Value=t.Value
