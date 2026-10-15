@@ -17,7 +17,7 @@ import {
   analyzeLongestPath,
   analyzeOrphans,
 } from '../../../src/engine/graphAnalysis';
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 
 const emptyGraph = () => new Graph({ type: 'directed', multi: false });
 

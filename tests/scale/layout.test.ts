@@ -2,7 +2,7 @@
 import { expect, it } from 'vitest';
 import { buildGraph } from '../../src/engine/graphBuilder';
 import { DEFAULT_CONFIG } from '../../src/engine/types';
-import { buildLargeModel } from '../unit/webview/largeGraphFixture';
+import { buildLargeModel } from '../unit/helpers/largeGraphFixture';
 
 it('lays out 1500 nodes without losing objects or reciprocal edge pairs', () => {
   const model = buildLargeModel(1500);

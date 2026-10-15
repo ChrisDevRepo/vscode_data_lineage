@@ -70,7 +70,7 @@ Before the rules run, the SQL is cleaned:
 - `TOP (expression) [PERCENT]` is taken out of `INSERT`, `UPDATE` and `MERGE`, so the target follows the keyword.
 - The column list and `WITH` options of `CREATE [EXTERNAL] TABLE ... AS SELECT` are removed, so the name stands directly before `AS`.
 
-Built-in statement scanning also records mutation targets before custom rewrites, so metadata fallback can distinguish data-producing writes from deletes. Then custom `preprocessing` rules run, the other rules run in priority order, and captures are resolved against the loaded objects. `external_ref` rules read the raw SQL, because paths and URLs occur in string literals.
+Built-in statement scanning also records mutation targets before custom rewrites, so metadata fallback can distinguish data-producing writes from deletes. Then custom `preprocessing` rules run, the other rules run in priority order, and captures are resolved against the loaded objects. `external_ref` rules read the raw SQL, because paths and URLs occur in string literals. Matches starting inside comments or quoted identifiers are ignored; single-quoted paths remain available to custom rules.
 
 The shipped rules cover `FROM` / `JOIN` / `APPLY` sources, DML and `CREATE TABLE AS SELECT` targets, procedure calls, and file references from `OPENROWSET`, `COPY INTO` and `BULK INSERT`.
 

@@ -98,6 +98,17 @@ scripts/*
 # Code-audit workspace (tool output, inventories, classification artifacts)
 .audit/
 
+# Generated reviews and audit reports stay local.
+.reviews/
+review/
+reviews/
+audit/
+audits/
+[Rr][Ee][Vv][Ii][Ee][Ww]*.[Mm][Dd]
+*[-_.][Rr][Ee][Vv][Ii][Ee][Ww]*.[Mm][Dd]
+[Aa][Uu][Dd][Ii][Tt]*.[Mm][Dd]
+*[-_.][Aa][Uu][Dd][Ii][Tt]*.[Mm][Dd]
+
 # Package-verification scratch trees (.verify-tmp, .verify2, …). Each holds a full copy of the
 # repository, so an unignored one is picked up by `vsce ls` and would ship source in the VSIX.
 .verify*/

@@ -1,5 +1,5 @@
 /**
- * Deterministic large-graph generator for the rendering lanes.
+ * Deterministic large-graph fixture shared by backend correctness and optional layout checks.
  *
  * The largest tracked fixture is 148 nodes (tests/fixtures/graph-baseline-aw.json), while `maxNodes`
  * admits up to 5000 objects (default 2000) and `renderLimit` renders up to 1500. `buildLargeModel` covers that range as a
@@ -10,7 +10,7 @@
  */
 
 import type { DatabaseModel } from '../../../src/engine/types';
-import { generateDwhModel } from '../helpers/dwhGraphGenerator';
+import { generateDwhModel } from './dwhGraphGenerator';
 
 const FIXED_SEED = 20260923;
 

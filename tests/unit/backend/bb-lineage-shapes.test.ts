@@ -1,3 +1,4 @@
+// Owner: src/ai/sm/smBase.ts and engine/graphGuards.ts; BB navigation and prune functional contracts.
 /**
  * Object-level (BB) lineage by graph shape: the delivered graph is the approved directed ball of the
  * origin minus what a prune removed, every delivered node keeps a directed path to the origin, and
@@ -35,6 +36,7 @@ const SHAPES: Shape[] = [
   { name: 'transitive shortcut sets the level', types: v('o', 'a', 'b', 'c'), edges: [['o', 'a'], ['a', 'b'], ['b', 'c'], ['o', 'c']], up: CLOSED, down: exact(1), nodes: ['a', 'c', 'o'], leads: ['b:depth_boundary'] },
   { name: 'a table counts as a level and is kept at the border', types: { o: 'view', t: 'table', a: 'view' }, edges: [['o', 't'], ['t', 'a']], up: CLOSED, down: exact(1), nodes: ['o', 't'], leads: ['a:depth_boundary'] },
   { name: 'diamond keeps the join on one keep vote', types: v('o', 'a', 'b', 'j', 'k'), edges: [['o', 'a'], ['o', 'b'], ['a', 'j'], ['b', 'j'], ['j', 'k']], up: CLOSED, down: ALL, script: { a: { prune: ['j'] } }, nodes: ['a', 'b', 'j', 'k', 'o'] },
+  { name: 'one submission prunes an arm and investigates the other without cutting the shared join', types: v('o', 'a', 'b', 'j'), edges: [['o', 'a'], ['o', 'b'], ['a', 'j'], ['b', 'j']], up: CLOSED, down: ALL, script: { o: { verdict: 'analyze', prune: ['a'], ask: ['b'] } }, nodes: ['b', 'j', 'o'], pruned: ['a'], leads: ['a:pruned_by_ai'] },
   { name: 'diamond cuts the join and its tail when both arms prune', types: v('o', 'a', 'b', 'j', 'k'), edges: [['o', 'a'], ['o', 'b'], ['a', 'j'], ['b', 'j'], ['j', 'k']], up: CLOSED, down: ALL, script: { a: { prune: ['j'] }, b: { prune: ['j'] } }, nodes: ['a', 'b', 'o'], pruned: ['j', 'k'], leads: ['j:pruned_by_ai', 'j:pruned_by_ai'] },
   { name: 'unequal parallel paths keep the far node through the surviving arm', types: v('o', 'a', 'b', 'c', 'd'), edges: [['o', 'a'], ['a', 'b'], ['b', 'c'], ['o', 'c'], ['c', 'd']], up: CLOSED, down: ALL, script: { o: { prune: ['a'] } }, nodes: ['c', 'd', 'o'], pruned: ['a', 'b'], leads: ['a:pruned_by_ai'] },
   { name: 'pruned table cut vertex takes its exclusive readers', types: { o: 'view', t: 'table', b: 'view', c: 'view' }, edges: [['o', 't'], ['t', 'b'], ['b', 'c']], up: CLOSED, down: ALL, script: { o: { prune: ['t'] } }, nodes: ['o'], pruned: ['b', 'c', 't'], leads: ['t:pruned_by_ai'] },
@@ -65,7 +67,7 @@ describe('BB lineage by shape', () => {
     expect(result.pruned.filter(id => order.includes(id))).toEqual([]);
     expect(w.leads()).toEqual(shape.leads ?? []);
     expect(withoutDirectedPath(w.engine, origin, { upstream: shape.up.levels !== 0, downstream: shape.down.levels !== 0 })).toEqual([]);
-    const kept = new Set(result.nodes);
+    const kept = new Set(shape.nodes);
     expect(result.edges).toEqual(shape.edges.filter(([s, t]) => kept.has(s) && kept.has(t)).map(([s, t]) => `${s}>${t}`).sort());
     expect(w.scope()).toEqual(before);
     expect(delivered(w.engine)).toEqual(result);

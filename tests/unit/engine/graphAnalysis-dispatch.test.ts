@@ -11,7 +11,7 @@ import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';
 import { runAnalysis } from '../../../src/engine/graphAnalysis';
 import type { AnalysisConfig, AnalysisType } from '../../../src/engine/types';
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 
 const CONFIG: AnalysisConfig = { hubMinDegree: 2, islandMaxSize: 4, longestPathMinNodes: 2 };
 

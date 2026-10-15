@@ -4,7 +4,8 @@
  * `core` is the SQL parser directory plus the lineage engine files. Coverage floors apply to
  * that run. `runtime` is the deterministic AI and trust contract set: schema rejection, secret
  * redaction, cancellation, template structure, and SQL-fence repair. `support` is everything
- * else, including webview, database connection, routing scenarios, and operator-tool checks.
+ * else, including rendered webview, database connection and prompt/routing checks. The explicit
+ * lists classify contracts rather than directory names; tests/unit/backend owns BB/CT state.
  * A new engine file must be added to `lineageEngineTests` or `engineSupportTests` before the
  * lane check passes. A new parser file is core. A new webview file is support.
  */
@@ -13,6 +14,29 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** Fixed aggregate recipes: filters or disabling flags would silently narrow a gate lane. */
+const laneScriptCommands = {
+  test: 'node tests/tools/run-lane.mjs gate',
+  'test:core': 'node tests/tools/run-lane.mjs core',
+  'test:lineage': 'node tests/tools/run-lane.mjs lineage',
+  'test:bfs': 'node tests/tools/run-lane.mjs lineage',
+  'test:runtime': 'node tests/tools/run-lane.mjs runtime',
+  'test:support': 'node tests/tools/run-lane.mjs support',
+  'coverage:core': 'node tests/tools/run-lane.mjs core --coverage',
+};
+
+/** Checks aggregate npm recipes; callers can still pass options to the lane runner explicitly. */
+export function laneScriptProblems(scripts = {}) {
+  return Object.entries(laneScriptCommands).flatMap(([script, expected]) => {
+    const command = scripts[script];
+    if (!command) return [`package.json has no "${script}" script.`];
+    if (typeof command !== 'string' || command.trim().split(/[ \t]+/u).join(' ') !== expected) {
+      return [`"${script}" must run ${expected}. It is: ${command}`];
+    }
+    return [];
+  });
+}
 
 /** Repo-relative POSIX path. */
 export const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');
@@ -25,6 +49,7 @@ export const lineageEngineTests = [
   'tests/unit/engine/external-file-stability.test.ts',
   'tests/unit/engine/columnTraceView.test.ts',
   'tests/unit/engine/directed-removal-policy.test.ts',
+  'tests/unit/engine/dwhGraphGenerator.test.ts',
   'tests/unit/engine/exclusionFilters.test.ts',
   'tests/unit/engine/graph-analysis-aw.test.ts',
   'tests/unit/engine/graphAnalysis-dispatch.test.ts',
@@ -36,6 +61,7 @@ export const lineageEngineTests = [
   'tests/unit/engine/graphologyGraph-guards.test.ts',
   'tests/unit/engine/identifier-collision-review.test.ts',
   'tests/unit/engine/isolationFilter.test.ts',
+  'tests/unit/engine/largeGraph.test.ts',
   'tests/unit/engine/modeCapabilities.test.ts',
   'tests/unit/engine/modelBuilder-completeness.test.ts',
   'tests/unit/engine/modelBuilder-direction.test.ts',
@@ -90,38 +116,37 @@ export const engineSupportTests = [
 ];
 
 /**
- * Deterministic contracts that stay on the gate: malformed input, schema repair, secret redaction,
- * cancellation, template structure, escaping, and the operator-runner secret boundary.
+ * Deterministic contracts that stay on the gate: backend graph structure, malformed input, schema repair, secret redaction,
+ * cancellation, tool registration/dispatch, identifier boundaries, template structure, escaping, and the operator-runner secret boundary.
  * Prompt sentences and routing scenarios are support, not rows in this list.
  */
 export const runtimeContractTests = [
   'tests/unit/engine/logging-redaction.test.ts',
   'tests/unit/ai-core/agent-runtime-no-langsmith.test.ts',
+  'tests/unit/ai-core/dispatcher-matrix.test.ts',
   'tests/unit/ai-core/graph-patterns-labels.test.ts',
+  'tests/unit/ai-core/identifier-presentation-paths.test.ts',
   'tests/unit/ai-core/operator-tool-boundary.test.ts',
   'tests/unit/ai-core/output-template-sections.test.ts',
-  'tests/unit/ai-core/present-result-repair-missing-highlight.test.ts',
-  'tests/unit/ai-core/present-result-sibling-and-addable-fields.test.ts',
+  'tests/unit/ai-core/present-result-schema.test.ts',
+  'tests/unit/ai-core/present-result-repair.test.ts',
+  'tests/unit/ai-core/present-result-coverage.test.ts',
+  'tests/unit/ai-core/present-result-functional.test.ts',
   'tests/unit/ai-core/present-result-sql-fence-boundary.test.ts',
-  'tests/unit/ai-core/present-result-unheld-hint-matches-schema.test.ts',
   'tests/unit/ai-core/prompt-task-slot-escaping.test.ts',
   'tests/unit/ai-core/registered-search-cancel.test.ts',
   'tests/unit/ai-core/runtime-abort-signal.test.ts',
   'tests/unit/ai-core/synthesis-envelope-escape.test.ts',
   'tests/unit/ai-core/tool-boundary-malformed-input.test.ts',
   'tests/unit/ai-core/trace-security.test.ts',
-  'tests/unit/sm/lineage-cases.test.ts',
-  'tests/unit/sm/fresh-kept-schema-parity.test.ts',
-  'tests/unit/sm/function-question-schema.test.ts',
-  'tests/unit/sm/present-result-carry-verdict.test.ts',
-  'tests/unit/sm/present-result-ct-coverage-repair.test.ts',
-  'tests/unit/sm/present-result-held-fields.test.ts',
-  'tests/unit/sm/present-result-highlight-schema.test.ts',
-  'tests/unit/sm/present-result-label-contract.test.ts',
-  'tests/unit/sm/present-result-origin-connectivity.test.ts',
-  'tests/unit/sm/tool-boundary-precedence.test.ts',
-  'tests/unit/sm/tool-error-envelope.test.ts',
-  'tests/unit/sm/zod-issue-matrix.test.ts',
+  'tests/unit/ai-core/ai-tool-registration.test.ts',
+  'tests/unit/backend/bb-lineage-shapes.test.ts',
+  'tests/unit/backend/lineage-cases.test.ts',
+  'tests/unit/ai-core/submit-findings-schema.test.ts',
+  'tests/unit/backend/function-column-contracts.test.ts',
+  'tests/unit/ai-core/tool-boundary-precedence.test.ts',
+  'tests/unit/ai-core/tool-error-envelope.test.ts',
+  'tests/unit/ai-core/zod-issue-matrix.test.ts',
 ];
 
 /** Paths passed to Vitest for the coverage-floored core. */
@@ -132,7 +157,7 @@ export const supportDirectories = [
   'tests/unit/webview',
   'tests/unit/engine/db',
   'tests/unit/ai-core',
-  'tests/unit/sm',
+  'tests/unit/backend',
 ];
 
 /** Every `*.test.ts` / `*.test.tsx` under `tests/unit`. */
@@ -169,7 +194,7 @@ export function classifyUnitTests(allFiles = unitTestFiles().sort()) {
   const problems = [];
   const claim = (file, lane, claimed) => {
     const previous = claimed.get(file);
-    if (previous && previous !== lane) problems.push(`${file} is claimed by both ${previous} and ${lane}.`);
+    if (previous) problems.push(`${file} is claimed more than once (${previous}, ${lane}).`);
     claimed.set(file, lane);
   };
   const claimed = new Map();

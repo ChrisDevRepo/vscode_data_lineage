@@ -11,7 +11,6 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
-import Graph from 'graphology';
 import { loadRules } from '../../../src/engine/sqlBodyParser';
 import type { RawParseRulesConfig } from '../../../src/engine/sqlBodyParser';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
@@ -63,30 +62,6 @@ export function loadParseRules() {
   loadRules(yaml.load(rulesYaml) as RawParseRulesConfig);
 }
 
-// ─── Graph Helper ───────────────────────────────────────────────────────────
-
-/** Build a directed graphology graph from nodes + edges (for synthetic test graphs) */
-export function makeGraph(
-  nodes: Array<{ id: string; schema?: string; name?: string; type?: string }>,
-  edges: Array<[string, string]>
-): Graph {
-  const g = new Graph({ type: 'directed', multi: false });
-  for (const n of nodes) {
-    g.addNode(n.id, {
-      schema: n.schema || 'dbo',
-      name: n.name || n.id,
-      type: n.type || 'table',
-    });
-  }
-  for (const [s, t] of edges) {
-    const key = `${s}→${t}`;
-    if (!g.hasEdge(key)) {
-      g.addEdgeWithKey(key, s, t, { type: 'body' });
-    }
-  }
-  return g;
-}
-
 // ─── Parser Helpers ─────────────────────────────────────────────────────────
 
 /** Check that a list contains a value (case-insensitive partial match on the last part) */
@@ -121,16 +96,17 @@ export function detailPanelStub(
 /** Builds the standard detail-handler host while leaving connection behavior to each test. */
 export function detailHandlers(
   create: typeof import('../../../src/bridge/messageHandlers').createMessageHandlers,
-  { isDbSession = true, settings = {}, outputChannel = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, trace: () => {} }, extensionUri = 'ext' }: {
+  { isDbSession = true, settings = {}, outputChannel = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, trace: () => {} }, extensionUri = 'ext', log = () => {} }: {
     isDbSession?: boolean;
     settings?: Record<string, unknown>;
     outputChannel?: Pick<Parameters<typeof create>[3], 'info' | 'debug' | 'warn' | 'error' | 'trace'>;
     extensionUri?: unknown;
+    log?: Parameters<typeof create>[0]['log'];
   } = {},
 ) {
   return create(
     {
-      postMessage: async () => true, log: () => {}, getExtensionUri: () => extensionUri,
+      postMessage: async () => true, log, getExtensionUri: () => extensionUri,
       getConfiguration: () => ({ get: (key: string, fallback: unknown) => key in settings ? settings[key] : fallback }),
     } as unknown as Parameters<typeof create>[0],
     { globalState: { get: () => undefined, update: () => undefined }, secrets: {}, extensionUri } as never,

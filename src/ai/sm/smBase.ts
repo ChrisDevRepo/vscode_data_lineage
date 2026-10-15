@@ -282,8 +282,6 @@ interface ValidatedHop {
   stagedSummaryChars: number;
   stagedColumnEdges: ColumnEdge[];
   stagedColumnFlowEntries: number;
-  /** CT tracked columns this hop's column_flow left unaccounted; informational, never a rejection. */
-  unaccountedColumns: string[];
 }
 
 /**
@@ -3076,7 +3074,6 @@ export class NavigationEngine implements IHopStateMachine {
       const stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       const stagedSummaryChars = finding.summary?.length ?? 0;
 
-      let unaccountedColumns: string[] = [];
       if (this.tracer) {
         const submittedFlow = finding.column_flow ?? [];
         const accounted = new Set(terminated);
@@ -3099,10 +3096,9 @@ export class NavigationEngine implements IHopStateMachine {
         // An explicit empty flow on an ordinary arrival still declares that no input is carried.
         const wholeStop = submittedFlow.length === 0 && focusId !== this.originNodeId && this.currentReturnTargets().length === 0;
         const missing = wholeStop ? [] : incomingRefs.filter(ref => !accounted.has(endpointKey(ref.node, ref.col)));
-        unaccountedColumns = [...new Set(missing.map(ref => ref.col))];
         if (missing.length) invalidRoutes.push({ kind: 'missing_task_decision', id: focusId,
           path: focusId === this.originNodeId ? `column_flow.${submittedFlow.length}` : `terminated_inputs.${finding.terminated_inputs?.length ?? 0}`,
-          reason: `Assigned column targets [${missing.map(ref => `${ref.node}.${ref.col}`).join(', ')}] have no mapping or explicit endpoint. Supply the missing mapping, or name an incoming column that stops in terminated_inputs.`, available_columns: unaccountedColumns });
+          reason: `Assigned column targets [${missing.map(ref => `${ref.node}.${ref.col}`).join(', ')}] have no mapping or explicit endpoint. Supply the missing mapping, or name an incoming column that stops in terminated_inputs.`, available_columns: [...new Set(missing.map(ref => ref.col))] });
       }
 
       const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
@@ -3119,7 +3115,7 @@ export class NavigationEngine implements IHopStateMachine {
       return this.applyValidatedHop({
         focusId, finding, routeRequests, flowQuestionByNode, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
         carryByNode, routeContexts, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges,
-        stagedColumnFlowEntries, unaccountedColumns,
+        stagedColumnFlowEntries,
       });
     } catch (err: unknown) {
       this.log('error', '[Engine] Exception in submitFindings', err);
@@ -3248,7 +3244,7 @@ export class NavigationEngine implements IHopStateMachine {
     const {
       focusId, finding, routeRequests, flowQuestionByNode, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
       carryByNode, routeContexts, stagedSections, stagedDetailChars, stagedSummaryChars, stagedColumnEdges,
-      stagedColumnFlowEntries, unaccountedColumns,
+      stagedColumnFlowEntries,
     } = staged;
     let lineageQuestionsByNode: Map<string, string[]> | undefined;
     this.beginHopCommit(stagedColumnFlowEntries);
@@ -3368,9 +3364,8 @@ export class NavigationEngine implements IHopStateMachine {
     }
     this.finishHopCommit();
     const outcomes = routeOutcomes.length > 0 ? { route_outcomes: routeOutcomes } : {};
-    const columnStatus = unaccountedColumns.length > 0 ? { unaccounted_columns: unaccountedColumns } : {};
 
-    return { ok: true, ...outcomes, ...columnStatus, ...this.commitRemovals };
+    return { ok: true, ...outcomes, ...this.commitRemovals };
   }
 
   /**

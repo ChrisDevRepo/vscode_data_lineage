@@ -1,5 +1,5 @@
 /**
- * Synthetic object-level (BB) worlds for tests/unit/sm/bb-*.test.ts.
+ * Synthetic object-level (BB) worlds for tests/unit/backend/bb-*.test.ts.
  *
  * NOT a test file. A world is a named graph and an approved depth per side; the direction is
  * derived from the depth exactly as the tool boundary derives it, so no test can state a
@@ -9,8 +9,7 @@ import { NavigationEngine } from '../../../../src/ai/sm/smBase';
 import type { DepthIntent } from '../../../../src/ai/sm/smTypes';
 import { directionFromDepth } from '../../../../src/engine/shared/explorationDepthContract';
 import type { DatabaseModel, ObjectType } from '../../../../src/engine/types';
-import { makeGraph } from '../../helpers/testUtils';
-import { makeModel, makeNode } from './fixtures';
+import { makeGraph, makeIndexedModel, makeNode } from '../../helpers/modelFixtures';
 
 /** One side of the approved depth. */
 export type DepthSide = DepthIntent['upstream'];
@@ -45,11 +44,7 @@ export function world(
   const nodes = Object.entries(types).map(([id, type]) => makeNode({
     id, name: id, schema: 'dbo', type, ...(type === 'procedure' ? { bodyScript: `-- ${id}` } : {}),
   }));
-  const model = makeModel(nodes, edges, ['dbo']);
-  const neighborIndex: Record<string, { in: string[]; out: string[] }> = {};
-  for (const node of nodes) neighborIndex[node.id] = { in: [], out: [] };
-  for (const [source, target] of edges) { neighborIndex[target].in.push(source); neighborIndex[source].out.push(target); }
-  (model as { neighborIndex: unknown }).neighborIndex = neighborIndex;
+  const model = makeIndexedModel(nodes, edges);
   const graph = makeGraph(nodes, edges);
   const logs: string[] = [];
   const engine = new NavigationEngine(model, graph, (_level, message) => { logs.push(message); }, {});
@@ -101,8 +96,8 @@ export function delivered(engine: NavigationEngine): { nodes: string[]; edges: s
 }
 
 /**
- * Delivered nodes with no directed path from the origin over delivered edges on an approved side —
- * the reference oracle, written here and independent of the engine's own walks.
+ * Connectivity invariant over delivered edges, independent of the engine's own walks.
+ * Missing nodes and edges require separate comparisons against fixture expectations.
  */
 export function withoutDirectedPath(engine: NavigationEngine, origin: string, sides: { upstream: boolean; downstream: boolean }): string[] {
   const { nodes, edges } = delivered(engine);

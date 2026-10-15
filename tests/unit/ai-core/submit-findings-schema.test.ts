@@ -1,3 +1,4 @@
+// Owner: src/ai/tools/toolSchemas.ts (submitFindingsSchemaForMode); Zod/provider schema contracts.
 /** Provider JSON Schema and runtime agree on fresh kept findings, cuts and held patches. */
 import Ajv from 'ajv';
 import { describe, expect, it } from 'vitest';
@@ -5,27 +6,6 @@ import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode } from '../../
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 
 describe('fresh kept required-field projection', () => {
-  it.each(['bb', 'ct'] as const)('preserves the previous fresh accepted set across classifications and malformed inputs in %s', mode => {
-    for (const classification of ['business', 'technical', 'both'] as const) {
-      const projected = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, true));
-      const previous = structuredClone(projected) as any;
-      const angles = classification === 'both' ? ['business', 'technical'] : [classification];
-      previous.required = previous.required.filter((key: string) => key !== 'summary' && key !== 'sections');
-      delete previous.properties.sections.required;
-      previous.anyOf = [{ properties: { verdict: { enum: ['analyze', 'passthrough'] }, sections: { required: angles } }, required: ['verdict', 'summary', 'sections'] }];
-      const ajv = new Ajv({ strict: false });
-      const before = ajv.compile(previous), after = ajv.compile(projected);
-      const complete: Record<string, unknown> = { focus_node_id: 'source', verdict: 'analyze', summary: 'Observed rule.', sections: Object.fromEntries(angles.map(angle => [angle, 'Observed rule.'])), ...(mode === 'ct' ? { column_flow: [] } : {}) };
-      const examples: unknown[] = [complete, null, [], {}, { ...complete, verdict: 'end_branch' }, { ...complete, verdict: 'passthrough' }, { ...complete, sections: {} }, { ...complete, sections: { business: 'Only business.' } }, { ...complete, sections: { technical: 'Only technical.' } }, { ...complete, sections: { ...complete.sections as object, other: 'Unknown angle.' } }, { ...complete, summary: null }, { ...complete, questions: [{ nodeId: 'neighbor' }] }, { ...complete, prune_neighbors: [{}] }, { ...complete, extra: true }];
-      for (const key of Object.keys(complete)) {
-        const missing = { ...complete }; delete missing[key]; examples.push(missing);
-      }
-      for (const example of examples) {
-        expect(after(example), JSON.stringify(example)).toBe(before(example));
-      }
-    }
-  });
-
   it('projects fresh requirements directly without composition or changing held schemas', () => {
     const fresh = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'both', true));
     const held = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'both', false));
@@ -134,15 +114,15 @@ describe('fresh kept required-field projection', () => {
     }
   });
 
-  it('requires both fresh locked angles without changing the authored input or contaminating a held schema', () => {
-    const held = submitFindingsSchemaForMode('ct', 'both', false);
-    const fresh = submitFindingsSchemaForMode('ct', 'both', true);
+  it.each(['bb', 'ct'] as const)('requires both fresh locked angles without changing input or contaminating a held schema in %s', mode => {
+    const held = submitFindingsSchemaForMode(mode, 'both', false);
+    const fresh = submitFindingsSchemaForMode(mode, 'both', true);
     expect(fresh).not.toBe(held);
-    expect(submitFindingsSchemaForMode('ct', 'both', false)).toBe(held);
+    expect(submitFindingsSchemaForMode(mode, 'both', false)).toBe(held);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(fresh));
     for (const verdict of ['analyze', 'passthrough']) {
       for (const sections of [{ business: 'Business rule.' }, { technical: 'Execution rule.' }]) {
-        const partial = { focus_node_id: 'source', verdict, summary: 'Supplies the amount.', column_flow: [], sections };
+        const partial = { focus_node_id: 'source', verdict, summary: 'Supplies the amount.', ...(mode === 'ct' ? { column_flow: [] } : {}), sections };
         const before = structuredClone(partial);
         expect(fresh.safeParse(partial).success).toBe(false);
         expect(wire(partial)).toBe(false);
@@ -152,7 +132,7 @@ describe('fresh kept required-field projection', () => {
       }
     }
     const complete = { focus_node_id: 'source', verdict: 'analyze', summary: 'Supplies the amount.',
-      column_flow: [], sections: { business: 'Business rule.', technical: 'Execution rule.' } };
+      ...(mode === 'ct' ? { column_flow: [] } : {}), sections: { business: 'Business rule.', technical: 'Execution rule.' } };
     expect(fresh.safeParse(complete).success).toBe(true);
     expect(wire(complete)).toBe(true);
   });

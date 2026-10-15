@@ -13,7 +13,7 @@ vi.mock('vscode', async original => ({ ...await original<object>(),
 import { LineageParticipant } from '../../../src/ai/participant/lineageParticipant';
 import type { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 import { AiSession } from '../../../src/ai/session/session';
-import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { makeModel, makeNode } from '../helpers/modelFixtures';
 
 function fixture() {
   const session = new AiSession();

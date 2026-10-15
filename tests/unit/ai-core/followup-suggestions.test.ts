@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 vi.mock('vscode', async original => ({ ...await original<object>(), l10n: { t: (text: string) => text }, workspace: { getConfiguration: () => ({ get: () => undefined }) }, StatusBarAlignment: {Left:1}, window:{createStatusBarItem:()=>({show(){},hide(){}})} }));
 import { LineageParticipant } from '../../../src/ai/participant/lineageParticipant';
 import { AiSession } from '../../../src/ai/session/session';
-import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { makeModel, makeNode } from '../helpers/modelFixtures';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 

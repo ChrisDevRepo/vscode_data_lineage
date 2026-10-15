@@ -321,11 +321,11 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 ln-text-link shrink-0">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
           </svg>
-          <h3 className="text-sm font-semibold ln-text">GitHub Copilot Chat</h3>
+          <h3 className="text-sm font-semibold ln-text">VS Code Chat</h3>
           <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full ln-help-badge">NEW</span>
         </div>
         <p className="text-sm mb-3 ln-text-muted">
-          Type <span className="font-bold font-mono ln-text-link">@lineage</span> in GitHub Copilot Chat to query your loaded graph. Answers come from your actual data — never from general knowledge.
+          Type <span className="font-bold font-mono ln-text-link">@lineage</span> in VS Code Chat to query your loaded graph. Lineage answers use the loaded model and SQL; general SQL questions can also use the model's knowledge.
         </p>
         <div className="rounded-sm p-3 space-y-1.5 font-mono text-xs ln-help-code-block">
           {[
@@ -350,7 +350,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         <FeatureCard
           icon="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"
           title="Any Model"
-          desc="Works with any model in your Copilot chat dropdown. Auto-scales to context window."
+          desc="Uses the model selected in VS Code Chat. Context is budgeted for the selected model."
         />
       </div>
 

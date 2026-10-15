@@ -15,10 +15,10 @@ export const SQL_LITERAL = 3;
  * escapes; an unterminated block comment runs to the end of the text. The parser and the DDL
  * search share this one reading so both agree on what is commented out.
  *
- * @param options - `markLiterals` marks quoted spans {@link SQL_LITERAL} instead of {@link SQL_CODE}.
+ * @param options - `markLiterals` marks all quoted spans; `markIdentifiers` marks only quoted identifiers as {@link SQL_LITERAL}.
  * @returns One mask value per UTF-16 code unit of `sql`.
  */
-export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: boolean }): Uint8Array {
+export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: boolean; readonly markIdentifiers?: boolean }): Uint8Array {
   const mask = new Uint8Array(sql.length);
   let depth = 0;
   let i = 0;
@@ -33,7 +33,7 @@ export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: 
     }
     if (ch === '\'' || ch === '"' || ch === '[') {
       const end = skipQuoted(sql, i + 1, ch === '[' ? ']' : ch);
-      if (options?.markLiterals) mask.fill(SQL_LITERAL, i, end);
+      if (options?.markLiterals || (options?.markIdentifiers && ch !== "'")) mask.fill(SQL_LITERAL, i, end);
       i = end;
       continue;
     }

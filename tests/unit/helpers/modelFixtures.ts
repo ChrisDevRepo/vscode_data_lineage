@@ -1,18 +1,19 @@
 /**
- * Shared fixture builders for tests/unit/sm/**.
+ * Shared model fixture builders for backend and runtime unit tests.
  *
  * `makeModel` supplies minimal metadata with an empty catalog and neighbor index.
  * `makeIndexedModel` adds the complete declared neighborhood for hop-routing tests,
  * including table focuses. Callers declare SQL, object types and columns explicitly
  * when those facts matter to the contract under test.
  */
+import Graph from 'graphology';
 import type {
   DatabaseModel,
   LineageEdge,
   LineageNode,
   ObjectType,
   SchemaInfo,
-} from '../../../../src/engine/types';
+} from '../../../src/engine/types';
 
 /**
  * Build a LineageNode fixture. `fullName` defaults to `id` — these synthetic graphs
@@ -80,4 +81,26 @@ export function makeIndexedModel(
     model.neighborIndex[to].in.push(from);
   }
   return model;
+}
+
+/** Build a directed graphology graph from nodes + edges (for synthetic test graphs) */
+export function makeGraph(
+  nodes: Array<{ id: string; schema?: string; name?: string; type?: string }>,
+  edges: Array<[string, string]>
+): Graph {
+  const g = new Graph({ type: 'directed', multi: false });
+  for (const n of nodes) {
+    g.addNode(n.id, {
+      schema: n.schema || 'dbo',
+      name: n.name || n.id,
+      type: n.type || 'table',
+    });
+  }
+  for (const [s, t] of edges) {
+    const key = `${s}→${t}`;
+    if (!g.hasEdge(key)) {
+      g.addEdgeWithKey(key, s, t, { type: 'body' });
+    }
+  }
+  return g;
 }

@@ -1,4 +1,4 @@
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 import {
   buildTraceScopeGraph,
   buildVisibleTraceScope,

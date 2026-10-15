@@ -18,7 +18,7 @@ afterAll(() => {
   loadParseRules();
 });
 
-function externalRefRule(flags: string): RawParseRulesConfig {
+function externalRefRule(flags: string, pattern = "\\bOPENROWSET\\s*\\(\\s*BULK\\s+'([^']+)'"): RawParseRulesConfig {
   return {
     rules: [{
       name: 'scan_openrowset',
@@ -26,7 +26,7 @@ function externalRefRule(flags: string): RawParseRulesConfig {
       priority: 50,
       category: 'external_ref',
       kind: 'openrowset',
-      pattern: "\\bOPENROWSET\\s*\\(\\s*BULK\\s+'([^']+)'",
+      pattern,
       flags,
       description: 'test rule',
     }],
@@ -132,6 +132,13 @@ describe('parse rule regex flags', () => {
 });
 
 describe('extractExternalRefs', () => {
+  it('keeps custom rules matching quoted paths while ignoring quoted identifiers', () => {
+    const config = externalRefRule('g', "'(https://[^']+)'");
+    expect(loadRules(config).errors).toEqual([]);
+    expect(extractExternalRefs("SELECT [ref 'https://phantom.example'], 'https://real.example/data.csv';"))
+      .toEqual([{ url: 'https://real.example/data.csv', kind: 'openrowset' }]);
+  });
+
   it('terminates and keeps every distinct reference over a body with many matches', () => {
     loadRules(externalRefRule('gi'));
     const body = Array.from(

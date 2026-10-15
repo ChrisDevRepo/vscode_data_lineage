@@ -6,8 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { TaskLedger } from '../../../src/ai/sm/taskLedger';
-import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { makeGraph, makeModel, makeNode } from '../helpers/modelFixtures';
 
 const ORIGIN = '[s].[origin]', BRANCH = '[s].[branch]', OTHER = '[s].[other]';
 const col = (name: string) => ({ name, type: 'int', nullable: 'NULL' as const, extra: '' });

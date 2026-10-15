@@ -1044,7 +1044,7 @@ function normalizeCrossDb(raw: string, identifierCaseSensitive: boolean): string
 export function extractExternalRefs(rawSql: string): ExternalRef[] {
   const seen = new Set<string>();
   const results: ExternalRef[] = [];
-  const mask = sqlCommentMask(rawSql);
+  const mask = sqlCommentMask(rawSql, { markIdentifiers: true });
   const extRules = activeRules.filter(r => r.category === 'external_ref');
 
   for (const rule of extRules) {

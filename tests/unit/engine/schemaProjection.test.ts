@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../../../src/engine/schemaProjection';
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 
 describe('partitionBySchema — expanded schemas', () => {
   const lineageGraph = () => makeGraph(

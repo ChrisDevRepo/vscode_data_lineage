@@ -6,7 +6,7 @@ import { AiSession } from '../../../src/ai/session/session';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import type { AiTraceRecord, AiTraceWriter } from '../../../src/ai/observability/aiTraceWriter';
-import { makeModel, makeNode } from '../sm/helpers/fixtures';
+import { makeModel, makeNode } from '../helpers/modelFixtures';
 
 const BADGE = 'What could I explore next?';
 /** Provider text that echoes prompt content, as some providers do in their error messages. */

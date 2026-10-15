@@ -1,11 +1,11 @@
+// Owner: src/ai/sm/columnTracer.ts and tools/toolSchemas.ts; qualified function task contracts.
 /** Caller provenance is offered only on eligible neighboring functions; ordinary questions remain unchanged. */
 import Ajv from 'ajv';
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
-import { makeGraph } from '../helpers/testUtils';
-import { makeModel, makeNode } from './helpers/fixtures';
+import { makeGraph, makeModel, makeNode } from '../helpers/modelFixtures';
 
 const caller = '[d].[caller]', fn = '[d].[function]', source = '[d].[source]';
 const col = (name: string) => ({ name, type: 'int', nullable: 'NULL' as const, extra: '' });

@@ -158,7 +158,6 @@ export function DetailApp() {
         statsEnabled={config.statsEnabled}
         excludeExternalTables={config.excludeExternalTables}
         standardModeEnabled={config.standardModeEnabled}
-        fillContainer
         findQuery={findQuery}
       />
     );
@@ -192,7 +191,6 @@ export function DetailApp() {
               statsEnabled={false}
               excludeExternalTables={false}
               standardModeEnabled={false}
-              fillContainer
               findQuery={findQuery}
               compactColumns
             />

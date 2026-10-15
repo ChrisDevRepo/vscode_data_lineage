@@ -56,7 +56,9 @@ debug.log
 **/*.tmp
 
 # Code-audit workspace (tool output, inventories, classification artifacts).
-.audit/**
+**/{.audit,.reviews,review,reviews,audit,audits}/**
+**/{[Rr][Ee][Vv][Ii][Ee][Ww],[Aa][Uu][Dd][Ii][Tt]}*.[Mm][Dd]
+**/*[-_.]{[Rr][Ee][Vv][Ii][Ee][Ww],[Aa][Uu][Dd][Ii][Tt]}*.[Mm][Dd]
 
 # Package-verification scratch trees (.verify-tmp, .verify2, …). Each holds a full copy of the
 # repository, so an unignored one ships the whole source and test tree inside the VSIX.

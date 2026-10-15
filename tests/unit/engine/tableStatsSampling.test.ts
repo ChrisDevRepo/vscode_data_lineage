@@ -49,9 +49,13 @@ describe('table statistics sampling', () => {
       executeSimpleQuery,
       dispose: vi.fn().mockResolvedValue(undefined),
     });
-    const { handlers } = arrange();
+    const log = vi.fn();
+    const { handlers } = detailHandlers(createMessageHandlers, { log });
 
-    await handlers['show-detail']({ type: 'show-detail' });
+    const node = { id: '[dbo].[Orders]', schema: 'dbo', name: 'Orders', fullName: '[dbo].[Orders]', type: 'table' as const };
+    await handlers['show-detail']({ type: 'show-detail', node });
+    expect(log.mock.calls.filter(([level]) => level !== 'debug').map(([, , text]) => text).join('\n')).not.toContain(node.id);
+    expect(log.mock.calls.filter(([level]) => level === 'debug').map(([, , text]) => text).join('\n')).toContain(node.id);
     await detailPanelListener!({
       type: 'table-stats-request', schema: 'dbo', objectName: 'Orders', mode: 'quick',
       columns: [{ name: 'Id', type: 'int', nullable: 'NOT NULL', extra: '' }],

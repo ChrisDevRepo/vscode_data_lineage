@@ -8,8 +8,7 @@ import { AiSession } from '../../../src/ai/session/session';
 import type { PresentationArtifact } from '../../../src/ai/session/types';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { HopSubmission } from '../../../src/ai/sm/smTypes';
-import { makeGraph } from '../../../tests/unit/helpers/testUtils';
-import { makeModel, makeNode } from '../../../tests/unit/sm/helpers/fixtures';
+import { makeGraph, makeModel, makeNode } from '../helpers/modelFixtures';
 import { ScriptedModelPort, scriptedRegistry, validCall } from '../../harness/scriptedModelPort';
 
 const GATE_RESULT = JSON.stringify({

@@ -1,5 +1,5 @@
 /**
- * Loose sanity checks for the seeded, asymmetric graph generator: same seed reproduces the
+ * Fixture and extractor contracts for the seeded, asymmetric graph generator: same seed reproduces the
  * identical model, a different seed diverges, edges per node land in the 2.5-3.5 band at 2k/10k,
  * and at least one hub object exists. A .dacpac round-trip through the real extractor proves the
  * generated graph is not just an in-memory shape.

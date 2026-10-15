@@ -1,6 +1,6 @@
 // Pruning shares one fixed-leg policy across AI and GUI, including closed-anchor protection.
 import { describe, expect, it } from 'vitest';
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 import { analyzeRemoval, type RemovalContext } from '../../../src/engine/graphGuards';
 import { canPruneTraceNode, traceRemovalSides } from '../../../src/engine/traceScope';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
