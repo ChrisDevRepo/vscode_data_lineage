@@ -232,11 +232,6 @@ export class ColumnTracer {
     const focusNode = nodeMap.get(focusId);
     if (!focusNode) return { invalidRoutes, stagedEdges };
 
-    const focusIsCarrier = !SCRIPT_TYPES.has(focusNode.type);
-    // Exploration direction never reverses a value edge: upstream_columns are inputs.
-    const continuationNeighbors = focusIsCarrier
-      ? new Set((model.neighborIndex[identifierKey(focusId)]?.in ?? []).map((id) => identifierKey(id)))
-      : null;
 
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
     const activeNorm = this.aspect.active_columns.map(this.columnKey);
@@ -302,21 +297,8 @@ export class ColumnTracer {
       if (entry.writes_to && toNodeObj && toNodeId && identifierKey(toNodeId) !== identifierKey(focusId)) {
         const focusLower = identifierKey(focusId);
         const toLower = identifierKey(toNodeId);
-        const verbs = new Set<string>();
-        for (const e of model.edges) {
-          if (identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower) {
-            verbs.add(edgeApiType(e.type, focusNode.type));
-          }
-        }
-        if (verbs.size === 0) {
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it — a write destination is a node this hop writes.` });
-          continue;
-        }
-        if (!verbs.has('write')) {
-          const reason = [...verbs].every(v => v === 'read')
-            ? `writes_to names "${toNodeObj.id}" but that node only reads ${focusId} — a downstream reader is never the write destination.`
-            : `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded write dependency into it — ${[...verbs].sort().join(', ')} does not establish a write destination.`;
-          invalidRoutes.push({ kind: 'bad_writes_to_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason });
+        if (!model.edges.some(e => identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower)) {
+          invalidRoutes.push({ kind: 'absent_contributor', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it.` });
           continue;
         }
       }
@@ -391,25 +373,7 @@ export class ColumnTracer {
           log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — ${neighbor.type} metadata fallback`);
         }
 
-        if (continuationNeighbors) {
-          if (continuationNeighbors.size === 0 && !model.neighborIndex[identifierKey(focusId)]) {
-            log?.('debug', `[CT] unverifiable continuation "${cont.col}" on carrier "${focusId}" from "${cont.node}" — no recorded writers, accepting unverified`);
-          } else {
-            if (!continuationNeighbors.has(identifierKey(neighbor.id))) {
-              invalidRoutes.push({
-                kind: 'non_writer_continuation',
-                id: cont.node,
-                path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`,
-                reason: `focus "${focusId}" has no body of its own, so upstream_columns name nodes that write it — "${cont.node}" is not one of them. Downstream readers consume this column; they are not its inputs.`,
-                allowed_values: Array.from(continuationNeighbors).sort(),
-              });
-              continue;
-            }
-            log?.('debug', `[CT] continuation edge "${cont.col}" on carrier "${focusId}" from "${cont.node}" — attributed on that node's own hop`);
-          }
-        }
-
-        // Adjacency is judged last, after the column and the carrier's continuation: a column absent from declared metadata is refused wherever the object sits, and a non-writer continuation keeps its own refusal.
+        // Adjacency is judged last, after the column: a column absent from declared metadata is refused wherever the object sits.
         if (contributorIds && neighbor.id !== focusId && !contributorIds.has(neighbor.id)) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" has no dependency edge to ${focusId}; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.` });
           continue;
@@ -467,16 +431,6 @@ export class ColumnTracer {
           : `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${tracked}].`,
       });
     };
-
-    if (focusIsCarrier) {
-      for (const [entryIndex, edges] of entryEdges) {
-        const upDetached = detachedIn(edges, attached);
-        const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : undefined;
-        if (upDetached.length === 0 || downDetached?.length === 0) continue;
-        rejectEntry(entryIndex, edges, upDetached, downDetached);
-      }
-      return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)) };
-    }
 
     const entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> = [];
     for (const [entryIndex, edges] of entryEdges) {

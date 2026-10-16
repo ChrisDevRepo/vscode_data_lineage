@@ -849,6 +849,8 @@ export interface SubmitFindingsHopColumns {
    * stay eligible in `questions` via {@link SubmitFindingsHopColumns.callerContextNodeIds}.
    */
   readonly columnSourceNodeIds?: readonly string[];
+  /** Sorted ids the focus has a recorded dependency into; the only admissible `writes_to.node` values. */
+  readonly writeTargetNodeIds?: readonly string[];
 }
 
 /**
@@ -899,7 +901,9 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
-    writes_to: ColumnFlowEntrySchema.shape.writes_to,
+    writes_to: hop.writeTargetNodeIds
+      ? ColumnFlowWritesToObject.extend({ node: objectIdSchema(hop.writeTargetNodeIds, hop.identifierCaseSensitive) }).nullish().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? '')
+      : ColumnFlowEntrySchema.shape.writes_to,
   };
   if (hop.returnTargets?.length) {
     const destinations = hop.returnTargets.map(target => z.object({

@@ -63,12 +63,8 @@ export const REJECTION_CODES = {
   outColNotTracked: 'out_col_not_tracked',
   /** `upstream_columns[].col` names a column the contributor node does not itself read (`bad_contributor_col` kind, `smRouteValidation.ts`). */
   contributorColNotOnSource: 'contributor_col_not_on_source',
-  /** A bodyless focus's `column_flow` names a neighbour other than its own carrier side (`non_writer_continuation` kind, `smRouteValidation.ts`). */
-  continuationNotWriter: 'continuation_not_writer',
   /** An `upstream_columns` entry names the same node.col as this submission's own `writes_to` target (`self_loop_column` kind, `smRouteValidation.ts`). */
   columnSelfLoop: 'column_self_loop',
-  /** `writes_to` names a downstream reader rather than the node this hop writes (`bad_writes_to_target` kind, `smRouteValidation.ts`). */
-  writesToNamesReader: 'writes_to_names_reader',
   /** An `upstream_columns` entry names a node already pruned earlier this run (`smRouteValidation.ts`, `columnTracer.ts`). */
   prunedContributor: 'pruned_contributor',
   /** A `submit_findings` field (e.g. `badge_label`, a `column_flow` note) exceeds its length bound (`smBase.ts`). */

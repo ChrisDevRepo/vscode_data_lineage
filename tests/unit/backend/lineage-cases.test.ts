@@ -352,21 +352,21 @@ describe('carrier value-edge orientation', () => {
     expect(engine.toJSON().nodeStates).toContainEqual(expect.objectContaining({ nodeId: carrier, action: 'passthrough', source: 'engine', reason: 'storage_passthrough' }));
     expect(engine.canPruneCurrent).toBe(true);
   });
-  it.each(['upstream', 'downstream'] as const)('accepts writer inputs and rejects reversed reader inputs while exploring %s', direction => {
-    const writer = '[d].[Writer]', carrier = '[d].[Stored]', reader = '[d].[Reader]';
-    const nodes = [writer, carrier, reader].map(id => makeNode({ id, schema: 'd', name: id,
+  it.each(['upstream', 'downstream'] as const)('accepts adjacent inputs and rejects non-adjacent inputs while exploring %s', direction => {
+    const writer = '[d].[Writer]', carrier = '[d].[Stored]', reader = '[d].[Reader]', other = '[d].[Other]';
+    const nodes = [writer, carrier, reader, other].map(id => makeNode({ id, schema: 'd', name: id,
       type: id === carrier ? 'table' : 'view', columns: ['Value'].map(column) }));
     const model = makeModel(nodes, [[writer, carrier], [carrier, reader]], ['d']);
     model.neighborIndex = { '[d].[stored]': { in: [writer], out: [reader] } };
     const validate = (source: string) => new ColumnTracer(['Value']).validateColumnFlow(carrier,
       { focus_node_id: carrier, summary: 'Trace Value.', sections: [], column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'Value' }] }] },
       new Map(nodes.map(node => [node.id, node])), model, null, undefined, undefined, direction,
-      [{ node: carrier, col: 'Value' }], [], [], [], [{ node: carrier, col: 'Value' }]);
+      [{ node: carrier, col: 'Value' }], [], [], [], [{ node: carrier, col: 'Value' }], new Set([writer, reader]));
     const valid = validate(writer);
     expect(valid.invalidRoutes).toEqual([]);
     expect(valid.stagedEdges).toMatchObject([{ from_node: writer, to_node: carrier }]);
-    const reversed = validate(reader);
-    expect(reversed.invalidRoutes).toContainEqual(expect.objectContaining({ kind: 'non_writer_continuation' }));
+    const reversed = validate(other);
+    expect(reversed.invalidRoutes).toContainEqual(expect.objectContaining({ kind: 'absent_contributor' }));
     expect(reversed.stagedEdges).toEqual([]);
   });
 });

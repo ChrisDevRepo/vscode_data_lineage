@@ -21,7 +21,7 @@ import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope'
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   missing_task_decision:
-    'Account for each listed assigned endpoint with its mapping or terminated_inputs entry. Supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it.',
+    'Account for each listed assigned endpoint with its mapping or terminated_inputs entry. Supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it. questions replaces the whole list: resend your other valid questions with the added ones.',
   invalid_task_decision:
     'terminated_inputs may name only an assigned incoming column (listed in the reason) that is not also mapped; remove or correct the entry.',
   absent_contributor:
@@ -32,16 +32,12 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Set column_flow[].out_col to an output connected to the qualified column tasks supplied for this hop, or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
     'Correct the object and column together against the SQL, using a confirmed in-scope supplier. If the SQL supplier is outside the requested trace, remove that upstream_columns entry and retain the dependency in sections. Keep required output mappings and other valid suppliers; do not guess a replacement.',
-  non_writer_continuation:
-    'upstream_columns name SQL-supported dependencies of the output, independent of exploration direction. Remove unconfirmed dependencies and retain known SQL facts or unresolved evidence in sections.',
   self_loop_column:
     'Remove the supplier identical to its output destination. Keep a valid in-scope writes_to unchanged; omit a known outside destination and retain its write in sections. Explain any existing-destination read in sections.',
   bad_return_target:
     'Supply one column_flow entry for each exact caller_output_targets destination, with returns_to matching that node and column and out_col matching its column. Do not use writes_to on scalar-return tasks; identify real contributors from the supplied caller and function SQL.',
   bad_caller_context:
     'Use questions[].caller_context only for a neighboring function with supplied caller SQL and an active real caller output; otherwise omit caller_context and keep the question.',
-  bad_writes_to_target:
-    'Set writes_to to the in-scope SQL table destination for this output, omit it for a known destination outside the requested trace, or use null only when this output has no SQL table write. Retain known outside writes in sections; do not choose a destination from adjacency.',
   pruned_contributor:
     'Remove the pruned supplier; a removed node stays removed. Keep required output mappings with remaining supported in-scope suppliers, or upstream_columns: [] when none remain. Preserve known source facts or unresolved evidence in sections; do not guess a replacement.',
   prune_absent:
@@ -83,11 +79,9 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   bad_out_col: REJECTION_CODES.outColNotOnNode,
   untracked_out_col: REJECTION_CODES.outColNotTracked,
   bad_contributor_col: REJECTION_CODES.contributorColNotOnSource,
-  non_writer_continuation: REJECTION_CODES.continuationNotWriter,
   self_loop_column: REJECTION_CODES.columnSelfLoop,
   bad_return_target: REJECTION_CODES.routeValidationFailed,
   bad_caller_context: REJECTION_CODES.routeValidationFailed,
-  bad_writes_to_target: REJECTION_CODES.writesToNamesReader,
   pruned_contributor: REJECTION_CODES.prunedContributor,
   prune_absent: REJECTION_CODES.routeValidationFailed,
   prune_noop_removed: REJECTION_CODES.routeValidationFailed,

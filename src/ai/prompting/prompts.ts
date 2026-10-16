@@ -802,7 +802,7 @@ export function buildCurrentTaskBlock(
         : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these qualified columns, retaining known facts beyond the requested trace limit and unresolved evidence in sections.</assigned_endpoints>`,
     );
     if (external.length) lines.push(
-      `  <neighbor_columns>${endpoints(external)}: Use this object's SQL to establish the relations involving these qualified columns. Record confirmed relations in lineage_submit_findings.column_flow; keep SQL facts not represented there in sections. Preserve mappings for other tasks.</neighbor_columns>`,
+      `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column as writes_to); otherwise leave it out of column_flow. Keep SQL facts not represented there in sections. Preserve mappings for other tasks.</neighbor_columns>`,
     );
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {

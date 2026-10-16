@@ -1389,6 +1389,7 @@ export class NavigationEngine implements IHopStateMachine {
             && task.activeColumns.some(col => resolveFunctionCallerTarget(id, { node: focus.id, col }, this.nodeMap, this.model, this.store)))).sort()
         : [],
       columnSourceNodeIds: focus && this.graph.hasNode(focus.id) ? this.columnSourceNodeIds(focus.id) : [],
+      ...(focus?.type === 'procedure' && this.graph.hasNode(focus.id) ? { writeTargetNodeIds: this.graph.outNeighbors(focus.id).sort() } : {}),
       incomingRefs: this.incomingColumnRefs(),
       identifierCaseSensitive: this.identifierCaseSensitive,
       ...(this.currentReturnTargets().length ? { returnTargets: this.currentReturnTargets() } : {}),
@@ -3894,7 +3895,7 @@ export class NavigationEngine implements IHopStateMachine {
       const node = this.nodeMap.get(id);
       const open = !!node && !this.visited.has(id) && !this.removedSet.has(id);
       return { id, can_question: open,
-        can_prune: !!node && prunable.has(id) && this.scopeNodeIds.has(id) && this.admitsRoute(id, node, focusId).admitted,
+        can_prune: !!node && prunable.has(id) && this.scopeNodeIds.has(id) && this.admitsRoute(id, node, focusId).admitted && !this.pruneRefusal([id]),
       };
     });
   }
