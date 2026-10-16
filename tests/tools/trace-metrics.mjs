@@ -215,7 +215,7 @@ function feedbackFor(request, rejection) {
   if (!request) return null;
   if (rejection.callId) {
     for (const message of request.messages ?? []) for (const part of message.parts ?? []) {
-      if (message.role === 'tool' && part.type === 'tool-result' && part.callId === rejection.callId) return (part.content ?? []).filter(item => item.type === 'text').map(item => item.value ?? '').join('\n');
+      if (part.type === 'tool-result' && part.callId === rejection.callId) return (part.content ?? []).filter(item => item.type === 'text').map(item => item.value ?? '').join('\n');
     }
     return null;
   }

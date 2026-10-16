@@ -31,7 +31,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   untracked_out_col:
     'Set column_flow[].out_col to an output connected to the qualified column tasks supplied for this hop, or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
-    'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
+    'Correct the object and column together against the SQL, using a confirmed in-scope supplier. If the SQL supplier is outside the requested trace, remove that upstream_columns entry and retain the dependency in sections. Keep required output mappings and other valid suppliers; do not guess a replacement.',
   non_writer_continuation:
     'upstream_columns name SQL-supported dependencies of the output, independent of exploration direction. Remove unconfirmed dependencies and retain known SQL facts or unresolved evidence in sections.',
   self_loop_column:
@@ -59,7 +59,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and cannot be pruned. Remove it from prune_neighbors.',
   prune_unsupported:
-    'Removing this node would disconnect analysis already committed, or it is not an approved-scope node the prune can remove. Remove it from prune_neighbors and decide it as a kept neighbor.',
+    'Remove this id from prune_neighbors and keep valid mappings. For a kept in-scope neighbor with can_question: true, resend questions with its investigation question and the other valid questions.',
   question_not_neighbor:
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
   prune_question_conflict:
@@ -70,7 +70,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
 
 /** Repair order for an `untracked_out_col` whose reason names detached links (path `.upstream_columns`). */
 const DETACHED_LINK_DIRECTIVE =
-  'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in sections; do not invent a write.';
+  'Keep required output mappings and SQL-confirmed mappings connected to the assigned qualified columns; omit other mappings and retain their SQL facts in sections. If no mappings remain, submit column_flow: []; do not invent a write.';
 
 /**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the

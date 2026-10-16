@@ -428,7 +428,8 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
             model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.requestTimeoutMs,
             ...(provider!.provider === 'azure' ? { apiKeyHeader: 'api-key' as const } : {}),
             ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),
-          }, { requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
+          }, { requestId, budget, traceVerbose: options.verbose, debugLog: message => logger.debug(message),
+            wireLog: record => { void traceWriter!.write(record); } });
           const turnDir = join(runDir, `turn-${turnIndex}`);
           mkdirSync(turnDir, { recursive: true });
           const questionHash = createHash('sha256').update(prompt).digest('hex');

@@ -463,7 +463,7 @@ export class ColumnTracer {
         id: focusId,
         path: `column_flow.${entryIndex}.upstream_columns`,
         reason: detached.length > 0
-          ? `column_flow.${entryIndex} into "${entry.out_col}" links ${[...new Set(detached.map(edge => `${edge.from_node}.${edge.from_col} -> ${edge.to_node}.${edge.to_col}`))].join(', ')}, which attach to no tracked endpoint [${tracked}].`
+          ? `column_flow.${entryIndex} into "${entry.out_col}" links ${[...new Set(detached.map(edge => `${edge.from_node}.${edge.from_col} -> ${edge.to_node}.${edge.to_col}`))].join(', ')}, whose destination columns do not connect to the requested column chain within this trace [${tracked}]. Naming a requested column only as a source does not establish this connection.`
           : `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${tracked}].`,
       });
     };

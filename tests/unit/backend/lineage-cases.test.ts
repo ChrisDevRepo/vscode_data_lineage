@@ -843,7 +843,7 @@ describe('current task completeness before advancement', () => {
     });
     expect(result).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining('prune_neighbors.0.id') });
     expect(result).toMatchObject({ detail: expect.arrayContaining([{ id: leaf, path: 'prune_neighbors.0.id',
-      reason: expect.any(String), allowed_values: [middle] }]) });
+      reason: expect.any(String), allowed_values: [] }]) });
     const after = engine.toJSON();
     expect(after.removedSet).toEqual(before.removedSet);
     expect(after.agenda).toEqual(before.agenda);
@@ -1540,7 +1540,9 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
         .parse({ focus_node_id: origin, prune_neighbors: prunes }));
     }
     const before = engine.toJSON();
-    expect(engine.submitFindings(submission)).toMatchObject({ code: 'route_validation_failed', issuePaths: ['prune_neighbors.0.id'] });
+    const rejection = engine.submitFindings(submission);
+    expect(rejection).toMatchObject({ code: 'route_validation_failed', issuePaths: ['prune_neighbors.0.id'],
+      detail: [expect.objectContaining({ path: 'prune_neighbors.0.id', allowed_values: [stranger] })] });
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().removedSet).toEqual(before.removedSet);
     expect(engine.toJSON().agenda).toEqual(before.agenda);

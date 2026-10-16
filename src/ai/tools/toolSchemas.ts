@@ -84,7 +84,7 @@ const SupplementSchema = z.object({
  * session, not merely a one-time skip of the initial seed.
  */
 const DEPTH_DESCRIPTION =
-  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" for a user-specified bound, including direct or immediate sources/consumers as {levels: 1, exactness: "exact"}; use "approximate" when the count is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
+  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. "Original sources" or "all upstream sources" means upstream levels: "all"; "all downstream consumers" means downstream levels: "all"; "full chain" means levels: "all" in the requested direction. exactness is "exact" for a user-specified bound, including direct or immediate sources/consumers as {levels: 1, exactness: "exact"}; use "approximate" when the count is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
 
 const StartDepthSchema = ExplorationDepthSelectionSchema.nullish().describe(DEPTH_DESCRIPTION);
 

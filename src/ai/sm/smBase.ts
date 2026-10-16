@@ -2974,7 +2974,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
 
       if (classViolation || lengthViolations.length > 0 || invalidRoutes.length > 0) {
-        return this.rejectFinding(focusId, finding, classViolation, lengthViolations, invalidRoutes, pruneTargets);
+        return this.rejectFinding(focusId, finding, classViolation, lengthViolations, invalidRoutes, pruneTargets, acceptedNids, stagedColumnEdges);
       }
 
       return this.applyValidatedHop({
@@ -3010,12 +3010,15 @@ export class NavigationEngine implements IHopStateMachine {
     lengthViolations: ReadonlyArray<{ path: string; chars: number; limit: number }>,
     fatalRoutes: InvalidRoute[],
     pruneTargets: ReadonlyArray<{ raw: string; resolved: ReturnType<typeof resolveModelNodeId>; path: string }>,
+    acceptedNids: ReadonlySet<string>,
+    stagedColumnEdges: readonly ColumnEdge[],
   ): ToolRejection {
     const neighbors = this.neighborChoices(focusId);
     fatalRoutes = fatalRoutes.map(route => {
       const action = route.path?.startsWith('prune_neighbors.') ? 'can_prune'
         : route.path?.match(/^questions\.\d+\.nodeId$/) ? 'can_question' : undefined;
-      return action ? { ...route, allowed_values: neighbors.filter(neighbor => neighbor[action]).map(neighbor => neighbor.id) } : route;
+      return action ? { ...route, allowed_values: neighbors.filter(neighbor => neighbor[action]
+        && (action !== 'can_prune' || !this.pruneRefusal([neighbor.id], acceptedNids, stagedColumnEdges))).map(neighbor => neighbor.id) } : route;
     });
     const conflictPrunePaths = fatalRoutes.flatMap(route => route.kind === 'prune_question_conflict'
       ? pruneTargets.filter(target => (target.resolved ?? this.identifierKey(target.raw)) === route.id).map(target => target.path)
