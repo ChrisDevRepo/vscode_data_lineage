@@ -5,7 +5,7 @@
  * This lives under `src/engine/shared/` — the VS Code-free surface both bundles may import —
  * because the webview's AI-view reconciler needs it too. Keeping it here stops the Vite build
  * from reaching into `src/ai/**`, which is extension-host-only territory.
- * AI tool inputs use exact metadata IDs; this resolver serves catalog and saved-reference identity.
+ * AI tools use bounded metadata-equivalent binding; this resolver retains catalog and saved-reference compatibility.
  */
 import { normalizeName } from './sqlIdentifier';
 import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';

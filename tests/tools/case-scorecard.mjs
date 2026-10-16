@@ -73,34 +73,47 @@ export function formatting(answer, sections) {
 
 /**
  * Groups a run dir's turns by catalog case. `run.json.turns` lists turns in order, so turn N is
- * `turn-N`; the first turn of a case is its scored answer.
+ * `turn-N`; the first turn's canonical preview is scored when present, otherwise its streamed text.
  *
  * @param {string} runDir
- * @returns {{ run: object, cases: Map<string, { outcomes: string[], answer: string, answerPath: string | null, modelCalls: number }> }}
+ * @returns {{ run: object, cases: Map<string, { outcomes: string[], answer: string, answerPath: string | null, answerField: string | null, answerRepresentation: string, modelCalls: number }> }}
  */
 export function readRun(runDir) {
   const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
   const cases = new Map();
   (run.turns ?? []).forEach((turn, index) => {
     const id = turn.id ?? `turn-${index + 1}`;
-    const answerPath = join(runDir, `turn-${index + 1}`, 'answer.md');
-    const entry = cases.get(id) ?? { outcomes: [], answer: '', answerPath: null, modelCalls: 0 };
+    const turnDir = join(runDir, `turn-${index + 1}`);
+    const answerPath = join(turnDir, 'answer.md');
+    const reportPath = join(turnDir, 'present-result.json');
+    const entry = cases.get(id) ?? { outcomes: [], answer: '', answerPath: null, answerField: null,
+      answerRepresentation: 'unavailable', modelCalls: 0, caseIdentity: turn.caseIdentity ?? null };
     if (entry.answerPath === null) {
-      entry.answerPath = existsSync(answerPath) ? answerPath : '';
-      entry.answer = entry.answerPath ? readFileSync(answerPath, 'utf8') : '';
+      const report = existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, 'utf8'))?.aiMetadata?.description : null;
+      if (typeof report === 'string' && report.trim()) {
+        entry.answer = report;
+        entry.answerPath = reportPath;
+        entry.answerField = 'aiMetadata.description';
+        entry.answerRepresentation = 'canonical_preview_markdown';
+      } else {
+        entry.answerPath = existsSync(answerPath) ? answerPath : '';
+        entry.answer = entry.answerPath ? readFileSync(answerPath, 'utf8') : '';
+        entry.answerRepresentation = entry.answerPath ? 'streamed_markdown' : 'unavailable';
+      }
     }
     entry.outcomes.push(turn.outcome);
     entry.modelCalls += turn.modelCalls ?? 0;
     cases.set(id, entry);
   });
-  for (const id of run.cases ?? []) if (!cases.has(id)) cases.set(id, { outcomes: ['not_run'], answer: '', answerPath: null, modelCalls: 0 });
+  for (const id of run.cases ?? []) if (!cases.has(id)) cases.set(id, { outcomes: ['not_run'], answer: '', answerPath: null, answerField: null, answerRepresentation: 'unavailable', modelCalls: 0 });
   return { run, cases };
 }
 
 /**
  * Scores both runs per case and gives each a verdict: `regressed` when correctness drops or
  * formatting drops by more than {@link FORMAT_DROP}, `improved` for the reverse, `missing` when
- * the case is in only one run, `same` otherwise. Section labels count only when both runs recorded them.
+ * the case is in only one run, `not_comparable` when question/fixture identity is absent or different,
+ * `same` otherwise. Section labels count only when both runs recorded them.
  *
  * @param {ReturnType<typeof readRun>} base
  * @param {ReturnType<typeof readRun>} cand
@@ -120,19 +133,26 @@ export function compareCases(base, cand, expectations = {}) {
         chars: result.answer.length,
         modelCalls: result.modelCalls,
         answerPath: result.answerPath,
+        answerField: result.answerField,
+        answerRepresentation: result.answerRepresentation,
       };
     };
     const b = score(base);
     const c = score(cand);
+    const baseIdentity = base.cases.get(id)?.caseIdentity;
+    const candidateIdentity = cand.cases.get(id)?.caseIdentity;
+    const comparability = !baseIdentity || !candidateIdentity ? 'unknown'
+      : baseIdentity === candidateIdentity ? 'matched' : 'different';
     let verdict = 'same';
     if (!b || !c) verdict = 'missing';
+    else if (comparability !== 'matched') verdict = 'not_comparable';
     else {
       const dc = c.c - b.c;
       const df = (c.f ?? 0) - (b.f ?? 0);
       if (dc < 0 || df < -FORMAT_DROP) verdict = 'regressed';
       else if (dc > 0 || df > FORMAT_DROP) verdict = 'improved';
     }
-    return { id, base: b, cand: c, verdict };
+    return { id, base: b, cand: c, comparability, verdict };
   });
 }
 
@@ -144,7 +164,7 @@ export function renderTable(rows) {
     out.push(`| ${row.id} | ${cf(row.base)} | ${cf(row.cand)} | ${row.base?.chars ?? '–'}→${row.cand?.chars ?? '–'} | ${row.base?.modelCalls ?? '–'}→${row.cand?.modelCalls ?? '–'} | ${row.verdict} |`);
   }
   const count = verdict => rows.filter(row => row.verdict === verdict).length;
-  out.push('', `${count('improved')} improved, ${count('regressed')} regressed, ${count('same')} same, ${count('missing')} missing. C = correctness signals, F = formatting signals (0..1). Read the side-by-side files before accepting any verdict.`);
+  out.push('', `${count('improved')} improved, ${count('regressed')} regressed, ${count('same')} same, ${count('missing')} missing, ${count('not_comparable')} not comparable (question/fixture identity missing or different). C = correctness signals, F = formatting signals (0..1). Read the side-by-side files before accepting any verdict.`);
   return out.join('\n');
 }
 
@@ -175,8 +195,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   for (const row of rows) {
     const dir = join(outDir, row.id);
     mkdirSync(dir, { recursive: true });
-    if (row.base?.answerPath) writeFileSync(join(dir, 'base.md'), readFileSync(row.base.answerPath, 'utf8'));
-    if (row.cand?.answerPath) writeFileSync(join(dir, 'cand.md'), readFileSync(row.cand.answerPath, 'utf8'));
+    if (row.base?.answerPath) writeFileSync(join(dir, 'base.md'), base.cases.get(row.id).answer);
+    if (row.cand?.answerPath) writeFileSync(join(dir, 'cand.md'), cand.cases.get(row.id).answer);
   }
   writeFileSync(join(outDir, 'scorecard.json'), JSON.stringify(rows, null, 1) + '\n');
   console.log(renderTable(rows));

@@ -33,11 +33,15 @@ async function respond(request, progress) {
           : { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 1, exactness: 'exact' } },
       });
     }
-    else call('lineage_start_exploration', {
-      origin: tracedOrigin, analysisMode: 'bb', classification: 'technical',
-      // Must differ from the "zero levels downstream" refine, or that patch is a no-op and revision stays 1.
-      depth: { upstream: { levels: 2, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
-    });
+    else {
+      const origin = session.model?.nodes.find(node => `[${node.schema}].[${node.name}]` === tracedOrigin)?.id;
+      if (!origin) throw new Error(`Fixture origin ${tracedOrigin} was not found in loaded metadata.`);
+      call('lineage_start_exploration', {
+        origin, analysisMode: 'bb', classification: 'technical',
+        // Must differ from the "zero levels downstream" refine, or that patch is a no-op and revision stays 1.
+        depth: { upstream: { levels: 2, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
+      });
+    }
     return;
   }
   if (names.includes('lineage_submit_findings')) {

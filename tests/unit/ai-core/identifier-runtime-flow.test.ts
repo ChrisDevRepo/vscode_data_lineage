@@ -2,7 +2,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
 import { buildGraphologyGraph } from '../../../src/engine/graphBuilder';
-import { normalizeColName } from '../../../src/utils/sql';
+import { normalizeColName, splitSqlName, stripBrackets } from '../../../src/utils/sql';
 import { AiSession } from '../../../src/ai/session/session';
 import { EMPTY_AI_TEMPLATES } from '../../../src/ai/session/types';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
@@ -60,6 +60,7 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
     expect(deriveStagePromptContext(model, null).identifierCaseSensitive).toBe(cs ? true : undefined);
     const id = (name: string) => normalizeName(name, cs);
     const root = id('dbo.Report');
+    const suppliedId = (nodeId: string) => splitSqlName(nodeId).map(part => `\"${stripBrackets(part).replace(/\"/g, '\"\"')}\"`).join(' . ');
     const calls: ToolGenerationInput[] = [];
     const visited: string[] = [];
     let providerCalls = 0;
@@ -79,7 +80,7 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
         let payload: Record<string, unknown>;
         if (input.tools.some(tool => tool.name === 'lineage_start_exploration')) {
           toolName = 'lineage_start_exploration';
-          payload = { origin: root, analysisMode: mode, classification: 'technical',
+          payload = { origin: suppliedId(root), analysisMode: mode, classification: 'technical',
             depth: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
             ...(mode === 'ct' ? { targetColumns: cs ? ['Value', 'value'] : ['Value'] } : {}),
           };
@@ -99,7 +100,7 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
               : [{ node: id('Sales.Calc'), col: 'Value' }, { node: id('Sales.Source'), col: 'Value' }, ...(cs ? [{ node: id('sales.Source'), col: 'Value' }] : [])])
             : [{ node: id(focus === id('Sales.calc') && cs ? 'Sales.source' : 'Sales.Source'), col }],
           }));
-          payload = { focus_node_id: focus, summary: `Records ${focus}.`, sections: { technical: `Observed ${focus} from its supplied definition.` },
+          payload = { focus_node_id: suppliedId(focus), summary: `Records ${focus}.`, sections: { technical: `Observed ${focus} from its supplied definition.` },
             ...(engine.currentHopAnalysisMode === 'ct' ? { column_flow: flow } : {}),
             questions: model.edges.filter(edge => edge.target === focus && !visited.includes(edge.source))
               .map(edge => ({ nodeId: edge.source, question: `Inspect ${edge.source} for the catalog identity investigation.` })),
@@ -115,8 +116,8 @@ describe.each([false, true])('dirty catalog through real runtime (CS=%s)', cs =>
           toolName = 'lineage_present_result';
           const ids = session.resultGraph!.nodeIds;
           payload = { name: 'Catalog lineage', summary: 'Catalog dependencies and columns.',
-            sections: ids.map((nodeId, i) => ({ label: `Object ${i + 1}`, node_ids: [nodeId], text: session.memory.getResult().detail_slots.find(slot => slot.nodeId === nodeId)?.sections.map(section => section.text).join('\n') ?? 'Source structure.' })),
-            highlight_groups: [{ label: 'Lineage', color: 'source', node_ids: ids }],
+            sections: ids.map((nodeId, i) => ({ label: `Object ${i + 1}`, node_ids: [suppliedId(nodeId)], text: session.memory.getResult().detail_slots.find(slot => slot.nodeId === nodeId)?.sections.map(section => section.text).join('\n') ?? 'Source structure.' })),
+            highlight_groups: [{ label: 'Lineage', color: 'source', node_ids: ids.map(suppliedId) }],
           };
         }
         const call = { valid: true as const, callId: `call-${providerCalls}`, toolName, input: payload };

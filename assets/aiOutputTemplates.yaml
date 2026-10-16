@@ -178,7 +178,7 @@ structural_summary:
 column_trace_capture:
   stages: [active]
   instruction: |
-    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. An empty upstream list states that the value originates here; unresolved mappings remain questions.
+    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. Keep unresolved source evidence explicit in sections and eligible questions. Distinguish direct value lineage from indirect dependencies. Record SQL-supported dataset effects in sections for memory and preview, separately from value derivation; interpret the complete statement.
 
 # ── Cross-section rendering at synthesis ─────────────────────────────────────
 # Always-on at synthesis. Describes HOW captured content renders consistently
@@ -198,7 +198,7 @@ general:
     - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.
     - **Status lifecycles**: numbered transitions.
     - **Callouts**: each captured ⚠️ sits once, in its section, as its own markdown list item (`- ⚠️ …`), never merged onto the same line as another callout; impact before mechanism in a business mission.
-    - **Scope**: a side branch the question did not ask about is one line in the section it hangs off — never a section, a highlight, or a deletion. A column trace follows the traced column's value chain to its terminal sources.
+    - **Scope**: a side branch the question did not ask about is one line in the section it hangs off — never a section, a highlight, or a deletion. A column trace follows the value chain within the approved scope and distinguishes terminal sources from the requested trace limit.
   example: ""
 
 # ── Big-picture ETL closing — TECHNICAL angle only ───────────────────────────

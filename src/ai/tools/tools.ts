@@ -486,7 +486,7 @@ export function getObjectDetail(
   cursor?: string,
 ): object {
   const nodeMap = getModelNodeMap(model);
-  const resolvedId = resolveModelNodeId(id, nodeMap) ?? '';
+  const resolvedId = resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? '';
   const node      = nodeMap.get(resolvedId);
   if (!node) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { id } });
@@ -568,7 +568,7 @@ export function getScopeBundle(
   store?: import('../../engine/columnStore').ColumnStore,
 ): object {
   const nodeMap = getModelNodeMap(model);
-  const origin = resolveModelNodeId(input.origin, nodeMap) ?? '';
+  const origin = resolveModelNodeId(input.origin, nodeMap, model.identifierCaseSensitive) ?? '';
   const originNode = nodeMap.get(origin);
   if (!originNode) {
     return makeRejection({ code: REJECTION_CODES.notFound, hint: 'Call lineage_search_objects to resolve the canonical origin ID.', detail: { origin: input.origin } });
@@ -731,9 +731,10 @@ export function getNeighborColumns(
 ): object {
   const nodeMap = getModelNodeMap(model);
   const results = ids.map(id => {
-    const node = nodeMap.get(id);
+    const resolvedId = resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? '';
+    const node = nodeMap.get(resolvedId);
     if (!node) throw new Error('get_neighbor_columns received an id outside the model; validate ids with NavigationEngine.validateNeighborIds first');
-    const cols = getNodeColumns(id, nodeMap, store);
+    const cols = getNodeColumns(resolvedId, nodeMap, store);
     const foreignKeys = presentForeignKeys(node.fks);
     return {
       ...strip({

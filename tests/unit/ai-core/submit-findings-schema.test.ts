@@ -6,6 +6,52 @@ import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode } from '../../
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 
 describe('fresh kept required-field projection', () => {
+  it('keeps procedure destinations optional and nullable at both submission boundaries', () => {
+    const schema = submitFindingsSchemaForMode('ct', 'technical', true, {
+      outCols: ['Value'], writesTo: true, columnSourceNodeIds: ['input'],
+    });
+    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+    for (const destination of [{}, { writes_to: null }, { writes_to: { node: 'stored', col: 'Value' } }]) {
+      const input = { focus_node_id: 'procedure', summary: 'SQL produces Value.',
+        sections: { technical: 'Recorded SQL findings; destination relationships are retained separately.' },
+        column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'input', col: 'Value' }], ...destination }] };
+      const parsed = schema.safeParse(input);
+      expect(parsed.success, JSON.stringify(destination)).toBe(true);
+      if (parsed.success) expect(parsed.data).toEqual(input);
+      expect(wire(input), JSON.stringify(destination)).toBe(true);
+    }
+  });
+
+  it.each([
+    { cs: false, raw: ' sales . source ', accepted: true },
+    { cs: true, raw: ' "Sales" . "Source" ', accepted: true },
+    { cs: true, raw: 'sales.source', accepted: false },
+    { cs: false, raw: 'Source', accepted: false },
+    { cs: false, raw: 'Sales..Source', accepted: false },
+    { cs: false, raw: 'server.db.Sales.Source', accepted: false },
+  ])('binds only metadata-equivalent action, contributor and scalar IDs: $raw CS=$cs', ({ cs, raw, accepted }) => {
+    const canonical = '[Sales].[Source]';
+    const hop = { outCols: ['Value'], writesTo: false, identifierCaseSensitive: cs,
+      neighbors: [{ id: canonical, can_question: true, can_prune: true }],
+      columnSourceNodeIds: [canonical], incomingRefs: [{ node: canonical, col: 'Value' }],
+    };
+    for (const part of [
+      { questions: [{ nodeId: raw, question: 'Establish Value.' }] },
+      { prune_neighbors: [{ id: raw, reason: 'Not needed.' }] },
+      { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: raw, col: 'Value' }] }] },
+      { terminated_inputs: [{ node: raw, col: 'Value' }] },
+    ]) {
+      const input = { focus_node_id: 'focus', column_flow: [], ...part };
+      const parsed = submitFindingsSchemaForMode('ct', undefined, false, hop).safeParse(input);
+      expect(parsed.success).toBe(accepted);
+      if (parsed.success) expect(parsed.data).toEqual(input);
+    }
+    const input = { focus_node_id: 'focus', column_flow: [{ out_col: 'Value', upstream_columns: [], returns_to: { node: raw, col: 'Value' } }] };
+    const scalar = submitFindingsSchemaForMode('ct', undefined, false, { ...hop, returnTargets: [{ node: canonical, col: 'Value' }] }).safeParse(input);
+    expect(scalar.success).toBe(accepted);
+    if (scalar.success) expect(scalar.data).toEqual(input);
+  });
+
   it.each(['bb', 'ct'] as const)('serves an empty neighbor choice set safely in %s', mode => {
     const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, writesTo: false, neighbors: [] });
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
@@ -56,7 +102,7 @@ describe('fresh kept required-field projection', () => {
       expect(parsed.success).toBe(accepted);
       if (parsed.success) expect(parsed.data).toEqual(before);
       expect(input).toEqual(before);
-      expect(schema.safeParse({ ...input, terminated_inputs: [{ node: 'SOURCE', col: name }] }).success).toBe(false);
+      expect(schema.safeParse({ ...input, terminated_inputs: [{ node: 'SOURCE', col: name }] }).success).toBe(accepted && !caseSensitive);
     }
   });
 

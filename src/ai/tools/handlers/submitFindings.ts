@@ -78,6 +78,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         `tally=R${diag.tally.analyze}/P${diag.tally.passthrough}/I${diag.tally.prune} expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}${ctSuffix}`
       );
 
-      return s.logAndReturn('lineage_submit_findings', acknowledgeCommittedHop(engine, s, finding.focus_node_id, result), validatedInput);
+      return s.logAndReturn('lineage_submit_findings', acknowledgeCommittedHop(engine, s, focus!, result), validatedInput);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

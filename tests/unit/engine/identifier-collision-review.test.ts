@@ -6,6 +6,7 @@ import { resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution'
 import { getObjectDetail } from '../../../src/ai/tools/tools';
 import { loadParseRules } from '../helpers/testUtils';
 import { stripBrackets } from '../../../src/utils/sql';
+import { resolveModelNodeId as resolveToolNodeId } from '../../../src/ai/support/modelReferences';
 
 beforeAll(loadParseRules);
 const escaped = '[dbo].[a]]b]', plain = '[dbo].[ab]', reader = '[dbo].[reader]';
@@ -40,7 +41,7 @@ describe.each([false, true])('escaped identifier ownership (CS=%s)', cs => {
   });
   it('resolves current tool requests to the correct bracketed and unescaped objects', () => {
     const model = buildModel([table(escaped), table(plain)], [], undefined, undefined, true, undefined, cs);
-    expect(getObjectDetail(model, '"dbo"."a]b"')).toHaveProperty('code', 'not_found');
+    expect(getObjectDetail(model, '"dbo"."a]b"')).toMatchObject({ id: escaped, name: 'a]b' });
     expect(getObjectDetail(model, escaped)).toMatchObject({ id: escaped, name: 'a]b' });
     expect(getObjectDetail(model, plain)).toMatchObject({ id: plain, name: 'ab' });
   });
@@ -49,6 +50,32 @@ describe.each([false, true])('escaped identifier ownership (CS=%s)', cs => {
     const nodeMap = new Map([[escaped, {}], [doubleBracket, {}]]);
     expect(resolveModelNodeId(escaped, nodeMap, cs)).toBe(escaped);
     expect(resolveModelNodeId('"dbo"."a]]b"', nodeMap, cs)).toBe(doubleBracket);
+  });
+});
+
+describe.each([false, true])('metadata-bound tool representations (CS=%s)', cs => {
+  it.each([' [Sales] . [Amount ] ', '"Sales" . "Amount "', 'Sales.[Amount ]'])('binds equivalent %s without losing quoted spaces', raw => {
+    const id = '[Sales].[Amount ]';
+    expect(resolveToolNodeId(raw, new Map([[id, {}]]), cs)).toBe(id);
+    expect(resolveToolNodeId('Sales.Amount', new Map([[id, {}]]), cs)).toBeNull();
+  });
+  it.each(['Sales..Amount', '.Sales.Amount', 'Sales.Amount.', '[Sales].[Amount', '[Sales]junk.[Amount]', 'Amount', 'db.Sales.Amount', 'server.db.Sales.Amount', '[Sales].\u200b[Amount]'])('rejects malformed or different identity %s', raw => {
+    expect(resolveToolNodeId(raw, new Map([['[Sales].[Amount]', {}]]), cs)).toBeNull();
+  });
+  it('applies source case policy and refuses ambiguous normalized ownership', () => {
+    const ids = new Map([['[Sales].[Amount]', {}], ['[Sales].[amount]', {}]]);
+    expect(resolveToolNodeId('[Sales].[Amount]', ids, cs)).toBe('[Sales].[Amount]');
+    expect(resolveToolNodeId('Sales.Amount', ids, cs)).toBe(cs ? '[Sales].[Amount]' : null);
+    expect(resolveToolNodeId('SALES.AMOUNT', new Map([['[Sales].[Amount]', {}]]), cs)).toBe(cs ? null : '[Sales].[Amount]');
+  });
+  it('keeps opaque URLs exact and requires delimiters around SQL punctuation', () => {
+    const url = 'https://Host/Orders.csv';
+    const ids = new Map([[url, {}], ['[Sales].[A+B]', {}]]);
+    expect(resolveToolNodeId(url, ids, cs)).toBe(url);
+    expect(resolveToolNodeId('https://host/orders.csv', ids, cs)).toBeNull();
+    expect(resolveToolNodeId('Sales.A+B', ids, cs)).toBeNull();
+    expect(resolveToolNodeId('Sales."A+B"', ids, cs)).toBe('[Sales].[A+B]');
+    expect(resolveToolNodeId('Sales.(A+B)', ids, cs)).toBeNull();
   });
 });
 

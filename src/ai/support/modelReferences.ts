@@ -1,8 +1,18 @@
-/** Exact model references at the AI tool boundary; saved graph aliases are resolved separately. */
+/** Metadata-bound SQL representations at the AI boundary; saved aliases remain separate. */
+import { sqlIdentifierComparisonKey } from '../../engine/shared/sqlIdentifier';
 
-/** Returns only an exact model id; the agent must copy identifiers from the supplied metadata. */
-export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>): string | null {
-  return nodeMap.has(raw) ? raw : null;
+/** Binds an equivalent SQL spelling only when one loaded identity owns it under source CI/CS. */
+export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>, identifierCaseSensitive = false): string | null {
+  if (nodeMap.has(raw)) return raw;
+  const key = sqlIdentifierComparisonKey(raw, identifierCaseSensitive);
+  if (key === null) return null;
+  let owner: string | null = null;
+  for (const id of nodeMap.keys()) {
+    if (sqlIdentifierComparisonKey(id, identifierCaseSensitive) !== key) continue;
+    if (owner !== null && owner !== id) return null;
+    owner = id;
+  }
+  return owner;
 }
 
 /**
@@ -15,12 +25,13 @@ export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>): 
 export function resolveModelNodeIds(
   raws: string[],
   nodeMap: Map<string, unknown>,
+  identifierCaseSensitive = false,
 ): { resolved: string[]; unresolved: string[] } {
   const resolved: string[] = [];
   const unresolved: string[] = [];
   const seenResolved = new Set<string>();
   for (const raw of raws) {
-    const id = resolveModelNodeId(raw, nodeMap);
+    const id = resolveModelNodeId(raw, nodeMap, identifierCaseSensitive);
     if (!id) {
       unresolved.push(raw);
       continue;

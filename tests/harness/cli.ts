@@ -1,5 +1,6 @@
 /** Optional service runners; no question registry, scoring, campaign scheduling, or default service calls. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
@@ -338,6 +339,8 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
   const result: Record<string, unknown> = { kind, runtime: 'error', export: 'disabled', durationMs: 0 };
   const started = Date.now();
   let traceWriter: AiTraceWriter | undefined;
+  let tracePath: string | undefined;
+  const metricManifests: string[] = [];
   try {
     if (db) {
       const outputChannel = logger as unknown as vscode.LogOutputChannel;
@@ -382,7 +385,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       }
     } else {
       traceWriter = new AiTraceWriter();
-      const tracePath = await traceWriter.enable(runDir, { origin: 'headless-harness', verbose: options.verbose });
+      tracePath = await traceWriter.enable(runDir, { origin: 'headless-harness', verbose: options.verbose });
       const envEffort = process.env.AI_TEST_REASONING_EFFORT || process.env.AI_TEST_THINKING_LEVEL;
       const reasoningEffort: ThinkingLevel | undefined = options.effort
         ?? (envEffort ? z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'off']).parse(envEffort.toLowerCase()) : undefined);
@@ -398,12 +401,23 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       if (reasoningEffort) result.thinkingLevel = reasoningEffort;
       result.endpoint = endpoint;
       result.cases = runs.map(run => run.id);
+      const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoPath(), encoding: 'utf8' });
+      const sourceDiff = spawnSync('git', ['diff', 'HEAD', '--', 'src', 'assets'], { cwd: repoPath() });
+      const context = { provider: provider!.provider, model: provider!.model, reasoningEffort: reasoningEffort ?? null,
+        executionMode: result.executionMode, settings: { timeoutMs: options.timeoutMs, requestTimeoutMs: options.requestTimeoutMs, temperature: null },
+        promptAssets: Object.fromEntries(['src/ai/prompting/prompts.ts', 'src/ai/prompting/smPrompts.ts', 'assets/aiOutputTemplates.yaml']
+          .map(file => [file, createHash('sha256').update(readFileSync(repoPath(file))).digest('hex')])),
+        source: { revision: revision.status === 0 ? revision.stdout.trim() : null,
+          trackedSourceDiffHash: sourceDiff.status === 0 ? createHash('sha256').update(sourceDiff.stdout).digest('hex') : null } };
+      result.context = context;
       const turns: Array<{ id: string; outcome: string; modelCalls: number; failedChecks: string[]; gates: readonly import('./runTurn').HarnessGateDecision[] }> = [];
+      result.turns = turns;
       let turnIndex = 0;
       let stop = false;
       for (const run of runs) {
         if (stop) break;
         const { session, budget } = await createHarnessSession({ dacpacPath: run.dacpac, contextWindow: Infinity });
+        const fixtureHash = createHash('sha256').update(readFileSync(run.dacpac ?? repoPath('assets', 'demo.dacpac'))).digest('hex');
         const priorMessages: ModelMessage[] = [];
         result.sections ??= [...new Set(Object.values(session.outputSections).flat())];
         for (const [promptIndex, prompt] of run.prompts.entries()) {
@@ -415,10 +429,25 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
             ...(provider!.provider === 'azure' ? { apiKeyHeader: 'api-key' as const } : {}),
             ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),
           }, { requestId, budget, traceVerbose: options.verbose, wireLog: record => { void traceWriter!.write(record); } });
-          const turn = await runHarnessTurn({ session, model: port, requestId, prompt, priorMessages: [...priorMessages], gate: run.gate, runDir: join(runDir, `turn-${turnIndex}`), logger, signal: controller.signal, traceWriter });
+          const turnDir = join(runDir, `turn-${turnIndex}`);
+          mkdirSync(turnDir, { recursive: true });
+          const questionHash = createHash('sha256').update(prompt).digest('hex');
+          const identity = { catalogId: run.id, questionHash, fixtureHash, caseIdentity: `${run.id}:${questionHash}:${fixtureHash}`, requestId };
+          const manifestPath = join(turnDir, 'metrics-manifest.json');
+          const manifest = { ...identity, context, tracePath, requestIds: [requestId], question: prompt, outcome: 'error',
+            answerPath: join(turnDir, 'answer.md'), answerRepresentation: 'markdown',
+            reportPath: join(turnDir, 'present-result.json'), reportRepresentation: 'present_result_json', finalSnapshotPath: join(turnDir, 'final-snapshot.json') };
+          writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+          metricManifests.push(manifestPath);
+          const turn = await runHarnessTurn({ session, model: port, requestId, prompt, priorMessages: [...priorMessages], gate: run.gate, runDir: turnDir, logger, signal: controller.signal, traceWriter });
+          if (session.resultGraph) writeFileSync(manifest.finalSnapshotPath, JSON.stringify({
+            nodes: session.resultGraph.nodeIds, columnEdges: session.stateMachine?.columnAspect?.edges ?? null,
+          }, null, 2) + '\n');
+          manifest.outcome = turn.outcome.outcome;
+          writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
           const failedChecks = turnChecks(run, turn, promptIndex === 0);
           for (const failure of failedChecks) logger.error(`${run.id} turn ${turnIndex}: ${failure}`);
-          turns.push({ id: run.id, outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls, failedChecks, gates: turn.gates });
+          turns.push({ ...identity, id: run.id, outcome: turn.outcome.outcome, modelCalls: turn.outcome.modelCalls, failedChecks, gates: turn.gates });
           const next = nextAiRunStep(turn.outcome.outcome, controller.signal.aborted);
           if (next !== 'prompt') {
             stop = next === 'stop';
@@ -464,6 +493,16 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
     clearTimeout(watchdog);
     process.removeListener('SIGINT', interrupt);
     await traceWriter?.close();
+    for (const manifestPath of metricManifests) {
+      const metrics = spawnSync(process.execPath, [repoPath('tests', 'tools', 'trace-metrics.mjs'),
+        '--case-manifest', manifestPath, '--output', join(manifestPath, '..', 'metrics.json')], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'inherit', shell: false,
+      });
+      if (metrics.status !== 0) {
+        result.runtime = 'error';
+        logger.error('Deterministic case metrics could not be persisted.');
+      }
+    }
     setShimLogSink(() => {});
     result.durationMs = Date.now() - started;
     writeFileSync(join(runDir, 'run.json'), JSON.stringify(result, null, 2) + '\n');

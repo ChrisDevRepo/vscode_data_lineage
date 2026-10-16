@@ -34,7 +34,7 @@ describe('source-authoritative retrieval identifiers',()=>{
   expect(await searchObjects(m,'CASETAB')).toMatchObject({name_match:{status:'unique',ids:['[dbo].[casetab]']}});
  });
 });
-describe('retrieval exact ID boundary',()=>{
+describe('retrieval metadata-equivalent ID boundary',()=>{
  async function invoke(tool:'lineage_get_object_detail'|'lineage_get_scope_bundle',input:object){
   const { AiSession }=await import('../../../src/ai/session/session');
   const { buildAiToolRegistry }=await import('../../../src/ai/tools/toolProvider');
@@ -44,15 +44,17 @@ describe('retrieval exact ID boundary',()=>{
   const result=JSON.parse(await buildAiToolRegistry(()=>session,channel,()=>undefined).invoke(tool,input));
   return { result, normalize:debug.filter(line=>line.includes('[Normalize]')) };
  }
- it('rejects an altered get_object_detail id and accepts a canonical id',async()=>{
+ it('binds an equivalent get_object_detail id and rejects an unknown id',async()=>{
   const rewritten=await invoke('lineage_get_object_detail',{id:'DBO.CASETAB'});
-  expect(rewritten.result).toMatchObject({code:'not_found'});
+  expect(rewritten.result).toMatchObject({id:'[dbo].[casetab]'});
+  expect((await invoke('lineage_get_object_detail',{id:'DBO.MISSING'})).result).toMatchObject({code:'not_found'});
   expect(rewritten.normalize).toEqual([]);
   expect((await invoke('lineage_get_object_detail',{id:'[dbo].[casetab]'})).normalize).toEqual([]);
  });
- it('rejects an altered scope origin and accepts a canonical origin',async()=>{
+ it('binds an equivalent scope origin and rejects an unknown origin',async()=>{
   const rewritten=await invoke('lineage_get_scope_bundle',{origin:'DBO.READER',direction:'upstream',depth:1});
-  expect(rewritten.result).toMatchObject({code:'not_found'});
+  expect(rewritten.result).toMatchObject({origin:'[dbo].[reader]'});
+  expect((await invoke('lineage_get_scope_bundle',{origin:'DBO.MISSING',direction:'upstream',depth:1})).result).toMatchObject({code:'not_found'});
   expect(rewritten.normalize).toEqual([]);
   expect((await invoke('lineage_get_scope_bundle',{origin:'[dbo].[reader]',direction:'upstream',depth:1})).normalize).toEqual([]);
  });

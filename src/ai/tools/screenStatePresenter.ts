@@ -19,6 +19,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { schemaKey } from '../../utils/sql';
+import { resolveModelNodeId } from '../support/modelReferences';
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
 export interface ScreenStateInput {
@@ -353,7 +354,9 @@ function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unkn
   const slots = asRecord(asRecord(snapshot?.memory)?.detailSlots) ?? {};
   const hashes = storedHashes(run);
   const stale = new Set(staleIds(run, input.getDdl));
-  return (input.ids ?? []).map(id => {
+  const known = new Map([...states.keys(), ...Object.keys(slots), ...Object.keys(hashes)].map(id => [id, true]));
+  return (input.ids ?? []).map(raw => {
+    const id = resolveModelNodeId(raw, known, snapshot?.identifierCaseSensitive === true) ?? raw;
     const state = states.get(id);
     const slot = asRecord(slots[id]);
     if (!state && !slot && hashes[id] === undefined) return { id, decision: 'not_in_run' };

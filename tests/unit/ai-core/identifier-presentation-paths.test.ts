@@ -41,20 +41,18 @@ function neighborWorld(cs: boolean) {
 }
 
 describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs => {
-  it('rejects noncanonical neighbor IDs and accepts an explicit canonical retry', async () => {
+  it('binds equivalent neighbor IDs while preserving supplied values', async () => {
     const { session, registry } = neighborWorld(cs);
     const input = { ids: cs
       ? ['Sales.Orders', '"Sales"."Orders"', '[Sales].[Orders]', 'Sales.orders']
       : ['SALES.ORDERS', '"sALES"."oRDERS"', '[SALES].[ORDERS]', 'Sales.orders'] };
     const before = structuredClone(input);
-    expect(JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', input)))).toHaveProperty('code', 'out_of_scope_or_not_neighbor');
-    const corrected = { ids: input.ids.map(id => normalizeName(id, cs)) };
-    const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', corrected)));
+    const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', input)));
     expect(result).toMatchObject({ total: 4, results: input.ids.map(id => ({ id: normalizeName(id, cs) })) });
     expect(result.results.every((entry: { error?: string }) => !entry.error)).toBe(true);
     if (cs) expect(result.results.map((entry: { columns: { n: string }[] }) => entry.columns[0].n)).toEqual(['Upper', 'Upper', 'Upper', 'lower']);
     expect(input).toEqual(before);
-    expect(session.hopLog.at(-1)?.input).toBe(corrected);
+    expect(session.hopLog.at(-1)?.input).toBe(input);
   });
 
   it.each([['[Other].[Orders]'], ['[Sales].[Missing]']] as const)('rejects unresolved or out-of-scope neighbor %s without returning columns', async (raw) => {
@@ -66,9 +64,9 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     expect(result.detail).toEqual([{ path: 'ids.0', allowed_values: expect.any(Array) }]);
   });
 
-  it('preserves the refused spelling under either catalog case policy', async () => {
+  it('preserves unknown spelling under either catalog case policy', async () => {
     const { registry } = neighborWorld(cs);
-    const raw = 'SALES.ORDERS';
+    const raw = 'SALES.MISSING';
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor', issuePaths: ['ids.0'],
       detail: [{ path: 'ids.0', allowed_values: expect.any(Array) }] });
@@ -141,7 +139,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     }, [canonical]);
     expect(result.success).toBe(false);
     if (result.success === false) {
-      expect(result.rejection.hint).toContain('exact catalog casing');
+      expect(result.rejection.hint).toContain('canonical ids from the accepted metadata');
       expect(result.rejection.hint).not.toContain('Case and bracket differences are normalized automatically');
       expect(result.rejection.reason).toContain(canonical);
     }
@@ -168,10 +166,7 @@ it.each([undefined, false, true])('recalls historical identities using the saved
   const registry = buildAiToolRegistry(() => session, channel, () => undefined, undefined, { getStoredRun: () => run });
   const input = { ids: ['Sales.Orders', '"Sales"."orders"', 'SALES.ORDERS', 'Sales.Missing'] };
   const before = structuredClone(input);
-  const refused = JSON.parse(String(await registry.invoke('lineage_get_screen_state', input)));
-  expect(refused.objects).toEqual(input.ids.map(id => ({ id, decision: 'not_in_run' })));
-  const corrected = { ids: historicalCs ? ['[Sales].[Orders]', '[Sales].[orders]', 'SALES.ORDERS', 'Sales.Missing'] : ['[sales].[orders]', '[sales].[orders]', '[sales].[orders]', 'Sales.Missing'] };
-  const result = JSON.parse(String(await registry.invoke('lineage_get_screen_state', corrected)));
+  const result = JSON.parse(String(await registry.invoke('lineage_get_screen_state', input)));
   expect(result.objects).toEqual(historicalCs ? [
     { id: '[Sales].[Orders]', decision: 'analyze', reason: 'Upper object.', stale: false, in_current_model: false },
     { id: '[Sales].[orders]', decision: 'prune', reason: 'Lower object.', stale: false, in_current_model: false },
@@ -182,7 +177,7 @@ it.each([undefined, false, true])('recalls historical identities using the saved
     { id: 'Sales.Missing', decision: 'not_in_run' },
   ]);
   expect(input).toEqual(before);
-  expect(session.hopLog.at(-1)?.input).toBe(corrected);
+  expect(session.hopLog.at(-1)?.input).toBe(input);
   expect(logs.some(log => log.includes('id resolved'))).toBe(false);
 });
 

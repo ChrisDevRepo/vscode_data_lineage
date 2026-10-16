@@ -52,7 +52,7 @@ function buildSynthesisReminder(question: string): string {
 
 /** Source/transform/target highlight buckets derived from graph position. */
 interface FlowRoleGroups {
-  /** Terminal data origins: reached nodes data only flows out of. */
+  /** Upstream endpoint candidates: reached nodes data only flows out of within the trace. */
   source: string[];
   /** The queried origin node — the answer anchor. */
   target: string[];
@@ -71,7 +71,7 @@ interface FlowRoleGroups {
  *
  * @param originNodeId - The queried origin (becomes the sole `target`).
  * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
- * @param hopNodes - CT-only focus-node set excluded from the terminal-source set.
+ * @param hopNodes - CT-only focus-node set excluded from the upstream endpoint candidate set.
  */
 function computeFlowRoleGroups(
   originNodeId: string,
@@ -157,7 +157,7 @@ function buildDirectionLines(
  * Renders the shared `highlight_groups` guidance lines from computed {@link FlowRoleGroups}.
  *
  * @remarks
- * Enumerates only mechanical facts (target, terminal-source candidates) — transform is
+ * Enumerates only mechanical facts (target, upstream endpoint candidates) — transform is
  * deliberately NOT enumerated: models transcribe enumerated lists verbatim, defeating the
  * question-relative judgment the highlights template assigns the AI. Candidates are bounded by
  * the presented set, since `highlight_groups[].node_ids` rejects anything the render does not carry.
@@ -168,8 +168,8 @@ function buildDirectionLines(
 function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string>): string[] {
   const linkable = (ids: readonly string[]): string[] => ids.filter(id => presented.has(id));
   return [
-    `- highlight_groups.target (the queried origin): ${linkable(groups.target).join(', ')}`,
-    `- highlight_groups.source candidates (terminal origins this trace reached): ${linkable(groups.source).join(', ') || '(none)'}`,
+    `- highlight_groups.target (the queried object): ${linkable(groups.target).join(', ')}`,
+    `- highlight_groups.source candidates (upstream endpoints reached within this trace; use retained SQL findings to describe their dependencies): ${linkable(groups.source).join(', ') || '(none)'}`,
   ];
 }
 

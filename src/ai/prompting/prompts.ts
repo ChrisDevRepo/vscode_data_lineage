@@ -249,7 +249,7 @@ function buildPresentationDetailContract(mode: PresentationStage, evidence?: str
         headingRule,
       ]
       : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas, row-dropping steps (filters, inner joins, dedup) and ⚠️ callouts at the captured depth, and the role each captured input plays (value, filter-only or display-only); it follows the asked output\'s calculation chain across nodes, including intermediate CTE and derived-column results. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. A short SQL witness may accompany its explanation.',
+        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas, dataset effects and ⚠️ callouts at the captured depth, and the role each captured input plays (value, filter-only or display-only); it follows the asked output\'s calculation chain across nodes, including intermediate CTE and derived-column results. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. Preserve captured dataset effects even when no column-value edge represents them. A short SQL witness may accompany its explanation.',
         '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
         '- Describe declared SQL behavior; do not infer runtime execution counts or execution order without matching runtime evidence.',
         '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
@@ -799,13 +799,11 @@ export function buildCurrentTaskBlock(
     if (assigned.length) lines.push(
       nonBodied
         ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints. The engine carries them to connected SQL objects in the approved direction without inventing value edges; those SQL objects resolve whether and how the values continue.</assigned_endpoints>`
-        : `  <assigned_endpoints>${endpoints(assigned)}: resolve these endpoints from this object's SQL in the approved direction. Record their qualified continuation or establish their final endpoint.</assigned_endpoints>`,
+        : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these qualified columns, retaining known facts beyond the requested trace limit and unresolved evidence in sections.</assigned_endpoints>`,
     );
-    if (external.length) lines.push(task.traversalSide === 'upstream'
-      ? `  <writer_targets>${endpoints(external)}: determine whether this writer's SQL supplies these stored outputs. Record confirmed write mappings and their value contributors; end targets this writer does not supply on this branch.</writer_targets>`
-      : task.traversalSide === 'downstream'
-        ? `  <candidate_inputs>${endpoints(external)}: determine whether this object's SQL uses these values. These are incoming candidates, not asserted local outputs. Map confirmed value contributions, state join, filter and grouping roles in sections, and leave unused inputs unmapped; they end here. If none contributes a value, submit column_flow: []. If the SQL cannot establish a disposition, state the uncertainty; do not invent a mapping.</candidate_inputs>`
-        : `  <incoming_endpoints>${endpoints(external)}: resolve these qualified arrivals from this object's SQL in the approved direction. Record confirmed mappings or establish where this branch ends; do not assume consumption from object adjacency.</incoming_endpoints>`);
+    if (external.length) lines.push(
+      `  <neighbor_columns>${endpoints(external)}: Use this object's SQL to establish the relations involving these qualified columns. Record confirmed relations in lineage_submit_findings.column_flow; keep SQL facts not represented there in sections. Preserve mappings for other tasks.</neighbor_columns>`,
+    );
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(

@@ -25,7 +25,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   invalid_task_decision:
     'terminated_inputs may name only an assigned incoming column (listed in the reason) that is not also mapped; remove or correct the entry.',
   absent_contributor:
-    'Name only loaded objects connected to this focus: a writes_to target this hop writes, and upstream_columns contributors that are its neighbors or, for a caller-context investigation, read suppliers of the function or its declared callers. Remove the named reference and describe an unresolved source in sections.',
+    'Name only loaded objects connected to this focus: a writes_to target this hop writes, and upstream_columns contributors that are its neighbors or, for a caller-context investigation, read suppliers of the function or its declared callers. Remove the inadmissible reference while keeping required output mappings. Preserve known SQL facts in sections; state uncertainty only where evidence is unresolved.',
   bad_out_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   untracked_out_col:
@@ -33,17 +33,17 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_contributor_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
   non_writer_continuation:
-    'upstream_columns always name value inputs, independent of exploration direction. Do not name downstream readers as inputs; remove unconfirmed contributors and describe the uncertainty in sections.',
+    'upstream_columns name SQL-supported dependencies of the output, independent of exploration direction. Remove unconfirmed dependencies and retain known SQL facts or unresolved evidence in sections.',
   self_loop_column:
-    'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in sections.',
+    'Remove the supplier identical to its output destination. Keep a valid in-scope writes_to unchanged; omit a known outside destination and retain its write in sections. Explain any existing-destination read in sections.',
   bad_return_target:
     'Supply one column_flow entry for each exact caller_output_targets destination, with returns_to matching that node and column and out_col matching its column. Do not use writes_to on scalar-return tasks; identify real contributors from the supplied caller and function SQL.',
   bad_caller_context:
     'Use questions[].caller_context only for a neighboring function with supplied caller SQL and an active real caller output; otherwise omit caller_context and keep the question.',
   bad_writes_to_target:
-    'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table. A downstream reader is never a write destination: remove that node from writes_to.',
+    'Set writes_to to the in-scope SQL table destination for this output, omit it for a known destination outside the requested trace, or use null only when this output has no SQL table write. Retain known outside writes in sections; do not choose a destination from adjacency.',
   pruned_contributor:
-    'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
+    'Remove the pruned supplier; a removed node stays removed. Keep required output mappings with remaining supported in-scope suppliers, or upstream_columns: [] when none remain. Preserve known source facts or unresolved evidence in sections; do not guess a replacement.',
   prune_absent:
     'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
   prune_noop_removed:
@@ -55,7 +55,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   prune_noop_queued:
     'This node is already queued for a hop of its own; prune_neighbors does not pull queued work. Remove it from prune_neighbors and let its own hop run.',
   column_out_of_scope:
-    'This object is outside the approved scope, so the column trace does not reach it. Remove the reference from column_flow, record the finding in sections, and, if it is a listed neighbor, name the object in questions: a question to an out-of-scope object is kept as a follow-up question.',
+    'Remove the outside supplier from upstream_columns or omit the outside writes_to field. Keep required output mappings and other valid mappings; retain known SQL dependencies, writes and the requested trace limit in sections. Do not substitute null for a known write. An eligible questions entry can retain a listed neighbor as a follow-up.',
   prune_noop_out_of_scope:
     'This node is outside the approved scope (schema, direction, exclusion, or depth) and cannot be pruned. Remove it from prune_neighbors.',
   prune_unsupported:

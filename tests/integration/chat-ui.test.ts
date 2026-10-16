@@ -2,7 +2,9 @@
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 interface DepthProjection {
   upstream:{levels:number|'all';exactness:'exact'|'approximate'};
@@ -50,6 +52,14 @@ suite('Native chat confirmations — actual UI', () => {
   const planPhase = fixtureTrace.expect.phase;
   const originalQuestion = 'Trace all dependencies upstream from  [ai].[spImportOrders]  all level up and one level down';
   const artifactDir = `tmp/chat-ui/${real ? 'live' : 'fixture'}`;
+  let metricsRoot: string;
+  let tracePath: string | undefined;
+  let traceOffset = 0;
+  let testIndex = 0;
+  let casePrompts: string[] = [];
+  let initialGraph: SessionProjection['resultGraph'];
+  let initialAnswer: string | null = null;
+  let extensionPath: string;
   let fixture: { uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}>;
     uiErrors: Array<{requestIndex:number;message:string}> };
   let firstErrorIndex = 0;
@@ -103,6 +113,7 @@ suite('Native chat confirmations — actual UI', () => {
     await page.keyboard.press('Escape');
     assert.equal(await box.evaluate(el=>el instanceof HTMLTextAreaElement ? el.value : el.textContent),text,'the real input must contain exactly the user message');
     await page.keyboard.press('Enter');
+    casePrompts.push(text);
     await deadlineWait(()=>fixture.uiRequests.length>before,'Enter must dispatch a request to the selected model');
   };
   const approveOnce = async () => { await continueButton().click(); };
@@ -140,18 +151,90 @@ suite('Native chat confirmations — actual UI', () => {
     await waitForControl(cancelButton(),real ? phaseTimeoutMs : 20000);
   };
 
-  setup(() => {
+  setup(async () => {
+    casePrompts = [];
+    testIndex += 1;
+    traceOffset = tracePath && existsSync(tracePath) ? readFileSync(tracePath).length : 0;
+    initialGraph = exports?.getSession().resultGraph;
+    initialAnswer = page && await responses().count() ? await responses().last().innerText().catch(() => null) : null;
     testDeadline = real ? Date.now() + phaseTimeoutMs : Number.POSITIVE_INFINITY;
   });
-  teardown(async () => {
-    // Cancel through the native action so the provider's cancellation token aborts its request.
-    if (real && page) await vscode.commands.executeCommand('workbench.action.chat.cancel');
-    testDeadline = Number.POSITIVE_INFINITY;
+  const persistMetrics = async (catalogId: string, outcome: string) => {
+    if (!real || !metricsRoot) return;
+    const caseDir = join(metricsRoot, `case-${testIndex}`);
+    mkdirSync(caseDir, { recursive: true });
+    // Drain observed lifecycle records after cancellation without waiting for inference.
+    let trace = '';
+    let records: Array<{type?: string; requestId?: string}> = [];
+    const drainDeadline = Date.now() + 2000;
+    do {
+      trace = tracePath && existsSync(tracePath) ? readFileSync(tracePath).subarray(traceOffset).toString('utf8') : '';
+      records = trace.split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+      const ended = new Set(records.filter(row => row.type === 'turn-terminal').map(row => row.requestId));
+      if (!records.some(row => row.type === 'turn-start' && !ended.has(row.requestId))) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } while (Date.now() < drainDeadline);
+    const caseTracePath = join(caseDir, 'trace.ndjson');
+    writeFileSync(caseTracePath, trace);
+    const finalSnapshotPath = join(caseDir, 'final-snapshot.json');
+    const session = exports?.getSession();
+    if (session?.resultGraph && session.resultGraph !== initialGraph) writeFileSync(finalSnapshotPath, JSON.stringify({
+      nodes: session.resultGraph.nodeIds, columnEdges: session.stateMachine?.columnAspect?.edges ?? null,
+    }, null, 2) + '\n');
+    const reportPath = join(caseDir, 'report.md');
+    if (session?.resultGraph && session.resultGraph !== initialGraph && session.lastPresentResultDescription) {
+      writeFileSync(reportPath, session.lastPresentResultDescription);
+    }
+    const answerPath = join(caseDir, 'answer.txt');
+    const observedAnswer = page && await responses().count() ? await responses().last().innerText().catch(() => null) : null;
+    if (observedAnswer !== null && observedAnswer !== initialAnswer) {
+      const rendered = await responses().last().locator('.rendered-markdown').allTextContents();
+      if (rendered.length) writeFileSync(answerPath, rendered.join('\n'));
+    }
+    const question = casePrompts.length ? JSON.stringify(casePrompts) : null;
+    const questionHash = question === null ? null : createHash('sha256').update(question).digest('hex');
+    const fixturePath = join(extensionPath, 'tests/fixtures/AdventureWorks2025_AI.dacpac');
+    const fixtureHash = existsSync(fixturePath) ? createHash('sha256').update(readFileSync(fixturePath)).digest('hex') : null;
+    const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: extensionPath, encoding: 'utf8' });
+    const sourceDiff = spawnSync('git', ['diff', 'HEAD', '--', 'src', 'assets'], { cwd: extensionPath });
+    const context = { provider: process.env.AI_TEST_PROVIDER ?? null, model: process.env.AI_TEST_MODEL ?? null,
+      reasoningEffort: process.env.AI_TEST_REASONING_EFFORT ?? null,
+      executionMode: process.env.DLV_CHAT_UI_REPLAY_TRACE ? 'native-replay' : 'native-live',
+      settings: { timeoutMs: phaseTimeoutMs, requestTimeoutMs: Number(process.env.AI_TEST_REQUEST_TIMEOUT_MS) || null, temperature: 0.1 },
+      promptAssets: Object.fromEntries(['src/ai/prompting/prompts.ts', 'src/ai/prompting/smPrompts.ts', 'assets/aiOutputTemplates.yaml']
+        .map(file => [file, createHash('sha256').update(readFileSync(join(extensionPath, file))).digest('hex')])),
+      source: { revision: revision.status === 0 ? revision.stdout.trim() : null,
+        trackedSourceDiffHash: sourceDiff.status === 0 ? createHash('sha256').update(sourceDiff.stdout).digest('hex') : null } };
+    const manifestPath = join(caseDir, 'metrics-manifest.json');
+    writeFileSync(manifestPath, JSON.stringify({ catalogId, question, questionHash, fixtureHash, context,
+      caseIdentity: questionHash === null || fixtureHash === null ? null : `${catalogId}:${questionHash}:${fixtureHash}`,
+      tracePath: caseTracePath, requestIds: [...new Set(records.filter(row => row.type === 'turn-start').map(row => row.requestId).filter(id => typeof id === 'string'))],
+      outcome, answerPath, answerRepresentation: 'rendered_text', reportPath, reportRepresentation: 'markdown', finalSnapshotPath,
+    }, null, 2) + '\n');
+    const metrics = spawnSync(process.execPath, [join(extensionPath, 'tests/tools/trace-metrics.mjs'),
+      '--case-manifest', manifestPath, '--output', join(caseDir, 'metrics.json')], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'inherit', shell: false,
+    });
+    assert.equal(metrics.status, 0, 'deterministic native case metrics must be persisted');
+    console.log(`[chat-ui] metrics=${join(caseDir, 'metrics.json')}`);
+  };
+  teardown(async function () {
+    try {
+      // Cancel through the native action so the provider's cancellation token aborts its request.
+      if (real && page) await vscode.commands.executeCommand('workbench.action.chat.cancel');
+    } finally {
+      testDeadline = Number.POSITIVE_INFINITY;
+      await persistMetrics(`native:${this.currentTest?.title ?? 'unknown'}`, this.currentTest?.state ?? 'unknown');
+    }
   });
 
   suiteSetup(async function () {
+    extensionPath = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.extensionPath;
+    if (real) {
+      metricsRoot = join(extensionPath, 'test-results', 'chat-ui', randomUUID());
+      mkdirSync(metricsRoot, { recursive: true });
+    }
     await vscode.workspace.getConfiguration('editor').update('accessibilitySupport','on',vscode.ConfigurationTarget.Global);
-    const extensionPath = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.extensionPath;
     ({ assertUiProviderHealthy } = createRequire(join(extensionPath,'package.json'))(
       join(extensionPath,'tests/tools/chat-ui-replay-trace.mjs'),
     ));
@@ -166,7 +249,7 @@ suite('Native chat confirmations — actual UI', () => {
     if (real) assert.ok(exports.getSession().model?.nodes.some(node=>node.id.toLowerCase()==='[ai].[spimportorders]'),
       'the real fixture must contain the original trace origin');
     if (real) {
-      const tracePath=await vscode.commands.executeCommand<string>('dataLineageViz.enableAiTraceLogging');
+      tracePath=await vscode.commands.executeCommand<string>('dataLineageViz.enableAiTraceLogging');
       assert.ok(tracePath,'live acceptance must capture a fresh NDJSON trace');
       console.log(`[chat-ui] trace=${tracePath}`);
     }
@@ -177,6 +260,8 @@ suite('Native chat confirmations — actual UI', () => {
     await vscode.commands.executeCommand('workbench.action.chat.open', {query: fixturePrompt, isPartialQuery: true});
     // Choose the contributed fixture via the real model picker; no provider credentials.
     await vscode.commands.executeCommand('notifications.clearAll');
+    await vscode.commands.executeCommand('notifications.hideToasts');
+    await page.locator('.notifications-toasts.visible').waitFor({state:'hidden'});
     const picker = page.getByRole('button', {name:/^Models|Pick Model|Select Model|Model Picker/i}).last();
     await picker.click();
     await page.getByText('Lineage Smoke Model',{exact:true}).last().click();
@@ -249,6 +334,7 @@ suite('Native chat confirmations — actual UI', () => {
     await capture('typed-approve');
   });
   suiteTeardown(async()=>{
+    if (real && testIndex === 0) await persistMetrics('native:suite-setup', 'failed');
     mkdirSync(artifactDir,{recursive:true});
     if (page) {
       writeFileSync(`${artifactDir}/aria.txt`,await page.locator('.interactive-session').last().ariaSnapshot());

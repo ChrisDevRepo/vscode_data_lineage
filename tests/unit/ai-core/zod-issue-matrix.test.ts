@@ -15,6 +15,7 @@ import {
   SearchObjectsInputSchema,
   StartExplorationProviderInputSchema,
   SubmitFindingsBbInputSchema,
+  submitFindingsSchemaForMode,
 } from '../../../src/ai/tools/toolSchemas';
 
 const reject = (schema: z.ZodType, input: unknown) => {
@@ -55,6 +56,27 @@ describe('Zod issue matrix', () => {
     const r = reject(PresentResultModelSchema, { ...render, sections: '[{"label":"Sources","node_ids":["dbo.a"' });
     expect(r.reason).toMatch(/received \d+ characters of text that is not valid JSON/);
     expect(r.reason).toContain('Send it again as one complete JSON array');
+  });
+
+  it.each(['prune_neighbors', 'questions'] as const)('rejects a %s entry with no eligible IDs by directing entry removal', field => {
+    const schema = submitFindingsSchemaForMode('bb', 'technical', true, {
+      outCols: null, writesTo: false,
+      neighbors: [{ id: '[demo].[closed]', can_prune: false, can_question: false }],
+    });
+    const input = { focus_node_id: '[demo].[focus]', summary: 'A supported finding.',
+      sections: { technical: 'The supplied SQL establishes this finding.' },
+      [field]: [field === 'prune_neighbors'
+        ? { id: '[demo].[closed]', reason: 'Not needed.' }
+        : { nodeId: '[demo].[closed]', question: 'What supplies the value?' }],
+    };
+    const r = reject(schema, input);
+    expect(r.reason).toContain('No values are allowed here.');
+    expect(r.reason).not.toContain('not valid JSON');
+    expect(r.hint).not.toContain('as a never');
+    expect(r.hint).toContain(`Remove the entry at "${field}.0" from "${field}"`);
+    expect(r.hint).toContain(`"${field}": []`);
+    expect(r.detail).toEqual([{ path: `${field}.0.${field === 'prune_neighbors' ? 'id' : 'nodeId'}`, allowed_values: [] }]);
+    expect(schema.safeParse({ ...input, [field]: [] }).success).toBe(true);
   });
 
   it('empty arguments: diagnosed as a lost call ahead of the field list', () => {

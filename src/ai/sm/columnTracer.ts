@@ -126,7 +126,7 @@ export class ColumnTracer {
    * `<lineage_questions>` in that node's own `<current_task>` — never a different, unrelated hop.
    *
    * @remarks
-   * Terminal/current-node production (`upstream_columns: []`) stages no edge and spawns no
+   * An entry with no recorded upstream suppliers (`upstream_columns: []`) stages no edge and spawns no
    * question. Each question is labelled by `edge.from_col`, not `edge.to_col`, so the wording
    * matches that hop's own `<column_trace>` active-column label. Writer edges
    * (`from_node === hop_node`) never spawn one: they attribute the focus's own write, they do not
@@ -153,7 +153,7 @@ export class ColumnTracer {
 
     for (const { edge, toCols } of fedByKey.values()) {
       const fed = toCols.map(c => `\`${c}\``).join(', ');
-      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into ${fed} at \`${edge.hop_node}\` — determine its origin here.`;
+      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into ${fed} at \`${edge.hop_node}\` — establish its column relationships from this object's SQL.`;
       const existing = byNode.get(edge.from_node);
       if (existing) existing.push(question);
       else byNode.set(edge.from_node, [question]);
@@ -221,7 +221,7 @@ export class ColumnTracer {
     const columnFlow = finding.column_flow ?? [];
     if (returnTargets.length) {
       for (const target of returnTargets) {
-        const entries = columnFlow.filter(entry => entry.returns_to && resolveModelNodeId(entry.returns_to.node, nodeMap) === target.node && this.columnKey(entry.returns_to.col) === this.columnKey(target.col));
+        const entries = columnFlow.filter(entry => entry.returns_to && resolveModelNodeId(entry.returns_to.node, nodeMap, this.identifierCaseSensitive) === target.node && this.columnKey(entry.returns_to.col) === this.columnKey(target.col));
         if (entries.length !== 1) invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: 'column_flow', reason: `Scalar caller destination ${target.node}.${target.col} requires exactly one authored returns_to entry.` });
       }
     }
@@ -248,7 +248,7 @@ export class ColumnTracer {
       { node: edge.to_node, col: edge.to_col },
     ]);
     const anchors = new Map((incomingRefs ?? committedRefs)
-      .map(ref => [endpointKey(ref.node, ref.col), `${resolveModelNodeId(ref.node, nodeMap) ?? ref.node}.${ref.col}`]));
+      .map(ref => [endpointKey(ref.node, ref.col), `${resolveModelNodeId(ref.node, nodeMap, this.identifierCaseSensitive) ?? ref.node}.${ref.col}`]));
     if (incomingRefs === undefined && this.aspect.edges.length === 0) {
       for (const col of this.aspect.active_columns) anchors.set(endpointKey(focusId, col), `${focusId}.${col}`);
     }
@@ -273,7 +273,7 @@ export class ColumnTracer {
       }
 
       const readBackWrite = !!entry.writes_to && this.columnKey(entry.writes_to.col) === outNorm
-        && readBackTargets.has(resolveModelNodeId(entry.writes_to.node, nodeMap) ?? '');
+        && readBackTargets.has(resolveModelNodeId(entry.writes_to.node, nodeMap, this.identifierCaseSensitive) ?? '');
       if (traceDirection === 'upstream' && incomingDownstreamRefs.length === 0 && !activeNorm.includes(outNorm) && !readBackWrite) {
         const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
         invalidRoutes.push(existsOnNode
@@ -292,7 +292,7 @@ export class ColumnTracer {
       }
 
       const stagedBeforeEntry = stagedEdges.length;
-      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap);
+      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap, this.identifierCaseSensitive);
       const toNodeId = resolvedTarget?.attributionTo ?? null;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
       if (entry.writes_to && !toNodeObj) {
@@ -344,7 +344,7 @@ export class ColumnTracer {
           invalidRoutes.push({ kind: 'bad_contributor_col', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.col`, reason: 'An upstream column reference must name a non-empty column; procedure metadata fallback does not supply a column identity.' });
           continue;
         }
-        const neighborId = resolveModelNodeId(cont.node, nodeMap);
+        const neighborId = resolveModelNodeId(cont.node, nodeMap, this.identifierCaseSensitive);
         const neighbor = neighborId ? nodeMap.get(neighborId) : null;
         if (!neighbor) {
           invalidRoutes.push({ kind: 'absent_contributor', id: cont.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: `Upstream node "${cont.node}" is absent from the loaded model.` });
@@ -465,7 +465,6 @@ export class ColumnTracer {
         reason: detached.length > 0
           ? `column_flow.${entryIndex} into "${entry.out_col}" links ${[...new Set(detached.map(edge => `${edge.from_node}.${edge.from_col} -> ${edge.to_node}.${edge.to_col}`))].join(', ')}, which attach to no tracked endpoint [${tracked}].`
           : `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${tracked}].`,
-        allowed_values: [...this.aspect.active_columns], when: { node: focusId },
       });
     };
 
@@ -485,7 +484,7 @@ export class ColumnTracer {
       const upDetached = detachedIn(edges, attached);
       const downDetached = downstreamAttached ? detachedIn(edges, downstreamAttached) : undefined;
       if (entry.upstream_columns.length === 0) {
-        const target = resolveColumnFlowTarget(entry, focusId, nodeMap);
+        const target = resolveColumnFlowTarget(entry, focusId, nodeMap, this.identifierCaseSensitive);
         const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
           || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
         const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
@@ -534,7 +533,7 @@ export interface ColumnEndpointLink {
  * @param nodeMap - Map of all available lineage nodes, for id resolution.
  */
 export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, identifierCaseSensitive = false): (node: string, col: string) => string {
-  return (node, col) => JSON.stringify([resolveModelNodeId(node, nodeMap) ?? schemaKey(node, identifierCaseSensitive), normalizeColName(col, identifierCaseSensitive)]);
+  return (node, col) => JSON.stringify([resolveModelNodeId(node, nodeMap, identifierCaseSensitive) ?? schemaKey(node, identifierCaseSensitive), normalizeColName(col, identifierCaseSensitive)]);
 }
 
 /**
@@ -695,14 +694,15 @@ export function resolveColumnFlowTarget(
   entry: ColumnFlowEntry,
   focusId: string,
   nodeMap: Map<string, LineageNode>,
+  identifierCaseSensitive = false,
 ): ColumnFlowTargetResolution | null {
   if (entry.returns_to) {
-    const toNode = resolveModelNodeId(entry.returns_to.node, nodeMap);
+    const toNode = resolveModelNodeId(entry.returns_to.node, nodeMap, identifierCaseSensitive);
     if (!toNode) return null;
     return { attributionTo: toNode, attributionCol: entry.returns_to.col, writerEdge: null };
   }
   if (entry.writes_to?.node) {
-    const toNode = resolveModelNodeId(entry.writes_to.node, nodeMap);
+    const toNode = resolveModelNodeId(entry.writes_to.node, nodeMap, identifierCaseSensitive);
     if (!toNode) return null;
     return {
       attributionTo: toNode,
@@ -732,7 +732,7 @@ export function readBackWriteTargets(focusId: string, nodeMap: Map<string, Linea
   const focusKey = key(focusId);
   const writes = new Map<string, string>();
   const reads = new Set<string>();
-  const id = (ref: string) => resolveModelNodeId(ref, nodeMap);
+  const id = (ref: string) => resolveModelNodeId(ref, nodeMap, model.identifierCaseSensitive);
   for (const edge of model.edges) {
     const target = id(edge.target);
     if (key(edge.source) === focusKey && target && edgeApiType(edge.type, focus.type) === 'write') writes.set(key(target), target);

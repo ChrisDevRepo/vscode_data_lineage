@@ -95,6 +95,30 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.columnAspect!.edges.some(edge => edge.from_col === '@Amount' || edge.to_col === '@Amount')).toBe(false);
   });
 
+  it('keeps the qualified scalar caller mapping when its lookup source is beyond the requested trace', () => {
+    const nodes = [
+      makeNode({ id: caller, schema: 'd', name: 'caller', type: 'view', columns: [col('Value')], bodyScript: `SELECT ${fn}(1) AS Value` }),
+      makeNode({ id: fn, schema: 'd', name: 'function', type: 'function', bodyScript: `CREATE FUNCTION ${fn}(@Id int) RETURNS int AS BEGIN RETURN (SELECT Amount FROM ${source} WHERE Id=@Id) END` }),
+      makeNode({ id: source, schema: 'd', name: 'source', type: 'table', columns: [col('Amount'), col('Id')] }),
+    ];
+    const edges: Array<[string, string]> = [[source, fn], [fn, caller]];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['d']), makeGraph(nodes, edges), () => {}, {});
+    expect(engine.init({ origin: caller, question: 'Trace Value upstream one level.', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Value'],
+      depthIntent: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    const sections = [{ angle: 'technical' as const, text: 'The function supplies Value from its Amount lookup.' }];
+    expect(engine.submitFindings({ ...finding, sections, questions: [{ nodeId: fn, question: 'Determine Value from the lookup.', caller_context: { node: caller, col: 'Value' } }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, caller_requested_outputs: [{ node: caller, col: 'Value' }] });
+    const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
+    const payload = { focus_node_id: fn, summary: 'Value comes from the lookup outside the requested trace.',
+      sections: { technical: `${source}.Amount supplies the return value; its lookup lies beyond the upstream-one limit.` },
+      column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Value' }, upstream_columns: [] }] };
+    expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(payload)).toBe(true);
+    expect(engine.submitFindings(toHopFinding(schema.parse(payload)))).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges).toEqual([]);
+  });
+
   it.each([false, true])('keeps a terminal caller output in BB despite scalar metadata=%s', declaredDependency => {
     const { engine } = world(true, declaredDependency);
     expect(engine.submitFindings({ ...finding,

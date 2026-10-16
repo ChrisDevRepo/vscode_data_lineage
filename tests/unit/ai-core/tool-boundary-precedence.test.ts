@@ -83,7 +83,7 @@ describe('large findings repairs', () => {
     const sections = { technical: 'Branch supplies Value unchanged.' };
     const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }];
     const questions = [{ nodeId: BRANCH, question: 'Establish the origin of Value.' }];
-    const submit = (input: object) => JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, ...input }, services));
+    const submit = (input: object) => JSON.parse(executeSubmitFindings({ focus_node_id: ' HOP . ORIGIN ', ...input }, services));
     expect(submit({ sections, column_flow, questions })).toMatchObject({ code: 'invalid_input', issuePaths: ['summary'] });
     const before = engine.toJSON();
     const rejected = submit({ summary: 'An unvalidated replacement.', ...malformed });
@@ -112,15 +112,15 @@ describe('large findings repairs', () => {
       expect(JSON.stringify(rejected)).not.toContain(text);
       expect(engine.getDetailSlots()).toEqual([]);
     }
-    const accepted = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN,
-      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] }, services));
+    const accepted = JSON.parse(executeSubmitFindings({ focus_node_id: ' \"hop\" . \"origin\" ',
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'HOP.BRANCH', col: 'Value' }] }] }, services));
     expect(accepted).toMatchObject({ ok: true, accepted_focus: ORIGIN, next_focus: BRANCH });
     expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)?.sections).toEqual([{ angle: 'technical', text }]);
   });
 });
 
 describe('lineage_prune_current boundary', () => {
-  it.each(['HOP.BRANCH', ' [hop].[branch] ', '[hop].[bran\u200bch]'])('rejects altered focus identity %s before changing state', focus_node_id => {
+  it.each(['[hop].[bran\u200bch]', 'hop..branch', 'other.branch'])('rejects different or malformed focus identity %s before changing state', focus_node_id => {
     const { engine, services } = tableArrivalWorld('ct');
     const before = engine.toJSON();
     expect(JSON.parse(executePruneCurrent({ focus_node_id, reason: 'Off path.' }, services))).toHaveProperty('code', 'invalid_input');
@@ -250,9 +250,11 @@ describe('lineage_get_neighbor_columns boundary', () => {
     expect(result).not.toHaveProperty('results');
   });
 
-  it('rejects a case variant and returns columns after an exact-ID repair', async () => {
+  it('binds a case-equivalent neighbor without changing the supplied request', async () => {
     const { registry } = ctWorld();
-    expect(JSON.parse(await registry.invoke('lineage_get_neighbor_columns', { ids: ['HOP.BRANCH'] }))).toHaveProperty('code', 'out_of_scope_or_not_neighbor');
+    const input = { ids: ['HOP.BRANCH'] };
+    expect(JSON.parse(await registry.invoke('lineage_get_neighbor_columns', input))).toMatchObject({ total: 1, results: [{ id: BRANCH }] });
+    expect(input).toEqual({ ids: ['HOP.BRANCH'] });
     const result = JSON.parse(await registry.invoke('lineage_get_neighbor_columns', { ids: [BRANCH] }));
     expect(result).toMatchObject({ total: 1, results: [{ id: BRANCH, columns: [expect.objectContaining({})] }] });
     expect(JSON.stringify(result)).not.toContain('not_found');
@@ -280,7 +282,7 @@ describe('lineage_submit_findings boundary', () => {
   });
 
   it.each([
-    { caseSensitive: false, node: 'HOP.BRANCH', extra: false, accepted: false },
+    { caseSensitive: false, node: 'HOP.BRANCH', extra: false, accepted: true },
     { caseSensitive: false, node: BRANCH, extra: false, accepted: true },
     { caseSensitive: true, node: BRANCH, extra: false, accepted: true },
     { caseSensitive: true, node: 'HOP.BRANCH', extra: false, accepted: false },
@@ -308,8 +310,8 @@ describe('lineage_submit_findings boundary', () => {
     expect(input).toEqual(before);
   });
 
-  it.each([{ caseSensitive: false, node: '[HOP].[BRANCH]', extra: false, accepted: false }, { caseSensitive: true, node: '[HOP].[BRANCH]', extra: false, accepted: false }, { caseSensitive: false, node: BRANCH, extra: false, accepted: true }, { caseSensitive: true, node: BRANCH, extra: false, accepted: true }, { caseSensitive: false, node: BRANCH, extra: true, accepted: false }])(
-    'requires exact caller-neighbor identity before strict validation: %j', options => {
+  it.each([{ caseSensitive: false, node: '[HOP].[BRANCH]', extra: false, accepted: true }, { caseSensitive: true, node: '[HOP].[BRANCH]', extra: false, accepted: false }, { caseSensitive: false, node: BRANCH, extra: false, accepted: true }, { caseSensitive: true, node: BRANCH, extra: false, accepted: true }, { caseSensitive: false, node: BRANCH, extra: true, accepted: false }])(
+    'binds only equivalent caller-neighbor identity before strict validation: %j', options => {
       const { session, model, graph } = ctWorld({ scalar: true, caseSensitive: options.caseSensitive });
       const { services } = stubToolServices({ session, model, graph });
       const input = { focus_node_id: ORIGIN, summary: 'The function computes Value.',

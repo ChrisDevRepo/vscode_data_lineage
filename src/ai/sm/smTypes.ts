@@ -78,9 +78,8 @@ export interface ColumnAspect {
   /** Columns relevant to the current focus node. Updated per-hop from the agenda entry. */
   active_columns: string[];
   /**
-   * Accumulated validated column lineage edges, appended each hop.
-   * A branch is terminal when a submitted flow entry has no upstream real columns.
-   * Completeness is structural — derivable from this array; no completion flag needed.
+   * Accumulated validated dependencies recorded within the requested trace;
+   * absence of an edge does not establish complete SQL provenance.
    */
   edges: ColumnEdge[];
 }
@@ -89,7 +88,7 @@ export interface ColumnAspect {
  * Structured attribution of data flow for a specific output column.
  */
 export interface ColumnFlowEntry {
-  /** Column name on the focus node, or procedure parameter prefixed with @. */
+  /** SQL-established output; for a procedure, the produced expression identified by its written column. */
   out_col: string;
   /**
    * Explicit destination column written by this focus. A named destination stages
@@ -102,8 +101,8 @@ export interface ColumnFlowEntry {
   /** Declared real caller output supplied by a scalar-return task; never a table write. */
   returns_to?: ScalarReturnTarget;
   /**
-   * Real upstream columns that continue this trace. Empty means the active column is
-   * produced/terminates here and there is no upstream real column to route.
+   * Supported dependencies recorded within the requested trace; sections retain known
+   * outside dependencies and unresolved evidence.
    */
   upstream_columns: ColumnRef[];
 }

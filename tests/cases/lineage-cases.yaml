@@ -488,7 +488,7 @@ cases:
   - id: headless-view-chain
     runners: [headless]
     dacpac: tests/fixtures/AdventureWorks2025_AI.dacpac
-    prompt: "Show upstream and downstream dependencies for [ai].[vwConsolidatedSales]."
+    prompt: "/trace Show upstream and downstream dependencies for [ai].[vwConsolidatedSales]."
     gate:
       - kind: approve
     expect:

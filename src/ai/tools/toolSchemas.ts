@@ -3,6 +3,7 @@
  * Zero VS Code imports — pure schema definitions.
  */
 import { z } from 'zod';
+import { resolveModelNodeId } from '../support/modelReferences';
 import { normalizeColName } from '../../utils/sql';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
@@ -83,7 +84,7 @@ const SupplementSchema = z.object({
  * session, not merely a one-time skip of the initial seed.
  */
 const DEPTH_DESCRIPTION =
-  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" when the user literally stated that level count, "approximate" when it is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
+  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" for a user-specified bound, including direct or immediate sources/consumers as {levels: 1, exactness: "exact"}; use "approximate" when the count is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
 
 const StartDepthSchema = ExplorationDepthSelectionSchema.nullish().describe(DEPTH_DESCRIPTION);
 
@@ -541,8 +542,8 @@ const ColumnRefSchema = z.object({
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
     'pass_through: unchanged value. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
-    'combine: the value source is also a join, grouping, partition or ordering key. filter: the value source also ' +
-    'selects contributing rows; never list a column for combine or filter alone. Grouping, partition and ordering keys are not aggregate value inputs; ' +
+    'combine: a SQL-supported join, grouping, partition or ordering key that affects the output. filter: the column selects contributing rows. ' +
+    'Contextual combine or filter roles may stand alone; do not infer arithmetic or aggregate roles from them. Grouping, partition and ordering keys are not aggregate value inputs; ' +
     'display-only sorting contributes no role.',
   ),
   note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(
@@ -558,18 +559,18 @@ const ColumnFlowWritesToObject = z.object({
 /**
  * One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys.
  */
-const OUT_COL_DESCRIPTION = 'Output column resolved from this hop\'s column task; for a procedure, the column it writes to writes_to, including a write into a table it reads back that feeds a tracked column.';
+const OUT_COL_DESCRIPTION = "Output identified by this hop's qualified column task and SQL; for a procedure, the produced expression identified by its written column. Do not invent output names.";
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
-  writes_to: ColumnFlowWritesToObject.nullish().describe('Actual destination object and column for this procedure\'s output, as declared by its SQL; null when it writes no table.'),
+  writes_to: ColumnFlowWritesToObject.nullish().describe('SQL table and column receiving this output within the requested trace. Omit for a known destination outside the requested trace and retain the write in sections. Use null only when this output has no SQL table write.'),
   returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
-    'At a bodied focus, only the real source columns whose value flows into out_col: operands of its expression, ' +
+    'At a bodied focus, use real SQL-supported dependencies of out_col: operands of its expression, ' +
     'an aggregate’s argument, each set-operation (UNION) branch’s column at that position, caller-bound value inputs. ' +
-    'A column used only to join, filter, group, partition or order rows is a dataset operation, not a source: omit it here and state it in sections. ' +
+    'Contextual columns may also be listed when their join, filter, grouping, partition or ordering role affects the value or contributing rows; explain these dataset operations in sections. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
-    'upstream_columns: [] declares a terminal output.',
+    'List all supported in-scope dependencies. upstream_columns: [] records no in-scope suppliers for this output. Keep known dependencies beyond the requested trace limit and unresolved source evidence in sections.',
   ),
 }).strict();
 
@@ -580,7 +581,7 @@ export const PruneCurrentInputSchema = z.object({
   reason: z.string().min(1).regex(/\S/).describe('Why the whole current node is irrelevant to this investigation.'),
 }).strict();
 
-const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries. When only some arriving inputs end without a local output, name them in terminated_inputs.';
+const COLUMN_FLOW_DESCRIPTION = 'In lineage_submit_findings, map the SQL-supported relations between this hop\'s qualified columns and eligible neighboring columns. Keep each requested or assigned output mapping when a dependency or destination is outside the requested trace; record only in-scope references and retain the SQL facts in sections. Omit external candidates with no confirmed mapped output; use column_flow: [] when no mappings remain. Preserve mappings for other tasks. Use terminated_inputs only for supplied inputs that SQL shows end without an output while others continue.';
 
 const TerminatedInputsSchema = z.array(ColumnFlowWritesToObject).describe(
   'Qualified incoming columns whose value contribution ends here without a local output, as established from this hop’s SQL. Use when other incoming columns continue in column_flow; name only the supplied incoming endpoints, never invent an output column.',
@@ -862,6 +863,14 @@ function suppliedValueSchema(values: readonly string[], key: (value: string) => 
       params: { allowed_values: [...values], ...(node ? { when: { node } } : {}) } }).meta({ enum: [...values] });
 }
 
+/** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
+function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false) {
+  if (ids.length === 0) return z.never();
+  const known = new Map(ids.map(id => [id, true]));
+  return z.string().refine(value => resolveModelNodeId(value, known, identifierCaseSensitive) !== null,
+    { message: 'Name a supplied object identity.', params: { allowed_values: [...ids] } }).meta({ enum: [...ids] });
+}
+
 /** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. */
 function columnNameSchema(names: readonly string[], identifierCaseSensitive = false, node?: string) {
   return suppliedValueSchema(names, name => normalizeColName(name, identifierCaseSensitive), node);
@@ -871,7 +880,7 @@ function columnNameSchema(names: readonly string[], identifierCaseSensitive = fa
 function terminatedInputsSchemaForHop(hop?: SubmitFindingsHopColumns) {
   if (!hop?.incomingRefs) return TerminatedInputsSchema;
   const endpoints = hop.incomingRefs.map(ref => ColumnFlowWritesToObject.extend({
-    node: suppliedValueSchema([ref.node]),
+    node: objectIdSchema([ref.node], hop.identifierCaseSensitive),
     col: columnNameSchema([ref.col], hop.identifierCaseSensitive, ref.node),
   }));
   if (endpoints.length === 0) return TerminatedInputsSchema.max(0);
@@ -885,21 +894,21 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     ? ColumnFlowEntrySchema.shape.out_col
     : columnNameSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
   const upstreamColumns = hop.columnSourceNodeIds
-    ? z.array(ColumnRefSchema.extend({ node: suppliedValueSchema(hop.columnSourceNodeIds) }).strict()).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
+    ? z.array(ColumnRefSchema.extend({ node: objectIdSchema(hop.columnSourceNodeIds, hop.identifierCaseSensitive) }).strict()).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
     : ColumnFlowEntrySchema.shape.upstream_columns;
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
-    writes_to: ColumnFlowEntrySchema.shape.writes_to.unwrap().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
+    writes_to: ColumnFlowEntrySchema.shape.writes_to,
   };
   if (hop.returnTargets?.length) {
     const destinations = hop.returnTargets.map(target => z.object({
       out_col: columnNameSchema([target.col], hop.identifierCaseSensitive, target.node),
-      returns_to: z.object({ node: z.literal(target.node), col: columnNameSchema([target.col], hop.identifierCaseSensitive, target.node) }).strict(),
+      returns_to: z.object({ node: objectIdSchema([target.node], hop.identifierCaseSensitive), col: columnNameSchema([target.col], hop.identifierCaseSensitive, target.node) }).strict(),
       upstream_columns: shape.upstream_columns,
     }).strict());
     const entry = destinations.length === 1 ? destinations[0]! : z.union(destinations as [typeof destinations[number], typeof destinations[number], ...Array<typeof destinations[number]>]);
-    return z.array(entry).describe('One entry per qualified caller_output_target; returns_to is required. Read the supplied caller SQL and function body to identify real contributors; [] upstream only when the target terminates locally.');
+    return z.array(entry).describe('One mapping per qualified caller_output_target, with matching returns_to. Identify dependencies from the supplied caller SQL and function body. List supported in-scope suppliers, or upstream_columns: [] when none can be recorded; retain known outside dependencies and unresolved evidence in sections.');
   }
   const entry = (hop.writesTo
     ? z.object(shape)
@@ -957,18 +966,18 @@ export function submitFindingsSchemaForMode(
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
   const baseQuestion = hop?.neighbors
-    ? NeighborQuestionSchema.extend({ nodeId: suppliedValueSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id)) })
+    ? NeighborQuestionSchema.extend({ nodeId: objectIdSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id), hop.identifierCaseSensitive) })
     : NeighborQuestionSchema;
   if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop), terminated_inputs: terminatedInputsSchemaForHop(hop).optional() }).strict() as typeof HopFindingCtBaseSchema;
   if (hop?.neighbors) narrowed = narrowed.extend({
-    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: suppliedValueSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id)) })).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
+    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: objectIdSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id), hop.identifierCaseSensitive) })).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
     questions: z.array(baseQuestion).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
   }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
     const [first, ...rest] = hop.callerContextNodeIds;
     const question = first === undefined ? baseQuestion : z.union([
       baseQuestion,
-      CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NeighborQuestionSchema.shape.nodeId.description ?? '') }),
+      CtNeighborQuestionSchema.extend({ nodeId: objectIdSchema([first, ...rest], hop.identifierCaseSensitive).describe(NeighborQuestionSchema.shape.nodeId.description ?? '') }),
     ]);
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }

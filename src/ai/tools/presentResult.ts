@@ -104,8 +104,8 @@ const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
  */
 function presentNodeIdHint(stage: PresentResultStage): string {
   return stage === 'visual_preview'
-    ? 'Use the accepted canonical ids with their exact catalog casing. Remove the named ids from node_ids.'
-    : 'Use the accepted canonical ids with their exact catalog casing. Remove the named ids from node_ids, or state the fact in sections[].text.';
+    ? 'Use canonical ids from the accepted metadata. Remove the named ids from node_ids.'
+    : 'Use canonical ids from the accepted metadata. Remove the named ids from node_ids, or state the fact in sections[].text.';
 }
 
 /**

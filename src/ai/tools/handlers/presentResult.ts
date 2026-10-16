@@ -35,7 +35,7 @@ import {
 import { mergedSectionsSchemaForPhase, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
-import { resolveModelNodeIds } from '../../support/modelReferences';
+import { resolveModelNodeId, resolveModelNodeIds } from '../../support/modelReferences';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
@@ -44,6 +44,26 @@ import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { isCancellationOutcome } from '../../support/cancellation';
+
+/** Binds only declared report-reference fields; raw arguments and authored text remain intact. */
+function bindPresentationReferences<T extends PresentResultInput | PresentResultRepairPatch>(input: T, model: NonNullable<AiSession['model']>): T {
+  const nodeMap = getModelNodeMap(model);
+  const bind = (id: string): string => typeof id === 'string'
+    ? resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? id : id;
+  return {
+    ...input,
+    ...(Array.isArray(input.sections) ? { sections: input.sections.map(section => section && typeof section === 'object' ? ({ ...section,
+      ...('node_ids' in section && Array.isArray(section.node_ids) ? { node_ids: section.node_ids.map(bind) } : {}),
+    }) : section) } : {}),
+    ...(Array.isArray(input.highlight_groups) ? { highlight_groups: input.highlight_groups.map(group => group && typeof group === 'object' ? ({ ...group,
+      ...('node_ids' in group && Array.isArray(group.node_ids) ? { node_ids: group.node_ids.map(bind) } : {}),
+    }) : group) } : {}),
+    ...(Array.isArray(input.notes) ? { notes: input.notes.map(note => note && typeof note === 'object' && 'node_id' in note
+      ? { ...note, node_id: bind(note.node_id) } : note) } : {}),
+    ...(Array.isArray(input.add_node_ids) ? { add_node_ids: input.add_node_ids.map(bind) } : {}),
+    ...(Array.isArray(input.prune_node_ids) ? { prune_node_ids: input.prune_node_ids.map(bind) } : {}),
+  } as T;
+}
 
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
@@ -193,9 +213,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ].filter(Boolean).join(' ');
         return reject(rejection);
       }
-      input = parsed.data;
+      input = bindPresentationReferences(parsed.data as PresentResultInput | PresentResultRepairPatch, model);
 
-      const held = drafts.get();
+      const heldDraft = drafts.get();
+      const held = heldDraft ? bindPresentationReferences(heldDraft, model) : heldDraft;
       const authorization = drafts.getAuthorization();
       let presentInput: PresentResultInput;
       if (held && authorization) {
@@ -293,11 +314,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (graphEditable && presentInput.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
-        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap);
+        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (addResolution.unresolved.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown add_node_ids (copy exact metadata IDs): ${quoteIds(addResolution.unresolved)}.`,
+            reason: `Unknown add_node_ids (use canonical metadata IDs): ${quoteIds(addResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['add_node_ids'],
           }));
@@ -324,11 +345,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
 
       if (graphEditable && presentInput.prune_node_ids?.length) {
-        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap);
+        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (pruneResolution.unresolved.length > 0) {
           return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown prune_node_ids (copy exact metadata IDs): ${quoteIds(pruneResolution.unresolved)}.`,
+            reason: `Unknown prune_node_ids (use canonical metadata IDs): ${quoteIds(pruneResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['prune_node_ids'],
           }));

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Equivalent SQL identifier delimiters, outside whitespace and source-permitted casing bind to known object identities without changing authored content or guessing missing names.
+- Column-trace tool descriptions permit SQL-supported contextual dependencies without treating them as arithmetic or aggregate inputs.
+- Column-trace instructions relate qualified columns to neighboring objects, retain SQL facts beyond the requested trace in sections, and allow an unrecorded table destination to be omitted without declaring that no write occurs.
+- Prohibited neighbor entries receive removal guidance instead of invalid-JSON instructions, and object-valued repair fields retain their diagnostics without incompatible scalar choices.
+- Offered column sources follow the same scope admission rules as submitted mappings.
 - Malformed findings repairs preserve held questions, column mappings and sections until a valid correction is submitted.
 - Report and preview rejections retain valid content and request only defective section fields; malformed retries preserve the draft, and correction choices remain available during escalation.
 - Distinct investigation questions retain SQL literal case and whitespace when tasks merge.

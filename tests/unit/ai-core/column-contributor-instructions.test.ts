@@ -1,4 +1,4 @@
-/** Model-facing contributor guidance preserves bindings and admits value inputs only as column sources. */
+/** Contributor guidance separates value derivation from SQL-supported contextual dependencies. */
 import { describe, expect, it } from 'vitest';
 import { SubmitFindingsModelSchema } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
@@ -6,26 +6,28 @@ import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 const flow = SubmitFindingsModelSchema.shape.column_flow.unwrap().element;
 
 describe('column contributor instructions', () => {
-  it('advertises caller bindings and value-flow sources, and excludes row-selection keys', () => {
+  it('advertises caller bindings, value inputs and SQL-supported contextual dependencies', () => {
     const projected = toModelJsonSchema(SubmitFindingsModelSchema) as {
       properties: { column_flow: { items: { properties: { upstream_columns: { description: string } } } } };
     };
     const description = projected.properties.column_flow.items.properties.upstream_columns.description;
     expect(description).toContain('caller-bound value inputs');
-    expect(description).toContain('only the real source columns whose value flows into out_col');
+    expect(description).toContain('real SQL-supported dependencies of out_col');
     expect(description).toContain('Resolve parameters and computed aliases to their source columns');
-    expect(description).toContain('A column used only to join, filter, group, partition or order rows is a dataset operation, not a source');
+    expect(description).toContain('Contextual columns may also be listed when');
+    expect(description).toContain('explain these dataset operations in sections');
     expect(description).toContain('each set-operation (UNION) branch’s column at that position');
     expect(description).toContain('Exclude the entry’s own writes_to column and unused expressions');
-    expect(description).toContain('upstream_columns: [] declares a terminal output');
+    expect(description).toContain('upstream_columns: [] records no in-scope suppliers for this output');
   });
 
   it('distinguishes aggregate values from grouping and row-selection roles', () => {
     const description = flow.shape.upstream_columns.element.shape.transforms.description!;
     expect(description).toContain('aggregate: value summarised by an aggregate');
     expect(description).toContain('compute: expression input, including a CASE condition operand');
-    expect(description).toContain('combine: the value source is also a join, grouping, partition or ordering key');
-    expect(description).toContain('never list a column for combine or filter alone');
+    expect(description).toContain('combine: a SQL-supported join, grouping, partition or ordering key that affects the output');
+    expect(description).toContain('Contextual combine or filter roles may stand alone');
+    expect(description).toContain('do not infer arithmetic or aggregate roles from them');
     expect(description).toContain('omit when SQL does not determine it');
   });
 

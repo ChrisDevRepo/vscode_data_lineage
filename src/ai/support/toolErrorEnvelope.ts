@@ -215,7 +215,8 @@ function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): strin
   if (issue.code === 'too_big' || issue.code === 'too_small') {
     return describeSizeIssue(issue, received) ?? issue.message;
   }
-  if (issue.code === 'invalid_type' && typeof received === 'string' && /^\s*[[{]/.test(received)) {
+  if (issue.code === 'invalid_type' && (issue.expected === 'array' || issue.expected === 'object')
+    && typeof received === 'string' && /^\s*[[{]/.test(received)) {
     try { JSON.parse(received); return baseIssueMessage(issue); } catch { /* Malformed JSON text still needs syntax guidance. */ }
     const kind = received.trimStart().startsWith('[') ? 'array' : 'object';
     return `received ${received.length} characters of text that is not valid JSON. Send it again as one complete JSON ${kind}, with line breaks inside strings written as \\n.`;
@@ -647,10 +648,20 @@ function quotedPaths(paths: Iterable<string>): string {
 function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   if (input === undefined) return undefined;
   const clauses = new Map<string, Set<string>>();
+  const removals = new Set<string>();
   for (const issue of error.issues) {
     if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
     const value = resolveAtPath(input, issue.path);
     if (value === undefined) continue;
+    if (issue.expected === 'never') {
+      const index = issue.path.reduce<number>((last, key, position) => typeof key === 'number' ? position : last, -1);
+      const field = issue.path.join('.');
+      const list = issue.path.slice(0, index).join('.');
+      removals.add(index >= 0
+        ? `Remove the entry at "${issue.path.slice(0, index + 1).join('.')}" from "${list}"; send "${list}": [] if no entries remain.`
+        : `No values are allowed for "${field}"; omit that field.`);
+      continue;
+    }
     const nullNote = acceptsNullAt(schema, issue.path) ? ', or null when it does not apply' : '';
     const node = jsonSchemaNodeAt(schema, issue.path);
     const example = issue.expected === 'object' && node ? `, shaped like ${JSON.stringify(exampleOf(node))}` : '';
@@ -658,8 +669,8 @@ function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
     const shape = `as ${article} ${issue.expected}${example}${nullNote}`;
     clauses.set(shape, (clauses.get(shape) ?? new Set()).add(issue.path.join('.')));
   }
-  if (clauses.size === 0) return undefined;
-  return [...clauses].map(([shape, paths]) => `Send ${quotedPaths(paths)} ${shape}.`).join(' ');
+  const hints = [...removals, ...[...clauses].map(([shape, paths]) => `Send ${quotedPaths(paths)} ${shape}.`)];
+  return hints.length > 0 ? hints.join(' ') : undefined;
 }
 
 /**
