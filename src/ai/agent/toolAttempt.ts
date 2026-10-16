@@ -854,14 +854,28 @@ function safeLogIdentifier(value: string, fallback: string): string {
   return safeIdentifier(value, { extraChars: '.:-', replacement: '_', maxLength: 100, fallback });
 }
 
-/**
- * Writes the `[Reject]` log line for a rejection no tool dispatch stands behind.
- *
- * @remarks
- * Dispatched rejections are logged by the registry's own result path; a rejection raised here
- * reaches the trace through {@link SyntheticRejectionTrace} and would otherwise be counted by the
- * trace and by no log line, leaving the two sources disagreeing on the run's rejection count.
- */
+/** One correlated outcome per completed tool call, independent of optional tracing. */
+function logToolOutcome(
+  input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase'>,
+  source: string,
+  call: ToolOutcomeIdentity,
+  status: 'accepted' | 'rejected' | 'gate' | 'reroute' | 'refused' | 'not_evaluated',
+  rejection?: Pick<ToolRejection, 'code' | 'issuePaths' | 'reason'>,
+): void {
+  input.debugLog?.(
+    `[ToolOutcome] source=${source}`
+    + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
+    + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
+    + ` callId=${safeCallId(call.callId)}`
+    + ` status=${status}`
+    + (rejection ? ` code=${safeLogIdentifier(rejection.code, 'unknown')}`
+      + (status === 'rejected' ? ` group=${classifyRejectionCode(rejection.code)}` : '')
+      + ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}`
+      + ` reason=${sanitizeForLog(rejection.reason)}` : ''),
+  );
+}
+
+/** Records synthetic rejections separately from siblings that were never evaluated. */
 function logSyntheticRejection(
   input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase'>,
   source: string,
@@ -869,16 +883,9 @@ function logSyntheticRejection(
   code: string,
   reason: string,
 ): void {
-  input.debugLog?.(
-    `[Reject] source=${source}`
-    + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
-    + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
-    + ` callId=${safeCallId(call.callId)}`
-    + ` code=${safeLogIdentifier(code, 'unknown')}`
-    + ` group=${classifyRejectionCode(code)}`
-    + ` reason=${sanitizeForLog(reason)}`
-    + ' issuePaths=none',
-  );
+  logToolOutcome(input, source, call,
+    code === 'phase_closed' || code === 'extra_call_not_evaluated' ? 'not_evaluated' : 'rejected',
+    { code, reason });
 }
 
 /** Renders provider validation paths without exposing any rejected payload values. */
@@ -1160,16 +1167,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
-      input.debugLog?.(
-        `[Reject] source=${argumentRejected ? 'provider_prevalidation' : 'provider_generation'}`
-        + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
-        + ` tool=${safeLogIdentifier(call.toolName, 'unknown')}`
-        + ` callId=${safeCallId(call.callId)}`
-        + ` code=${safeLogIdentifier(call.code, 'unknown')}`
-        + ` group=${classifyRejectionCode(call.code)}`
-        + ` reason=${sanitizeForLog(rejection.reason)}`
-        + ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}`
-      );
+      logToolOutcome(input, argumentRejected ? 'provider_prevalidation' : 'provider_generation', call, 'rejected', rejection);
       continue;
     }
 
@@ -1198,7 +1196,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         detail: { result: reused.result, observe: false, ...(reused.refused ? { refused: true } : {}) },
       }, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
-      input.debugLog?.(`[AI] tool-result-reused phase=${safeLogIdentifier(input.phase, 'unknown')} tool=${safeLogIdentifier(call.toolName, 'unknown')} callId=${safeCallId(call.callId)}`);
+      logToolOutcome(input, 'reused', call, reused.refused ? 'refused' : 'accepted');
       continue;
     }
     const progressLabel = definition ? definition.progressLabel : `Running ${call.toolName}…`;
@@ -1226,6 +1224,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const data = withHeldDraftDetail(withResendIdentity(resultRejection, call, input.priorState), call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome(call, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
+      logToolOutcome(input, 'dispatcher', call, 'rejected', outcome.rejection);
       if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName };
     } else {
       const observe = !controlSuccess && !terminalSuccess;
@@ -1261,6 +1260,8 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       if (observe && reusableKey && !reusableObservations.has(reusableKey)) {
         reusableObservations.set(reusableKey, observations[observations.length - 1]);
       }
+      logToolOutcome(input, 'dispatcher', call,
+        detectedGate !== null ? 'gate' : detectedReroute ? 'reroute' : detectedRefusal !== null || refused ? 'refused' : 'accepted');
     }
 
     if (detectedGate !== null) gate = detectedGate;

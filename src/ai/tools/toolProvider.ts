@@ -62,9 +62,8 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { errorMessage } from '../../utils/errorMessage';
 
 /**
- * Progress-message group for a rejection code, shared by this module's `[Reject]` debug line and
- * `graph.ts`'s validation progress labels — one classification read by both surfaces, so
- * a debug trace and what the user saw can never disagree about which group a code belongs to.
+ * Diagnostic group for a rejection code, shared by tool-result logging and the graph's repair
+ * summary and backend-fault policy. Routine correction details stay out of chat progress.
  *
  * @remarks
  * There is no "scope limit" group. The two budget codes are non-chargeable and never reach
@@ -76,7 +75,7 @@ export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer
 /**
  * Explicit membership for the non-fallback groups. Every rejection code NOT listed here —
  * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
- * `correction` fallback, so an unmapped code can never surface to the user as a raw machine string.
+ * `correction` fallback, so diagnostic grouping remains defined for future codes.
  *
  * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
  * - `source_selection` — routing and prune-topology guards.
@@ -117,7 +116,7 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
 };
 
 /**
- * Resolves a rejection code to its retry-messaging group, defaulting an unmapped code to the
+ * Resolves a rejection code to its diagnostic group, defaulting an unmapped code to the
  * `correction` fallback. See {@link REJECTION_GROUPS} for the membership this implements and why a
  * "scope limit" group is intentionally absent.
  */

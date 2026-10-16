@@ -50,6 +50,8 @@ export interface AgentFailureDetail {
 export interface AgentRuntimeDeps {
   /** LangGraph thread id for this request; a fresh value per turn, never reused across turns. */
   readonly threadId: string;
+  /** Host request id for correlated debug logs; falls back to this turn's thread id. */
+  readonly requestId?: string;
   /** Session accessor — same singleton the toolProvider reads. */
   readonly getSession: () => AiSession;
   /** Provider-neutral model port for structured output, streaming, and tool calls. */
@@ -167,6 +169,7 @@ export class AgentRuntime {
       signal: deps.signal,
       turnEpoch: deps.turnEpoch,
       logger: deps.logger,
+      requestId: deps.requestId ?? deps.threadId,
       traceSyntheticRejection: deps.traceSyntheticRejection,
       transportRetryDelayMs: deps.transportRetryDelayMs,
     });

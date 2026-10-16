@@ -76,8 +76,11 @@ function tableArrivalWorld(mode: 'bb' | 'ct') {
 
 describe('large findings repairs', () => {
   it.each([
-    { questions: 42 }, { sections: { technical: 42 } }, { column_flow: 42 }, { summary: 42 },
-  ])('preserves the held draft after a malformed repair %j', malformed => {
+    { malformed: { questions: 42 }, resend: 'summary, questions', path: 'questions' },
+    { malformed: { sections: { technical: 42 } }, resend: 'sections.technical, summary', path: 'sections.technical' },
+    { malformed: { column_flow: 42 }, resend: 'summary, column_flow', path: 'column_flow' },
+    { malformed: { summary: 42 }, resend: 'summary', path: 'summary' },
+  ])('preserves the held draft and names the malformed repair field $path', ({ malformed, resend, path }) => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
     const sections = { technical: 'Branch supplies Value unchanged.' };
@@ -88,7 +91,8 @@ describe('large findings repairs', () => {
     const before = engine.toJSON();
     const rejected = submit({ summary: 'An unvalidated replacement.', ...malformed });
     expect(rejected).toHaveProperty('code', 'invalid_input');
-    expect(rejected.hint).toContain('Held: sections.technical, questions, column_flow. Resend: summary.');
+    expect(rejected.issuePaths).toContain(path);
+    expect(rejected.hint).toContain(`Held: sections.technical, questions, column_flow. Resend: ${resend}.`);
     expect(engine.toJSON()).toEqual(before);
     expect(submit({ summary: 'Branch supplies Value.' })).toMatchObject({ ok: true, next_focus: BRANCH });
     expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)?.sections).toEqual([{ angle: 'technical', text: sections.technical }]);

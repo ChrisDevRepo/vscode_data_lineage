@@ -10,7 +10,7 @@ import { AgendaManager } from '../../../src/ai/sm/agendaManager';
 import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import type { ColumnEdge, ColumnFlowEntry, ScalarReturnTarget } from '../../../src/ai/sm/smTypes';
 import { NavigationEngine, type HopNeighborDisclosure } from '../../../src/ai/sm/smBase';
-import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
+import { findingRepairOrder, submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
 import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 
 import type { LineageNode, ObjectType } from '../../../src/engine/types';
@@ -1026,8 +1026,18 @@ describe('current task completeness before advancement', () => {
     expect(rejected).toMatchObject({ hint: expect.stringContaining('Held: sections.technical, summary, questions. Resend: column_flow.') });
     expect(engine.heldColumnFlow).toBe(false);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const malformed = { focus_node_id: root, prune_neighbors: [{ id: '[d].[Absent]', reason: 42 }] };
+    const parsed = schema.safeParse(malformed);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) throw new Error('Expected the malformed prune to be rejected');
+    const schemaRejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: malformed, schema });
+    const beforeMalformed = engine.toJSON();
+    const held = engine.holdRejectedSubmission(malformed, schemaRejection.issuePaths ?? []);
+    expect(held?.resend).toEqual(['column_flow', 'prune_neighbors']);
+    expect(findingRepairOrder(held)).toContain('Resend: column_flow, prune_neighbors.');
+    expect(engine.toJSON(), 'a malformed repair changes guidance without replacing the valid held draft').toEqual(beforeMalformed);
     const shortened = { ...overlong, upstream_columns: [{ node: neighbor, col: 'Value', note: 'The source value.' }] };
-    const retry = (column_flow: unknown[]) => toHopFinding(schema.parse({ focus_node_id: root, column_flow }));
+    const retry = (column_flow: unknown[]) => toHopFinding(schema.parse({ focus_node_id: root, column_flow, prune_neighbors: [] }));
     expect(engine.submitFindings(retry([shortened])), 'the Other entry of the rejected call is not restored').toMatchObject({ code: 'incomplete_task' });
     expect(engine.submitFindings(retry([shortened, terminal('Other')]))).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'ct' });

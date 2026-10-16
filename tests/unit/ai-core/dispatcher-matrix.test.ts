@@ -90,13 +90,19 @@ describe('optional table-arrival prune command delivery', () => {
     expect(available.input.registry.get('lineage_prune_current')?.inputSchema).toBe(PruneCurrentInputSchema);
     const input = { focus_node_id: 'dbo.Reader', reason: 'None of the inherited work applies to this SQL.' };
     const model = nativePort(() => [call('prune', input, 'lineage_prune_current'), call('sibling', {}, 'lineage_submit_findings')]);
-    const result = await executeToolAttempt(model.port, available);
+    const lines: string[] = [];
+    const result = await executeToolAttempt(model.port, available, { debugLog: line => lines.push(line) });
     expect(result.stop).toBe(accepted ? 'phase_complete' : 'continue');
     expect(result.observations).toEqual([]);
     expect(prune).toHaveBeenCalledExactlyOnceWith(input);
     const messages = result.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
     expect(messages[0].status).toBe(accepted ? 'success' : 'error');
     expect(messages[1].artifact).toMatchObject({ code: accepted ? 'phase_closed' : 'extra_call_not_evaluated' });
+    const outcomes = lines.filter(line => line.startsWith('[ToolOutcome]'));
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[0]).toContain(`callId=prune status=${accepted ? 'accepted' : 'rejected'}`);
+    expect(outcomes[1]).toContain('callId=sibling status=not_evaluated');
+    expect(outcomes.filter(line => line.includes(' status=rejected'))).toHaveLength(accepted ? 0 : 1);
   });
 });
 
@@ -206,7 +212,8 @@ describe('a tool call whose arguments are not a JSON object', () => {
   it('is answered by its own tool result stating the fault and the next action, and the valid sibling still runs', async () => {
     const { registry, invoke } = registryWith(() => JSON.stringify({ results: [] }));
     const model = nativePort(() => [call('bad', 'Orders'), call('good', { query: 'Orders' })]);
-    const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
+    const lines: string[] = [];
+    const attempt = await executeToolAttempt(model.port, discoveryPlan(registry), { debugLog: line => lines.push(line) });
     assertToolPairingWellFormed(attempt.messages);
     const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
     expect(results.map(item => item.status)).toEqual(['error', 'success']);
@@ -214,6 +221,10 @@ describe('a tool call whose arguments are not a JSON object', () => {
     expect(String(results[0].content)).not.toContain('Resend the full tool call');
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(attempt.rejections).toEqual([expect.objectContaining({ callId: 'bad', code: REJECTION_CODES.invalidToolInput })]);
+    expect(lines.filter(line => line.startsWith('[ToolOutcome]'))).toEqual([
+      expect.stringContaining('callId=bad status=rejected code=invalid_tool_input'),
+      expect.stringContaining('callId=good status=accepted'),
+    ]);
   });
 
   it('empty arguments reach the schema and are diagnosed as a lost call, with the fields to send', async () => {
@@ -309,10 +320,17 @@ describe('model-facing rejection text', () => {
     const { registry } = registryWith(() => JSON.stringify(rejection));
     const plan = discoveryPlan(registry);
     let state = initialToolPhaseAttemptState('discover');
-    const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'Missing' })]).port, plan, { priorState: state });
+    const lines: string[] = [];
+    const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'Missing' })]).port, plan,
+      { priorState: state, debugLog: line => lines.push(line) });
     expect(String(toolMessage(first.messages).content)).toContain(path);
     expect(String(toolMessage(first.messages).content)).not.toContain(columns[0]);
     expect(String(toolMessage(first.messages).content)).toContain(hint);
+    const outcome = lines.filter(line => line.startsWith('[ToolOutcome]'));
+    expect(outcome).toHaveLength(1);
+    expect(outcome[0]).toContain('phase=discover tool=lineage_search_objects callId=first status=rejected');
+    expect(outcome[0]).toContain(`issuePaths=${path}`);
+    expect(outcome[0]).not.toContain('query=Missing');
     state = recordToolAttempt(state, first);
     const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'StillMissing' })]).port, plan, { priorState: state });
     const content = String(toolMessage(second.messages).content);

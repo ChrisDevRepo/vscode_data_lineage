@@ -10,7 +10,7 @@ import {
 import { z } from 'zod';
 import type { IToolRegistry } from '../tools/registry';
 
-import type { TurnEventSink, TurnStatusPhase } from '../runtime/turnEventSink';
+import type { TurnEventSink } from '../runtime/turnEventSink';
 import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
 import { PendingGateSchema } from '../session/sessionPhase';
@@ -38,7 +38,7 @@ import { buildChatAnswer } from '../support/chatAnswer';
 import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { classifyRejectionCode, type RejectionChatGroup } from '../tools/toolProvider';
+import { classifyRejectionCode } from '../tools/toolProvider';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
@@ -85,6 +85,7 @@ import {
   type AgentStateUpdate,
 } from './state';
 import { errorMessage } from '../../utils/errorMessage';
+import { safeIdentifier } from '../support/logIdentifier';
 
 /**
  * Count of one-time phase nodes that each self-loop up to {@link MAX_TOOL_PROVIDER_CALLS} times.
@@ -115,53 +116,11 @@ const FIXED_TRANSITION_OVERHEAD = 7;
 const RECURSION_LIMIT_FLOOR = 50;
 
 /**
- * Base chat-progress label per self-looping phase, single-sourced for the repair-status suffix.
- *
- * @remarks
- * Matches the entry statuses the phase nodes emit; keyed by {@link InstructionPhase} so a retry
- * line never drifts from its phase's own wording.
- */
-const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
-  detect_entry: 'Scoping',
-  discover: 'Discovering context',
-  visual_preview: 'Building lineage preview',
-  sm_entry: 'Starting exploration',
-  active: 'Analysing hop-by-hop',
-  compose: 'Composing',
-  synthesis: 'Synthesising',
-  completed: 'Following up',
-};
-
-/**
  * The one chat-facing line for every last-render-step failure that still delivered the model's own
  * text — one wording, read wherever the notice is shown so it can never drift between the
  * synthesis-breaker path and the preview-dispatch path.
  */
 const SYNTHESIS_RENDER_FAILED_NOTICE = '_The AI preview could not be rendered; details are in the debug log._';
-
-/**
- * Chat-facing text for each {@link RejectionChatGroup}, derived once from
- * {@link classifyRejectionCode}'s id so the group id (used in debug `group=`/`classes=` fields) and
- * its chat wording can never drift apart.
- *
- * @remarks
- * `correction` is the fallback every unmapped code resolves to — no rejection code ever reaches the
- * user raw, whatever new guard is added later.
- */
-const REJECTION_GROUP_CHAT_TEXT: Readonly<Record<RejectionChatGroup, string>> = {
-  column_mapping: 'column mapping',
-  source_selection: 'source selection',
-  answer_format: 'answer format',
-  backend_fault: 'internal error',
-  missing_details: 'missing details',
-  correction: 'response',
-};
-
-/** Chat-facing group text for an attempt's latest rejection, for repair-progress chat lines. */
-function rejectionCauseLabel(attempt: Pick<ToolPhaseAttemptState, 'rejections'>): string {
-  const last = attempt.rejections[attempt.rejections.length - 1];
-  return last ? REJECTION_GROUP_CHAT_TEXT[classifyRejectionCode(last.code)] : 'response';
-}
 
 /**
  * LangGraph `recursionLimit` for one turn, derived from the graph shape and the provider-call cap so
@@ -233,6 +192,8 @@ export interface AgentGraphDeps {
    * dropped instead of corrupting the session a newer turn owns.
    */
   readonly turnEpoch: number;
+  /** Immutable host request id for debug correlation; absent for callers without one. */
+  readonly requestId?: string;
   /** Optional logger for active-loop diagnostics (host wires it to the AI channel); off when undefined. */
   readonly logger?: Logger;
   /** Wait before the one retry of a generation a transport interruption ended; the shipped default unless a test shortens it. */
@@ -247,6 +208,15 @@ export interface AgentGraphDeps {
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
 }
 
+
+/** Sends graph diagnostics with the immutable host request identity. */
+function logGraphDebug(deps: AgentGraphDeps, message: string): void {
+  if (!deps.logger) return;
+  const request = deps.requestId ? ` request=${safeIdentifier(deps.requestId, {
+    extraChars: '.:-', replacement: '_', maxLength: 128, fallback: 'unknown',
+  })}` : '';
+  deps.logger.debug(`${message}${request}`);
+}
 
 /**
  * Builds the production LangGraph runtime for one native-chat turn.
@@ -320,7 +290,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       `phase=${attempt.phase} reason=${stopped.reason} noProgressCalls=${attempt.noProgressCalls}${lastPart}`,
     );
     if (last) {
-      deps.logger?.debug(
+      logGraphDebug(deps,
         `[Stop] phase=${attempt.phase} reason=${stopped.reason} tool=${last.toolName} code=${last.code}`
         + ` rejectReason=${trunc(sanitizeForLog(last.reason), LOG_TRUNC_REJECTION)}`,
       );
@@ -353,47 +323,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return { ...fail(message), activeStop: 'provider_error' };
   };
 
-  /**
-   * Shows validation failures as short, transient progress updates while the model corrects them.
-   * Accepted non-terminal calls add no clarification status. Attempts and rejection details stay
-   * in the debug/trace record; terminal budget, provider and backend failures keep their own errors.
-   *
-   * @param statusText - The phase's own status line; defaults to the phase progress label.
-   */
-  const emitRepairProgress = (
-    phaseLabel: InstructionPhase,
-    priorAttempt: ToolPhaseAttemptState,
-    nextAttempt: ToolPhaseAttemptState,
-    statusText?: string,
-  ): void => {
-    if (nextAttempt.rejections.length <= priorAttempt.rejections.length) return;
-    const base = statusText ?? `${PHASE_PROGRESS_LABELS[phaseLabel]}…`;
-    const statusPhase: TurnStatusPhase = phaseLabel === 'synthesis' ? 'synthesizing' : 'scoping';
-    deps.sink.status(statusPhase, `${base} (Validation failed: ${rejectionCauseLabel(nextAttempt)})`);
-  };
-
-  /**
-   * Debug-only per-hop convergence summary, emitted once an active hop that recorded at least one
-   * rejection reaches a terminal disposition (committed, or failed the turn outright).
-   *
-   * @remarks
-   * Complements the per-attempt `[AI] [Attempt]` line and toolProvider's `[Reject]` line with the
-   * one line support needs to correlate clarification progress ({@link emitRepairProgress}) with what
-   * the hop actually did: the ordered chain of rejection GROUPS — never raw codes, the same rule the
-   * chat line follows — and whether the model was converging on one fault category or bouncing
-   * between unrelated ones.
-   *
-   * `converging` compares only the final two recorded rejections, the model's most recent correction
-   * against the one immediately before it: equal groups mean the retry stayed on the SAME category
-   * of fault (still working the issue), a changed group means it moved to a different one. A hop
-   * with only one rejection has no prior group to diverge from, so it reads as converging by default.
-   *
-   * @param hop - The hop number this attempt state belongs to, matching the chat "Hop X/Y" counter.
-   * @param focusId - The hop's focus node id, `[schema].[object]` form.
-   * @param attempt - The hop's cumulative attempt state at its terminal disposition.
-   * @param outcome - How the hop concluded.
-   */
-  const emitHopConvergenceSummary = (
+  /** Logs the ordered rejection groups and final disposition of a repaired active hop. */
+  const emitHopRepairSummary = (
     hop: number,
     focusId: string,
     attempt: Pick<ToolPhaseAttemptState, 'rejections' | 'providerCalls'>,
@@ -401,12 +332,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   ): void => {
     if (attempt.rejections.length === 0) return;
     const classes = attempt.rejections.map(rejection => classifyRejectionCode(rejection.code));
-    const last = classes[classes.length - 1];
-    const secondLast = classes.length > 1 ? classes[classes.length - 2] : undefined;
-    const converging = secondLast === undefined || secondLast === last;
-    deps.logger?.debug(
-      `[Retry] hop=${hop} focus=${focusId} attempts=${attempt.rejections.length} classes=${classes.join('→')}`
-      + ` providerCalls=${attempt.providerCalls}/${MAX_TOOL_PROVIDER_CALLS} converging=${converging ? 'yes' : 'no'} outcome=${outcome}`,
+    logGraphDebug(deps,
+      `[Repair] hop=${hop} focus=${focusId} rejections=${attempt.rejections.length} classes=${classes.join('→')}`
+      + ` providerCalls=${attempt.providerCalls} outcome=${outcome}`,
     );
   };
 
@@ -425,7 +353,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   ): ToolPhaseAttemptState => {
     const nextAttempt = recordToolAttempt(priorAttempt, res, terminalTool);
     const last = nextAttempt.rejections[nextAttempt.rejections.length - 1];
-    deps.logger?.debug(
+    logGraphDebug(deps,
       `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`
       + `${startedAt !== undefined ? ` durationMs=${Math.max(0, Date.now() - startedAt)}` : ''}`
       + `${last ? ` lastReject=${last.toolName}:${last.code}` : ''}`,
@@ -458,7 +386,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   const observeWrite = (outcome: SessionWriteOutcome): SessionWriteOutcome => {
     if (outcome.kind === 'dropped_stale_turn') {
-      deps.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
+      logGraphDebug(deps, `[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
     }
     return outcome;
   };
@@ -475,7 +403,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   /** Logs a connection-level interruption, waits the transport-retry delay and runs the one retry. */
   const retryAfterTransportWait = async <R>(phase: string, failure: ProviderErrorDiagnostic, attempt: () => Promise<R>): Promise<R> => {
-    deps.logger?.debug(`[AI] transport-retry phase=${phase} ${formatProviderErrorDiagnostic(failure)}`);
+    logGraphDebug(deps, `[AI] transport-retry phase=${phase} ${formatProviderErrorDiagnostic(failure)}`);
     await abortableDelay(deps.transportRetryDelayMs ?? TRANSPORT_RETRY_DELAY_MS, deps.signal);
     return attempt();
   };
@@ -497,7 +425,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   ): Promise<ToolAttemptResult> => {
     const attempt = () => executeToolAttempt(deps.model, plan, {
       priorState,
-      debugLog: message => deps.logger?.debug(message),
+      debugLog: message => logGraphDebug(deps, message),
       traceSyntheticRejection: deps.traceSyntheticRejection,
       presentResultRepairDraftContext: () => {
         const drafts = deps.getSession().presentResultRepairDraft;
@@ -510,7 +438,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const first = await attempt();
     if (first.stop !== 'error' || !first.providerError || !isTransportProviderError(first.providerError) || deps.signal?.aborted) return first;
     if (first.replyStreamed) {
-      deps.logger?.debug(`[AI] transport-retry skipped phase=${plan.frame.phase} reason=reply_streamed ${formatProviderErrorDiagnostic(first.providerError)}`);
+      logGraphDebug(deps, `[AI] transport-retry skipped phase=${plan.frame.phase} reason=reply_streamed ${formatProviderErrorDiagnostic(first.providerError)}`);
       return first;
     }
     return retryAfterTransportWait(plan.frame.phase, first.providerError, attempt);
@@ -573,7 +501,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const reason = nextAttempt.stopReason;
     if (!reason) return null;
     const fault = [...nextAttempt.rejections].reverse().find(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')?.code ?? 'unknown';
-    deps.logger?.debug(
+    logGraphDebug(deps,
       `[AI] [Breaker] phase=${nextAttempt.phase} reason=${reason} noProgressCalls=${nextAttempt.noProgressCalls}`
       + (reason === 'backend_fault' ? ` code=${fault}` : ''),
     );
@@ -615,7 +543,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const nextAttempt = recordAttempt(priorAttempt, result, phaseLabel, startedAt);
     const terminal = attemptFailure(result, nextAttempt, ...failure);
-    if (!terminal && result.stop === 'continue') emitRepairProgress(phaseLabel, priorAttempt, nextAttempt);
     return terminal ? { terminal, nextAttempt } : { result, nextAttempt };
   };
 
@@ -629,12 +556,12 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     nextAttempt: ToolPhaseAttemptState,
     draft: StandardPhaseDraft,
   ): Promise<ToolAttemptResult | null> => {
-    deps.logger?.debug(
+    logGraphDebug(deps,
       `[AI] [Salvage] phase=discover reason=no_progress observations=${nextAttempt.observations.length}`
       + ' — asking once more with tool calls disabled instead of discarding them.',
     );
     const terminalTask = buildDiscoveryFinalAnswerTask();
-    const transcript = await renderToolAttemptContext(nextAttempt, deps.model, message => deps.logger?.debug(message));
+    const transcript = await renderToolAttemptContext(nextAttempt, deps.model, message => logGraphDebug(deps, message));
     const plan = compileInstructionPlan({
       kind: 'converse',
       registry: deps.registry,
@@ -647,7 +574,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     });
     const result = await withLmStage(draft.stage, () => runToolAttempt(plan, { ...nextAttempt, messages: [] }));
     if (result.stop !== 'final' || result.text.trim().length === 0) {
-      deps.logger?.debug(`[AI] [Salvage] phase=discover unusable — stop=${result.stop}`);
+      logGraphDebug(deps, `[AI] [Salvage] phase=discover unusable — stop=${result.stop}`);
       return null;
     }
     return result;
@@ -682,11 +609,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const trigger = parseGateTrigger(state.prompt);
     if (trigger) {
       if (!held || held.revision !== trigger.revision) {
-        deps.logger?.debug(`[AI] [Gate] ${trigger.action} for revision=${trigger.revision} ignored — pending=${held?.revision ?? 'none'}`);
+        logGraphDebug(deps, `[AI] [Gate] ${trigger.action} for revision=${trigger.revision} ignored — pending=${held?.revision ?? 'none'}`);
         deps.sink.stream(STALE_GATE_TRIGGER_REPLY);
         return { ctx, messages, outcome: 'ok', toolAttempt: null, phase: 'done' };
       }
-      deps.logger?.debug(`[AI] [Gate] ${trigger.action} turn claims held proposal — revision=${held.revision}`);
+      logGraphDebug(deps, `[AI] [Gate] ${trigger.action} turn claims held proposal — revision=${held.revision}`);
       return trigger.action === 'approve'
         ? { ctx, messages, gate: held.gate, gateDecision: { kind: 'approve', classes: held.gate.classes }, phase: 'gate_approve' }
         : { ctx, messages, gate: held.gate, gateDecision: { kind: 'cancel' }, phase: 'gate_cancel' };
@@ -708,14 +635,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         action = classified.value.action;
       } catch (error) {
         if (!(error instanceof StructuredOutputError)) throw error;
-        deps.logger?.debug(
+        logGraphDebug(deps,
           `[AI] [Gate] typed-reply classification failed, proposal stays pending — revision=${held.revision} code=${error.code} reason=${sanitizeForLog(error.reason)}`,
         );
         deps.sink.stream(UNREAD_GATE_REPLY);
         return { ctx, messages, outcome: 'ok', toolAttempt: null, phase: 'done' };
       }
       if (action === 'approve') {
-        deps.logger?.debug(`[AI] [Gate] typed reply approves held proposal — revision=${held.revision}`);
+        logGraphDebug(deps, `[AI] [Gate] typed reply approves held proposal — revision=${held.revision}`);
         return {
           ctx,
           messages,
@@ -725,11 +652,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         };
       }
       if (action === 'cancel') {
-        deps.logger?.debug(`[AI] [Gate] typed reply cancels held proposal — revision=${held.revision}`);
+        logGraphDebug(deps, `[AI] [Gate] typed reply cancels held proposal — revision=${held.revision}`);
         return { ctx, messages, gate: held.gate, gateDecision: { kind: 'cancel' }, phase: 'gate_cancel' };
       }
       if (action === 'change') {
-        deps.logger?.debug(`[AI] [Gate] held proposal claims prompt as refinement — revision=${held.revision}`);
+        logGraphDebug(deps, `[AI] [Gate] held proposal claims prompt as refinement — revision=${held.revision}`);
         return {
           ctx,
           messages,
@@ -738,7 +665,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           phase: 'gate_refine',
         };
       }
-      deps.logger?.debug(`[AI] [Gate] typed reply is not about the held proposal — answered normally, revision=${held.revision} stays pending`);
+      logGraphDebug(deps, `[AI] [Gate] typed reply is not about the held proposal — answered normally, revision=${held.revision} stays pending`);
     }
 
     if (sess.phase.kind === 'completed' && sess.resultGraph) {
@@ -759,7 +686,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? state.messages
       : [modelUserMessage(state.prompt)];
     const detectorMessages = priorAttempt.providerCalls > 0
-      ? [...base, ...await renderToolAttemptContext(priorAttempt, deps.model, message => deps.logger?.debug(message))]
+      ? [...base, ...await renderToolAttemptContext(priorAttempt, deps.model, message => logGraphDebug(deps, message))]
       : base;
     let callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
@@ -797,7 +724,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           modelUserMessage(noCallCorrectionText('entry_detection', error.reason, entryDetectionHint, priorAttempt)),
         ],
       });
-      deps.logger?.debug(
+      logGraphDebug(deps,
         `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} stop=${nextAttempt.stopReason ?? 'continue'}`,
       );
       const stopped = attemptStop(nextAttempt, 'Entry detection', 'without a valid route');
@@ -868,7 +795,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     const sess = deps.getSession();
     const walk = captureDiscoveryWalkFromObservations(nextAttempt.observations, res.text, (toolName, callId) =>
-      deps.logger?.debug(`[AI] [Discovery] malformed canonical output tool=${toolName} callId=${trunc(sanitizeForLog(callId), 64)} — skipped for walk capture`));
+      logGraphDebug(deps, `[AI] [Discovery] malformed canonical output tool=${toolName} callId=${safeIdentifier(callId, { extraChars: '.:-', replacement: '_', maxLength: 64, fallback: 'unknown' })} — skipped for walk capture`));
     observeWrite(sess.settleDiscoveryTurn(deps.turnEpoch, state.prompt, res.text, walk, nextAttempt.observations.length > 0));
     const assistantMessage = res.text
       ? [modelAssistantMessage(res.text)]
@@ -876,7 +803,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
-    ], nextAttempt.observations, message => deps.logger?.debug(message));
+    ], nextAttempt.observations, message => logGraphDebug(deps, message));
     const closingNotices = sess.takeClosingNotices();
     if (closingNotices) deps.sink.stream(closingNotices);
     return { outcome: 'ok', messages: assistantMessage, toolAttempt: null, phase: 'done' };
@@ -935,7 +862,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.appendDiscoveryTurn(deps.model.budget, [
       modelUserMessage(state.prompt),
       ...assistantMessage,
-    ], nextAttempt.observations, message => deps.logger?.debug(message));
+    ], nextAttempt.observations, message => logGraphDebug(deps, message));
     return { outcome: 'ok', messages: assistantMessage, toolAttempt: null, phase: 'done' };
   };
 
@@ -975,7 +902,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { outcome: 'ok', messages: [modelAssistantMessage(res.text)], toolAttempt: null, phase: 'done' };
     }
     if (res.stop !== 'continue') return fail('Exploration did not reach the consent gate.');
-    emitRepairProgress('sm_entry', priorAttempt, nextAttempt);
     return { toolAttempt: nextAttempt, phase: 'sm_entry' };
   };
 
@@ -1094,15 +1020,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       candidate.classification = proposal.classification;
       const initialized = candidate.init(proposal.init);
       if ('code' in initialized) return initialized;
-      deps.logger?.debug(`[AI] [Proposal] approved revision=${proposal.revision} origin=${sanitizeForLog(proposal.init.origin)} depth=${sanitizeForLog(JSON.stringify(proposal.init.depthIntent))}`);
+      logGraphDebug(deps, `[AI] [Proposal] approved revision=${proposal.revision} origin=${sanitizeForLog(proposal.init.origin)} depth=${sanitizeForLog(JSON.stringify(proposal.init.depthIntent))}`);
       return candidate;
     });
     if (activation.kind === 'dropped_stale_turn') {
-      deps.logger?.debug(`[AI] stale-turn proposal activation dropped — expectedRevision=${expectedRevision}`);
+      logGraphDebug(deps, `[AI] stale-turn proposal activation dropped — expectedRevision=${expectedRevision}`);
       return fail('Approved exploration belongs to a superseded turn.');
     }
     if (activation.kind === 'rejected') {
-      deps.logger?.debug(`[AI] approved proposal activation rejected — revision=${expectedRevision} reason=${sanitizeForLog(activation.reason)}`);
+      logGraphDebug(deps, `[AI] approved proposal activation rejected — revision=${expectedRevision} reason=${sanitizeForLog(activation.reason)}`);
       return fail(`Approved exploration could not start: ${activation.reason}`);
     }
     const engine = activation.engine as NavigationEngine;
@@ -1244,7 +1170,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
     const rejectedCommitTool = res.rejections.find(rejection => isHopCommit(rejection.toolName))?.toolName;
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${engine.currentHop}`, hopStartedAt, rejectedCommitTool ?? terminalTool);
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${progress.current} focus=${sanitizeForLog(focusId)}`, hopStartedAt, rejectedCommitTool ?? terminalTool);
 
     if (res.stop === 'error') {
       return {
@@ -1267,27 +1193,26 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       completedHops: state.activeHopCount,
     });
     if (stopped) {
-      deps.logger?.debug(
+      logGraphDebug(deps,
         `[AI] [Stop] phase=active reason=${stopped.reason} focus=${focusId} submittedHops=${state.activeHopCount} disposition=error`,
       );
-      emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'failed');
+      emitHopRepairSummary(progress.current, focusId, nextAttempt, 'failed');
       return {
         ...failActiveIncomplete(state, engine, stopped.reason, stopped.message),
         toolAttempt: nextAttempt,
       };
     }
     if (!submitted) {
-      emitRepairProgress('active', priorAttempt, nextAttempt, hopHeader);
       return {
         toolAttempt: nextAttempt,
         phase: 'active_worker',
       };
     }
 
-    emitHopConvergenceSummary(progress.current, focusId, nextAttempt, 'committed');
+    emitHopRepairSummary(progress.current, focusId, nextAttempt, 'committed');
     const hop = engine.currentHop;
     observeWrite(sess.setHopCount(deps.turnEpoch, hop));
-    deps.logger?.debug(`[AI] [Hop ${hop}] sliding memory wipe — trigger=submit_ok messagesBefore=${state.messages.length}`);
+    logGraphDebug(deps, `[AI] [Hop ${hop}] sliding memory wipe — trigger=submit_ok messagesBefore=${state.messages.length}`);
     if (committedFinding.value && committedFinding.value.summary.trim()) {
       // Escape only the display copy: formulas and identifiers are literal summary text.
       const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\s+/g, ' ').trim(), 135);
@@ -1431,7 +1356,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       const salvaged = sess.bufferedFollowUpProse;
       const budgetExhausted = attempt.terminal.activeStop === 'no_progress';
       if (salvaged && budgetExhausted) {
-        deps.logger?.debug(`[AI] [Follow-up] breaker tripped with ${salvaged.length} chars of buffered prose — delivering it instead of the error`);
+        logGraphDebug(deps, `[AI] [Follow-up] breaker tripped with ${salvaged.length} chars of buffered prose — delivering it instead of the error`);
         const answer = `${salvaged}\n\n_The graph was not changed — that step did not complete._`;
         deps.sink.stream('\n\n' + answer);
         return { outcome: 'ok', messages: [modelAssistantMessage(answer)], toolAttempt: null, phase: 'done' };
@@ -1578,7 +1503,7 @@ function logClassificationGating(
   gatedKeys: readonly string[],
 ): void {
   if (gatedKeys.length === 0) return;
-  deps.logger?.debug(
+  logGraphDebug(deps,
     `[AI] [Prompt] capture keys excluded by classification — stage=${stage} classification=${sanitizeForLog(classification)} keys=${sanitizeForLog([...new Set(gatedKeys)].join(', '))}`,
   );
 }
@@ -1839,7 +1764,7 @@ function renderHeldSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): void {
   const closing = sess.takeClosingNotices() + (assembled.description ? '\n\n' + assembled.description : '');
   if (closing) deps.sink.stream(closing);
   deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
-  deps.logger?.debug(
+  logGraphDebug(deps,
     '[AI] [Repair] synthesis breaker tripped with a held draft — held text rendered to chat.',
   );
   sess.markSynthesisRenderDegraded('synthesis_breaker');

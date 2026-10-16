@@ -1,5 +1,6 @@
 /** Completed hop summaries persist as text with their original identity; transient statuses and memory remain intact. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { Logger } from '../../../src/utils/log';
 import { marked } from 'marked';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';
@@ -133,12 +134,15 @@ const statusLabels = (events: readonly TurnEvent[]): string[] =>
  * `LONG_SUMMARY` for the origin and `SHORT_SUMMARY` for the leaf; `leafCallSummary` is what the
  * model's leaf call itself carries.
  */
-async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSummary = SHORT_SUMMARY, cancelBeforeLeafCommit = false): Promise<{ labels: string[]; events: TurnEvent[]; archive: string; requests: string }> {
+async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSummary = SHORT_SUMMARY, cancelBeforeLeafCommit = false, repairOrigin = false): Promise<{ labels: string[]; events: TurnEvent[]; archive: string; requests: string; debug: string[] }> {
   const session = new AiSession();
   const leaves = seedFanOutLineage(session, 1);
   const epoch = session.beginTurn();
   seedProposal(session, epoch, leaves.length + 1);
 
+  let originSubmissions = 0;
+  const debug: string[] = [];
+  const logger = new Logger({ debug: (message: string) => debug.push(message), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never, 'AI');
   const controller = new AbortController();
   const { registry } = scriptedRegistry([
     { name: 'lineage_search_objects', result: JSON.stringify({ matches: [] }) },
@@ -148,12 +152,13 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
       result: (): string => {
         const engine = session.stateMachine as NavigationEngine;
         const isOrigin = engine.currentFocus === '[ai].[Origin]';
+        if (isOrigin) originSubmissions += 1;
         if (!isOrigin && cancelBeforeLeafCommit) { controller.abort(); return JSON.stringify({ error: 'cancelled' }); }
         const finding: HopSubmission = {
           focus_node_id: engine.currentFocus!,
           sections: [{ angle: 'business', text: isOrigin ? LONG_SUMMARY : leafCommittedSummary }],
           summary: isOrigin ? LONG_SUMMARY : leafCommittedSummary,
-          ...(isOrigin ? { questions: leaves.map(id => ({ nodeId: id, question: `origin of ${id}?` })) } : {}),
+          ...(isOrigin && (!repairOrigin || originSubmissions > 1) ? { questions: leaves.map(id => ({ nodeId: id, question: `origin of ${id}?` })) } : {}),
         };
         return JSON.stringify(submitAndAdvance(engine, finding));
       },
@@ -163,6 +168,7 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
 
   const script = [
     { toolCalls: [validCall('start-1', 'lineage_start_exploration', { origin: '[ai].[Origin]', analysisMode: 'bb', classification: 'business' })] },
+    ...(repairOrigin ? [{ toolCalls: [validCall('submit-origin-incomplete', 'lineage_submit_findings', { summary: LONG_SUMMARY })] }] : []),
     { toolCalls: [validCall('submit-origin', 'lineage_submit_findings', { summary: LONG_SUMMARY })] },
     { toolCalls: [validCall('submit-leaf-0', 'lineage_submit_findings', { summary: leafCallSummary })] },
     { toolCalls: [validCall('present-1', 'lineage_present_result', {})] },
@@ -171,6 +177,8 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
   const turn = makeGateSink();
   const runtime = new AgentRuntime({
     threadId: 'hop-summary-visibility',
+    requestId: 'hop-summary-request',
+    logger,
     getSession: () => session,
     model: model as unknown as ModelPort,
     registry,
@@ -191,6 +199,7 @@ async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSum
     events: turn.events,
     archive: JSON.stringify((session.stateMachine as NavigationEngine).toJSON().memory),
     requests: JSON.stringify(model.requests),
+    debug,
   };
 }
 
@@ -258,4 +267,20 @@ it('renders multiplication and identifier punctuation literally without altering
   expect(labels[1]).toContain('**Hop 2 — Leaf0**');
   expect(archive).toContain(summary);
   expect(requests).toContain(summary.replace(/</g, '\\\\u003c').replace(/>/g, '\\\\u003e'));
+});
+
+
+it('keeps correctable rejection details in correlated debug logs while chat retains normal hop progress', async () => {
+  const { events, labels, requests, debug } = await hopSummaryLabelsForTurn(SHORT_SUMMARY, SHORT_SUMMARY, false, true);
+  expect(labels).toHaveLength(2);
+  expect(statusLabels(events).some(label => label.startsWith('Hop 1/2 — analysing Origin'))).toBe(true);
+  expect(events.filter(event => event.type === 'status' || event.type === 'text').map(event => event.type === 'status' ? event.label : event.delta).join('')).not.toMatch(/Validation failed|Retrying|missing details/);
+  expect(events.some(event => event.type === 'error')).toBe(false);
+  expect(requests).toContain('questions');
+  expect(debug).toEqual(expect.arrayContaining([
+    expect.stringContaining('lastReject=lineage_submit_findings:incomplete_task'),
+    expect.stringContaining('[Repair] hop=1 focus=[ai].[Origin] rejections=1 classes=missing_details providerCalls=2 outcome=committed request=hop-summary-request'),
+  ]));
+  expect(debug.filter(line => /\[(?:Attempt|Repair|ToolOutcome)\]/.test(line)).every(line => line.includes('request=hop-summary-request'))).toBe(true);
+  expect(debug.filter(line => line.includes('[Attempt] phase=active hop=1 focus=[ai].[Origin]'))).toHaveLength(2);
 });

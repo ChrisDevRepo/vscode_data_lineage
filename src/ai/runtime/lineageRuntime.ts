@@ -181,6 +181,7 @@ export class LineageRuntime {
       : undefined;
     const runtime = new AgentRuntime({
       threadId: requestKey,
+      requestId: input.request.id,
       getSession: this.deps.getSession,
       model: input.model,
       registry: instrumentedRegistry,

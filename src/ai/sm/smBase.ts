@@ -667,8 +667,8 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Holds valid parts of an initially schema-rejected finding; malformed repairs leave an existing
-   * draft and its required repair fields unchanged.
+   * Holds valid parts of an initially schema-rejected finding; malformed repairs preserve an existing
+   * draft and request both its outstanding fields and the malformed repair's defective fields.
    *
    * @param input - The rejected payload as the model sent it.
    * @param failedPaths - Dotted Zod issue paths of the rejection.
@@ -681,7 +681,11 @@ export class NavigationEngine implements IHopStateMachine {
     if (typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
     const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.identifierCaseSensitive);
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
-    if (this.heldDraftOfCurrentFocus()) return this.heldPartsOfCurrentFocus();
+    const held = this.heldPartsOfCurrentFocus();
+    if (held) {
+      const { fields, angles } = splitFailedParts([...held.resend, ...failedPaths]);
+      return { ...held, resend: [...[...angles].map(angle => `sections.${angle}`), ...fields] };
+    }
     const sent: HopFindingKept = {
       focus_node_id: raw.focus_node_id,
       sections: extractRawSectionAngles(raw.sections),
