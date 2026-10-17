@@ -12,14 +12,7 @@ type NotifyContext = Record<string, unknown>;
 
 const MAX_NOTIFICATION_CONTEXT = LOG_TRUNC_JSON * 4;
 
-/**
- * One-line, bounded rendering of a context value.
- *
- * @remarks
- * Text is redacted before it is cut, so truncation cannot split a credential past the redaction
- * patterns: list items and error messages here, a string value by {@link formatContext} before the
- * call. `formatContext` redacts each rendered part again, which covers serialized objects.
- */
+/** One-line, bounded rendering of a context value. */
 function renderContextValue(value: unknown): string {
   try {
     if (Array.isArray(value)) {

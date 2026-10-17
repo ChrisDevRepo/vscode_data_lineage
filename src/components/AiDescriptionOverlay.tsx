@@ -12,28 +12,14 @@ import { errorMessage } from '../utils/errorMessage';
 /** Which edge of the canvas the report column is docked against. */
 export type AiDockPosition = 'right' | 'left' | 'bottom';
 
-/**
- * The dock choices, in the order the menu lists them.
- *
- * @remarks
- * One dropdown rather than three always-visible buttons: the trigger already shows the current
- * edge through its icon, so the header carries a single control and every position stays one
- * click away in the menu — the same shape VS Code uses for its own "Move Panel To" layout menu.
- */
+/** The dock choices, in the order the menu lists them. */
 const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; label: string }> = [
   { position: 'left', label: 'Dock left' },
   { position: 'bottom', label: 'Dock bottom' },
   { position: 'right', label: 'Dock right' },
 ];
 
-/**
- * The collapsed rail's expand glyph, per dock edge: it points the way the panel will reopen.
- *
- * @remarks
- * A right- or left-docked rail is a vertical tab and reopens sideways into the canvas; a
- * bottom-docked rail is a horizontal strip and reopens upward. The arrow is the only part of the
- * rail that changes with the edge — the name and the hit target are identical on all three.
- */
+/** The collapsed rail's expand glyph, per dock edge: it points the way the panel will reopen. */
 const RAIL_TOGGLE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
   right: '\u25C0',
   left: '\u25B6',
@@ -47,11 +33,7 @@ const COLLAPSE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
   bottom: '\u25BC',
 };
 
-/**
- * Panel-dock icon: a frame with the docked edge filled, modelled on VS Code's
- * `layout-panel-left` / `layout-panel` / `layout-panel-right` codicons so each position reads
- * at a glance instead of three near-identical arrow glyphs.
- */
+/** Panel-dock icon: a frame with the docked edge filled, modelled on VS Code's `layout-panel-left` / `layout-panel` / `layout-panel-right` codicons so each position reads at a glance instead of three near-identical arrow glyphs. */
 function DockIcon({ position }: { position: AiDockPosition }) {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
@@ -98,19 +80,7 @@ interface AiDescriptionOverlayProps {
   onPanelResize?: (width: number, height: number) => void;
 }
 
-/**
- * The AI report column: a pane docked to the chosen edge for AI-generated descriptions and logic summaries.
- *
- * @remarks
- * Renders GitHub Flavored Markdown and KaTeX math through the same `marked` extension VS Code
- * applies to chat responses, so a description renders identically in both surfaces. When
- * collapsed it shrinks to a slim rail on the edge it was docked to instead of disappearing, so
- * reopening never hunts for a button. Numbered section
- * chips navigate the document and, through `onFocusSection`, highlight that section's nodes on
- * the graph while the rest dim.
- *
- * @param props - The component props.
- */
+/** The AI report column: a pane docked to the chosen edge for AI-generated descriptions and logic summaries. */
 export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   viewName,
   description,

@@ -5,23 +5,15 @@ import { Tooltip } from './ui/Tooltip';
 interface ColumnTableProps {
   /** The array of column definitions to render. */
   columns: ColumnDef[];
-  /**
-   * Indicates if the parent object is a "virtual" external reference.
-   * If true, a specific message is shown indicating metadata unavailability.
-   */
+  /** Indicates if the parent object is a "virtual" external reference. If true, a specific message is shown indicating metadata unavailability. */
   isVirtualExt: boolean;
   /** Optional search query to highlight matching text within column names. */
   findQuery?: string;
-  /**
-   * If true, hides the 'Null' and 'Flags' columns to save space.
-   * Typically used for views or functions where these attributes are non-applicable.
-   */
+  /** If true, hides the 'Null' and 'Flags' columns to save space. Typically used for views or functions where these attributes are non-applicable. */
   compact?: boolean;
 }
 
-/**
- * Renders SQL column metadata and constraint badges, or an empty-state message.
- */
+/** Renders SQL column metadata and constraint badges, or an empty-state message. */
 export function ColumnTable({ columns, isVirtualExt, findQuery, compact }: ColumnTableProps) {
   if (columns.length === 0) {
     return (

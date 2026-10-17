@@ -34,10 +34,7 @@ const aiRoot = fileURLToPath(new URL('../../../src/ai', import.meta.url));
 const DATABASE_EXECUTION_PATTERN =
   /connectionManager|db\/dbSession|builtInProvider|connectDatabase|dmvExtractor|profilingEngine|executeSimpleQuery|executeDmvQueries|table-stats-request/;
 
-/**
- * A token that provably exists in `src/ai/**`. The negative match below is vacuously true when the
- * scan reads nothing, so the same scan must also find this control before the absence proof counts.
- */
+/** A token that provably exists in `src/ai/**`. The negative match below is vacuously true when the scan reads nothing, so the same scan must also find this control before the absence proof counts. */
 const SCAN_POSITIVE_CONTROL = 'NavigationEngine';
 
 /** Floor for the number of scanned AI sources — a collapsed tree must fail, not silently pass. */

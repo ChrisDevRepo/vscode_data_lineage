@@ -1,9 +1,4 @@
-/**
- * `lineage_get_scope_bundle`'s origin node entry carries an explicit `in`/`out` split (same shape
- * as `buildHopFocusNode`/`presentNeighbor`), so a consumer never has to infer direction from bare
- * `[source, target, type]` edge-tuple position. Every other node in the bundle keeps the scalar
- * `deg` it always had — the split is origin-only.
- */
+/** `lineage_get_scope_bundle`'s origin node entry carries an explicit `in`/`out` split (same shape as `buildHopFocusNode`/`presentNeighbor`), so a consumer never has to infer direction from bare `[source, target, type]` edge-tuple position. Every other node in the bundle keeps the scalar `deg` it always had — the split is origin-only. */
 import { describe, expect, it } from 'vitest';
 import { getScopeBundle } from '../../../src/ai/tools/tools';
 import { buildBareGraph } from '../../../src/ai/support/graphUtils';
@@ -11,10 +6,7 @@ import { DEFAULT_TURN_TOKEN_BUDGET as BUDGET } from '../../../src/ai/support/tok
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import type { GetScopeBundleInput } from '../../../src/ai/tools/toolSchemas';
 
-/**
- * Origin `raworderimport` is read by `spcleanorders` (OUT side) and written by
- * `spimportorders` (IN side): one neighbor on each side of the origin.
- */
+/** Origin `raworderimport` is read by `spcleanorders` (OUT side) and written by `spimportorders` (IN side): one neighbor on each side of the origin. */
 function makeSplitModel(): DatabaseModel {
   const nodes: LineageNode[] = [
     { id: '[ai].[spimportorders]', schema: 'ai', name: 'spImportOrders', fullName: '[ai].[spImportOrders]', type: 'procedure', columns: [] },

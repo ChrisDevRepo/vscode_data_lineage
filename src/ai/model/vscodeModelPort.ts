@@ -40,13 +40,7 @@ import {
 } from '../providers/structuredOutput';
 import { errorMessage } from '../../utils/errorMessage';
 
-/**
- * Request-scoped model port over the exact native model selected in Chat UI.
- *
- * LangChain `BaseMessage` instances are the only history representation. The
- * port performs no model selection, fallback, tool execution, or lifecycle
- * routing.
- */
+/** Request-scoped model port over the exact native model selected in Chat UI. */
 export class VscodeModelPort implements ModelPort {
   /** Request-scoped adapter identifier derived from the selected model ID. */
   public readonly id: string;
@@ -66,36 +60,11 @@ export class VscodeModelPort implements ModelPort {
       readonly debugLog?: (message: string) => void;
       /** Native request identifier shared by wire and runtime lifecycle records. */
       readonly requestId?: string;
-      /**
-       * Debug wire sink, supplied only when session trace logging is enabled.
-       *
-       * @remarks
-       * Unlike {@link debugLog} this carries model content — prompts, tool payloads, SQL — so it
-       * never reaches the output channel and is absent unless the user opted in.
-       */
+      /** Debug wire sink, supplied only when session trace logging is enabled. */
       readonly wireLog?: (record: WireRecord) => void;
-      /**
-       * Whether the active trace captures the verbatim system instruction as its own field.
-       *
-       * @remarks
-       * Off by default, in which case the `wire-request` `system` field carries the prompt's hash
-       * only. This does **not** make the trace prompt-free: `vscode.lm` has no system role, so the
-       * bridge downgrades the system instruction into the first User turn and it is recorded with
-       * the rest of `messages[]` either way. That is deliberate — the message array is what makes a
-       * bad turn reconstructable from the trace alone. The privacy control is the opt-in itself
-       * plus the owner-only file mode, not partial redaction of the request.
-       *
-       * The port never captures provider bodies on this lane — `vscode.lm` hands back a stream of
-       * parts, not an HTTP payload — so `provider-raw` has no emitter here.
-       */
+      /** Whether the active trace captures the verbatim system instruction as its own field. */
       readonly traceVerbose?: boolean;
-      /**
-       * Token budget the owning turn resolved from this model's window and the workspace settings.
-       *
-       * @remarks
-       * Absent only where a caller builds a port outside a turn, which leaves the shipped defaults
-       * and the ceilings in force.
-       */
+      /** Token budget the owning turn resolved from this model's window and the workspace settings. */
       readonly budget?: TurnTokenBudget;
     } = {},
   ) {
@@ -113,16 +82,7 @@ export class VscodeModelPort implements ModelPort {
     );
   }
 
-  /**
-   * {@inheritDoc SingleGenerationModelPort.getNumTokens} — delegates to the selected model's own
-   * `countTokens`.
-   *
-   * @remarks
-   * Carries no cancellation token: the caller is `trimMessages`' token counter, run outside any
-   * single generation's request-scoped `CancellationTokenSource` — there is no live token in
-   * scope to pass. A rejecting `countTokens` call (a BYOK provider whose counter throws) falls
-   * back to the shared chars-per-token estimate rather than failing the node.
-   */
+  /** {@inheritDoc SingleGenerationModelPort.getNumTokens} — delegates to the selected model's own `countTokens`. */
   public async getNumTokens(content: MessageContent): Promise<number> {
     const text = messageContentToText(content);
     try {
@@ -313,11 +273,7 @@ export class VscodeModelPort implements ModelPort {
     signal?: AbortSignal,
     onTextDelta?: (text: string) => void,
     phase?: string,
-    /**
-     * Overrides the bound runnable this streams, for a caller (structured output) whose tool
-     * binding the bridge already owns ({@link VscodeLangChainBridge.bindStructuredOutputTool});
-     * `definitions`/`choice` are unused when supplied.
-     */
+    /** Overrides the bound runnable this streams, for a caller (structured output) whose tool binding the bridge already owns ({@link VscodeLangChainBridge.bindStructuredOutputTool}); `definitions`/`choice` are unused when supplied. */
     buildRunnable?: (bridge: VscodeLangChainBridge) => VscodeBridgeRunnable,
   ): Promise<{
     message: AIMessageChunk;
@@ -401,19 +357,12 @@ export class VscodeModelPort implements ModelPort {
 }
 
 /** One provider tool call: its parsed object arguments, or the JSON text LangChain could not read as an object. */
-export type EmittedToolCall = { readonly id: string; readonly name: string } & (
+type EmittedToolCall = { readonly id: string; readonly name: string } & (
   | { readonly args: Record<string, unknown> }
   | { readonly malformedArgs: string }
 );
 
-/**
- * The generation's tool calls in emission order, pairing LangChain's parsed `tool_calls` and its
- * `invalid_tool_calls` (arguments that were no JSON object) back onto the bridge's one chunk per
- * call.
- *
- * @throws {@link ModelPortError} `unsupported_response` when a call ID is missing or repeated:
- *   results cannot be correlated safely, so no call in the generation may dispatch.
- */
+/** The generation's tool calls in emission order, pairing LangChain's parsed `tool_calls` and its `invalid_tool_calls` (arguments that were no JSON object) back onto the bridge's one chunk per call. */
 export function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
   const valid: ToolCall[] = [...(message.tool_calls ?? [])];
   const invalid = [...(message.invalid_tool_calls ?? [])];

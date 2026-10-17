@@ -10,18 +10,11 @@ import { readJsonLines } from './json-lines.mjs';
 
 const TRACE_LINE = Symbol('physicalTraceLine');
 const SUBMIT = 'lineage_submit_findings';
-/** The port's synthetic forced-output call: it is parsed by the port and never dispatched, so it has no tool record. */
-const STRUCTURED_OUTPUT = 'structured_output';
 const PRESENT = 'lineage_present_result';
 const DIRECT = new Set(['pass_through', 'compute', 'aggregate']);
 const ROW_ROLE = new Set(['combine', 'filter']);
 
-/**
- * Parses an lm-trace NDJSON text, skipping lines that are not JSON objects.
- *
- * @param {string} text
- * @returns {object[]}
- */
+/** Parses an lm-trace NDJSON text, skipping lines that are not JSON objects. */
 export function parseTrace(text) {
   return text.split(/\r?\n/u).flatMap((line, index) => readJsonLines(line).records.map(record => {
     Object.defineProperty(record, TRACE_LINE, { value: index + 1 });
@@ -29,25 +22,14 @@ export function parseTrace(text) {
   }));
 }
 
-/**
- * Classifies one `column_flow` contributor by the contract: a contributor with a direct transform
- * (or none stated) is a value input; one whose transforms are all `combine` or `filter` is a row role.
- *
- * @param {{ transforms?: string[] }} contributor
- * @returns {'direct' | 'row_role'}
- */
+/** Classifies one `column_flow` contributor by the contract: a contributor with a direct transform (or none stated) is a value input; one whose transforms are all `combine` or `filter` is a row role. */
 export function contributorKind(contributor) {
   const transforms = Array.isArray(contributor.transforms) ? contributor.transforms : [];
   if (transforms.length === 0) return 'direct';
   return transforms.some(t => DIRECT.has(t)) || !transforms.every(t => ROW_ROLE.has(t)) ? 'direct' : 'row_role';
 }
 
-/**
- * Summarises one `lineage_submit_findings` input.
- *
- * @param {object} input
- * @returns {{ focus: string, direct: string[], rowRole: string[], pruned: string[], prunedAndNamed: string[], entries: number, entriesWithoutWritesTo: number, questions: string[] }}
- */
+/** Summarises one `lineage_submit_findings` input. */
 export function summariseSubmission(input) {
   const direct = new Set();
   const rowRole = new Set();
@@ -74,24 +56,12 @@ export function summariseSubmission(input) {
   };
 }
 
-/**
- * Distinct captured-snippet ids (`S<n>`) opened as ```sql fences in a text.
- *
- * @param {string} text
- * @returns {Set<string>}
- */
+/** Distinct captured-snippet ids (`S<n>`) opened as ```sql fences in a text. */
 export function snippetIds(text) {
   return new Set([...text.matchAll(/```sql S(\d+)/g)].map(match => `S${match[1]}`));
 }
 
-/**
- * Computes payload metrics with tool outcomes and repairs isolated by request id.
- * Every terminal is retained; a failed or cancelled turn makes the whole capture unsuccessful.
- *
- * @param {object[]} records - Parsed lm-trace records.
- * @returns {object} Hops in submission order with their outcome, prune-versus-source conflicts,
- *   synthesis snippet counts, rejections by code and whether submissions and tool records aligned.
- */
+/** Computes payload metrics with tool outcomes and repairs isolated by request id. Every terminal is retained; a failed or cancelled turn makes the whole capture unsuccessful. */
 export function runMetrics(records) {
   const calls = [];
   for (const record of records) {
@@ -151,22 +121,12 @@ export function runMetrics(records) {
 /** Top-level keys a resend always carries; they identify the call and are not part of the defect. */
 const IDENTITY_KEYS = new Set(['focus_node_id', 'verdict', 'is_update']);
 
-/**
- * Size of a rejected call, in characters of its input, from which a resend is judged on its size. A small
- * call is cheaper to resend whole than to patch, so only a large exchange is expected to resend the defect only.
- */
+/** Size of a rejected call, in characters of its input, from which a resend is judged on its size. A small call is cheaper to resend whole than to patch, so only a large exchange is expected to resend the defect only. */
 export const LARGE_CALL_CHARS = 4000;
 /** Share of the rejected call's characters above which the resend of a large call is not defect-only. */
 export const MAX_RESEND_SHARE = 0.5;
 
-/**
- * Follows every rejected call to the call that repaired it: how many replies the repair took, and
- * whether each resend carried only the defect. Outcomes require conservative call/generation association.
- *
- * @param {object[]} calls - Calls of the run in order, with `name`, `input`, `outputTokens`.
- * @param {object[]} toolRecords - `tool` records in order.
- * @returns {{ aligned: boolean, rejectedCalls: number, chains: object[], retriesToResolve: Record<string, number>, steps: object[], resendTokens: { rejected: number, resent: number }, defectOnlySteps: number }}
- */
+/** Follows every rejected call to the call that repaired it: how many replies the repair took, and whether each resend carried only the defect. Outcomes require conservative call/generation association. */
 export function repairChains(calls, toolRecords, measured = null) {
   // Legacy direct callers receive conservative associations too; no ordinal zip across missing outcomes.
   if (!measured) {
@@ -367,12 +327,7 @@ function measureUsage(responses) {
   })) };
 }
 
-/**
- * Deterministic per-case diagnostics. Supply only records belonging to the case.
- * finalSnapshot is an explicitly captured final projection { nodes: [], columnEdges: [] };
- * omitted arrays remain unknown. Causal annotations are caller supplied, never inferred here.
- * Raw authored text, SQL, tool arguments and feedback are deliberately excluded.
- */
+/** Deterministic per-case diagnostics. Supply only records belonging to the case. finalSnapshot is an explicitly captured final projection { nodes: [], columnEdges: [] }; omitted arrays remain unknown. Causal annotations are caller supplied, never inferred here. Raw authored text, SQL, tool arguments and feedback are deliberately excluded. */
 export function detailedMetrics(records, { finalSnapshot = null, causalAnnotations = [] } = {}) {
   const measured = measureRetryEpisodes(records);
   const responses = records.filter(record => record.type === 'wire-response');
@@ -449,8 +404,6 @@ export function writeMetricsReport(path, metrics) {
   writeFileSync(path, `${JSON.stringify(metrics, null, 2)}\n`, 'utf8');
 }
 
-const focusOf = call => String(call.input?.focus_node_id ?? '');
-
 /** Citation counts prompt manual review when many snippets were offered and few were cited. */
 export const MIN_OFFERED_FOR_CITATION_CHECK = 10;
 export const MIN_CITED_SHARE = 0.1;
@@ -478,20 +431,10 @@ export const RULES = {
 
 const finding = (rule, extra) => ({ rule, kind: RULES[rule].kind, ...extra, ...(RULES[rule].kind === 'defect' ? { correct: RULES[rule].correct } : { verify: RULES[rule].verify }) });
 
-/**
- * Orders findings with the defects first.
- *
- * @param {{ kind: string }[]} items
- */
+/** Orders findings with the defects first. */
 const defectsFirst = items => [...items].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'defect' ? -1 : 1));
 
-/**
- * Generic rules over one run. Thresholds are declared here, before any run is read. A defect is a fault of
- * the pipeline; a signal is a reason to read the answer against the question and the SQL, never a verdict.
- *
- * @param {ReturnType<typeof runMetrics>} run
- * @returns {{ rule: string, kind: 'defect' | 'signal', focus?: string, detail: string, correct?: string, verify?: string }[]}
- */
+/** Generic rules over one run. Thresholds are declared here, before any run is read. A defect is a fault of the pipeline; a signal is a reason to read the answer against the question and the SQL, never a verdict. */
 export function findings(run) {
   const out = [];
   if (run.outcome !== 'ok') out.push(finding('run_not_completed', { detail: `outcome ${run.outcome}; ${run.hops.filter(hop => hop.status === 'accepted').length} hops accepted` }));
@@ -529,12 +472,7 @@ export function findings(run) {
   return defectsFirst(out);
 }
 
-/**
- * Signals for manually selected baseline/candidate captures of the same question.
- *
- * @param {ReturnType<typeof runMetrics>[]} runs
- * @returns {{ rule: string, kind: 'defect' | 'signal', focus?: string, detail: string, correct?: string, verify?: string }[]}
- */
+/** Signals for manually selected baseline/candidate captures of the same question. */
 export function spreadFindings(runs) {
   const out = [];
   for (const row of compareRuns(runs)) {
@@ -557,13 +495,7 @@ export function spreadFindings(runs) {
   return defectsFirst(out);
 }
 
-/**
- * Compares the accepted hops of repeated runs of one question, per focus object: the sets a hop named as
- * value inputs and row roles are reported for manual review, without judging content quality.
- *
- * @param {object[]} runs - Results of {@link runMetrics}.
- * @returns {{ focus: string, runs: number, identicalDirect: boolean, identicalRowRole: boolean, directCounts: number[], onlyInSome: string[] }[]}
- */
+/** Compares the accepted hops of repeated runs of one question, per focus object: the sets a hop named as value inputs and row roles are reported for manual review, without judging content quality. */
 export function compareRuns(runs) {
   const byFocus = new Map();
   runs.forEach((run, runIndex) => {
@@ -609,13 +541,7 @@ export function findLatestTraces(dir = 'test-results/headless', count = 2) {
   return traces.sort((a, b) => b.mtime - a.mtime).slice(0, count).map(t => t.file).reverse();
 }
 
-/**
- * Generates an executive BI scorecard comparing candidate run to baseline run with RAG status.
- *
- * @param {object} base - Baseline run metrics with optional durationMs and chars.
- * @param {object} cand - Candidate run metrics with optional durationMs and chars.
- * @returns {object} Executive scorecard.
- */
+/** Generates an executive BI scorecard comparing candidate run to baseline run with RAG status. */
 export function generateScorecard(base, cand) {
   const diffPct = (b, c) => (b === 0 ? (c === 0 ? 0 : 100) : Number((((c - b) / b) * 100).toFixed(1)));
   const diffVal = (b, c) => c - b;

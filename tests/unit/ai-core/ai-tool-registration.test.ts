@@ -1,9 +1,5 @@
 // Owner: src/ai/tools/toolDefs.ts, toolPolicy.ts and toolProvider.ts; registration and delivery contracts.
-/**
- * Pins tool registration: the manifest's `languageModelTools` match the external stage of the core
- * tool policy, `vscode.lm` receives exactly that subset while the participant registry keeps the full catalog,
- * and the canonical registry rejects duplicates and unknown tools and passes raw input through.
- */
+/** Pins tool registration: the manifest's `languageModelTools` match the external stage of the core tool policy, `vscode.lm` receives exactly that subset while the participant registry keeps the full catalog, and the canonical registry rejects duplicates and unknown tools and passes raw input through. */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type * as VSCode from 'vscode';

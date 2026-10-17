@@ -1,13 +1,4 @@
-/**
- * The webview→host handlers that hand a webview-supplied string to a VS Code API: the report
- * "Open in editor" path, the draw.io export save dialog and the webview error log.
- *
- * All are boundaries, so all are pinned here — the contract cap that stops an unbounded report
- * payload reaching `openTextDocument`, the base-name reduction that stops a webview-supplied file
- * name seeding the save dialog at a path it never came from, and the fallback that keeps the report
- * readable when the built-in Markdown preview is not installed. The panel double here also pins
- * the host-side inbound protocol-version check of the main and detail panels.
- */
+/** The webview→host handlers that hand a webview-supplied string to a VS Code API: the report "Open in editor" path, the draw.io export save dialog and the webview error log. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AI_REPORT_MARKDOWN_MAX_CHARS,

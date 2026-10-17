@@ -96,13 +96,7 @@ function errorNumber(err: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
-/**
- * Whether an error came from the SQL driver rather than from this extension's own logic.
- *
- * @remarks
- * Driver errors carry a numeric SQL Server error number or an `E…` code (`ELOGIN`, `ETIMEOUT`,
- * `ESOCKET`, `EREQUEST`).
- */
+/** Whether an error came from the SQL driver rather than from this extension's own logic. */
 export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
 }
@@ -129,20 +123,7 @@ function grantStatement(user: string | undefined): string {
   return `GRANT VIEW DEFINITION TO ${principal};`;
 }
 
-/**
- * Describes a connection or query failure for the user.
- *
- * @remarks
- * `message` is `<connection name>: <original driver text>` with credential-shaped text removed, plus
- * one hint when the server rejects a Microsoft token. The
- * actions depend on the error class; those that manage a saved connection are offered only when the
- * error names one, and Retry only when the caller supplies a retry hook. Each action runs
- * on the user's click and any retry it triggers is a single attempt, never a loop.
- *
- * @param err - The raw error from the driver.
- * @param target - The connection the error belongs to.
- * @param hooks - Caller-supplied capabilities the actions use.
- */
+/** Describes a connection or query failure for the user. */
 export function describeConnectionError(
   err: unknown,
   target: ConnectionErrorTarget,
@@ -240,12 +221,7 @@ export function describeConnectionError(
   return { message, actions: wanted };
 }
 
-/**
- * Asks, in a modal, whether to trust a server certificate without validating it.
- *
- * @param connection - The server the certificate belongs to.
- * @returns `true` only when the user confirmed.
- */
+/** Asks, in a modal, whether to trust a server certificate without validating it. */
 export async function confirmTrustServerCertificate(connection: Pick<BuiltInConnection, 'server' | 'port' | 'database'>): Promise<boolean> {
   const confirmed = await vscode.window.showWarningMessage(
     `Trust the certificate of ${describeConnection(connection)} without validating it? Do this only for a server you know uses a self-signed certificate, such as a development or test server.`,
@@ -255,15 +231,7 @@ export async function confirmTrustServerCertificate(connection: Pick<BuiltInConn
   return confirmed === TRUST_CERTIFICATE;
 }
 
-/**
- * Logs a connection error once, shows it with its actions, and runs the action the user picks.
- *
- * @remarks
- * Redacted driver detail goes to the log at debug level; the toast carries the described message, never
- * the raw error alone. The returned `message` is for callers that also show the text inline.
- *
- * @returns The described message, and a promise that settles once the toast is answered or dismissed.
- */
+/** Logs a connection error once, shows it with its actions, and runs the action the user picks. */
 export function reportConnectionError(
   err: unknown,
   target: ConnectionErrorTarget,
@@ -288,20 +256,12 @@ export function reportConnectionError(
   return { message, actions, answered };
 }
 
-/**
- * Builds the error target for a session that is already open.
- *
- * @param session - The open session.
- */
+/** Builds the error target for a session that is already open. */
 export function targetFromSession(session: DbSession): ConnectionErrorTarget {
   return targetFromStored(session.connectionInfo);
 }
 
-/**
- * Builds the error target for a stored connection record.
- *
- * @param info - The stored record.
- */
+/** Builds the error target for a stored connection record. */
 export function targetFromStored(info: StoredConnectionInfo): ConnectionErrorTarget {
   const saved = info.connectionId
     ? readBuiltInConnections().find((c) => c.id === info.connectionId)

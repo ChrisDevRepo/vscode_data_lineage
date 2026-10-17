@@ -1,10 +1,4 @@
-/**
- * Unit tests for the classification gate.
- *
- * Covers:
- *   ClassificationSchema — Zod enum rejects invalid values
- *   AiSession classification contract — stores, requires, and resets the locked value
- */
+/** Unit tests for the classification gate. */
 
 import { describe, expect, it } from 'vitest';
 import { ClassificationSchema } from '../../../src/ai/session/classification';

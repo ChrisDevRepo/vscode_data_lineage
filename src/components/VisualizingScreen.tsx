@@ -3,12 +3,7 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { Spinner } from './ui/Spinner';
 
-/**
- * Represents the major phases of the application initialization and graph generation process.
- * - 'load': Extracting metadata from DACPAC or live database.
- * - 'parse': Building the internal graph and model structure.
- * - 'generate': Calculating layout and preparing the visual canvas.
- */
+/** Represents the major phases of the application initialization and graph generation process. - 'load': Extracting metadata from DACPAC or live database. - 'parse': Building the internal graph and model structure. - 'generate': Calculating layout and preparing the visual canvas. */
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
 interface VisualizingScreenProps {
@@ -38,14 +33,7 @@ const PHASE_ORDER: Record<LoadingPhase, number> = { load: 0, parse: 1, generate:
 
 type PhaseStatus = 'pending' | 'active' | 'done' | 'error';
 
-/**
- * Determines the status of a specific loading phase based on the current active phase.
- *
- * @param rowPhase - The phase to check.
- * @param current - The currently active loading phase.
- * @param hasError - Whether an error has occurred in the process.
- * @returns The status of the phase (pending, active, done, or error).
- */
+/** Determines the status of a specific loading phase based on the current active phase. */
 function phaseStatus(rowPhase: LoadingPhase, current: LoadingPhase, hasError: boolean): PhaseStatus {
   const rowIdx = PHASE_ORDER[rowPhase];
   const curIdx = PHASE_ORDER[current];
@@ -89,9 +77,7 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
 
 const AUTO_REDIRECT_MS = 8000;
 
-/**
- * Displays project-loading progress, elapsed time, cancellation, and failure recovery.
- */
+/** Displays project-loading progress, elapsed time, cancellation, and failure recovery. */
 export const VisualizingScreen = memo(function VisualizingScreen({
   sourceName,
   phase,

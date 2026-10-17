@@ -9,9 +9,7 @@ import { ForeignKeysSection } from './ForeignKeysSection';
 import { StatsSection } from './StatsSection';
 
 
-/**
- * Represents the lifecycle and data state of table statistics profiling.
- */
+/** Represents the lifecycle and data state of table statistics profiling. */
 export type TableStatsState =
   | { phase: 'idle' }
   | { phase: 'loading'; mode: StatsMode }
@@ -52,9 +50,7 @@ export interface TableDetailPanelProps {
   compactColumns?: boolean;
 }
 
-/**
- * Displays columns, foreign keys, and profiling metrics for the selected database object.
- */
+/** Displays columns, foreign keys, and profiling metrics for the selected database object. */
 export const TableDetailPanel = memo(function TableDetailPanel({
   schema,
   objectName,

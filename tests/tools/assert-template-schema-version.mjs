@@ -16,15 +16,7 @@ const normalize = (text) => text.replace(/\r\n/g, '\n');
 
 const git = async (args, cwd, env) => (await runCommand('git', args, { cwd, env })).stdout;
 
-/**
- * Baseline the gate compares against: the highest release tag, which is what a user actually
- * upgraded from — falling back to `origin/main` in repositories that carry no `v*` tags, so the
- * comparison still runs instead of skipping.
- *
- * Deliberately not `git describe`: releases are squash-merged, so a release tag is usually NOT an
- * ancestor of the feature branch being gated, and `describe` would find nothing and skip the check
- * on precisely the branches that need it. Sorting all `v*` tags by version is reachability-free.
- */
+/** Baseline the gate compares against: the highest release tag, which is what a user actually upgraded from — falling back to `origin/main` in repositories that carry no `v*` tags, so the comparison still runs instead of skipping. */
 async function baselineRef(cwd, env) {
   const tag = (await git(['tag', '--list', 'v*', '--sort=-v:refname'], cwd, env)).split('\n')[0].trim();
   if (tag) return { ref: tag, label: tag };

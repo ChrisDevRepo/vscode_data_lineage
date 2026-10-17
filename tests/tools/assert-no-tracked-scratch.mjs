@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-/**
- * Fails when Git tracks local-only scratch directories or generated review reports.
- *
- * `tmp/` holds session handovers, logs and evidence that may name private paths, model pins or
- * conversation state; it is ignored, so a tracked file there was force-added by mistake.
- */
+/** Fails when Git tracks local-only scratch directories or generated review reports. */
 import { runCommand } from './command.mjs';
 
 let tracked;

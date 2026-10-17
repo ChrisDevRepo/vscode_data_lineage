@@ -1,11 +1,4 @@
-/**
- * Exclusion-filter equivalence guard.
- *
- * `applyExclusionFilter` (graph-time, modelFilters) and `applyExclusionPatterns`
- * (load-time, modelFilters) must exclude exactly the same nodes and edges for
- * the same patterns; the load-time function adds parse-stat bookkeeping on top and
- * nothing else. These tests pin that contract so the two paths cannot drift.
- */
+/** Exclusion-filter equivalence guard. */
 
 import { describe, it, expect } from 'vitest';
 import { applyExclusionFilter, applyExclusionPatterns, scopeModelForVisualize } from '../../../src/engine/modelFilters';

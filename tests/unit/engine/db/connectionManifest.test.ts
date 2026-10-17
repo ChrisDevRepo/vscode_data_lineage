@@ -1,7 +1,4 @@
-/**
- * Pins the connection contributions in package.json: the provider enum, the credential-free
- * connections schema, application scope, the four commands, and the bundled driver.
- */
+/** Pins the connection contributions in package.json: the provider enum, the credential-free connections schema, application scope, the four commands, and the bundled driver. */
 
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';

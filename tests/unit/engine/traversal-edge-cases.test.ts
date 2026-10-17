@@ -1,12 +1,4 @@
-/**
- * Owns synthetic traceNodeWithLevels membership, depth and edge contracts. Per
- * .agents/rules/testing.md, every distinct scenario retains equivalent assertions. Other graph APIs stay in their
- * owning suites. Covers the graph shapes that stress traversal termination and dedup: cycles,
- * self-loops, asymmetric diamonds, missing origins and depth caps, for `traceNodeWithLevels`,
- * `bfsReachable`, `findShortestPathOrdered`, `directNeighborIds`, `analyzeRemoval` and
- * `buildGraphologyGraph`. A regression that made any of them revisit a node would hang the
- * extension rather than fail a test.
- */
+/** Owns synthetic traceNodeWithLevels membership, depth and edge contracts. Per .agents/rules/testing.md, every distinct scenario retains equivalent assertions. Other graph APIs stay in their owning suites. Covers the graph shapes that stress traversal termination and dedup: cycles, self-loops, asymmetric diamonds, missing origins and depth caps, for `traceNodeWithLevels`, `bfsReachable`, `findShortestPathOrdered`, `directNeighborIds`, `analyzeRemoval` and `buildGraphologyGraph`. A regression that made any of them revisit a node would hang the extension rather than fail a test. */
 
 import { describe, expect, it } from 'vitest';
 import { buildGraphologyGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';

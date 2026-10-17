@@ -29,29 +29,13 @@ import {
 import { notifyUser } from '../utils/notify';
 import { errorMessage } from '../utils/errorMessage';
 
-/**
- * Receives a diagnostic line raised while a graph is built or laid out.
- *
- * @param level - Severity, in the host log vocabulary.
- * @param text - Ready-to-log line, already carrying its `[Category]` prefix.
- */
+/** Receives a diagnostic line raised while a graph is built or laid out. */
 type GraphLogSink = (level: 'info' | 'debug' | 'warn', text: string) => void;
 
-/**
- * Where this module's diagnostics go. Defaults to a no-op so the engine stays usable outside the
- * webview — a host process, a test — without reaching for `window`.
- */
+/** Where this module's diagnostics go. Defaults to a no-op so the engine stays usable outside the webview — a host process, a test — without reaching for `window`. */
 let logSink: GraphLogSink = () => {};
 
-/**
- * Installs the sink this module logs through.
- *
- * @remarks
- * Called once from the webview entry point, which owns the bridge to the host. Until then the
- * default sink discards, which is what a non-webview caller gets today.
- *
- * @param sink - Receiver for every diagnostic this module raises.
- */
+/** Installs the sink this module logs through. */
 export function setGraphLogSink(sink: GraphLogSink): void {
   logSink = sink;
 }
@@ -60,42 +44,15 @@ export function setGraphLogSink(sink: GraphLogSink): void {
 export const NODE_WIDTH = 220;
 /** Height of a standard graph node in pixels. */
 export const NODE_HEIGHT = 80;
-/**
- * Vertical space reserved above an annotated node for its AI badge (`.ln-ai-badge` in
- * `src/index.css`, rendered by `AiBadgeToolbar` in `src/components/AiNodeAnnotations.tsx`), so
- * two annotated nodes stacked in the same rank never let one node's badge run into the node
- * above it.
- *
- * @remarks
- * Covers the toolbar's node gap (`AI_ANNOTATION_NODE_GAP` in `AiNodeAnnotations.tsx`) plus the
- * chip's own rendered height, with a small margin so the reservation does not track the chip's
- * exact pixel height.
- */
+/** Vertical space reserved above an annotated node for its AI badge (`.ln-ai-badge` in `src/index.css`, rendered by `AiBadgeToolbar` in `src/components/AiNodeAnnotations.tsx`), so two annotated nodes stacked in the same rank never let one node's badge run into the node above it. */
 export const AI_BADGE_BAND = 26;
-/**
- * Vertical space reserved below an annotated node for its AI footnote (`.ln-ai-note-label` in
- * `src/index.css`, rendered by `AiNoteToolbar` in `src/components/AiNodeAnnotations.tsx`), so
- * two annotated nodes stacked in the same rank never let one node's footnote run into the node
- * below it.
- *
- * @remarks
- * Covers the toolbar's node gap (`AI_ANNOTATION_NODE_GAP` in `AiNodeAnnotations.tsx`) plus the
- * footnote's own rendered height, with a small margin so the reservation does not track the
- * label's exact pixel height.
- */
+/** Vertical space reserved below an annotated node for its AI footnote (`.ln-ai-note-label` in `src/index.css`, rendered by `AiNoteToolbar` in `src/components/AiNodeAnnotations.tsx`), so two annotated nodes stacked in the same rank never let one node's footnote run into the node below it. */
 export const AI_NOTE_BAND = 20;
 /** Width of a schema-level node in pixels. */
 export const SCHEMA_NODE_WIDTH = 200;
 /** Height of a schema-level node in pixels. */
 export const SCHEMA_NODE_HEIGHT = 80;
-/**
- * Rank separation for Schema View, independent of `layout.rankSeparation`.
- *
- * @remarks
- * A schema node carries a name plus its object counts, so the macro view needs more room
- * between ranks than the object graph. `layout.rankSeparation` and `layout.nodeSeparation`
- * are documented as object-graph settings and are deliberately not read here.
- */
+/** Rank separation for Schema View, independent of `layout.rankSeparation`. */
 const SCHEMA_RANK_SEPARATION = 160;
 /** Node separation for Schema View; see {@link SCHEMA_RANK_SEPARATION}. */
 const SCHEMA_NODE_SEPARATION = 80;
@@ -107,17 +64,7 @@ const GRID_DEFAULT_COLS = 4;
 /** Padding between nodes in grid layout (px). */
 const GRID_CELL_PADDING = 40;
 
-/**
- * Collects every edge whose endpoints both sit inside the traced node set.
- *
- * @remarks
- * Direction governs which nodes a trace admits, not which edges are drawn between two nodes
- * already in that set — an upstream-only trace holding both `A` and `S` still draws `A → S`.
- *
- * @param graph - The underlying computational graph.
- * @param nodeIds - Set of node identifiers within the trace scope.
- * @returns A set of edge identifiers connecting two traced nodes.
- */
+/** Collects every edge whose endpoints both sit inside the traced node set. */
 function collectTraceEdges(graph: Graph, nodeIds: Set<string>): Set<string> {
   const edgeIds = new Set<string>();
 
@@ -128,9 +75,7 @@ function collectTraceEdges(graph: Graph, nodeIds: Set<string>): Set<string> {
   return edgeIds;
 }
 
-/**
- * Represents the structured result of graph compilation.
- */
+/** Represents the structured result of graph compilation. */
 interface GraphResult {
   /** Nodes formatted for React Flow. */
   flowNodes: FlowNode[];
@@ -140,11 +85,7 @@ interface GraphResult {
   graph: Graph;
 }
 
-/**
- * Minimal node shape consumed by {@link buildLineageFlowNode} when constructing a React Flow node.
- * The `external*` fields are populated only for external references (objects outside the analyzed
- * project) and are therefore optional; internal objects leave them undefined.
- */
+/** Minimal node shape consumed by {@link buildLineageFlowNode} when constructing a React Flow node. The `external*` fields are populated only for external references (objects outside the analyzed project) and are therefore optional; internal objects leave them undefined. */
 type LineageFlowNodeSource = {
   id: string;
   label: string;
@@ -176,10 +117,7 @@ function flowNodeSource(node: LineageNode): LineageFlowNodeSource {
   };
 }
 
-/**
- * Builds one React Flow object node; its degrees come from `graph`, and are 0 for a node the graph
- * lacks or when no graph is given (a synthesized trace node whose degrees are recomputed later).
- */
+/** Builds one React Flow object node; its degrees come from `graph`, and are 0 for a node the graph lacks or when no graph is given (a synthesized trace node whose degrees are recomputed later). */
 function buildLineageFlowNode(
   source: LineageFlowNodeSource,
   graph: Graph | null,
@@ -209,13 +147,7 @@ function buildLineageFlowNode(
   };
 }
 
-/**
- * Builds a directed graphology graph from a database model.
- * Carries the model's identifier comparison policy as a graph attribute for derived schema views.
- *
- * @param model - The database model definitions.
- * @returns A populated graph instance.
- */
+/** Builds a directed graphology graph from a database model. Carries the model's identifier comparison policy as a graph attribute for derived schema views. */
 export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
   graph.setAttribute('identifierCaseSensitive', model.identifierCaseSensitive === true);
@@ -241,9 +173,7 @@ export function buildGraphologyGraph(model: DatabaseModel): Graph {
   return graph;
 }
 
-/**
- * Converts internal model and graph state into React Flow structures.
- */
+/** Converts internal model and graph state into React Flow structures. */
 function toFlowResult(
   model: DatabaseModel,
   graph: Graph,
@@ -259,45 +189,20 @@ function toFlowResult(
   return { flowNodes, flowEdges, graph };
 }
 
-/**
- * Fully builds and layouts a graph for visualization.
- *
- * @param model - Database model to visualize.
- * @param config - Extension configuration.
- * @param annotatedNodeIds - Ids carrying an AI badge or footnote; see {@link computeLayout}.
- * @returns Complete graph result.
- */
+/** Fully builds and layouts a graph for visualization. */
 export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): GraphResult {
   const graph = buildGraphologyGraph(model);
   const positions = computeLayout(graph, config, annotatedNodeIds);
   return toFlowResult(model, graph, positions, config);
 }
 
-/**
- * Builds a graph without executing layout algorithms, preserving default positions.
- *
- * @param model - Database model to visualize.
- * @param config - Extension configuration.
- * @returns Complete graph result with zeroed positions.
- */
+/** Builds a graph without executing layout algorithms, preserving default positions. */
 export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
   const graph = buildGraphologyGraph(model);
   return toFlowResult(model, graph, new Map(), config);
 }
 
-/**
- * Traces a node's lineage with separate upstream and downstream depth caps.
- *
- * @remarks
- * BFS is run per direction; a depth value of `0` for either argument suppresses
- * traversal in that direction entirely.
- *
- * @param graph - The graphology computational graph.
- * @param nodeId - Origin node for the trace.
- * @param upstreamLevels - Maximum hop depth in the inbound direction.
- * @param downstreamLevels - Maximum hop depth in the outbound direction.
- * @returns The set of reachable node ids and the edges connecting them.
- */
+/** Traces a node's lineage with separate upstream and downstream depth caps. */
 export function traceNodeWithLevels(
   graph: Graph,
   nodeId: string,
@@ -308,10 +213,7 @@ export function traceNodeWithLevels(
   return { nodeIds, edgeIds: collectTraceEdges(graph, nodeIds) };
 }
 
-/**
- * The node half of {@link traceNodeWithLevels}: the reachable node ids alone, without the O(E)
- * edge collection, for callers that only count or probe a scope.
- */
+/** The node half of {@link traceNodeWithLevels}: the reachable node ids alone, without the O(E) edge collection, for callers that only count or probe a scope. */
 export function traceNodeIdsWithLevels(
   graph: Graph,
   nodeId: string,
@@ -339,19 +241,7 @@ export function traceNodeIdsWithLevels(
   return nodeIds;
 }
 
-/**
- * Calculates the shortest directed path between two nodes as node/edge id sets.
- *
- * @remarks
- * Delegates path-finding to the shared {@link findShortestPathOrdered} (bidirectional
- * retry) so the GUI "Find Path" feature has a single source of truth for path lookup.
- *
- * @param graph - The graphology computational graph.
- * @param sourceId - Path start node.
- * @param targetId - Path end node.
- * @returns The set of node and edge ids on the shortest path, or `null` if
- *   either endpoint is unknown or no path exists in either direction.
- */
+/** Calculates the shortest directed path between two nodes as node/edge id sets. */
 export function computeShortestPath(
   graph: Graph,
   sourceId: string,
@@ -370,9 +260,7 @@ export function computeShortestPath(
   return { nodeIds, edgeIds };
 }
 
-/**
- * Lays out nodes in a uniform grid.
- */
+/** Lays out nodes in a uniform grid. */
 function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
   const cellW = NODE_WIDTH + GRID_CELL_PADDING;
@@ -393,12 +281,7 @@ function isSynthesizingMode(trace: TraceState, synthesizeOutOfFilter?: boolean):
   return trace.mode === 'path-applied' || !!synthesizeOutOfFilter;
 }
 
-/**
- * Projects the full flow onto the traced node / edge sets.
- *
- * @remarks
- * Handles bidirectional-edge aliasing (`A↔B` matches either `A→B` or `B→A`).
- */
+/** Projects the full flow onto the traced node / edge sets. */
 function projectFlowToTrace(
   flowNodes: FlowNode[],
   flowEdges: FlowEdge[],
@@ -416,14 +299,7 @@ function projectFlowToTrace(
   return { nodes, edges };
 }
 
-/**
- * Adds traced nodes / edges that are not in the visible flow back into the scope.
- *
- * @remarks
- * Used for `path-applied` and explicit out-of-filter synthesis. Mutates the passed
- * arrays in place so that subsequent layout and degree recomputation observe the
- * full trace scope.
- */
+/** Adds traced nodes / edges that are not in the visible flow back into the scope. */
 function synthesizeMissingTraceScope(
   filteredNodes: FlowNode[],
   filteredEdges: FlowEdge[],
@@ -456,13 +332,7 @@ function synthesizeMissingTraceScope(
   }
 }
 
-/**
- * Recomputes `inDegree` / `outDegree` for nodes that were synthesized with zero degree.
- *
- * @remarks
- * Only touches nodes whose original degree was 0/0, so nodes carried over from the
- * visible flow retain their full-graph degree.
- */
+/** Recomputes `inDegree` / `outDegree` for nodes that were synthesized with zero degree. */
 function recomputeSynthesizedDegrees(filteredNodes: FlowNode[], filteredEdges: FlowEdge[]): void {
   const synthesizedIds = new Set(
     filteredNodes.filter((n) => n.data.inDegree === 0 && n.data.outDegree === 0).map((n) => n.id),
@@ -499,19 +369,7 @@ function layoutTraceFlow(
   });
 }
 
-/**
- * Applies active trace state to the visual graph, filtering and re-layouting as needed.
- *
- * @param flowNodes - Flow nodes to decorate.
- * @param flowEdges - Flow edges to decorate.
- * @param trace - Current trace state to serialize.
- * @param config - Rendering configuration for the trace view.
- * @param model - Database model to inspect.
- * @param synthesizeOutOfFilter - Whether to synthesize hidden out-of-filter nodes.
- *
- * @returns Trace-scoped nodes and edges, plus a graphology graph over the synthesized
- * scope when out-of-filter synthesis ran.
- */
+/** Applies active trace state to the visual graph, filtering and re-layouting as needed. */
 export function applyTraceToFlow(
   flowNodes: FlowNode[],
   flowEdges: FlowEdge[],
@@ -573,17 +431,7 @@ export function applyTraceToFlow(
   return { nodes, edges, graph: traceGraph };
 }
 
-/**
- * Input to {@link dagreLayout}.
- *
- * @remarks
- * `direction` and `sizeOf` exist for callers that lay out a non-object view — the column view
- * carries its own direction and variable row heights. `annotatedNodeIds` is a plain id list
- * rather than a function so it stays structured-cloneable, like the rest of this input, for a
- * layout worker. An annotated node's Dagre box includes its bands, and its returned position is
- * the node's own top edge, not the top of the reserved box. All four participate in the layout
- * cache key.
- */
+/** Input to {@link dagreLayout}. */
 export interface LayoutInput {
   nodeIds: string[];
   edges: Array<{ source: string; target: string }>;
@@ -610,13 +458,7 @@ export function layoutCacheKey({ nodeIds, edges, config, ranker, direction, size
   return `${direction ?? config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}|${sizes}|${annotated}`;
 }
 
-/**
- * Computes spatial positions using the Dagre layout engine with LRU caching.
- *
- * @param input - Nodes, edges, and layout configuration; see {@link LayoutInput}.
- *
- * @returns Top-left position per node, or an empty map when Dagre fails.
- */
+/** Computes spatial positions using the Dagre layout engine with LRU caching. */
 export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: number }> {
   const key = layoutCacheKey(input);
   const cached = layoutCache.find(e => e.key === key);
@@ -638,13 +480,7 @@ function storeLayout(key: string, positions: Map<string, { x: number; y: number 
   if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
 }
 
-/**
- * Runs Dagre on one layout input without touching the cache — the unit of work a layout
- * worker executes off the UI thread.
- *
- * @param input - Nodes, edges, and layout configuration; see {@link LayoutInput}.
- * @returns Top-left position per node, or an empty map when Dagre fails.
- */
+/** Runs Dagre on one layout input without touching the cache — the unit of work a layout worker executes off the UI thread. */
 export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, annotatedNodeIds }: LayoutInput): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
@@ -682,17 +518,7 @@ export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, an
   return positions;
 }
 
-/**
- * Stores positions computed elsewhere (a layout worker) under the input's cache key, so the
- * next {@link dagreLayout} call for the same input returns without running Dagre.
- *
- * @param input - The layout input the positions were computed for.
- * @param positions - Top-left position per node.
- * @param key - Precomputed cache key; derived from `input` when omitted.
- * @returns Whether the positions were stored. A result missing any input node (a failed worker
- *   layout returns an empty map) is not, so the view lays out on the main thread instead of
- *   serving a layout with no positions.
- */
+/** Stores positions computed elsewhere (a layout worker) under the input's cache key, so the next {@link dagreLayout} call for the same input returns without running Dagre. */
 export function seedLayoutCache(
   input: LayoutInput,
   positions: Map<string, { x: number; y: number }>,
@@ -703,22 +529,12 @@ export function seedLayoutCache(
   return true;
 }
 
-/**
- * Whether {@link dagreLayout} would answer this input from the cache.
- *
- * @param key - Precomputed cache key; derived from `input` when omitted.
- */
+/** Whether {@link dagreLayout} would answer this input from the cache. */
 export function hasCachedLayout(input: LayoutInput, key: string = layoutCacheKey(input)): boolean {
   return layoutCache.some(e => e.key === key);
 }
 
-/**
- * Calculates graph metrics for diagnostic purposes.
- *
- * @param graph - Graph instance to traverse.
- *
- * @returns Node and edge totals plus root (in-degree 0) and leaf (out-degree 0) counts.
- */
+/** Calculates graph metrics for diagnostic purposes. */
 export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } {
   let rootNodes = 0;
   let leafNodes = 0;
@@ -736,9 +552,7 @@ export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges:
   };
 }
 
-/**
- * Selects a canonical direction for a bidirectional edge pair, favoring data flows (transformers → sinks).
- */
+/** Selects a canonical direction for a bidirectional edge pair, favoring data flows (transformers → sinks). */
 function canonicalDirection(graph: Graph, a: string, b: string): [string, string] {
   const aType = graph.getNodeAttributes(a).type;
   const bType = graph.getNodeAttributes(b).type;
@@ -750,9 +564,7 @@ function canonicalDirection(graph: Graph, a: string, b: string): [string, string
   return a < b ? [a, b] : [b, a];
 }
 
-/**
- * Transforms relational model edges into React Flow edges, handling bidirectionality.
- */
+/** Transforms relational model edges into React Flow edges, handling bidirectionality. */
 function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
   const valid = edges.filter(
     (e) => graph.hasNode(e.source) && graph.hasNode(e.target)
@@ -806,9 +618,7 @@ function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>
   return result;
 }
 
-/**
- * Calculates visual stroke properties based on schema-to-schema connection count.
- */
+/** Calculates visual stroke properties based on schema-to-schema connection count. */
 function schemaEdgeStroke(count: number): { strokeWidth: number; opacity: number } {
   const t = Math.min(Math.log2(Math.max(count, 1)) / 6, 1);
   return { strokeWidth: 0.8 + t * 2.2, opacity: 0.55 + t * 0.45 };
@@ -824,21 +634,12 @@ function schemaNamesFromGraph(graph: Graph): string[] {
   return [...present].sort((a, b) => a.localeCompare(b));
 }
 
-/**
- * Builds the working-set schema color map shared by every overview surface.
- */
+/** Builds the working-set schema color map shared by every overview surface. */
 function buildOverviewColorMap(graph: Graph): SchemaColorMap {
   return createSchemaColorMap(schemaNamesFromGraph(graph), undefined, graph.getAttribute('identifierCaseSensitive') === true);
 }
 
-/**
- * Builds the macro-level Schema View graph.
- *
- * @param graph - The current filtered Graphology working graph.
- * @param config - Supplies layout direction and edge style; node spacing is view-owned
- *   ({@link SCHEMA_RANK_SEPARATION}, {@link SCHEMA_NODE_SEPARATION}).
- * @returns React Flow nodes and edges for Schema View.
- */
+/** Builds the macro-level Schema View graph. */
 export function buildSchemaGraph(
   graph: Graph,
   config: ExtensionConfig = DEFAULT_CONFIG,
@@ -919,11 +720,7 @@ export function buildSchemaGraph(
   return { nodes, edges };
 }
 
-/**
- * Splits an object graph into the Dagre input for its connected nodes and the isolated nodes
- * placed on a grid row below — the one definition {@link buildGraph} and a layout worker share,
- * so both produce the same cache key.
- */
+/** Splits an object graph into the Dagre input for its connected nodes and the isolated nodes placed on a grid row below — the one definition {@link buildGraph} and a layout worker share, so both produce the same cache key. */
 function objectLayoutPlan(graph: Graph, config: ExtensionConfig, annotatedNodeIds?: readonly string[]): { input: LayoutInput; isolatedIds: string[] } {
   const seen = new Set<string>();
   const edges: Array<{ source: string; target: string }> = [];
@@ -953,38 +750,18 @@ function objectLayoutPlan(graph: Graph, config: ExtensionConfig, annotatedNodeId
   };
 }
 
-/**
- * Dagre input {@link buildGraph} lays out for a graph built from a model — structured-cloneable
- * (no `sizeOf`), so a layout worker can compute it and {@link seedLayoutCache} can store the result.
- *
- * @param graph - Graph built from the model by {@link buildGraphologyGraph}.
- * @param config - Extension configuration.
- * @param annotatedNodeIds - Ids carrying an AI badge or footnote; see {@link computeLayout}.
- */
+/** Dagre input {@link buildGraph} lays out for a graph built from a model — structured-cloneable (no `sizeOf`), so a layout worker can compute it and {@link seedLayoutCache} can store the result. */
 export function objectLayoutInputForGraph(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): LayoutInput {
   return objectLayoutPlan(graph, config, annotatedNodeIds).input;
 }
 
-/**
- * Computes spatial layout for the object graph.
- *
- * @remarks
- * Disconnected singletons (e.g. cross-DB virtual nodes whose only counterpart is outside the
- * current schema filter) are placed in a row below the Dagre layout rather than passed to
- * Dagre, whose longest-path ranker crashes on fully disconnected components.
- *
- * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so their rank reserves the
- * vertical band those overlays need; see {@link AI_BADGE_BAND} and {@link AI_NOTE_BAND}.
- */
+/** Computes spatial layout for the object graph. */
 function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): Map<string, { x: number; y: number }> {
   const { input, isolatedIds } = objectLayoutPlan(graph, config, annotatedNodeIds);
   return placeIsolatedRow(new Map(dagreLayout(input)), isolatedIds);
 }
 
-/**
- * Places `isolatedIds` in one row below every laid-out position, mutating and returning `positions`.
- * Dagre's longest-path ranker crashes on fully disconnected components, so they never reach it.
- */
+/** Places `isolatedIds` in one row below every laid-out position, mutating and returning `positions`. Dagre's longest-path ranker crashes on fully disconnected components, so they never reach it. */
 function placeIsolatedRow(
   positions: Map<string, { x: number; y: number }>,
   isolatedIds: readonly string[],
@@ -1175,22 +952,7 @@ function buildExpandedSchemaViewFlowEdges(
   ];
 }
 
-/**
- * Builds the expanded schema view flow graph.
- *
- * @remarks
- * Objects whose schema is in `expandedSchemas` render individually; every other schema collapses
- * into one cluster node joined by aggregated bridge edges. Isolated nodes and unconnected clusters
- * drop into a peripheral row (same as {@link computeLayout}); the caller's graph is pre-filtered.
- *
- * @param graph - The filtered working-set graphology graph.
- * @param expandedSchemas - Schemas shown as individual objects; all others collapse per schema.
- * @param focusId - The node opened in expanded schema view (for highlight + centering); `null` when entered via a
- *   schema double-click, in which case no node is highlighted.
- * @param config - Extension configuration (layout).
- * @param options - Render-only options such as hiding collapsed schema clusters without changing filters.
- * @returns React Flow nodes (individual + schema-cluster nodes) and edges (real + bridge).
- */
+/** Builds the expanded schema view flow graph. */
 export function buildExpandedSchemaViewGraph(
   graph: Graph,
   expandedSchemas: ReadonlySet<string>,

@@ -29,34 +29,15 @@ const DmvQueriesConfigSchema = z.object({
   queries: z.array(z.record(z.string(), z.any())).optional()
 }).passthrough();
 
-/**
- * Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server.
- */
+/** Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server. */
 export interface DmvQuery {
-  /**
-   * The unique name/key of the query.
-   *
-   * @remarks
-   * Two classes of name, because they fail differently. Required — 'schema-preview',
-   * 'nodes', 'columns', 'dependencies' — are listed in the loader's `KNOWN_NAMES` and
-   * warn when a custom YAML omits them, since the import path cannot complete without
-   * them. Optional — 'all-objects', 'platform-info', 'constraints' — are deliberately
-   * absent from that list: omitting 'all-objects' leaves cross-schema references
-   * unclassified, omitting 'platform-info' records an unknown platform, and
-   * omitting 'constraints' drops constraint enrichment. All degrade silently by design,
-   * so a warning would be noise.
-   */
+  /** The unique name/key of the query. */
   name: string;
   /** A human-readable description of the query's purpose. Never consumed by the import path. */
   description?: string;
   /** The raw SQL statement to execute. */
   sql: string;
-  /**
-   * The execution phase of the query.
-   * `1`: Preliminary phase (unfiltered).
-   * `2`: Main extraction phase (typically filters by schema).
-   * @default 2
-   */
+  /** The execution phase of the query. `1`: Preliminary phase (unfiltered). `2`: Main extraction phase (typically filters by schema). */
   phase?: number;
 }
 
@@ -65,9 +46,7 @@ function hasRequiredQueryFields(q: Record<string, any>): q is DmvQuery {
   return Boolean(q.name) && Boolean(q.sql);
 }
 
-/**
- * Root configuration structure for DMV query definition files.
- */
+/** Root configuration structure for DMV query definition files. */
 export interface DmvQueriesConfig {
   /** Schema version of the configuration file. */
   version: number;
@@ -75,14 +54,7 @@ export interface DmvQueriesConfig {
   queries: DmvQuery[];
 }
 
-/**
- * Loads DMV queries by checking the workspace configuration for a custom path,
- * falling back to built-in defaults if necessary.
- *
- * @param outputChannel - The VS Code output channel for logging.
- * @param extensionUri - The base URI of the extension for resolving built-in assets.
- * @returns A promise resolving to an array of validated DMV queries.
- */
+/** Loads DMV queries by checking the workspace configuration for a custom path, falling back to built-in defaults if necessary. */
 export async function loadDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
@@ -191,18 +163,7 @@ export interface DmvQueryCache extends vscode.Disposable {
   reload(): Promise<DmvQuery[]>;
 }
 
-/**
- * Creates a DMV queries cache that reloads when `dataLineageViz.dmvQueriesFile` names another file.
- *
- * @remarks
- * Each load reads the YAML, logs and may show a warning toast for an unusable custom file, so callers
- * that need the queries repeatedly — the built-in provider's server-info lookup on every table-statistics
- * request — read the cached result instead. A setting change that keeps the resolved file (a relative
- * path rewritten to its absolute form) keeps the cache. Listening for setting changes starts with the
- * first load; dispose to stop it.
- *
- * @param load - Reads and validates the queries, normally {@link loadDmvQueries}.
- */
+/** Creates a DMV queries cache that reloads when `dataLineageViz.dmvQueriesFile` names another file. */
 export function createDmvQueryCache(load: () => Promise<DmvQuery[]>): DmvQueryCache {
   let cached: Promise<DmvQuery[]> | undefined;
   let loadedFile: string | undefined;
@@ -228,14 +189,7 @@ export function createDmvQueryCache(load: () => Promise<DmvQuery[]>): DmvQueryCa
   };
 }
 
-/**
- * Loads the built-in DMV queries from the extension's `assets` directory.
- *
- * @param outputChannel - The VS Code output channel for logging.
- * @param extensionUri - The base URI of the extension.
- * @returns A promise resolving to the built-in DMV queries.
- * @throws If the built-in configuration file is missing or corrupted.
- */
+/** Loads the built-in DMV queries from the extension's `assets` directory. */
 async function loadBuiltInDmvQueries(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
@@ -246,14 +200,7 @@ async function loadBuiltInDmvQueries(
   return parsed.queries;
 }
 
-/**
- * Reads and validates the built-in `assets/dmvQueries.yaml`, returning the whole config.
- *
- * @remarks
- * Split from {@link loadBuiltInDmvQueries} because the custom-file path needs the shipped
- * `version` — the contract a custom file is validated against — and not only the queries.
- * @throws If the built-in file is missing, has no `queries` array, or declares no `version`.
- */
+/** Reads and validates the built-in `assets/dmvQueries.yaml`, returning the whole config. */
 async function loadBuiltInDmvConfig(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
@@ -301,15 +248,7 @@ function storedAuthKind(authenticationType: string | undefined): BuiltInConnecti
   return undefined;
 }
 
-/**
- * Finds the saved built-in connection that reopens a stored project.
- *
- * @remarks
- * A saved `connectionId` wins. Otherwise the match follows the saved connection identity:
- * same server and port (a `host,port` server string is split first), and the same sign-in type and user where both sides name one. Among several
- * matches the one saved for the project's database is preferred, then the first; the project's own
- * database is opened either way.
- */
+/** Finds the saved built-in connection that reopens a stored project. */
 function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnectionInfo): BuiltInConnection | undefined {
   const byId = stored.connectionId ? connections.find((c) => c.id === stored.connectionId) : undefined;
   if (byId) return byId;
@@ -335,11 +274,7 @@ const MANAGE_ITEMS = [
   { label: '$(trash) Remove Connection…', command: 'dataLineageViz.removeDatabaseConnection' },
 ] as const;
 
-/**
- * Shows the saved built-in connections, an add item and the manage commands; returns the chosen or
- * newly added connection. A manage item runs its command and shows the list again. The add flow
- * starts from the server, port, user and database of `stored` when there is one.
- */
+/** Shows the saved built-in connections, an add item and the manage commands; returns the chosen or newly added connection. A manage item runs its command and shows the list again. The add flow starts from the server, port, user and database of `stored` when there is one. */
 async function pickBuiltInConnection(
   env: DbConnectEnv,
   connections: BuiltInConnection[],
@@ -374,32 +309,13 @@ async function pickBuiltInConnection(
   }
 }
 
-/**
- * Asks for the database of a connection saved without one.
- *
- * @remarks
- * The name is typed: a login that exists only inside one database (a contained or Microsoft Entra
- * user on Azure SQL, a Fabric or Synapse workspace) cannot list the server's databases. The
- * connection made with that name reports a database that cannot be opened.
- */
+/** Asks for the database of a connection saved without one. */
 async function pickDatabase(connection: BuiltInConnection): Promise<string | undefined> {
   const typed = await vscode.window.showInputBox({ prompt: `Database on ${connection.server}`, placeHolder: 'Database name', ignoreFocusOut: true });
   return typed?.trim() || undefined;
 }
 
-/**
- * Opens a built-in connection for one operation.
- *
- * @remarks
- * A stored record reconnects the matching saved connection silently; without a match, or without a
- * record, the connection picker opens. The caller disposes the returned session.
- *
- * @param env - Host services.
- * @param stored - Connection record of the project being reopened.
- * @param token - Cancels an in-progress connect.
- * @returns The open session, or `undefined` when the user cancels a prompt.
- * @throws {DbConnectionError} When the connection cannot be opened.
- */
+/** Opens a built-in connection for one operation. */
 export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
   const connections = readBuiltInConnections(logger);
@@ -428,13 +344,7 @@ export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnecti
   }
 }
 
-/**
- * Builds the capabilities the connection-error actions use.
- *
- * @param env - Host services.
- * @param connectionId - Saved built-in connection an error belongs to, when there is one.
- * @param retry - Repeats the failed operation once.
- */
+/** Builds the capabilities the connection-error actions use. */
 export function connectionErrorHooks(
   env: DbConnectEnv,
   connectionId: string | undefined,
@@ -455,14 +365,7 @@ function dmvTimeoutMessage(name: string, queryTimeoutMs: number): string {
   return `DMV query "${name}" timed out after ${queryTimeoutMs / 1000}s. Increase dataLineageViz.dmvQueryTimeout if needed.`;
 }
 
-/**
- * Runs one query on a session, bounded by an optional timeout.
- *
- * @remarks
- * The session owns the budget: it starts the timer when the request reaches the wire, cancels the
- * request when it is spent and only then rejects. No second timer runs here, so a reported timeout
- * always means the request was cancelled.
- */
+/** Runs one query on a session, bounded by an optional timeout. */
 async function runTimed(
   session: DbSession,
   sql: string,
@@ -472,16 +375,7 @@ async function runTimed(
   return timeoutMs ? session.executeSimpleQuery(sql, { timeoutMs, timeoutMessage }) : session.executeSimpleQuery(sql);
 }
 
-/**
- * Executes a batch of DMV queries sequentially.
- *
- * @param session - The open database session.
- * @param queries - List of queries to execute.
- * @param outputChannel - Logger output channel.
- * @param onProgress - Optional callback for tracking execution progress.
- * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
- * @returns A map of query names to their execution results.
- */
+/** Executes a batch of DMV queries sequentially. */
 export async function executeDmvQueries(
   session: DbSession,
   queries: DmvQuery[],
@@ -512,28 +406,10 @@ export async function executeDmvQueries(
   return results;
 }
 
-/**
- * Whether a query belongs to the schema-filtered Phase 2 sweep.
- *
- * @remarks
- * Exported so callers can size progress reporting from the same predicate the sweep itself
- * uses. `phase: 1` means "not schema-filtered" rather than "runs during Phase 1" — the
- * platform probe carries that tag while running at Phase 2 time — so an independent
- * re-implementation of this test would silently miscount the steps.
- */
+/** Whether a query belongs to the schema-filtered Phase 2 sweep. */
 export const isPhase2Query = (q: DmvQuery): boolean => (q.phase ?? 2) !== 1;
 
-/**
- * Executes Phase 2 queries with `{{SCHEMAS}}` substitution.
- *
- * @param session - The open database session.
- * @param queries - Candidate queries to filter and execute.
- * @param schemas - Schema names for placeholder replacement.
- * @param outputChannel - Logger output channel.
- * @param onProgress - Progress tracking callback.
- * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
- * @returns Results for the executed Phase 2 queries.
- */
+/** Executes Phase 2 queries with `{{SCHEMAS}}` substitution. */
 export async function executeDmvQueriesFiltered(
   session: DbSession,
   queries: DmvQuery[],
@@ -555,15 +431,7 @@ export async function executeDmvQueriesFiltered(
   return executeDmvQueries(session, expanded, outputChannel, onProgress, queryTimeoutMs);
 }
 
-/**
- * Executes a single SQL command without batching or placeholders.
- *
- * @param session - The open database session.
- * @param sql - The SQL script to execute.
- * @param outputChannel - Logger output channel.
- * @param timeout - Optional budget; the session cancels the request when it is spent.
- * @returns The query execution result.
- */
+/** Executes a single SQL command without batching or placeholders. */
 export async function executeSimpleQuery(
   session: DbSession,
   sql: string,

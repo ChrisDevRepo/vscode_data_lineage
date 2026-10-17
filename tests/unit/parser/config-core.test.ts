@@ -1,13 +1,4 @@
-/**
- * Unit tests for src/configCore.ts — pure YAML config parsing for extension startup.
- *
- * Covers:
- *   parseAiOutputTemplatesYaml — real assets/aiOutputTemplates.yaml parses; every
- *     REQUIRED_AI_TEMPLATE_KEYS entry present with a non-empty instruction; schemaVersion
- *     readable; negative cases (scalar-under-key rejected, bare schemaVersion accepted)
- *   parseParseRulesYaml — real assets/defaultParseRules.yaml parses with a non-empty rules[]
- *   clampDeclaredNumericSetting — numeric settings are held to their package.json min/max
- */
+/** Unit tests for src/configCore.ts — pure YAML config parsing for extension startup. */
 
 import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';

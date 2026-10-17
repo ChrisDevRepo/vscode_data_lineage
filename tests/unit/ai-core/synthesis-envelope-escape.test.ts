@@ -1,12 +1,4 @@
-/**
- * The synthesis envelope reaches the model as a bannered, delimited, escaped block — the same
- * untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`.
- *
- * @remarks
- * The envelope is the turn's largest DDL-derived payload (captured formulas and SQL inside
- * `detail_slots[].sections[].text`). These tests pin `buildSynthesisEnvelopeMessage`, the pure
- * wrapper `synthesisNode` (`src/ai/agent/graph.ts`) sends it through.
- */
+/** The synthesis envelope reaches the model as a bannered, delimited, escaped block — the same untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`. */
 import { describe, expect, it } from 'vitest';
 import { buildSynthesisEnvelopeMessage } from '../../../src/ai/agent/graph';
 import { buildSmCompletionEnvelope } from '../../../src/ai/prompting/smPrompts';

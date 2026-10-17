@@ -1,22 +1,13 @@
 import type { DatabaseModel } from './types';
 import { groupByWeaklyConnected } from './unionFind';
 
-/**
- * A weakly-connected group of schemas in the model's schema-level graph.
- */
+/** A weakly-connected group of schemas in the model's schema-level graph. */
 export interface SchemaComponent {
   /** Member schema names, sorted ascending. */
   schemas: string[];
 }
 
-/**
- * Filter-independent connectivity summary of the full model, at schema granularity.
- *
- * @remarks
- * This is the schema-level quotient of the entire object graph — every schema is
- * present regardless of the current GUI filter, so it shows which schemas stay
- * linked and which a narrowed filter would orphan. Used by the debug dump.
- */
+/** Filter-independent connectivity summary of the full model, at schema granularity. */
 export interface ModelConnectivity {
   /** Weakly-connected schema groups, largest first then by first schema name. */
   components: SchemaComponent[];
@@ -24,14 +15,7 @@ export interface ModelConnectivity {
   isolatedSchemas: string[];
 }
 
-/**
- * Computes the schema-level connectivity of the entire model.
- *
- * @param model - The database model whose nodes/edges are summarized.
- *
- * @returns The weakly-connected schema components and the schemas with no
- * inter-schema edge. An edge between objects of one schema links nothing.
- */
+/** Computes the schema-level connectivity of the entire model. */
 export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectivity {
   const schemaUniverse = new Set<string>();
   const nodeSchema = new Map<string, string>();
@@ -64,16 +48,7 @@ export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectiv
 /** Isolated schema names printed before the dump says how many more there are. */
 const ISOLATED_SCHEMA_NAME_CAP = 8;
 
-/**
- * Renders a {@link ModelConnectivity} as the short `MODEL CONNECTIVITY` block in the debug dump.
- *
- * Counts components and isolated schemas. Isolated names are capped so a catalog of many
- * unlinked schemas stays scannable; member lists and per-edge rows are omitted.
- *
- * @param conn - The connectivity summary to format.
- *
- * @returns Indented multi-line text (no trailing newline).
- */
+/** Renders a {@link ModelConnectivity} as the short `MODEL CONNECTIVITY` block in the debug dump. */
 export function formatModelConnectivity(conn: ModelConnectivity): string {
   const lines = [
     `  Components: ${conn.components.length}`,

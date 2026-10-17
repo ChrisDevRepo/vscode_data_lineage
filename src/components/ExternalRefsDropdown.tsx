@@ -24,12 +24,7 @@ const EXTERNAL_REFS_ICON = (
   </svg>
 );
 
-/**
- * A dropdown for filtering external references in the lineage graph.
- *
- * Provides a master toggle to show/hide all external references and granular
- * checkboxes for specific types (file sources, cross-database links).
- */
+/** A dropdown for filtering external references in the lineage graph. */
 export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   showExternalRefs,
   externalRefTypes,

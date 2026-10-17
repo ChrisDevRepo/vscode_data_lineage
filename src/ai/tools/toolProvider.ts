@@ -1,17 +1,4 @@
-/**
- * Canonical AI tool registry, handlers, and the surfaces for callers without a chat turn.
- *
- * @remarks
- * Acts as the Zod boundary between untrusted LM-supplied tool input and the engine + retrieval layer.
- * The native `@lineage` runtime dispatches through {@link buildAiToolRegistry}.
- * {@link createExternalToolSource} serves the `external` policy stage of the same catalog to other
- * VS Code agents ({@link registerAiTools}).
- *
- * Read-only tools remain thin wrappers around provider-neutral functions in
- * [`tools.ts`](./tools.ts). Mutating exploration and presentation tools live in
- * per-tool handler modules under `handlers/`; this module owns their shared host
- * services, registry binding, turn-lease checks, and effect serialization.
- */
+/** Canonical AI tool registry, handlers, and the surfaces for callers without a chat turn. */
 import * as vscode from 'vscode';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
@@ -61,33 +48,10 @@ import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { errorMessage } from '../../utils/errorMessage';
 
-/**
- * Diagnostic group for a rejection code, shared by tool-result logging and the graph's repair
- * summary and backend-fault policy. Routine correction details stay out of chat progress.
- *
- * @remarks
- * There is no "scope limit" group. The two budget codes are non-chargeable and never reach
- * `rejections[]`, so a group for them would be unreachable and would misrepresent a budget refusal
- * as a model correction.
- */
-export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'missing_details' | 'correction';
+/** Diagnostic group for a rejection code, shared by tool-result logging and the graph's repair summary and backend-fault policy. Routine correction details stay out of chat progress. */
+type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'missing_details' | 'correction';
 
-/**
- * Explicit membership for the non-fallback groups. Every rejection code NOT listed here —
- * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
- * `correction` fallback, so diagnostic grouping remains defined for future codes.
- *
- * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
- * - `source_selection` — routing and prune-topology guards.
- * - `answer_format` — structural/schema violations of the tool envelope itself.
- * - `missing_details` — a valid submission still owes an explicit task or neighbor decision.
- * - `backend_fault` — a backend state or exception no model reply can correct (a closed panel
- *   included); the run ends on the first one instead of spending the step's replies.
- *
- * Other session/state codes, transport artifacts, the budget guards, and control-flow markers are
- * deliberately absent — none says anything about the model's semantic accuracy, so they fall to
- * `correction` rather than borrowing one of the named groups.
- */
+/** Explicit membership for the non-fallback groups. Every rejection code NOT listed here — including any future or renamed code — resolves through {@link classifyRejectionCode} to the `correction` fallback, so diagnostic grouping remains defined for future codes. */
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
   [REJECTION_CODES.outColNotOnNode]: 'column_mapping',
   [REJECTION_CODES.contributorColNotOnSource]: 'column_mapping',
@@ -112,23 +76,12 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.noProjectLoaded]: 'backend_fault',
 };
 
-/**
- * Resolves a rejection code to its diagnostic group, defaulting an unmapped code to the
- * `correction` fallback. See {@link REJECTION_GROUPS} for the membership this implements and why a
- * "scope limit" group is intentionally absent.
- */
+/** Resolves a rejection code to its diagnostic group, defaulting an unmapped code to the `correction` fallback. See {@link REJECTION_GROUPS} for the membership this implements and why a "scope limit" group is intentionally absent. */
 export function classifyRejectionCode(code: string): RejectionChatGroup {
   return REJECTION_GROUPS[code] ?? 'correction';
 }
 
-/**
- * Reveals the result panel and posts one preview, naming the outcome.
- *
- * @param panel - The open result panel, or `undefined` when none is open.
- * @returns `no_panel` without a panel, `delivered` when the webview accepted the message,
- * `post_failed` when the validated send was dropped or refused. A transport throw propagates. A schema drop
- * is a log line here: the participant's failed-render toast is the one user-visible notice.
- */
+/** Reveals the result panel and posts one preview, naming the outcome. */
 export async function deliverToPanel(
   panel: vscode.WebviewPanel | undefined,
   message: AiViewPreviewMessage,
@@ -139,12 +92,7 @@ export async function deliverToPanel(
   return (await postToWebview(panel, message, logger, false)) ? 'delivered' : 'post_failed';
 }
 
-/**
- * Private handler for AI tool execution.
- *
- * Owns the shared VS Code host services and thin read-tool handlers. Mutating
- * tool behavior is delegated through the explicit {@link ToolServices} seam.
- */
+/** Private handler for AI tool execution. */
 class ToolHandler implements ToolServices {
   public readonly logger: Logger;
 
@@ -246,18 +194,7 @@ class ToolHandler implements ToolServices {
     }));
   }
 
-  /**
-   * Mechanical phase guard — enforces the per-phase tool policy at the shared
-   * registry execution boundary, not just at the LM `tools[]` parameter.
-   *
-   * @remarks
-   * The native runtime carries the full catalog; callers without a chat turn (`vscode.lm`) are
-   * evaluated against the `external` stage, and every dispatch path lands on this check.
-   *
-   * @returns Provider-neutral JSON text carrying an `off_policy` error when the
-   *   tool is not allowed in the current phase, or `null` when execution is
-   *   permitted.
-   */
+  /** Mechanical phase guard — enforces the per-phase tool policy at the shared registry execution boundary, not just at the LM `tools[]` parameter. */
   public authorizeTool(toolName: ToolName, input: unknown): string | null {
     const sess = this.getSession();
     const stage = this.deriveLmStage(sess);
@@ -266,10 +203,7 @@ class ToolHandler implements ToolServices {
     return violation ? this.logAndReturn(toolName, violation, input) : null;
   }
 
-  /**
-   * Derives the {@link LmStage}: the `external` stage for a caller without a chat turn, otherwise
-   * the session's current phase + engine state.
-   */
+  /** Derives the {@link LmStage}: the `external` stage for a caller without a chat turn, otherwise the session's current phase + engine state. */
   private deriveLmStage(sess: AiSession): LmStage {
     if (this.caller === 'external') return { kind: 'external' };
     if (sess.activeLmStage) return sess.activeLmStage;
@@ -444,16 +378,7 @@ class ToolHandler implements ToolServices {
     }
   }
 
-  /**
-   * SM ACTIVE pruning-verification affordance. Returns columns + FKs (no DDL)
-   * for direct neighbors of the current focus node, bounded by the active scope.
-   *
-   * @remarks
-   * Structural contract: ids must be direct neighbors of the current focus AND
-   * within the active BFS scope. `NavigationEngine.validateNeighborIds` enforces
-   * both conditions and returns a structured error on violation — the tool is
-   * never a backdoor for out-of-scope exploration.
-   */
+  /** SM ACTIVE pruning-verification affordance. Returns columns + FKs (no DDL) for direct neighbors of the current focus node, bounded by the active scope. */
   public getNeighborColumns(input: unknown) {
     try {
       const sess = this.getSession();
@@ -495,13 +420,9 @@ type LineageToolOutput = string;
 type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolOutput>;
 
 /** Runs state-changing dispatches one at a time, in arrival order. */
-export type EffectSerializer = <T>(run: () => Promise<T>) => Promise<T>;
+type EffectSerializer = <T>(run: () => Promise<T>) => Promise<T>;
 
-/**
- * Creates an {@link EffectSerializer}: each run starts after the previous one settled.
- *
- * @returns A serializer owning its own queue.
- */
+/** Creates an {@link EffectSerializer}: each run starts after the previous one settled. */
 export function createEffectSerializer(): EffectSerializer {
   let queue: Promise<void> = Promise.resolve();
   return async <T>(run: () => Promise<T>): Promise<T> => {
@@ -518,7 +439,7 @@ export function createEffectSerializer(): EffectSerializer {
 }
 
 /** Optional host seam of {@link buildAiToolRegistry}. */
-export interface AiToolHost {
+interface AiToolHost {
   /** Resolves the AI run behind an applied bookmark. */
   readonly getStoredRun?: StoredRunReader;
   /** Text-completion capability `start_exploration` uses for the discovery-handoff memo. */
@@ -533,22 +454,7 @@ export interface AiToolHost {
   readonly serialize?: EffectSerializer;
 }
 
-/**
- * Builds the shared lineage {@link ToolRegistry} — the single authoritative dispatch surface
- * for the AI tool catalog.
- *
- * @remarks
- * The native runtime calls this with a turn lease; {@link createExternalToolSource} calls it for
- * callers without a chat turn. The registry is the sole dispatch entry point (`invoke`), keeping
- * names, handlers, ordering, authorization, and labels consistent.
- *
- * @param getSession - Factory for the active AI session.
- * @param outputChannel - Log channel for tracing tool activity.
- * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
- * @param turnLease - Optional host-turn ownership checked around every dispatch.
- * @param host - Optional host seam, see {@link AiToolHost}.
- * @returns A ready-to-dispatch canonical registry.
- */
+/** Builds the shared lineage {@link ToolRegistry} — the single authoritative dispatch surface for the AI tool catalog. */
 export function buildAiToolRegistry(
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
@@ -598,34 +504,14 @@ export function buildAiToolRegistry(
 }
 
 /** The core tools a caller without a chat turn reaches, and their dispatch. */
-export interface ExternalToolSource {
+interface ExternalToolSource {
   /** Catalog entries in the `external` stage, in catalog order. */
   readonly tools: readonly ToolContract[];
-  /**
-   * Dispatches one call through the canonical registry as an `external` caller.
-   *
-   * @returns The tool's JSON text — a result or a rejection envelope.
-   * @throws When `name` is not an external tool or the caller's signal is aborted.
-   */
+  /** Dispatches one call through the canonical registry as an `external` caller. */
   invoke(name: string, input: unknown, signal: AbortSignal): Promise<string>;
 }
 
-/**
- * Creates the single tool source shared by every surface without a chat turn: the `vscode.lm`
- * registration.
- *
- * @remarks
- * The tool set is the `external` stage of the core tool policy ({@link EXTERNAL_TOOL_NAMES}), so a
- * catalog tool reaches the VS Code registration by being allowed there. Each call builds a
- * read-only registry bound to its own cancellation signal; aborted calls are rejected before
- * their handler runs.
- *
- * @param getSession - Factory for the active AI session.
- * @param outputChannel - Log channel.
- * @param getPanel - Accessor for the active webview panel.
- * @param host - Optional stored-run reader.
- * @returns The external tool source.
- */
+/** Creates the single tool source shared by every surface without a chat turn: the `vscode.lm` registration. */
 export function createExternalToolSource(
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
@@ -644,21 +530,7 @@ export function createExternalToolSource(
   };
 }
 
-/**
- * Registers the external lineage tools with `vscode.lm` for other VS Code agents.
- *
- * @remarks
- * `package.json` contributes exactly {@link ExternalToolSource.tools} (generated by
- * `scripts/generate-tool-manifest.mjs`) — a contributed entry with no `registerTool` binding is a
- * broken tool, not merely an unused one. Native `@lineage` dispatch keeps the full catalog and does
- * not use these registrations. A rejection is thrown as an `Error` whose message is the reason and
- * the hint, the way the VS Code tools guide asks ("throw an error with a message that makes sense
- * to the LLM"); the host shows it to the calling model as the tool's failure, and a result is a
- * success with the tool's JSON text.
- *
- * @param source - The shared external tool source.
- * @returns Disposables for the registered `vscode.lm` tool bindings.
- */
+/** Registers the external lineage tools with `vscode.lm` for other VS Code agents. */
 export function registerAiTools(source: ExternalToolSource): vscode.Disposable[] {
   return source.tools.map((tool) =>
     vscode.lm.registerTool(tool.name, {

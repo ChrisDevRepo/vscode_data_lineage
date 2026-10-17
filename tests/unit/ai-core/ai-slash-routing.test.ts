@@ -1,13 +1,4 @@
-/**
- * Unit tests for deterministic /trace · /search slash routing.
- *
- * Slash commands pin the entry route in code and skip the LLM entry-detector call. Node ids are
- * 2-part [schema].[object], so a column trace requires a 3-part [schema].[table].[column] reference.
- *
- * Free-prose intent is EXCLUSIVELY the structured entry detector's call (the engine has no
- * authority over user-intent semantics) — the second half of this file locks that no natural-language
- * phrasing is ever routed deterministically.
- */
+/** Unit tests for deterministic /trace · /search slash routing. */
 
 import { describe, expect, it } from 'vitest';
 import { detectSlashRoute } from '../../../src/ai/agent/slashCommands';
@@ -69,13 +60,7 @@ describe('ai-slash-routing', () => {
     }
   });
 
-  /**
-   * Specification-anchored contract test: the table implements `docs/ARCHITECTURE.md`
-   * §Discovery and visual preview and is typed against the FULL `AgentEntryRoute` x
-   * `AgentExecutionTrigger` union (`src/ai/agent/state.ts`) so an added route or trigger
-   * fails to compile here rather than silently defaulting through the router's fallthrough
-   * `return 'discover'`.
-   */
+  /** Specification-anchored contract test: the table implements `docs/ARCHITECTURE.md` §Discovery and visual preview and is typed against the FULL `AgentEntryRoute` x `AgentExecutionTrigger` union (`src/ai/agent/state.ts`) so an added route or trigger fails to compile here rather than silently defaulting through the router's fallthrough `return 'discover'`. */
   it('routes every AgentEntryRoute x AgentExecutionTrigger pair per docs/ARCHITECTURE.md §Discovery and visual preview', () => {
     const ROUTING_TABLE: Record<AgentEntryRoute, Record<AgentExecutionTrigger, InitialAgentStage>> = {
       // Entry detection does not decide the runtime stage; only the execution trigger does.

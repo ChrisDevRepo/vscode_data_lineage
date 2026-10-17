@@ -1,7 +1,4 @@
-/**
- * Tests for the pure column-trace-view derivation: relation normalisation, row/shape derivation,
- * relation-to-state resolution, deterministic ordering, and handle id uniqueness.
- */
+/** Tests for the pure column-trace-view derivation: relation normalisation, row/shape derivation, relation-to-state resolution, deterministic ordering, and handle id uniqueness. */
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -365,14 +362,7 @@ describe('columnTraceView', () => {
   });
 });
 
-/**
- * Lane for the transform node's place in the chain.
- *
- * A relation names the hop that produced it. Drawing the source straight to the target left that
- * hop with no inbound edge, so dagre ranked the procedure as a source and parked it at the left
- * margin with a single line spanning the canvas to its own output. The procedure is on the path, so
- * the path is drawn through it.
- */
+/** Lane for the transform node's place in the chain. */
 describe('buildColumnTraceView — routing through the analysing hop', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
 
@@ -595,11 +585,7 @@ describe('columnTraceView layout settings', () => {
   });
 });
 
-/**
- * The AI badge and note draw above and below the card through `NodeToolbar`, outside the box Dagre
- * measures. At the default separation of 30 their ~32px band does not fit, and one node's note lands
- * on the next node's badge — so the band is carried by the vertical separation instead.
- */
+/** The AI badge and note draw above and below the card through `NodeToolbar`, outside the box Dagre measures. At the default separation of 30 their ~32px band does not fit, and one node's note lands on the next node's badge — so the band is carried by the vertical separation instead. */
 describe('columnTraceView AI annotation band', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.t'));
   const relations: ColumnTraceRelation[] = [
@@ -640,10 +626,7 @@ describe('columnTraceView AI annotation band', () => {
   });
 });
 
-/**
- * Lane for the column thread a click pins: the clicked column's trace cone — what it is derived
- * from and what is derived from it — never a sibling input that merely shares an output with it.
- */
+/** Lane for the column thread a click pins: the clicked column's trace cone — what it is derived from and what is derived from it — never a sibling input that merely shares an output with it. */
 describe('columnThread — directed trace cone', () => {
   it.each([['->', false], ['->', true], ['::', false], ['::', true]] as const)('preserves separate relations containing literal %s separators (CS=%s)', (separator, cs) => {
     const [a, b, c, hop] = ['a', 'b', 'c', 'h'].map(name => `[dbo].[${name}]`);

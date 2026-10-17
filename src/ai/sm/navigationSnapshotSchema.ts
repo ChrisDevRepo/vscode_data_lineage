@@ -44,21 +44,10 @@ const CurrentDepthIntentSchema = z.object({
   message: 'Depth cannot be 0 in both directions.',
 });
 
-/**
- * Levels a pre-per-side checkpoint seeded for an unstated side: the mechanical default the retired
- * `lineage_start_exploration` depth contract declared for an omitted side (its schema text read
- * "Omitted/null defaults to 3"). Read-side only; a live call always states its own levels.
- */
+/** Levels a pre-per-side checkpoint seeded for an unstated side: the mechanical default the retired `lineage_start_exploration` depth contract declared for an omitted side (its schema text read "Omitted/null defaults to 3"). Read-side only; a live call always states its own levels. */
 const LEGACY_UNSTATED_DEPTH_LEVELS = 3;
 
-/**
- * Pre-per-side checkpoint format, read tolerantly and mapped onto the current shape: a legacy
- * finite/`'all'` side maps to `exact`, a legacy unstated (`null`) side maps to `approximate` at
- * {@link LEGACY_UNSTATED_DEPTH_LEVELS}. An older init also wrote that default into an unstated
- * `asymmetric` side, which therefore reads back as `exact`; the checkpoint's own `depthLimits`
- * (`null` for such a side) still decide enforcement and how the depth is reported. This mapping
- * exists only for reading an old checkpoint; a live call always names `exactness` itself.
- */
+/** Pre-per-side checkpoint format, read tolerantly and mapped onto the current shape: a legacy finite/`'all'` side maps to `exact`, a legacy unstated (`null`) side maps to `approximate` at {@link LEGACY_UNSTATED_DEPTH_LEVELS}. An older init also wrote that default into an unstated `asymmetric` side, which therefore reads back as `exact`; the checkpoint's own `depthLimits` (`null` for such a side) still decide enforcement and how the depth is reported. This mapping exists only for reading an old checkpoint; a live call always names `exactness` itself. */
 const LegacyDepthIntentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('explicit'), levels: z.number().int().positive() }).strict(),
   z.object({ kind: z.literal('full_frontier') }).strict(),
@@ -327,23 +316,10 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict();
 
-/**
- * A strongly typed snapshot of an active NavigationEngine session.
- */
+/** A strongly typed snapshot of an active NavigationEngine session. */
 type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
 
-/**
- * Validates the engine's serialized projection against the persistence shape without repairing or
- * migrating it.
- *
- * @remarks
- * A version-1 projection never carries an agenda entry for an already visited node, so such an
- * entry is dropped and `agendaSize` follows.
- *
- * @param input - Serialized engine projection to validate.
- * @returns The strictly parsed navigation snapshot.
- * @throws {@link InvalidEngineCheckpointError} when `input` fails schema validation.
- */
+/** Validates the engine's serialized projection against the persistence shape without repairing or migrating it. */
 export function parseNavigationSnapshot(input: unknown): NavigationSnapshot {
   const result = NavigationSnapshotSchema.safeParse(input);
   if (result.success) {

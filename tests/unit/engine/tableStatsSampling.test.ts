@@ -1,8 +1,5 @@
 import { detailHandlers } from '../helpers/testUtils';
-/**
- * Pins how table statistics report sampling: a table that refuses `TABLESAMPLE` is profiled again
- * with a full scan, and that result is reported as unsampled.
- */
+/** Pins how table statistics report sampling: a table that refuses `TABLESAMPLE` is profiled again with a full scan, and that result is reported as unsampled. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const detailMessages: Array<Record<string, unknown>> = [];

@@ -1,7 +1,4 @@
-/**
- * Pins the built-in connection settings: schema and tolerant read, the no-password contract,
- * and the add / remove / update-password commands with their secret-store side effects.
- */
+/** Pins the built-in connection settings: schema and tolerant read, the no-password contract, and the add / remove / update-password commands with their secret-store side effects. */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 

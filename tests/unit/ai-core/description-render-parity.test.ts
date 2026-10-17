@@ -1,15 +1,5 @@
 // @vitest-environment jsdom
-/**
- * Parity contract: an AI-authored description reaches the renderer as the model's own bytes.
- *
- * @remarks
- * The Copilot chat window renders model markdown through `marked` + the vendored
- * `markedKatexExtension` + DOMPurify and applies no pre-render text handling. Our React overlay uses
- * the same code, so the only way the two surfaces can disagree is a transform of our own between the
- * tool call and the renderer. These tests pin that there is none: section text is assembled
- * byte-identical, and rendering the assembled document yields the same math HTML as rendering the
- * model's text directly.
- */
+/** Parity contract: an AI-authored description reaches the renderer as the model's own bytes. */
 import { describe, expect, it } from 'vitest';
 import DOMPurify from 'dompurify';
 import { orderAndAssemble } from '../../../src/ai/tools/presentResult';
@@ -61,12 +51,7 @@ describe('assembled description — the model\'s bytes reach the renderer', () =
   }
 });
 
-/**
- * The engine writes the `### Objects` link header and the overlay decodes the href on click, so the
- * two must agree on the encoding. A bracketed SQL identifier may legally contain `%` or `)`, which
- * raw would throw a `URIError` in the click handler, resolve to a different id, or terminate the
- * markdown link before the href is complete.
- */
+/** The engine writes the `### Objects` link header and the overlay decodes the href on click, so the two must agree on the encoding. A bracketed SQL identifier may legally contain `%` or `)`, which raw would throw a `URIError` in the click handler, resolve to a different id, or terminate the markdown link before the href is complete. */
 describe('focus-node object links round-trip to the id the overlay resolves', () => {
   /** The overlay's own decode step, mirrored from `AiDescriptionOverlay.handleMarkdownClick`. */
   function resolvedIds(markdown: string): string[] {

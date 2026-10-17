@@ -1,17 +1,4 @@
-/**
- * Comprehensive syntactic edge-case tests for the SQL body parser.
- *
- * @remarks
- * Every case is its own test. These are independent claims about T-SQL — that a string
- * containing `--` is not a comment, that a CTE name is not a table, that a CLR method call
- * is not a cross-database reference — and one failing must not conceal the rest.
- *
- * Uniform cases go through the tables below; a case needing a bespoke assertion gets its own
- * `it`. A construct whose full read, write, and exec lists equal what this file checks now lives in
- * tests/cases/parser/exact-edges.yaml. This file keeps the claims an exact list would change:
- * a partial name, a count, or a bespoke check. Whole procedure bodies are the `fixture-*` rows of
- * that file.
- */
+/** Comprehensive syntactic edge-case tests for the SQL body parser. */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { extractExternalRefs, parseSqlBody } from '../../../src/engine/sqlBodyParser';
@@ -22,14 +9,7 @@ beforeAll(() => { loadParseRules(); });
 const mentions = (list: string[], needle: string) =>
   list.some(entry => entry.toLowerCase().includes(needle.toLowerCase()));
 
-/**
- * One parser expectation.
- *
- * @remarks
- * `no*` fields are case-insensitive substring checks, which is how the original
- * negatives were written: a false positive shows up as the fragment appearing anywhere
- * in the captured name.
- */
+/** One parser expectation. */
 type ParseCase = {
   name: string;
   sql: string;

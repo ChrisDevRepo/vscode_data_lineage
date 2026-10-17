@@ -14,10 +14,7 @@ interface SuggestionListProps {
   style?: CSSProperties;
   /** Nodes that exist in the model but are not visible in the current filtered view. */
   otherSuggestions?: AutocompleteNode[];
-  /**
-   * Nodes in the working set that are currently collapsed inside a schema cluster.
-   * Selecting one uses the same search/navigation callback as other suggestions.
-   */
+  /** Nodes in the working set that are currently collapsed inside a schema cluster. Selecting one uses the same search/navigation callback as other suggestions. */
   collapsedSuggestions?: AutocompleteNode[];
 }
 
@@ -68,11 +65,7 @@ function SuggestionRow({
   );
 }
 
-/**
- * Renders the keyboard-navigable autocomplete suggestion list.
- *
- * @returns The suggestion listbox, or `null` when all partitions are empty.
- */
+/** Renders the keyboard-navigable autocomplete suggestion list. */
 export function SuggestionList({
   suggestions,
   selectedIndex,

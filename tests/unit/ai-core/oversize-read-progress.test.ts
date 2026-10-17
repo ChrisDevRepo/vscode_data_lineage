@@ -1,8 +1,4 @@
-/**
- * A read whose body is refused as `result_too_large` stores no evidence: it never counts as
- * progress, so a run of oversize reads ends the phase on the reply limit, and the discovery
- * salvage never asks for an answer when every held observation is such a refusal.
- */
+/** A read whose body is refused as `result_too_large` stores no evidence: it never counts as progress, so a run of oversize reads ends the phase on the reply limit, and the discovery salvage never asks for an answer when every held observation is such a refusal. */
 import { HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';

@@ -25,12 +25,7 @@ declare const __BUILD_TIMESTAMP__: string;
 let outputChannel: vscode.LogOutputChannel;
 let activeTraceWriter: AiTraceWriter | undefined;
 
-/**
- * Activates extension services in dependency order.
- *
- * @param context - VS Code extension context.
- * @returns An API object for testing and internal integration.
- */
+/** Activates extension services in dependency order. */
 export async function activateRuntime(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
@@ -260,14 +255,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   };
 }
 
-/**
- * Extension deactivation: closes the AI trace writer so buffered trace records are flushed.
- *
- * @remarks
- * Every other disposable from {@link activateRuntime} is on `context.subscriptions` and torn down
- * by VS Code; panel resources such as database connections are released by each panel's
- * `onDidDispose` handler.
- */
+/** Extension deactivation: closes the AI trace writer so buffered trace records are flushed. */
 export async function deactivate(): Promise<void> {
   const traceWriter = activeTraceWriter;
   activeTraceWriter = undefined;
@@ -276,17 +264,7 @@ export async function deactivate(): Promise<void> {
 
 export default { activateRuntime, deactivate };
 
-/**
- * Loads AI Output Templates from built-in assets and optional user overrides.
- *
- * These templates provide the structural instructions used by the AI to generate
- * summaries, section titles, and highlighted badges in the UI.
- *
- * @param outputChannel - The log channel for reporting load status.
- * @param extensionUri - The root URI of the extension.
- * @returns A promise resolving to the validated and merged `AiOutputTemplates` and the section labels
- *   declared by the capture recipes (a custom file's list replaces the built-in list of the same recipe).
- */
+/** Loads AI Output Templates from built-in assets and optional user overrides. */
 async function loadAiOutputTemplates(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
@@ -400,16 +378,7 @@ async function loadAiOutputTemplates(
   return result();
 }
 
-/**
- * Loads and installs SQL parsing rules for DDL analysis.
- *
- * Rules are loaded from the built-in `defaultParseRules.yaml` and can be
- * overridden by a custom file specified in settings.
- *
- * @param outputChannel - The log channel.
- * @param extensionUri - The root URI of the extension.
- * @returns A promise that resolves when the rules are loaded and applied to the engine.
- */
+/** Loads and installs SQL parsing rules for DDL analysis. */
 async function loadParseRules(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,

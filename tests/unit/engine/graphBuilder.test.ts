@@ -1,12 +1,4 @@
-/**
- * Owns graph construction, layout failures and annotation spacing.
- * Synthetic trace membership/depth contracts live in traversal-edge-cases.test.ts;
- * the SDK-style DACPAC test here retains extraction-to-trace integrity coverage.
- *
- * Split out of this file, by module under test:
- * - virtual external nodes (`buildModel`) → modelBuilder-externalRefs.test.ts
- * - schema and expanded-schema views → schemaViews.test.ts
- */
+/** Owns graph construction, layout failures and annotation spacing. Synthetic trace membership/depth contracts live in traversal-edge-cases.test.ts; the SDK-style DACPAC test here retains extraction-to-trace integrity coverage. */
 
 import { readFileSync } from 'fs';
 import dagre from '@dagrejs/dagre';

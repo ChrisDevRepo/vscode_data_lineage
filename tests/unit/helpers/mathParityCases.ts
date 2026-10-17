@@ -1,17 +1,4 @@
-/**
- * Markdown/math parity corpus — the cases an AI-authored description must survive on the way to a
- * rendered surface.
- *
- * @remarks
- * The Copilot chat window renders the model's bytes through `marked` + the vendored
- * `markedKatexExtension` + DOMPurify with no pre-render text handling. Our React overlay renders the
- * same bytes through the same code, so any transform we apply between the tool call and the renderer
- * must be invisible in the rendered HTML. Every case here is exercised twice: once for what the
- * renderer produces, and once for that invisibility invariant.
- *
- * Classes cover the KaTeX single-dollar delimiter bug (KaTeX#1830), marked's backslash tokenisation
- * gap (marked#3434), and the escaping states a model reaches through JSON tool arguments.
- */
+/** Markdown/math parity corpus — the cases an AI-authored description must survive on the way to a rendered surface. */
 
 /** One corpus entry. */
 export interface MathParityCase {

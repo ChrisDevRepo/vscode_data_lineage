@@ -12,10 +12,7 @@ export interface ReconciledAiView {
   metadata: AIViewMetadata;
 }
 
-/**
- * Canonicalizes AI-preview references; savedResolver applies strict persisted ownership instead.
- * Saved edges with unresolved endpoints are omitted; preview reconciliation retains its existing fallback.
- */
+/** Canonicalizes AI-preview references; savedResolver applies strict persisted ownership instead. Saved edges with unresolved endpoints are omitted; preview reconciliation retains its existing fallback. */
 export function reconcileAiView(nodeIds: string[], metadata: AIViewMetadata, model: DatabaseModel, savedResolver?: (id: string) => string | null): ReconciledAiView {
   const nodeMap = new Map<string, unknown>(model.nodes.map(node => [node.id, node]));
   const canonicalize = savedResolver ?? ((id: string): string | null => resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive));

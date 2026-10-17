@@ -1,8 +1,4 @@
-/**
- * Tool trace records separate corrections the model is charged for from control outcomes: a gate
- * carries no rejection code, an admission refusal is `refused`, and a sibling closed without
- * evaluation is `not_evaluated`. Scripted replies exercise runtime wiring only, not inference.
- */
+/** Tool trace records separate corrections the model is charged for from control outcomes: a gate carries no rejection code, an admission refusal is `refused`, and a sibling closed without evaluation is `not_evaluated`. Scripted replies exercise runtime wiring only, not inference. */
 import { describe, expect, it, vi } from 'vitest';
 import type { LogOutputChannel } from 'vscode';
 import { Logger } from '../../../src/utils/log';

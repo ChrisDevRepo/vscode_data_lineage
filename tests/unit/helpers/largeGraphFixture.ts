@@ -1,26 +1,11 @@
-/**
- * Deterministic large-graph fixture shared by backend correctness and optional layout checks.
- *
- * The largest tracked fixture is 148 nodes (tests/fixtures/graph-baseline-aw.json), while `maxNodes`
- * admits up to 5000 objects (default 2000) and `renderLimit` renders up to 1500. `buildLargeModel` covers that range as a
- * thin wrapper over the shared seeded DWH generator ({@link generateDwhModel} in
- * `tests/unit/helpers/dwhGraphGenerator.ts`), fixed to `nodeCount` real objects and zero external
- * refs, so a failure is reproducible from the node count alone and the shape stays a single source
- * of truth across every large-graph test consumer.
- */
+/** Deterministic large-graph fixture shared by backend correctness and optional layout checks. */
 
 import type { DatabaseModel } from '../../../src/engine/types';
 import { generateDwhModel } from './dwhGraphGenerator';
 
 const FIXED_SEED = 20260923;
 
-/**
- * Builds a lineage model of exactly `nodeCount` objects with a deterministic, realistic
- * data-warehouse dependency shape (schema skew, hubs, hot spots, isolated objects and islands).
- *
- * @param nodeCount - Number of objects to generate.
- * @returns A model with nodes, edges, schemas, catalog, and neighbor index fully populated.
- */
+/** Builds a lineage model of exactly `nodeCount` objects with a deterministic, realistic data-warehouse dependency shape (schema skew, hubs, hot spots, isolated objects and islands). */
 export function buildLargeModel(nodeCount: number): DatabaseModel {
   return generateDwhModel({ objectCount: nodeCount, seed: FIXED_SEED, profile: { externalRefCount: 0 } }).model;
 }

@@ -1,6 +1,4 @@
-/**
- * DMV Extractor test — uses synthetic DMV data to verify model building.
- */
+/** DMV Extractor test — uses synthetic DMV data to verify model building. */
 
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';

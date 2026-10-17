@@ -25,24 +25,10 @@ export { PROJECT_STORE_KEY };
 /** Retrieves the currently active lineage webview panel, if one exists. */
 export function getActivePanel() { return activePanel; }
 
-/**
- * Starts a host-initiated import on the active panel, superseding any load in flight.
- *
- * @returns The new load's cancellation token, or `undefined` when no panel is open.
- */
+/** Starts a host-initiated import on the active panel, superseding any load in flight. */
 export function beginActivePanelLoad(): vscode.CancellationToken | undefined { return activeBeginExternalLoad?.(); }
 
-/**
- * Orchestrates the creation, restoration, and lifecycle of the primary Data Lineage Webview.
- *
- * This function handles:
- * - Preventing multiple instances of the same panel (revealing the existing one instead).
- * - Initializing the IPC bridge (BridgeHost) for Extension <-> Webview communication.
- * - Injecting the necessary HTML, scripts, and styles into the webview.
- * - Managing panel-scoped state and ensuring cleanup on disposal.
- *
- * @param loadDemo - If true, triggers the "AdventureWorks Demo" load sequence on initialization.
- */
+/** Orchestrates the creation, restoration, and lifecycle of the primary Data Lineage Webview. */
 export function openPanel(
   context: vscode.ExtensionContext,
   title: string,
@@ -168,12 +154,7 @@ export function openPanel(
   }, undefined, panelDisposables);
 }
 
-/**
- * Asks whether the open lineage view, which holds a loaded graph, may be closed so the wizard can
- * start. Only one lineage panel exists at a time, so starting the wizard means replacing it.
- *
- * @returns `true` when the user confirms the replacement.
- */
+/** Asks whether the open lineage view, which holds a loaded graph, may be closed so the wizard can start. Only one lineage panel exists at a time, so starting the wizard means replacing it. */
 async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
   const closeAndOpen = 'Close and Open Wizard';
   const choice = await vscode.window.showWarningMessage(
@@ -190,9 +171,7 @@ async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
   return true;
 }
 
-/**
- * Generates the root HTML for the lineage webview.
- */
+/** Generates the root HTML for the lineage webview. */
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo: boolean): string {
   const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));

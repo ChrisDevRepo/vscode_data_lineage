@@ -40,10 +40,7 @@ export interface BuiltInOpenOptions {
 const APP_NAME = 'Data Lineage Viz';
 
 const MS_PER_SECOND = 1000;
-/**
- * Connect retries on the transient errors the driver recognises (the SqlClient list: 4060, 10928,
- * 10929, 40197, 40501, 40613). Microsoft recommends waiting at least five seconds before a retry.
- */
+/** Connect retries on the transient errors the driver recognises (the SqlClient list: 4060, 10928, 10929, 40197, 40501, 40613). Microsoft recommends waiting at least five seconds before a retry. */
 const CONNECT_RETRY_INTERVAL_MS = 5 * MS_PER_SECOND;
 const CONNECT_MAX_RETRIES = 3;
 /** Login budget of one connect attempt; Microsoft recommends 30 seconds for Azure SQL and Synapse. */
@@ -117,14 +114,7 @@ function renderReal(n: number): string {
   return String(Number(single.toPrecision(REAL_MAX_DIGITS)));
 }
 
-/**
- * Renders an exact numeric with its declared scale.
- *
- * @remarks
- * The driver delivers `decimal`, `numeric` and `money` as a double. Beyond the digits a double holds,
- * padding to the scale would print digits the server never sent, so such a value keeps the double's
- * shortest text instead.
- */
+/** Renders an exact numeric with its declared scale. */
 function renderScaled(n: number, scale: number): string {
   return Math.abs(n) * 10 ** scale <= Number.MAX_SAFE_INTEGER ? n.toFixed(scale) : String(n);
 }
@@ -149,16 +139,7 @@ function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
   }
 }
 
-/**
- * Renders one `tedious` cell value as a database result `displayValue`.
- *
- * @remarks
- * `bit` renders `1`/`0`, binary as `0x` hex, decimals with their declared scale, temporal values in
- * UTC with the fraction their type carries, and `NULL` as `isNull` with the text `NULL`.
- *
- * @param value - Value from a `row` event.
- * @param meta - Metadata of the column the value came from.
- */
+/** Renders one `tedious` cell value as a database result `displayValue`. */
 export function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
   if (value === null || value === undefined) return NULL_CELL;
   const typeName = meta.type.name;
@@ -313,24 +294,7 @@ async function resolveAuthentication(
   return { type: 'default', options: { userName: connection.user, password } };
 }
 
-/**
- * Opens a built-in session for a saved connection.
- *
- * @remarks
- * SQL login reads the password from the secret store and prompts once when none is saved; Entra ID
- * signs in with VS Code's Microsoft account in the saved directory, or the one {@link acquireSqlToken} chooses. Neither credential is logged or persisted in a
- * settings file. The connection declares read-only application intent (`ApplicationIntent=ReadOnly`),
- * so availability-group and read scale-out routing may serve it from a readable secondary. The server
- * may carry a `tcp:` prefix or a `host\instance` name; an explicit port takes precedence over the instance.
- *
- * @param connection - The saved connection.
- * @param env - Host services.
- * @param options - Per-open overrides.
- * @returns The open session, or `undefined` when the user cancelled a prompt or the connect.
- * @throws The driver's own error, unchanged, when login or the network fails; a
- *   `MicrosoftSignInError` when Entra sign-in does not complete; an `Error` before any sign-in when
- *   an Entra ID connection sets `encrypt` to `false`.
- */
+/** Opens a built-in session for a saved connection. */
 export async function openBuiltInSession(
   connection: BuiltInConnection,
   env: BuiltInEnv,

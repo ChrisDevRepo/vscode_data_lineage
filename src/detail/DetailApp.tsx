@@ -7,9 +7,7 @@ import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 
-/**
- * Configuration options for the detail view, typically synchronized from VS Code settings.
- */
+/** Configuration options for the detail view, typically synchronized from VS Code settings. */
 interface DetailConfig {
   /** Whether the active session is connected to a live database. */
   isDbMode: boolean;
@@ -21,9 +19,7 @@ interface DetailConfig {
   standardModeEnabled: boolean;
 }
 
-/**
- * Represents the complete state of the detail panel for a specific node.
- */
+/** Represents the complete state of the detail panel for a specific node. */
 interface DetailState {
   /** The lineage node being inspected. */
   node: LineageNode;
@@ -54,9 +50,7 @@ window.addEventListener('error', (event) => {
   _vscodeApi.postMessage({ type: 'error', error: `[Detail] Uncaught error: ${event.message}` });
 });
 
-/**
- * Coordinates detail-webview messages, DDL/column views, and profiling state.
- */
+/** Coordinates detail-webview messages, DDL/column views, and profiling state. */
 export function DetailApp() {
   const vscodeApi  = useRef(_vscodeApi);
   const nodeRef    = useRef<LineageNode | undefined>(undefined);

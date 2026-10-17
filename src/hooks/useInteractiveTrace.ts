@@ -7,9 +7,7 @@ import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEdit
 import { directNeighborIds } from '../engine/graphGuards';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
-/**
- * Return type for the useInteractiveTrace hook, providing state and control actions.
- */
+/** Return type for the useInteractiveTrace hook, providing state and control actions. */
 interface UseInteractiveTraceReturn {
   /** The current state of the trace session (mode, focal node, depths). */
   trace: TraceState;
@@ -45,10 +43,7 @@ interface UseInteractiveTraceReturn {
   pruneTraceNode: (nodeId: string) => void;
   /** Node count a trace from the current origin at the given depths would render — BFS only, no layout. */
   estimateTraceSize: (upstreamLevels: number, downstreamLevels: number) => number;
-  /**
-   * Shows only the origin→target routes for the given targets, against the pre-focus scope;
-   * an empty list restores it. False, scope untouched, when a route is unreachable.
-   */
+  /** Shows only the origin→target routes for the given targets, against the pre-focus scope; an empty list restores it. False, scope untouched, when a route is unreachable. */
   setFocusTargets: (targetIds: string[]) => boolean;
   /** Restores the scope stashed by the last focus, or ends the trace when nothing was stashed. */
   exitFocusPaths: () => void;
@@ -113,21 +108,7 @@ function resolveBfsGraph(
   return { bfsGraph: preferred, autoPromoted: false };
 }
 
-/**
- * Custom hook for managing interactive data lineage traces and pathfinding.
- *
- * @remarks
- * Auto-promotes to `fullGraph` when the selected node is filtered out of the base graph, so the
- * user can always see the requested lineage.
- *
- * @param graph - The currently active (filtered) graph instance.
- * @param flowNodes - The current set of React Flow nodes.
- * @param flowEdges - The current set of React Flow edges.
- * @param config - The application configuration (for default depths).
- * @param model - The full database model (required for unfiltered pathfinding).
- * @param baseRenderLimited - Whether the base object graph is blocked by the React Flow render limit.
- * @returns An object containing the trace state, subsets, and action handlers.
- */
+/** Custom hook for managing interactive data lineage traces and pathfinding. */
 export function useInteractiveTrace(
   graph: Graph | null,
   flowNodes: FlowNode<CustomNodeData>[],
@@ -154,10 +135,7 @@ export function useInteractiveTrace(
     }));
   }, [config]);
 
-  /**
-   * Runs a depth-limited BFS from `nodeId` and shows the result as a fresh trace in `mode`:
-   * `'filtered'` for a trace started at the default depths, `'applied'` for configured depths.
-   */
+  /** Runs a depth-limited BFS from `nodeId` and shows the result as a fresh trace in `mode`: `'filtered'` for a trace started at the default depths, `'applied'` for configured depths. */
   const runLevelTrace = useCallback((mode: 'filtered' | 'applied', nodeId: string, upstreamLevels: number, downstreamLevels: number) => {
     const label = mode === 'filtered' ? 'Immediate' : 'Apply';
     const { bfsGraph, autoPromoted } = resolveBfsGraph(nodeId, useFullModelRef.current, graph, fullGraph);
@@ -406,12 +384,7 @@ export function useInteractiveTrace(
     }
   }, [focus, endTrace]);
 
-  /**
-   * Shows every path connecting the origin and each checked target, unioned.
-   *
-   * All-or-nothing per call: when any route is unreachable the scope is untouched. Routes always
-   * resolve against the pre-focus scope, so a target hidden by the current focus can be added.
-   */
+  /** Shows every path connecting the origin and each checked target, unioned. */
   const setFocusTargets = useCallback((targetIds: string[]): boolean => {
     const base = focus?.previous ?? trace;
     if (targetIds.length === 0) {

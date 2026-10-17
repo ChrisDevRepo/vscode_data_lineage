@@ -1,10 +1,4 @@
-/**
- * Executes the approval-gated `lineage_start_exploration` lifecycle.
- *
- * @remarks
- * Proposal validation and preview construction stay local to this handler.
- * Turn-lease validation and effect serialization remain in the registry wrapper.
- */
+/** Executes the approval-gated `lineage_start_exploration` lifecycle. */
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
 import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent, type NavigationInitParams } from '../../sm/smTypes';

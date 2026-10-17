@@ -2,11 +2,7 @@ import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
-/**
- * Drives a real `@lineage` participant turn through public API and observes what it streams.
- *
- * The recording stream is a test double, so this asserts emitted responses, not rendered UI.
- */
+/** Drives a real `@lineage` participant turn through public API and observes what it streams. */
 suite('Participant turn — public API, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 

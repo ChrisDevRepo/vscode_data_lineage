@@ -1,8 +1,4 @@
-/**
- * Webview→host diagnostic and screen-state frames: the detail-panel diagnostic funnel, and the
- * `filter-changed` / `render-state` buffers the host walks — well-shaped passes with unknown extras
- * kept literally, a malformed buffer rejects at the boundary.
- */
+/** Webview→host diagnostic and screen-state frames: the detail-panel diagnostic funnel, and the `filter-changed` / `render-state` buffers the host walks — well-shaped passes with unknown extras kept literally, a malformed buffer rejects at the boundary. */
 import { describe, expect, it } from 'vitest';
 import {
   DetailPanelToExtensionMsgSchema,

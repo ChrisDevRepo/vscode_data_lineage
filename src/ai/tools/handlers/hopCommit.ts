@@ -8,24 +8,14 @@ import type { ToolServices } from './toolServices';
 /** A hop commit command's tool name. */
 type HopCommitTool = 'lineage_submit_findings' | 'lineage_prune_current';
 
-/**
- * Resolves the active engine without changing the command payload before schema validation.
- *
- * @returns The engine and unchanged input, or the logged `no_active_session` result.
- */
+/** Resolves the active engine without changing the command payload before schema validation. */
 export function prepareHopCommit(tool: HopCommitTool, input: unknown, s: ToolServices): { engine: NavigationEngine; input: unknown } | string {
   const engine = s.getSession().stateMachine as NavigationEngine | null;
   if (!engine) return s.logAndReturn(tool, makeRejection({ code: REJECTION_CODES.noActiveSession, reason: 'No exploration is active.' }), input);
   return { engine, input };
 }
 
-/**
- * Advances one committed hop and returns the shared acknowledgement or synthesis handoff.
- *
- * @remarks
- * The acknowledgement's `pruned` / `cut_ids` are read after the advance, so a pending neighbor
- * prune resolved when the agenda empties is reported with the commit that ended the walk.
- */
+/** Advances one committed hop and returns the shared acknowledgement or synthesis handoff. */
 export function acknowledgeCommittedHop(
   engine: NavigationEngine,
   s: ToolServices,

@@ -16,15 +16,7 @@ const LIT_STROKE_WIDTH = 1.6;
 /** Stroke width of a column-view edge outside the lit set. */
 const DIM_STROKE_WIDTH = 1;
 
-/**
- * Dash pattern of an edge that only shaped which rows arrive, never the value.
- *
- * @remarks
- * Consistent with OpenLineage conventions: OpenLineage splits every column
- * relation into DIRECT and INDIRECT, and a lineage viewer draws the indirect one broken — a column
- * used in a WHERE or a JOIN predicate reaches the output without its value ever landing in it. The
- * `COLUMN_TRANSFORM_DIRECTION` map classifies each class; an INDIRECT-only edge is drawn dashed.
- */
+/** Dash pattern of an edge that only shaped which rows arrive, never the value. */
 const INDIRECT_DASH_PATTERN = '5 4';
 
 /** Outer size, in px, of the marker chip centred on the edge path. */
@@ -36,13 +28,7 @@ const CHIP_GLYPH_SIZE = 20;
 /** How many class glyphs the chip shows before the remainder collapses into a count. */
 const CHIP_MAX_GLYPHS = 2;
 
-/**
- * Payload a column-view edge carries to its renderer.
- *
- * @remarks
- * Indexed to satisfy React Flow's edge-data constraint. `lit` is resolved by the canvas, which
- * owns the hovered column path, so the edge renders the effect without recomputing it.
- */
+/** Payload a column-view edge carries to its renderer. */
 export interface ColumnTraceEdgeData extends Record<string, unknown> {
   /** Whether the value changed between the two endpoints. */
   state: ColumnLineState;
@@ -58,19 +44,11 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
   transforms?: ColumnTransformClass[];
   /** One-clause model note for the edge; absent whenever the model offered none. */
   note?: string;
-  /**
-   * Whether the edge is an object-level dependency rather than a column thread: drawn broken, since
-   * no column value crosses it, and never marked with a chip.
-   */
+  /** Whether the edge is an object-level dependency rather than a column thread: drawn broken, since no column value crosses it, and never marked with a chip. */
   objectLevel?: boolean;
 }
 
-/**
- * Display name of one transform class, as the tooltip's first line spells it.
- *
- * @remarks
- * The chip's tooltip is the only surface that names the class, so these strings are user-facing.
- */
+/** Display name of one transform class, as the tooltip's first line spells it. */
 const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
   pass_through: 'Pass through',
   compute: 'Compute',
@@ -84,15 +62,7 @@ function markedTransformClasses(transforms: readonly ColumnTransformClass[] | un
   return [...new Set(transforms ?? [])].filter(c => c !== 'pass_through');
 }
 
-/**
- * Builds the marker chip's tooltip text: the class names first, then the model's own one-clause
- * note when it offered one, else the structural description of the line.
- *
- * @remarks
- * A `pass_through`-only edge never reaches here — it renders no chip, because identity is what an
- * unmarked line already says. `filter`/`combine` are INDIRECT: no value crosses the edge, so the
- * structural fallback says what the edge does to the row set rather than claiming a value changed.
- */
+/** Builds the marker chip's tooltip text: the class names first, then the model's own one-clause note when it offered one, else the structural description of the line. */
 function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
   const classes = markedTransformClasses(data.transforms);
   if (classes.length === 0) {
@@ -123,16 +93,7 @@ function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransfor
   );
 }
 
-/**
- * The mark drawn for one transform class.
- *
- * @remarks
- * Inline SVG, since the webview ships no icon library. One mark per class, each the symbol its
- * operation already carries in data tooling: arrow copies, `fx` computes, sigma aggregates,
- * overlapping circles join, funnel filters. All are stroked primitives in the shared 24-unit box
- * so they render as one family at chip scale. DIRECT vs INDIRECT is carried by the line itself
- * (an indirect edge is drawn broken), never by the chip.
- */
+/** The mark drawn for one transform class. */
 function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
   switch (transformClass) {
     case 'pass_through':
@@ -183,14 +144,7 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
   }
 }
 
-/**
- * The mark drawn inside an unclassified chip: an open ring.
- *
- * @remarks
- * The ring carries no orientation, so it cannot be misread as a direction on a canvas where
- * direction is the primary semantic, and it stays unfilled because the object-type legend uses a
- * filled dot for a view. r=7 in the 24-unit box lands as a ~5.8px ring inside the 20px glyph box.
- */
+/** The mark drawn inside an unclassified chip: an open ring. */
 function ColumnTransformGlyph() {
   return (
     <svg
@@ -207,20 +161,7 @@ function ColumnTransformGlyph() {
   );
 }
 
-/**
- * Renders one column-view edge and, where the trace recorded a transformation, its marker chip.
- *
- * @remarks
- * A custom edge rather than React Flow's `label` prop because the marker has to be a hover target:
- * `label` renders inert text with no pointer callback, so the transformation could be seen but not
- * interrogated. The chip is the trigger — hovering the bare line does nothing, matching how every
- * comparable lineage tool exposes transform detail.
- *
- * The chip's content follows the classification: a model-classified edge shows one glyph per class
- * (capped, the remainder collapsed into a count), an unclassified transformation keeps the neutral
- * ring. A `pass_through`-only edge renders no chip at all — identity is what an unmarked line
- * already says, so marking it would spend the reader's attention to say nothing.
- */
+/** Renders one column-view edge and, where the trace recorded a transformation, its marker chip. */
 export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   sourceX,
   sourceY,

@@ -8,17 +8,7 @@ import { nodeBin, npmCommand } from './npm-launcher.mjs';
 /** Where a failing step's captured output is written, so a red gate stays diagnosable. */
 const LOG_DIR = join('test-results', 'gate');
 
-/**
- * Runs one step, streaming its output live while retaining a copy.
- *
- * @param step - Step descriptor.
- * @returns Exit status, spawn error, and the combined output.
- *
- * @remarks
- * `stdio: 'inherit'` cannot tee, so a failed step's diagnostics survived only in terminal
- * scrollback — worthless for an intermittent failure, which is the case that most needs them.
- * Streaming keeps the live view a long step depends on.
- */
+/** Runs one step, streaming its output live while retaining a copy. */
 function runStep(step) {
   return new Promise((resolve) => {
     const child = spawn(step.cmd, step.args, { stdio: ['inherit', 'pipe', 'pipe'], shell: false });

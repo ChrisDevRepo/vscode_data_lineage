@@ -1,6 +1,4 @@
-/**
- * Verifies VS Code setting defaults against runtime constants.
- */
+/** Verifies VS Code setting defaults against runtime constants. */
 
 import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';

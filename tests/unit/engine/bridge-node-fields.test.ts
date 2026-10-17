@@ -1,11 +1,4 @@
-/**
- * Bridge node-field contract.
- *
- * Zod strips undeclared keys, and the host posts the parsed copy, so a `LineageNode` field the
- * boundary schema does not declare is silently dropped from every node that crosses the bridge.
- * The type check fails `typecheck:tests` when `LineageNode` gains a field the schema lacks; the
- * runtime check proves a fully populated node survives the host's send path unchanged.
- */
+/** Bridge node-field contract. */
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { postToDetail } from '../../../src/bridge/host';

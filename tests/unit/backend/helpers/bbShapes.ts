@@ -1,10 +1,4 @@
-/**
- * Synthetic object-level (BB) worlds for tests/unit/backend/bb-*.test.ts.
- *
- * NOT a test file. A world is a named graph and an approved depth per side; the direction is
- * derived from the depth exactly as the tool boundary derives it, so no test can state a
- * direction the product never forwards.
- */
+/** Synthetic object-level (BB) worlds for tests/unit/backend/bb-*.test.ts. */
 import { expect } from 'vitest';
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../../src/ai/tools/toolSchemas';
 import { NavigationEngine, type HopNeighborDisclosure } from '../../../../src/ai/sm/smBase';
@@ -31,10 +25,7 @@ export interface BbWorld {
   leads: () => string[];
 }
 
-/**
- * Builds a model from `types` and `edges` (`[source, target]`: target reads source, or a procedure
- * source writes target) and starts a BB exploration at `origin`.
- */
+/** Builds a model from `types` and `edges` (`[source, target]`: target reads source, or a procedure source writes target) and starts a BB exploration at `origin`. */
 export function world(
   types: Record<string, ObjectType>,
   edges: Array<[string, string]>,
@@ -114,10 +105,7 @@ export function delivered(engine: NavigationEngine): { nodes: string[]; edges: s
   };
 }
 
-/**
- * Connectivity invariant over delivered edges, independent of the engine's own walks.
- * Missing nodes and edges require separate comparisons against fixture expectations.
- */
+/** Connectivity invariant over delivered edges, independent of the engine's own walks. Missing nodes and edges require separate comparisons against fixture expectations. */
 export function withoutDirectedPath(engine: NavigationEngine, origin: string, sides: { upstream: boolean; downstream: boolean }): string[] {
   const { nodes, edges } = delivered(engine);
   const pairs = edges.map(edge => edge.split('>') as [string, string]);

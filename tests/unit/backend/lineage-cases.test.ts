@@ -1,8 +1,5 @@
 // Owner: src/ai/sm/smBase.ts, columnTracer.ts and agendaManager.ts; supplied-message functional contracts.
-/**
- * Runs column-flow rows from `tests/cases/lineage-cases.yaml`.
- * A row locks ids, columns, edges, and rejection kinds. Prompt sentences stay out of the catalog.
- */
+/** Runs column-flow rows from `tests/cases/lineage-cases.yaml`. A row locks ids, columns, edges, and rejection kinds. Prompt sentences stay out of the catalog. */
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { TaskLedger } from '../../../src/ai/sm/taskLedger';
@@ -117,11 +114,16 @@ function column(name: string) {
   return { name, type: 'int', nullable: 'NULL' as const, extra: '' };
 }
 
-/** Builds graph and neighbor metadata from one declared fixture topology. */
-function navigationFor(nodes: LineageNode[], pairs: ReadonlyArray<readonly [string, string]>) {
+const guardRecord = (focus_node_id: string) => ({ focus_node_id,
+  summary: 'Trace the requested value.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes this mapping.' }] });
+const upstreamAll = { upstream: { levels: 'all' as const, exactness: 'exact' as const }, downstream: { levels: 0, exactness: 'exact' as const } };
+
+function engineFor(nodes: LineageNode[], pairs: ReadonlyArray<readonly [string, string]>, mutate?: (model: ReturnType<typeof makeIndexedModel>) => void) {
   const model = makeIndexedModel(nodes, pairs);
+  mutate?.(model);
   return new NavigationEngine(model, makeGraph(nodes, pairs.map(([from, to]) => [from, to])), () => {}, {});
 }
+const navigationFor = engineFor;
 
 /** Uses the same declared objects and topology to check delivered column rows. */
 function columnViewFor(nodes: LineageNode[], pairs: ReadonlyArray<readonly [string, string]>, edges: readonly ColumnEdge[]) {
@@ -1310,18 +1312,27 @@ describe('result dispositions', () => {
     expect(result.edges.map(([from, to]) => `${from}->${to}`).sort()).toEqual([`${used}->${writer}`, `${writer}->${target}`]);
     expect(result.detail_slots.map(slot => slot.nodeId).sort()).toEqual(kept);
   });
+  it('advertises can_prune=false when removing an open neighbor is refused by pruneRefusal', () => {
+    const origin = '[d].[Proc]', focus = '[d].[Src]', sink = '[d].[Sink]';
+    const nodes = [
+      makeNode({ id: origin, schema: 'd', name: 'Proc', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.Proc AS INSERT INTO d.Sink(X) SELECT X FROM d.Src;' }),
+      makeNode({ id: focus, schema: 'd', name: 'Src', type: 'view', columns: [column('X')], bodyScript: 'SELECT X FROM d.Sink;' }),
+      makeNode({ id: sink, schema: 'd', name: 'Sink', type: 'table', columns: [column('X')] }),
+    ];
+    const engine = navigationFor(nodes, [[focus, origin], [origin, sink], [sink, focus]]);
+    expect(engine.init({ origin, question: 'Trace X.', analysisMode: 'ct', targetColumns: ['X'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({
+      ...guardRecord(origin),
+      column_flow: [{ out_col: 'X', writes_to: { node: sink, col: 'X' }, upstream_columns: [{ node: focus, col: 'X' }] }],
+      questions: [{ nodeId: focus, question: 'Follow Src.' }],
+    })).toHaveProperty('ok', true);
+    const hop = engine.getHopContext();
+    expect(hop).toMatchObject({ focus_node: { id: focus } });
+    expect(hop && 'neighbors' in hop ? hop.neighbors?.find(n => n.id === sink) : undefined).toMatchObject({ id: sink, can_question: true, can_prune: false });
+    expect(engine.hopSubmitColumns.neighbors).toContainEqual({ id: sink, can_question: true, can_prune: false });
+  });
 });
-
-// CT carry guard: authored column decisions are ACKed or REJECTed and an accepted carry dispatches exactly as accepted.
-const guardRecord = (focus_node_id: string) => ({ focus_node_id,
-  summary: 'Trace the requested value.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes this mapping.' }] });
-const upstreamAll = { upstream: { levels: 'all' as const, exactness: 'exact' as const }, downstream: { levels: 0, exactness: 'exact' as const } };
-
-function engineFor(nodes: LineageNode[], pairs: Array<[string, string]>, mutate?: (model: ReturnType<typeof makeIndexedModel>) => void) {
-  const model = makeIndexedModel(nodes, pairs);
-  mutate?.(model);
-  return new NavigationEngine(model, makeGraph(nodes, pairs), () => {}, {});
-}
 
 describe('CT dispatch keeps the accepted carry', () => {
   const origin = '[d].[Report]', first = '[d].[First]', second = '[d].[Second]', writer = '[d].[Writer]';

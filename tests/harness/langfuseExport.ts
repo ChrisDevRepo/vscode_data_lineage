@@ -12,10 +12,7 @@ export interface LangfuseConfig {
   readonly secretKey: string;
   /** Injectable for tests; defaults to the global `fetch` Node ≥22 provides. */
   readonly fetchImpl?: typeof fetch;
-  /**
-   * Run-level identity the trace itself does not carry — only the CLI that launched this run
-   * knows which lane and which scenario prompt produced it.
-   */
+  /** Run-level identity the trace itself does not carry — only the CLI that launched this run knows which lane and which scenario prompt produced it. */
   readonly runMetadata?: {
     readonly lane?: string;
     readonly promptId?: string;
@@ -115,14 +112,7 @@ interface OtelExportResponseShape {
   };
 }
 
-/**
- * Reads Langfuse connection settings from an env-shaped object.
- *
- * @param env - Caller-supplied key/value map — deliberately not `process.env` so this stays
- *   testable and the exporter never reaches into ambient process state on its own.
- * @returns `null` when any of the three required variables is missing or empty, so the caller can
- *   reject an explicitly requested export when configuration is incomplete.
- */
+/** Reads Langfuse connection settings from an env-shaped object. */
 export function resolveLangfuseConfig(
   env: Readonly<Record<string, string | undefined>>,
 ): Pick<LangfuseConfig, 'baseUrl' | 'publicKey' | 'secretKey'> | null {
@@ -133,13 +123,7 @@ export function resolveLangfuseConfig(
   return { baseUrl, publicKey, secretKey };
 }
 
-/**
- * Posts every turn and generation in `run` to Langfuse Cloud as one OTLP/HTTP JSON export.
- *
- * @param run - A trace already parsed by {@link parseTrace} (see `traceModel.ts`).
- * @param config - Connection and optional run identity; see {@link LangfuseConfig}.
- * @returns The count of spans accepted and any partial-success or transport error text, secret-scrubbed.
- */
+/** Posts every turn and generation in `run` to Langfuse Cloud as one OTLP/HTTP JSON export. */
 export async function exportRunToLangfuse(
   run: ParsedRun,
   config: LangfuseConfig,
@@ -318,14 +302,7 @@ function buildSpans(
   return spans;
 }
 
-/**
- * One tool dispatch as a Langfuse `tool` observation.
- *
- * @remarks
- * A rejection is a `WARNING` and a thrown handler an `ERROR`, so rejections are countable in the
- * backend. A consent `gate` stays at the default level: it is a control outcome, not a fault. Only
- * bounded identifiers are exported (status, code, field paths); tool arguments and results are not.
- */
+/** One tool dispatch as a Langfuse `tool` observation. */
 function toolSpan(
   tool: ToolEntry,
   traceId: string,
@@ -399,11 +376,7 @@ function traceAttributes(
   return attrs;
 }
 
-/**
- * The root span's input and output: the first captured request and the last response. A turn whose
- * generations all failed has no response, so its input comes from the first captured request and
- * its output is the last provider failure.
- */
+/** The root span's input and output: the first captured request and the last response. A turn whose generations all failed has no response, so its input comes from the first captured request and its output is the last provider failure. */
 function rootIo(run: ParsedRun, generations: readonly GenerationEntry[]): { input?: unknown; output?: unknown } {
   let input: unknown;
   let output: unknown;
@@ -445,15 +418,7 @@ function turnTraceId(turn: JoinedTurn): string {
   return otelTraceId(turnIdentity(turn));
 }
 
-/**
- * Uploads evidence files through the media API and returns the reference token for each.
- *
- * @remarks
- * Per file: request an upload URL for the trace, `PUT` the bytes with their SHA-256, then confirm the
- * upload. Literal secrets are removed before hashing. A file that fails or exceeds the size limit is
- * reported and skipped; it never blocks the span export. A file already stored under the same hash
- * comes back without an upload URL and is referenced as is.
- */
+/** Uploads evidence files through the media API and returns the reference token for each. */
 async function uploadAttachments(
   config: LangfuseConfig,
   fetchImpl: typeof fetch,

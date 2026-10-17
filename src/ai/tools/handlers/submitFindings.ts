@@ -1,10 +1,4 @@
-/**
- * Executes active-hop submissions for the `lineage_submit_findings` tool.
- *
- * @remarks
- * Raw arguments are parsed unchanged against the
- * current hop's served contract and converted to the internal finding. Turn-lease validation and effect serialization remain in the registry.
- */
+/** Executes active-hop submissions for the `lineage_submit_findings` tool. */
 import { toHopFinding, submitFindingsSchemaForMode, findingRepairOrder } from '../../tools/toolSchemas';
 import { rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
@@ -13,13 +7,7 @@ import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContrac
 import type { ToolServices } from './toolServices';
 import { acknowledgeCommittedHop, prepareHopCommit } from './hopCommit';
 
-/**
- * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
- * `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one.
- *
- * @param columnFlow - The hop's submitted `column_flow`; absent yields zero counts.
- * @returns The suffix for the `[Hop N]` log line.
- */
+/** Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`, `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one. */
 export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
   const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);
   const noNote = refs.filter(ref => !ref.note).length;
@@ -30,13 +18,7 @@ export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefin
   return ` refs=${refs.length} refs_no_note=${noNote} role_mixed=${mixed}`;
 }
 
-/**
- * Validates and submits findings for the current exploration focus.
- *
- * @param input - Raw model-supplied tool input.
- * @param s - Host capabilities for the active tool session.
- * @returns The accepted-hop result, completion envelope, or structured rejection.
- */
+/** Validates and submits findings for the current exploration focus. */
 export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
       const prepared = prepareHopCommit('lineage_submit_findings', input, s);

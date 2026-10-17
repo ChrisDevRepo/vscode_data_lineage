@@ -2,13 +2,7 @@ import type { ClassificationValue } from '../../session/classification';
 import { CLASSIFICATION_KEPT_ANGLES } from '../../session/classification';
 import type { CapturedSection } from '../../session/memoryManager';
 
-/**
- * Required section angles by locked classification, read from the same
- * {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema
- * (`tools/toolSchemas.ts`) narrows the `sections` keys to. An off-lock angle can no
- * longer be authored at all — it fails that schema before this validator ever runs —
- * so this rule only ever catches a locked angle that is missing, not a surplus one.
- */
+/** Required section angles by locked classification, read from the same {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema (`tools/toolSchemas.ts`) narrows the `sections` keys to. An off-lock angle can no longer be authored at all — it fails that schema before this validator ever runs — so this rule only ever catches a locked angle that is missing, not a surplus one. */
 const SECTION_RULES: Record<ClassificationValue, {
   required: readonly ('business' | 'technical')[];
   missingMsg: string;
@@ -27,15 +21,7 @@ const SECTION_RULES: Record<ClassificationValue, {
   },
 };
 
-/**
- * Validates findings carry the `sections.business`/`sections.technical` keys required by the
- * locked classification.
- *
- * @param archivedAngles - Angles already archived for this focus node from an earlier visit
- * (`AiMemoryManager.getArchivedAngles`). A follow-up (`supplementAgenda`) revisits a node whose earlier sections
- * `storeDetail` already appended into the archive (never replaced), so an angle present there
- * satisfies the lock even when this submission does not re-carry it.
- */
+/** Validates findings carry the `sections.business`/`sections.technical` keys required by the locked classification. */
 export function validateSectionsAgainstClassification(
   sections: CapturedSection[] | undefined,
   classification: ClassificationValue | undefined,
@@ -57,18 +43,7 @@ export function validateSectionsAgainstClassification(
   return `${rule.missingMsg} This submission is ${missingText}.${keepText}`;
 }
 
-/**
- * Converts a `sections` object keyed by angle into angle-bearing entries.
- *
- * @remarks
- * The converter for a validated payload (`toHopFinding` in `toolSchemas.ts`). Tolerant on purpose:
- * only the `business`/`technical` keys are read, and a blank or non-string body is absent, so it
- * never counts toward coverage and never overwrites a held body.
- *
- * @param rawSections - The unparsed `sections` value from the raw or normalized tool input.
- * @returns Angle-bearing entries suitable for {@link validateSectionsAgainstClassification};
- * anything not shaped like `{ business?: string, technical?: string }` is dropped.
- */
+/** Converts a `sections` object keyed by angle into angle-bearing entries. */
 export function extractRawSectionAngles(rawSections: unknown): CapturedSection[] {
   if (typeof rawSections !== 'object' || rawSections === null || Array.isArray(rawSections)) return [];
   const record = rawSections as Record<string, unknown>;
@@ -81,16 +56,7 @@ export function extractRawSectionAngles(rawSections: unknown): CapturedSection[]
   return out;
 }
 
-/**
- * Returns phase-valid recovery guidance for an active-hop `submit_findings` focus rejection.
- *
- * @remarks
- * Active hops do not expose discovery tools; an unresolved focus must be
- * corrected from the current-hop focus ID already in the worker context.
- *
- * @param expectedFocusNodeId - Expected focus id for focus mismatch errors.
- * @returns A model-facing recovery hint that mentions only active-phase tools.
- */
+/** Returns phase-valid recovery guidance for an active-hop `submit_findings` focus rejection. */
 export function activeSubmitFindingsRecoveryHint(expectedFocusNodeId?: string): string {
   return expectedFocusNodeId
     ? `Retry lineage_submit_findings with the exact current-hop focus_node.id: \`${expectedFocusNodeId}\`.`

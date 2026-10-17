@@ -12,9 +12,7 @@ interface AnalysisBannerProps {
   onSaveAsBookmark?: (name: string) => void;
 }
 
-/**
- * Configures {@link ModeBanner} for the active structural analysis and selected group.
- */
+/** Configures {@link ModeBanner} for the active structural analysis and selected group. */
 export const AnalysisBanner = memo(function AnalysisBanner({
   analysis,
   onClose,

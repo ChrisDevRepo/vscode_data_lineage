@@ -73,12 +73,7 @@ export interface HttpRequestInit {
 /** Injectable transport for deterministic checks; live runs use explicit HTTP deadlines. */
 export type FetchLike = (url: string, init: HttpRequestInit) => Promise<HttpResponseLike>;
 
-/**
- * Renders the reasoning tuning into the request-body fields the lane's dialect accepts.
- *
- * @param tuning - The lane's declared tuning, if any.
- * @returns A body fragment to spread: `reasoning_effort`, `chat_template_kwargs`, or nothing.
- */
+/** Renders the reasoning tuning into the request-body fields the lane's dialect accepts. */
 function reasoningPayload(tuning: OpenAiRequestTuning | undefined): Record<string, unknown> {
   const reasoning = tuning?.reasoning;
   if (!reasoning) return {};
@@ -88,12 +83,7 @@ function reasoningPayload(tuning: OpenAiRequestTuning | undefined): Record<strin
   return 'effort' in reasoning ? { reasoning_effort: reasoning.effort } : {};
 }
 
-/**
- * Renders an OpenRouter upstream allow-list into the request `provider` object.
- *
- * @param routing - The lane's allow-list, if any.
- * @returns `provider.order` plus `allow_fallbacks`, or nothing when the lane has no allow-list.
- */
+/** Renders an OpenRouter upstream allow-list into the request `provider` object. */
 function providerRoutingPayload(routing: OpenRouterProviderRouting | undefined): Record<string, unknown> {
   if (!routing || routing.order.length === 0) return {};
   return { provider: { order: [...routing.order], allow_fallbacks: routing.allowFallbacks } };
@@ -101,13 +91,7 @@ function providerRoutingPayload(routing: OpenRouterProviderRouting | undefined):
 
 /** Provider capabilities that change what the port sends or keeps. */
 export interface OpenAiLaneCapabilities {
-  /**
-   * Whether a previous turn's `reasoning_content` is echoed back (DD-3).
-   *
-   * @remarks
-   * DeepSeek returns `500` for a follow-up request whose assistant turn lost it. The cache is
-   * port-owned and turn-scoped; the value never enters LangChain history.
-   */
+  /** Whether a previous turn's `reasoning_content` is echoed back (DD-3). */
   readonly echoReasoning?: boolean;
   /** Preserve the complete opaque OpenRouter reasoning_details sequence on assistant replay. */
   readonly echoReasoningDetails?: boolean;
@@ -115,86 +99,22 @@ export interface OpenAiLaneCapabilities {
   readonly stream?: boolean;
   /** A lane without native tool calling is a configuration error, never a runtime fallback. */
   readonly nativeToolCalling?: boolean;
-  /**
-   * Whether the provider accepts the object form of `tool_choice`
-   * (`{ type: 'function', function: { name } }`). Defaults to `true`.
-   *
-   * @remarks
-   * Some local servers (LM Studio's OpenAI-compatible endpoint) only accept the string values
-   * `none` / `auto` / `required` and answer `400 Invalid tool_choice type` for the object form.
-   * When this is `false`, a forced named tool degrades to `'required'`; the port already narrows
-   * the advertised tool set to the forced tool alone, so `'required'` forces the same tool under
-   * a server that cannot name it.
-   */
+  /** Whether the provider accepts the object form of `tool_choice` (`{ type: 'function', function: { name } }`). Defaults to `true`. */
   readonly namedToolChoice?: boolean;
-  /**
-   * Whether the provider accepts only `tool_choice: "auto"` (no `none`, `required` or named form).
-   * When `true`, every forced choice is sent as `'auto'`; the port already narrows the advertised
-   * tool set to the forced tool alone, so the one tool on offer is the forced one.
-   */
+  /** Whether the provider accepts only `tool_choice: "auto"` (no `none`, `required` or named form). When `true`, every forced choice is sent as `'auto'`; the port already narrows the advertised tool set to the forced tool alone, so the one tool on offer is the forced one. */
   readonly autoToolChoiceOnly?: boolean;
 }
 
-/**
- * Provider-specific request-body tuning. Every field lands verbatim in the request body, so a
- * verbose trace's `provider-raw` capture always shows exactly what tuning was active for a run.
- */
-/**
- * The ONLY request knob the harness may set: thinking level, plus which dialect carries it.
- *
- * @remarks
- * The harness exists to reproduce what the extension does inside Copilot Chat, where the model is
- * `ChatRequest.model` and the host sends no tuning of its own. Every knob added here is a variable
- * that shows up in a measured answer and gets attributed to whatever prompt edit was under test, so
- * the interface is deliberately closed to everything except thinking level.
- *
- * Removed rather than left unused, each for the same reason: `maxTokens` (an output cap truncates
- * the answer depth this project measures) and `providerSort` (a price or throughput sort has no
- * Copilot counterpart). Do not reintroduce either, and do not add a sampling or penalty field.
- * An OpenRouter upstream allow-list is not that sort: it is
- * {@link OpenAiCompatiblePortConfig.providerRouting}, and only the openrouter lane sets it.
- */
+/** Provider-specific request-body tuning. Every field lands verbatim in the request body, so a verbose trace's `provider-raw` capture always shows exactly what tuning was active for a run. */
+/** The ONLY request knob the harness may set: thinking level, plus which dialect carries it. */
 export interface OpenAiRequestTuning {
-  /**
-   * Thinking level, rendered in the lane's {@link OpenAiRequestTuning.reasoningStyle} dialect.
-   *
-   * @remarks
-   * DeepSeek-family models reason by default, and with `stream: false` the time-to-first-byte is
-   * the full reasoning duration (deepseek-ai/DeepSeek-V3#1464 measured 31.8s → 2.7s for the same
-   * call once thinking was disabled). A cancelled long trace run spent 150–182s per late hop generating
-   * up to ~2,000 reasoning tokens per call; this field attacks exactly that.
-   *
-   * Measured on a long trace with deepseek-v4-flash: `{ enabled: false }` cut per-generation
-   * latency ~10x but cost the model its ability to repair strict-schema rejections — two runs in
-   * a row burned the 3-failure semantic budget re-sending the same over-length `badge_label`.
-   * `{ effort: 'low' }` is the compromise: bounded thinking kept for self-correction.
-   * The effort label is provider-specific and sent verbatim.
-   */
+  /** Thinking level, rendered in the lane's {@link OpenAiRequestTuning.reasoningStyle} dialect. */
   readonly reasoning?: { readonly enabled: false } | { readonly effort: string };
-  /**
-   * Which request-body dialect carries {@link OpenAiRequestTuning.reasoning}.
-   *
-   * @remarks
-   * The measured lanes do not share a schema. Azure Foundry and Fireworks answer
-   * `400 Unknown parameter: 'reasoning'` for an object-shaped field and take a scalar
-   * `reasoning_effort` instead, which is why this seam exists rather than a single field name.
-   *
-   * `scalar` (the default) sends `reasoning_effort: <effort>` and sends nothing for
-   * `{ enabled: false }`, which has no scalar spelling.
-   * `chat_template_kwargs` is the Qwen3 template switch that oMLX honours
-   * (`chat_template_kwargs: { enable_thinking: false }`); it has no effort levels, so it sends
-   * only `{ enabled: false }` and nothing for an effort.
-   */
+  /** Which request-body dialect carries {@link OpenAiRequestTuning.reasoning}. */
   readonly reasoningStyle?: 'scalar' | 'chat_template_kwargs';
 }
 
-/**
- * OpenRouter upstream allow-list. `allowFallbacks: false` keeps the router inside `order`.
- *
- * @remarks
- * Names match the `provider` field OpenRouter returns on a completion. A lane that omits this
- * sends no `provider` object, so OpenRouter keeps its own load balancing.
- */
+/** OpenRouter upstream allow-list. `allowFallbacks: false` keeps the router inside `order`. */
 export interface OpenRouterProviderRouting {
   /** Upstream names in try order. */
   readonly order: readonly string[];
@@ -205,11 +125,7 @@ export interface OpenRouterProviderRouting {
 export interface OpenAiCompatiblePortConfig {
   /** API root including the version prefix, e.g. `https://api.fireworks.ai/inference/v1`. */
   readonly baseUrl: string;
-  /**
-   * Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint
-   * that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query.
-   * The traced `provider-raw` URL is this value, so a trace names the endpoint actually called.
-   */
+  /** Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query. The traced `provider-raw` URL is this value, so a trace names the endpoint actually called. */
   readonly chatCompletionsUrl?: string;
   readonly model: string;
   /** Sent only in the configured authentication header; never logged or traced. */
@@ -223,10 +139,7 @@ export interface OpenAiCompatiblePortConfig {
   readonly capabilities?: OpenAiLaneCapabilities;
   /** Optional request-body tuning; absent fields send nothing extra. */
   readonly requestTuning?: OpenAiRequestTuning;
-  /**
-   * OpenRouter upstream allow-list. Absent on every lane except `openrouter`.
-   * Spread into the body as `provider`.
-   */
+  /** OpenRouter upstream allow-list. Absent on every lane except `openrouter`. Spread into the body as `provider`. */
   readonly providerRouting?: OpenRouterProviderRouting;
 }
 
@@ -239,27 +152,11 @@ export interface OpenAiCompatiblePortOptions {
   readonly wireLog?: (record: WireRecord) => void;
   /** Whether the active trace captures the system instruction and verbatim provider bodies. */
   readonly traceVerbose?: boolean;
-  /**
-   * Forces every `lineage_start_exploration` call to `analysisMode:'bb'` with `targetColumns`
-   * dropped, regardless of what the model requested.
-   *
-   * @remarks
-   * Mode is chosen by the model, not the harness — `smBase.ts` infers `bb`/`ct` from whether
-   * `targetColumns` is non-empty and rejects a mismatched pair. So a forced call must rewrite both
-   * fields together, or the engine rejects it. This exists so a CT question can be measured as BB
-   * without rewording it: the PM wants the byte-identical question run once under each mode so the
-   * BFS is comparable. Each rewrite logs one `[ForceBB]` debug line naming what changed.
-   */
+  /** Forces every `lineage_start_exploration` call to `analysisMode:'bb'` with `targetColumns` dropped, regardless of what the model requested. */
   readonly forceBb?: boolean;
   /** Transport seam. Defaults to the runtime's global `fetch`. */
   readonly fetchImpl?: FetchLike;
-  /**
-   * Token budget this port's turn runs under.
-   *
-   * @remarks
-   * Mirrors the production model port: absent for a lane that never calibrates one, in which case
-   * {@link DEFAULT_TURN_TOKEN_BUDGET} applies — the shipped ceilings, no model window.
-   */
+  /** Token budget this port's turn runs under. */
   readonly budget?: TurnTokenBudget;
 }
 
@@ -281,23 +178,13 @@ export interface OpenAiGenerationSummary {
 /** Default whole-request budget; a reasoning model on a cold route legitimately takes minutes. */
 const DEFAULT_REQUEST_TIMEOUT_MS = 7_200_000;
 
-/**
- * DD-4a transient-transport retry, {@link OpenAiCompatiblePort.send} only.
- *
- * @remarks
- * Node's global `fetch` (and undici's) surface a connection-level failure as
- * `TypeError: fetch failed` with the real error on `.cause`; these codes never reached a provider
- * response at all, so retrying them cannot corrupt a measured model answer (DD-4).
- */
+/** DD-4a transient-transport retry, {@link OpenAiCompatiblePort.send} only. */
 const TRANSIENT_TRANSPORT_ERROR_CODES = new Set([
   'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET',
   // Connect-phase failures: no request reached the provider, so a retry cannot repeat a generation.
   'UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ENOTFOUND',
 ]);
-/**
- * Response headers a failed request's verbose trace keeps: rate-limit state and the provider's
- * request id, which a provider's support needs to find the request. None carries a credential.
- */
+/** Response headers a failed request's verbose trace keeps: rate-limit state and the provider's request id, which a provider's support needs to find the request. None carries a credential. */
 const DIAGNOSTIC_RESPONSE_HEADERS = [
   'retry-after',
   'x-request-id',
@@ -345,12 +232,7 @@ function errorCode(error: unknown): string | undefined {
 }
 
 /** Bounded exponential backoff with full jitter, capped at {@link TRANSPORT_RETRY_MAX_DELAY_MS}. */
-/**
- * The transient status of an upstream failure delivered inside HTTP 200: `choices[0].finish_reason`
- * is `"error"`, `choices[0].error.code` is in {@link TRANSIENT_TRANSPORT_HTTP_STATUSES}, and the
- * choice carries no text and no tool call. A choice with any model output is never reported, so a
- * retry cannot replace a measured answer (DD-4).
- */
+/** The transient status of an upstream failure delivered inside HTTP 200: `choices[0].finish_reason` is `"error"`, `choices[0].error.code` is in {@link TRANSIENT_TRANSPORT_HTTP_STATUSES}, and the choice carries no text and no tool call. A choice with any model output is never reported, so a retry cannot replace a measured answer (DD-4). */
 function transientEnvelopeStatus(body: unknown): number | undefined {
   const choices = asRecord(body)?.choices;
   const choice = asRecord(Array.isArray(choices) ? choices[0] : undefined);
@@ -430,29 +312,14 @@ export class OpenAiCompatiblePort implements ModelPort {
   /** Every completed generation, in call order — the run summary's measurement rows. */
   public readonly generations: OpenAiGenerationSummary[] = [];
 
-  /**
-   * Turn-scoped `reasoning_content` cache, keyed by every tool-call id the generation emitted and
-   * by its text (DD-3). Port-owned so the provider-specific field never reaches graph history.
-   */
+  /** Turn-scoped `reasoning_content` cache, keyed by every tool-call id the generation emitted and by its text (DD-3). Port-owned so the provider-specific field never reaches graph history. */
   private readonly reasoning = new Map<string, string>();
   private readonly reasoningDetails = new Map<string, readonly unknown[]>();
 
-  /**
-   * Per-call `extra_content` cache, keyed by call id. Port-owned for the same reason as
-   * {@link reasoning}: a LangChain `ToolCall` is `{id, name, args, type}` and has nowhere to carry
-   * a provider extra, so it is kept beside the message rather than inside it. Instance-scoped, so
-   * it lives no longer than the port — one run's captured signature never reaches another run.
-   */
+  /** Per-call `extra_content` cache, keyed by call id. Port-owned for the same reason as {@link reasoning}: a LangChain `ToolCall` is `{id, name, args, type}` and has nowhere to carry a provider extra, so it is kept beside the message rather than inside it. Instance-scoped, so it lives no longer than the port — one run's captured signature never reaches another run. */
   private readonly toolExtraContent = new Map<string, Record<string, unknown>>();
 
-  /**
-   * Per-turn `extra_content` fallback, keyed by every tool-call id one response emitted, holding
-   * the FIRST `extra_content` that response carried. A provider that signs only
-   * the first call of a parallel tool-call group leaves its siblings with none of their own; when
-   * such a sibling is replayed alone, the request still needs a signature for that assistant turn
-   * or the provider answers HTTP 400. Populated only for ids that arrived together in one
-   * {@link readCompletion} call, so a lookup can never cross into a different turn.
-   */
+  /** Per-turn `extra_content` fallback, keyed by every tool-call id one response emitted, holding the FIRST `extra_content` that response carried. A provider that signs only the first call of a parallel tool-call group leaves its siblings with none of their own; when such a sibling is replayed alone, the request still needs a signature for that assistant turn or the provider answers HTTP 400. Populated only for ids that arrived together in one {@link readCompletion} call, so a lookup can never cross into a different turn. */
   private readonly toolExtraContentTurn = new Map<string, Record<string, unknown>>();
 
   private readonly fetchImpl: FetchLike;
@@ -496,11 +363,7 @@ export class OpenAiCompatiblePort implements ModelPort {
     );
   }
 
-  /**
-   * {@inheritDoc SingleGenerationModelPort.getNumTokens} — no live model to ask off the VS Code
-   * host, so this lane keeps LangChain's own chars/4 approximation ({@link estimateTokens}) rather
-   * than a second counter implementation.
-   */
+  /** {@inheritDoc SingleGenerationModelPort.getNumTokens} — no live model to ask off the VS Code host, so this lane keeps LangChain's own chars/4 approximation ({@link estimateTokens}) rather than a second counter implementation. */
   public async getNumTokens(content: MessageContent): Promise<number> {
     return estimateTokens(messageContentToText(content).length);
   }
@@ -871,25 +734,7 @@ export class OpenAiCompatiblePort implements ModelPort {
     }
   }
 
-  /**
-   * Performs the HTTP attempt(s) for one generation and returns whatever came back.
-   *
-   * @remarks
-   * A non-2xx status and an unparsable body are *returned*, not thrown, so the caller can capture
-   * the bytes before classifying them — a trace that loses the body of the failure it is meant to
-   * explain is worthless. Only a transport failure (no response at all, and not transient-retried
-   * away) throws from here.
-   *
-   * The timeout covers the body read as well as the response headers: a provider that answers and
-   * then stalls mid-body is the same measurement failure as one that never answers. The caller's
-   * signal is forwarded rather than composed with `AbortSignal.any`, which is not available in every
-   * lib configuration this file compiles under. DD-4a (module remarks) retries a connection-level
-   * failure, an attempt that exceeded its deadline, or a 429/502/503/504 up to
-   * {@link MAX_TRANSPORT_ATTEMPTS} times. The deadline is per attempt, as in the OpenAI SDKs: one
-   * whole-request deadline let a single provider stall consume the budget every retry needed, so a
-   * stall was never retried at all. Every other outcome — including every status this method
-   * returns rather than throws — is exactly one attempt, unchanged from DD-4.
-   */
+  /** Performs the HTTP attempt(s) for one generation and returns whatever came back. */
   private async send(
     url: string,
     payload: unknown,
@@ -1056,11 +901,7 @@ export class OpenAiCompatiblePort implements ModelPort {
     return text ? this.reasoningDetails.get(`text:${text}`) : undefined;
   }
 
-  /**
-   * Caches each tool call's `extra_content`, keyed by its own call id, and separately
-   * caches the response's FIRST `extra_content`, keyed by every call id the response emitted, as
-   * the per-turn fallback an unsigned sibling resolves through.
-   */
+  /** Caches each tool call's `extra_content`, keyed by its own call id, and separately caches the response's FIRST `extra_content`, keyed by every call id the response emitted, as the per-turn fallback an unsigned sibling resolves through. */
   private rememberToolExtraContent(collected: ReadCompletion): void {
     const calls = collected.parts.filter(
       (part): part is Extract<PortGenerationPart, { type: 'tool-call' }> => part.type === 'tool-call',

@@ -20,9 +20,7 @@ interface SidePanelProps {
   style?: CSSProperties;
 }
 
-/**
- * Renders the shared titled, closable sidebar shell.
- */
+/** Renders the shared titled, closable sidebar shell. */
 export function SidePanel({ title, icon, onClose, children, className, closeLabel = 'Close panel', actions, style }: SidePanelProps) {
   return (
     <div className={className ? `ln-sidebar ${className}` : 'ln-sidebar'} style={style}>

@@ -1,27 +1,4 @@
-/**
- * Snapshot baseline for graph analysis over AdventureWorks2025_AI.dacpac.
- *
- * COMPARES AGAINST: tests/fixtures/graph-baseline-aw.json (verified with NetworkX)
- *
- * `longestPath.maxDepth` is the exception: it was re-derived after the strongly-connected-component
- * condensation replaced the memoised DFS in `analyzeLongestPath`, which had truncated the chain at
- * a cycle exit. The 13-node value was validated hop by hop against the graph — every consecutive
- * pair is a real edge and no node repeats — rather than against the previous implementation.
- *
- * The baseline carries no write edge `[ai].[spImportOrders] → [ai].[ActiveRegions]`: the procedure
- * only reads that table, inside `IN (SELECT …)` and `NOT EXISTS (SELECT …)` subqueries, so the two
- * objects form no cycle.
- * The local three-part read in `dbo.fnExternal` contributes
- * `[ext].[externalsales] → [dbo].[fnexternal]`: its `COUNT(*)` reads the loaded table
- * through `[AdventureWorks2025].[ext].[ExternalSales]`, adding one edge and one island member.
- *
- * @remarks
- * One test per baseline dimension, deliberately. These assertions are not independent
- * observations of one fact — a node-count drift and a BFS reachability drift are
- * different defects with different causes, and collapsing them into a single block
- * meant the first one to fail hid every one after it. The dacpac is extracted once in
- * `beforeAll` and shared read-only, so the split costs nothing.
- */
+/** Snapshot baseline for graph analysis over AdventureWorks2025_AI.dacpac. */
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';

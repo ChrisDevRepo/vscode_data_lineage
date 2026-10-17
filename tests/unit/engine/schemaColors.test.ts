@@ -1,6 +1,4 @@
-/**
- * Tests for deterministic schema palette assignment.
- */
+/** Tests for deterministic schema palette assignment. */
 
 import { describe, it, expect } from 'vitest';
 import {

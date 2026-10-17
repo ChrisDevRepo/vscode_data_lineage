@@ -1,6 +1,4 @@
-/**
- * Verifies contributed VS Code commands against their runtime registrations.
- */
+/** Verifies contributed VS Code commands against their runtime registrations. */
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
@@ -9,13 +7,7 @@ import { rootPath } from '../helpers/testUtils';
 
 type Command = { command: string };
 
-/**
- * Commands registered at runtime but deliberately absent from `contributes.commands`,
- * so neither reaches the Command Palette.
- *
- * - `openExternalProject` is the integration-test entry point for forcing a dacpac load.
- * - `aiResumeNativeGate` is invoked from chat gate links, never typed by a user.
- */
+/** Commands registered at runtime but deliberately absent from `contributes.commands`, so neither reaches the Command Palette. */
 const INTENTIONALLY_UNCONTRIBUTED = [
   'dataLineageViz.aiResumeNativeGate',
   'dataLineageViz.openExternalProject',

@@ -25,28 +25,15 @@ interface DetailSearchSidebarProps {
   onClose: () => void;
   /** The complete set of searchable nodes. */
   allNodes: DetailSearchNode[];
-  /**
-   * Callback triggered when a search result is clicked.
-   * @param nodeId - The ID of the target node.
-   * @param searchTerm - The term that was searched for.
-   */
+  /** Callback triggered when a search result is clicked. */
   onResultClick: (nodeId: string, searchTerm: string) => void;
-  /**
-   * IDs of nodes currently rendered in the graph after all active filters.
-   * When provided, results whose node ID is absent are rendered dimmed with a
-   * "Not in Current Filter" separator — matching Quick Jump behavior.
-   */
+  /** IDs of nodes currently rendered in the graph after all active filters. When provided, results whose node ID is absent are rendered dimmed with a "Not in Current Filter" separator — matching Quick Jump behavior. */
   visibleNodeIds?: Set<string>;
-  /**
-   * IDs of filter-visible nodes that are currently collapsed into a schema cluster.
-   * These results remain actionable and expand their schema when selected.
-   */
+  /** IDs of filter-visible nodes that are currently collapsed into a schema cluster. These results remain actionable and expand their schema when selected. */
   collapsedSchemaNodeIds?: Set<string>;
 }
 
-/**
- * Internal representation of a search match.
- */
+/** Internal representation of a search match. */
 interface SearchResult {
   /** The node that matched the query. */
   node: DetailSearchNode;
@@ -77,13 +64,7 @@ const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
 /** Set of object types that typically contain a SQL body script. */
 const BODY_TYPES = new Set<ObjectType>(['procedure', 'view', 'function']);
 
-/**
- * Body matches this panel renders for one term.
- *
- * @remarks
- * A display cap belonging to this panel, stated here rather than defaulted inside
- * `searchBodyScripts` — the AI's grep tool shares that function and must never be capped.
- */
+/** Body matches this panel renders for one term. */
 const BODY_RESULT_LIMIT = 100;
 
 /** Groups search results by display label, preserving insertion order. */
@@ -98,13 +79,7 @@ function groupByType(items: SearchResult[]): Map<string, SearchResult[]> {
   return map;
 }
 
-/**
- * Wraps every occurrence of `term` within `snippet` with a `<mark>` element.
- *
- * @param snippet - The text to annotate.
- * @param term - The search term to highlight (case-insensitive).
- * @returns An array of strings and `<mark>` React nodes.
- */
+/** Wraps every occurrence of `term` within `snippet` with a `<mark>` element. */
 function highlightSnippet(snippet: string, term: string): React.ReactNode[] {
   if (!term) return [snippet];
   const parts: React.ReactNode[] = [];
@@ -123,13 +98,7 @@ function highlightSnippet(snippet: string, term: string): React.ReactNode[] {
   return parts;
 }
 
-/**
- * Single Detail Search result row.
- *
- * @remarks
- * When `clustered` is true, the row is in filter scope but collapsed into a schema cluster.
- * When `dimmed` is true, the row is outside the active graph filter.
- */
+/** Single Detail Search result row. */
 function ResultRow({ result, term, onResultClick, dimmed = false, clustered = false }: ResultRowProps) {
   return (
     <div
@@ -163,17 +132,7 @@ function ResultRow({ result, term, onResultClick, dimmed = false, clustered = fa
   );
 }
 
-/**
- * A specialized sidebar component for performing full-text searches across object definitions
- * and column metadata.
- *
- * @remarks
- * Searches within procedure, view and function body scripts and column names. Results from nodes
- * outside the active graph filter are rendered dimmed with a "Not in Current Filter" separator
- * when `visibleNodeIds` is supplied — consistent with Quick Jump behavior.
- *
- * Performance: `useDeferredValue` prevents UI lock during heavy searches.
- */
+/** A specialized sidebar component for performing full-text searches across object definitions and column metadata. */
 export const DetailSearchSidebar = memo(function DetailSearchSidebar({
   onClose,
   allNodes,

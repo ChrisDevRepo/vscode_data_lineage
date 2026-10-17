@@ -1,11 +1,4 @@
-/**
- * Tests for the expanded schema view partition (engine/schemaProjection).
- *
- * @remarks
- * The partition is the contract: every node lands in exactly one of `individual` or
- * `collapsed`, decided by schema membership alone. Each scenario gets its own `it` so a
- * partition defect names the case that breaks it.
- */
+/** Tests for the expanded schema view partition (engine/schemaProjection). */
 
 import { describe, expect, it } from 'vitest';
 import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../../../src/engine/schemaProjection';

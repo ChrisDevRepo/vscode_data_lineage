@@ -1,11 +1,4 @@
-/**
- * Unit tests for graph analysis functions.
- *
- * @remarks
- * One `it` per behaviour rather than one per analysis function. These are independent
- * rules — a maxSize filter and an empty-graph guard fail for unrelated reasons — and
- * grouping them meant the first failure suppressed the rest of its analysis.
- */
+/** Unit tests for graph analysis functions. */
 
 import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';

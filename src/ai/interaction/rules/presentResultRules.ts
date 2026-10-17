@@ -1,12 +1,7 @@
 import type { InteractionRuleResult } from '../types';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/**
- * `present_result` requires either a bounded preview scope or a completed exploration graph.
- *
- * @param hasPresentationSource - True if a bounded scope or result graph exists.
- * @returns A rule result error if no presentation source is available, otherwise null.
- */
+/** `present_result` requires either a bounded preview scope or a completed exploration graph. */
 export function evaluatePresentResultPreconditionsRule(hasPresentationSource: boolean): InteractionRuleResult {
   if (hasPresentationSource) return null;
   return makeRejection({

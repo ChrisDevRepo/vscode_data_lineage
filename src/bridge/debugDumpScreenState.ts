@@ -27,17 +27,7 @@ function formatAffordanceSide(label: string, side: TraceAffordanceSideSnapshot):
   return parts.join('\n');
 }
 
-/**
- * Builds the on-screen-state dump sections that explain "why does node X show/hide its
- * +/- buttons" without the live app: the highlighted node, its computed affordances and the
- * reason each control is grayed, the live trace scope, the selected node's neighbors
- * tagged in-trace vs off-trace, and any active analytics/bookmark view.
- *
- * @param renderState - The latest `render-state` snapshot mirrored from the webview.
- * @param screenState - Analytics/bookmark extras from the latest `filter-changed` ui-state.
- * @param model - The loaded database model, for neighbor reconciliation.
- * @returns A formatted multi-section block (always includes SELECTION & AFFORDANCES).
- */
+/** Builds the on-screen-state dump sections that explain "why does node X show/hide its +/- buttons" without the live app: the highlighted node, its computed affordances and the reason each control is grayed, the live trace scope, the selected node's neighbors tagged in-trace vs off-trace, and any active analytics/bookmark view. */
 export function formatScreenStateSections(
   renderState: RenderStateSnapshot | null,
   screenState: ScreenStateExtras | null,

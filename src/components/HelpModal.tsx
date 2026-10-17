@@ -82,11 +82,7 @@ function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
 /** Shorter labels for keys whose `KeyboardEvent.key` name reads poorly on a keycap. */
 const KEY_CAPTIONS: Partial<Record<AppShortcutId, string>> = { exitMode: 'Esc' };
 
-/**
- * Every registered app shortcut, followed by the keys handled per-control rather
- * than through {@link SHORTCUT_KEYS} — so this panel is the complete list it claims
- * to be, and adding a binding without a description fails to compile.
- */
+/** Every registered app shortcut, followed by the keys handled per-control rather than through {@link SHORTCUT_KEYS} — so this panel is the complete list it claims to be, and adding a binding without a description fails to compile. */
 const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   ...(Object.keys(SHORTCUT_DESCRIPTIONS) as AppShortcutId[]).map(id => ({
     keys: [KEY_CAPTIONS[id] ?? [SHORTCUT_KEYS[id]].flat().join(' / ')],
@@ -377,9 +373,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
 }
 
 
-/**
- * Displays the extension's overview, analysis, database, and AI help tabs.
- */
+/** Displays the extension's overview, analysis, database, and AI help tabs. */
 export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalProps) {
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');

@@ -12,13 +12,7 @@ import {
 } from '../../../src/utils/modelSearch';
 import type { ColumnDef } from '../../../src/engine/types';
 
-/**
- * Whether this runner's V8 implements ES2025 regexp modifier groups (`(?i:…)`, `(?-i:…)`).
- *
- * @remarks
- * Measured, never assumed: Node gained them mid-life, and the VS Code extension host runs its own
- * Node, so a test that hard-codes one answer pins the runner instead of the code under test.
- */
+/** Whether this runner's V8 implements ES2025 regexp modifier groups (`(?i:…)`, `(?-i:…)`). */
 const MODIFIER_GROUPS_SUPPORTED = (() => {
   try {
     new RegExp('(?i:a)');
@@ -296,14 +290,7 @@ describe('model search', () => {
   });
 });
 
-/**
- * A match inside a SQL comment is marked.
- *
- * The reported context is a 3-line window, so a match deep inside a block comment arrived
- * indistinguishable from live code: three answers described commented-out SQL as running behaviour.
- * The marker is additive — `commented` is set only when true, and never filters a hit, because two
- * of that same answer's correct facts came from inside a comment.
- */
+/** A match inside a SQL comment is marked. */
 describe('model search — commented matches', () => {
   /** Runs `pattern` over one body and returns `[line, commented]` for every hit, in order. */
   function hits(bodyScript: string, pattern: string): [number, boolean][] {
@@ -405,13 +392,7 @@ describe('model search — commented matches', () => {
   });
 });
 
-/**
- * The innermost `IF`/`WHILE` predicate governing a hit is reported.
- *
- * The reported context is a 3-line window, so a hit's controlling condition sits outside it
- * whenever it is more than a line or two away — the normal case in T-SQL. The marker is additive,
- * the same shape as `commented`: present only when a governing condition exists.
- */
+/** The innermost `IF`/`WHILE` predicate governing a hit is reported. */
 describe('model search — enclosing predicate', () => {
   /** Runs `pattern` over one body and returns `[line, enclosingPredicate]` for every hit, in order. */
   function hits(bodyScript: string, pattern: string): [number, string | undefined][] {

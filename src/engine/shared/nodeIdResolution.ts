@@ -1,28 +1,10 @@
-/**
- * Canonical node-id resolution shared by the extension host, the AI subsystem and the webview.
- *
- * @remarks
- * This lives under `src/engine/shared/` — the VS Code-free surface both bundles may import —
- * because the webview's AI-view reconciler needs it too. Keeping it here stops the Vite build
- * from reaching into `src/ai/**`, which is extension-host-only territory.
- * AI tools use bounded metadata-equivalent binding; this resolver retains catalog and saved-reference compatibility.
- */
+/** Canonical node-id resolution shared by the extension host, the AI subsystem and the webview. */
 import { normalizeName } from './sqlIdentifier';
 import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { externalFileId } from './externalFileId';
 import type { DatabaseModel } from '../types';
 
-/**
- * Resolves a user/model-supplied node id against a canonical node map.
- *
- * Accepts equivalent identifier delimiters and CI case variants; CS requires exact catalog casing.
- * Returns the canonical id present in `nodeMap` or `null` when no match exists.
- *
- * @param raw - The raw node id string.
- * @param nodeMap - The map of canonical nodes to check against.
- * @param identifierCaseSensitive - Checked source catalog policy; true forbids guessed identifier casing.
- * @returns The canonical node id if resolved, otherwise null.
- */
+/** Resolves a user/model-supplied node id against a canonical node map. */
 export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>, identifierCaseSensitive = false): string | null {
   const input = (raw ?? '').replace(/\p{Cf}/gu, '').trim();
   if (!input) return null;
@@ -46,13 +28,7 @@ export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>, i
   return null;
 }
 
-/**
- * Resolves persisted references by unique ownership, including legacy delimiter/URL aliases.
- * Current tool/SQL inputs must use {@link resolveModelNodeId}, never this legacy recovery path.
- * @param model - Current physical identities and schema names; no inferred catalog entries.
- * @param nodeIdEncodingVersion - Two disables old SQL delimiter aliases; URL aliases apply to both.
- * @returns Exact persisted-ID and schema resolvers; ambiguous or absent references resolve to null.
- */
+/** Resolves persisted references by unique ownership, including legacy delimiter/URL aliases. Current tool/SQL inputs must use {@link resolveModelNodeId}, never this legacy recovery path. */
 export function createSavedReferenceResolver(
   model: Pick<DatabaseModel, 'nodes' | 'schemas' | 'identifierCaseSensitive'>,
   nodeIdEncodingVersion?: 2,

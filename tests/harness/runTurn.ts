@@ -18,14 +18,7 @@ export function nativeHarnessPrompt(prompt: string): string {
   return prompt.replace(/^@lineage(?=\s|$)[ \t]?/u, '');
 }
 
-/**
- * Reads `uiState.screenState.bookmark.id` out of a parsed `--ui-state` buffer.
- *
- * @remarks
- * The buffer is an opaque passthrough by contract (see `AiSession.uiState`), so every step is
- * defensive rather than typed — a foreign or malformed shape resolves to `undefined` instead of
- * throwing, matching how the production presenter itself treats the same buffer.
- */
+/** Reads `uiState.screenState.bookmark.id` out of a parsed `--ui-state` buffer. */
 function bookmarkIdFromUiState(uiState: unknown): string | undefined {
   if (typeof uiState !== 'object' || uiState === null) return undefined;
   const screenState = (uiState as Record<string, unknown>).screenState;
@@ -36,30 +29,13 @@ function bookmarkIdFromUiState(uiState: unknown): string | undefined {
   return typeof id === 'string' ? id : undefined;
 }
 
-/**
- * How one gate round is answered.
- *
- * @remarks
- * `--gate` supplies an ordered, comma-separated list of these; round *N* of a turn is answered by
- * entry *N*, clamped to the last entry once the list is exhausted, so a trailing `approve` or `deny`
- * terminates any further round without needing one entry per possible gate.
- */
+/** How one gate round is answered. */
 export type GateRoundPolicy =
   | { readonly kind: 'approve'; readonly expect?: string }
   | { readonly kind: 'deny' }
   | { readonly kind: 'refine'; readonly instruction: string };
 
-/**
- * Evaluates one `approve:<expect>` assertion against the pending proposal.
- *
- * @param expr - `[!]<field>~<substring>` for membership, or `<field>=<number>` for a count.
- * @param session - The session carrying `pendingExploration` at gate time.
- * @returns Whether the proposal satisfies the assertion.
- * @remarks
- * The gate is where the proposal becomes binding, so an expectation is checked here rather than on
- * the finished graph: approving a proposal that contradicts the instruction and then scoring the
- * result conflates a wrong proposal with a wrongly accepted one.
- */
+/** Evaluates one `approve:<expect>` assertion against the pending proposal. */
 export function evaluateGateExpectation(expr: string, session: AiSession): boolean {
   const proposal = session.pendingExploration;
   if (!proposal) return false;
@@ -100,32 +76,14 @@ export interface HarnessTurnOptions {
   readonly logger: HeadlessLogChannel;
   readonly requestId?: string;
   readonly maxRounds?: number;
-  /**
-   * How each consent gate this turn raises is answered, in round order.
-   *
-   * @remarks
-   * A run-level policy, not a human-in-the-loop decision: the harness has no human to ask, and a
-   * lane that silently varied its answer between otherwise-identical runs would make them
-   * incomparable. Round *N* (1-based) is answered by `gate[N-1]`, clamped to the last entry once the
-   * list is exhausted. Defaults to a single `approve` entry.
-   */
+  /** How each consent gate this turn raises is answered, in round order. */
   readonly gate?: readonly GateRoundPolicy[];
   readonly signal?: AbortSignal;
   /** Session trace sink; when present the runtime writes lifecycle and tool records to it. */
   readonly traceWriter?: AiTraceWriter;
-  /**
-   * Parsed `--ui-state` buffer, assigned to `session.uiState` verbatim before the turn.
-   *
-   * @remarks
-   * A top-level `renderState` key is additionally lifted onto `session.renderState`, and a
-   * top-level `filter` key onto `session.filter` — mirroring the two extra webview messages a real
-   * screen posts alongside `filter-changed`.
-   */
+  /** Parsed `--ui-state` buffer, assigned to `session.uiState` verbatim before the turn. */
   readonly uiState?: unknown;
-  /**
-   * Parsed `--stored-run` buffer. Resolved by `lineage_get_screen_state` only for the bookmark id
-   * found at `uiState.screenState.bookmark.id`, matching how a real save keys one run per bookmark.
-   */
+  /** Parsed `--stored-run` buffer. Resolved by `lineage_get_screen_state` only for the bookmark id found at `uiState.screenState.bookmark.id`, matching how a real save keys one run per bookmark. */
   readonly storedRun?: StoredAiRun;
 }
 
@@ -136,11 +94,7 @@ export interface HarnessGateDecision {
   readonly decision: 'approve' | 'deny' | 'refine';
   /** The refine instruction sent, present only when `decision` is `'refine'`. */
   readonly instruction?: string;
-  /**
-   * The `approve:<expect>` assertion evaluated at this gate, and whether the proposal satisfied it.
-   * A failed expectation is answered `deny`, so the run records a refusal at the gate instead of
-   * measuring a graph nobody would have approved.
-   */
+  /** The `approve:<expect>` assertion evaluated at this gate, and whether the proposal satisfied it. A failed expectation is answered `deny`, so the run records a refusal at the gate instead of measuring a graph nobody would have approved. */
   readonly expectation?: { readonly expr: string; readonly ok: boolean };
 }
 
@@ -168,12 +122,7 @@ function writeArtifact(
   artifacts[name] = path;
 }
 
-/**
- * Executes one turn and dumps `sm-state.json`, `answer.md`, `present-result.json`, `hop-log.json`.
- *
- * @param options - Session, model port, prompt, run directory, and gate policy.
- * @returns The terminal outcome plus the observed events, answer text, and artifact paths.
- */
+/** Executes one turn and dumps `sm-state.json`, `answer.md`, `present-result.json`, `hop-log.json`. */
 export async function runHarnessTurn(options: HarnessTurnOptions): Promise<HarnessTurnResult> {
   mkdirSync(options.runDir, { recursive: true });
   if (options.uiState !== undefined) {

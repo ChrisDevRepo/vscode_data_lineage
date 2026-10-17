@@ -1,16 +1,4 @@
-/**
- * `lineage_get_scope_bundle` already computes each node's hop distance from the origin while
- * capping the BFS walk (`tools.ts` `walkWithCap`'s `depth` argument) and used to throw it away.
- * Every returned node now carries that distance back — `uh` (upstream hop distance) and/or `dh`
- * (downstream hop distance), scalar per side, never an array — so "which nodes are upstream, and
- * how far" is a transcription of the response instead of a graph walk the model has to redo over
- * the flat positional `edges[]`.
- *
- * Fixture (not the objects behind the measured defect): a two-hop upstream chain
- * `UpstreamTwo -> UpstreamOne -> Root`, a one-hop downstream neighbor `Root -> DownstreamOne`, and
- * a node reachable on both sides of `Root` (`BothSides`, one edge each direction) standing in for
- * a node that is both read and written by the origin.
- */
+/** `lineage_get_scope_bundle` already computes each node's hop distance from the origin while capping the BFS walk (`tools.ts` `walkWithCap`'s `depth` argument) and used to throw it away. Every returned node now carries that distance back — `uh` (upstream hop distance) and/or `dh` (downstream hop distance), scalar per side, never an array — so "which nodes are upstream, and how far" is a transcription of the response instead of a graph walk the model has to redo over the flat positional `edges[]`. */
 import { describe, expect, it } from 'vitest';
 import { getScopeBundle } from '../../../src/ai/tools/tools';
 import { buildBareGraph } from '../../../src/ai/support/graphUtils';

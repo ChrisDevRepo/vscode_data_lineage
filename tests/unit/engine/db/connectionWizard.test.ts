@@ -1,6 +1,4 @@
-/**
- * Pins the pure parts of the add-connection wizard: server input parsing.
- */
+/** Pins the pure parts of the add-connection wizard: server input parsing. */
 
 import { describe, it, expect } from 'vitest';
 import { parseServerInput } from '../../../../src/engine/db/connectionCommands';

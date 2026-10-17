@@ -1,10 +1,4 @@
-/**
- * Pins the GraphCanvas camera and drag contracts the mount-level fix can't exercise without a full
- * React Flow harness: a pending fit no-ops once a later user gesture bumps the fit generation, the
- * canvas min zoom lets a fit contain every laid-out node, and a rebuild landing mid-drag preserves
- * the dragged node's position until drag stop. Each helper here is the exact function
- * `GraphCanvas.tsx` wires up, not a stand-in reimplementing its call sites.
- */
+/** Pins the GraphCanvas camera and drag contracts the mount-level fix can't exercise without a full React Flow harness: a pending fit no-ops once a later user gesture bumps the fit generation, the canvas min zoom lets a fit contain every laid-out node, and a rebuild landing mid-drag preserves the dragged node's position until drag stop. Each helper here is the exact function `GraphCanvas.tsx` wires up, not a stand-in reimplementing its call sites. */
 import { describe, expect, it, vi } from 'vitest';
 import { getNodesBounds, getViewportForBounds, type Node as FlowNode } from '@xyflow/react';
 import {

@@ -18,18 +18,7 @@ const DENSE_EDGE_COUNT = 2000;
 /** Density step; one rounding step keeps a single trimmed or added edge from repainting every edge. */
 const DENSITY_STEP = 0.05;
 
-/**
- * Edge density of the rendered graph in [0, 1]: 0 up to {@link SPARSE_EDGE_COUNT} edges, 1 from
- * {@link DENSE_EDGE_COUNT}, log-linear between.
- *
- * @remarks
- * The canvas root carries it as `--ln-edge-density`; the CSS in `src/index.css` fades the edge color
- * toward transparent and thins the stroke by it, down to per-theme floors, so overlapping lines on a
- * large graph read as density instead of solid ink while a small graph keeps its full-strength lines.
- *
- * @param edgeCount - Edges rendered on the canvas.
- * @returns The density, rounded to {@link DENSITY_STEP}.
- */
+/** Edge density of the rendered graph in [0, 1]: 0 up to {@link SPARSE_EDGE_COUNT} edges, 1 from {@link DENSE_EDGE_COUNT}, log-linear between. */
 export function edgeDensity(edgeCount: number): number {
   if (edgeCount <= SPARSE_EDGE_COUNT) return 0;
   if (edgeCount >= DENSE_EDGE_COUNT) return 1;
@@ -37,37 +26,12 @@ export function edgeDensity(edgeCount: number): number {
   return Number((Math.round(density / DENSITY_STEP) * DENSITY_STEP).toFixed(2));
 }
 
-/**
- * Creates the retention map {@link decorateFlowEdges} reuses across renders.
- *
- * @returns An empty cache, owned by the caller for the lifetime of the canvas.
- */
+/** Creates the retention map {@link decorateFlowEdges} reuses across renders. */
 export function createEdgeDecorationCache(): EdgeDecorationCache {
   return new Map();
 }
 
-/**
- * Applies the click-selection connected/dimmed style to each edge, reusing the previous result
- * whenever an edge's connectedness and animation eligibility are unchanged.
- *
- * @remarks
- * Mirrors {@link decorateFlowNodes} (`src/engine/nodeDecoration.ts`): an edge connected to
- * `connectedTo` is marked {@link LIT_CLASS_NAME} and `animated`; the lit stroke color/width and the
- * dimmed 0.35-opacity, scaled-down appearance of every other edge are both expressed once as CSS
- * rules keyed off `.ln-has-selection` and {@link LIT_CLASS_NAME} (`src/index.css`), reading each
- * edge's own base width back out of the `--ln-edge-w` custom property `GraphCanvas.tsx` sets when
- * the edge is built. An edge's object identity therefore never needs to change just because a
- * *different* node was clicked.
- *
- * @param edges - Edges to decorate, in render order.
- * @param connectedTo - Node whose incident edges are lit; null/undefined when nothing is focused.
- * @param litAnimated - Whether a lit edge animates, already resolved from config and the rendered
- * edge count.
- * @param cache - Retention map from {@link createEdgeDecorationCache}, mutated in place.
- * @param routeEdgeIds - `source→target` keys of a lit route; when given, only route edges are lit
- * (either direction, matching the bidirectional-edge aliasing) instead of every incident edge.
- * @returns The decorated edges, in the order given.
- */
+/** Applies the click-selection connected/dimmed style to each edge, reusing the previous result whenever an edge's connectedness and animation eligibility are unchanged. */
 export function decorateFlowEdges(
   edges: readonly FlowEdge[],
   connectedTo: string | null | undefined,

@@ -1,8 +1,4 @@
-/**
- * A view's columns arrive from a DACPAC as computed columns with no declared type and no expression,
- * so they stay unresolved; a table computed column whose expression is not a bare column reference
- * stays unresolved too.
- */
+/** A view's columns arrive from a DACPAC as computed columns with no declared type and no expression, so they stay unresolved; a table computed column whose expression is not a bare column reference stays unresolved too. */
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseModel } from '../../../src/engine/types';
 import { UNRESOLVED_COLUMN_TYPE } from '../../../src/engine/types';

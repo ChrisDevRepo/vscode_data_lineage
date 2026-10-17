@@ -1,24 +1,10 @@
-/**
- * Shared prune validation and column-reference rejection policy for the Navigation Engine.
- *
- * @remarks
- * Pure, engine-state-free: maps a structural {@link InvalidRouteKind} to its machine error code
- * and verb-led corrective order, and builds the content-error rejection envelope. The engine
- * consumes {@link buildRouteValidationRejection}. Every invalid column reference or refused prune
- * rejects the submission atomically.
- */
+/** Shared prune validation and column-reference rejection policy for the Navigation Engine. */
 
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
-/**
- * Per-kind corrective order. Keyed by {@link InvalidRouteKind} so a new kind is a compile
- * error. Each value is a self-contained, **verb-led imperative** — positive, with the
- * legitimate alternative built in so the model never has to guess the nearest match. Used for
- * the content-error hint. The offending value
- * is stated in the rejection reason; the dispatcher discloses column choices from the second rejection.
- */
+/** Per-kind corrective order. Keyed by {@link InvalidRouteKind} so a new kind is a compile error. Each value is a self-contained, **verb-led imperative** — positive, with the legitimate alternative built in so the model never has to guess the nearest match. Used for the content-error hint. The offending value is stated in the rejection reason; the dispatcher discloses column choices from the second rejection. */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   missing_task_decision:
     'Account for each listed assigned endpoint with its mapping or terminated_inputs entry. Supply an investigation question for each listed kept neighbor, including those carrying columns, or prune it. questions replaces the whole list: resend your other valid questions with the added ones.',
@@ -62,10 +48,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Remove questions[] entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
 };
 
-/**
- * Machine error code per validation kind. Used when one kind dominates the rejection so the
- * model gets a specific, structured classification; mixed kinds fall back to the generic code.
- */
+/** Machine error code per validation kind. Used when one kind dominates the rejection so the model gets a specific, structured classification; mixed kinds fall back to the generic code. */
 export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   missing_task_decision: REJECTION_CODES.incompleteTask,
   invalid_task_decision: REJECTION_CODES.routeValidationFailed,
@@ -89,20 +72,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   question_closed: REJECTION_CODES.routeValidationFailed,
 };
 
-/**
- * Builds the atomic content/action rejection envelope.
- *
- * @remarks
- * Each kind is emitted by one policy owner, so no message-text inference or mode branch is needed.
- * `code` is the specific per-kind code when one kind dominates; `hint` is the verb-led
- * order(s) followed by the engine's repair order (`findingRepairOrder`), since the engine holds the draft of every
- * rejected submission; `reason` states each failure without choices as one line per error;
- * `detail` carries possible values for the dispatcher's shared escalation.
- *
- * @param errors - Field-resolved validation failures accumulated before commit; at least one.
- * @param repairOrder - The engine's sentence naming the held parts and the parts to resend.
- * @returns A stable structured rejection without a second repair protocol.
- */
+/** Builds the atomic content/action rejection envelope. */
 export function buildRouteValidationRejection(errors: InvalidRoute[], repairOrder: string): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
@@ -116,11 +86,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], repairOrde
   });
 }
 
-/**
- * The verb-led corrective orders for a set of route/column failures, one per distinct kind, without
- * the repair order; shared by {@link buildRouteValidationRejection} and a finding rejection
- * that also reports other faults of the same submission.
- */
+/** The verb-led corrective orders for a set of route/column failures, one per distinct kind, without the repair order; shared by {@link buildRouteValidationRejection} and a finding rejection that also reports other faults of the same submission. */
 export function routeRejectionDirectives(errors: readonly InvalidRoute[]): string {
   return [...new Set(errors.map(e => e.kind))].map(kind => ROUTE_REJECTION_DIRECTIVE[kind]).join(' ');
 }

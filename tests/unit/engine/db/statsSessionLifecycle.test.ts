@@ -1,8 +1,5 @@
 import { detailHandlers } from '../../helpers/testUtils';
-/**
- * Pins the table-statistics connection lifetime: a built-in connection is opened per request and
- * closed afterwards; a DACPAC model never reaches a database.
- */
+/** Pins the table-statistics connection lifetime: a built-in connection is opened per request and closed afterwards; a DACPAC model never reaches a database. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const connectDatabase = vi.fn();

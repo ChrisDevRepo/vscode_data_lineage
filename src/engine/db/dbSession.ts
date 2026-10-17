@@ -18,13 +18,7 @@ export interface DbQueryOptions {
   timeoutMessage?: string;
 }
 
-/**
- * One open database connection.
- *
- * @remarks
- * Consumers read result cells by column name, so a provider must return `displayValue` strings in
- * a consistent display format.
- */
+/** One open database connection. */
 export interface DbSession {
   /** Persistable, credential-free description of the connection. */
   readonly connectionInfo: StoredConnectionInfo;
@@ -56,13 +50,7 @@ export interface ConnectionErrorTarget {
   tenantId?: string;
 }
 
-/**
- * A failed connect, keeping the original driver error untouched.
- *
- * @remarks
- * `message` is the driver's own text. Presentation (name prefix, actions) is added by
- * `describeConnectionError`, never by rewriting the error.
- */
+/** A failed connect, keeping the original driver error untouched. */
 export class DbConnectionError extends Error {
   constructor(readonly target: ConnectionErrorTarget, readonly original: unknown) {
     super(errorMessage(original));

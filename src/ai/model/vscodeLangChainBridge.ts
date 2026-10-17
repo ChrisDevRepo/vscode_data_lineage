@@ -1,12 +1,4 @@
-/**
- * Request-scoped bridge from the VS Code Chat model selected by the user to LangChain.
- *
- * Adapted from the MIT-licensed `jitrodriguez/vscode-chat-langchain-bridge` project.
- * Source derivation: commit 1dda72d, copyright Juan Rodriguez, MIT License.
- * The local implementation intentionally keeps a narrower boundary: it translates messages,
- * tool definitions, stream parts, cancellation, and errors only. Tool execution, lifecycle,
- * semantic repair, authorization, and UI rendering remain outside the bridge.
- */
+/** Request-scoped bridge from the VS Code Chat model selected by the user to LangChain. */
 import * as vscode from 'vscode';
 import type { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager';
 import {
@@ -39,7 +31,7 @@ import { sanitizeProviderError } from '../support/text';
 import { STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../providers/structuredOutput';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
-export interface VscodeBridgeToolDefinition {
+interface VscodeBridgeToolDefinition {
   /** Tool name the model addresses the call by. */
   readonly name: string;
   /** Natural-language tool description shown to the model. */
@@ -49,7 +41,7 @@ export interface VscodeBridgeToolDefinition {
 }
 
 /** LangChain call options projected onto one VS Code Language Model request. */
-export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
+interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
   /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
   /** `'auto'`, `'any'` (a tool call is required), `'none'`, or the name of the one tool the model must call. */
@@ -60,26 +52,16 @@ export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
 export type VscodeBridgeRunnable = Runnable<BaseLanguageModelInput, AIMessageChunk, VscodeLangChainCallOptions>;
 
 /** Constructor fields for one request-selected VS Code language model. */
-export interface VscodeLangChainBridgeFields {
+interface VscodeLangChainBridgeFields {
   /** The exact `vscode.LanguageModelChat` selected for this request. */
   readonly model: vscode.LanguageModelChat;
   /** Cancellation token for the request; firing it surfaces as a port-level cancellation. */
   readonly token: vscode.CancellationToken;
-  /**
-   * Debug wire capture, present only when session trace logging is enabled.
-   *
-   * @remarks
-   * Absent by default so nothing is allocated on the normal path. The callback must never throw:
-   * a capture failure is not allowed to fail the user's turn.
-   */
+  /** Debug wire capture, present only when session trace logging is enabled. */
   readonly wire?: (event: WireEvent) => void;
 }
 
-/**
- * LangChain `BaseChatModel` backed by exactly one VS Code `request.model`.
- *
- * The instance is request-scoped and has no model-selection or provider-fallback behavior.
- */
+/** LangChain `BaseChatModel` backed by exactly one VS Code `request.model`. */
 export class VscodeLangChainBridge extends BaseChatModel<
   VscodeLangChainCallOptions
 > {
@@ -104,9 +86,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     return 'vscode-request-model';
   }
 
-  /**
-   * Binds model-facing tool metadata. Execution remains graph/dispatcher-owned.
-   */
+  /** Binds model-facing tool metadata. Execution remains graph/dispatcher-owned. */
   bindTools(
     tools: VscodeBridgeToolDefinition[],
     kwargs: Partial<VscodeLangChainCallOptions> = {},
@@ -265,18 +245,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
   }
 }
 
-/**
- * Converts one LangChain message without adding history or helper prose.
- *
- * @remarks
- * An assistant message replays the provider stream parts it carries ({@link PROVIDER_PARTS_KEY})
- * as the original objects, ahead of its text and tool calls, in the order the provider streamed
- * them: the model's own turn goes back verbatim, never rebuilt from the fields this bridge reads.
- *
- * A `ToolMessage`'s `status` is not projected: `vscode.LanguageModelToolResultPart` has no error
- * flag, and the bridge adds no prose. A failed call reaches the model through its content alone,
- * which for every rejection or dispatch error is the shared error envelope naming its code.
- */
+/** Converts one LangChain message without adding history or helper prose. */
 function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
     return vscode.LanguageModelChatMessage.User(toTextParts(message.content), message.name);

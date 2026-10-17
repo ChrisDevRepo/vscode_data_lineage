@@ -1,11 +1,4 @@
-/**
- * Covers `runAnalysis` — the dispatcher the product calls.
- *
- * The per-analysis functions are tested directly in graphAnalysis.test.ts, but nothing
- * exercised the switch that routes to them or the threshold arithmetic it applies. A
- * mis-wired case there returns a well-formed report for the wrong analysis, which every
- * direct-call test still passes.
- */
+/** Covers `runAnalysis` — the dispatcher the product calls. */
 
 import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';
@@ -15,10 +8,7 @@ import { makeGraph } from '../helpers/modelFixtures';
 
 const CONFIG: AnalysisConfig = { hubMinDegree: 2, islandMaxSize: 4, longestPathMinNodes: 2 };
 
-/**
- * One hub (`H`, degree 4), one 2-node island (`I1`→`I2`), one orphan (`O`), one cycle
- * (`C1`→`C2`→`C1`) and a chain long enough for the longest-path analysis.
- */
+/** One hub (`H`, degree 4), one 2-node island (`I1`→`I2`), one orphan (`O`), one cycle (`C1`→`C2`→`C1`) and a chain long enough for the longest-path analysis. */
 function mixedGraph(): Graph {
   return makeGraph(
     [

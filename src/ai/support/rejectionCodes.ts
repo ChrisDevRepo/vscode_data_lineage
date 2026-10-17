@@ -1,11 +1,4 @@
-/**
- * Single owner for rejection codes that appear on more than one surface.
- *
- * @remarks
- * A code belongs here only once a second surface (a hint payload, instruction prose) shows its
- * wire `error` literal to the model — most codes live only where they are emitted. Both surfaces
- * then interpolate this constant, so a rename cannot drift between the guard and the prompt.
- */
+/** Single owner for rejection codes that appear on more than one surface. */
 export const REJECTION_CODES = {
   /** Tool called outside the current phase's `toolPolicy` allow-list. */
   offPolicy: 'off_policy',
@@ -29,13 +22,7 @@ export const REJECTION_CODES = {
   supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
   /** `supplement` named no node to extend; the repair is to answer, never to resend an empty list. */
   supplementEmpty: 'supplement_empty',
-  /**
-   * Every id named in a `supplement` request was refused — unresolved (no such object), or stopped by
-   * the border (excluded, out-of-allowlist, or not connected to the trace) — distinct from
-   * {@link supplementEmpty}, whose list of ids was empty to begin with. The repair is a corrective
-   * tool call (a new `lineage_start_exploration` proposal for a border refusal), never a resend of
-   * this supplement.
-   */
+  /** Every id named in a `supplement` request was refused — unresolved (no such object), or stopped by the border (excluded, out-of-allowlist, or not connected to the trace) — distinct from {@link supplementEmpty}, whose list of ids was empty to begin with. The repair is a corrective tool call (a new `lineage_start_exploration` proposal for a border refusal), never a resend of this supplement. */
   supplementAllRefused: 'supplement_all_refused',
   /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
   invalidRegex: 'invalid_regex',

@@ -1,6 +1,4 @@
-/**
- * Tests for dacpac extraction, filtering, edge integrity, and error handling.
- */
+/** Tests for dacpac extraction, filtering, edge integrity, and error handling. */
 
 import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
@@ -74,15 +72,7 @@ async function testExtraction() {
 }
 
 
-/**
- * Pins the exact edge set the SQL-body parser derives for two AdventureWorks procedures.
- *
- * @remarks
- * `testExtraction` only proves the model has *some* edges. These two procedures were chosen
- * because between them they exercise every extraction category on real dacpac bodies: reads
- * (`FROM`/`JOIN`), writes (`INSERT`/`UPDATE`), a table that is both read and written in the same
- * body, and `EXEC` calls. A regression in any parse rule changes one of these sets.
- */
+/** Pins the exact edge set the SQL-body parser derives for two AdventureWorks procedures. */
 async function testNamedProcedureEdges() {
   const model = await loadAdventureWorksModel();
 
@@ -439,15 +429,7 @@ async function testDacpacExtractionOptions() {
 }
 
 
-/**
- * Covers the `allObjects`-defined branch of `buildModel` — `buildCatalog(allObjects ?? objects)`
- * and `buildFullCatalog(allObjects)`.
- *
- * The DMV lane does not supply `allObjects`, so the DACPAC lane is the only producer of a catalog
- * wider than the rendered node set — this is the sole coverage for that branch. Asserts that an
- * object outside the selected schemas is still resolvable for display and still reachable
- * through `neighborIndex`, without being rendered as a node.
- */
+/** Covers the `allObjects`-defined branch of `buildModel` — `buildCatalog(allObjects ?? objects)` and `buildFullCatalog(allObjects)`. */
 async function testCrossSchemaCatalogUnderFilter() {
 
   const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
@@ -487,11 +469,7 @@ async function testCrossSchemaCatalogUnderFilter() {
 }
 
 
-/**
- * Builds a dacpac whose property values carry the five predefined XML entities, a numeric
- * character reference, and a double-escaped `&amp;lt;`, plus a CDATA body whose literal
- * entity-like text must be served verbatim.
- */
+/** Builds a dacpac whose property values carry the five predefined XML entities, a numeric character reference, and a double-escaped `&amp;lt;`, plus a CDATA body whose literal entity-like text must be served verbatim. */
 async function makeEntityDacpac(): Promise<Uint8Array> {
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
@@ -548,10 +526,7 @@ function computedColumnXml(owner: string, name: string, script: string | undefin
   return `<Entry><Element Type="SqlComputedColumn" Name="${owner}.[${name}]">${scriptXml}${depsXml}</Element></Entry>`;
 }
 
-/**
- * Builds a dacpac with a table whose computed columns are bare references or expressions, and a
- * view whose columns (no ExpressionScript, as DacFx emits them) each read one table column.
- */
+/** Builds a dacpac with a table whose computed columns are bare references or expressions, and a view whose columns (no ExpressionScript, as DacFx emits them) each read one table column. */
 async function makeComputedColumnDacpac(): Promise<Uint8Array> {
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();

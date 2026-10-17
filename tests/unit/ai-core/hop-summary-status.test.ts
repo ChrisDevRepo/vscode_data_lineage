@@ -106,10 +106,7 @@ function makeGateSink() {
   return { events, sink, nextGate };
 }
 
-/**
- * Submits through the REAL engine and, on acceptance, dequeues the next agenda entry — mirroring
- * `submitFindings.ts`'s own post-commit `getHopContext()` call.
- */
+/** Submits through the REAL engine and, on acceptance, dequeues the next agenda entry — mirroring `submitFindings.ts`'s own post-commit `getHopContext()` call. */
 function submitAndAdvance(engine: NavigationEngine, finding: HopSubmission) {
   const result = engine.submitFindings(finding);
   if (!('code' in result)) engine.getHopContext();
@@ -129,11 +126,7 @@ function commitStubPresentation(session: AiSession, epoch: number): string {
 const statusLabels = (events: readonly TurnEvent[]): string[] =>
   events.filter((e): e is Extract<TurnEvent, { type: 'status' }> => e.type === 'status').map(e => e.label);
 
-/**
- * Runs one approved two-hop turn through the real runtime. The scripted handler commits
- * `LONG_SUMMARY` for the origin and `SHORT_SUMMARY` for the leaf; `leafCallSummary` is what the
- * model's leaf call itself carries.
- */
+/** Runs one approved two-hop turn through the real runtime. The scripted handler commits `LONG_SUMMARY` for the origin and `SHORT_SUMMARY` for the leaf; `leafCallSummary` is what the model's leaf call itself carries. */
 async function hopSummaryLabelsForTurn(leafCallSummary: string, leafCommittedSummary = SHORT_SUMMARY, cancelBeforeLeafCommit = false, repairOrigin = false): Promise<{ labels: string[]; events: TurnEvent[]; archive: string; requests: string; debug: string[] }> {
   const session = new AiSession();
   const leaves = seedFanOutLineage(session, 1);

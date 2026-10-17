@@ -1,17 +1,9 @@
-/**
- * Shared helpers for aggregating object-level edges into schema-level edges.
- *
- * Pure, zero-import module behind the schema projection layer
- * (`schemaProjection`), holding its bidirectional-collapse rules.
- */
+/** Shared helpers for aggregating object-level edges into schema-level edges. */
 
 /** Separator that cannot appear in schema names, for composite edge keys. */
 const SCHEMA_EDGE_KEY_SEPARATOR = '\u0000';
 
-/**
- * Aggregated schema-to-schema dependency edge with antiparallel pairs
- * collapsed into a single bidirectional entry.
- */
+/** Aggregated schema-to-schema dependency edge with antiparallel pairs collapsed into a single bidirectional entry. */
 export interface CollapsedSchemaEdge {
   /** Source schema (lexicographically first when bidirectional). */
   sourceSchema: string;
@@ -43,15 +35,7 @@ export function addRawSchemaEdge(rawEdges: Map<string, number>, sourceSchema: st
   rawEdges.set(key, (rawEdges.get(key) ?? 0) + 1);
 }
 
-/**
- * Collapses a raw directed schema→schema count map into deduplicated edges,
- * merging antiparallel pairs into single bidirectional entries.
- *
- * @param rawEdges - Directed counts keyed by {@link schemaEdgeKey}.
- *
- * @returns Edges in sorted-key encounter order; bidirectional entries use the
- * lexicographically first schema as the source.
- */
+/** Collapses a raw directed schema→schema count map into deduplicated edges, merging antiparallel pairs into single bidirectional entries. */
 export function collapseRawSchemaEdges(rawEdges: ReadonlyMap<string, number>): CollapsedSchemaEdge[] {
   const consumed = new Set<string>();
   const edges: CollapsedSchemaEdge[] = [];

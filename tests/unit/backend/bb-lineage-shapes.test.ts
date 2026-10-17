@@ -1,9 +1,5 @@
 // Owner: src/ai/sm/smBase.ts and engine/graphGuards.ts; BB navigation and prune functional contracts.
-/**
- * Object-level (BB) lineage by graph shape: the delivered graph is the approved directed ball of the
- * origin minus what a prune removed, every delivered node keeps a directed path to the origin, and
- * every delivered edge joins two delivered nodes.
- */
+/** Object-level (BB) lineage by graph shape: the delivered graph is the approved directed ball of the origin minus what a prune removed, every delivered node keeps a directed path to the origin, and every delivered edge joins two delivered nodes. */
 import { describe, expect, it } from 'vitest';
 import { delivered, drain, submit, withoutDirectedPath, world, type DepthSide, type HopScript } from './helpers/bbShapes';
 import type { ObjectType } from '../../../src/engine/types';

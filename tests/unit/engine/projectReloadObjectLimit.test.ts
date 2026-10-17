@@ -1,9 +1,4 @@
-/**
- * Pins that reopening a saved project whose source grew past `dataLineageViz.maxNodes` loads nothing
- * and reports the one object-limit message — for a DACPAC project and for a database project alike —
- * and that every DACPAC load path resolves three-part names against the DACPAC name and logs a
- * construct that is not fully supported as a warning.
- */
+/** Pins that reopening a saved project whose source grew past `dataLineageViz.maxNodes` loads nothing and reports the one object-limit message — for a DACPAC project and for a database project alike — and that every DACPAC load path resolves three-part names against the DACPAC name and logs a construct that is not fully supported as a warning. */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
 import type { ProjectStore } from '../../../src/engine/projectStore';

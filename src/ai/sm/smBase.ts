@@ -31,17 +31,9 @@ import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigat
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
-/**
- * A hop neighbour plus the engine decisions already taken about it.
- *
- * @remarks
- * A neighbor passed through on the route into the current focus is already visited and cannot be
- * pruned at that focus. Column evidence does not create additional retention protections.
- */
+/** A hop neighbour plus the engine decisions already taken about it. */
 export interface HopNeighborDisclosure extends HopNeighbor {
-  /**
-   * A neighbor already passed through on the route into this focus, protected by the visit-once rule.
-   */
+  /** A neighbor already passed through on the route into this focus, protected by the visit-once rule. */
   prune_protected?: boolean;
   /** Already analyzed on an earlier hop; a prune cannot remove committed analysis. */
   already_visited?: boolean;
@@ -49,13 +41,7 @@ export interface HopNeighborDisclosure extends HopNeighbor {
   already_removed?: boolean;
   /** Columns a committed `column_flow` edge attributes to this neighbour, as evidence only. */
   attributed_columns?: string[];
-  /**
-   * This neighbour is unreachable from the origin in the approved direction (a downstream write
-   * target during an upstream-only run, or the reverse), in BB and CT alike. In a bidirectional
-   * session it marks a neighbour outside both the upstream and the downstream closure of the
-   * origin, reached only sideways through a shared node. An out-of-direction neighbour is never
-   * visited, and a prune on it is a no-op.
-   */
+  /** This neighbour is unreachable from the origin in the approved direction (a downstream write target during an upstream-only run, or the reverse), in BB and CT alike. In a bidirectional session it marks a neighbour outside both the upstream and the downstream closure of the origin, reached only sideways through a shared node. An out-of-direction neighbour is never visited, and a prune on it is a no-op. */
   out_of_direction?: boolean;
   /** An open target can receive an in-scope subquestion or an out-of-scope deferred proposal. */
   can_question: boolean;
@@ -102,18 +88,11 @@ const REMOVAL_REFUSAL: Record<NonNullable<RemovalAnalysis['rejection']>, string>
   'unknown-node': 'not removed — it is not in the loaded model, so there is nothing to prune.',
   'visited': 'not removed — it is retained by committed analysis or a column mapping.',
 };
-/**
- * Fields of a held finding draft besides its section angles. Each is one part: a retry that sends it
- * replaces the held value whole (`[]` clears a held list), and a retry that omits it keeps the held
- * value. An empty `summary` counts as omitted.
- */
+/** Fields of a held finding draft besides its section angles. Each is one part: a retry that sends it replaces the held value whole (`[]` clears a held list), and a retry that omits it keeps the held value. An empty `summary` counts as omitted. */
 const HELD_FIELDS = ['summary', 'badge_label', 'prune_neighbors', 'questions', 'column_flow', 'terminated_inputs'] as const;
 type HeldField = typeof HELD_FIELDS[number];
 
-/**
- * Splits dotted issue paths into the parts a rejection fails: `sections.<angle>` fails that angle,
- * and any other path fails its whole top-level field (`questions.1.nodeId` fails `questions`).
- */
+/** Splits dotted issue paths into the parts a rejection fails: `sections.<angle>` fails that angle, and any other path fails its whole top-level field (`questions.1.nodeId` fails `questions`). */
 function splitFailedParts(paths: readonly string[]): { readonly fields: Set<string>; readonly angles: Set<string> } {
   const fields = new Set<string>();
   const angles = new Set<string>();
@@ -130,9 +109,7 @@ function splitFailedParts(paths: readonly string[]): { readonly fields: Set<stri
 /** A section angle's merge key. */
 const angleKey = (section: { angle?: string }): string => section.angle ?? '';
 
-/**
- * Defines the core interface for the state machine handling exploration modes.
- */
+/** Defines the core interface for the state machine handling exploration modes. */
 export interface IHopStateMachine {
   /** The current status of the state machine. */
   readonly status: SmStatus;
@@ -188,45 +165,20 @@ export interface IHopStateMachine {
   /** Every captured detail slot in insertion order. */
   getDetailSlots(): DetailSlot[];
 
-  /**
-   * Extends a completed exploration with additional nodes for analysis.
-   *
-   * @remarks
-   * Only callable when `status === 'complete'` and at least one object id is supplied; the engine
-   * re-enters `awaiting_findings` and merges new `DetailSlot` entries without resetting prior
-   * analysis.
-   *
-   * @param nodeIds - Ids to append to the shared agenda. Storage objects automatically forward to connected SQL within the approved routing border.
-   *   Ids outside the graph are dropped.
-   * @param leadIds - Host-selected pending lead identifiers to schedule.
-   * @returns Counts agendaed or skipped (unknown / duplicate), plus `skippedDetails`
-   *   naming which id was dropped and why.
-   */
+  /** Extends a completed exploration with additional nodes for analysis. */
   supplementAgenda(nodeIds: string[], leadIds?: string[], chain?: SupplementChain): { ok: true; agendaed: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection;
 }
 
-/**
- * The write path a border test serves. Every purpose tests the exclusion sets; `route`
- * also tests approved-direction reachability, while `supplement` (an already-surfaced
- * lead) and `seed_bfs` (the walk that defines the direction) do not.
- */
+/** The write path a border test serves. Every purpose tests the exclusion sets; `route` also tests approved-direction reachability, while `supplement` (an already-surfaced lead) and `seed_bfs` (the walk that defines the direction) do not. */
 type BorderPurpose = 'route' | 'supplement' | 'seed_bfs';
 
-/**
- * First failing border axis for a candidate node, or `in_border` when it clears every
- * participating axis. A discriminated verdict (not a boolean bag) so a caller can route each
- * outcome distinctly — e.g. the route path rejects `excluded` but *defers* `out_of_direction`.
- */
+/** First failing border axis for a candidate node, or `in_border` when it clears every participating axis. A discriminated verdict (not a boolean bag) so a caller can route each outcome distinctly — e.g. the route path rejects `excluded` but *defers* `out_of_direction`. */
 type BorderVerdict =
   | { kind: 'in_border' }
   | { kind: 'excluded'; axis: 'type' | 'schema' | 'node_id' }
   | { kind: 'out_of_direction' };
 
-/**
- * Combined border + depth admission test for one route candidate. A record, not a boolean: the two
- * axes are reported to the model differently (schema gate name vs level count), so callers that
- * need the distinction read the axes while others read only `admitted`.
- */
+/** Combined border + depth admission test for one route candidate. A record, not a boolean: the two axes are reported to the model differently (schema gate name vs level count), so callers that need the distinction read the axes while others read only `admitted`. */
 type RouteAdmission = {
   /** First failing border axis, or `in_border`. */
   border: BorderVerdict;
@@ -284,13 +236,7 @@ interface ValidatedHop {
   stagedColumnFlowEntries: number;
 }
 
-/**
- * Unified Navigation Engine — the core state machine for all exploration modes.
- *
- * @remarks
- * Map & Router: the engine owns the topological map (visited/current/agenda); the AI acts as
- * router, proposing hops the engine validates before advancing.
- */
+/** Unified Navigation Engine — the core state machine for all exploration modes. */
 export class NavigationEngine implements IHopStateMachine {
   /** The database model containing nodes and edges. */
   protected readonly model: DatabaseModel;
@@ -309,15 +255,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Optional session identifier for tracking logs across rounds. */
   public sessionId?: string;
-  /**
-   * Gate-locked mission-type classification (`business`|`technical`|`both`) — the AI's own verdict,
-   * declared as a required field on the `start_exploration` proposal and Zod-validated before the
-   * gate can approve.
-   *
-   * @remarks
-   * Set by the caller after construction, like {@link sessionId} — not a constructor param, and
-   * excluded from {@link toJSON}; `AiSession.classification` is the single source of truth.
-   */
+  /** Gate-locked mission-type classification (`business`|`technical`|`both`) — the AI's own verdict, declared as a required field on the `start_exploration` proposal and Zod-validated before the gate can approve. */
   public classification?: ClassificationValue;
   /** The operational status of the state machine. */
   protected _status: SmStatus = 'created';
@@ -331,15 +269,7 @@ export class NavigationEngine implements IHopStateMachine {
   protected visited = new Set<string>();
   /** Set of node identifiers excluded during exploration cascades. */
   protected removedSet = new Set<string>();
-  /**
-   * A neighbor prune not yet resolved: nodeId → each sender's own vote on its edge into the node
-   * (`'prune'` from `prune_neighbors`, `'keep'` from an ordinary route, a question, or — CT — a
-   * `column_flow` reference). One sender casts at most one ballot, keyed by its own focus id, so a
-   * reactivated sender's fresh verdict replaces its own earlier one rather than adding a second
-   * vote — {@link tryResolvePrunes} removes the node only once every live sender has finished and
-   * every recorded ballot reads `'prune'`, or when the agenda empties. Checkpoints preserve
-   * accepted ballots so resuming does not change a shared node's fate.
-   */
+  /** A neighbor prune not yet resolved: nodeId → each sender's own vote on its edge into the node (`'prune'` from `prune_neighbors`, `'keep'` from an ordinary route, a question, or — CT — a `column_flow` reference). One sender casts at most one ballot, keyed by its own focus id, so a reactivated sender's fresh verdict replaces its own earlier one rather than adding a second vote — {@link tryResolvePrunes} removes the node only once every live sender has finished and every recorded ballot reads `'prune'`, or when the agenda empties. Checkpoints preserve accepted ballots so resuming does not change a shared node's fate. */
   private pruneBallots = new Map<string, Map<string, 'prune' | 'keep'>>();
   /** Removals since the last hop commit began, reported in that commit's acknowledgement ({@link commitRemovals}). */
   private hopRemovals: { pruned: string[]; cut_ids: string[] } = { pruned: [], cut_ids: [] };
@@ -369,38 +299,16 @@ export class NavigationEngine implements IHopStateMachine {
   protected depthFromOrigin = new Map<string, number>();
   /** The configurable depth budget. */
   protected depthBudget: number | null = null;
-  /**
-   * Both sides unbounded — the default depth ceiling. Never mutated in place (only ever
-   * reassigned wholesale), so instances may safely share this one frozen object.
-   */
+  /** Both sides unbounded — the default depth ceiling. Never mutated in place (only ever reassigned wholesale), so instances may safely share this one frozen object. */
   private static readonly UNBOUNDED_DEPTH_LIMITS: { upstream: number; downstream: number } = Object.freeze({
     upstream: Number.POSITIVE_INFINITY,
     downstream: Number.POSITIVE_INFINITY,
   });
-  /**
-   * Per-side depth ceilings from the approved intent; `Infinity` where that side is unbounded. A
-   * side at `levels: 0` is `0` whatever its exactness.
-   *
-   * @remarks
-   * Kept alongside {@link depthBudget} because a single scalar cannot express an asymmetric ask:
-   * collapsing `{upstream: 2, downstream: 1}` to its maximum enforces 2 on both sides, admitting
-   * a node the user capped out. Only consulted when {@link depthEnforcement} is `'strict'`.
-   */
+  /** Per-side depth ceilings from the approved intent; `Infinity` where that side is unbounded. A side at `levels: 0` is `0` whatever its exactness. */
   protected depthLimits: { upstream: number; downstream: number } = NavigationEngine.UNBOUNDED_DEPTH_LIMITS;
-  /**
-   * Whether the approved depth is a hard border (`'strict'`) or an initial seed the model may grow
-   * (`'silent'`). Set from the AI's own `depthIntent`: an `'exact'` side binds and a `levels: 0`
-   * side is always closed; an open `'approximate'` side does not bind.
-   */
+  /** Whether the approved depth is a hard border (`'strict'`) or an initial seed the model may grow (`'silent'`). Set from the AI's own `depthIntent`: an `'exact'` side binds and a `levels: 0` side is always closed; an open `'approximate'` side does not bind. */
   protected depthEnforcement: 'strict' | 'silent' = 'silent';
-  /**
-   * Resolves the per-side ceilings, published budget and enforcement of an approved depth intent.
-   *
-   * @remarks
-   * The rule `init()` applies. A side at `levels: 0` is closed (`0`) whatever its exactness;
-   * otherwise only an `'exact'` side binds and an `'approximate'` side is `Infinity`. The budget is
-   * the larger ceiling when both are finite, and enforcement is `'strict'` once either is finite.
-   */
+  /** Resolves the per-side ceilings, published budget and enforcement of an approved depth intent. */
   private static resolveDepthBorder(depthIntent: DepthIntent): {
     limits: { upstream: number; downstream: number };
     budget: number | null;
@@ -418,26 +326,14 @@ export class NavigationEngine implements IHopStateMachine {
       enforcement: Number.isFinite(limits.upstream) || Number.isFinite(limits.downstream) ? 'strict' : 'silent',
     };
   }
-  /**
-   * Directed distance from the origin to every reachable node, per side; cleared whenever the BFS
-   * seed is recomputed and refilled on the next depth read ({@link ensureDirectedDepths}).
-   *
-   * @remarks
-   * Both sides are kept because a border can be asymmetric — collapsing to one number would judge a
-   * node against the ceiling the user did not set for that path. Absent when no directed path reaches that side.
-   */
+  /** Directed distance from the origin to every reachable node, per side; cleared whenever the BFS seed is recomputed and refilled on the next depth read ({@link ensureDirectedDepths}). */
   private directedDepths = new Map<string, { upstream?: number; downstream?: number }>();
   /** Whether {@link directedDepths} holds the current seed's walk; false until the next fill. */
   private directedDepthsFilled = false;
   /** History of explicit AI expansions beyond the initial BFS seed. */
   protected budgetExpansions: Array<{ nodeId: string; depth: number; atHop: number }> = [];
 
-  /**
-   * Submission held after a rejection a retry can correct without re-authoring the analysis — a
-   * schema rejection in the `submit_findings` handler ({@link holdRejectedSubmission}), a route/column
-   * fault, or a field over its length cap — so {@link applyHeldContent} restores what the retry
-   * omits. Other rejections never establish held state.
-   */
+  /** Submission held after a rejection a retry can correct without re-authoring the analysis — a schema rejection in the `submit_findings` handler ({@link holdRejectedSubmission}), a route/column fault, or a field over its length cap — so {@link applyHeldContent} restores what the retry omits. Other rejections never establish held state. */
   private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, { readonly failed: readonly string[]; readonly focusId: string; readonly hop: number; readonly mode: 'bb' | 'ct' }>();
 
   /** Exploration direction set by `init`; consulted by `enqueueHop` when contracting reference nodes. */
@@ -461,25 +357,12 @@ export class NavigationEngine implements IHopStateMachine {
   protected guiExcludedNodeIds: Set<string> = new Set();
   /** Each GUI exclusion pattern that compiles, in filter order, with its own node predicate — attributes an excluded object to the rule that matched it ({@link getScopeSummary}). */
   private readonly guiExclusionRules: Array<{ pattern: string; matches: (node: { schema: string; name: string; fullName: string }) => boolean }> = [];
-  /**
-   * Specific node ids (lower-cased) the user asked to keep in scope but skip analysis on.
-   * The hop dispatcher detects these on dequeue and records user passthrough — topology
-   * is preserved so descendants stay reachable.
-   */
+  /** Specific node ids (lower-cased) the user asked to keep in scope but skip analysis on. The hop dispatcher detects these on dequeue and records user passthrough — topology is preserved so descendants stay reachable. */
   protected passNodeIds: Set<string> = new Set();
   /** Last `init` params kept for refine re-run — origin/direction/depth/etc survive across the gate cycle. */
   protected initSnapshot: EngineInitSnapshot | null = null;
 
-  /**
-   * Compressed AI-composed memo of the discovery walk's findings + user-stated semantic
-   * constraints, composed once after gate approval and rendered into every hop's stable prefix as
-   * `<discovery_summary>` (alongside `<mission_brief>` and the sliding `<short_term_memory>`).
-   *
-   * @remarks
-   * Captures user-stated intent that cannot be expressed in the structural approval fields (e.g.
-   * "ignore audit-related processing"), so it rides with the AI across hops even past a mid-walk
-   * node that wasn't pre-listable. Never wiped by sliding-memory rotations. Read via {@link getDiscoverySummary}.
-   */
+  /** Compressed AI-composed memo of the discovery walk's findings + user-stated semantic constraints, composed once after gate approval and rendered into every hop's stable prefix as `<discovery_summary>` (alongside `<mission_brief>` and the sliding `<short_term_memory>`). */
   protected _discoverySummary: string | null = null;
   /** Last per-hop snapshot of detail/summary chars, used for diagnostics. */
   protected lastHopDetailChars = 0;
@@ -573,14 +456,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.depthEnforcement === 'strict' ? this.depthBudget : null;
   }
 
-  /**
-   * Object types the GUI filter hid at session start.
-   *
-   * @remarks
-   * The default `excludeTypes` baseline a fresh proposal is seeded with when the model states
-   * none of its own — a plain approve then keeps them out; an explicit `excludeTypes` on a later
-   * call replaces this default rather than adding to it.
-   */
+  /** Object types the GUI filter hid at session start. */
   public getGuiHiddenTypes(): string[] {
     return Array.from(this.guiHiddenTypes);
   }
@@ -600,12 +476,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.heldFindingFocus !== null && this.heldFindingDraft.get()?.column_flow !== undefined;
   }
 
-  /**
-   * Canonical focus id of a currently-held finding, or `null` when none is held.
-   *
-   * @remarks
-   * Non-null means a rejected submit_findings of this focus left correctable parts held.
-   */
+  /** Canonical focus id of a currently-held finding, or `null` when none is held. */
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();
     const authorization = this.heldFindingDraft.getAuthorization();
@@ -619,16 +490,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
   }
 
-  /**
-   * Overlays a retry on the draft held for the same focus by the one held-draft rule: each part the
-   * retry sends — a section angle or a {@link HELD_FIELDS} field — replaces the held part whole, and
-   * each part it omits keeps the held part. Nothing else is restored, dropped or combined.
-   *
-   * @returns The submission to apply, or a `missing_field` rejection when a finding carries no
-   *   sections and no summary and no held draft of this focus supplies them, or when neither the
-   *   retry nor a held draft supplies a non-empty summary. Empty sections with an authored summary
-   *   pass on: a revisit credits the angles already archived.
-   */
+  /** Overlays a retry on the draft held for the same focus by the one held-draft rule: each part the retry sends — a section angle or a {@link HELD_FIELDS} field — replaces the held part whole, and each part it omits keeps the held part. Nothing else is restored, dropped or combined. */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
     const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap, this.identifierCaseSensitive);
     const held = inFocus === this.currentFocusNodeId ? this.heldDraftOfCurrentFocus() : null;
@@ -666,15 +528,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Holds valid parts of an initially schema-rejected finding; malformed repairs preserve an existing
-   * draft and request both its outstanding fields and the malformed repair's defective fields.
-   *
-   * @param input - The rejected payload as the model sent it.
-   * @param failedPaths - Dotted Zod issue paths of the rejection.
-   * @returns What the draft now holds and what must be resent. A call that does not name
-   *   the current focus holds nothing new and reports the draft already held; `null` when nothing is held.
-   */
+  /** Holds valid parts of an initially schema-rejected finding; malformed repairs preserve an existing draft and request both its outstanding fields and the malformed repair's defective fields. */
   public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): HeldSubmissionParts | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
     const raw = input as Record<string, unknown> & { focus_node_id?: unknown };
@@ -697,12 +551,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.holdValidParts(sent, failedPaths);
   }
 
-  /**
-   * Holds a rejected finding minus the parts the rejection's issue paths fail ({@link splitFailedParts}):
-   * a failed section angle or field is left out whole and named as owed in the next retry.
-   *
-   * @returns The held parts, or `null` (and nothing held) when no valid part remains.
-   */
+  /** Holds a rejected finding minus the parts the rejection's issue paths fail ({@link splitFailedParts}): a failed section angle or field is left out whole and named as owed in the next retry. */
   private holdValidParts(finding: HopFindingKept, issuePaths: readonly string[]): HeldSubmissionParts | null {
     const { fields, angles } = splitFailedParts(issuePaths);
     const draft: HopFindingKept = {
@@ -757,10 +606,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Neighbours removed by a resolved AI prune, each with the sender's own reason — follow-up
-   * material for the completed chat, not report content.
-   */
+  /** Neighbours removed by a resolved AI prune, each with the sender's own reason — follow-up material for the completed chat, not report content. */
   public get prunedBranches(): ReadonlyArray<PrunedBranch> {
     return this.pendingLeads
       .filter(lead => lead.reason === 'pruned_by_ai' && this.removedSet.has(lead.nodeId))
@@ -777,24 +623,13 @@ export class NavigationEngine implements IHopStateMachine {
     return this.taskLedger.pendingLeads.filter(lead => lead.status === 'pending');
   }
 
-  /**
-   * Records a deferred route — the sole entry point for mutating the bucket.
-   *
-   * @remarks
-   * Deduplicates on `(nodeId, fromFocusNodeId)`: a later deferral for the same pair replaces the
-   * earlier one. Also records a rejection in memory so `recent_rejections` reflects the same event.
-   */
+  /** Records a deferred route — the sole entry point for mutating the bucket. */
   protected deferQuestion(entry: DeferredQuestion, legs: ReadonlyArray<ContinuationLeg> = []): void {
     this.recordPendingLead(entry, legs);
     this.memory.recordRejection(entry.nodeId, `deferred: out of approved scope (${entry.reason})`, entry.atHop);
   }
 
-  /**
-   * Records the structured task and lead corresponding to an accepted scope-boundary deferral.
-   *
-   * @remarks
-   * Each deferral reason maps to its `PendingLead['reason']` through {@link LEAD_REASON_BY_DEFERRAL}.
-   */
+  /** Records the structured task and lead corresponding to an accepted scope-boundary deferral. */
   private recordPendingLead(entry: DeferredQuestion, legs: ReadonlyArray<ContinuationLeg>): void {
     const leadReason = LEAD_REASON_BY_DEFERRAL[entry.reason];
     const tasks = legs.length > 0
@@ -816,15 +651,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Records one sender's prune reason as a `pending` `pruned_by_ai` lead, re-arming one an earlier
-   * vote left dismissed. A vote that keeps the node, its dispatch or its return to the graph
-   * dismisses the lead.
-   *
-   * @param nodeId - Resolved neighbour the sender voted to prune.
-   * @param fromNodeId - The sender focus.
-   * @param reason - The sender's `prune_neighbors[].reason`, verbatim.
-   */
+  /** Records one sender's prune reason as a `pending` `pruned_by_ai` lead, re-arming one an earlier vote left dismissed. A vote that keeps the node, its dispatch or its return to the graph dismisses the lead. */
   private recordPruneLead(nodeId: string, fromNodeId: string, reason: string): void {
     const task = this.ensureDeferredTask(nodeId, '', this.hopCount);
     this.taskLedger.ensureLead({
@@ -839,15 +666,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Applies the mode's task shape to one set of common task fields.
-   *
-   * @remarks
-   * The single home for the CT/BB task fork: a CT task is `column_lineage` carrying the columns the
-   * hop tracks, a BB task is the plain kind with no column state.
-   *
-   * @param preferredColumns - Columns this task tracks; an empty list creates an object task.
-   */
+  /** Applies the mode's task shape to one set of common task fields. */
   private taskInputFor(
     common: Omit<InvestigationTaskInput, 'kind' | 'activeColumns' | 'returnTargets'>,
     bbKind: 'root' | 'analytical',
@@ -863,13 +682,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  /**
-   * Creates a structurally mode-valid deferred task without changing agenda state.
-   *
-   * @remarks
-   * A deferred continuation keeps the qualified leg that arrived for it, so a later follow-up
-   * resumes from those exact endpoints; without a leg the task is an object task.
-   */
+  /** Creates a structurally mode-valid deferred task without changing agenda state. */
   private ensureDeferredTask(nodeId: string, question: string, createdHop: number, leg?: ContinuationLeg): InvestigationTask {
     const columns = leg && [...new Map(leg.sourceRefs.map(ref => [this.columnKey(ref.col), ref.col])).values()];
     return this.taskLedger.ensureTask(this.taskInputFor({
@@ -893,14 +706,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
-  /**
-   * Records the process lifecycle state for a node.
-   *
-   * @remarks
-   * Source of truth for whether a node was analyzed, passed through, or pruned (`DetailSlot`
-   * remains only the text bucket). Stronger terminal states replace weaker ones, so an
-   * AI-analyzed node is not later downgraded by an incidental pass-through observation.
-   */
+  /** Records the process lifecycle state for a node. */
   private markNodeState(
     nodeId: string,
     action: SmNodeAction,
@@ -946,11 +752,7 @@ export class NavigationEngine implements IHopStateMachine {
       && this.directionalNeighbors(carrierId, this._direction).includes(focusId);
   }
 
-  /**
-   * Emits a session-end diagnostic summarizing badge_label diversity across analyzed verdicts. Low
-   * diversity indicates the AI is not distinguishing functional roles, so the final view won't
-   * group variants usefully.
-   */
+  /** Emits a session-end diagnostic summarizing badge_label diversity across analyzed verdicts. Low diversity indicates the AI is not distinguishing functional roles, so the final view won't group variants usefully. */
   private logLabelDiversity(): void {
     const labels: string[] = [];
     for (const slot of this.memory.getResult().detail_slots) {
@@ -995,23 +797,12 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  /**
-   * Continuation questions carried on the dequeued {@link AgendaEntry} for the hop currently in
-   * flight — set at dispatch in {@link getHopContext}, from that entry's own `lineageQuestions`,
-   * never from whichever node happened to commit most recently. Both the live per-hop worker message
-   * and {@link toJSON} read this, so the state dump records the questions the hop was dispatched with.
-   */
+  /** Continuation questions carried on the dequeued {@link AgendaEntry} for the hop currently in flight — set at dispatch in {@link getHopContext}, from that entry's own `lineageQuestions`, never from whichever node happened to commit most recently. Both the live per-hop worker message and {@link toJSON} read this, so the state dump records the questions the hop was dispatched with. */
   public get pendingLineageQuestions(): string[] {
     return this._pendingLineageQuestions;
   }
 
-  /**
-   * Returns every captured detail slot in insertion order.
-   *
-   * @remarks
-   * Mirrors `getResult().detail_slots` but is callable mid-exploration. Slot count equals the
-   * number of nodes that produced at least one `submit_findings.sections[]` entry.
-   */
+  /** Returns every captured detail slot in insertion order. */
   public getDetailSlots(): DetailSlot[] {
     return this.memory.getResult().detail_slots;
   }
@@ -1055,19 +846,7 @@ export class NavigationEngine implements IHopStateMachine {
     return origin && this.tracer ? this.matchColumnsToNode(origin, this.tracer.targetColumns).resolved.map(col => ({ node: origin, col })) : [];
   }
 
-  /**
-   * The qualified (node, column) identities a column task continues from.
-   *
-   * @remarks
-   * A non-root task carries its own `sourceRefs` or scalar `returnTargets`, set from the committed
-   * edge or carry that created it. The root task's only anchor is the origin with its explicitly
-   * requested target columns. Nothing is recovered from task ancestry, historical edges or a
-   * column name that merely exists on a node.
-   *
-   * @param task - The task to read.
-   * @returns The qualified endpoints, `[]` for an object task, or `null` for a column task that
-   *   carries none — an engine invariant violation that stops the dispatch.
-   */
+  /** The qualified (node, column) identities a column task continues from. */
   private qualifiedTaskRefs(task: InvestigationTask): Array<{ node: string; col: string }> | null {
     if (task.kind !== 'column_lineage') return [];
     if (task.sourceRefs?.length) return task.sourceRefs.map(ref => ({ ...ref }));
@@ -1079,35 +858,20 @@ export class NavigationEngine implements IHopStateMachine {
     return null;
   }
 
-  /**
-   * The qualified endpoints of a task as the prompt renders them: those on the task's own object
-   * (assigned) and those on another object (external), compared by identifier key.
-   *
-   * @param task - A current task, from {@link getCurrentTasks}.
-   * @returns Both groups; empty for an object task or a column task without qualified endpoints.
-   */
+  /** The qualified endpoints of a task as the prompt renders them: those on the task's own object (assigned) and those on another object (external), compared by identifier key. */
   public taskEndpoints(task: InvestigationTask): { assigned: ScalarReturnTarget[]; external: ScalarReturnTarget[] } {
     const refs = this.qualifiedTaskRefs(task) ?? [];
     const own = (ref: ScalarReturnTarget): boolean => !!task.nodeId && this.identifierKey(ref.node) === this.identifierKey(task.nodeId);
     return { assigned: refs.filter(own), external: refs.filter(ref => !own(ref)) };
   }
 
-  /**
-   * Whether a queued task still dispatches exactly as accepted: its qualified endpoints exist
-   * ({@link qualifiedTaskRefs}) and each names a loaded object and, where that object declares
-   * columns, one of them. Dispatch never rewrites or narrows the accepted carry.
-   */
+  /** Whether a queued task still dispatches exactly as accepted: its qualified endpoints exist ({@link qualifiedTaskRefs}) and each names a loaded object and, where that object declares columns, one of them. Dispatch never rewrites or narrows the accepted carry. */
   private taskRefsResolve(task: InvestigationTask): boolean {
     const refs = this.qualifiedTaskRefs(task);
     return refs !== null && refs.every(ref => this.nodeMap.has(ref.node) && this.matchColumnsToNode(ref.node, [ref.col]).unmatched.length === 0);
   }
 
-  /**
-   * The qualified tracked-column identities this hop received, read only from its current tasks
-   * ({@link qualifiedTaskRefs}); dispatch refuses a task without them.
-   *
-   * @param traversalSide - Restricts the result to tasks arriving on that routing leg.
-   */
+  /** The qualified tracked-column identities this hop received, read only from its current tasks ({@link qualifiedTaskRefs}); dispatch refuses a task without them. */
   private incomingColumnRefs(traversalSide?: 'upstream' | 'downstream'): Array<{ node: string; col: string }> {
     if (!this.tracer || !this.currentFocusNodeId) return [];
     const refs = new Map<string, { node: string; col: string }>();
@@ -1127,28 +891,13 @@ export class NavigationEngine implements IHopStateMachine {
     return this.effectiveDirection() === 'downstream' ? 'downstream' : 'upstream';
   }
 
-  /**
-   * Collapses `this._direction` plus a depth side of exactly `0` into the single traversal
-   * direction actually approved for later hop growth.
-   *
-   * @remarks
-   * Only narrows a `'bidirectional'` session — a fixed direction already fully restricts. A side
-   * of exactly `0` is a permanent exclusion of that direction (not just the initial seed); both
-   * sides `0` cannot reach here (rejected at the Zod boundary before `init()`).
-   */
+  /** Collapses `this._direction` plus a depth side of exactly `0` into the single traversal direction actually approved for later hop growth. */
   private effectiveDirection(): 'upstream' | 'downstream' | 'bidirectional' {
     if (this._direction !== 'bidirectional') return this._direction;
     return directionFromDepth(this.currentDepthIntent);
   }
 
-  /**
-   * Directed distance from the origin to `targetId`, and which side of the origin it lies on.
-   *
-   * @remarks
-   * The lineage question is directional: an undirected shortest path can route around through a
-   * shared sink (e.g. an audit table every procedure writes to) and report a node as nearer than it
-   * is. `null` when no directed path exists either side; callers fall back to a hop-relative estimate.
-   */
+  /** Directed distance from the origin to `targetId`, and which side of the origin it lies on. */
   private directedDepthFromOrigin(targetId: string): { depth: number; side: 'upstream' | 'downstream' } | null {
     if (!this.originNodeId) return null;
     if (targetId === this.originNodeId) return { depth: 0, side: 'downstream' };
@@ -1168,16 +917,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.directedDepths.get(targetId);
   }
 
-  /**
-   * Fills {@link directedDepths} with one walk per side, unless the current seed already filled it.
-   *
-   * @remarks
-   * Two traversals answer every node's distance, fixing the cost of enforcing a border per scope
-   * seed rather than per candidate. The first depth recorded for a node is its shortest on that
-   * side — breadth-first order guarantees it. The walk stops at an object the exclusion border
-   * refuses, exactly as the scope seed does ({@link computeBfsScope}), so a distance is never
-   * measured along a path the approved scope does not hold.
-   */
+  /** Fills {@link directedDepths} with one walk per side, unless the current seed already filled it. */
   private ensureDirectedDepths(): void {
     if (this.directedDepthsFilled || !this.originNodeId) return;
     this.directedDepthsFilled = true;
@@ -1194,16 +934,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
-  /**
-   * Whether admitting `targetId` would cross a depth border the user fixed.
-   *
-   * @remarks
-   * Only true under `'strict'` enforcement (the AI reported an explicit level count). A node is
-   * inside the border when EITHER side's distance fits that side's own ceiling — judging it on the
-   * other side's ceiling would refuse requested work; a breach reports the smallest resolved distance.
-   *
-   * @param fallbackDepth - Hop-relative depth to judge by when no directed path resolves.
-   */
+  /** Whether admitting `targetId` would cross a depth border the user fixed. */
   private depthBorderBreach(targetId: string, fallbackDepth: number | undefined): number | null {
     if (this.depthEnforcement !== 'strict') return null;
     const sides = this.directedDepthsFor(targetId);
@@ -1220,14 +951,7 @@ export class NavigationEngine implements IHopStateMachine {
     return fallbackDepth > limit ? fallbackDepth : null;
   }
 
-  /**
-   * True when a route target is reachable from the origin within the approved traversal direction.
-   *
-   * @remarks
-   * `'bidirectional'` is the upstream closure plus downstream closure, never the undirected walk —
-   * a node reached only by crossing sideways through a shared consumer is not an approved-direction
-   * target. {@link directedDepthsFor} is shared with {@link depthBorderBreach} so both axes agree.
-   */
+  /** True when a route target is reachable from the origin within the approved traversal direction. */
   private isReachableInApprovedDirection(targetId: string): boolean {
     const direction = this.effectiveDirection();
     if (!this.originNodeId) return true;
@@ -1248,18 +972,7 @@ export class NavigationEngine implements IHopStateMachine {
     return false;
   }
 
-  /**
-   * The single scope-border test — is `node` inside the approved border for the given write path?
-   *
-   * @remarks
-   * Consolidates the exclusion-set / direction checks every write path shares, axes selected by
-   * `purpose` ({@link BorderPurpose}), check order fixed (exclusions → direction). A GUI-hidden
-   * schema is a default exclusion, so the exclusion axis is the one schema wall. The schema axis is
-   * tested last among the exclusions, so an `excluded` verdict names `schema` only when no
-   * user-authored type or node-id exclusion also holds the node.
-   *
-   * @param purpose - Which write path is asking, fixing the participating axes.
-   */
+  /** The single scope-border test — is `node` inside the approved border for the given write path? */
   private checkBorder(nodeId: string, node: LineageNode, purpose: BorderPurpose): BorderVerdict {
     const checkDirection = purpose === 'route';
 
@@ -1270,28 +983,12 @@ export class NavigationEngine implements IHopStateMachine {
     return { kind: 'in_border' };
   }
 
-  /**
-   * Whether an `excluded` border verdict traces to the GUI schema filter (the node's schema is
-   * unticked) rather than a user-authored exclusion pattern (`excludeTypes`/`excludeNodeIds`, or a
-   * schema the user typed that the GUI did not already hide), so a supplement skip or route
-   * deferral can tell the model the `confirm_sm_start` repair.
-   */
+  /** Whether an `excluded` border verdict traces to the GUI schema filter (the node's schema is unticked) rather than a user-authored exclusion pattern (`excludeTypes`/`excludeNodeIds`, or a schema the user typed that the GUI did not already hide), so a supplement skip or route deferral can tell the model the `confirm_sm_start` repair. */
   private isGuiHiddenSchemaBorder(border: BorderVerdict, node: LineageNode): boolean {
     return border.kind === 'excluded' && border.axis === 'schema' && this.guiHiddenSchemas.has(this.identifierKey(node.schema));
   }
 
-  /**
-   * Whether the router would admit a route to `nodeId` right now — border **and** depth.
-   *
-   * @remarks
-   * {@link checkBorder} owns only the border axis; a candidate inside the border but past a fixed
-   * depth ceiling still clears it and is deferred as a lead rather than accepted. This is the single
-   * statement of both axes so the route path and {@link openNeighbors} cannot drift on either. An
-   * object a supplement admitted is inside the approved scope whatever its depth.
-   *
-   * @param focusId - Hop the route is issued from, supplying the hop-relative depth fallback when
-   *   no directed path from the origin resolves.
-   */
+  /** Whether the router would admit a route to `nodeId` right now — border **and** depth. */
   private admitsRoute(nodeId: string, node: LineageNode, focusId: string): RouteAdmission {
     const border = this.checkBorder(nodeId, node, 'route');
     let candidateDepth = this.depthFromOrigin.get(nodeId) ?? this.directedDepthFromOrigin(nodeId)?.depth;
@@ -1352,12 +1049,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.initSnapshot?.targetColumns ?? null;
   }
 
-  /**
-   * Neighbor action choices and column facts that narrow this hop's served schema: every declared
-   * focus column as `out_col` when metadata exists, and whether the focus is a procedure (the one
-   * node that may name a `writes_to` target). Eligible function neighbors narrow caller-context questions;
-   * stored column metadata narrows the admissible `upstream_columns` sources.
-   */
+  /** Neighbor action choices and column facts that narrow this hop's served schema: every declared focus column as `out_col` when metadata exists, and whether the focus is a procedure (the one node that may name a `writes_to` target). Eligible function neighbors narrow caller-context questions; stored column metadata narrows the admissible `upstream_columns` sources. */
   public get hopSubmitColumns(): SubmitFindingsHopColumns {
     const focus = this.currentFocusNodeId ? this.nodeMap.get(this.currentFocusNodeId) : undefined;
     const neighbors = focus ? this.neighborChoices(focus.id) : [];
@@ -1381,11 +1073,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  /**
-   * Object-graph ids an `upstream_columns` contributor may name at one hop: the focus's neighbors
-   * plus the read suppliers of its declared scalar callers. The served `node` enum and the
-   * contributor admission both read it, so a column edge never leaves the object graph.
-   */
+  /** Object-graph ids an `upstream_columns` contributor may name at one hop: the focus's neighbors plus the read suppliers of its declared scalar callers. The served `node` enum and the contributor admission both read it, so a column edge never leaves the object graph. */
   private columnContributorIds(focusId: string): Set<string> {
     const callers = uniqueScalarReturnTargets([
       ...this.currentReturnTargets(),
@@ -1398,12 +1086,7 @@ export class NavigationEngine implements IHopStateMachine {
     return candidates;
   }
 
-  /**
-   * Metadata-derived `upstream_columns` source ids for one hop: {@link columnContributorIds} kept
-   * when stored columns exist or the procedure/external missing-metadata fallback applies and not
-   * already pruned — mirroring the engine's contributor admission, so a columnless scalar function
-   * is never offered as a column source.
-   */
+  /** Metadata-derived `upstream_columns` source ids for one hop: {@link columnContributorIds} kept when stored columns exist or the procedure/external missing-metadata fallback applies and not already pruned — mirroring the engine's contributor admission, so a columnless scalar function is never offered as a column source. */
   private columnSourceNodeIds(focusId: string): string[] {
     return [...this.columnContributorIds(focusId)].filter(id => {
       const node = this.nodeMap.get(id);
@@ -1461,30 +1144,12 @@ export class NavigationEngine implements IHopStateMachine {
     return this.initSnapshot?.analysisMode ?? (this.tracer ? 'ct' : 'bb');
   }
 
-  /**
-   * The analysis mode of the hop currently dispatched — the contract selector for this hop alone.
-   *
-   * @remarks
-   * Unlike the session-level {@link currentAnalysisMode} (locked at `init`), this varies per hop,
-   * even per edge: a CT hop reaching a branch with no columns to map dispatches as BB rather than
-   * demand a `column_flow` account it cannot give. Column state selects the contract, never the AI's prune/keep verdict.
-   */
+  /** The analysis mode of the hop currently dispatched — the contract selector for this hop alone. */
   public get currentHopAnalysisMode(): 'bb' | 'ct' {
-    return this.hopModeFromColumnList(this.tracer?.activeColumns);
+    return (this.tracer?.activeColumns.filter(Boolean).length ?? 0) > 0 ? 'ct' : 'bb';
   }
 
-  /**
-   * Builds a one-shot snapshot of the proposed scope for the `confirm_sm_start` gate detail.
-   *
-   * @remarks
-   * Single source of truth — the gate's "Scope: N" line and the rendered tree both come
-   * from this object so the count and the tree never diverge. Every in-scope name is listed;
-   * `omitted` counts the names past `namesPerType` when a caller bounds the list.
-   * `ambiguousObjectNames` is computed from the full {@link nodeMap}, not the proposed scope
-   * alone, so a name is flagged even when only one of its colliding schemas is in scope.
-   *
-   * @param namesPerType - Names listed under each (schema,type) pair; every name by default.
-   */
+  /** Builds a one-shot snapshot of the proposed scope for the `confirm_sm_start` gate detail. */
   public getScopeSummary(namesPerType = Number.POSITIVE_INFINITY): ScopeSummary {
     const bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }> = Object.create(null);
     let hopCount = 0;
@@ -1578,11 +1243,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  /**
-   * Groups every excluded object under the first GUI exclusion rule matching it, or under `named`
-   * when none does. An object the schema or type filter already removes is left out, so each count
-   * states what the rule removes from the selected schemas and types.
-   */
+  /** Groups every excluded object under the first GUI exclusion rule matching it, or under `named` when none does. An object the schema or type filter already removes is left out, so each count states what the rule removes from the selected schemas and types. */
   private excludedObjectsByCause(): ScopeExclusions {
     const group = (): ScopeExclusionGroup => ({ count: 0, byType: {} });
     const rules = this.guiExclusionRules.map(rule => ({ pattern: rule.pattern, ...group() }));
@@ -1605,12 +1266,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { rules: rules.filter(rule => rule.count > 0), named };
   }
 
-  /**
-   * Applies the shared graph removal policy with this session's scope, anchors and direction legs.
-   *
-   * @param anchors - Analysis the removal must not disconnect: visited nodes and the routes or
-   *   column endpoints a submission under validation commits. Existing column endpoints are always protected.
-   */
+  /** Applies the shared graph removal policy with this session's scope, anchors and direction legs. */
   private removalSupport(removedBefore: ReadonlySet<string>, removedAfter: ReadonlySet<string>, anchors: ReadonlySet<string> = this.visited): RemovalAnalysis {
     const protectedAnchors = new Set([...anchors, ...(this.tracer?.edges ?? []).flatMap(edge => [edge.from_node, edge.to_node])]);
     const analysis = analyzeRemoval(this.graph, {
@@ -1630,15 +1286,7 @@ export class NavigationEngine implements IHopStateMachine {
     return analysis;
   }
 
-  /**
-   * Validates that the given node ids are legitimate targets for neighbor-column
-   * inspection (the `get_neighbor_columns` tool).
-   *
-   * @remarks
-   * Column lookup only inspects **direct neighbors of the current focus node that are also
-   * within the active BFS scope** — this keeps the tool from becoming a backdoor for out-of-scope
-   * exploration. Returns the "invalid" subset; empty array iff all pass.
-   */
+  /** Validates that the given node ids are legitimate targets for neighbor-column inspection (the `get_neighbor_columns` tool). */
   public validateNeighborIds(ids: string[]): string[] {
     const allowed = new Set(this.neighborColumnIds);
     return ids.filter(id => !allowed.has(resolveModelNodeId(id, this.nodeMap, this.identifierCaseSensitive) ?? ''));
@@ -1649,13 +1297,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.neighborChoices(this.currentFocusNodeId ?? '').filter(neighbor => this.scopeNodeIds.has(neighbor.id)).map(neighbor => neighbor.id);
   }
 
-  /**
-   * The current hop's sub-questions as archived beside its findings: every non-blank task question
-   * in dispatch order. The mission question, carried separately as the original question, is left
-   * out in either mode and wherever routing re-sends it. `from_node` names the asking hop only for
-   * a model-authored question whose parent task belongs to a visited node; engine-routed text is
-   * kept without a sender.
-   */
+  /** The current hop's sub-questions as archived beside its findings: every non-blank task question in dispatch order. The mission question, carried separately as the original question, is left out in either mode and wherever routing re-sends it. `from_node` names the asking hop only for a model-authored question whose parent task belongs to a visited node; engine-routed text is kept without a sender. */
   private currentIncomingQuestions(): IncomingQuestion[] {
     const focusId = this.currentFocusNodeId;
     const mission = (this.memory.getUserQuestion() ?? '').trim();
@@ -1691,10 +1333,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this._discoverySummary;
   }
 
-  /**
-   * Stores the discovery-handoff memo composed at proposal time, set verbatim at gate approval and
-   * never recomposed. Empty or whitespace-only input becomes `null`.
-   */
+  /** Stores the discovery-handoff memo composed at proposal time, set verbatim at gate approval and never recomposed. Empty or whitespace-only input becomes `null`. */
   public setDiscoverySummary(text: string): void {
     const trimmed = text.trim();
     this._discoverySummary = trimmed.length > 0 ? trimmed : null;
@@ -1933,21 +1572,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { ok: true };
   }
 
-  /**
-   * Nodes physically connected to the traced graph, plus every batch id reachable from it —
-   * directly or transitively through another batch id.
-   *
-   * @remarks
-   * Multi-source BFS seeded from `scopeNodeIds ∪ visited` minus `removedSet` — the retained trace,
-   * the same support {@link removalSupport} requires of every visited node — and walking
-   * only into nodes already seeded or named in `batchIds`. A batch id whose only path back runs
-   * through a pruned object or one outside both sets is never discovered here; the refusal names
-   * those connectors ({@link connectorsTo}).
-   *
-   * @param batchIds - Candidate ids from one `supplement` call, so a chain within the same request
-   *   can connect through each other even before any of them is itself admitted.
-   * @returns Every seed plus every batch id reachable from a seed or another reachable batch id.
-   */
+  /** Nodes physically connected to the traced graph, plus every batch id reachable from it — directly or transitively through another batch id. */
   private tracedGraphReachable(batchIds: ReadonlySet<string>): Set<string> {
     const reachable = new Set<string>([...this.scopeNodeIds, ...this.visited].filter(id => !this.removedSet.has(id)));
     const allowed = new Set<string>([...reachable, ...batchIds]);
@@ -1964,20 +1589,7 @@ export class NavigationEngine implements IHopStateMachine {
     return reachable;
   }
 
-  /**
-   * Finds follow-up targets that clear the border but have no dependency path to the traced graph.
-   *
-   * @remarks
-   * Unresolvable and excluded ids are left to the caller, which reports them with their own
-   * reasons ({@link checkBorder} is the same test). A target is connected only when the retained
-   * trace reaches it through retained objects and the request's own ids ({@link tracedGraphReachable}).
-   * An earlier prune is never undone implicitly: a target joined only through objects outside the
-   * retained trace is refused with those connectors named ({@link connectorsTo}), so the request
-   * must name them itself.
-   *
-   * @param nodeIds - Follow-up targets, canonical or free-cased.
-   * @returns The connected ids (logged), plus one {@link SupplementSkip} per unconnected id.
-   */
+  /** Finds follow-up targets that clear the border but have no dependency path to the traced graph. */
   private admitSupplementTargets(nodeIds: readonly string[]): { admitted: string[]; skipped: SupplementSkip[] } {
     const admitted: string[] = [];
     const skipped: SupplementSkip[] = [];
@@ -2008,16 +1620,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { admitted, skipped };
   }
 
-  /**
-   * The objects outside the retained trace on the shortest scope-bounded path between a supplement
-   * target and the trace, or null when no such path clears the border.
-   *
-   * @remarks
-   * Reuses {@link scopeBoundedPathToOrigin}, along the approved legs first, else undirected (a
-   * follow-up crossing the initial direction). The connectors are the path objects after the last
-   * retained one (scope and visited minus `removedSet`) that the request did not already name. Every
-   * connector must clear the border, so a user exclusion is never offered as a connector.
-   */
+  /** The objects outside the retained trace on the shortest scope-bounded path between a supplement target and the trace, or null when no such path clears the border. */
   private connectorsTo(nodeId: string, batchIds: ReadonlySet<string>): string[] | null {
     const path = this.scopeBoundedPathToOrigin(nodeId, this.allowedNoteSides()) ?? this.scopeBoundedPathToOrigin(nodeId);
     if (!path) return null;
@@ -2031,14 +1634,7 @@ export class NavigationEngine implements IHopStateMachine {
     }) ? connectors : null;
   }
 
-  /**
-   * Returns a pruned node to the analysable set so a follow-up can add it back.
-   *
-   * @remarks
-   * `removedSet` is not a standing veto — adding only ever introduces edges, so it cannot orphan a
-   * committed node. `_totalNodes` is credited back only under the same condition that debited it, so
-   * a focus prune (which never debited) is not double-counted.
-   */
+  /** Returns a pruned node to the analysable set so a follow-up can add it back. */
   private unprune(id: string): void {
     if (!this.removedSet.delete(id)) return;
     this.taskLedger.dismissNodeLeads(id, 'pruned_by_ai');
@@ -2050,18 +1646,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.log('debug', `[Supplement] unprune hop=${this.hopCount} id=${id} (total → ${this._totalNodes})`);
   }
 
-  /**
-   * Walks a chain add from each named id and returns the named ids followed by every object reached.
-   *
-   * @remarks
-   * The walk stops at an object the border refuses — a user exclusion or the GUI schema filter —
-   * so the branch reachable only through it stays out too; the refused object itself is still
-   * reported (`admitSupplementTargets` names it `excluded` or `out_of_allowlist`) rather than
-   * silently swallowed. Objects already analysed are not re-queued — only the named ids are
-   * re-analysed on request.
-   *
-   * @returns Named ids first, then reached ids in breadth-first order, without duplicates.
-   */
+  /** Walks a chain add from each named id and returns the named ids followed by every object reached. */
   private expandSupplementChain(nodeIds: readonly string[], chain: SupplementChain): string[] {
     const maxDepth = chain.depth === 'all' ? Number.POSITIVE_INFINITY : chain.depth;
     const mode = chain.direction === 'upstream' ? 'inbound' : 'outbound';
@@ -2092,18 +1677,7 @@ export class NavigationEngine implements IHopStateMachine {
     return result;
   }
 
-  /**
-   * The carry a follow-up starts from, read only from the request itself.
-   *
-   * @remarks
-   * An object request, or a selected object task, is an object visit. A selected column task
-   * continues as CT only from its own qualified endpoints ({@link qualifiedTaskRefs}); a scalar
-   * function continues only from the task's own return targets. Nothing is recovered from
-   * historical edges, other ledger tasks or column names.
-   *
-   * @returns The carry, `'no_qualified_task'` for a column task without qualified endpoints, or
-   *   `'scalar_binding_unresolved'` when one of the task's return targets no longer resolves.
-   */
+  /** The carry a follow-up starts from, read only from the request itself. */
   private supplementCarryFor(nodeId: string, task?: InvestigationTask): ColumnCarry | 'no_qualified_task' | 'scalar_binding_unresolved' {
     if (!this.tracer) return { kind: 'carry', columns: [] };
     if (task?.kind !== 'column_lineage') return { kind: 'row_role_only' };
@@ -2120,25 +1694,7 @@ export class NavigationEngine implements IHopStateMachine {
     return outputs.length === targets.length ? { kind: 'scalar_return', outputs } : 'scalar_binding_unresolved';
   }
 
-  /**
-   * Extends a completed exploration with additional nodes for analysis.
-   *
-   * @remarks
-   * Only callable when `status === 'complete'`. A pruned id the request names is returned to the
-   * analysable set ({@link unprune}); a pruned connector it does not name refuses the target. The
-   * exclusion sets, a GUI-hidden schema included, remain a hard wall, whether the id is named
-   * directly or reached only through a chain walk. A selected column task without qualified
-   * endpoints rejects the whole call before any change. Status moves to `awaiting_findings`
-   * only when at least one id was agendaed; an all-refused call leaves `status` at `complete` so a
-   * fresh {@link NavigationInitParams} proposal is not blocked by a live-engine check.
-   *
-   * @param leadIds - Host-selected pending leads; never accepted from a model tool payload.
-   * @returns Counts for agendaed and skipped ids, plus per-node `skippedDetails`
-   *   naming which id was dropped and why (`excluded` | `out_of_allowlist` | `unresolved` |
-   *   `not_connected_to_trace`, the last two refusals carrying a `hint`), or a structured error. A
-   *   partial admit — some ids agendaed, others skipped — is always `{ ok: true, ... }`, never
-   *   silent: every skip is named.
-   */
+  /** Extends a completed exploration with additional nodes for analysis. */
   public supplementAgenda(nodeIds: string[], leadIds: string[] = [], chain?: SupplementChain): { ok: true; agendaed: number; skipped: number; skippedDetails: SupplementSkip[] } | ToolRejection {
     if (this._status !== 'complete') {
       return makeRejection({
@@ -2258,14 +1814,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { ok: true, agendaed, skipped, skippedDetails };
   }
 
-  /**
-   * Gets the details for the next scheduled navigation hop.
-   *
-   * @remarks
-   * CT is selected from this entry's merged demand and dispatched exactly as accepted; no column
-   * is recovered from historical evidence. A queued task whose qualified endpoints no longer
-   * resolve stops the run.
-   */
+  /** Gets the details for the next scheduled navigation hop. */
   public getHopContext(): HopContext {
     let entry: AgendaEntry | undefined;
     while (this._agenda.length > 0) {
@@ -2407,18 +1956,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  /**
-   * Stops the live run on an engine invariant a dispatch or a submission cannot satisfy.
-   *
-   * @remarks
-   * The status becomes `error` with a user-facing reason; the active worker and the coordinator
-   * settle it through the incomplete-run path. Nothing is visited or committed and nothing else
-   * changes.
-   *
-   * @param nodeId - Node whose dispatch or submission failed, for the debug line only.
-   * @param field - Failing engine field, for the debug line only.
-   * @param reason - User-facing reason exposed as {@link errorReason}.
-   */
+  /** Stops the live run on an engine invariant a dispatch or a submission cannot satisfy. */
   private failInvariant(nodeId: string, field: string, reason: string): HopContext {
     this.log('error', `[Invariant] dispatch refused field=${field} hop=${this.hopCount + 1} — engine stopped`);
     this.log('debug', `[Invariant] dispatch refused node=${nodeId} field=${field}`);
@@ -2439,19 +1977,12 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * The metadata-driven question a passthrough candidate carries to the next object: whether that
-   * object touches the forwarded endpoints at all, not an assignment to map them.
-   */
+  /** The metadata-driven question a passthrough candidate carries to the next object: whether that object touches the forwarded endpoints at all, not an assignment to map them. */
   private candidateQuestion(nid: string, side: 'upstream' | 'downstream', refs: ReadonlyArray<{ node: string; col: string }>): string {
     return `Determine whether ${nid} ${side === 'upstream' ? 'writes' : 'uses'} ${refs.map(ref => `${ref.node}.${ref.col}`).join(', ')}; map confirmed value contributions and end unused inputs on this branch.`;
   }
 
-  /**
-   * Re-renders the current focus hop context without advancing the agenda.
-   *
-   * @returns The current focus context, or `null` when no focus is active.
-   */
+  /** Re-renders the current focus hop context without advancing the agenda. */
   public peekHopContext(): HopContext | null {
     const focusId = this.currentFocusNodeId;
     if (!focusId) return null;
@@ -2541,17 +2072,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Removes a whole unrelated hop reached through passthrough and the open nodes the shared
-   * directed pruning rule cuts with it. Uses the ordinary structural removal policy in BB and CT;
-   * unaffected branches remain.
-   *
-   * @remarks
-   * The command is rejected when the removal would disconnect committed analysis — counting
-   * neighbor prunes still pending resolution — or when a committed column mapping names the focus
-   * or a node the cut would remove. The acknowledgement lists the removed focus in `pruned` and the
-   * cut nodes in `cut_ids`; committed column mappings are never removed.
-   */
+  /** Removes a whole unrelated hop reached through passthrough and the open nodes the shared directed pruning rule cuts with it. Uses the ordinary structural removal policy in BB and CT; unaffected branches remain. */
   public pruneCurrent(focusNodeId: string, reason: string): SubmitResult {
     const focusId = this.validateCurrentHopFocus(focusNodeId);
     if (typeof focusId !== 'string') return focusId;
@@ -2592,11 +2113,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { ok: true, ...this.commitRemovals };
   }
 
-  /**
-   * The removals since the current hop commit began: `pruned` for nodes a prune named, `cut_ids`
-   * for the open nodes the directed pruning rule cut with them. Includes a pending neighbor prune
-   * resolved when the agenda empties after the commit. Empty lists are omitted.
-   */
+  /** The removals since the current hop commit began: `pruned` for nodes a prune named, `cut_ids` for the open nodes the directed pruning rule cut with them. Includes a pending neighbor prune resolved when the agenda empties after the commit. Empty lists are omitted. */
   public get commitRemovals(): Pick<Extract<SubmitResult, { ok: true }>, 'pruned' | 'cut_ids'> {
     const { pruned, cut_ids } = this.hopRemovals;
     return { ...(pruned.length > 0 ? { pruned: [...pruned] } : {}), ...(cut_ids.length > 0 ? { cut_ids: [...cut_ids] } : {}) };
@@ -2620,11 +2137,7 @@ export class NavigationEngine implements IHopStateMachine {
     this._status = 'exploring';
   }
 
-  /**
-   * Why removing `nodeIds` now is refused, or undefined when the removal is supported. The check
-   * counts neighbor prunes still pending resolution, except targets this submission keeps by
-   * routing them. Routed targets and staged column endpoints are protected as committed analysis.
-   */
+  /** Why removing `nodeIds` now is refused, or undefined when the removal is supported. The check counts neighbor prunes still pending resolution, except targets this submission keeps by routing them. Routed targets and staged column endpoints are protected as committed analysis. */
   private pruneRefusal(nodeIds: readonly string[], routed: ReadonlySet<string> = new Set(), stagedColumnEdges: readonly ColumnEdge[] = []): string | undefined {
     const pending = [...this.pruneBallots].filter(([id, ballots]) => !routed.has(id) && [...ballots.values()].every(vote => vote === 'prune')).map(([id]) => id);
     const analysis = this.removalSupport(this.removedSet, new Set([...this.removedSet, ...pending, ...nodeIds]),
@@ -2634,11 +2147,7 @@ export class NavigationEngine implements IHopStateMachine {
     return undefined;
   }
 
-  /**
-   * Validates and commits the current SQL object's findings, explicit neighbor decisions and qualified column mappings.
-   * Every admitted open neighbor needs an authored question or prune decision, including queued work.
-   * Storage forwarding is engine-owned; this command never invents an investigation purpose or column source.
-   */
+  /** Validates and commits the current SQL object's findings, explicit neighbor decisions and qualified column mappings. Every admitted open neighbor needs an authored question or prune decision, including queued work. Storage forwarding is engine-owned; this command never invents an investigation purpose or column source. */
   public submitFindings(params: HopSubmission): SubmitResult {
     const focusId = this.validateCurrentHopFocus(params?.focus_node_id);
     if (typeof focusId !== 'string') return focusId;
@@ -2983,16 +2492,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
-  /**
-   * One rejection for every engine-side fault of a submission — a missing locked section angle, an
-   * over-cap `badge_label` or `column_flow` note, and each fatal route/column failure — so one round
-   * corrects them all. Nothing is committed: the valid parts are held ({@link holdValidParts}) and
-   * the failed ones named for resending. A missing locked angle is owed without failing a sent
-   * angle; a failed list entry fails its whole list.
-   *
-   * @returns A single-category rejection keeps that category's code and wording; a mixed one is
-   *   `invalid_input` with every reason line, every directive and the shared held-parts sentence.
-   */
+  /** One rejection for every engine-side fault of a submission — a missing locked section angle, an over-cap `badge_label` or `column_flow` note, and each fatal route/column failure — so one round corrects them all. Nothing is committed: the valid parts are held ({@link holdValidParts}) and the failed ones named for resending. A missing locked angle is owed without failing a sent angle; a failed list entry fails its whole list. */
   private rejectFinding(
     focusId: string,
     finding: HopFindingKept,
@@ -3060,28 +2560,14 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Whether `nodeId` sits on the approved downstream side of the origin (the origin itself counts).
-   *
-   * @param nodeId - Canonical node id.
-   * @returns True when the approved direction reaches the node by a downstream walk.
-   */
+  /** Whether `nodeId` sits on the approved downstream side of the origin (the origin itself counts). */
   private onDownstreamSide(nodeId: string): boolean {
     if (this.effectiveDirection() === 'upstream') return false;
     if (nodeId === this.originNodeId) return true;
     return this.directedDepthsFor(nodeId)?.downstream !== undefined;
   }
 
-  /**
-   * Removes the open nodes the latest removals left without a directed path to the origin.
-   *
-   * @remarks
-   * A still-surviving directed origin route on an approved leg protects a join.
-   * The shared graph policy computes the cut before the hop applies any mutation.
-   *
-   * @param cutNodeId - The node whose hop made the removals, recorded as `viaNodeId`.
-   * @param removal - The admitted shared removal analysis, computed before mutation.
-   */
+  /** Removes the open nodes the latest removals left without a directed path to the origin. */
   private cutUnreachable(cutNodeId: string, removal: RemovalAnalysis): void {
     const dropped = removal.cutIds;
     this.hopRemovals.cut_ids.push(...dropped);
@@ -3099,11 +2585,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
-  /**
-   * Commits a kept hop whose submission passed every validation guard: route deferrals, scope
-   * growth, neighbour prunes and their cut, the focus verdict and the enqueued neighbours, each
-   * exactly once.
-   */
+  /** Commits a kept hop whose submission passed every validation guard: route deferrals, scope growth, neighbour prunes and their cut, the focus verdict and the enqueued neighbours, each exactly once. */
   private applyValidatedHop(staged: ValidatedHop): SubmitResult {
     const {
       focusId, finding, routeRequests, flowQuestionByNode, routeOutcomes, acceptedNids, scopeAddNids, deferredRoutes, prunedNeighborNids,
@@ -3230,15 +2712,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { ok: true, ...outcomes, ...this.commitRemovals };
   }
 
-  /**
-   * Measures the scope for the exploration admission check: total nodes, rounds (the hops the run
-   * takes: those already taken, one per unvisited object not explicitly passed by the user,
-   * and one per supplement target)
-   * and the distinct starting trace columns.
-   *
-   * @param extraIds - Node ids a pending supplement would add; measured together with the scope so
-   *   the check is cumulative.
-   */
+  /** Measures the scope for the exploration admission check: total nodes, rounds (the hops the run takes: those already taken, one per unvisited object not explicitly passed by the user, and one per supplement target) and the distinct starting trace columns. */
   public measureAdmissionScope(extraIds: readonly string[] = []): ProposedScope {
     const extra = new Set(extraIds);
     const ids = new Set(this.scopeNodeIds);
@@ -3254,10 +2728,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { nodes: ids.size, rounds, columns: new Set(this.currentTargetColumns ?? []).size };
   }
 
-  /**
-   * Measures the scope a supplement would produce — the existing scope plus every object the
-   * supplement would admit — without changing the engine. A supplement selects no starting columns.
-   */
+  /** Measures the scope a supplement would produce — the existing scope plus every object the supplement would admit — without changing the engine. A supplement selects no starting columns. */
   public measureSupplementScope(nodeIds: readonly string[], chain?: SupplementChain): ProposedScope {
     const ids = (chain ? this.expandSupplementChain(nodeIds, chain) : [...nodeIds]).map(raw => resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive) ?? raw);
     const seen = new Set(ids);
@@ -3275,11 +2746,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { ...this.measureAdmissionScope(this.admitSupplementTargets(ids).admitted), columns: 0 };
   }
 
-  /**
-   * Calculates the approximate number of DDL characters required by the scope.
-   *
-   * @returns The total character count.
-   */
+  /** Calculates the approximate number of DDL characters required by the scope. */
   private estimateScopeDdlChars(): number {
     let total = 0;
     for (const nid of this.scopeNodeIds) {
@@ -3289,19 +2756,7 @@ export class NavigationEngine implements IHopStateMachine {
     return total;
   }
 
-  /**
-   * Evaluates the breadth-first search reachability for initializing traversal scope.
-   *
-   * @remarks
-   * Walks to {@link depthLimits}, already resolved by `init()` for the approved intent — an exact
-   * side there is finite (or `Infinity` for `'all'`) exactly as enforced at hop time, a `levels: 0`
-   * side is `0`, and an open approximate side is `Infinity`, so the dry-run preview this feeds sees the same full reach the
-   * approval it proposes would actually admit.
-   *
-   * @param startId - Starting node identifier.
-   * @param direction - Direction of graph traversal ('upstream', 'downstream', 'bidirectional').
-   * @returns A set of valid node identifiers reachable within the depth parameters.
-   */
+  /** Evaluates the breadth-first search reachability for initializing traversal scope. */
   private computeBfsScope(
     startId: string,
     direction: 'upstream' | 'downstream' | 'bidirectional',
@@ -3338,27 +2793,16 @@ export class NavigationEngine implements IHopStateMachine {
     return this.graph.neighbors(nodeId);
   }
 
-  /**
-   * The note graph the agenda schedules over, read from current engine state.
-   *
-   * @remarks
-   * `u ⇒ v` when a note written at `u`'s hop can reach `v`: on the upstream side `u` reads what
-   * `v` writes (a consumer asks its producer), on the downstream side `v` reads what `u` writes.
-   * A node's sides are the entries of {@link directedDepthsFor} the approved direction allows (the
-   * origin holds every allowed side), and an edge only follows a side both ends share — the same
-   * "upstream closure plus downstream closure" as {@link isReachableInApprovedDirection}, so no
-   * edge crosses from one side of the origin to the other. Distance is the directed distance from
-   * the origin, falling back to the entry's recorded depth when no directed path resolves.
-   */
+  /** The note graph the agenda schedules over, read from current engine state. */
   private worklistView(): WorklistView {
     const allowed = this.allowedNoteSides();
     return {
-      successors: nodeId => this.noteSuccessors(nodeId, allowed),
+      successors: nodeId => this.noteWalk(nodeId, allowed, false),
       distance: entry => this.directedDepthFromOrigin(entry.nodeId)?.depth ?? entry.depth,
     };
   }
 
-  /** The note-graph sides the active direction allows ({@link worklistView}, {@link liveSenders}). */
+  /** The note-graph sides the active direction allows ({@link worklistView}). */
   private allowedNoteSides(): ReadonlyArray<'upstream' | 'downstream'> {
     const direction = this.effectiveDirection();
     return direction === 'bidirectional' ? ['upstream', 'downstream'] : [direction];
@@ -3396,40 +2840,6 @@ export class NavigationEngine implements IHopStateMachine {
     return Array.from(out);
   }
 
-  /** Unfinished note-graph successors of `nodeId` ({@link worklistView}). */
-  private noteSuccessors(nodeId: string, allowed: ReadonlyArray<'upstream' | 'downstream'>): string[] {
-    return this.noteWalk(nodeId, allowed, false);
-  }
-
-  /**
-   * Live senders of `nodeId` — unfinished nodes whose hop could still cast a neighbor-prune vote
-   * (or a keep) on the edge into `nodeId`: the note-graph walk {@link worklistView} readiness uses,
-   * in the reverse step direction.
-   *
-   * @remarks
-   * A neighbor prune ({@link recordBallot}) resolves once this returns empty: no live sender
-   * remains that could still vote on `nodeId`, so its fate is decided by the votes already cast.
-   * An unfinished sender reachable only through `nodeId` itself (a cycle) is never dispatched while
-   * the vote is pending; {@link getHopContext} resolves such a vote when the agenda empties.
-   */
-  private liveSenders(nodeId: string): string[] {
-    return this.noteWalk(nodeId, this.allowedNoteSides(), true);
-  }
-
-  /**
-   * Records `focusId`'s own ballot on the edge into `nodeId` and attempts resolution.
-   *
-   * @remarks
-   * One sender casts at most one ballot: a second call from the same `focusId` (a reactivated
-   * hop revising its own earlier verdict) replaces its prior entry rather than adding a second
-   * vote, so a sender's fresh judgement always supersedes its own earlier one. A vote is not a
-   * removal — `nodeId` is cut only once {@link tryResolvePrunes} finds no live sender left standing
-   * between it and every focus that could still name it.
-   */
-  private castBallot(nodeId: string, focusId: string, vote: 'prune' | 'keep'): void {
-    if (this.recordBallot(nodeId, focusId, vote)) this.tryResolvePrunes([nodeId]);
-  }
-
   /** Stores one sender's ballot without resolving it; false when `nodeId` is already removed. */
   private recordBallot(nodeId: string, focusId: string, vote: 'prune' | 'keep'): boolean {
     if (this.removedSet.has(nodeId)) return false;
@@ -3440,40 +2850,7 @@ export class NavigationEngine implements IHopStateMachine {
     return true;
   }
 
-  /**
-   * Records the current focus's keep on `nodeId`: a live route or question reached it
-   * ({@link castBallot}). A keep from the same sender that voted to prune it on an
-   * earlier, reactivated hop supersedes that sender's own earlier vote — it never overrides a
-   * different sender's still-standing vote, which `tryResolvePrunes` reads fresh off every ballot
-   * on every resolution attempt.
-   */
-  private resolveKept(nodeId: string): void {
-    const focusId = this.currentFocusNodeId;
-    // Only a hop being committed is a sender's decision. Initial scheduling, reactivated work and
-    // supplement scheduling run with the last focus left set by the completed run, so the status is
-    // the evidence that a sender is deciding; the focus alone is not.
-    if (!focusId || this._status !== 'awaiting_findings' || !this.visited.has(focusId)) return;
-    this.castBallot(nodeId, focusId, 'keep');
-  }
-
-  /**
-   * Removes every node of `nodeIds` whose live senders have finished and whose ballots all read
-   * `'prune'` — the resolution point of a neighbor-prune vote ({@link castBallot}) — as ONE removal
-   * proposal, so the removed set is a function of the set of resolved prunes, never of their order.
-   *
-   * @remarks
-   * `cutUnreachable` runs here, at resolution, never at vote time. The ballot
-   * map is read fresh at every attempt, so a sender's ballot decides the outcome for as long as it
-   * stands, and a later, different sender's opposite vote never overrides it. Submission already
-   * rejected a vote whose removal lacked support ({@link pruneRefusal}); a node that still lacks it
-   * here, because a later hop committed analysis that depends on it, is retained unrouted and the
-   * refusal is recorded in working memory. The rest are analysed together by
-   * {@link removalSupport}, the same atomic proposal shape the shared cut policy defines; the
-   * removed and cut ids are reported in the commit acknowledgement ({@link commitRemovals}).
-   *
-   * @param runEnded - The agenda is empty, so no remaining sender can be dispatched; the vote
-   *   resolves on the ballots cast and the unheard senders are named in the log.
-   */
+  /** Removes every node of `nodeIds` whose live senders have finished and whose ballots all read `'prune'` as one atomic removal proposal. */
   private tryResolvePrunes(nodeIds: readonly string[], runEnded = false): void {
     const ready: Array<{ nodeId: string; voters: string[] }> = [];
     for (const nodeId of nodeIds) {
@@ -3484,7 +2861,7 @@ export class NavigationEngine implements IHopStateMachine {
         if (this.visited.has(nodeId)) this.taskLedger.dismissNodeLeads(nodeId, 'pruned_by_ai');
         continue;
       }
-      const unheard = this.liveSenders(nodeId);
+      const unheard = this.noteWalk(nodeId, this.allowedNoteSides(), true);
       if (unheard.length > 0) {
         if (!runEnded) continue;
         this.log('debug', `[Prune] resolve at run end id=${nodeId} unheard=[${trunc(unheard.join(', '), LOG_TRUNC_CONTENT)}] — agenda empty, no sender left to dispatch`);
@@ -3535,10 +2912,7 @@ export class NavigationEngine implements IHopStateMachine {
     this.cutUnreachable(first.voters.at(-1) ?? first.nodeId, removal);
   }
 
-  /**
-   * Re-attempts resolution for every neighbor prune still pending — the end of each hop, and once
-   * more when the agenda empties ({@link tryResolvePrunes} `runEnded`).
-   */
+  /** Re-attempts resolution for every neighbor prune still pending. */
   private resolvePendingPrunes(runEnded = false): void {
     this.tryResolvePrunes(Array.from(this.pruneBallots.keys()), runEnded);
   }
@@ -3594,20 +2968,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
-  /**
-   * Forwards a pass-tagged node's intent to its in-direction bodied neighbours.
-   *
-   * @remarks
-   * When a node is in
-   * {@link passNodeIds} the AI is not asked to analyse it, yet its descendants must stay
-   * reachable. Walk in-direction neighbours and re-enqueue each via
-   * `enqueueHop` (which respects scope and visited state).
-   *
-   * A pass node is topology only: no hop records how its columns map to its inputs, so an
-   * ordinary column continuation cannot attach beyond it. Its neighbours receive the shared BB
-   * visit with the source-qualified unresolved question instead of a CT task whose every link
-   * would be detached. Qualified scalar caller outputs keep their binding.
-   */
+  /** Forwards a pass-tagged node's intent to its in-direction bodied neighbours. */
   private contractThroughPassNode(entry: AgendaEntry): void {
     for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
       for (const taskId of entry.taskIds) {
@@ -3638,67 +2999,23 @@ export class NavigationEngine implements IHopStateMachine {
     return `Column ${named} continues through \`${passNodeId}\`, which the approved scope passes through without analysis; no column mapping through it is recorded, so this continuation stays unresolved.`;
   }
 
-  /**
-   * Single funnel for all writes to the agenda.
-   *
-   * @remarks
-   * SQL objects receive explicit hops; storage objects forward tasks automatically and user
-   * pass-tags bypass analysis.
-   * Scope admission is settled by the caller before an object enters the agenda.
-   *
-   * @param targetId - Node to enqueue.
-   * @param question - Authored reason / sub-question for the visit. Preserved verbatim when forwarded.
-   * @param depth - Topological depth relative to origin.
-   * @param priority - Agenda priority (2 = routed, 3 = origin or follow-up).
-   * @param opts - Enqueue modifiers, an options object by design: two of the flags are adjacent
-   *   same-typed booleans with different semantics, and a positional transposition would compile
-   *   silently while corrupting hop accounting. `carry` is required; every other field is optional.
-   */
+  /** Single funnel for all writes to the agenda. */
   private enqueueHop(
     targetId: string,
     question: string,
     depth: number,
     priority: number,
     opts: {
-      /**
-       * The per-neighbor column decision for this hop (column-trace mode); BB tasks must not carry
-       * any columns. Every caller states one explicitly — there is no "no opinion" carry.
-       */
       readonly carry: ColumnCarry;
-      /**
-       * CT chain-continuation questions opened for `targetId` by the committing hop's
-       * `column_flow` edges — carried onto the agenda entry itself so `<lineage_questions>`
-       * renders only when this exact node is dispatched.
-       */
       readonly lineageQuestions?: string[];
-      /**
-       * Whether `targetId` was absent from {@link scopeNodeIds} before the caller's own mutations
-       * this call (callers that pre-add to scope before enqueueing MUST pass this explicitly; the
-       * live default only holds for callers that never touch scope themselves).
-       */
       readonly freshScopeExpansion?: boolean;
-      /**
-       * Whether `targetId` was previously visited and had its visited flag reset (a
-       * `supplementAgenda` re-analysis), so it consumes a brand-new hop despite being in scope.
-       */
       readonly reactivated?: boolean;
-      /** Existing task to attach instead of creating a new task. */
       readonly callerContext?: FunctionCallerContext;
-      /** Source-qualified input context retained without asserting a local output mapping. */
       readonly sourceRefs?: readonly ScalarReturnTarget[];
-      /** The accepted task's read/write leg; dual-role carriers never choose a side by guessing. */
       readonly traversalSide?: 'upstream' | 'downstream';
       readonly existingTaskId?: string;
-      /** Parent task assigned when a new task is created. */
       readonly parentTaskId?: string;
-      /** Engine-owned sender of this route through explicit passthrough. */
       readonly passthroughFromNodeId?: string;
-      /**
-       * Records a node left un-enqueued, keyed by node id: `already_visited` /
-       * `already_pruned` for the visit-once skip, `not_enqueued` for an out-of-scope target.
-       * The route
-       * commit turns the settled entries into `route_outcomes` so a route with no effect is stated, never left `accepted:true`.
-       */
       readonly dispositions?: Map<string, RouteSkipDisposition>;
     },
   ): void {
@@ -3726,7 +3043,10 @@ export class NavigationEngine implements IHopStateMachine {
       dispositions?.set(targetId, removed ? 'already_pruned' : 'already_visited');
       return;
     }
-    this.resolveKept(targetId);
+    const focusId = this.currentFocusNodeId;
+    if (focusId && this._status === 'awaiting_findings' && this.visited.has(focusId) && this.recordBallot(targetId, focusId, 'keep')) {
+      this.tryResolvePrunes([targetId]);
+    }
     const node = this.nodeMap.get(targetId);
     if (!node) {
       this.log('debug', `[Disposition] enqueue drop ${targetId} — absent from the loaded graph model`);
@@ -3742,16 +3062,13 @@ export class NavigationEngine implements IHopStateMachine {
     }
     const task = this.ensureExecutableTask(targetId, question, priority, activeColumns, existingTaskId, parentTaskId, carry.kind === 'scalar_return' ? carry.outputs : undefined, callerContext, sourceRefs, traversalSide, passthroughFromNodeId);
     const alreadyQueued = this._agenda.has(targetId);
-    this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: this.agendaColumnsFor(carry), ...this.carryToRecord(carry), ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
+    const agendaColumns = !this.tracer ? undefined : carry.kind === 'row_role_only' ? [] : activeColumns;
+    const columnCarry = !this.tracer ? {} : { columnCarry: carry.kind === 'carry' ? { kind: 'carry' as const, columns: [...carry.columns] } : carry.kind === 'scalar_return' ? { kind: 'scalar_return' as const, outputs: carry.outputs.map(target => ({ ...target })) } : { ...carry } };
+    this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: agendaColumns, ...columnCarry, ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
     if (!alreadyQueued && (freshScopeExpansion || reactivated)) this._totalNodes++;
   }
 
-
-  /**
-   * Derives one neighbor's continuation from accepted flow, explicit qualified passthrough or a
-   * validated caller context, exactly as accepted. Routing prose, compiler metadata and historical
-   * evidence never replace or reactivate it.
-   */
+  /** Derives one neighbor's continuation from accepted flow, explicit qualified passthrough or a validated caller context. */
   private neighborCarryFor(nodeId: string, carryByNode: ReadonlyMap<string, ReadonlySet<string>>, callerContext?: FunctionCallerContext): ColumnCarry {
     if (!this.tracer) return { kind: 'carry', columns: [] };
     if (callerContext && !getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined)?.length && this.validFunctionCallerContext(nodeId, callerContext)) {
@@ -3761,38 +3078,6 @@ export class NavigationEngine implements IHopStateMachine {
     for (const col of carryByNode.get(nodeId) ?? []) if (!byKey.has(this.columnKey(col))) byKey.set(this.columnKey(col), col);
     const columns = [...byKey.values()];
     return columns.length > 0 ? { kind: 'carry', columns } : { kind: 'row_role_only' };
-  }
-
-  /** Empty or absent columns (or no tracer) dispatch as BB; a named column set is CT. */
-  private hopModeFromColumnList(columns: readonly string[] | undefined): 'bb' | 'ct' {
-    if (!this.tracer) return 'bb';
-    return (columns?.filter(Boolean).length ?? 0) > 0 ? 'ct' : 'bb';
-  }
-
-  /**
-   * Projects the authored carry decision onto an agenda entry, when there is one worth persisting.
-   *
-   * @remarks
-   * BB entries never record one: the mode has no column channel.
-   *
-   * @param carry - The caller's column decision for this hop.
-   * @returns A spreadable `columnCarry` fragment, or an empty object.
-   */
-  private carryToRecord(carry: ColumnCarry): { columnCarry?: ColumnCarry } {
-    if (!this.tracer) return {};
-    return { columnCarry: carry.kind === 'carry' ? { kind: 'carry', columns: [...carry.columns] } : carry.kind === 'scalar_return' ? { kind: 'scalar_return', outputs: carry.outputs.map(target => ({ ...target })) } : { ...carry } };
-  }
-
-  /**
-   * Projects the agenda entry's persisted `activeColumns` for one CT hop, read only from the carry.
-   *
-   * @returns `undefined` in BB, `[]` for a row-only arrival, otherwise the carried column names.
-   */
-  private agendaColumnsFor(carry: ColumnCarry): string[] | undefined {
-    if (!this.tracer) return undefined;
-    if (carry.kind === 'row_role_only') return [];
-    if (carry.kind === 'scalar_return') return [...new Set(carry.outputs.map(target => target.col))];
-    return carry.columns.filter(Boolean);
   }
 
   /** Creates the typed task attached to a concrete agenda hop. */
@@ -3823,12 +3108,7 @@ export class NavigationEngine implements IHopStateMachine {
     }, 'analytical', activeColumns, returnTargets, sourceRefs));
   }
 
-  /**
-   * Collects neighboring node attributes for evaluation during hop routing.
-   *
-   * @param focusId - Central node identifier to derive neighbor connections from.
-   * @returns Array of metadata structures matching neighbor hop properties.
-   */
+  /** Collects neighboring node attributes for evaluation during hop routing. */
   private buildNeighborList(focusId: string): HopNeighborDisclosure[] {
     const inSet = new Set(this.graph.inNeighbors(focusId));
     const edgeVerb = new Map<string, string>();
@@ -3897,15 +3177,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Shortest node chain from origin to a node, ignoring `removedSet` but bounded to `scopeNodeIds`
-   * (plus the target itself) so a chain is never assembled from ground the run never explored.
-   *
-   * @param targetId - The node id to connect back to origin.
-   * @param sides - Approved legs the path may walk, each in its own direction from the origin; omitted,
-   *   the walk is undirected.
-   * @returns Path node ids inclusive of both ends, or null when no scope-bounded path exists.
-   */
+  /** Shortest node chain from origin to a node, ignoring `removedSet` but bounded to `scopeNodeIds` (plus the target itself) so a chain is never assembled from ground the run never explored. */
   private scopeBoundedPathToOrigin(targetId: string, sides?: ReadonlyArray<'upstream' | 'downstream'>): string[] | null {
     const origin = this.originNodeId;
     if (!origin || !this.graph.hasNode(targetId)) return null;
@@ -3937,19 +3209,7 @@ export class NavigationEngine implements IHopStateMachine {
     return path.reverse();
   }
 
-  /**
-   * Packages exploration records into the final presentation topology.
-   *
-   * @remarks
-   * The render is exactly the nodes a hop or the user's pass filter dispositioned `analyze` or
-   * `passthrough`, the model edges between them, and every committed column edge. A pruned node is
-   * absent from the render and reported through its `prune` entry in `node_states`; nothing else is
-   * withheld or added.
-   *
-   * @returns Detailed analysis metrics matching the outcome format.
-   * @throws When the exploration is not `complete`: a result exists only once no agenda entry and
-   *   no focus is left, so a stopped run never yields one.
-   */
+  /** Packages exploration records into the final presentation topology. */
   public getResult(): SmResult {
     if (this._status !== 'complete') {
       throw new Error(`Exploration result requested in status '${this._status}': a result exists only for a complete exploration.`);
@@ -3971,11 +3231,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  /**
-   * Emits the serializable active map state used by diagnostics and the presentation artifact's run record.
-   *
-   * @returns Plain object suitable for JSON output routines.
-   */
+  /** Emits the serializable active map state used by diagnostics and the presentation artifact's run record. */
   public toJSON(): SmState {
     const snapshot: SmState = {
       identifierCaseSensitive: this.identifierCaseSensitive,
@@ -4006,13 +3262,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
-  /**
-   * Flattens the engine's private working state into a serializable projection.
-   *
-   * @remarks
-   * The companion to {@link toJSON}'s top-level fields: the private state the saved run records.
-   * Maps and sets are flattened to arrays for the JSON boundary.
-   */
+  /** Flattens the engine's private working state into a serializable projection. */
   private serializeInternals(): EngineInternalsSnapshot {
     return {
       originNodeId: this.originNodeId,

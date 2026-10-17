@@ -4,17 +4,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 
-/**
- * Executable form of three written architecture rules.
- *
- * @remarks
- * Each rule below is stated in prose (`docs/ARCHITECTURE.md`, `docs/DEVELOPER_GUIDE.md`).
- * The scans run inside the normal unit suite — and therefore inside `npm run gate` — so a
- * violation fails the build.
- *
- * The scans run over the source tree behind a file-count floor and a positive-control token per
- * tree, because a scan that silently matches nothing would otherwise "prove" every absence.
- */
+/** Executable form of three written architecture rules. */
 
 const srcRoot = fileURLToPath(new URL('../../../src', import.meta.url));
 const aiRoot = join(srcRoot, 'ai');
@@ -40,18 +30,7 @@ function posixRelative(from: string, to: string): string {
   return relative(from, to).split('\\').join('/');
 }
 
-/**
- * Removes line and block comments while preserving string and template literals.
- *
- * @remarks
- * The rules below are about calls, not prose: a doc comment that names `showErrorMessage` to
- * explain why it is banned must not trip its own gate. String literals are preserved because a
- * URL (`'https://…'`) is not a comment and dropping it would corrupt the surrounding call text.
- * Regular-expression literals are not tracked; no scanned rule token can appear inside one.
- *
- * @param source - TypeScript source text.
- * @returns The same text with comment bodies removed.
- */
+/** Removes line and block comments while preserving string and template literals. */
 function stripComments(source: string): string {
   let out = '';
   let quote: string | undefined;
@@ -94,13 +73,7 @@ function stripComments(source: string): string {
   return out;
 }
 
-/**
- * Returns the argument text of the call whose opening parenthesis follows `from`.
- *
- * @param source - Comment-stripped source text.
- * @param from - Index just past the callee identifier.
- * @returns Argument text, or an empty string when the identifier is not a call.
- */
+/** Returns the argument text of the call whose opening parenthesis follows `from`. */
 function callArguments(source: string, from: number): string {
   let index = from;
   while (index < source.length && /\s/.test(source[index])) index += 1;
@@ -131,12 +104,7 @@ const NOTIFICATION_PATTERN = /\b(showErrorMessage|showWarningMessage|console\.[A
 /** The consent-dialog escape hatch: a *modal* warning is a deliberate user prompt, not logging. */
 const MODAL_ARGUMENT = /\bmodal\s*:\s*true\b/;
 
-/**
- * Finds banned notification/console calls in one AI source file.
- *
- * @param source - Raw TypeScript source text.
- * @returns Callee names of the offending calls, in source order.
- */
+/** Finds banned notification/console calls in one AI source file. */
 function forbiddenNotificationCalls(source: string): string[] {
   const stripped = stripComments(source);
   const found: string[] = [];
@@ -154,13 +122,7 @@ function forbiddenNotificationCalls(source: string): string[] {
 /** Static imports, re-exports, dynamic imports and requires alike. */
 const MODULE_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
 
-/**
- * Resolves every relative module specifier of a file to a `src`-relative module path.
- *
- * @param file - Absolute path of the importing file.
- * @param source - Raw TypeScript source text.
- * @returns `src`-relative POSIX module paths, without extensions.
- */
+/** Resolves every relative module specifier of a file to a `src`-relative module path. */
 function importedModules(file: string, source: string): string[] {
   const stripped = stripComments(source);
   return [...stripped.matchAll(MODULE_SPECIFIER)]
@@ -169,16 +131,7 @@ function importedModules(file: string, source: string): string[] {
     .map((specifier) => posixRelative(srcRoot, resolve(dirname(file), specifier)));
 }
 
-/**
- * Engine imports in `src/ai/**` that bypass `src/engine/shared/*`.
- *
- * @remarks
- * Frozen inventory of the violations that existed when the layering rule became executable. It
- * exists to block **new** coupling without demanding an unrelated refactor first, so the list may
- * only ever shrink: delete an entry when the import is removed or moved behind
- * `src/engine/shared/*`, never add one. The stale-entry test below fails if a fixed violation is
- * left listed.
- */
+/** Engine imports in `src/ai/**` that bypass `src/engine/shared/*`. */
 const GRANDFATHERED_ENGINE_IMPORTS: readonly string[] = [
   'prompting/hostPrompts.ts -> engine/projectStore',
   'prompting/hostPrompts.ts -> engine/types',
@@ -277,12 +230,7 @@ describe('architecture rule gates', () => {
   });
 });
 
-/**
- * Codes with more than one emission site; every site must interpolate `REJECTION_CODES`
- * (`src/ai/support/rejectionCodes.ts`) rather than hand-typing the literal, so a rename cannot
- * drift between the emitting guard, the prompt that teaches the recovery, and the schema that
- * types the envelope.
- */
+/** Codes with more than one emission site; every site must interpolate `REJECTION_CODES` (`src/ai/support/rejectionCodes.ts`) rather than hand-typing the literal, so a rename cannot drift between the emitting guard, the prompt that teaches the recovery, and the schema that types the envelope. */
 const MULTI_SITE_REJECTION_CODES = [
   REJECTION_CODES.staleTurn,
   REJECTION_CODES.invalidInput,

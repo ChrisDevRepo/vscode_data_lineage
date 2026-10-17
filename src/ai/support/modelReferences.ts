@@ -15,13 +15,7 @@ export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>, i
   return owner;
 }
 
-/**
- * Resolves multiple node ids while preserving order and removing duplicates.
- *
- * @param raws - An array of raw node id strings.
- * @param nodeMap - The map of canonical nodes to check against.
- * @returns An object containing resolved and unresolved node id arrays.
- */
+/** Resolves multiple node ids while preserving order and removing duplicates. */
 export function resolveModelNodeIds(
   raws: string[],
   nodeMap: Map<string, unknown>,

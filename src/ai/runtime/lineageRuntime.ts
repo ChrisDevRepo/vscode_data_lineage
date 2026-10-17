@@ -20,7 +20,7 @@ import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
-export interface LineageRuntimeRequest {
+interface LineageRuntimeRequest {
   /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
   /** Verbatim user prompt for this turn. */
@@ -30,7 +30,7 @@ export interface LineageRuntimeRequest {
 }
 
 /** Request-scoped dependencies required to execute one lineage turn. */
-export interface LineageRuntimeRunInput {
+interface LineageRuntimeRunInput {
   /** The exact native request model, already wrapped as a provider-neutral port. */
   readonly model: ModelPort;
   /** Request identity, prompt, and optional history for this turn. */
@@ -42,7 +42,7 @@ export interface LineageRuntimeRunInput {
 }
 
 /** Terminal runtime outcome and provider-call accounting for one lineage turn. */
-export interface LineageRuntimeResult {
+interface LineageRuntimeResult {
   /** Terminal status of the turn. */
   readonly outcome: TurnOutcome;
   /** Provider calls attempted through the request's model port. */
@@ -52,7 +52,7 @@ export interface LineageRuntimeResult {
 }
 
 /** Long-lived dependencies used to construct request-scoped lineage turns. */
-export interface LineageRuntimeDeps {
+interface LineageRuntimeDeps {
   /** Session accessor for the {@link AiSession} singleton. */
   readonly getSession: () => AiSession;
   /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
@@ -65,13 +65,7 @@ export interface LineageRuntimeDeps {
   readonly traceWriter?: AiTraceWriter;
 }
 
-/**
- * Single production facade for native lineage turns.
- *
- * The facade owns turn setup and active-request coordination. The outer
- * LangGraph owns phase/hop routing and `AgentRuntime` owns interrupt/resume and
- * the one terminal event.
- */
+/** Single production facade for native lineage turns. */
 export class LineageRuntime {
   private readonly active = new Map<string, {
     readonly runtime: AgentRuntime;
@@ -80,13 +74,7 @@ export class LineageRuntime {
 
   public constructor(private readonly deps: LineageRuntimeDeps) {}
 
-  /**
-   * Generates suggestions from compact facts without tools, history replay or session mutation.
-   *
-   * @remarks
-   * Writes the same `turn-start`/`turn-terminal` lifecycle pair as {@link run}, so the trace joins
-   * this turn's wire records to a turn like any other request.
-   */
+  /** Generates suggestions from compact facts without tools, history replay or session mutation. */
   public async runSuggestions(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const runFingerprint = fingerprint(`${session.id}:${input.request.id}`);
@@ -117,11 +105,7 @@ export class LineageRuntime {
       ? { failure: { message: result.error } } : {}) };
   }
 
-  /**
-   * Executes one request against a captured session epoch and request-selected model.
-   *
-   * @throws When the same session/request identifier is already active.
-   */
+  /** Executes one request against a captured session epoch and request-selected model. */
   public async run(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const requestKey = `${session.id}:${input.request.id}`;

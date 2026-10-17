@@ -257,7 +257,5 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   );
 }
 
-/**
- * Renders an object node inside the React Flow canvas; schema clusters render through `SchemaNode`.
- */
+/** Renders an object node inside the React Flow canvas; schema clusters render through `SchemaNode`. */
 export const CustomNode = memo(CustomNodeComponent);

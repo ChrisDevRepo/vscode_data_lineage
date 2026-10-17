@@ -1,35 +1,13 @@
-/**
- * Stage-scoped prompt assembly for the synthesis / active / discover phases.
- */
+/** Stage-scoped prompt assembly for the synthesis / active / discover phases. */
 
 import { AI_SECTION_KEY_BY_ANGLE, SECTIONS_PLACEHOLDER, type AiOutputSections, type AiOutputTemplates, type AiSectionAngle } from '../session/types';
 import type { ClassificationValue } from '../session/classification';
 import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
 
-/**
- * Stages at which a YAML instruction may be injected into the AI system prompt.
- *
- * @remarks
- * - `discover`  = inline chat first response (no SM engaged).
- * - `active`    = per-hop `sections` writing — capture rules (one key per fired `*_capture`).
- * - `synthesis` = present_result authoring — render rules. Slot bodies arrive
- *                 pre-formatted from the active-phase capture; the model writes
- *                 the section text from them (it may rephrase or drop), and the
- *                 engine assembles, numbers and frames.
- */
+/** Stages at which a YAML instruction may be injected into the AI system prompt. */
 type TemplateStage = 'discover' | 'active' | 'synthesis';
 
-/**
- * Canonical, code-owned routing of YAML keys to stages.
- *
- * @remarks
- * Authoritative — a `stages:` field in the YAML (default or overlay) is informational only; the
- * loader never reads it (`AiOutputTemplatesConfigSchema` passes it through, only `instruction` is
- * overlaid), so a disagreeing overlay is silently routed by this map instead.
- *
- * No key exists for the assembled `description` (engine output of `orderAndAssemble` in
- * `presentResult.ts`) or for section grouping and order, which `buildSynthesisPrompt()` owns.
- */
+/** Canonical, code-owned routing of YAML keys to stages. */
 const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
   discovery_chat:       ['discover'],
   summary:              ['synthesis'],
@@ -47,38 +25,19 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   column_trace_capture: ['active'],
 };
 
-/**
- * Classification-gated keys — fire only when the session classification
- * matches one of the listed values. Keys absent from this map are always on.
- *
- * @remarks
- * A fresh exploration locks classification before the approval gate, so active
- * prompt assembly normally receives a concrete value. The `undefined` behavior
- * remains defensive for pre-gate callers: every gated capture key fires
- * rather than silently dropping an evidence angle.
- */
+/** Classification-gated keys — fire only when the session classification matches one of the listed values. Keys absent from this map are always on. */
 const CLASSIFICATION_GATED: Readonly<Record<string, readonly ClassificationValue[]>> = {
   business_capture:     ['business', 'both'],
   technical_capture:    ['technical', 'both'],
   loading_pattern:      ['technical', 'both'],
 };
 
-/**
- * CT-mode-gated keys — fire only when the current hop is dispatched under the CT contract; a BB
- * hop of a CT session renders without them. Additive to classification-gated templates; both gates
- * must pass.
- */
+/** CT-mode-gated keys — fire only when the current hop is dispatched under the CT contract; a BB hop of a CT session renders without them. Additive to classification-gated templates; both gates must pass. */
 const CT_MODE_GATED: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'column_trace_capture',
 ]);
 
-/**
- * Per-FOCUS capture keys — which of these fires depends on the current hop's focus node
- * (bodied script vs non-bodied table), so they are volatile per hop. They render into the
- * per-hop worker message (`render: 'per_focus'`), NEVER into the active system prompt
- * (`render: 'stable'`): a system prompt that swaps templates per focus type breaks the
- * byte-stable prefix the provider-side implicit prompt cache keys on.
- */
+/** Per-FOCUS capture keys — which of these fires depends on the current hop's focus node (bodied script vs non-bodied table), so they are volatile per hop. They render into the per-hop worker message (`render: 'per_focus'`), NEVER into the active system prompt (`render: 'stable'`): a system prompt that swaps templates per focus type breaks the byte-stable prefix the provider-side implicit prompt cache keys on. */
 const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
   'technical_capture',
@@ -86,26 +45,13 @@ const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'structural_summary',
 ]);
 
-/**
- * The `sections` key each capture key writes. The per-focus recipe labels its bullet with this
- * value, never the YAML key, so the label is the literal the `submit_findings` schema accepts.
- */
+/** The `sections` key each capture key writes. The per-focus recipe labels its bullet with this value, never the YAML key, so the label is the literal the `submit_findings` schema accepts. */
 const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business' | 'technical'>>> = {
   business_capture:  'business',
   technical_capture: 'technical',
 };
 
-/**
- * Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the
- * one-key-per-schema-angle rule (each capture bullet is
- * labelled with the `sections` key it writes), the exact-substring quoting rule and the
- * `not established` wording, so no capture key restates them.
- *
- * @remarks
- * The `sections` shape is read from the same {@link CLASSIFICATION_KEPT_ANGLES} the dispatched
- * `submit_findings` schema narrows to, so the prompt line and the schema never name different
- * angles; a locked mission told both keys would guess the excluded one and be rejected.
- */
+/** Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the one-key-per-schema-angle rule (each capture bullet is labelled with the `sections` key it writes), the exact-substring quoting rule and the `not established` wording, so no capture key restates them. */
 function captureRecipeHeader(classification: ClassificationValue | undefined): string {
   const kept = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
   const shape = !kept
@@ -121,29 +67,11 @@ function captureRecipeHeader(classification: ClassificationValue | undefined): s
   ].join('\n\n');
 }
 
-/**
- * Bare-summary angle clause — the one line the non-bodied per-focus render keeps from
- * {@link captureRecipeHeader} when it drops the rest of that header (its SQL-evidence rules do
- * not apply to a schema-only node with no body). Without it the model has no cue that
- * `sections` is a fixed schema key set and free-labels the entry from the summary's own bullet
- * names (`Purpose`, `Upstream sources`, …), which `lineage_submit_findings` rejects.
- *
- * @remarks
- * Unlocked (`classification` undefined) states every angle the mode ever accepts. A locked
- * classification with one kept angle ({@link CLASSIFICATION_KEPT_ANGLES}) states only that angle:
- * the per-dispatch `submit_findings` schema (`toolSchemas.ts`
- * `capturedSectionSchemaForClassification`) hard-rejects the excluded one, so naming it here
- * would only buy the model a rejection it cannot act on. `both` names both keys, which the
- * classification validator requires on a fresh submission.
- */
+/** Bare-summary angle clause — the one line the non-bodied per-focus render keeps from {@link captureRecipeHeader} when it drops the rest of that header (its SQL-evidence rules do not apply to a schema-only node with no body). Without it the model has no cue that `sections` is a fixed schema key set and free-labels the entry from the summary's own bullet names (`Purpose`, `Upstream sources`, …), which `lineage_submit_findings` rejects. */
 const BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED =
   'Submit this under the matching `sections` key (`business`, `technical`, or both) — never a descriptive label.';
 
-/**
- * Resolves {@link BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED} to the angle(s) the locked classification
- * keeps, reading the same {@link CLASSIFICATION_KEPT_ANGLES} the dispatched schema
- * narrows to — one source, so the prompt line and the schema can never name different angles.
- */
+/** Resolves {@link BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED} to the angle(s) the locked classification keeps, reading the same {@link CLASSIFICATION_KEPT_ANGLES} the dispatched schema narrows to — one source, so the prompt line and the schema can never name different angles. */
 function bareSummaryAngleClause(classification: ClassificationValue | undefined): string {
   if (!classification) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
@@ -151,18 +79,7 @@ function bareSummaryAngleClause(classification: ClassificationValue | undefined)
   return `Submit this under \`sections.${kept[0]}\` — never a descriptive label.`;
 }
 
-/**
- * The ordered bold section labels the active angle(s) write, as one list for the synthesis
- * `general` instruction.
- *
- * @remarks
- * Reads the `sections` each capture recipe declares, for the angles {@link CLASSIFICATION_KEPT_ANGLES}
- * keeps: one angle gives its own list, `both` the ordered union, first occurrence winning. A label
- * only a later angle declares is placed right after the label that precedes it in that angle's own
- * list, so each recipe's order survives the merge. An unlocked classification keeps every angle, as
- * the capture gates do. A label declared only by an angle the mission did not fire is therefore
- * never served.
- */
+/** The ordered bold section labels the active angle(s) write, as one list for the synthesis `general` instruction. */
 function activeSectionLabels(sections: AiOutputSections, classification: ClassificationValue | undefined): string {
   const angles: readonly AiSectionAngle[] = classification
     ? CLASSIFICATION_KEPT_ANGLES[classification]
@@ -194,46 +111,14 @@ export interface StagePromptResult {
   gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' | 'ct_mode' | 'focus_scope' }>;
 }
 
-/**
- * Assembles the stage-scoped template block for the AI system prompt.
- *
- * @remarks
- * Walks `STAGE_BY_KEY` and emits one bullet per active key: `- <key>: <instruction>`, a capture key
- * labelled with its `sections` key instead (`CAPTURE_ANGLE`), and a per-focus recipe key with
- * no angle of its own (e.g. `structural_callouts`) labelled with neither — it folds into whichever
- * angle fired, per {@link captureRecipeHeader}, never its own `- <key>:` line. One heading
- * hierarchy — no per-key `####` wrappers. The AI parses the bullet list directly.
- * The non-bodied per-focus render is the exception: `structural_summary` ships bare, with no
- * `### ` header, keeping only {@link bareSummaryAngleClause} ahead of it.
- *
- * At synthesis, if `classification` is known, a code-resolved `**Mission type:** <value>`
- * one-liner is emitted before the bullet list.
- *
- * @param templates - The loaded AI output templates (instruction strings).
- * @param phase - The current conversation phase.
- * @param classification - Optional mission-type signal; gates active-phase capture firing.
- * @param slotCount - Number of detail slots collected so far; suppresses the `closing` template at synthesis when below the `CLOSING_MIN_SLOTS` threshold (3).
- * @param isCtMode - True if column trace mode is active.
- * @param render - The render scope configuration.
- * @param sections - Section labels declared by the capture recipes; at synthesis they replace
- *   {@link SECTIONS_PLACEHOLDER} in the `general` instruction, for the active angle only. Required, so
- *   a render never serves the placeholder an empty list by omission; the session carries the loaded
- *   labels, and an instruction without the placeholder renders as written.
- * @returns An object containing the assembled prompt block, shipped keys, and dropped keys.
- */
+/** Assembles the stage-scoped template block for the AI system prompt. */
 export function resolveStagePrompt(
   templates: AiOutputTemplates,
   phase: TemplateStage,
   classification: ClassificationValue | undefined,
   slotCount: number | undefined,
   isCtMode: boolean | undefined,
-  /**
-   * Which slice of the active stage to render. Default `{ scope: 'stable' }` — every
-   * hop-invariant key, per-focus capture keys excluded. `{ scope: 'per_focus', focusKind }`
-   * renders ONLY the capture recipe matching the current focus (bodied → `*_capture`,
-   * non-bodied → `structural_summary`) for the per-hop worker message. Non-active stages
-   * carry no per-focus keys, so the scope is a no-op there.
-   */
+  /** Which slice of the active stage to render. Default `{ scope: 'stable' }` — every hop-invariant key, per-focus capture keys excluded. `{ scope: 'per_focus', focusKind }` renders ONLY the capture recipe matching the current focus (bodied → `*_capture`, non-bodied → `structural_summary`) for the per-hop worker message. Non-active stages carry no per-focus keys, so the scope is a no-op there. */
   render: StageRenderScope = { scope: 'stable' },
   sections: AiOutputSections,
 ): StagePromptResult {

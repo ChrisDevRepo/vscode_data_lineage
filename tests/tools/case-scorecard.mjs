@@ -17,14 +17,7 @@ export const FORMAT_DROP = 0.2;
 const mean = values => (values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length);
 const round = value => (value === null ? null : Math.round(value * 100) / 100);
 
-/**
- * Correctness signals of one case: every turn ended `ok`, and the first answer meets the row's
- * `must_contain` and `preview_chars_min`. Follow-up answers are not held to the first turn's keywords.
- *
- * @param {{ outcomes: string[], answer: string }} result - The case's turn outcomes and first answer.
- * @param {{ must_contain?: string[], preview_chars_min?: number }} expect - The catalog row's `expect`.
- * @returns {number} Mean of the applicable checks, 0..1.
- */
+/** Correctness signals of one case: every turn ended `ok`, and the first answer meets the row's `must_contain` and `preview_chars_min`. Follow-up answers are not held to the first turn's keywords. */
 export function correctness(result, expect = {}) {
   const checks = [result.outcomes.length > 0 && result.outcomes.every(outcome => outcome === 'ok') ? 1 : 0];
   const lower = result.answer.toLowerCase();
@@ -35,14 +28,7 @@ export function correctness(result, expect = {}) {
   return mean(checks);
 }
 
-/**
- * Formatting signals of one answer: balanced code fences, well-formed markdown tables, no leaked
- * tool-call JSON, and — when the run recorded its section labels — bold labels drawn from that set.
- *
- * @param {string} answer - The rendered answer markdown.
- * @param {string[]} [sections] - Allowed section labels; omitted when the run did not record them.
- * @returns {number | null} Mean of the applicable checks, 0..1; null for an empty answer.
- */
+/** Formatting signals of one answer: balanced code fences, well-formed markdown tables, no leaked tool-call JSON, and — when the run recorded its section labels — bold labels drawn from that set. */
 export function formatting(answer, sections) {
   if (answer.trim() === '') return null;
   const lines = answer.split('\n');
@@ -71,13 +57,7 @@ export function formatting(answer, sections) {
   return mean(checks);
 }
 
-/**
- * Groups a run dir's turns by catalog case. `run.json.turns` lists turns in order, so turn N is
- * `turn-N`; the first turn's canonical preview is scored when present, otherwise its streamed text.
- *
- * @param {string} runDir
- * @returns {{ run: object, cases: Map<string, { outcomes: string[], answer: string, answerPath: string | null, answerField: string | null, answerRepresentation: string, modelCalls: number }> }}
- */
+/** Groups a run dir's turns by catalog case. `run.json.turns` lists turns in order, so turn N is `turn-N`; the first turn's canonical preview is scored when present, otherwise its streamed text. */
 export function readRun(runDir) {
   const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
   const cases = new Map();
@@ -109,16 +89,7 @@ export function readRun(runDir) {
   return { run, cases };
 }
 
-/**
- * Scores both runs per case and gives each a verdict: `regressed` when correctness drops or
- * formatting drops by more than {@link FORMAT_DROP}, `improved` for the reverse, `missing` when
- * the case is in only one run, `not_comparable` when question/fixture identity is absent or different,
- * `same` otherwise. Section labels count only when both runs recorded them.
- *
- * @param {ReturnType<typeof readRun>} base
- * @param {ReturnType<typeof readRun>} cand
- * @param {Record<string, { must_contain?: string[], preview_chars_min?: number }>} expectations - `expect` by case id.
- */
+/** Scores both runs per case and gives each a verdict: `regressed` when correctness drops or formatting drops by more than {@link FORMAT_DROP}, `improved` for the reverse, `missing` when the case is in only one run, `not_comparable` when question/fixture identity is absent or different, `same` otherwise. Section labels count only when both runs recorded them. */
 export function compareCases(base, cand, expectations = {}) {
   const ids = [...new Set([...base.cases.keys(), ...cand.cases.keys()])];
   // Label conformance is scored only when both runs recorded their labels, so neither side is held to a check the other skips.
@@ -168,10 +139,7 @@ export function renderTable(rows) {
   return out.join('\n');
 }
 
-/**
- * Reads the command line: two run directories and an optional `--out DIR`.
- * @returns `{ dirs, out }`, or `null` for `--help`, an unknown flag or a run-directory count other than two.
- */
+/** Reads the command line: two run directories and an optional `--out DIR`. */
 export function parseArgs(args) {
   const outIndex = args.indexOf('--out');
   const dirs = args.filter((arg, index) => !arg.startsWith('-') && (outIndex === -1 || index !== outIndex + 1));

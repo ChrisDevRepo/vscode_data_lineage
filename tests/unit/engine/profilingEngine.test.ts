@@ -1,10 +1,4 @@
-/**
- * Unit tests for pure functions in src/engine/profilingEngine.ts.
- *
- * Covers: extractBaseType, classifyColumn, buildColumnAggregations,
- * buildProfilingQuery, buildRowCountQuery, computeSamplePercent,
- * compactDate, typeBadgeLabel, parseProfilingResult, profilingRowFromResult.
- */
+/** Unit tests for pure functions in src/engine/profilingEngine.ts. */
 
 import { describe, it, expect } from 'vitest';
 import {

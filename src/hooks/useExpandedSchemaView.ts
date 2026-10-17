@@ -5,9 +5,7 @@ import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../engi
 import type { DatabaseModel, ExtensionConfig, GraphMode } from '../engine/types';
 import { notifyUser } from '../utils/notify';
 
-/**
- * UI state that tracks which schemas are expanded in Expanded Schema View.
- */
+/** UI state that tracks which schemas are expanded in Expanded Schema View. */
 export interface ExpandedSchemaViewState {
   /** Object highlighted after search/detail navigation; null for schema-level expansion. */
   focusNodeId: string | null;
@@ -28,16 +26,7 @@ interface UseExpandedSchemaViewArgs {
   showExpandedSchemaClusters: boolean;
 }
 
-/**
- * Encapsulates Expanded Schema View state transitions and derived render data.
- *
- * @remarks
- * This hook owns only the feature logic. State still lives in `App` so existing
- * reset points and host-sync behavior can remain unchanged.
- *
- * @returns Expanded-view flow graph, rendered counts, collapsed-cluster IDs, and
- * the expand/collapse/toggle actions.
- */
+/** Encapsulates Expanded Schema View state transitions and derived render data. */
 export function useExpandedSchemaView({
   config,
   expandedSchemaView,
@@ -59,15 +48,7 @@ export function useExpandedSchemaView({
     );
   }, [expandedSchemaView, graph, graphMode, showExpandedSchemaClusters]);
 
-  /**
-   * The projected expanded-schema graph, or null when there is none to show.
-   *
-   * @remarks
-   * The render limit is checked here, in the layer that owns the projection, because expanded
-   * schemas can arrive without passing `applyExpandedSchemaViewSchemas`: a restored view or bookmark
-   * whose graph grew, or whose limit shrank, since it was saved. Over the limit nothing is projected,
-   * so the webview never lays out an oversized graph and shows the render-limit notice instead.
-   */
+  /** The projected expanded-schema graph, or null when there is none to show. */
   const expandedSchemaViewGraph = useMemo(() => {
     if (!expandedSchemaView || !graph || expandedSchemaViewRenderedCount === undefined) return null;
     if (expandedSchemaViewRenderedCount > config.renderLimit) return null;

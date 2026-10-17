@@ -1,12 +1,4 @@
-/**
- * The AI tool catalog.
- *
- * @remarks
- * One entry per lineage tool, pairing the model-facing name with its single Zod input schema.
- * This is the authoritative, **VS Code-free** list every surface derives from: the `@lineage`
- * registry binds each entry's handler, and the `external` policy stage selects what `vscode.lm` and
- * the generated `languageModelTools` manifest serve.
- */
+/** The AI tool catalog. */
 import type { z } from 'zod';
 import type { ToolDefinition } from './registry';
 import { EXTERNAL_TOOL_NAMES } from './toolPolicy';
@@ -40,11 +32,7 @@ export interface ToolContract<TSchema extends z.ZodType = z.ZodType> {
   readonly modelDescription: string;
   /** Zod source for provider schema generation and boundary validation. */
   readonly inputSchema: TSchema;
-  /**
-   * Progress label shown while the tool executes. Omitted on tools that run repeatedly inside one
-   * user-visible operation (per-hop commits) — a registered tool without a label emits no status
-   * update, so the operation-level status stays visible instead of flickering per call.
-   */
+  /** Progress label shown while the tool executes. Omitted on tools that run repeatedly inside one user-visible operation (per-hop commits) — a registered tool without a label emits no status update, so the operation-level status stays visible instead of flickering per call. */
   readonly progressLabel?: string;
   /** Lifecycle mutation class used for execution serialization. */
   readonly effect: ToolEffect;
@@ -52,14 +40,7 @@ export interface ToolContract<TSchema extends z.ZodType = z.ZodType> {
   readonly tags?: readonly string[];
 }
 
-/**
- * The canonical tool catalog, in registration order.
- *
- * @remarks
- * The model descriptions mirror the public manifest and are used directly by API adapters.
- * `submit_findings` and `present_result` use model-facing schemas whose runtime dispatch
- * narrows to the strict phase/mode-specific variants.
- */
+/** The canonical tool catalog, in registration order. */
 export const TOOL_DEFS = [
   {
     name: 'lineage_get_context', title: 'Get Lineage Context', inputSchema: GetContextInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
@@ -136,10 +117,6 @@ export const TOOL_DEFS = [
 /** Closed union of the canonical catalog names used for exhaustive dispatch typing. */
 export type ToolName = (typeof TOOL_DEFS)[number]['name'];
 
-/**
- * The catalog as served to callers without a chat turn (`vscode.lm` and the generated
- * `languageModelTools` manifest): the tools the `external` policy stage allows, in catalog order,
- * each with its input contract.
- */
+/** The catalog as served to callers without a chat turn (`vscode.lm` and the generated `languageModelTools` manifest): the tools the `external` policy stage allows, in catalog order, each with its input contract. */
 export const EXTERNAL_TOOL_DEFS: readonly ToolContract[] = (TOOL_DEFS as readonly ToolContract[])
   .filter(def => EXTERNAL_TOOL_NAMES.has(def.name));

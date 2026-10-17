@@ -1,8 +1,4 @@
-/**
- * `lineage_detect_graph_patterns` runs the engine analyses on the AI's bare graph, so that graph
- * must carry every node attribute the analyses read: a hub label names its object, and an external
- * reference keeps its kind and database.
- */
+/** `lineage_detect_graph_patterns` runs the engine analyses on the AI's bare graph, so that graph must carry every node attribute the analyses read: a hub label names its object, and an external reference keeps its kind and database. */
 import { describe, expect, it } from 'vitest';
 import { runAnalysis } from '../../../src/ai/tools/tools';
 import { buildBareGraph } from '../../../src/ai/support/graphUtils';

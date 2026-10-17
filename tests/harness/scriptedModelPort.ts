@@ -54,14 +54,7 @@ const SCRIPTED_IDENTITY: ModelIdentity = {
   version: '1',
 };
 
-/**
- * Replays a fixed queue of generations through the one-generation model-port contract.
- *
- * @remarks
- * Every request is retained on {@link requests} so a test can assert exactly which messages,
- * tool definitions, tool choice, and instruction context the graph projected onto the provider —
- * this is the surface that proves what a retry attempt does and does not replay.
- */
+/** Replays a fixed queue of generations through the one-generation model-port contract. */
 export class ScriptedModelPort implements SingleGenerationModelPort {
   public readonly id = 'scripted-test-port';
   public readonly identity: ModelIdentity = SCRIPTED_IDENTITY;
@@ -219,16 +212,7 @@ export interface ScriptedTool {
   readonly thrown?: unknown;
 }
 
-/**
- * Builds a real {@link ToolRegistry} whose handlers are scripted and whose dispatches are recorded.
- *
- * @remarks
- * The production registry is used unchanged so lookup, duplicate-name guarding, and dispatch stay
- * authoritative; only the bound handlers are test-owned. A production tool name keeps its
- * production effect, so effect-keyed dispatch (one hop commit per reply) runs as in production.
- * @param tools - Ordered tool entries to register.
- * @returns The registry plus the live ordered dispatch log.
- */
+/** Builds a real {@link ToolRegistry} whose handlers are scripted and whose dispatches are recorded. */
 export function scriptedRegistry(tools: readonly ScriptedTool[]): {
   registry: IToolRegistry<string>;
   invocations: RecordedInvocation[];

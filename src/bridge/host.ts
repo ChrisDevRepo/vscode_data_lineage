@@ -10,23 +10,11 @@ import {
   type ExtensionToDetailMsg,
 } from '../engine/shared/bridgeContract';
 
-/**
- * Defines the abstract interface for the extension-webview communication bridge.
- *
- * @remarks
- * Decouples bridge logic from the concrete VS Code API, enabling unit testing in pure Node.js environments.
- */
+/** Defines the abstract interface for the extension-webview communication bridge. */
 export interface BridgeHost {
   /** Sends a type-safe message from the extension host to the webview. */
   postMessage(msg: ExtensionToWebviewMsg): Thenable<boolean>;
-  /**
-   * Records a log entry with a specific severity level and category.
-   *
-   * @remarks
-   * The text is redacted at every level, and at `error` level the error message and the stack too, before they
-   * reach the output channel: warn, info and debug lines also carry caught driver messages.
-   * Pass a message string, not a synthetic `Error`, when there is no thrown error: its stack names only the logging site.
-   */
+  /** Records a log entry with a specific severity level and category. */
   log(level: 'info' | 'debug' | 'warn' | 'error', cat: LogCategory, text: string, err?: any): void;
   /** Displays a VS Code error notification to the user. */
   showErrorMessage(msg: string): void;
@@ -57,21 +45,7 @@ interface WebviewPostTarget {
   readonly webview: vscode.Webview;
 }
 
-/**
- * The single sanctioned host→webview send primitive.
- *
- * @remarks
- * Validates `msg` against `schema` and **drops** a malformed frame (returning `false`) rather than
- * shipping it — a drop is a send-side bug. The webview is left waiting on data that will never
- * arrive, so the drop is notified as well as logged rather than being visible only to a developer
- * with the Output channel open. A caller that already tells the user about its `false` result passes
- * `notifyDrop = false`; the drop is then logged only, so one cause raises one notice. Raw `panel.webview.postMessage` bypasses the contract; go through
- * {@link postToWebview} / {@link postToDetail} (or {@link BridgeHost.postMessage}, which delegates).
- *
- * Being the one send path, this is also where {@link BRIDGE_PROTOCOL_VERSION} is stamped. The stamp
- * is applied to the *parsed* payload, after validation — Zod strips unknown keys, so stamping first
- * would silently drop it, and adding it to the unions would be schema churn every handler pays for.
- */
+/** The single sanctioned host→webview send primitive. */
 function postValidated<S extends z.ZodTypeAny>(
   target: WebviewPostTarget,
   schema: S,
@@ -105,12 +79,7 @@ function postValidated<S extends z.ZodTypeAny>(
   });
 }
 
-/**
- * Sends a validated message to the main lineage webview.
- *
- * @param notifyDrop - Raise the error toast when a malformed frame is dropped (default). A caller whose
- * `false` result already reaches the user through its own notice passes `false`; the drop is then a log line only.
- */
+/** Sends a validated message to the main lineage webview. */
 export function postToWebview(
   panel: vscode.WebviewPanel,
   msg: ExtensionToWebviewMsg,

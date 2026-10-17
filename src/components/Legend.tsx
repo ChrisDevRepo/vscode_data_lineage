@@ -29,15 +29,10 @@ const INSET_LEFT: Record<'none' | 'sidebar' | 'navigator' | 'rail', number | str
 /** The maximum number of schemas to display before showing an "expand" button. */
 const SCHEMA_DISPLAY_LIMIT = 10;
 
-/**
- * Height cap for the expanded schema list: it scrolls inside the canvas instead of running past
- * its bottom edge, while the toggle stays pinned below the list.
- */
+/** Height cap for the expanded schema list: it scrolls inside the canvas instead of running past its bottom edge, while the toggle stays pinned below the list. */
 const LEGEND_LIST_MAX_HEIGHT = 'min(60vh, calc(100vh - 160px))';
 
-/**
- * Maps rendered schemas to colors with collapsible overflow and theme-aware contrast.
- */
+/** Maps rendered schemas to colors with collapsible overflow and theme-aware contrast. */
 export const Legend = memo(function Legend({
   schemas,
   schemaColorMap,

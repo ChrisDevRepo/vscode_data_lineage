@@ -22,32 +22,13 @@ export interface HarnessSessionOptions {
   /** Parse rules applied before extraction; without them the recovered edge count drops sharply. */
   readonly parseRulesPath?: string;
   readonly outputTemplatesPath?: string;
-  /**
-   * The lane model's input window, in tokens.
-   *
-   * @remarks
-   * Drives the same calibration `lineageParticipant.ts` performs from `request.model.maxInputTokens`.
-   * A lane that does not know its window passes `Number.POSITIVE_INFINITY`, which leaves both
-   * configured ceilings untouched — the participant's behaviour for a model that reports none.
-   */
+  /** The lane model's input window, in tokens. */
   readonly contextWindow: number;
-  /**
-   * Injection-probe payloads: appended to the stored DDL of the named node after
-   * {@link populateColumnStore} runs, so the hop loop's `store.getDdl` read (`src/ai/sm/smBase.ts`)
-   * returns the tampered body — the same channel `<hop_context>` carries to the model, behind the
-   * untrusted-content banner in `src/ai/agent/stagePrompts.ts`.
-   */
+  /** Injection-probe payloads: appended to the stored DDL of the named node after {@link populateColumnStore} runs, so the hop loop's `store.getDdl` read (`src/ai/sm/smBase.ts`) returns the tampered body — the same channel `<hop_context>` carries to the model, behind the untrusted-content banner in `src/ai/agent/stagePrompts.ts`. */
   readonly ddlOverrides?: ReadonlyArray<{ readonly nodeId: string; readonly appendComment: string }>;
 }
 
-/**
- * Loads the tracked output templates exactly as activation does.
- *
- * @remarks
- * Same parser, same required-key projection, same "skip a key whose `instruction` is missing"
- * behaviour — only the VS Code file API and the user-overlay setting are left out, because a headless
- * lane has neither.
- */
+/** Loads the tracked output templates exactly as activation does. */
 async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
   const templates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   const parsed = parseAiOutputTemplatesYaml(await readFile(path, 'utf8'));
@@ -66,12 +47,7 @@ export interface HarnessSession {
   readonly budget: TurnTokenBudget;
 }
 
-/**
- * Builds one fully loaded session: parse rules, dacpac model, column store, bare graph, templates.
- *
- * @param options - Fixture paths and the lane's context window.
- * @returns The session and the budget calibrated for it.
- */
+/** Builds one fully loaded session: parse rules, dacpac model, column store, bare graph, templates. */
 export async function createHarnessSession(options: HarnessSessionOptions): Promise<HarnessSession> {
   const parseRulesPath = options.parseRulesPath ?? repoPath('assets', 'defaultParseRules.yaml');
   const dacpacPath = options.dacpacPath ?? repoPath('assets', 'demo.dacpac');

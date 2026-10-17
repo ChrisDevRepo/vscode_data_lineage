@@ -7,17 +7,7 @@ export const SQL_LINE_COMMENT = 2;
 /** Mask value of a character inside a `'…'`, `"…"` or `[…]` span, delimiters included; set only on request. */
 export const SQL_LITERAL = 3;
 
-/**
- * Classifies every character of a T-SQL text as code, block comment or line comment.
- *
- * @remarks
- * Block comments nest; `'…'`, `"…"` and `[…]` hide comment delimiters and honour their doubled
- * escapes; an unterminated block comment runs to the end of the text. The parser and the DDL
- * search share this one reading so both agree on what is commented out.
- *
- * @param options - `markLiterals` marks all quoted spans; `markIdentifiers` marks only quoted identifiers as {@link SQL_LITERAL}.
- * @returns One mask value per UTF-16 code unit of `sql`.
- */
+/** Classifies every character of a T-SQL text as code, block comment or line comment. */
 export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: boolean; readonly markIdentifiers?: boolean }): Uint8Array {
   const mask = new Uint8Array(sql.length);
   let depth = 0;

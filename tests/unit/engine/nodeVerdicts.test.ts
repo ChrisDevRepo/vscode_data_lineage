@@ -1,14 +1,4 @@
-/**
- * CT-only additive fields on `AIViewMetadata`: per-node `nodeVerdicts` (host-wire package P2) and
- * the per-edge `columnAspect.edges[].transforms` classification.
- *
- * @remarks
- * Proves each field round-trips through the strict write schema used to send `ai-view-preview`
- * frames to the webview, and that the tolerant read schema used for persisted project records
- * keeps a record whose entries carry a field this build never declared — the same
- * forward-compatibility guarantee already covered for `badges`/`columnAspect` in
- * `projectStore.test.ts`.
- */
+/** CT-only additive fields on `AIViewMetadata`: per-node `nodeVerdicts` (host-wire package P2) and the per-edge `columnAspect.edges[].transforms` classification. */
 import { describe, it, expect } from 'vitest';
 import {
   COLUMN_TRANSFORM_CLASSES,

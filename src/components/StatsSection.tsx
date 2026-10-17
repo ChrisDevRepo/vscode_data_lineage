@@ -48,10 +48,7 @@ function hasDetail(col: ColumnStats): boolean {
   return col.min !== undefined || col.minLength !== undefined;
 }
 
-/**
- * Labeled key-value grid for expanded column detail.
- * Every metric has a plain English label — no abbreviations.
- */
+/** Labeled key-value grid for expanded column detail. Every metric has a plain English label — no abbreviations. */
 function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   const pairs: Array<{ label: string; value: string }> = [];
 
@@ -342,9 +339,7 @@ interface StatsSectionProps {
   standardModeEnabled: boolean;
 }
 
-/**
- * Requests and displays quick or standard column-level profiling metrics.
- */
+/** Requests and displays quick or standard column-level profiling metrics. */
 export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';
 

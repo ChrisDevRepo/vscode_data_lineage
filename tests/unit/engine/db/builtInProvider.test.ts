@@ -1,7 +1,4 @@
-/**
- * Pins the built-in tedious session: cell rendering per SQL type, credential sources, unchanged
- * driver errors, timeout cancellation (owned by the session alone), request serialization, disposal, and that the mssql extension is never touched.
- */
+/** Pins the built-in tedious session: cell rendering per SQL type, credential sources, unchanged driver errors, timeout cancellation (owned by the session alone), request serialization, disposal, and that the mssql extension is never touched. */
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';

@@ -10,18 +10,7 @@ import {
 import { Logger } from './log';
 import { errorMessage } from './errorMessage';
 
-/**
- * Migrates legacy workspace-state connection metadata into the project store.
- *
- * The migration supports DACPAC and database connections and is safe to call when no legacy
- * state exists. The legacy keys are removed after a valid connection is saved, and also when the
- * record is incomplete or fails validation: this build can never migrate it, and an mssql-era
- * record may still carry a password. A failed save keeps them so the next activation retries.
- *
- * @param onProjectsDropped - Receives the drop report when persisted records fail validation.
- *   This path rewrites global state, so anything validation discards here is lost permanently —
- *   the host reports it through the same single-notification channel as a normal load.
- */
+/** Migrates legacy workspace-state connection metadata into the project store. */
 export async function migrateFromWorkspaceState(
   context: vscode.ExtensionContext,
   PROJECT_STORE_KEY: string,

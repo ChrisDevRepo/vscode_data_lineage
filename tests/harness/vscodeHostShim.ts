@@ -16,13 +16,7 @@ export class HarnessShimError extends Error {
 
 let logSink: (line: string) => void = () => {};
 
-/**
- * Routes shim-observed activity (notifications, ad-hoc output channels) into the run's `host.log`.
- *
- * @remarks
- * Set by the harness once the run directory exists. Until then the sink is a no-op rather than
- * `console`, so importing the shim never writes anywhere on its own.
- */
+/** Routes shim-observed activity (notifications, ad-hoc output channels) into the run's `host.log`. */
 export function setShimLogSink(sink: (line: string) => void): void {
   logSink = sink;
 }
@@ -129,15 +123,7 @@ const implemented: Record<string, unknown> = {
   },
 };
 
-/**
- * The module object the `vscode` alias resolves to.
- *
- * @remarks
- * Assigned over `module.exports` rather than declared with `export =` so this file can keep its own
- * named exports for harness callers while still handing `require('vscode')` a proxy. Plain named
- * exports alone would answer `undefined` for every unimplemented member, the silent gap this
- * fail-closed proxy eliminates.
- */
+/** The module object the `vscode` alias resolves to. */
 module.exports = new Proxy(implemented, {
   get: (target, property): unknown => {
     if (typeof property === 'string' && !(property in target)) throw new HarnessShimError(property);

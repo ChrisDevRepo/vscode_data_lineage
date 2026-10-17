@@ -14,13 +14,7 @@ import { computeSchemas } from './shared/modelSchemas';
 
 export { applyIsolationFilter } from './shared/modelFilters';
 
-/**
- * The admit/refuse comparison behind {@link checkObjectLimit}, for a surface that has only a count
- * (the wizard's schema preview) and no built model yet.
- *
- * @param count - Object count of the selection.
- * @param limit - The configured `dataLineageViz.maxNodes` value.
- */
+/** The admit/refuse comparison behind {@link checkObjectLimit}, for a surface that has only a count (the wizard's schema preview) and no built model yet. */
 export function exceedsObjectLimit(count: number, limit: number): boolean {
   return count > limit;
 }
@@ -30,44 +24,19 @@ export type ObjectLimitCheck =
   | { ok: true; model: DatabaseModel }
   | { ok: false; count: number; limit: number };
 
-/**
- * Verifies a model's object count against `dataLineageViz.maxNodes` before it is loaded or
- * rendered. This is the single owner of the admit/refuse decision — every surface that can
- * exceed the limit (host load paths, the wizard, in-canvas schema filters) calls it instead of
- * re-deriving the comparison.
- *
- * @param model - The candidate model, already filtered to the selection under evaluation.
- * @param limit - The configured `dataLineageViz.maxNodes` value.
- * @returns `ok: true` with the model when its node count is within `limit`; otherwise `ok: false`
- *   with the node count and the limit that refused it.
- */
+/** Verifies a model's object count against `dataLineageViz.maxNodes` before it is loaded or rendered. This is the single owner of the admit/refuse decision — every surface that can exceed the limit (host load paths, the wizard, in-canvas schema filters) calls it instead of re-deriving the comparison. */
 export function checkObjectLimit(model: DatabaseModel, limit: number): ObjectLimitCheck {
   const count = model.nodes.length;
   if (exceedsObjectLimit(count, limit)) return { ok: false, count, limit };
   return { ok: true, model };
 }
 
-/**
- * Builds the one user-facing message for an object-count refusal, shared by every surface that
- * reports it (the host's error toast or inline `db-error`, the wizard, the webview's warning).
- *
- * @param count - The refused object count.
- * @param limit - The configured `dataLineageViz.maxNodes` value.
- */
+/** Builds the one user-facing message for an object-count refusal, shared by every surface that reports it (the host's error toast or inline `db-error`, the wizard, the webview's warning). */
 export function formatObjectLimitMessage(count: number, limit: number): string {
   return `${count.toLocaleString()} objects selected (limit ${limit.toLocaleString()}, set by dataLineageViz.maxNodes). Select fewer schemas or raise the setting.`;
 }
 
-/**
- * Filters the model by removing nodes that match any of the provided regex exclusion patterns.
- * Matches are performed against both the `schema.name` format and the `fullName`.
- *
- * @param model - The database model to filter.
- * @param patterns - A list of regex strings defining the exclusion rules.
- * @param onInvalidPattern - Optional callback invoked for each unparseable pattern so the
- *   caller can surface the error via its own logger or UI. Invalid patterns are skipped.
- * @returns A new DatabaseModel instance with matching nodes and their associated edges removed.
- */
+/** Filters the model by removing nodes that match any of the provided regex exclusion patterns. Matches are performed against both the `schema.name` format and the `fullName`. */
 export function applyExclusionFilter(
   model: DatabaseModel,
   patterns: string[],
@@ -84,13 +53,7 @@ export function applyExclusionFilter(
   return { ...model, nodes, edges };
 }
 
-/**
- * Filters the model to include only nodes explicitly present in the provided allowlist.
- *
- * @param model - The database model to filter.
- * @param allowlist - IDs to retain; absent leaves the model unscoped and empty retains no objects.
- * @returns A filtered DatabaseModel instance.
- */
+/** Filters the model to include only nodes explicitly present in the provided allowlist. */
 export function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
   if (!allowlist) return model;
   const nodes = model.nodes.filter((n) => allowlist.has(n.id));
@@ -99,17 +62,7 @@ export function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string
   return { ...model, nodes, edges };
 }
 
-/**
- * Filters an existing DatabaseModel in memory to include only objects from specific schemas.
- *
- * @remarks
- * Retains every matching object and every external reference it touches — this never truncates.
- * Callers that must honor `dataLineageViz.maxNodes` check the result with
- * {@link checkObjectLimit} before loading or rendering it.
- *
- * @param selectedSchemas - Set of schema names to retain.
- * @returns A new DatabaseModel instance containing the filtered subset.
- */
+/** Filters an existing DatabaseModel in memory to include only objects from specific schemas. */
 export function filterBySchemas(
   model: DatabaseModel,
   selectedSchemas: Set<string>,
@@ -141,20 +94,7 @@ export function filterBySchemas(
   };
 }
 
-/**
- * Removes nodes from a DatabaseModel that match specified exclusion patterns, and records
- * the removed objects on the parse statistics of the surviving objects that referenced them.
- *
- * @remarks
- * Node and edge exclusion is delegated to {@link applyExclusionFilter} so the load-time and
- * graph-time paths cannot diverge; only the parse-stat annotation is specific to this entry
- * point. Invalid patterns are skipped and reported, matching that function's contract.
- *
- * @param model - The DatabaseModel to filter.
- * @param patterns - Array of regex pattern strings.
- * @param onWarning - Callback receiving a formatted message for each invalid regex pattern.
- * @returns A new DatabaseModel with matching nodes and edges removed.
- */
+/** Removes nodes from a DatabaseModel that match specified exclusion patterns, and records the removed objects on the parse statistics of the surviving objects that referenced them. */
 export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
   const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
     onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
@@ -208,20 +148,7 @@ export function applyExclusionPatterns(model: DatabaseModel, patterns: string[],
   return { ...filtered, parseStats };
 }
 
-/**
- * Scopes a loaded model to the schemas chosen for Visualize, removes excluded objects, and
- * recounts the schema list from the surviving nodes.
- *
- * @remarks
- * Schemas are recounted with the model's own identifier case rule, so a case-sensitive model keeps
- * `Sales` and `sales` as two schemas and a later schema filter still matches both spellings.
- *
- * @param model - The loaded model.
- * @param selectedSchemas - Schema names to keep.
- * @param patterns - Exclusion regex strings; invalid ones are reported through `onWarning`.
- * @param onWarning - Receives one message per invalid pattern.
- * @returns The scoped model with recounted `schemas`.
- */
+/** Scopes a loaded model to the schemas chosen for Visualize, removes excluded objects, and recounts the schema list from the surviving nodes. */
 export function scopeModelForVisualize(
   model: DatabaseModel,
   selectedSchemas: Set<string>,

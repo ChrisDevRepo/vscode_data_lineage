@@ -1,11 +1,4 @@
-/**
- * Termination contract for user-supplied parse-rule regexes.
- *
- * Every consumer of `rule.pattern` scans or rewrites the whole SQL body, so the global flag is a
- * termination condition rather than a style preference: `extractExternalRefs` scans with `exec` and
- * would never advance `lastIndex`, and a preprocessing `replace` would rewrite only the first
- * occurrence. `validateRule` is the single place that can reject the rule before either happens.
- */
+/** Termination contract for user-supplied parse-rule regexes. */
 
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';

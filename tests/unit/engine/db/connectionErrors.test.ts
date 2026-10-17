@@ -1,7 +1,4 @@
-/**
- * Pins connection error presentation: the original driver text behind the connection name, the
- * actions chosen per error class for each provider, what each action calls, and secret redaction.
- */
+/** Pins connection error presentation: the original driver text behind the connection name, the actions chosen per error class for each provider, what each action calls, and secret redaction. */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 

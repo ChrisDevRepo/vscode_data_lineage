@@ -1,10 +1,5 @@
 // Owner: src/ai/support/toolErrorEnvelope.ts with real tools/toolSchemas.ts; rejection diagnostic contracts.
-/**
- * One case per Zod issue kind the model-facing tool schemas can emit, against the real schemas,
- * asserting the reason line and the repair hint the model reads
- * (tool-input rejection text). A Zod upgrade that renames an
- * issue code or rewords a message fails here first.
- */
+/** One case per Zod issue kind the model-facing tool schemas can emit, against the real schemas, asserting the reason line and the repair hint the model reads (tool-input rejection text). A Zod upgrade that renames an issue code or rewords a message fails here first. */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { rejectionFromZodError, INVALID_TOOL_INPUT_REPAIR_HINT } from '../../../src/ai/support/toolErrorEnvelope';

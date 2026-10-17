@@ -11,7 +11,7 @@ export interface CurrentHopActionTarget {
 }
 
 /** Immutable facts needed to classify current-hop prune actions. */
-export interface CurrentHopActionPolicyInput {
+interface CurrentHopActionPolicyInput {
   /** Canonical exploration origin. */
   originId: string;
   /** Explicit prune_neighbors targets. */
@@ -27,19 +27,14 @@ export interface CurrentHopActionPolicyInput {
 }
 
 /** Pure action classification consumed atomically by NavigationEngine. */
-export interface CurrentHopActionPolicyResult {
+interface CurrentHopActionPolicyResult {
   /** Refused or unknown actions that reject this submission atomically. */
   invalidRoutes: InvalidRoute[];
   /** Resolved prune targets that are not the origin and not already visited, queued, noted or removed. */
   acceptedPruneIds: string[];
 }
 
-/**
- * Classifies current-hop prune actions without mutating engine state.
- *
- * @remarks
- * Every refused prune rejects the submission; the agent must explicitly remove or correct it.
- */
+/** Classifies current-hop prune actions without mutating engine state. */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
   const invalidRoutes: InvalidRoute[] = [];
   const acceptedPruneIds: string[] = [];

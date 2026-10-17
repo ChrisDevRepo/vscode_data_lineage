@@ -1,13 +1,4 @@
-/**
- * Backend graph build, traversal and display-policy contracts above the tracked fixture size.
- *
- * The largest tracked fixture is 148 nodes, while `maxNodes` admits up to 5000 (default 2000) and
- * `renderLimit` renders up to 1500. These cover the build, the
- * object-limit refusal, the render-limit boundary, and — for the scoped surface, which returns
- * before the limit check — how many nodes an unbounded trace can actually put on the canvas.
- *
- * No DOM, display or layout engine is needed; layout checks live in tests/scale.
- */
+/** Backend graph build, traversal and display-policy contracts above the tracked fixture size. */
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -27,12 +18,7 @@ function configWith(overrides: Partial<ExtensionConfig>): ExtensionConfig {
   return { ...DEFAULT_CONFIG, ...overrides };
 }
 
-/**
- * Independently reproduces the ancestors-union-descendants reach `traceNodeWithLevels` computes at
- * unbounded depth, walking `model.neighborIndex` directly rather than through `graphology` — a
- * second implementation of the same semantics, so the assertion catches a real regression instead
- * of pinning a size that holds only for one particular fixture connectivity shape.
- */
+/** Independently reproduces the ancestors-union-descendants reach `traceNodeWithLevels` computes at unbounded depth, walking `model.neighborIndex` directly rather than through `graphology` — a second implementation of the same semantics, so the assertion catches a real regression instead of pinning a size that holds only for one particular fixture connectivity shape. */
 function directedReach(model: DatabaseModel, originId: string): number {
   const walk = (direction: 'in' | 'out'): Set<string> => {
     const visited = new Set<string>([originId]);

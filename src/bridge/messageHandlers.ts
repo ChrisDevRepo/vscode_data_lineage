@@ -61,10 +61,7 @@ import { buildWebviewCsp } from '../utils/cspBuilder';
 import { getNonce } from '../utils/getNonce';
 import { errorMessage } from '../utils/errorMessage';
 
-/**
- * Maps each main-panel message type to a handler whose `msg` parameter is
- * narrowed to the matching variant of {@link MainPanelToExtensionMsg}.
- */
+/** Maps each main-panel message type to a handler whose `msg` parameter is narrowed to the matching variant of {@link MainPanelToExtensionMsg}. */
 export type WebviewMessageHandlers = {
   [K in MainPanelToExtensionMsg['type']]: (
     msg: Extract<MainPanelToExtensionMsg, { type: K }>,
@@ -101,17 +98,7 @@ function parseWebviewLog(text: string): { category: LogCategory; message: string
   };
 }
 
-/**
- * Splits a project list into the records the webview contract accepts and those it rejects.
- *
- * @remarks
- * The send path validates the whole frame, so one unacceptable record would otherwise cost every
- * project in it. Partitioning first keeps the failure proportional: the readable projects still
- * arrive, and the rejected one is named in the log — {@link ProjectSchema} stays strict throughout.
- *
- * @param projects - Records loaded from the project store.
- * @returns The records that validate, plus one issue summary per record that does not.
- */
+/** Splits a project list into the records the webview contract accepts and those it rejects. */
 export function partitionSendableProjects(
   projects: readonly Project[],
 ): { sendable: Project[]; rejected: Array<{ id: string; issues: string }> } {
@@ -170,14 +157,10 @@ function recordWebviewError(sess: AiSession, entry: WebviewErrorEntry): void {
   if (state.lastErrors.length > MAX_LAST_ERRORS) state.lastErrors.shift();
 }
 
-/**
- * Storage key for the project store in VS Code's global state.
- */
+/** Storage key for the project store in VS Code's global state. */
 export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
 
-/**
- * Represents a bundle of message handlers and their associated cleanup logic.
- */
+/** Represents a bundle of message handlers and their associated cleanup logic. */
 export interface MessageHandlerBundle {
   /** Map of message types to their per-variant handler functions. */
   handlers: WebviewMessageHandlers;
@@ -185,29 +168,11 @@ export interface MessageHandlerBundle {
   cleanup: () => Promise<void>;
   /** Function to programmatically trigger the demo load when the panel is already active. */
   triggerDemoLoad: () => Promise<void>;
-  /**
-   * Starts a host-initiated import on this panel: supersedes the active load and tells the webview
-   * a new load began, so its result is not discarded as belonging to a cancelled load.
-   */
+  /** Starts a host-initiated import on this panel: supersedes the active load and tells the webview a new load began, so its result is not discarded as belonging to a cancelled load. */
   beginExternalLoad: () => vscode.CancellationToken;
 }
 
-/**
- * Installs a freshly built model as the session's current one.
- *
- * @remarks
- * Deliberately panel-independent — it never posts to a webview, so a command-driven load leaves the
- * session in exactly the state a bridge-driven load does: column store repopulated, source labels
- * set, and `dataLineageViz.modelLoaded` raised. The lineage store is opened for `project` only,
- * fire-and-forget, and the snapshot is captured synchronously here because the write runs later on
- * the storage queue — a payload read at write time could see a model the session already replaced.
- *
- * @param sess - Session to install the model into.
- * @param model - Model just extracted from a dacpac or from DMV results.
- * @param isDb - Whether the model came from a live database rather than a dacpac.
- * @param project - Project identity when the load is backed by a stored project.
- * @param store - Project store consulted for the human-readable source label; read only when `project` is set.
- */
+/** Installs a freshly built model as the session's current one. */
 export function applyModelToSession(
   sess: AiSession,
   model: DatabaseModel,
@@ -250,24 +215,7 @@ export interface ReportDocumentRef {
   document?: vscode.TextDocument;
 }
 
-/**
- * Factory for creating the IPC (Inter-Process Communication) bridge between the Extension Host and the Webview.
- *
- * @param host - Bridge host used to interact with VS Code.
- * @param context - Extension context for global state and subscriptions.
- * @param getSession - Factory for retrieving the current AI session.
- * @param outputChannel - Output channel used for logging.
- * @param loadProjectStore - Loader for the persisted project store.
- * @param saveProjectStore - Persister for project-store updates.
- * @param migrateFromWorkspaceState - Migration helper for legacy workspace state.
- * @param loadDemoFlag - Whether demo data should be loaded instead of a persisted project.
- * @param setDetailPanel - Setter for the current detail panel reference.
- * @param reportDocumentRef - Holder of the untitled AI report document, owned by the caller so one
- *   report document survives the handlers being re-created when the panel is closed and reopened.
- *   Defaults to a holder private to this handler set.
- *
- * @returns The per-message-type handler map plus the panel-dispose cleanup function.
- */
+/** Factory for creating the IPC (Inter-Process Communication) bridge between the Extension Host and the Webview. */
 export function createMessageHandlers(
   host: BridgeHost,
   context: vscode.ExtensionContext,
@@ -341,29 +289,14 @@ export function createMessageHandlers(
     reportDocumentRef.document = created;
     return created;
   }
-  /**
-   * The built-in markdown preview tabs titled for `doc`, across every editor group.
-   *
-   * @remarks
-   * The built-in preview labels a tab `<prefix> <name>` (`Preview <name>`, `[Preview] <name>` when locked,
-   * the prefix localized), so the document name must be the whole last word of the label. The webview tab
-   * exposes no document URI; a different document whose name has a space before the same `Untitled-N`
-   * text is the one case this match cannot tell apart.
-   */
+  /** The built-in markdown preview tabs titled for `doc`, across every editor group. */
   function reportPreviewTabs(doc: vscode.TextDocument): vscode.Tab[] {
     const name = path.basename(doc.uri.path);
     return vscode.window.tabGroups.all.flatMap((group) =>
       group.tabs.filter((tab) =>
         tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('markdown.preview') && tab.label.endsWith(` ${name}`)));
   }
-  /**
-   * Leaves at most the visible report previews on screen; returns true when one is the visible tab of an editor group.
-   *
-   * @remarks
-   * A preview hidden behind another tab is closed, also when another report preview is visible: the preview
-   * command opens a new preview whenever the group beside the active one holds none, so a hidden one would
-   * end as a second preview. A refused or failed close is logged and the command still runs.
-   */
+  /** Leaves at most the visible report previews on screen; returns true when one is the visible tab of an editor group. */
   async function settleReportPreviews(doc: vscode.TextDocument): Promise<boolean> {
     const previews = reportPreviewTabs(doc);
     for (const tab of previews.filter((candidate) => !candidate.isActive)) {
@@ -373,13 +306,7 @@ export function createMessageHandlers(
     return previews.some((tab) => tab.isActive);
   }
 
-  /**
-   * Installs a newly loaded model.
-   *
-   * @remarks
-   * The detail panel shows a node of the previous model, so it is cleared; a DACPAC model drops the
-   * previous database connection, so table statistics cannot reach the database it came from.
-   */
+  /** Installs a newly loaded model. */
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
     if (!isDb) lastConnectionInfo = undefined;
@@ -859,14 +786,7 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', 'Opening extension settings');
       host.executeCommand('workbench.action.openSettings', 'dataLineageViz');
     },
-    /**
-     * Saves a webview-composed export under a name the user confirms in the save dialog.
-     *
-     * @remarks
-     * `defaultName` is webview-supplied, so only its base name pre-fills the dialog: a name carrying
-     * separators or `..` segments would otherwise seed the dialog at a path the export never came
-     * from. The dialog still owns the destination — this only bounds what the webview may suggest.
-     */
+    /** Saves a webview-composed export under a name the user confirms in the save dialog. */
     'export-file': async (msg) => {
       const defaultName = path.basename(msg.defaultName);
       host.log('debug', 'Bridge', `Exporting file: ${defaultName}`);
@@ -876,21 +796,7 @@ export function createMessageHandlers(
         host.executeCommand('revealFileInOS', uri);
       }
     },
-    /**
-     * Shows the AI report in one untitled markdown document and one preview beside the panel.
-     *
-     * @remarks
-     * The first click creates the document; later clicks replace its text and re-use it while it is
-     * open, so repeated clicks never accumulate documents or previews. The unsaved document stays
-     * available for the user to keep or save. An open preview follows its document by itself, so the
-     * preview command runs only when no preview of the report is the visible tab of a group; a preview
-     * hidden behind another tab is closed first, because the built-in command opens a new preview whenever
-     * the group beside the active one holds none. No HTML sanitizing pass runs
-     * here: the content lands in a text document, and VS Code's own markdown preview renders it under
-     * its `markdown.preview.security` policy. The preview command belongs to the built-in markdown
-     * extension, which a user can disable — its absence is not a failed action, so the fallback shows
-     * the document itself and reports it as a warning.
-     */
+    /** Shows the AI report in one untitled markdown document and one preview beside the panel. */
     'ai-open-in-editor': async (msg) => {
       host.log('debug', 'Bridge', 'Opening AI description in editor');
       const content = stripFocusNodeLinks(msg.markdown);
@@ -976,11 +882,7 @@ const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 /** Toast sink for a failure the webview already shows inline through `db-error`: log it, show it once. */
 const SHOWN_INLINE = (): void => {};
 
-/**
- * Refuses a dacpac over {@link MAX_DACPAC_BYTES}. Like {@link isModelOverLimit}, the refusal is
- * posted as a `db-error`, so the loader shows it inline and leaves its loading state instead of
- * spinning to its timeout.
- */
+/** Refuses a dacpac over {@link MAX_DACPAC_BYTES}. Like {@link isModelOverLimit}, the refusal is posted as a `db-error`, so the loader shows it inline and leaves its loading state instead of spinning to its timeout. */
 function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode.LogOutputChannel): boolean {
   if (bytes <= MAX_DACPAC_BYTES) return false;
   const mb = (bytes / 1024 / 1024).toFixed(1);
@@ -997,13 +899,7 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode
   return true;
 }
 
-/**
- * Refuses a built model that exceeds `dataLineageViz.maxNodes` — the shared `checkObjectLimit`
- * gate for every model load path, webview-bridge or command. When a webview bridge is present the
- * refusal is posted to it as a `db-error` — shown inline, and the loader leaves its loading state at
- * once instead of spinning to the generic "Processing timed out" notice. `host` is omitted where
- * there is no webview bridge; the refusal is then a `vscode.window.showErrorMessage` toast.
- */
+/** Refuses a built model that exceeds `dataLineageViz.maxNodes` — the shared `checkObjectLimit` gate for every model load path, webview-bridge or command. When a webview bridge is present the refusal is posted to it as a `db-error` — shown inline, and the loader leaves its loading state at once instead of spinning to the generic "Processing timed out" notice. `host` is omitted where there is no webview bridge; the refusal is then a `vscode.window.showErrorMessage` toast. */
 export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger: Logger, host?: BridgeHost): boolean {
   const check = checkObjectLimit(model, maxNodes);
   if (check.ok) return false;
@@ -1129,25 +1025,10 @@ async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: st
   return true;
 }
 
-/**
- * Upper bound for the platform probe, independent of `dmvQueryTimeout`.
- *
- * @remarks
- * The probe is a single-row `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must not
- * inherit the user's bulk-query budget (default 120 s) — an unreachable server would otherwise
- * stall the import behind a progress notification showing no steps. An unavailable probe records
- * an explicit unknown platform.
- */
+/** Upper bound for the platform probe, independent of `dmvQueryTimeout`. */
 const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
 
-/**
- * Resolves the database platform before the Phase 2 model is built.
- *
- * @remarks
- * The `platform-info` query supplies metadata; an unavailable or unusable result records an
- * explicit unknown label without failing the import or repeating the same query. Runs ahead of the Phase 2 sweep because `buildModelFromDmv`
- * needs the result at model construction.
- */
+/** Resolves the database platform before the Phase 2 model is built. */
 async function loadDatabasePlatform(
   session: DbSession,
   queries: DmvQuery[],
@@ -1326,9 +1207,7 @@ async function handleTableStatsRequestHost(
   }
 }
 
-/**
- * Logs a summary of the SQL parsing results and stores it in the session.
- */
+/** Logs a summary of the SQL parsing results and stores it in the session. */
 function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, objectCount?: number, edgeCount?: number, schemaCount?: number) {
   const logger = Logger.create(outputChannel, 'Parse');
   const sess = getSession();
@@ -1369,23 +1248,13 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   }
 }
 
-/**
- * The settings snapshot the host sends to the webview. Every other {@link ExtensionConfig} field is
- * host-only and read where it is used.
- */
+/** The settings snapshot the host sends to the webview. Every other {@link ExtensionConfig} field is host-only and read where it is used. */
 export type HostConfigSnapshot = Pick<
   ExtensionConfig,
   'excludePatterns' | 'maxNodes' | 'layout' | 'externalRefs' | 'overview' | 'renderLimit' | 'trace' | 'analysis'
 >;
 
-/**
- * Reads display and behaviour settings from a VS Code workspace configuration
- * and returns the serialisable config snapshot sent to the webview. Numeric settings are
- * clamped to their declared manifest range; an unset value takes its `DEFAULT_CONFIG` default.
- *
- * @param cfg - Workspace configuration scoped to `dataLineageViz`.
- * @returns Config snapshot for the webview, validated on send by the bridge contract.
- */
+/** Reads display and behaviour settings from a VS Code workspace configuration and returns the serialisable config snapshot sent to the webview. Numeric settings are clamped to their declared manifest range; an unset value takes its `DEFAULT_CONFIG` default. */
 export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): HostConfigSnapshot {
   const num = (key: string) => readDeclaredNumericSetting(cfg, key);
   const { layout, overview, externalRefs } = DEFAULT_CONFIG;
@@ -1424,16 +1293,7 @@ function readExtensionConfig(host: BridgeHost): HostConfigSnapshot {
   return buildExtensionConfig(host.getConfiguration());
 }
 
-/**
- * Generates the root HTML for the secondary Detail Webview.
- *
- * This provides the container, strict CSP, and bootloader fallback for the
- * detail panel.
- *
- * @param webview - The vscode.Webview instance for the detail panel.
- * @param extensionUri - The base URI of the extension for resolving assets.
- * @returns The complete HTML string.
- */
+/** Generates the root HTML for the secondary Detail Webview. */
 function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
@@ -1501,9 +1361,7 @@ function sameSetting(actual: unknown, fallback: unknown): boolean {
   return stable(actual) === stable(fallback);
 }
 
-/**
- * Numeric parse summary. Script names and reference lists stay out of the clipboard.
- */
+/** Numeric parse summary. Script names and reference lists stay out of the clipboard. */
 function formatParseStatsSummary(stats: SessionParseCounts): string {
   return [
     'PARSE STATS',
@@ -1515,9 +1373,7 @@ function formatParseStatsSummary(stats: SessionParseCounts): string {
   ].join('\n');
 }
 
-/**
- * Short view summary: mode, filter counts and trace scope. The raw ui-state object is not pasted.
- */
+/** Short view summary: mode, filter counts and trace scope. The raw ui-state object is not pasted. */
 function formatGuiSummary(uiState: unknown): string | null {
   if (uiState === null || typeof uiState !== 'object') return null;
   const lines = ['GUI'];
@@ -1547,9 +1403,7 @@ function formatGuiSummary(uiState: unknown): string | null {
   return lines.join('\n');
 }
 
-/**
- * Settings that differ from the package default. `ai.*` is omitted. Connection records are a count.
- */
+/** Settings that differ from the package default. `ai.*` is omitted. Connection records are a count. */
 function formatNonDefaultSettings(context: vscode.ExtensionContext): string {
   const lines = ['SETTINGS (non-default dataLineageViz.*, excluding ai.*)'];
   try {
@@ -1581,14 +1435,7 @@ function formatNonDefaultSettings(context: vscode.ExtensionContext): string {
   return lines.join('\n');
 }
 
-/**
- * Builds a GUI diagnostic snapshot for the current extension state.
- *
- * @param context - Extension context for global state and subscriptions.
- * @param getSession - Factory for retrieving the current session-backed GUI state.
- *
- * @returns Diagnostic text focused on the user-visible graph, filters, render state, and settings.
- */
+/** Builds a GUI diagnostic snapshot for the current extension state. */
 export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession): string {
   const sess = getSession();
   const uiDiagnostics = getUiDiagnostics(sess);

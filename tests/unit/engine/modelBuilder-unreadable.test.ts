@@ -1,7 +1,4 @@
-/**
- * A module without a readable definition is loaded without edges and marked; the catalog cannot give the direction.
- * A module with a construct that is not fully supported keeps what the parser captures and is recorded for a warning.
- */
+/** A module without a readable definition is loaded without edges and marked; the catalog cannot give the direction. A module with a construct that is not fully supported keeps what the parser captures and is recorded for a warning. */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { loadParseRules } from '../helpers/testUtils';

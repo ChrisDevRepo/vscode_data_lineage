@@ -1,8 +1,4 @@
-/**
- * Pins the DMV queries cache: the YAML is read once per setting value for server-info lookups, a change
- * of `dataLineageViz.dmvQueriesFile` reloads it, and an invalid custom file warns once rather than on
- * every table-statistics request.
- */
+/** Pins the DMV queries cache: the YAML is read once per setting value for server-info lookups, a change of `dataLineageViz.dmvQueriesFile` reloads it, and an invalid custom file warns once rather than on every table-statistics request. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

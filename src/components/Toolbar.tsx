@@ -57,10 +57,7 @@ interface ToolbarProps {
   onExecuteSearch?: (name: string, schema?: string) => void;
   /** Callback to initiate a column-level or table-level lineage trace. */
   onStartTrace?: (nodeId: string) => void;
-  /**
-   * IDs of nodes that are in the working set but collapsed inside a schema cluster.
-   * Passed through to {@link SearchWithAutocomplete} for three-state search partitioning.
-   */
+  /** IDs of nodes that are in the working set but collapsed inside a schema cluster. Passed through to {@link SearchWithAutocomplete} for three-state search partitioning. */
   collapsedSchemaNodeIds?: Set<string>;
   /** Callback to toggle the full-text SQL search sidebar. */
   onToggleDetailSearch?: () => void;
@@ -143,10 +140,7 @@ interface ToolbarProps {
   overviewThreshold: number;
   /** Rendered-node ceiling above which the graph is replaced by a limit warning (`dataLineageViz.renderLimit`). */
   renderLimit: number;
-  /**
-   * Set once on initial load/reset: `true` when the loaded model is below the overview threshold.
-   * Disables the Schema View button until the user opts in via settings; never re-derived from filter changes.
-   */
+  /** Set once on initial load/reset: `true` when the loaded model is below the overview threshold. Disables the Schema View button until the user opts in via settings; never re-derived from filter changes. */
   schemaViewSoftDisabled?: boolean;
 }
 
@@ -187,9 +181,7 @@ function expandedSchemaStatusText(expandedSchemaCount: number): string {
 }
 
 
-/**
- * Provides graph search, filtering, analysis, navigation, and keyboard controls.
- */
+/** Provides graph search, filtering, analysis, navigation, and keyboard controls. */
 export const Toolbar = memo(function Toolbar({
   types,
   onToggleType,

@@ -36,16 +36,7 @@ export { normalizeName };
 /** Number of scripted bodies to per-rule trace before falling back to aggregate stats only. */
 const PARSE_TRACE_BUDGET = 5;
 
-/**
- * Builds a per-rule trace callback for the next sampled body and decrements `ctx.parseTrace.budget`.
- * Returns `undefined` when no body remains in the sampling budget. The callback emits one log line
- * per matching rule via `ctx.parseTrace.emit`, prefixed with the node label and a single SQL preview.
- *
- * @remarks
- * Emits a header line `Trace [schema.name] sql=<preview>` once per traced body, then a per-rule
- * line for each rule that contributed at least one new ref. Routed by the caller to the `[Parse]`
- * category so DBAs can verify YAML rule firing without instrumenting code.
- */
+/** Builds a per-rule trace callback for the next sampled body and decrements `ctx.parseTrace.budget`. Returns `undefined` when no body remains in the sampling budget. The callback emits one log line per matching rule via `ctx.parseTrace.emit`, prefixed with the node label and a single SQL preview. */
 function makeParseTraceCallback(
   node: LineageNode,
   ctx: EdgeContext,
@@ -60,20 +51,7 @@ function makeParseTraceCallback(
   };
 }
 
-/**
- * Builds a complete DatabaseModel from extracted objects and dependencies.
- *
- *
- * @param objects - Extracted objects to include in the model.
- * @param deps - Extracted dependencies between objects.
- * @param allObjects - Catalog of all known objects in scope.
- * @param currentDatabase - Current database name for local-object resolution.
- * @param externalRefsEnabled - Whether external reference nodes should be emitted.
- * @param onDebugLog - Debug logger callback.
- * @param identifierCaseSensitive - Checked catalog comparison policy; missing metadata stays CI.
- *
- * @returns A fully assembled DatabaseModel.
- */
+/** Builds a complete DatabaseModel from extracted objects and dependencies. */
 export function buildModel(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
@@ -112,12 +90,7 @@ export function buildModel(
   };
 }
 
-/**
- * Transfers heavy metadata (columns, DDL) from nodes into the provided ColumnStore.
- *
- * @param model - The database model to index.
- * @param store - Target ColumnStore instance.
- */
+/** Transfers heavy metadata (columns, DDL) from nodes into the provided ColumnStore. */
 export function populateColumnStore(model: DatabaseModel, store: ColumnStore): void {
   for (const node of model.nodes) {
     if (node.columns && node.columns.length > 0) {
@@ -131,9 +104,7 @@ export function populateColumnStore(model: DatabaseModel, store: ColumnStore): v
   }
 }
 
-/**
- * Constructs a display catalog for cross-schema resolution and neighbor discovery.
- */
+/** Constructs a display catalog for cross-schema resolution and neighbor discovery. */
 function buildCatalog(
   allObjects: ExtractedObject[],
   schemaCanonical: Map<string, string>,
@@ -151,9 +122,7 @@ function buildCatalog(
   return catalog;
 }
 
-/**
- * Builds an O(1) neighbor index for efficient graph traversal and UI interaction.
- */
+/** Builds an O(1) neighbor index for efficient graph traversal and UI interaction. */
 function buildNeighborIndex(
   edges: LineageEdge[],
   extraPairs?: Array<{ source: string; target: string }>,
@@ -180,13 +149,7 @@ function buildNeighborIndex(
   return index;
 }
 
-/**
- * Parses a full SQL name into schema and object components, respecting bracketed identifiers.
- *
- * @param fullName - Fully qualified name to parse.
- *
- * @returns Schema and object name; schema defaults to `dbo` when unqualified.
- */
+/** Parses a full SQL name into schema and object components, respecting bracketed identifiers. */
 export function parseName(fullName: string): { schema: string; objectName: string } {
   const parts = splitSqlName(fullName).map(p => stripBrackets(p));
   if (parts.length >= 2) {
@@ -195,22 +158,12 @@ export function parseName(fullName: string): { schema: string; objectName: strin
   return { schema: 'dbo', objectName: parts[0] };
 }
 
-/**
- * Checks if a name contains a schema qualifier (e.g., 'dbo.Table' vs 'Table').
- *
- * @param name - The SQL identifier to check.
- * @returns `true` if the name is schema-qualified.
- */
+/** Checks if a name contains a schema qualifier (e.g., 'dbo.Table' vs 'Table'). */
 function isSchemaQualified(name: string): boolean {
   return stripBrackets(name).includes('.');
 }
 
-/**
- * Checks if a reference points to a known system schema (e.g., sys, INFORMATION_SCHEMA).
- *
- * @param name - The SQL identifier to check.
- * @returns `true` if it belongs to a system schema.
- */
+/** Checks if a reference points to a known system schema (e.g., sys, INFORMATION_SCHEMA). */
 function isSystemRef(name: string, ctx?: EdgeContext): boolean {
   if (ctx?.identifierCaseSensitive && (ctx.nodeIds.has(name) || ctx.allNodeIds.has(name))) return false;
   const schema = stripBrackets(splitSqlName(name)[0] ?? '').toLowerCase();
@@ -244,16 +197,7 @@ function classifyMutation(
   return deleted ? 'delete' : 'read';
 }
 
-/**
- * Internal utility to add a directional edge to the lineage graph.
- *
- * @param edges - The collection of edges to add to.
- * @param edgeKeys - A set used to deduplicate edges by their source→target key.
- * @param source - Source node ID.
- * @param target - Target node ID.
- * @param type - The edge type (body-read, write, or exec).
- * @param deleteOnly - Marks a write edge whose every mutation is a DELETE or TRUNCATE.
- */
+/** Internal utility to add a directional edge to the lineage graph. */
 function addEdge(
   edges: LineageEdge[],
   edgeKeys: Set<string>,
@@ -269,12 +213,7 @@ function addEdge(
   }
 }
 
-/**
- * Builds the primary list of LineageNodes from extracted object metadata.
- *
- * @param objects - Metadata for objects discovered in the active scope.
- * @returns The assembled nodes and their unique IDs.
- */
+/** Builds the primary list of LineageNodes from extracted object metadata. */
 function buildNodeList(objects: ExtractedObject[], identifierCaseSensitive: boolean): { nodes: LineageNode[]; nodeIds: Set<string> } {
   const nodes: LineageNode[] = [];
   const nodeIds = new Set<string>();
@@ -298,12 +237,7 @@ function buildNodeList(objects: ExtractedObject[], identifierCaseSensitive: bool
   return { nodes, nodeIds };
 }
 
-/**
- * Builds the full cross-schema catalog for Phase 2 dependency resolution.
- *
- * @param allObjects - The full database catalog (optional).
- * @returns Metadata for all objects available for neighbor resolution.
- */
+/** Builds the full cross-schema catalog for Phase 2 dependency resolution. */
 function buildFullCatalog(allObjects: ExtractedObject[] | undefined, identifierCaseSensitive: boolean): {
   allNodeIds: Set<string>;
   allObjectMeta: Map<string, { schema: string; name: string; type: ObjectType }>;
@@ -321,9 +255,7 @@ function buildFullCatalog(allObjects: ExtractedObject[] | undefined, identifierC
   return { allNodeIds, allObjectMeta };
 }
 
-/**
- * Classification structure for dependencies found during extraction.
- */
+/** Classification structure for dependencies found during extraction. */
 interface GroupedDeps {
   /** Resolved local dependencies. */
   depsPerSource: Map<string, string[]>;
@@ -337,14 +269,7 @@ interface GroupedDeps {
   crossDbMetaDeps: Map<string, string[]>;
 }
 
-/**
- * Categorizes dependencies based on their visibility and resolution status in the current catalog.
- *
- * @param deps - Raw extracted dependencies.
- * @param nodeIds - Nodes in the active filtered scope.
- * @param allNodeIds - All nodes in the database catalog.
- * @returns A grouped collection of dependencies ready for graph processing.
- */
+/** Categorizes dependencies based on their visibility and resolution status in the current catalog. */
 function groupDependencies(
   deps: ExtractedDependency[],
   nodeIds: Set<string>,
@@ -395,9 +320,7 @@ function groupDependencies(
   return { depsPerSource, crossSchemaDepsForNode, unresolvableDepsForNode, inboundNeighborPairs, crossDbMetaDeps };
 }
 
-/**
- * Shared context for processing dependency edges per-node.
- */
+/** Shared context for processing dependency edges per-node. */
 interface EdgeContext {
   identifierCaseSensitive: boolean;
   currentDatabase?: string;
@@ -426,11 +349,7 @@ interface EdgeContext {
   parseTrace?: ParseTraceCtx;
 }
 
-/**
- * Sample-mode parse-rule trace state. The first `budget` scripted bodies that go through
- * `parseSqlBody` will have each firing rule logged via `emit`. Set `budget` based on a
- * representative-sample size (e.g. 5).
- */
+/** Sample-mode parse-rule trace state. The first `budget` scripted bodies that go through `parseSqlBody` will have each firing rule logged via `emit`. Set `budget` based on a representative-sample size (e.g. 5). */
 interface ParseTraceCtx {
   /** Remaining bodies to trace before tracing stops. */
   budget: number;
@@ -438,19 +357,7 @@ interface ParseTraceCtx {
   emit: (msg: string) => void;
 }
 
-/**
- * Resolves regex-parsed references into graph edges or neighbor index pairs.
- *
- * @param refs - Canonical references emitted by the SQL-body parser.
- * @param sourceId - ID of the node being parsed.
- * @param spLabel - Human-readable name for logging.
- * @param direction - Edge directionality (inward vs outward).
- * @param edgeType - The semantic type of connection (body vs exec).
- * @param ctx - Shared edge creation context.
- * @param outRefs - Collection for successful resolutions.
- * @param unrelated - Collection for unresolvable drops.
- * @returns The number of successfully resolved edges.
- */
+/** Resolves regex-parsed references into graph edges or neighbor index pairs. */
 function processRegexRefs(
   refs: string[],
   sourceId: string,
@@ -495,13 +402,7 @@ function processRegexRefs(
   return count;
 }
 
-/**
- * Orchestrates edge creation for non-procedural nodes (tables, views, functions).
- *
- * @param node - The node to process.
- * @param xmlDeps - Dependencies declared in the XML model (DACPAC only).
- * @param ctx - Shared edge context.
- */
+/** Orchestrates edge creation for non-procedural nodes (tables, views, functions). */
 function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
 
@@ -577,13 +478,7 @@ function parseNode(node: LineageNode, ctx: EdgeContext): ReturnType<typeof parse
   return parsed;
 }
 
-/**
- * Orchestrates edge creation for stored procedures using regex-based script analysis.
- *
- * @param node - The node to process.
- * @param xmlDeps - XML-declared dependencies.
- * @param ctx - Shared edge context.
- */
+/** Orchestrates edge creation for stored procedures using regex-based script analysis. */
 function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
   const parsed = parseNode(node, ctx);
@@ -661,17 +556,7 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
   });
 }
 
-/**
- * Primary internal builder for the node and edge lists.
- *
- * @param objects - Objects discovered in scope.
- * @param deps - Extracted object-level dependencies.
- * @param allObjects - Full database catalog.
- * @param currentDatabase - Active database name.
- * @param externalRefsEnabled - Whether to create virtual nodes for external systems.
- * @param onDebugLog - Optional sink for sampled parser diagnostics.
- * @returns Assembled nodes, edges, statistics, and neighbor index pairs.
- */
+/** Primary internal builder for the node and edge lists. */
 function buildNodesAndEdges(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
@@ -741,13 +626,7 @@ function buildNodesAndEdges(
   return { nodes, edges: sanitized, stats, neighborPairs };
 }
 
-/**
- * Extract last path segment from a URL, max length 40.
- *
- * @param url - The URL to parse.
- * @param maxLen - Maximum character length.
- * @returns The last segment of the path.
- */
+/** Extract last path segment from a URL, max length 40. */
 function lastUrlSegment(url: string, maxLen = 40): string {
   const cleaned = url.replace(/[?#].*$/, '');
   const segments = cleaned.split('/');
@@ -755,22 +634,7 @@ function lastUrlSegment(url: string, maxLen = 40): string {
   return last.length > maxLen ? last.slice(-maxLen) : last;
 }
 
-/**
- * Creates virtual nodes for external systems like cloud files or remote databases.
- *
- * @remarks
- * Every distinct external reference becomes a node and edge; there is no admission budget. A
- * caller that must honor `dataLineageViz.maxNodes` checks the assembled model afterward with
- * {@link checkObjectLimit} in `modelFilters.ts`.
- *
- * @param nodes - Node collection to add to.
- * @param nodeIds - ID set to add to.
- * @param edges - Edge collection.
- * @param edgeKeys - Edge deduplication set.
- * @param crossDbRegexRefs - Discovered 3-part references from regex.
- * @param crossDbMetaDeps - Discovered 3-part references from model metadata.
- * @param currentDatabase - Active database name.
- */
+/** Creates virtual nodes for external systems like cloud files or remote databases. */
 function createVirtualNodes(
   nodes: LineageNode[],
   nodeIds: Set<string>,

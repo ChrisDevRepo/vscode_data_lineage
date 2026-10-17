@@ -11,20 +11,7 @@ if (!root) {
   throw new Error('Root element not found!');
 }
 
-/**
- * Reports a failed bootstrap chunk load and leaves a visible message in place of the panel.
- *
- * @remarks
- * The dynamic imports below carry the ErrorBoundary and — in detail mode — the global
- * `unhandledrejection` listener itself, so a chunk that fails to load has no other reporter: without
- * this the panel is blank and nothing reaches the Output channel. `window.vscode` may legitimately
- * be undefined here (detail mode acquires it inside the chunk that just failed), in which case the
- * in-page message is the only surface left.
- *
- * @param surface - Which webview failed, used to label the Output-channel record.
- * @param mount - Element the failure message replaces the panel content in.
- * @param error - The rejection value from the import chain.
- */
+/** Reports a failed bootstrap chunk load and leaves a visible message in place of the panel. */
 function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement, error: unknown): void {
   const message = errorMessage(error);
   window.vscode?.postMessage({

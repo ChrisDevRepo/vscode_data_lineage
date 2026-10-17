@@ -1,11 +1,4 @@
-/**
- * Tests for the graph display mode contract.
- *
- * @remarks
- * The mode derivation is a decision table, so it is tested as one. Each row is its own
- * `it`, named for the rule it encodes, so a regression names the rule that broke rather
- * than the first row that happened to be checked.
- */
+/** Tests for the graph display mode contract. */
 
 import { describe, expect, it } from 'vitest';
 import { deriveGraphDisplayMode, deriveInitialGraphMode } from '../../../src/engine/graphDisplayMode';

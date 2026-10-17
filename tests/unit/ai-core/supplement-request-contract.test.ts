@@ -1,8 +1,4 @@
-/**
- * A follow-up supplement is read only from the request: an object request is an object visit, a
- * column continuation needs the request's own qualified task, and a pruned connector the request
- * does not name refuses the target instead of being restored.
- */
+/** A follow-up supplement is read only from the request: an object request is an object visit, a column continuation needs the request's own qualified task, and a pruned connector the request does not name refuses the target instead of being restored. */
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { TaskLedger } from '../../../src/ai/sm/taskLedger';

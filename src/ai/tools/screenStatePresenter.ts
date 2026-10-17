@@ -1,13 +1,4 @@
-/**
- * Projection of the user's current screen into the `lineage_get_screen_state` payload.
- *
- * @remarks
- * Pure and VS Code-free. The bridge validates `uiState` and `render-state` against their
- * `bridgeContract` schemas, but the session buffers can also be seeded by non-bridge writers, so
- * every read here stays defensive: a missing, malformed, or foreign-shaped field omits its section
- * instead of throwing. The payload answers "what is on screen", never "what is in the
- * model" — the catalog, statistics, and filters stay with `lineage_get_context`.
- */
+/** Projection of the user's current screen into the `lineage_get_screen_state` payload. */
 import {
   SCREEN_STATE_MAX_IDS,
   TRACE_ALL_LEVELS,
@@ -22,7 +13,7 @@ import { schemaKey } from '../../utils/sql';
 import { resolveModelNodeId } from '../support/modelReferences';
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
-export interface ScreenStateInput {
+interface ScreenStateInput {
   /** Latest `filter-changed` ui-state buffer. */
   readonly uiState: unknown;
   /** Latest `render-state` buffer. */
@@ -42,7 +33,7 @@ export interface ScreenStateInput {
 }
 
 /** Inputs of one stored-run recall query. */
-export interface RunRecallInput {
+interface RunRecallInput {
   /** Latest `filter-changed` ui-state buffer, read for the applied bookmark. */
   readonly uiState: unknown;
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
@@ -100,14 +91,7 @@ function pageOf<T>(page: ListPage, items: readonly T[]): T[] {
   return items.slice(page.offset, end);
 }
 
-/**
- * Emits one page of an id list as `<key>`.
- *
- * @param page - The shared page; marked as continuing when this list has more ids.
- * @param key - The payload field name carrying the ids.
- * @param ids - The full id list.
- * @returns A spreadable fragment holding the page's ids.
- */
+/** Emits one page of an id list as `<key>`. */
 function spreadPaged(page: ListPage, key: string, ids: readonly string[]): Record<string, unknown> {
   return { [key]: pageOf(page, ids) };
 }
@@ -117,27 +101,13 @@ function asLevel(value: unknown): number | 'all' | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-/**
- * Renders a rendered-trace depth, decoding the unbounded sentinel the trace controls encode.
- *
- * @remarks
- * `TRACE_ALL_LEVELS` is finite, so `asCount` would pass it through as a literal depth and report
- * nine quadrillion levels where the banner shows "All".
- */
+/** Renders a rendered-trace depth, decoding the unbounded sentinel the trace controls encode. */
 function asTraceLevel(value: unknown): number | 'all' {
   const level = asCount(value);
   return level === TRACE_ALL_LEVELS ? 'all' : level;
 }
 
-/**
- * Reports a stored run's depth per side as the run bound it.
- *
- * @remarks
- * `depthIntent` is the per-side `{levels, exactness}` record (`explorationDepthContract.ts`). A
- * finite `levels` is reported only when the persisted `depthLimits` ceiling for that side
- * bound the run; a `null` ceiling means the count never became a border (an approximate side, or a
- * legacy checkpoint's seeded default read back as exact), so it reads back as the unstated `null`.
- */
+/** Reports a stored run's depth per side as the run bound it. */
 function presentDepth(
   init: Record<string, unknown> | null,
   internals: Record<string, unknown> | null,
@@ -255,13 +225,7 @@ function presentBookmark(
   };
 }
 
-/**
- * Renders what the user currently sees: the active trace, graph analysis, applied bookmark, and
- * view level.
- *
- * @param input - Session-owned screen buffers and counts.
- * @returns The model-facing screen payload with its token estimate; absent sections render `null`.
- */
+/** Renders what the user currently sees: the active trace, graph analysis, applied bookmark, and view level. */
 export function presentScreenState(input: ScreenStateInput): {
   screen: Record<string, unknown>;
   _token_estimate: { chars: number; estimated_tokens: number };
@@ -334,13 +298,7 @@ function nodeStatesOf(run: StoredAiRun): Record<string, unknown>[] {
   });
 }
 
-/**
- * The objects the stored run analysed, as a count plus the id list — one page on the screen card, whole on a scoped recall.
- *
- * @remarks
- * Carried by the screen card and by every scoped recall alike, so a read narrowed to one class or
- * to a few ids still states the run's full analysed set instead of reading as the whole run.
- */
+/** The objects the stored run analysed, as a count plus the id list — one page on the screen card, whole on a scoped recall. */
 function presentAnalyzedSet(run: StoredAiRun, page?: ListPage): Record<string, unknown> {
   const analyzed = nodeStatesOf(run)
     .filter(state => state.action === 'analyze')
@@ -391,14 +349,7 @@ function recallPruned(run: StoredAiRun): Record<string, unknown>[] {
     }));
 }
 
-/**
- * Unresolved leads of the run, each marked with whether its object is already on the graph.
- *
- * @remarks
- * A lead on an object the graph already shows is a deeper look, not an addition; `on_graph`
- * distinguishes the two; the graph shows exactly the nodes with an `analyze` or `passthrough` state.
- * Resolved, scheduled and dismissed leads are history, not open.
- */
+/** Unresolved leads of the run, each marked with whether its object is already on the graph. */
 function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
   const snapshot = asRecord(run.snapshot);
   const internals = asRecord(snapshot?.engineInternals);
@@ -438,17 +389,7 @@ function overBudgetHint(input: RunRecallInput, chars: number, tokenBudget: numbe
   return `Narrow ids to at most ${fits} or use a filter instead.`;
 }
 
-/**
- * Answers one recall query against the run stored with the applied bookmark.
- *
- * @remarks
- * Over-budget responses hard-reject with the discovery over-budget envelope and a narrowing hint;
- * nothing is truncated. An applied AI bookmark's run wins; without one the session's completed run
- * answers, and only when neither exists does the call answer `no_run_memory`.
- *
- * @param input - The resolved query and the session's read-only resolvers.
- * @returns The recall payload, or a rejection envelope, with its token estimate.
- */
+/** Answers one recall query against the run stored with the applied bookmark. */
 export function presentRunRecall(input: RunRecallInput): Record<string, unknown> | ToolRejection {
   const run = resolveAppliedRun(input);
   if (!run) {
@@ -473,18 +414,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
   return withEstimate(payload);
 }
 
-/**
- * Summarises what is on screen in one prompt-context phrase.
- *
- * @remarks
- * Grounds the stage prompts so a bare "explain this" can reach `lineage_get_screen_state`. The
- * phrase names each surface present with its identity — the trace origin and levels, the analysis
- * type and selected group label, the applied bookmark's name — never its contents (objects,
- * findings), which stay behind the tool call.
- *
- * @param uiState - Latest `filter-changed` ui-state buffer, read defensively.
- * @returns The raw phrase — the prompt slot builder escapes it — or `null` when no trace, analysis, or bookmark is applied.
- */
+/** Summarises what is on screen in one prompt-context phrase. */
 export function describeScreen(uiState: unknown): string | null {
   const { ui, extras } = screenStateParts(uiState);
   const parts: string[] = [];

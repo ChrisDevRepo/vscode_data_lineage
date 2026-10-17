@@ -1,12 +1,4 @@
-/**
- * Every dynamic prompt slot is escaped, including the model-authored ones.
- *
- * @remarks
- * `task.question` and the CT lineage questions are composed by the model on an earlier hop and
- * replayed into `<root_question>` / `<sub_question>` / `<lineage_questions>` on a later one, so they
- * are untrusted exactly like the user question and the screen phrase. Unescaped, a question could
- * close its own delimiter and open a new instruction block in the system prompt.
- */
+/** Every dynamic prompt slot is escaped, including the model-authored ones. */
 import { describe, expect, it } from 'vitest';
 import { buildCurrentTaskBlock, buildMemoryBlock } from '../../../src/ai/prompting/prompts';
 

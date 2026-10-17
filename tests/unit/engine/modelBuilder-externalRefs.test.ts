@@ -1,14 +1,4 @@
-/**
- * Virtual external nodes built by `modelBuilder` from SQL bodies: OPENROWSET and
- * COPY INTO / BULK INSERT file references, three-part cross-database references, and
- * the CETAS external-table target.
- *
- * @remarks
- * Split out of graphBuilder.test.ts, where these lived despite exercising `buildModel`.
- * The suppression rules matter most: a T-SQL CLR method call such as
- * `EMP_cte.OrganizationNode.GetAncestor(...)` is textually identical to
- * `[db].[schema].[object]`, and admitting one invents a database that does not exist.
- */
+/** Virtual external nodes built by `modelBuilder` from SQL bodies: OPENROWSET and COPY INTO / BULK INSERT file references, three-part cross-database references, and the CETAS external-table target. */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';

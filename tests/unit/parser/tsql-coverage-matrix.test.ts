@@ -1,9 +1,4 @@
-/**
- * Exact parser edges. Each row in tests/cases/parser/exact-edges.yaml is one SQL statement
- * and the full source, target, and call lists. A missing name and an invented name both fail.
- * Two generated-length statements stay in this file. Partial checks stay in parser-edge-cases.test.ts.
- * Whole procedures are the yaml `fixture-*` rows.
- */
+/** Exact parser edges. Each row in tests/cases/parser/exact-edges.yaml is one SQL statement and the full source, target, and call lists. A missing name and an invented name both fail. Two generated-length statements stay in this file. Partial checks stay in parser-edge-cases.test.ts. Whole procedures are the yaml `fixture-*` rows. */
 import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import { beforeAll, describe, expect, it } from 'vitest';

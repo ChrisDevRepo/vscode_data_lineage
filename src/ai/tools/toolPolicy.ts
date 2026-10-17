@@ -1,32 +1,9 @@
-/**
- * Canonical tool-by-stage policy shared by provider projection and runtime authorization.
- *
- * @remarks
- * Policy:
- *
- * | Stage                     | Tools                                                                                            |
- * |---------------------------|--------------------------------------------------------------------------------------------------|
- * | `discover`                | get_context, get_screen_state, search_objects, get_scope_bundle, search_ddl, get_object_detail, detect_graph_patterns |
- * | `visual_preview`          | present_result (restructures the cached discovery answer)                                  |
- * | `sm_entry`                | get_screen_state, search_objects, get_object_detail (resolve all columns for a CT start), start_exploration (resolve origin + open the consent gate) |
- * | `active` (sm_bb)          | submit_findings; prune_current when the engine authorizes candidate removal                        |
- * | `active` (sm_ct)          | submit_findings, get_neighbor_columns; the same conditional prune_current                         |
- * | `synthesis`               | present_result                                                                                    |
- * | `completed`               | present_result, start_exploration (a supplement on the completed engine, or a fresh proposal), and every discovery read tool |
- * | `external`                | the existing read-only VS Code tool surface                |
- *
- * SM keeps `present_result` synthesis-only because the agenda drains across many hops.
- *
- * `external` is the stage of every caller without a chat turn (the `vscode.lm` registration). Hop-by-hop tools are never in it: they advance an approved exploration the chat owns.
- */
+/** Canonical tool-by-stage policy shared by provider projection and runtime authorization. */
 
 /** Mode variant of the ACTIVE phase. */
-export type ActiveMode = 'sm_bb' | 'sm_ct';
+type ActiveMode = 'sm_bb' | 'sm_ct';
 
-/**
- * Discriminated stage descriptor passed to {@link getAllowedLmToolNames}.
- * `active` requires `mode` at compile time — callers cannot forget it.
- */
+/** Discriminated stage descriptor passed to {@link getAllowedLmToolNames}. `active` requires `mode` at compile time — callers cannot forget it. */
 export type LmStage =
   /** Idle / ad-hoc question answering. No state machine active. */
   | { kind: 'discover' }
@@ -62,13 +39,7 @@ const VISUAL_PREVIEW_TOOLS: readonly string[] = [
   'lineage_present_result',
 ];
 
-/**
- * Tools visible while resolving the SM origin and opening the consent gate; the screen card
- * resolves an origin the user referred to as "this trace". `get_object_detail` is included so the
- * CT missing-columns rejection's hint ("read them with `lineage_get_object_detail`") names a tool
- * callable at this stage, enabling resolution of "all columns" for a CT start
- * instead of abandoning the trace.
- */
+/** Tools visible while resolving the SM origin and opening the consent gate; the screen card resolves an origin the user referred to as "this trace". `get_object_detail` is included so the CT missing-columns rejection's hint ("read them with `lineage_get_object_detail`") names a tool callable at this stage, enabling resolution of "all columns" for a CT start instead of abandoning the trace. */
 const SM_ENTRY_TOOLS: readonly string[] = [
   'lineage_get_screen_state',
   'lineage_search_objects',
@@ -81,17 +52,7 @@ const SYNTHESIS_TOOLS: readonly string[] = [
   'lineage_present_result',
 ];
 
-/**
- * Tools visible in the post-synthesis follow-up phase.
- *
- * @remarks
- * The follow-up phase refines the report: text edits and prunes re-render via `present_result`;
- * explicit node additions go through `start_exploration` with its `supplement` field (see
- * {@link StartExplorationInputSchema}), and a different origin or scope is a fresh
- * `start_exploration` proposal that opens a new approval card. Every discovery read tool stays
- * available, so a question beyond the report — another object, a wider neighbourhood — is answered
- * by walking the loaded graph instead of starting over.
- */
+/** Tools visible in the post-synthesis follow-up phase. */
 const COMPLETED_TOOLS: readonly string[] = [
   ...DISCOVERY_TOOLS,
   'lineage_present_result',
@@ -112,10 +73,7 @@ const EXTERNAL_TOOLS: readonly string[] = [
 /** Names of every tool a caller without a chat turn can reach; drives `vscode.lm` and the manifest. */
 export const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(EXTERNAL_TOOLS);
 
-/**
- * Exhaustiveness helper — forces the compiler to flag an un-handled `kind`
- * when a new variant is added to {@link LmStage}.
- */
+/** Exhaustiveness helper — forces the compiler to flag an un-handled `kind` when a new variant is added to {@link LmStage}. */
 function assertNever(x: never): never {
   throw new Error(`toolPolicy: unhandled LmStage variant: ${JSON.stringify(x)}`);
 }
@@ -145,11 +103,7 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
   }
 }
 
-/**
- * Derives the ACTIVE-mode tag from the current hop's analysis mode.
- *
- * @param hasColumnAspect - Whether the current hop runs in column-trace mode.
- */
+/** Derives the ACTIVE-mode tag from the current hop's analysis mode. */
 export function activeModeOf(hasColumnAspect: boolean): ActiveMode {
   return hasColumnAspect ? 'sm_ct' : 'sm_bb';
 }

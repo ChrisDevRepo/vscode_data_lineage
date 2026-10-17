@@ -1,11 +1,4 @@
-/**
- * Tiny lifecycle holder for "hold-and-amend" AI repair drafts.
- *
- * @remarks
- * The store is deliberately domain-neutral: it does not know which fields are safe to preserve or
- * which failures are repairable; tool/domain dispatchers own those policies. A held draft is cleared
- * only on success or turn reset, never by a failed retry.
- */
+/** Tiny lifecycle holder for "hold-and-amend" AI repair drafts. */
 export class RepairDraftStore<TFull, TAuthorization = undefined> {
   private draft: TFull | null = null;
   private authorization: TAuthorization | null = null;
@@ -32,13 +25,7 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
     this.authorization = null;
   }
 
-  /**
-   * Merges keyed patch entries into held entries: a patch entry overlays the held entry with the
-   * same key in place, a new key appends, and `{ remove: true }` drops the held entry (a key not
-   * held is a no-op). Every held entry the patch does not name is kept as authored.
-   *
-   * @param keyOf - Identity of an entry; the caller owns any key normalization.
-   */
+  /** Merges keyed patch entries into held entries: a patch entry overlays the held entry with the same key in place, a new key appends, and `{ remove: true }` drops the held entry (a key not held is a no-op). Every held entry the patch does not name is kept as authored. */
   public static mergeByKey<T extends object>(
     held: readonly T[],
     patch: ReadonlyArray<Partial<T> & { remove?: boolean }>,
@@ -104,16 +91,7 @@ export function indexedRepairFields<Field extends string>(
   return [...byIndex].sort(([a], [b]) => a - b).map(([index, fields]) => ({ index, fields: [...fields].sort() }));
 }
 
-/**
- * The one resend rule every held-draft hint states for a keyed list, so no tool teaches a second
- * contract for the same merge ({@link RepairDraftStore.mergeByKey}).
- *
- * @param field - The list field a resend carries, e.g. `sections`.
- * @param key - What identifies an entry in that list, e.g. `label` or `angle`.
- * @param partialFields - The entry fields the stage accepts and a resent entry may omit to keep the
- * held value, the first being the body a new key needs. Absent for a list whose entries are only
- * replaced by key.
- */
+/** The one resend rule every held-draft hint states for a keyed list, so no tool teaches a second contract for the same merge ({@link RepairDraftStore.mergeByKey}). */
 export function keyedResendRule(field: string, key: string, partialFields: readonly string[] = []): string {
   const rule = `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;
   if (partialFields.length === 0) return rule;

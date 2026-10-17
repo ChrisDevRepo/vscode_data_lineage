@@ -1,11 +1,6 @@
 import { groupByWeaklyConnected } from './unionFind';
 
-/**
- * Minimal node shape for rendered-connectivity analysis.
- *
- * @remarks
- * Decoupled from React Flow types so the helper stays pure and unit-testable.
- */
+/** Minimal node shape for rendered-connectivity analysis. */
 export interface RenderConnectivityNode {
   /** React Flow node id. */
   id: string;
@@ -21,14 +16,7 @@ export interface RenderConnectivityEdge {
   target: string;
 }
 
-/**
- * Connectivity of the graph currently on screen.
- *
- * @remarks
- * Computed from the actual rendered React Flow nodes/edges so the debug dump
- * reflects exactly what the user sees — including whether clusters are joined
- * or orphaned. Bounded by `renderLimit`, so always cheap.
- */
+/** Connectivity of the graph currently on screen. */
 export interface RenderConnectivity {
   /** Rendered node count. */
   nodeCount: number;
@@ -40,14 +28,7 @@ export interface RenderConnectivity {
   isolatedNodes: string[];
 }
 
-/**
- * Summarizes the connectivity of the rendered graph.
- *
- * @param nodes - Rendered nodes (id + optional label).
- * @param edges - Rendered directed edges, treated as undirected for grouping.
- *
- * @returns Node, edge and component counts, and isolated node labels.
- */
+/** Summarizes the connectivity of the rendered graph. */
 export function summarizeRenderedConnectivity(
   nodes: readonly RenderConnectivityNode[],
   edges: readonly RenderConnectivityEdge[],
@@ -81,16 +62,7 @@ export function summarizeRenderedConnectivity(
   };
 }
 
-/**
- * Renders a {@link RenderConnectivity} as the count lines in the debug dump.
- *
- * Reports how many nodes, edges, components and isolated nodes are on screen.
- * Member names stay out of the clipboard text.
- *
- * @param conn - The rendered-connectivity summary to format.
- *
- * @returns Indented multi-line text (no trailing newline).
- */
+/** Renders a {@link RenderConnectivity} as the count lines in the debug dump. */
 export function formatRenderConnectivity(conn: RenderConnectivity): string {
   return [
     `  Rendered: ${conn.nodeCount} nodes, ${conn.edgeCount} edges`,

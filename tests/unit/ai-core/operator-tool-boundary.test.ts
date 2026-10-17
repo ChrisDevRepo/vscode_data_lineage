@@ -1,9 +1,4 @@
-/**
- * Boundaries of the optional headless and database runners.
- *
- * Transport retries, Langfuse upload, and stage-replay mechanics stay with those operator tools.
- * These rows keep the configuration failures and the secret boundary that must not regress.
- */
+/** Boundaries of the optional headless and database runners. */
 import { z } from 'zod';
 import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';

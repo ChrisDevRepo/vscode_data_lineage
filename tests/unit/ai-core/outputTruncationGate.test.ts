@@ -1,7 +1,4 @@
-/**
- * Pins the output-truncation gate step: a planted cut fails, a log-helper trunc and an allowlisted
- * elision pass, and a stale baseline entry fails.
- */
+/** Pins the output-truncation gate step: a planted cut fails, a log-helper trunc and an allowlisted elision pass, and a stale baseline entry fails. */
 import { describe, expect, it } from 'vitest';
 import { compare, findSites } from '../../tools/assert-no-output-truncation.mjs';
 

@@ -1,7 +1,4 @@
-/**
- * Pins platform detection on a failed `platform-info` probe: the built-in session records
- * the explicit unknown platform without sending it twice.
- */
+/** Pins platform detection on a failed `platform-info` probe: the built-in session records the explicit unknown platform without sending it twice. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../../src/bridge/host';
 import type { SimpleExecuteResult } from '../../../../src/types/database';

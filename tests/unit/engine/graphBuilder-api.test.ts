@@ -1,16 +1,4 @@
-/**
- * Covers the host-side exported `graphBuilder` surface that no test named: pathfinding,
- * the layout engine and its cache (including worker-computed seeding), graph metrics, and
- * the no-layout build. Synthetic trace membership/depth contracts belong to
- * traversal-edge-cases.test.ts.
- *
- * These sit between the BFS trace and what the user sees. A defect here shows as a
- * correct trace rendered wrongly — a node missing from the view, an edge dropped —
- * which no analysis-level test can detect.
- *
- * `applyTraceToFlow` is covered in tests/unit/webview/applyTraceToFlow.test.ts: it runs
- * only under the webview hook, and its warning path reaches `window`.
- */
+/** Covers the host-side exported `graphBuilder` surface that no test named: pathfinding, the layout engine and its cache (including worker-computed seeding), graph metrics, and the no-layout build. Synthetic trace membership/depth contracts belong to traversal-edge-cases.test.ts. */
 
 import { describe, expect, it } from 'vitest';
 import {

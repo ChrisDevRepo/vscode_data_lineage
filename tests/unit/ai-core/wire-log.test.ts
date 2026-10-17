@@ -16,16 +16,7 @@ import {
 /** Every temporary trace root this file created, so none survives the run. */
 const traceRoots: string[] = [];
 
-/**
- * Creates a temporary directory for one `AiTraceWriter` and registers it for removal.
- *
- * @returns Absolute path of the new directory.
- *
- * @remarks
- * `AiTraceWriter.enable` writes a real NDJSON file, so these cases need a real directory rather
- * than a mocked filesystem. Registering here rather than deleting per case keeps the removal off
- * the assertion path: a failing case still leaves its trace readable until the file finishes.
- */
+/** Creates a temporary directory for one `AiTraceWriter` and registers it for removal. */
 async function traceRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'lineage-trace-'));
   traceRoots.push(root);

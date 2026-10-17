@@ -4,9 +4,7 @@ import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
-/**
- * Represents a status notification displayed in the UI during project loading or processing.
- */
+/** Represents a status notification displayed in the UI during project loading or processing. */
 export type StatusMessage = {
   /** The descriptive text of the status message. */
   text: string;
@@ -14,18 +12,10 @@ export type StatusMessage = {
   type: 'info' | 'success' | 'warning' | 'error';
 };
 
-/**
- * The source context currently being loaded.
- */
+/** The source context currently being loaded. */
 export type LoadingContext = 'dacpac' | 'database' | null;
 
-/**
- * The full state and action set managed by the project loader hook.
- *
- * @remarks
- * This interface defines the bridge between the React frontend and the VS Code
- * extension host for all data extraction and project lifecycle events.
- */
+/** The full state and action set managed by the project loader hook. */
 export interface DacpacLoaderState {
   /** The fully extracted database model (Phase 2 result). */
   model: DatabaseModel | null;
@@ -75,17 +65,7 @@ export interface DacpacLoaderState {
   clearAllSchemas: (names: string[]) => void;
 }
 
-/**
- * Orchestrates the project loading lifecycle: from file picking to full lineage extraction.
- *
- * @remarks
- * Two-phase extraction for both DACPACs and live databases: Phase 1 shows a schema selector,
- * Phase 2 does the full DDL parse and graph build. Communicates with the extension host via
- * `postMessage`.
- *
- * @param onConfigReceived - Callback triggered when the extension host delivers updated configuration.
- * @returns The project loader state and interactive actions.
- */
+/** Orchestrates the project loading lifecycle: from file picking to full lineage extraction. */
 export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => void): DacpacLoaderState {
   const vscodeApi = useVsCode();
   const [model, setModel] = useState<DatabaseModel | null>(null);
@@ -101,11 +81,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const isDemoRef = useRef(false);
   const loadCancelledRef = useRef(false);
   const pendingCancelsRef = useRef(0);
-  /**
-   * Status auto-clear policy: transient info messages (progress, connecting, loading) clear 6 s
-   * after loading ends; success messages carry the load summary, and warnings and errors need the
-   * user's attention, so those stay until the next status replaces them.
-   */
+  /** Status auto-clear policy: transient info messages (progress, connecting, loading) clear 6 s after loading ends; success messages carry the load summary, and warnings and errors need the user's attention, so those stay until the next status replaces them. */
   useEffect(() => {
     if (status && status.type === 'info' && !isLoading) {
       const timer = setTimeout(() => setStatus(null), 6000);

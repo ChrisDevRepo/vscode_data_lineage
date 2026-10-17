@@ -2,22 +2,7 @@ import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
-/**
- * Drives every externally contributed lineage tool through `vscode.lm.invokeTool` in a host with no model
- * provider fixture.
- *
- * @remarks
- * This is the tier that makes the AI surface automatically testable rather than UAT-only. It is
- * public stable API, not a workaround: `ChatParticipantToolToken` is `never`
- * (`@types/vscode` `index.d.ts:20630`), so `undefined` is the only token an extension can
- * construct, and the typings state a tool may be invoked "globally by any extension in any custom
- * flow". `registerAiTools` ({@link file://./../../src/ai/tools/toolProvider.ts}) declares no
- * `confirmationMessages`, which is what keeps the path free of UI.
- *
- * Why it matters beyond coverage: only the existing read-only tool surface is registered with
- * `vscode.lm.registerTool`, so external callers cannot drive the participant-owned exploration.
- * This lane exercises the same entry point an agent would use.
- */
+/** Drives every externally contributed lineage tool through `vscode.lm.invokeTool` in a host with no model provider fixture. */
 suite('Tool surface — invokeTool, no model, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 

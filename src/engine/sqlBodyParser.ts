@@ -1,18 +1,4 @@
-/**
- * ─── SQL Body Parser ────────────────────────────────────────────────────────
- *
- * Regex-based T-SQL dependency extraction engine.
- *
- * @remarks
- * This parser uses a high-performance, multi-pass cleansing pipeline to
- * neutralize comments, strings, and complex SQL structures (like CTEs and
- * comma-joins) before applying rule-based extraction for lineage analysis.
- *
- * Extraction rules are loaded from YAML at runtime to allow for extensibility
- * without modifying the core engine logic.
- *
- * @packageDocumentation
- */
+/** ─── SQL Body Parser ──────────────────────────────────────────────────────── */
 
 import { normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../utils/sql';
 import { CLR_TYPE_METHODS } from './shared/sqlMetadata';
@@ -24,38 +10,17 @@ import {
 import type { ExternalRef } from './types';
 import { errorMessage } from '../utils/errorMessage';
 
-/**
- * Represents the extracted SQL dependencies from a parsed SQL body.
- *
- * @remarks
- * Categorizes discovered database objects into read/write operations and
- * execution calls.
- */
+/** Represents the extracted SQL dependencies from a parsed SQL body. */
 interface ParsedDependencies {
-  /**
-   * Schema-qualified names of objects read from (e.g., `[dbo].[Table]`).
-   * Captured from SELECT and JOIN clauses.
-   */
+  /** Schema-qualified names of objects read from (e.g., `[dbo].[Table]`). Captured from SELECT and JOIN clauses. */
   sources: string[];
-  /**
-   * Schema-qualified names of objects written to (e.g., `[dbo].[Table]`).
-   * Captured from configured data-producing target rules; DELETE/TRUNCATE remain separate mutations.
-   */
+  /** Schema-qualified names of objects written to (e.g., `[dbo].[Table]`). Captured from configured data-producing target rules; DELETE/TRUNCATE remain separate mutations. */
   targets: string[];
-  /**
-   * Schema-qualified names of stored procedures executed (e.g., `[dbo].[Proc]`).
-   * Captured from EXEC/EXECUTE calls.
-   */
+  /** Schema-qualified names of stored procedures executed (e.g., `[dbo].[Proc]`). Captured from EXEC/EXECUTE calls. */
   execCalls: string[];
-  /**
-   * Full 3-part names of cross-database sources (e.g., `db.schema.object`).
-   * These are tracked separately from local references.
-   */
+  /** Full 3-part names of cross-database sources (e.g., `db.schema.object`). These are tracked separately from local references. */
   crossDbSources: string[];
-  /**
-   * Full 3-part names of cross-database targets (e.g., `db.schema.object`).
-   * Tracked for cross-DB lineage analysis.
-   */
+  /** Full 3-part names of cross-database targets (e.g., `db.schema.object`). Tracked for cross-DB lineage analysis. */
   crossDbTargets: string[];
   /** Physical mutations on decoded, qualified components; catalog binding decides identity. */
   mutations: Array<{ parts: string[]; kind: 'write' | 'delete' }>;
@@ -69,65 +34,29 @@ const PARTIAL_SUPPORT: ReadonlyArray<readonly [label: string, pattern: RegExp]> 
   ['Dynamic SQL', /\bEXEC(?:UTE)?\s*\(|\bsp_executesql\b/i],
 ];
 
-/**
- * Defines a single regex-based extraction rule for SQL parsing.
- *
- * @remarks
- * Rules are the atomic unit of extraction in the engine. They use named capture
- * groups to identify pertinent identifiers in the SQL text.
- */
+/** Defines a single regex-based extraction rule for SQL parsing. */
 interface ParseRule {
-  /**
-   * Unique identifier for the rule.
-   * Used for debugging and configuration overrides.
-   */
+  /** Unique identifier for the rule. Used for debugging and configuration overrides. */
   name: string;
-  /**
-   * Whether the rule is actively applied during parsing.
-   */
+  /** Whether the rule is actively applied during parsing. */
   enabled: boolean;
-  /**
-   * Execution order (lower priority runs earlier).
-   * Crucial for rules that depend on previous preprocessing passes.
-   */
+  /** Execution order (lower priority runs earlier). Crucial for rules that depend on previous preprocessing passes. */
   priority: number;
-  /**
-   * Categorizes how the rule's matches are classified in {@link ParsedDependencies}.
-   */
+  /** Categorizes how the rule's matches are classified in {@link ParsedDependencies}. */
   category: 'preprocessing' | 'source' | 'target' | 'exec' | 'external_ref';
-  /**
-   * The regular expression string to evaluate against the SQL body.
-   * Must contain at least one capture group for the identifier.
-   */
+  /** The regular expression string to evaluate against the SQL body. Must contain at least one capture group for the identifier. */
   pattern: string;
-  /**
-   * Regex flags (e.g., 'gi') applied to the pattern. Must include `g`: every consumer scans or
-   * rewrites the whole body, and a non-global pattern either never terminates or matches once.
-   */
+  /** Regex flags (e.g., 'gi') applied to the pattern. Must include `g`: every consumer scans or rewrites the whole body, and a non-global pattern either never terminates or matches once. */
   flags: string;
-  /**
-   * Replacement string for 'preprocessing' category rules.
-   * Allows transforming SQL text before extraction.
-   */
+  /** Replacement string for 'preprocessing' category rules. Allows transforming SQL text before extraction. */
   replacement?: string;
-  /**
-   * Defines the type of external reference.
-   * Required if category is 'external_ref'.
-   */
+  /** Defines the type of external reference. Required if category is 'external_ref'. */
   kind?: string;
-  /**
-   * Human-readable explanation of the rule's purpose.
-   */
+  /** Human-readable explanation of the rule's purpose. */
   description: string;
 }
 
-/**
- * Raw, unvalidated configuration wrapper accepted by {@link loadRules}.
- *
- * @remarks
- * `loadRules` IS the per-rule validator, so its input is deliberately loose: YAML-shaped
- * candidates go in, invalid entries are skipped with diagnostics.
- */
+/** Raw, unvalidated configuration wrapper accepted by {@link loadRules}. */
 export interface RawParseRulesConfig {
   /** Candidate rules; each entry stays `unknown` until `validateRule` accepts it. */
   readonly rules?: readonly unknown[];
@@ -151,18 +80,7 @@ let activeRules: ParseRule[] = [];
 /** Rule categories accepted by the configuration boundary. */
 const VALID_CATEGORIES = new Set(['preprocessing', 'source', 'target', 'exec', 'external_ref']);
 
-/**
- * Validates a single parse rule for structural and regex correctness.
- *
- * @remarks
- * Checks for required fields, valid categories, and the two regex properties every scan depends
- * on: the pattern must not match the empty string, and the flags must include `g`. Both are
- * termination conditions, not style preferences.
- *
- * @param rule - The raw rule object to validate.
- * @param index - The index of the rule in the configuration array.
- * @returns A validation result indicating success or failure with an error message.
- */
+/** Validates a single parse rule for structural and regex correctness. */
 function validateRule(rule: unknown, index: number): { valid: true; name: string } | { valid: false; name: string; error: string } {
   const r = rule as Record<string, unknown>;
   const name = typeof r?.name === 'string' ? r.name : `rule[${index}]`;
@@ -194,18 +112,7 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
   return { valid: true, name };
 }
 
-/**
- * Loads rules from a parsed configuration (built-in or custom) with validation.
- *
- * @remarks
- * Rules are sorted by priority to guarantee execution order regardless of source-file order.
- * When `config` yields no valid rule, `fallback` is loaded in its place and its diagnostics are
- * appended; without a fallback no rule stays active.
- *
- * @param config - The configuration object containing the rules to load.
- * @param fallback - Rules to activate when `config` holds no valid rule (the built-in file for a custom one).
- * @returns A summary of the load operation, including success counts and any validation errors.
- */
+/** Loads rules from a parsed configuration (built-in or custom) with validation. */
 export function loadRules(config: RawParseRulesConfig, fallback?: RawParseRulesConfig): LoadRulesResult {
   const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedFallback: false };
   const validRules: ParseRule[] = [];
@@ -266,11 +173,7 @@ function skip(sql: string, pattern: string, at: number): number {
   return re.test(sql) ? re.lastIndex : -1;
 }
 
-/**
- * Same-length view of `sql[from, to)` for structural tests at its own nesting level: text inside
- * nested parentheses becomes spaces and every quoted span becomes `#`, so a keyword, comma or
- * parenthesis found in it belongs to that level and offsets still index into `sql`.
- */
+/** Same-length view of `sql[from, to)` for structural tests at its own nesting level: text inside nested parentheses becomes spaces and every quoted span becomes `#`, so a keyword, comma or parenthesis found in it belongs to that level and offsets still index into `sql`. */
 function topLevelText(sql: string, mask: Uint8Array, from: number, to: number): string {
   let out = '';
   let depth = 0;
@@ -298,18 +201,7 @@ function applyEdits(sql: string, edits: TextEdit[]): string {
   return result + sql.slice(at);
 }
 
-/**
- * Preprocessing pass that rewrites the `FROM` of `IS [NOT] DISTINCT FROM` and of
- * `TRIM([LEADING | TRAILING | BOTH] characters FROM string)` to a comma.
- *
- * @remarks
- * In both forms `FROM` separates two operands and opens no FROM clause, so no later pass or rule
- * may read the operand after it as a table source. One scan tracks the open parentheses, so a
- * `FROM` belongs to `TRIM` only when the innermost open parenthesis is the one `TRIM` opened.
- *
- * @param sql - Cleaned SQL text.
- * @returns SQL text whose remaining `FROM` keywords all open a FROM clause.
- */
+/** Preprocessing pass that rewrites the `FROM` of `IS [NOT] DISTINCT FROM` and of `TRIM([LEADING | TRAILING | BOTH] characters FROM string)` to a comma. */
 function neutraliseOperandFrom(sql: string): string {
   const mask = sqlCommentMask(sql, { markLiterals: true });
   const operandFrom = new Set<number>();
@@ -333,18 +225,7 @@ function neutraliseOperandFrom(sql: string): string {
   return applyEdits(sql, [...operandFrom].map(from => ({ from, to: from + 'FROM'.length, text: ',' })));
 }
 
-/**
- * Preprocessing pass that takes `TOP (expression) [PERCENT]` out of INSERT, UPDATE and MERGE, so
- * every later pass and rule reads the target directly after the statement keyword.
- *
- * @remarks
- * The expression may nest parentheses and hold a subquery or a function call, so each one is
- * appended after the text as a statement of its own and its reads stay visible. An unbalanced
- * parenthesis ends the pass.
- *
- * @param sql - Cleaned SQL text.
- * @returns SQL text without a TOP clause between a DML keyword and its target.
- */
+/** Preprocessing pass that takes `TOP (expression) [PERCENT]` out of INSERT, UPDATE and MERGE, so every later pass and rule reads the target directly after the statement keyword. */
 function liftDmlTop(sql: string): string {
   const mask = sqlCommentMask(sql, { markLiterals: true });
   const edits: TextEdit[] = [];
@@ -364,18 +245,7 @@ function liftDmlTop(sql: string): string {
   return applyEdits(sql, edits) + lifted;
 }
 
-/**
- * Preprocessing pass that removes the column list and the WITH options between the table name of
- * `CREATE [EXTERNAL] TABLE` and `AS SELECT` / `AS WITH`.
- *
- * @remarks
- * Only those two parenthesised groups may stand there, so the CTAS rules match the name directly
- * before `AS` and a plain `CREATE TABLE` never pairs with the `AS` of a later statement. An
- * unbalanced parenthesis ends the pass.
- *
- * @param sql - Cleaned SQL text.
- * @returns SQL text whose CTAS and CETAS statements read `CREATE [EXTERNAL] TABLE name AS ...`.
- */
+/** Preprocessing pass that removes the column list and the WITH options between the table name of `CREATE [EXTERNAL] TABLE` and `AS SELECT` / `AS WITH`. */
 function dropCtasOptions(sql: string): string {
   const mask = sqlCommentMask(sql, { markLiterals: true });
   const edits: TextEdit[] = [];
@@ -398,24 +268,10 @@ function dropCtasOptions(sql: string): string {
   return applyEdits(sql, edits);
 }
 
-/**
- * Clauses that end a single-query FROM clause. WINDOW is left out: it is also a legal alias, and a
- * WINDOW clause after the table list adds no member.
- */
+/** Clauses that end a single-query FROM clause. WINDOW is left out: it is also a legal alias, and a WINDOW clause after the table list adds no member. */
 const FROM_CLAUSE_END_RE = /\b(?:WHERE|GROUP|HAVING|ORDER|OPTION|FOR)\b/iu;
 
-/**
- * Returns the one table a query expression reads in its own FROM clause, or `null` when its text
- * names no such single table.
- *
- * @remarks
- * Pure syntax: the query `sql[from, to)` must have exactly one FROM at its own level, no set
- * operator, and a FROM clause without APPLY, PIVOT or comma. A lone derived table is read the same
- * way. A join list resolves only when exactly one member is a table reference and every other
- * member is a derived table that cannot be written through ({@link isReadOnlyQuery}). Subqueries
- * elsewhere (select list, WHERE) never supply the table. The reference is returned as written:
- * schema-qualified, or an unqualified name the caller may resolve as an earlier CTE of the same list.
- */
+/** Returns the one table a query expression reads in its own FROM clause, or `null` when its text names no such single table. */
 function singleQueryTable(sql: string, mask: Uint8Array, from: number, to: number): string | null {
   const flat = topLevelText(sql, mask, from, to);
   if (SET_OPERATOR_RE.test(flat)) return null;
@@ -450,11 +306,7 @@ function singleQueryTable(sql: string, mask: Uint8Array, from: number, to: numbe
 /** Set operators between query expressions. */
 const SET_OPERATOR_RE = /\b(?:UNION|EXCEPT|INTERSECT)\b/iu;
 
-/**
- * Whether the derived-table query `sql[from, to)` can never be written through: a SELECT with
- * DISTINCT, GROUP BY or a set operator at its own level (SQL Server errors 4403 and 4406). A TOP
- * query stays writable.
- */
+/** Whether the derived-table query `sql[from, to)` can never be written through: a SELECT with DISTINCT, GROUP BY or a set operator at its own level (SQL Server errors 4403 and 4406). A TOP query stays writable. */
 function isReadOnlyQuery(sql: string, mask: Uint8Array, from: number, to: number): boolean {
   const flat = topLevelText(sql, mask, from, to);
   return /^\s*SELECT\b/iu.test(flat) && (SET_OPERATOR_RE.test(flat) || /\bSELECT\s+DISTINCT\b|\bGROUP\s+BY\b/iu.test(flat));
@@ -463,10 +315,7 @@ function isReadOnlyQuery(sql: string, mask: Uint8Array, from: number, to: number
 /** One `name [(columns)] AS (query)` entry of a WITH list; `from`/`to` bound the query text. */
 interface CteDefinition { name: string; from: number; to: number }
 
-/**
- * Reads the CTE list of the `WITH` at `withAt`, returning its definitions and the index just past
- * the list, or `null` when the text there is not a CTE list.
- */
+/** Reads the CTE list of the `WITH` at `withAt`, returning its definitions and the index just past the list, or `null` when the text there is not a CTE list. */
 function readCteList(sql: string, mask: Uint8Array, withAt: number): { definitions: CteDefinition[]; end: number } | null {
   let at = skip(sql, 'WITH\\s*', withAt);
   const namespaces = skip(sql, 'XMLNAMESPACES\\s*(?=\\()', at);
@@ -499,14 +348,7 @@ function readCteList(sql: string, mask: Uint8Array, withAt: number): { definitio
   }
 }
 
-/**
- * Scans one statement from its leading keyword to the first top-level `;` or statement keyword.
- *
- * @param start - Index of the statement's leading keyword.
- * @param keywordLength - Length of that keyword, which is not itself a boundary.
- * @returns The end index, the spans of the statement outside any parentheses, and whether every
- * parenthesis it opens is closed.
- */
+/** Scans one statement from its leading keyword to the first top-level `;` or statement keyword. */
 function scanStatement(sql: string, codeMask: Uint8Array, start: number, keywordLength: number): { end: number; depth0Spans: Array<[number, number]>; closed: boolean } {
   let end = start + keywordLength;
   let depth = 0;
@@ -535,20 +377,7 @@ function scanStatement(sql: string, codeMask: Uint8Array, start: number, keyword
   return { end, depth0Spans, closed: depth === 0 };
 }
 
-/**
- * Preprocessing pass that rewrites a CTE named by the UPDATE statement its WITH list introduces
- * to that CTE's single base table.
- *
- * @remarks
- * A CTE is visible only to the statement that directly follows its WITH list, so the rewrite is
- * confined to that UPDATE: the name after `UPDATE`, `FROM` or `JOIN`, with or without a table hint or alias. A CTE
- * resolves only when {@link singleQueryTable} finds one table in its query, followed through
- * earlier CTEs of the same list. Joins, set operators and any other shape stay unresolved, and
- * the same name in another statement is never rewritten.
- *
- * @param sql - Cleaned SQL text.
- * @returns SQL text with resolvable CTE names in UPDATE statements replaced by their base table.
- */
+/** Preprocessing pass that rewrites a CTE named by the UPDATE statement its WITH list introduces to that CTE's single base table. */
 function substituteCteUpdateAliases(sql: string, identifierCaseSensitive: boolean): string {
   const aliasKey = (alias: string): string => normalizeColName(alias, identifierCaseSensitive);
   const isQualified = (reference: string): boolean => splitSqlName(reference).length > 1;
@@ -601,29 +430,10 @@ const LIST_TOKEN_RE = /[\p{L}\p{Nd}_@$#]+|\[(?:[^\]]|\]\])*\]|\S/gu;
 /** A token that can be an alias: a word or delimited identifier, never a number or an operator. */
 const ALIAS_START_RE = /^[\p{L}_@#[]/u;
 
-/**
- * Where the table list of one `FROM` stands: a member is due (`source`), its name is read
- * (`name`), `AS` awaits its alias (`as`), or its alias is read (`alias`).
- */
+/** Where the table list of one `FROM` stands: a member is due (`source`), its name is read (`name`), `AS` awaits its alias (`as`), or its alias is read (`alias`). */
 type ListState = 'source' | 'name' | 'as' | 'alias';
 
-/**
- * Normalizes ANSI comma-join FROM clauses to modern JOIN syntax.
- *
- * @remarks
- * Transforms `FROM t1, t2, t3 WHERE` into `FROM t1 JOIN t2 JOIN t3 WHERE`, whatever each member
- * is (aliased table, hinted table, function call, derived table). One left-to-right pass keeps a
- * list state per parenthesis depth. A member is a name, an optional `AS alias` or bare alias, and
- * parenthesised tails (arguments, `WITH (` hint, column list). The list ends at the first token
- * that continues no member: a reserved word other than `AS` or `WITH (`, a word after the
- * alias, any operator, `;` or the closing parenthesis. The word in the member position is a
- * name, so `output.T` and `window` stay tables, and a non-reserved clause word after the alias
- * (`OUTPUT`, `WINDOW`) ends the list. A `PIVOT (` or `UNPIVOT (` clause is a member tail. A comma after a
- * `JOIN ... ON` condition or an `APPLY` is not rewritten.
- *
- * @param sql - Cleaned SQL text.
- * @returns SQL with normalized JOIN syntax.
- */
+/** Normalizes ANSI comma-join FROM clauses to modern JOIN syntax. */
 function normalizeAnsiCommaJoins(sql: string): string {
   const lists: Array<ListState | undefined> = [];
   const commas: TextEdit[] = [];
@@ -669,12 +479,7 @@ function normalizeAnsiCommaJoins(sql: string): string {
   return applyEdits(sql, commas);
 }
 
-/**
- * Masks every block comment, nested ones included, leaving line comments and literals in place.
- *
- * @param sql - Raw SQL text.
- * @returns SQL with block comments replaced by same-length whitespace, preserving line breaks.
- */
+/** Masks every block comment, nested ones included, leaving line comments and literals in place. */
 function removeBlockComments(sql: string): string {
   const mask = sqlCommentMask(sql);
   let out = '';
@@ -697,18 +502,7 @@ const MASK_OFFSET = 0xF0000;
 const MASKABLE_RE = /[^\p{L}\p{Nd}_@$#\]\u{10000}-\u{10FFFF}]/gu;
 const MASKED_RE = /[\u{F0000}-\u{FFFFF}]/gu;
 
-/**
- * Hides the content of a delimited identifier from the extraction rules.
- *
- * @remarks
- * Whitespace, periods, parentheses and every other character that cannot belong to a regular
- * identifier move one-to-one into a private-use range, so text such as `[x FROM dbo.X ok]` holds
- * no keyword, name or call, and a case-insensitive comparison of two masked names is unchanged.
- * {@link unmaskIdentifier} restores the characters when a captured name is read.
- *
- * @param delimited - A `[bracket]` identifier, delimiters included.
- * @returns The identifier with its content masked.
- */
+/** Hides the content of a delimited identifier from the extraction rules. */
 function maskDelimitedContent(delimited: string): string {
   return `[${maskText(delimited.slice(1, -1))}]`;
 }
@@ -723,27 +517,7 @@ function unmaskIdentifier(text: string): string {
   return text.replace(MASKED_RE, c => String.fromCodePoint(c.codePointAt(0)! - MASK_OFFSET));
 }
 
-/**
- * Parses a raw T-SQL string to extract dependencies using the active ruleset.
- *
- * @remarks
- * The parsing process follows these passes:
- * 1.  **Pass 0**: Nested-aware block comment removal.
- * 2.  **Pass 1**: Neutralization of string literals and line comments using the
- *     "Best Regex Trick" (leftmost match); the content of delimited identifiers is masked.
- * 3.  **Pass 1.4**: Whitespace around the period of a multipart name is removed (`dbo . T` → `dbo.T`).
- * 4.  **Pass 1.45**: The `FROM` of `IS DISTINCT FROM` and `TRIM(... FROM ...)` becomes a comma.
- * 5.  **Pass 1.47**: `TOP (expression) [PERCENT]` leaves INSERT, UPDATE and MERGE.
- * 6.  **Pass 1.48**: The column list and WITH options of CTAS and CETAS are removed.
- * 7.  **Pass 1.5**: ANSI-92 comma-join normalization.
- * 8.  **Pass 1.6**: CTE alias substitution for UPDATE targets.
- * 9.  **Extraction**: Rule-based matching against the cleaned SQL.
- *
- * @param sql - The raw SQL statement or script body to parse.
- * @param onRuleFire - Optional per-rule firing callback. Invoked with `(ruleName, category, addedCount)` for every extraction rule that contributed at least one new ref. Used for sample-mode parser diagnostics.
- * @param identifierCaseSensitive - Checked source catalog policy; absent retains CI normalization.
- * @returns A categorization of all discovered dependencies.
- */
+/** Parses a raw T-SQL string to extract dependencies using the active ruleset. */
 export function parseSqlBody(
   sql: string,
   onRuleFire?: (ruleName: string, category: string, added: number) => void,
@@ -838,14 +612,7 @@ export function parseSqlBody(
   };
 }
 
-/**
- * Collects all matches for a regex and adds them to the provided set.
- *
- * @param sql - Cleaned SQL text to search within.
- * @param regex - Regular expression to execute.
- * @param out - Set to store the normalized matches.
- * @param normalize - Function to normalize the raw string.
- */
+/** Collects all matches for a regex and adds them to the provided set. */
 function collectMatchesWith(
   sql: string,
   regex: RegExp,
@@ -869,20 +636,13 @@ function collectMatchesWith(
   }
 }
 
-/**
- * Code mask of the cleaned text, and the index of the first UPDATE that leaves a parenthesis open:
- * every later UPDATE lies inside that parenthesis and is no statement of its own.
- */
+/** Code mask of the cleaned text, and the index of the first UPDATE that leaves a parenthesis open: every later UPDATE lies inside that parenthesis and is no statement of its own. */
 interface AliasScan { mask: Uint8Array; unclosedFrom: number }
 
 /** Marks an UPDATE alias bound to a derived table that names no single table. */
 const UNRESOLVED_BINDING = '\0';
 
-/**
- * Resolves an UPDATE's alias against the FROM/JOIN bindings in its own statement: a table
- * reference, or a derived table whose query names one table ({@link singleQueryTable}). Any
- * other count of bindings leaves the alias unresolved.
- */
+/** Resolves an UPDATE's alias against the FROM/JOIN bindings in its own statement: a table reference, or a derived table whose query names one table ({@link singleQueryTable}). Any other count of bindings leaves the alias unresolved. */
 function resolveUpdateAliasTarget(sql: string, scan: AliasScan, match: RegExpExecArray, identifierCaseSensitive: boolean): string | null {
   // Read from the matched text: custom rule captures retain their existing contract.
   const alias = match[0].match(new RegExp(`^UPDATE(?:\\s+|\\s*(?=\\[))(${ANY_IDENT.source})(?:\\s+|(?<=\\])\\s*)SET\\b`, 'iu'))?.[1];
@@ -979,16 +739,7 @@ function isTempObject(parts: string[]): boolean {
   return parts.at(-1)?.startsWith('#') ?? false;
 }
 
-/**
- * Normalizes a raw regex capture to `[schema].[object]` for catalog lookup.
- *
- * @remarks
- * Removes brackets and quotes, splits the identifier parts, and ensures
- * local variables or temporary tables are excluded.
- *
- * @param raw - The raw string captured by a regex.
- * @returns A normalized `[schema].[object]` string or `null` if invalid.
- */
+/** Normalizes a raw regex capture to `[schema].[object]` for catalog lookup. */
 function normalizeCaptured(raw: string, identifierCaseSensitive: boolean): string | null {
   const parts = splitSqlName(raw).map(p => unmaskIdentifier(stripBrackets(p)));
   const first = parts[0] ?? '';
@@ -1002,16 +753,7 @@ function normalizeCaptured(raw: string, identifierCaseSensitive: boolean): strin
   return schemaKey(canonical, identifierCaseSensitive);
 }
 
-/**
- * Normalizes a 3+ part name to cross-database format: `db.schema.object`.
- *
- * @remarks
- * Filters out CLR/XML methods that look like 3-part names but are actually
- * method calls.
- *
- * @param raw - The raw string captured by a regex.
- * @returns A normalized `db.schema.object` string or `null` if invalid.
- */
+/** Normalizes a 3+ part name to cross-database format: `db.schema.object`. */
 function normalizeCrossDb(raw: string, identifierCaseSensitive: boolean): string | null {
   const parts = splitSqlName(raw).map(p => unmaskIdentifier(stripBrackets(p)));
   const first = parts[0] ?? '';
@@ -1026,21 +768,7 @@ function normalizeCrossDb(raw: string, identifierCaseSensitive: boolean): string
   }).join('.');
 }
 
-/**
- * Extracts external file or URL references from raw SQL.
- *
- * @remarks
- * This function runs *before* the cleansing pipeline neutralizes string
- * literals, as external references (like BULK INSERT paths) are often
- * contained within single quotes.
- *
- * Scanning goes through {@link collectMatchesWith} so every rule shares forward progress over
- * zero-length matches; the capture is taken verbatim
- * because a path or URL is the reference, with no catalog identifier to normalize.
- *
- * @param rawSql - The raw SQL text before any preprocessing or cleansing.
- * @returns A deduplicated array of discovered external references.
- */
+/** Extracts external file or URL references from raw SQL. */
 export function extractExternalRefs(rawSql: string): ExternalRef[] {
   const seen = new Set<string>();
   const results: ExternalRef[] = [];

@@ -1,7 +1,4 @@
-/**
- * Canonical node resolution preserves full CI normalization and exact CS catalog identity,
- * including quoted identifiers and model-supplied Unicode padding.
- */
+/** Canonical node resolution preserves full CI normalization and exact CS catalog identity, including quoted identifiers and model-supplied Unicode padding. */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { createSavedReferenceResolver, resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution';

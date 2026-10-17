@@ -1,9 +1,4 @@
-/**
- * Thin native-chat host adapter for the shared lineage runtime.
- *
- * LangGraph owns phase/hop routing and tool attempts. This module owns only
- * VS Code request/response projection, cancellation, and native gate buttons.
- */
+/** Thin native-chat host adapter for the shared lineage runtime. */
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
@@ -38,13 +33,7 @@ import {
 interface PendingNativeGate {
   readonly gateId: string;
   readonly gate: string;
-  /**
-   * Chat request that raised this gate.
-   *
-   * @remarks
-   * Carried so a resolution recorded from the command handler — which runs outside the turn — can
-   * be grouped with that turn's other lifecycle records, whose sole grouping key is `requestId`.
-   */
+  /** Chat request that raised this gate. */
   readonly requestId: string;
   /** Proposal revision the card shows; its Approve and Cancel act on this revision only. */
   readonly revision: number;
@@ -64,11 +53,7 @@ interface GateButtonRequest {
   readonly label: string;
 }
 
-/**
- * Participant mention every chat turn the approval card opens starts with: Change scope prefills
- * it unsent (`isPartialQuery`) for the user to type the change; Approve and Cancel submit only
- * their visible action label. The mention is required for the turn to reach `@lineage`.
- */
+/** Participant mention every chat turn the approval card opens starts with: Change scope prefills it unsent (`isPartialQuery`) for the user to type the change; Approve and Cancel submit only their visible action label. The mention is required for the turn to reach `@lineage`. */
 const PARTICIPANT_MENTION = '@lineage ';
 
 /** Natural user request submitted by the combined follow-up badge. */
@@ -138,16 +123,7 @@ export class LineageParticipant {
     );
   }
 
-  /**
-   * Returns the current gate while the session still holds its proposal, or logs why a
-   * stale/replaced native button was ignored.
-   *
-   * @remarks
-   * The card stays live across button clicks and typed replies until the session no longer holds
-   * the proposal it shows (approved, cancelled, replaced by a revised card, or a new chat), so
-   * Change scope followed by Approve works. Log-only by design: a superseded card stays visible in
-   * the transcript forever, and a notification for each click would be noise.
-   */
+  /** Returns the current gate while the session still holds its proposal, or logs why a stale/replaced native button was ignored. */
   private requirePendingGate(
     gateId: string,
     action: NativeGateAction,
@@ -171,14 +147,7 @@ export class LineageParticipant {
     return session.phase.kind === 'awaiting_gate' && session.pendingExploration != null;
   }
 
-  /**
-   * Resolves the raising turn's gate with one validated action.
-   *
-   * @remarks
-   * The raising turn holds its gate the moment the card renders, so this normally finds no owning
-   * turn (`'no_turn'`); the caller then acts on the session-held proposal through a fresh
-   * chat turn. The card stays live either way.
-   */
+  /** Resolves the raising turn's gate with one validated action. */
   private async submitGateDecision(
     pending: PendingNativeGate,
     gateId: string,
@@ -207,22 +176,7 @@ export class LineageParticipant {
     }
   }
 
-  /**
-   * Records the outcome of one native gate action in the diagnostic trace.
-   *
-   * @param pending - Gate the participant currently holds, or `null` when none is pending.
-   * @param gateId - Gate id the clicked card carried.
-   * @param action - Action the card requested.
-   * @param outcome - How the participant answered the action.
-   * @param refusedBy - Enumerated deciding condition, supplied only for a refusal.
-   * @param decidedAt - ISO time the action arrived, before any turn it released was awaited.
-   *
-   * @remarks
-   * Gate resolution happens in a VS Code command handler, outside the turn that raised the gate and
-   * therefore outside its event sink — so this is the one place the trace can learn what answered a
-   * gate. No-op unless the diagnostic trace is enabled: {@link AiTraceWriter.write} discards every
-   * record while disabled, so the check is the writer's, not a second one here.
-   */
+  /** Records the outcome of one native gate action in the diagnostic trace. */
   private traceGateResolution(
     pending: PendingNativeGate | null,
     gateId: string,
@@ -425,15 +379,7 @@ export class LineageParticipant {
     if (this.activeTurns === 0) this.statusBarItem?.hide();
   }
 
-  /**
-   * Performs one chat-stream write, degrading to a no-op when the stream can no longer take it.
-   *
-   * @remarks
-   * VS Code tears the `ChatResponseStream` down when the turn ends or the user presses Stop, and a
-   * write that loses that race throws. These writes run inside the sink consumer, whose throw the
-   * runtime re-raises out of the turn, so an unguarded one escapes `handleChatRequest`. A closed
-   * stream and a cancelled token are normal end states; every other error still propagates.
-   */
+  /** Performs one chat-stream write, degrading to a no-op when the stream can no longer take it. */
   private write(
     stream: vscode.ChatResponseStream,
     token: vscode.CancellationToken,

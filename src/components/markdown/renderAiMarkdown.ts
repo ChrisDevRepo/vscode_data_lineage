@@ -38,10 +38,7 @@ const SANITIZE_CONFIG = { FORBID_ATTR: ['name'] };
 
 let purifier: DOMPurifyInstance | null = null;
 
-/**
- * The renderer's own sanitizer instance, created on first use. Its id hook keeps only numbered
- * section ids; a private instance keeps that hook off the shared `DOMPurify` other code uses.
- */
+/** The renderer's own sanitizer instance, created on first use. Its id hook keeps only numbered section ids; a private instance keeps that hook off the shared `DOMPurify` other code uses. */
 function aiPurifier(): DOMPurifyInstance {
   if (purifier) return purifier;
   purifier = DOMPurify(window);
@@ -55,16 +52,7 @@ function aiPurifier(): DOMPurifyInstance {
   return purifier;
 }
 
-/**
- * Renders an engine-assembled AI description to sanitized HTML.
- *
- * @remarks
- * Math follows the same delimiter rules VS Code applies to chat responses: `$…$` and `$$…$$`,
- * with prose amounts excluded by the surrounding-character guards. A KaTeX expression that fails
- * to parse degrades to its original source text rather than throwing.
- *
- * @returns Sanitized HTML ready for insertion into the overlay.
- */
+/** Renders an engine-assembled AI description to sanitized HTML. */
 export function renderAiMarkdown(description: string): string {
   return aiPurifier().sanitize(marked.parse(description, { async: false }), SANITIZE_CONFIG);
 }

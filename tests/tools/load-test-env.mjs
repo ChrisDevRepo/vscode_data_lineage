@@ -38,12 +38,7 @@ export async function prepareDatabaseToken(env = process.env, acquireToken, time
   }
 }
 
-/**
- * Loads optional test environment values and resolves a selected AI provider profile.
- *
- * Existing non-empty process values take precedence over `.env`; provider-specific aliases fill
- * only missing canonical `AI_TEST_*` values. Secrets are never returned or logged.
- */
+/** Loads optional test environment values and resolves a selected AI provider profile. */
 export function loadTestEnv({ env = process.env, envFile = ENV_FILE, requireAiProvider = false } = {}) {
   let source;
   try {

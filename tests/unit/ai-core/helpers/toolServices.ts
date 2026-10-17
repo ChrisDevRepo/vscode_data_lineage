@@ -1,7 +1,4 @@
-/**
- * Minimal `ToolServices` for driving a tool handler (typically `executeStartExploration`) without a
- * registry: a silent logger, the shipped turn budget, and a `logAndReturn` that records the payload.
- */
+/** Minimal `ToolServices` for driving a tool handler (typically `executeStartExploration`) without a registry: a silent logger, the shipped turn budget, and a `logAndReturn` that records the payload. */
 import type { ToolServices } from '../../../../src/ai/tools/handlers/toolServices';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../../../../src/ai/support/tokenBudget';
 import type { SerializedFilterState } from '../../../../src/engine/shared/bridgeContract';

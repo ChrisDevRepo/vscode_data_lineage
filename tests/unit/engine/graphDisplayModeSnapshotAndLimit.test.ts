@@ -1,11 +1,4 @@
-/**
- * A1 view-snapshot transition, A2 render-limit fallback notice, and the BFS-only trace size probe.
- *
- * @remarks
- * Pure decision tables only — the mechanics of storing/restoring a snapshot and probing trace
- * depths live in App.tsx / useInteractiveTrace.ts; this file pins the rule each of those callers
- * defers to.
- */
+/** A1 view-snapshot transition, A2 render-limit fallback notice, and the BFS-only trace size probe. */
 
 import { describe, expect, it } from 'vitest';
 import {

@@ -1,14 +1,4 @@
-/**
- * Unit-test lanes. The gate runs `core` and `runtime` only.
- *
- * `core` is the SQL parser directory plus the lineage engine files. Coverage floors apply to
- * that run. `runtime` is the deterministic AI and trust contract set: schema rejection, secret
- * redaction, cancellation, template structure, and SQL-fence repair. `support` is everything
- * else, including rendered webview, database connection and prompt/routing checks. The explicit
- * lists classify contracts rather than directory names; tests/unit/backend owns BB/CT state.
- * A new engine file must be added to `lineageEngineTests` or `engineSupportTests` before the
- * lane check passes. A new parser file is core. A new webview file is support.
- */
+/** Unit-test lanes. The gate runs `core` and `runtime` only. */
 import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,10 +74,7 @@ export const lineageEngineTests = [
   'tests/unit/engine/traversal-edge-cases.test.ts',
 ];
 
-/**
- * Engine tests that are not lineage oracles: persistence, bridge, export, profiling, and UI-adjacent
- * helpers. Database connection tests are the `tests/unit/engine/db` directory below.
- */
+/** Engine tests that are not lineage oracles: persistence, bridge, export, profiling, and UI-adjacent helpers. Database connection tests are the `tests/unit/engine/db` directory below. */
 export const engineSupportTests = [
   'tests/unit/engine/ai-preview-rendering.test.ts',
   'tests/unit/engine/aiReportExportBoundary.test.ts',
@@ -116,11 +103,7 @@ export const engineSupportTests = [
   'tests/unit/engine/webviewErrorDiagnostics.test.ts',
 ];
 
-/**
- * Deterministic contracts that stay on the gate: backend graph structure, malformed input, schema repair, secret redaction,
- * cancellation, tool registration/dispatch, identifier boundaries, template structure, escaping, and the operator-runner secret boundary.
- * Prompt sentences and routing scenarios are support, not rows in this list.
- */
+/** Deterministic contracts that stay on the gate: backend graph structure, malformed input, schema repair, secret redaction, cancellation, tool registration/dispatch, identifier boundaries, template structure, escaping, and the operator-runner secret boundary. Prompt sentences and routing scenarios are support, not rows in this list. */
 export const runtimeContractTests = [
   'tests/unit/engine/logging-redaction.test.ts',
   'tests/unit/ai-core/agent-runtime-no-langsmith.test.ts',
@@ -185,12 +168,7 @@ export function expandPath(entry, allFiles) {
   return allFiles.filter((file) => file.startsWith(prefix));
 }
 
-/**
- * Classifies every unit test file.
- *
- * @param allFiles - Repo-relative unit test paths. Defaults to a fresh disk walk.
- * @returns Lane membership and any classification problems.
- */
+/** Classifies every unit test file. */
 export function classifyUnitTests(allFiles = unitTestFiles().sort()) {
   const problems = [];
   const claim = (file, lane, claimed) => {

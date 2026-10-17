@@ -1,10 +1,6 @@
 import { createHash } from 'node:crypto';
 
-/**
- * Allocates bounded IDs from exact URL bytes, independent of other loaded files.
- * UTF-16 preserves every JavaScript code unit, including unmatched surrogates.
- * @throws If a generated ID is already owned by another URL or a catalog object.
- */
+/** Allocates bounded IDs from exact URL bytes, independent of other loaded files. UTF-16 preserves every JavaScript code unit, including unmatched surrogates. */
 export function allocateExternalFileIds(urls: Iterable<string>, reserved: ReadonlySet<string>): Map<string, string> {
   const occupied = new Set(reserved);
   const result = new Map<string, string>();

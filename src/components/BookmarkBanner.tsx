@@ -28,9 +28,7 @@ const SOURCE_COLORS = BOOKMARK_SOURCE_COLORS;
 /** SVG path for the bookmark icon. */
 const BOOKMARK_ICON = 'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z';
 
-/**
- * Configures {@link ModeBanner} for an active "Advanced Bookmark" (an allowlist-based view).
- */
+/** Configures {@link ModeBanner} for an active "Advanced Bookmark" (an allowlist-based view). */
 export const BookmarkBanner = memo(function BookmarkBanner({
   profile,
   shownCount,

@@ -1,13 +1,4 @@
-/**
- * Persisted AI-run checkpoints keyed by the bookmark that presented them.
- *
- * @remarks
- * A bookmark saved from an AI-authored view records the run that produced it, so a later turn can
- * answer "what did this view come from" without replaying the exploration. One record per saved
- * view, and the view owns its lifetime: `delete-view` and `delete-project`
- * (`src/bridge/messageHandlers.ts`) clear their records — a new route that removes a saved view
- * without going through those two must clear its record too.
- */
+/** Persisted AI-run checkpoints keyed by the bookmark that presented them. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { NavigationSnapshotSchema } from '../sm/navigationSnapshotSchema';
@@ -40,12 +31,7 @@ export type StoredRunReader = (bookmarkId: string) => StoredAiRun | undefined;
 /** Global-state key prefix under which one {@link StoredAiRun} is persisted per bookmark. */
 const AI_RUN_KEY_PREFIX = 'dataLineageViz.aiRun.';
 
-/**
- * Builds the global-state key holding the {@link StoredAiRun} for one bookmark.
- *
- * @param bookmarkId - Identifier of the saved filter profile the run was presented as.
- * @returns The prefixed storage key.
- */
+/** Builds the global-state key holding the {@link StoredAiRun} for one bookmark. */
 export function aiRunStorageKey(bookmarkId: string): string {
   return `${AI_RUN_KEY_PREFIX}${bookmarkId}`;
 }
@@ -63,16 +49,7 @@ type RunStoreReader = {
   get<T>(key: string): T | undefined;
 };
 
-/**
- * Read contract for one persisted run record.
- *
- * @remarks
- * Tolerant where the record can degrade and strict where it cannot. A top-level key from a newer
- * build is carried through rather than treated as corruption; an unreadable `origin` or
- * `ddlHashes` costs only the staleness annotation. The snapshot is validated by the navigation
- * snapshot schema, so a damaged record answers "no run memory" rather than reaching
- * the presenter as a half-shaped object.
- */
+/** Read contract for one persisted run record. */
 const StoredAiRunSchema = z.object({
   schemaVersion: z.literal(1),
   nodeIdEncodingVersion: z.literal(2).optional(),
@@ -83,18 +60,7 @@ const StoredAiRunSchema = z.object({
   snapshot: NavigationSnapshotSchema,
 }).passthrough();
 
-/**
- * Reads the run record filed under one bookmark key.
- *
- * @remarks
- * Fail-closed on the contract: a record of another `schemaVersion`, or one whose snapshot is not a
- * navigation checkpoint, reads as absent, so a consumer never meets a shape it does not know.
- *
- * @param store - The global-state reader.
- * @param bookmarkId - Identifier of the bookmark whose record is read.
- * @param log - Optional logger; a rejected record is reported once at debug.
- * @returns The stored run, or `undefined` when none is persisted or the record fails validation.
- */
+/** Reads the run record filed under one bookmark key. */
 export function readStoredRun(
   store: RunStoreReader,
   bookmarkId: string,
@@ -109,26 +75,14 @@ export function readStoredRun(
   return undefined;
 }
 
-/**
- * Hashes one object's DDL for staleness comparison.
- *
- * @param ddl - Current DDL text, or `undefined` when the object carries none.
- * @returns The lowercase sha256 hex digest, or {@link UNKNOWN_DDL_HASH} when there is no DDL.
- */
+/** Hashes one object's DDL for staleness comparison. */
 export function hashDdl(ddl: string | undefined): string {
   return typeof ddl === 'string' && ddl.length > 0
     ? createHash('sha256').update(ddl, 'utf8').digest('hex')
     : UNKNOWN_DDL_HASH;
 }
 
-/**
- * Builds the run record for a bookmark the user is saving from an AI-authored view.
- *
- * @param profile - The filter profile being saved.
- * @param artifact - The session's last committed presentation, or `null` when none exists.
- * @param getDdl - Resolver for an object's current DDL text.
- * @returns The record to persist, or `null` when the profile does not belong to a captured run.
- */
+/** Builds the run record for a bookmark the user is saving from an AI-authored view. */
 export function buildStoredRun(
   profile: FilterProfile,
   artifact: PresentationArtifact | null,
@@ -152,17 +106,7 @@ export function buildStoredRun(
   };
 }
 
-/**
- * Wraps the session's presented run as an unsaved record for recall.
- *
- * @remarks
- * A completed run on screen has the same checkpoint a bookmark save would persist, so recall reads
- * it the same way. The DDL cannot have moved within the session, so no hashes are recorded and no
- * object reads as stale.
- *
- * @param artifact - The session's latest presentation.
- * @returns The live run, or `undefined` when the presentation carries no run or checkpoint.
- */
+/** Wraps the session's presented run as an unsaved record for recall. */
 export function buildLiveRun(artifact: PresentationArtifact | null): StoredAiRun | undefined {
   const checkpoint = artifact?.checkpoint;
   if (!artifact?.runId || !checkpoint) return undefined;
@@ -177,19 +121,7 @@ export function buildLiveRun(artifact: PresentationArtifact | null): StoredAiRun
   };
 }
 
-/**
- * Persists one run record under its bookmark key.
- *
- * @remarks
- * Never skipped or truncated for size: a bookmark either carries its whole run or none, and the
- * exploration node cap already bounds a record. The store is SQLite-backed, so a multi-megabyte
- * value is an ordinary write.
- *
- * @param store - The global-state writer.
- * @param bookmarkId - Identifier of the bookmark the run is filed under.
- * @param run - The record to persist.
- * @returns The serialized size of the written record in characters, for diagnostics.
- */
+/** Persists one run record under its bookmark key. */
 export async function writeStoredRun(
   store: RunStoreWriter,
   bookmarkId: string,
@@ -199,12 +131,7 @@ export async function writeStoredRun(
   return JSON.stringify(run).length;
 }
 
-/**
- * Clears the run record filed under one bookmark key.
- *
- * @param store - The global-state writer.
- * @param bookmarkId - Identifier of the bookmark whose record is dropped.
- */
+/** Clears the run record filed under one bookmark key. */
 export async function clearStoredRun(store: RunStoreWriter, bookmarkId: string): Promise<void> {
   await store.update(aiRunStorageKey(bookmarkId), undefined);
 }

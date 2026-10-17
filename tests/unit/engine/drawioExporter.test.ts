@@ -1,9 +1,4 @@
-/**
- * Unit tests for the Draw.io XML export functions.
- *
- * Tests the pure export logic in src/export/drawioExporter.ts against synthetic
- * React Flow node/edge inputs — no VS Code or webview required.
- */
+/** Unit tests for the Draw.io XML export functions. */
 
 import { describe, it, expect } from 'vitest';
 import { XMLParser } from 'fast-xml-parser';
@@ -241,14 +236,7 @@ describe('Draw.io Exporter', () => {
   });
 });
 
-/**
- * The column view is a second rendering of the same scope in its own coordinate space, and the
- * export is an object-view artifact. `GraphCanvas` therefore hands the exporter the object nodes and
- * object-level edges it kept aside (`objectNodes()` / `localEdges`) rather than the mounted column
- * nodes — pinned by tests/unit/webview/graphCanvasObjectPositions.test.tsx. This is the other half: given
- * that object-space input, the XML carries object geometry and object-level edges, and nothing from
- * the column space.
- */
+/** The column view is a second rendering of the same scope in its own coordinate space, and the export is an object-view artifact. `GraphCanvas` therefore hands the exporter the object nodes and object-level edges it kept aside (`objectNodes()` / `localEdges`) rather than the mounted column nodes — pinned by tests/unit/webview/graphCanvasObjectPositions.test.tsx. This is the other half: given that object-space input, the XML carries object geometry and object-level edges, and nothing from the column space. */
 describe('Draw.io Exporter — column view exports the object graph', () => {
   /** Distance the exporter shifts the whole graph right, so a source x maps to a known output x. */
   const GRAPH_OFFSET_X = 300;

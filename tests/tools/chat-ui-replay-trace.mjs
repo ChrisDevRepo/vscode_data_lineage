@@ -10,14 +10,7 @@ const REPLAY_ORIGIN = '[ai].[spimportorders]';
 export const BADGE_REPLAY_SETUP =
   'Badge acceptance needs a recorded successful public AdventureWorks AI synthesis.';
 
-/**
- * Whether one NDJSON trace records the successful public analysis the badge lane replays: an
- * admitted `[ai].[spImportOrders]` exploration with both classifications whose accepted synthesis
- * reached an OK terminal. Native approval may continue in a fresh request of the same session.
- *
- * @param path - Trace file to read.
- * @returns `false` for a non-matching or unreadable (for example truncated) trace.
- */
+/** Whether one NDJSON trace records the successful public analysis the badge lane replays: an admitted `[ai].[spImportOrders]` exploration with both classifications whose accepted synthesis reached an OK terminal. Native approval may continue in a fresh request of the same session. */
 function isSuccessfulPublicAnalysis(path) {
   let records;
   try {
@@ -109,15 +102,7 @@ function isSuccessfulPublicAnalysis(path) {
   return successful;
 }
 
-/**
- * Finds the newest recorded trace the badge lane can replay.
- *
- * @param rootDir - Repository root, which is also the live lane's workspace; traces are read from
- * `<rootDir>/tmp/lm-trace` regardless of the process working directory.
- * @returns Absolute path of the newest qualifying `.ndjson` trace.
- * @throws Error starting with {@link BADGE_REPLAY_SETUP} when the directory is absent or holds no
- * qualifying trace; any other file-system failure is rethrown unchanged.
- */
+/** Finds the newest recorded trace the badge lane can replay. */
 export function findBadgeReplayTrace(rootDir) {
   const traceDir = join(rootDir, 'tmp', 'lm-trace');
   const setupError = () => new Error(

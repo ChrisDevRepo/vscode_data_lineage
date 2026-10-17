@@ -1,10 +1,4 @@
-/**
- * Regression tests for `src/ai/observability/aiTraceWriter.ts`.
- *
- * Pins the resilience contract: one failed append rejects only that caller's promise and must
- * never poison the serialized write chain, because the trace file is the opt-in diagnostic
- * channel users enable precisely when something is already going wrong.
- */
+/** Regression tests for `src/ai/observability/aiTraceWriter.ts`. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const openMock = vi.hoisted(() => vi.fn());

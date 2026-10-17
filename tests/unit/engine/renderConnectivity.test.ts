@@ -1,11 +1,4 @@
-/**
- * Rendered-graph connectivity guard.
- *
- * Verifies the debug-dump "what the user sees" summary: an expanded schema's
- * connected objects form one component while collapsed clusters with no bridge
- * edge are reported as isolated — and a single bridge edge joins a cluster into
- * its neighbour's component.
- */
+/** Rendered-graph connectivity guard. */
 
 import { describe, it, expect } from 'vitest';
 import { formatRenderConnectivity, summarizeRenderedConnectivity } from '../../../src/engine/renderConnectivity';

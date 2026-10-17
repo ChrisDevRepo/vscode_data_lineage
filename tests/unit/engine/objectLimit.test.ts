@@ -1,11 +1,4 @@
-/**
- * Pins the `dataLineageViz.maxNodes` contract at scale: a selection at or below the limit keeps
- * every object, edge, and external reference; a selection over it is refused outright — the exact
- * count, the exact limit, and the exact refusal message — with no partial model ever produced.
- * `1,990 objects + 20 external references` pins external references admitted against the node
- * budget on their own terms, so a `maxNodes + 10` total never silently passes as a 2,000-node
- * model "at limit".
- */
+/** Pins the `dataLineageViz.maxNodes` contract at scale: a selection at or below the limit keeps every object, edge, and external reference; a selection over it is refused outright — the exact count, the exact limit, and the exact refusal message — with no partial model ever produced. `1,990 objects + 20 external references` pins external references admitted against the node budget on their own terms, so a `maxNodes + 10` total never silently passes as a 2,000-node model "at limit". */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { extractDacpac, extractDacpacFiltered, extractSchemaPreview } from '../../../src/engine/dacpacExtractor';

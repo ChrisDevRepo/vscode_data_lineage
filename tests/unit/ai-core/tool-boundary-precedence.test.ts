@@ -1,10 +1,5 @@
 // Owner: src/ai/tools/toolProvider.ts and tools/handlers; raw tool admission and handler functional contracts.
-/**
- * The strict boundary that runs first owns these rejections, so the handler and engine never see the
- * shapes below: a start with no origin/supplement/revision, a non-string scope list, an empty
- * highlight-group list in any served present_result stage, and a neighbour id the engine has not
- * validated as an in-scope direct neighbour.
- */
+/** The strict boundary that runs first owns these rejections, so the handler and engine never see the shapes below: a start with no origin/supplement/revision, a non-string scope list, an empty highlight-group list in any served present_result stage, and a neighbour id the engine has not validated as an in-scope direct neighbour. */
 import { describe, expect, it } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';

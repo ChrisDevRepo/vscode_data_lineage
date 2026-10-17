@@ -1,7 +1,4 @@
-/**
- * A failed generation reports whether reply text already reached the chat, so the graph's single
- * transport retry never sends a second reply after the first one was partly shown.
- */
+/** A failed generation reports whether reply text already reached the chat, so the graph's single transport retry never sends a second reply after the first one was partly shown. */
 import { describe, expect, it } from 'vitest';
 import { HumanMessage } from '@langchain/core/messages';
 import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';

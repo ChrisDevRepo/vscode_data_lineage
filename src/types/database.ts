@@ -1,40 +1,24 @@
 /** Formatted database result cell. */
 export interface DbCellValue {
-  /**
-   * Formatted cell value returned by the database.
-   */
+  /** Formatted cell value returned by the database. */
   displayValue: string;
-  /**
-   * Whether the cell value is `NULL`.
-   */
+  /** Whether the cell value is `NULL`. */
   isNull: boolean;
 }
 
-/**
- * Database result column metadata.
- */
+/** Database result column metadata. */
 export interface IDbColumn {
-  /**
-   * Column name reported by the database.
-   */
+  /** Column name reported by the database. */
   columnName: string;
 }
 
-/**
- * Database query results.
- */
+/** Database query results. */
 export interface SimpleExecuteResult {
-  /**
-   * Number of rows returned or affected by the query.
-   */
+  /** Number of rows returned or affected by the query. */
   rowCount: number;
-  /**
-   * Metadata for the result columns.
-   */
+  /** Metadata for the result columns. */
   columnInfo: IDbColumn[];
-  /**
-   * Tabular query result rows.
-   */
+  /** Tabular query result rows. */
   rows: DbCellValue[][];
 }
 

@@ -1,11 +1,4 @@
-/**
- * Bridge protocol-envelope contract.
- *
- * Proves the two halves of the version tripwire independently: the host's single send choke point
- * stamps every outgoing frame, and `validateBridgeFrame` — the one check every webview receive site
- * routes through — rejects a frame whose version is missing or disagrees. The host's inbound
- * check on each panel listener is pinned in aiReportExportBoundary.test.ts.
- */
+/** Bridge protocol-envelope contract. */
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';

@@ -16,11 +16,7 @@ const logPrewarmSkipped = (reason: string): void => {
 
 const layoutWorker = createLayoutWorkerClient(() => new LayoutWorker(), logPrewarmSkipped);
 
-/**
- * Lays out the Object View graph in a worker and seeds the layout cache, so the later
- * Schema View → Object View switch finds its positions without running Dagre on the UI thread.
- * Without a usable worker the switch simply lays out on the main thread as before.
- */
+/** Lays out the Object View graph in a worker and seeds the layout cache, so the later Schema View → Object View switch finds its positions without running Dagre on the UI thread. Without a usable worker the switch simply lays out on the main thread as before. */
 function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
   if (typeof Worker === 'undefined') return;
   const input = objectLayoutInputForGraph(graph, config);
@@ -34,9 +30,7 @@ function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
   );
 }
 
-/**
- * Return type for the useGraphology hook, encapsulating graph data and builders.
- */
+/** Return type for the useGraphology hook, encapsulating graph data and builders. */
 interface UseGraphologyReturn {
   /** The list of nodes formatted for React Flow rendering. */
   flowNodes: FlowNode<CustomNodeData>[];
@@ -52,33 +46,13 @@ interface UseGraphologyReturn {
   filteredCount: number;
   /** Unique schema names found in the filtered node set, used for the legend. */
   renderedSchemas: string[];
-  /**
-   * Rebuilds the graph from the database model based on the current filter and configuration.
-   *
-   * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
-   * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so Dagre reserves the
-   *   vertical band those overlays need; see `AI_BADGE_BAND`/`AI_NOTE_BAND` in `graphBuilder.ts`.
-   * @returns The total number of nodes in the resulting graph, or `-1` when the schema selection's
-   *   object count exceeds `dataLineageViz.maxNodes` — nothing is built and the prior render state
-   *   is left untouched.
-   */
+  /** Rebuilds the graph from the database model based on the current filter and configuration. */
   buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean, annotatedNodeIds?: readonly string[]) => number;
-  /**
-   * Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns
-   * `true` and posts the refusal warning when the build would be refused, so a caller that defers the
-   * build into a transition, or vets a candidate schema selection, learns about the refusal
-   * synchronously. Only the filter's schema selection decides admission.
-   */
+  /** Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns `true` and posts the refusal warning when the build would be refused, so a caller that defers the build into a transition, or vets a candidate schema selection, learns about the refusal synchronously. Only the filter's schema selection decides admission. */
   refusesBuild: (model: DatabaseModel, filter: Pick<FilterState, 'schemas'>, config?: ExtensionConfig) => boolean;
 }
 
-/**
- * Manages graph filtering, render limits, layout, and React Flow projection.
- *
- * @remarks
- * Filters run in schema, type, exclusion, isolation, then allowlist order. Object layout is
- * skipped for Schema View and entirely withheld when the render limit is exceeded.
- */
+/** Manages graph filtering, render limits, layout, and React Flow projection. */
 export function useGraphology(): UseGraphologyReturn {
   const [flowNodes, setFlowNodes] = useState<FlowNode<CustomNodeData>[]>([]);
   const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([]);

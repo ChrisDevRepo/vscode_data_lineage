@@ -1,12 +1,4 @@
-/**
- * Model-level schema connectivity guard.
- *
- * Verifies the debug-dump connectivity summary reflects the true topology:
- * a self-contained schema is reported ISOLATED, cross-schema links concentrated
- * in a hub schema make the hub bridge the others, and dropping the hub (as a GUI
- * schema filter would) fragments the remainder into separate components. This is
- * the exact situation behind the "orphan clusters until dbo is added" report.
- */
+/** Model-level schema connectivity guard. */
 
 import { describe, it, expect } from 'vitest';
 import { formatModelConnectivity, summarizeModelConnectivity, type ModelConnectivity } from '../../../src/engine/schemaAdjacency';

@@ -1,7 +1,4 @@
-/**
- * A webview error message, stack and context are stored for the "Copy Debug Info" report, which the
- * user pastes into an issue. Credential-shaped text in them is removed before it is stored.
- */
+/** A webview error message, stack and context are stored for the "Copy Debug Info" report, which the user pastes into an issue. Credential-shaped text in them is removed before it is stored. */
 import { describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
 

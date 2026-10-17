@@ -1,8 +1,4 @@
-/**
- * Parses diagnostic NDJSON into typed buckets for test tools and trace export.
- * Unknown records and malformed lines retain their original positions so partial traces remain inspectable.
- * Callers own filesystem and network I/O.
- */
+/** Parses diagnostic NDJSON into typed buckets for test tools and trace export. Unknown records and malformed lines retain their original positions so partial traces remain inspectable. Callers own filesystem and network I/O. */
 import type { RuntimeLifecycleRecord } from '../../src/ai/observability/aiTraceWriter';
 import type { GenerationRecord, WireRecord } from '../../src/ai/observability/wireLog';
 
@@ -63,14 +59,7 @@ export interface JoinedTurn {
   readonly terminal?: TurnTerminalEntry;
 }
 
-/**
- * Parses one NDJSON trace file's content into typed buckets.
- *
- * @param ndjson - Full file content, one JSON object per line (a single trailing newline, the
- *   convention every {@link AiTraceWriter} write leaves, is tolerated and not counted as a line).
- * @returns A {@link ParsedRun} in which every input line is accounted for exactly once, either as
- *   a typed entry, a `raw` entry, or a `malformed` entry.
- */
+/** Parses one NDJSON trace file's content into typed buckets. */
 export function parseTrace(ndjson: string): ParsedRun {
   const lines = ndjson.split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
@@ -139,16 +128,7 @@ function isRecordShape(value: unknown): value is { readonly at: string; readonly
   return typeof record.at === 'string' && typeof record.type === 'string';
 }
 
-/**
- * Joins `turn-start` and `turn-terminal` lifecycle entries by `(requestId, runFingerprint)`.
- *
- * @remarks
- * The pairing key is the pair, not `requestId` alone: `runFingerprint` changes across a retried
- * run against the same native chat request, so requestId alone can silently merge two unrelated
- * turns. Preserves first-seen order across the trace; a start with no terminal (a cut-off
- * capture) and a terminal with no start (a trace beginning mid-turn) both surface with the
- * missing half left `undefined` rather than being dropped.
- */
+/** Joins `turn-start` and `turn-terminal` lifecycle entries by `(requestId, runFingerprint)`. */
 export function joinTurns(run: ParsedRun): readonly JoinedTurn[] {
   const order: string[] = [];
   const byKey = new Map<string, { requestId: string; runFingerprint: string; start?: TurnStartEntry; terminal?: TurnTerminalEntry }>();

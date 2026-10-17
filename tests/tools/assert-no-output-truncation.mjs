@@ -17,10 +17,7 @@ const TRUNC_CALL = /\btrunc(?:AtWordBoundary)?\(/;
 const TRUNC_DEFINITION = /\bfunction\s+trunc(?:AtWordBoundary)?\(/;
 const LOG_CALL = /\.(?:debug|info|warn|error|trace|log)\(|\b(?:log|debugLog|onDebugLog|debugLogger)\??\(/;
 
-/**
- * Visible elisions the PM ruled, plus the log helper file. One entry per line: file, a substring
- * that must appear in the offending line, and the reason. Never widened without a register row.
- */
+/** Visible elisions the PM ruled, plus the log helper file. One entry per line: file, a substring that must appear in the offending line, and the reason. Never widened without a register row. */
 export const ALLOWLIST = [
   { file: 'src/ai/prompting/scopeSummaryRenderer.ts', symbol: 'CARD_OBJECT_TYPE_LIMIT', reason: 'card-summary-view: visible "…" line, full list in the full view' },
   { file: 'src/ai/agent/graph.ts', symbol: "const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\\s+/g, ' ').trim(), 135);", reason: 'chat-preview-display-exception: PM ruling; display only, complete summary stays in memory and model context' },
@@ -65,13 +62,7 @@ function listSourceFiles(dir) {
   return out;
 }
 
-/**
- * Finds cut sites in one source text.
- *
- * @param {string} file - Repo-relative path, used for the allowlist and the report.
- * @param {string} text - Source text.
- * @returns {{file: string, line: number, text: string}[]} Offending sites, allowlist applied.
- */
+/** Finds cut sites in one source text. */
 export function findSites(file, text) {
   if (file.startsWith('src/components/')) return [];
   const lines = text.split('\n');

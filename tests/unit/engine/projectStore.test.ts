@@ -1,7 +1,4 @@
-/**
- * Tests for src/engine/projectStore.ts
- * Focus: migration, serialization, credential stripping and the stored-connection bridge schemas.
- */
+/** Tests for src/engine/projectStore.ts Focus: migration, serialization, credential stripping and the stored-connection bridge schemas. */
 
 import { describe, it, expect } from 'vitest';
 import {

@@ -84,14 +84,7 @@ const DEFAULT_DB_TIMEOUT_MS = 300_000;
 const DEFAULT_AI_TIMEOUT_MS = 7_200_000;
 const testTimeoutSchema = z.coerce.number().int().min(1).max(2_147_423_647, 'test timeout must be at most 2147423647');
 
-/**
- * Reads the run's evidence files for upload to the trace backend; missing files are skipped.
- *
- * @remarks
- * Run-level: the event trace and the debug log. Per turn: the answer, the hop log, the state dump and
- * the structured result. These can hold prompts and database metadata, so uploading is an explicit
- * `--attach` opt-in; nothing here is written to a tracked path.
- */
+/** Reads the run's evidence files for upload to the trace backend; missing files are skipped. */
 function collectAttachments(runDir: string, tracePath: string, turnCount: number, redact: readonly string[]): LangfuseAttachments {
   const read = (name: string, contentType: LangfuseAttachment['contentType'], path: string): LangfuseAttachment[] =>
     existsSync(path) ? [{ name, contentType, content: readFileSync(path, 'utf8') }] : [];
@@ -166,12 +159,7 @@ export interface AiRun {
   readonly expectMetrics?: CatalogCase['expect'];
 }
 
-/**
- * Headless questions to execute.
- *
- * @param options - Parsed runner flags. Without `--prompt`, every headless catalog row is one run.
- * @returns The catalog rows, or the single question passed on the command line.
- */
+/** Headless questions to execute. */
 export function aiRuns(options: ReturnType<typeof parseOptions>): AiRun[] {
   if (options.promptFromCli) {
     return [{ id: 'cli-prompt', dacpac: options.dacpac, prompts: [options.prompt!, ...options.followups] }];
@@ -209,16 +197,7 @@ export function aiRunStatus(turns: readonly { readonly outcome: string }[]): str
   return turns.find(turn => turn.outcome !== 'ok')?.outcome ?? (turns.length ? 'ok' : 'error');
 }
 
-/**
- * Checks one finished turn against its catalog row. Terminal status and the rejection ceiling apply to
- * every turn; the content checks (`preview_chars_min`, `must_contain`, `sql_blocks_min`) describe the
- * row's question and apply to its first answer only.
- *
- * @param run - The catalog row being run.
- * @param turn - The turn's terminal status, outcome, events and answer text.
- * @param firstTurn - Whether this turn answers the row's own question rather than a follow-up.
- * @returns One message per failed check; empty when every check passed.
- */
+/** Checks one finished turn against its catalog row. Terminal status and the rejection ceiling apply to every turn; the content checks (`preview_chars_min`, `must_contain`, `sql_blocks_min`) describe the row's question and apply to its first answer only. */
 export function turnChecks(
   run: Pick<AiRun, 'expectTerminal' | 'expectMetrics' | 'gate'>,
   turn: { terminalStatus?: string | null; outcome: { outcome: string }; events: ReadonlyArray<{ type: string; recoverable?: boolean }>; text: string; gates?: readonly { decision: string; instruction?: string }[] },

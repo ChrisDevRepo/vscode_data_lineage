@@ -1,11 +1,4 @@
-/**
- * Shared model fixture builders for backend and runtime unit tests.
- *
- * `makeModel` supplies minimal metadata with an empty catalog and neighbor index.
- * `makeIndexedModel` adds the complete declared neighborhood for hop-routing tests,
- * including table focuses. Callers declare SQL, object types and columns explicitly
- * when those facts matter to the contract under test.
- */
+/** Shared model fixture builders for backend and runtime unit tests. */
 import Graph from 'graphology';
 import type {
   DatabaseModel,
@@ -15,20 +8,14 @@ import type {
   SchemaInfo,
 } from '../../../src/engine/types';
 
-/**
- * Build a LineageNode fixture. `fullName` defaults to `id` — these synthetic graphs
- * use flat, already-qualified ids for both — unless explicitly overridden.
- */
+/** Build a LineageNode fixture. `fullName` defaults to `id` — these synthetic graphs use flat, already-qualified ids for both — unless explicitly overridden. */
 export function makeNode(
   node: Omit<LineageNode, 'fullName'> & Partial<Pick<LineageNode, 'fullName'>>,
 ): LineageNode {
   return { fullName: node.id, ...node };
 }
 
-/**
- * Build a `LineageEdge[]` fixture from `[source, target]` pairs. Every synthetic edge
- * is tagged `'body'`; callers supply explicit execution edges when testing calls.
- */
+/** Build a `LineageEdge[]` fixture from `[source, target]` pairs. Every synthetic edge is tagged `'body'`; callers supply explicit execution edges when testing calls. */
 export function makeEdges(pairs: ReadonlyArray<readonly [string, string]>): LineageEdge[] {
   return pairs.map(([source, target]) => ({ source, target, type: 'body' }));
 }
@@ -41,18 +28,12 @@ const ZERO_TYPE_COUNTS: Record<ObjectType, number> = {
   external: 0,
 };
 
-/**
- * Build a minimal `SchemaInfo[]` fixture from bare schema names. `nodeCount`/`types`
- * default to zero; callers fill them when testing schema counts.
- */
+/** Build a minimal `SchemaInfo[]` fixture from bare schema names. `nodeCount`/`types` default to zero; callers fill them when testing schema counts. */
 export function makeSchemas(names: ReadonlyArray<string>): SchemaInfo[] {
   return names.map((name) => ({ name, nodeCount: 0, types: { ...ZERO_TYPE_COUNTS } }));
 }
 
-/**
- * Build a full `DatabaseModel` fixture from nodes + `[source, target]` edge pairs +
- * schema names. `catalog`/`neighborIndex` default to empty (see module doc).
- */
+/** Build a full `DatabaseModel` fixture from nodes + `[source, target]` edge pairs + schema names. `catalog`/`neighborIndex` default to empty (see module doc). */
 export function makeModel(
   nodes: LineageNode[],
   edgePairs: ReadonlyArray<readonly [string, string]>,

@@ -1,7 +1,4 @@
-/**
- * Pins the notification helpers' log line: one line at the matching level whose context is redacted
- * before it reaches the output channel; the toast shows only the user message.
- */
+/** Pins the notification helpers' log line: one line at the matching level whose context is redacted before it reaches the output channel; the toast shows only the user message. */
 import { describe, expect, it, vi } from 'vitest';
 import { Logger } from '../../../src/utils/log';
 import { notifyError, notifyInfo, notifyWarning } from '../../../src/utils/notifications';

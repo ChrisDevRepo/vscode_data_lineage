@@ -1,8 +1,8 @@
 /** Non-terminal progress phases exposed to native chat surfaces. */
-export type TurnStatusPhase = 'thinking' | 'scoping' | 'tool' | 'synthesizing';
+type TurnStatusPhase = 'thinking' | 'scoping' | 'tool' | 'synthesizing';
 
 /** Terminal status of a graph-owned turn. */
-export type TurnResultStatus = 'ok' | 'error' | 'cancelled';
+type TurnResultStatus = 'ok' | 'error' | 'cancelled';
 
 /** Provider-neutral payload for a native consent gate. */
 export interface NativeGateEvent {
@@ -37,17 +37,12 @@ export type TurnEvent =
     };
 
 /** Callback that receives each accepted turn event. */
-export type TurnEventConsumer = (event: TurnEvent) => void;
+type TurnEventConsumer = (event: TurnEvent) => void;
 
 /** Observer callback that also receives the event's 1-based sequence number. */
-export type TurnEventObserver = (event: TurnEvent, sequence: number) => void;
+type TurnEventObserver = (event: TurnEvent, sequence: number) => void;
 
-/**
- * Provider-neutral event sink for exactly one runtime turn.
- *
- * The terminal outcome is claimed before invoking the external callback, so
- * synchronous re-entry cannot emit a second terminal or a late event.
- */
+/** Provider-neutral event sink for exactly one runtime turn. */
 export class TurnEventSink {
   private eventCount = 0;
   private terminal: TurnResultStatus | null = null;

@@ -16,10 +16,7 @@ interface BookmarkInfoCardProps {
 /** Local alias; the contract owns the values. */
 const SOURCE_DESCRIPTIONS = BOOKMARK_SOURCE_DESCRIPTIONS;
 
-/**
- * Formats an ISO date string into a localized short date and time format.
- * Example: "Mar 29, 2026, 12:15"
- */
+/** Formats an ISO date string into a localized short date and time format. Example: "Mar 29, 2026, 12:15" */
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: 'short', day: 'numeric', year: 'numeric',

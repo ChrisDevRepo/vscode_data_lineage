@@ -30,13 +30,7 @@ function formatArgument(value: unknown): string {
   }
 }
 
-/**
- * Creates a channel that appends every level to `logFilePath`.
- *
- * @param name - Channel name, recorded on each line so several channels can share one file.
- * @param logFilePath - Absolute path of the run's `host.log`; parent directories are created.
- * @returns A channel assignable to `vscode.LogOutputChannel` after one cast at the call site.
- */
+/** Creates a channel that appends every level to `logFilePath`. */
 export function createHeadlessLogger(name: string, logFilePath: string): HeadlessLogChannel {
   mkdirSync(dirname(logFilePath), { recursive: true });
   const write = (level: string, message: unknown, args: readonly unknown[]): void => {

@@ -1,11 +1,4 @@
-/**
- * Shared test utilities for all unit test files.
- * NOT a test file itself — imported by tests/unit/*.test.ts files.
- *
- * Location: tests/unit/helpers/testUtils.ts
- * - testPath() resolves paths relative to tests/fixtures/
- * - rootPath() resolves paths relative to project root
- */
+/** Shared test utilities for all unit test files. NOT a test file itself — imported by tests/unit/*.test.ts files. */
 
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -44,10 +37,7 @@ export function parserCaseSql(id: string): string {
 
 // ─── End-to-end dacpac helpers ────────────────────────────────────────────────
 
-/**
- * Full end-to-end: dacpac → DatabaseModel (Node.js, no VS Code needed).
- * Uses the AI dacpac (superset of AdventureWorks + [ai] schema).
- */
+/** Full end-to-end: dacpac → DatabaseModel (Node.js, no VS Code needed). Uses the AI dacpac (superset of AdventureWorks + [ai] schema). */
 export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   loadParseRules();
   const buffer = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));

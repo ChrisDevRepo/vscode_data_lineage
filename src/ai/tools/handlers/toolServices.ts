@@ -1,12 +1,4 @@
-/**
- * Capability seam supplied to mutating lineage-tool handlers.
- *
- * @remarks
- * The interface keeps host dependencies explicit: handlers receive only the
- * session, graph/model accessors, logging, filter materialization, and result
- * delivery they need. Session state remains owned by {@link AiSession}; turn-lease
- * validation and effect serialization remain registry concerns.
- */
+/** Capability seam supplied to mutating lineage-tool handlers. */
 import type Graph from 'graphology';
 import type { AiSession } from '../../session/session';
 import type { Logger } from '../../../utils/log';
@@ -29,16 +21,7 @@ export type ToolCaller = 'turn' | 'external';
 export interface ToolServices {
   /** Accessor for the active AI session — the single owner of all mutable tool state. */
   readonly getSession: () => AiSession;
-  /**
-   * Delivers one validated preview message to the result panel.
-   *
-   * @remarks
-   * The host owns the panel and the transport: it reveals before sending — a hidden panel measures
-   * its canvas at zero, and a graph framed against a box that does not exist yet is never re-framed
-   * once the tab comes forward — and it returns the webview's render ACK, which `present_result`
-   * writes into the committed artifact. The outcome is one of {@link PreviewDelivery}: an absent
-   * panel is a deferral, a refused send is a failure; a transport throw propagates to the caller.
-   */
+  /** Delivers one validated preview message to the result panel. */
   deliverPreview(message: AiViewPreviewMessage): Promise<PreviewDelivery>;
   /** Resolves the persisted AI run behind an applied bookmark; absent when the host wires no store. */
   readonly getStoredRun?: StoredRunReader;
@@ -48,19 +31,9 @@ export interface ToolServices {
   readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
   /** Cooperative host cancellation, mirrored from the owning turn's lease. */
   readonly signal?: AbortSignal;
-  /**
-   * Token budget of the turn that owns this registry.
-   *
-   * @remarks
-   * Fixed when the lease-bound registry was built, so a superseded turn's still-running dispatch
-   * keeps measuring against the caps its own model was admitted under. Callers without a chat turn
-   * carry the shipped defaults.
-   */
+  /** Token budget of the turn that owns this registry. */
   readonly budget: TurnTokenBudget;
-  /**
-   * Who dispatches: `turn` (an `@lineage` chat turn) or `external` (a caller without a chat turn,
-   * restricted to the read-only tool policy).
-   */
+  /** Who dispatches: `turn` (an `@lineage` chat turn) or `external` (a caller without a chat turn, restricted to the read-only tool policy). */
   readonly caller: ToolCaller;
   /** Current turn epoch — the turn lease wins over the session field so stale-turn writes are rejectable. */
   turnEpoch(sess: AiSession): number;
@@ -76,16 +49,7 @@ export interface ToolServices {
   toolError(toolName: string, err: unknown): string;
 }
 
-/**
- * Per-model id→node lookup, memoized across the mutating handlers that all rebuild it.
- *
- * @remarks
- * `submit_findings` and `present_result` each need an id→node map for the currently loaded
- * model. The model reference only changes when a new database is loaded (a fresh
- * `DatabaseModel` object replaces `AiSession.model`), so keying on that object in a `WeakMap`
- * gives free invalidation: the old entry falls out of scope with the old model, no explicit
- * clear needed.
- */
+/** Per-model id→node lookup, memoized across the mutating handlers that all rebuild it. */
 const modelNodeMapCache = new WeakMap<DatabaseModel, Map<string, LineageNode>>();
 
 /** Returns the memoized id→node map for `model`, building it once per model instance. */

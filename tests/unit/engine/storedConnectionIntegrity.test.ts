@@ -1,7 +1,4 @@
-/**
- * Pins the two contracts that keep a saved database project readable by the webview:
- * what may reach the `projects-list` frame and how legacy connections migrate.
- */
+/** Pins the two contracts that keep a saved database project readable by the webview: what may reach the `projects-list` frame and how legacy connections migrate. */
 
 import { describe, it, expect } from 'vitest';
 import { partitionSendableProjects } from '../../../src/bridge/messageHandlers';
