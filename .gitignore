@@ -39,6 +39,10 @@ CLAUDE*
 GEMINI*
 .GEMINI*
 .gemini/
+GROK*
+.GROK*
+grok.md
+.grok/
 GLM*
 .GLM*
 .glm-skills/

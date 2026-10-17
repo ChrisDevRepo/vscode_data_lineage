@@ -19,7 +19,7 @@ These need no database, model provider or display. Parser and lineage scenarios 
 
 A path argument to `test:core`, `test:lineage`, `test:runtime` or `test:support` runs that file only: `npm run test:core -- tests/unit/parser/identifier-case.test.ts`.
 
-The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAIL`. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs go to `test-results/gate`.
+The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAIL`. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs stay in untracked local output.
 
 ## Ownership and evidence
 
@@ -98,7 +98,7 @@ Coverage limits remain explicit: the current suites do not establish a complete 
 
 Deterministic tests verify parser, graph and runtime contracts. A structurally valid AI result does not establish complete SQL lineage, correct model-authored argument bindings or inclusion of every contributor. Fixed-response host tests establish API wiring and lifecycle, not inference quality. Current escaped-bracket identifiers are covered in both case modes. Ambiguous identifiers in older saved views or checkpoints cannot always be recovered: legacy references resolve only when they have a unique owner in the current model. Statement scanning uses semicolons or recognised top-level statement keywords; identifier tests do not establish complete parsing of arbitrary SQL without delimiters. See [parser limits](../PARSE_RULES.md).
 
-Headless AI uses simulated consent decisions and its own transport. It does not test interactive approval controls or the VS Code account's model integration. Badge replay checks the rendered follow-up control and live suggestion call, but does not prove fresh synthesis. Inspecting headless Markdown does not establish rendered layout; native UI checks remain separate. Live checks can incur provider charges.
+Headless AI uses simulated consent decisions and its own transport. It does not test interactive approval controls or the VS Code account's model integration. Badge replay checks the rendered follow-up control and live suggestion call, but does not prove fresh synthesis. Inspecting headless Markdown does not establish rendered layout; native UI checks remain separate. A live check spends provider tokens. Run one only under [When a live run is worth its cost](#when-a-live-run-is-worth-its-cost).
 
 Layout timings describe the tested dataset, hardware and runtime, not a general performance threshold. For manual performance review, record warm/cold state, repetitions, median and p95. Preserve each distinct contract and failure assertion when consolidating tests; coverage totals alone do not prove scenario preservation.
 
@@ -111,7 +111,7 @@ Layout timings describe the tested dataset, hardware and runtime, not a general 
 | Playwright GUI smoke | `npm run test:gui:host`, then `npm run test:gui:smoke` | Opens the demo in an isolated VS Code host and checks the graph renders |
 | Playwright chat UI | `npx vscode-test --config .vscode-test.chat-ui.mjs` | Native chat confirmations, approval/cancellation, scope revisions and suggestion badges |
 | Real-model smoke | `npm run test:ai:smoke` | One live `@lineage` turn against the demo DACPAC |
-| Headless review | `npm run test:ai:headless` | Loops the `headless` catalog rows against `AI_TEST_PROVIDER` (flags: `-- --help`) |
+| Headless review | `npm run test:ai:headless` | With no extra arguments, loops the `headless` catalog rows against `AI_TEST_PROVIDER`. That full loop is a new baseline. One question uses `--prompt` (flags: `-- --help`) |
 | Large layout scale | `npm run test:scale` | Layout check for a 1,500-node model |
 
 ## VS Code host checks
@@ -133,7 +133,7 @@ Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs`, ad
 |---|---|
 | default | Chat input, plan approval and cancellation with scripted responses |
 | `live` | The same controls against `AI_TEST_PROVIDER` and `tests/fixtures/AdventureWorks2025_AI.dacpac` |
-| `badge` | The follow-up suggestion badge, replaying a qualifying `live` analysis under `tmp/lm-trace/` and making a live model call for suggestions |
+| `badge` | The follow-up suggestion badge, replaying a qualifying recorded `live` analysis and making one live model call for suggestions |
 | `column` | A column-trace query and the rendered report |
 
 Check `live` answers against the fixture's SQL and graph. Keep reports, screenshots and traces out of git.
@@ -142,26 +142,41 @@ To run `badge` without a recorded trace, use `DLV_CHAT_UI_BADGE_LIVE=1 npx vscod
 
 ## Live-model and database settings
 
-Copy [`.env.example`](../../.env.example) to `.env` and fill only the section you need; never commit `.env`, traces or answers. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter` or `openai-compatible`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. These settings configure test harnesses only; the extension itself uses the VS Code chat model.
+Copy [`.env.example`](../../.env.example) into the local environment file the harness reads, and fill only the section you need. Leave that file, traces, and answers untracked. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter` or `openai-compatible`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. These settings configure test harnesses only; the extension itself uses the VS Code chat model. Keep the configured provider, model, and reasoning effort.
 
 `AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless catalog run or each native test. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models; headless `--timeout-ms` and `--request-timeout-ms` override their respective settings. Native live UI waits use the AI budget, with an additional minute for test teardown. Captured provider failures end UI waits immediately with the request number and error. Database smoke retains its five-minute default. Native chat runs pin the host version in `.vscode-test.chat-ui.mjs`; baseline comparisons must verify the same resolved host version in both launcher logs. For Entra ID database checks, set `DB_TEST_AUTH_TYPE=entraId` and either `DB_TEST_TOKEN` (an existing SQL access token) or the explicit noninteractive test login settings in [Test environments](ENVIRONMENTS.md); the default is SQL login.
 
 Headless follow-ups receive prior visible questions and answers through the same runtime history input as native chat. Each catalog case starts with a separate session and empty history.
 The harness removes a leading `@lineage` participant mention before dispatch, preserving slash commands and the remaining SQL text. A catalog row's configured consent steps must execute in order on its first turn; an answer that bypasses them fails the case.
 
-Headless artifacts go under ignored `test-results/headless/`. Headless turns automatically persist `metrics.json` beside their answer; real native Playwright cases write metrics and preserved trace slices under unique `test-results/chat-ui/` run directories, including failures. Metrics identify the case by its recorded question and fixture hashes and preserve provider, model, effort, settings and source hashes. Unknown usage or final graph values remain unknown; rendered native text has character counts but no Markdown delimiter counts. Completion is runtime evidence, not answer-quality evidence. Optional `--langfuse` export requires all three `LANGFUSE_*` settings and access to that endpoint; its separate deadline is 30 seconds. Full prompt/system and provider bodies require `--trace-verbose`, while ordinary answers and tool artifacts can already contain database metadata. `--attach` additionally exports evidence files. Use synthetic/public input, review captured content and keep artifacts out of Git.
+Generated answers, metrics, and traces stay untracked. Headless turns persist `metrics.json` beside their answer. Native Playwright cases persist metrics and a trace slice for each run, including failures. Metrics identify the case by its recorded question and fixture hashes and preserve provider, model, effort, settings, and source hashes. Unknown usage or final graph values remain unknown. Rendered native text has character counts and no Markdown delimiter counts. Completion is runtime evidence, not answer-quality evidence. Optional `--langfuse` export requires all three `LANGFUSE_*` settings and access to that endpoint; its separate deadline is 30 seconds. Full prompt and provider bodies require `--trace-verbose`, and only when the served prompt is the evidence. Ordinary answers and tool artifacts can already contain database metadata. `--attach` additionally exports evidence files. Use the AdventureWorks demo or other synthetic input, review captured content, and leave artifacts untracked.
 
-`AI_TEST_REASONING_EFFORT` depends on provider/model support; leave it empty when unsupported. Identically named effort levels do not establish equivalent reasoning across providers. Harness settings do not configure the installed extension.
+`AI_TEST_REASONING_EFFORT` stays at the configured value (`low` in [`.env.example`](../../.env.example)). Keep it. Identically named effort levels do not establish equivalent reasoning across providers. Harness settings do not configure the installed extension.
 
 ## Packaging
 
 `npm run package` creates `data-lineage-viz-<version>.vsix` without publishing it; install it in a separate VS Code profile to inspect it.
 
+## When a live run is worth its cost
+
+A live model run spends the external API provider's tokens. Deterministic `npm test` and `npm run gate` come first and do not call a provider. Keep that external test profile's provider, model, and reasoning effort. The coding agent reviewing the repository is a separate model.
+
+- Debugging one issue: run the one live case that shows that issue. A headless question is `npm run test:ai:headless -- --prompt "QUESTION"`. A native check uses the one label that renders the defect.
+- A new baseline: one full comparable run, after the previous baseline no longer matches because the question set, fixture, or settings changed, or because a broad behavior change invalidated the stored answers. Later work reuses that baseline.
+- A prompt comparison: the frozen question once before the change, when no matching baseline exists, and once after it. Add one held-out question only to check that unchanged behavior still holds.
+- Run a case again only when the code, question, fixture, or settings changed. A full catalog run is a new baseline, not a way to obtain a passing prompt. Leave another full run unstarted while known failures from the last baseline remain.
+
+Generated run output stays untracked.
+
 ## Before-deployment baseline review
 
-For a prompt or model-behavior change, run an unchanged baseline and the candidate with the same dataset, question, scope and provider: `npm run test:ai:headless -- --prompt "QUESTION"` (uses `assets/demo.dacpac` unless `--dacpac FILE` is given; `--trace-verbose` adds prompts and provider bodies). Review both answers against the SQL and graph (columns, formulas, filters, joins, grain, scope) and record the SQL evidence for any accepted difference.
+Follow [When a live run is worth its cost](#when-a-live-run-is-worth-its-cost). For a prompt or model-visible behavior change, compare one frozen question on the public demo (`assets/demo.dacpac` unless `--dacpac FILE` is given):
 
-- `node tests/tools/trace-metrics.mjs --latest` (or `BASELINE.ndjson CANDIDATE.ndjson`; add `--output PATH` to persist the JSON) compares tokens, rejections, repairs and lineage, with `GREEN`/`AMBER`/`RED` ratings.
-- `node tests/tools/case-scorecard.mjs BASE_RUN_DIR CANDIDATE_RUN_DIR` scores each catalog case of two headless runs and copies both answers to `test-results/scorecard/` for side-by-side reading. It prefers the canonical preview in `present-result.json.aiMetadata.description`, falling back to streamed `answer.md` when no preview exists, and records that source in its JSON. Its scores rank what to read first.
+`npm run test:ai:headless -- --prompt "QUESTION"`
 
-These diagnostic scoring tools stay outside the deterministic gate; their ancillary checks are private one-time probes.
+Reuse a baseline whose question, fixture, and settings still match. Run the candidate once after the change. Add `--trace-verbose` only when the served prompt is the evidence. Review both answers against the SQL and graph: requested facts, formulas, filters, joins, grain, row rules, scope, output instructions, and unsupported claims. Record the SQL evidence for any accepted difference.
+
+These tools read runs that already exist. They are not a reason to start another catalog run. They stay outside the deterministic gate.
+
+- `node tests/tools/trace-metrics.mjs --latest` (or `BASELINE.ndjson CANDIDATE.ndjson`; add `--output PATH` to persist the JSON) compares tokens, rejections, repairs, and lineage, with `GREEN`/`AMBER`/`RED` ratings.
+- `node tests/tools/case-scorecard.mjs BASE_RUN_DIR CANDIDATE_RUN_DIR` scores each catalog case of two existing headless runs and writes an untracked local comparison for side-by-side reading. It prefers the canonical preview in `present-result.json.aiMetadata.description`, falling back to streamed `answer.md` when no preview exists, and records that source in its JSON. Its scores rank what to read first.

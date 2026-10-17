@@ -1,6 +1,6 @@
 # Building from source
 
-This repository is public so you can clone, build and adapt the extension under the [MIT license](LICENSE). Bug reports go to [issues](https://github.com/ChrisDevRepo/vscode_data_lineage/issues); never attach credentials, customer SQL, `.dacpac` files or database content. Report security issues as described in [`SECURITY.md`](SECURITY.md).
+This repository is public so you can clone it, build it, and review security and behavior before you install or package the extension, under the [MIT license](LICENSE). Bug reports go to [issues](https://github.com/ChrisDevRepo/vscode_data_lineage/issues). Leave credentials, customer SQL, `.dacpac` files, and database content out of the report. Report security issues as described in [`SECURITY.md`](SECURITY.md).
 
 ## Setup
 
@@ -22,7 +22,7 @@ None of these need a database, model provider or credentials. Test tiers are in 
 
 ## Changing the code
 
-- Fix behavior in the layer that owns it and add a focused test.
+- Change behavior in the layer that owns it and add a focused test when the contract changes.
 - Keep the `.md` files true for what you changed.
-- Run `npm run gate` before you push.
+- Run `npm run gate` before you treat a code change as ready. It does not call a model provider.
 - Entries in `package.json` `overrides` are deliberate security pins plus the `langsmith` stub in `stubs/langsmith/`.
