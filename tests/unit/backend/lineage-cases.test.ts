@@ -53,6 +53,7 @@ interface LineageCase {
   readonly direction: 'upstream' | 'downstream';
   readonly roots?: readonly { node: string; col: string }[];
   readonly upstream?: readonly FlowColumn[];
+  readonly extra?: readonly { out: string; upstream?: readonly FlowColumn[] }[];
   readonly matrix?: readonly FlowColumn[];
   readonly expect: CaseExpect;
 }
@@ -138,7 +139,10 @@ function run(row: LineageCase, upstream: readonly FlowColumn[]) {
   }));
   const result = new ColumnTracer([...row.active]).validateColumnFlow(
     row.focus,
-    { summary: 's', sections: [], column_flow: [{ out_col: row.out, upstream_columns: upstream }] } as never,
+    { summary: 's', sections: [], column_flow: [
+      { out_col: row.out, upstream_columns: upstream },
+      ...(row.extra ?? []).map(entry => ({ out_col: entry.out, upstream_columns: entry.upstream ?? [] })),
+    ] } as never,
     new Map<string, LineageNode>(nodes.map(node => [node.id, node])),
     makeModel(nodes, [], ['dbo']),
     null,
@@ -164,19 +168,15 @@ function check(row: LineageCase, upstream: readonly FlowColumn[]) {
 }
 
 describe('declared contributor identities', () => {
-  it('keeps detached qualified-link diagnostics without scalar choices for the source array', () => {
+  it('stages a valid neighbor-column pair that does not sit on the requested chain', () => {
     const result = run({ id: 'detached-source-array', active: ['Tracked'], focus: 'writer', out: 'Other', direction: 'downstream',
       roots: [{ node: 'writer', col: 'Tracked' }],
       nodes: [{ id: 'writer', type: 'procedure' }, { id: 'source', type: 'table', columns: ['Other'] }], expect: {},
     }, [{ node: 'source', col: 'Other' }]);
-    expect(result.stagedEdges).toEqual([]);
-    expect(result.invalidRoutes).toEqual([expect.objectContaining({
-      path: 'column_flow.0.upstream_columns',
-      reason: expect.stringContaining('source.Other -> writer.Other'),
+    expect(result.invalidRoutes).toEqual([]);
+    expect(result.stagedEdges).toEqual([expect.objectContaining({
+      from_node: 'source', from_col: 'Other', to_node: 'writer', to_col: 'Other',
     })]);
-    expect(result.invalidRoutes[0].reason).toContain('writer.Tracked');
-    expect(result.invalidRoutes[0]).not.toHaveProperty('allowed_values');
-    expect(result.invalidRoutes[0]).not.toHaveProperty('when');
   });
 
   it.each([false, true])('merges queued column aliases under the shared CS=%s policy without normalizing questions', caseSensitive => {
@@ -1453,13 +1453,19 @@ describe('a procedure that writes and reads back the same table', () => {
     expect(result.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Z', to_node: work, to_col: 'Y' }));
   });
 
-  it.each([
-    ['a write into a table the procedure does not read', { out_col: 'V', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: other, col: 'V' } }, 'column_flow.1.out_col'],
-    ['a read-back write that feeds no tracked column', { out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: work, col: 'Y' } }, 'column_flow.1.upstream_columns'],
-  ])('rejects %s', (label, entry, path) => {
+  it('rejects a write to an out-of-direction neighbor and keeps the in-scope mapping', () => {
     const engine = atProc();
-    const flow = label.startsWith('a read-back') ? [{ ...readBack, upstream_columns: [{ node: source, col: 'Z' }] }, entry] : [readBack, entry];
-    expect(engine.submitFindings({ ...guardRecord(proc), questions, column_flow: flow })).toMatchObject({ issuePaths: expect.arrayContaining([path]) });
+    expect(engine.submitFindings({ ...guardRecord(proc), questions, column_flow: [readBack,
+      { out_col: 'V', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: other, col: 'V' } }] }))
+      .toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.1.writes_to.node'] });
+  });
+
+  it('accepts an extra in-direction mapping that is not on the requested column chain', () => {
+    const engine = atProc();
+    expect(engine.submitFindings({ ...guardRecord(proc), questions, column_flow: [
+      { ...readBack, upstream_columns: [{ node: source, col: 'Z' }] },
+      { out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: work, col: 'Y' } },
+    ] })).toHaveProperty('ok', true);
   });
 });
 

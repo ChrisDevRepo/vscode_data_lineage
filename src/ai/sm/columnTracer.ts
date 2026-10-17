@@ -195,8 +195,9 @@ export class ColumnTracer {
    *   object with metadata does not declare, or a carrier continuation at a non-writer is refused wherever
    *   the object sits; any other contributor is rejected as `absent_contributor`, so no column edge joins an object
    *   unconnected to the hop; omitted, adjacency is not checked.
-   * @returns Validation result containing any error, invalid routes, successfully staged edges and
-   *   the accepted entry sides when separate downstream obligations were supplied.
+   * @returns Validation result containing any error, invalid routes, successfully staged edges
+   *   (every valid neighbor-and-column mapping; many-to-many), and the accepted entry sides
+   *   used for CT carry when separate downstream obligations were supplied.
    */
   validateColumnFlow(
     focusId: string,
@@ -236,7 +237,6 @@ export class ColumnTracer {
     const validFocusCols = new Set<string>((getNodeColumns(focusNode.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
     const activeNorm = this.aspect.active_columns.map(this.columnKey);
     const entryEdges = new Map<number, ColumnEdge[]>();
-    const readBackTargets = readBackWriteTargets(focusId, nodeMap, model);
     const endpointKey = columnEndpointKeyFactory(nodeMap, model.identifierCaseSensitive);
     const committedRefs = this.aspect.edges.flatMap(edge => [
       { node: edge.from_node, col: edge.from_col },
@@ -265,16 +265,6 @@ export class ColumnTracer {
           invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.returns_to`, reason: 'returns_to must identify one supplied qualified scalar caller output, match out_col, and exclude writes_to.' });
           continue;
         }
-      }
-
-      const readBackWrite = !!entry.writes_to && this.columnKey(entry.writes_to.col) === outNorm
-        && readBackTargets.has(resolveModelNodeId(entry.writes_to.node, nodeMap, this.identifierCaseSensitive) ?? '');
-      if (traceDirection === 'upstream' && incomingDownstreamRefs.length === 0 && !activeNorm.includes(outNorm) && !readBackWrite) {
-        const existsOnNode = validFocusCols.size > 0 && validFocusCols.has(outNorm);
-        invalidRoutes.push(existsOnNode
-          ? { kind: 'untracked_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" exists on ${focusId} but is not an actively tracked column`, allowed_values: [...this.aspect.active_columns], when: { node: focusId } }
-          : { kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" is not an active tracked column`, allowed_values: [...this.aspect.active_columns], when: { node: focusId } });
-        continue;
       }
 
       if (!entry.returns_to && validFocusCols.size === 0 && !allowsMissingColumnMetadata(focusNode)) {
@@ -407,30 +397,15 @@ export class ColumnTracer {
       entryEdges.set(entryIndex, stagedEdges.slice(stagedBeforeEntry));
     }
 
-    // A link is admitted only when its destination is in the closure of the tracked roots over the
-    // committed and staged links; one fixpoint, so the order of the entries never decides.
+    // Attachment to the requested chain selects CT carry. It does not admit or reject a mapping:
+    // each valid neighbor-and-column pair is independent (UNION branches, computed outputs, extra
+    // siblings). A missing assigned incoming column is owed later as missing_task_decision.
     const mixed = incomingDownstreamRefs.length > 0;
     const closureEdges = [...this.aspect.edges, ...stagedEdges];
     const attached = columnAttachment(roots, closureEdges, mixed ? 'upstream' : traceDirection, endpointKey);
     const downstreamAttached = mixed ? columnAttachment(roots, closureEdges, 'downstream', endpointKey) : undefined;
     const detachedIn = (edges: ColumnEdge[], closure: ColumnAttachment): ColumnEdge[] =>
       edges.filter(edge => !closure.attaches(edge));
-    const rejectedEdges = new Set<ColumnEdge>();
-    // Rejects one entry: names the smaller detached set and withholds every edge the entry staged.
-    const rejectEntry = (entryIndex: number, edges: ColumnEdge[], upDetached: ColumnEdge[], downDetached: ColumnEdge[] | undefined): void => {
-      const detached = downDetached && downDetached.length < upDetached.length ? downDetached : upDetached;
-      for (const edge of edges) rejectedEdges.add(edge);
-      const entry = columnFlow[entryIndex];
-      const tracked = [...anchors.values()].join(', ');
-      invalidRoutes.push({
-        kind: 'untracked_out_col',
-        id: focusId,
-        path: `column_flow.${entryIndex}.upstream_columns`,
-        reason: detached.length > 0
-          ? `column_flow.${entryIndex} into "${entry.out_col}" links ${[...new Set(detached.map(edge => `${edge.from_node}.${edge.from_col} -> ${edge.to_node}.${edge.to_col}`))].join(', ')}, whose destination columns do not connect to the requested column chain within this trace [${tracked}]. Naming a requested column only as a source does not establish this connection.`
-          : `column_flow.${entryIndex} into "${entry.out_col}" is disconnected from the tracked endpoints [${tracked}].`,
-      });
-    };
 
     const entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> = [];
     for (const [entryIndex, edges] of entryEdges) {
@@ -442,15 +417,12 @@ export class ColumnTracer {
         const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
           || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
         const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
-        if (!mixed || upstream || downstream) {
-          if (!mixed ? upDetached.length === 0
-            : upstream && upDetached.length === 0 || downstream && downDetached?.length === 0) {
-            entrySides.push({ index: entryIndex, upstream, downstream });
-            continue;
-          }
-          rejectEntry(entryIndex, edges, upDetached, downDetached);
-          continue;
+        if ((!mixed || upstream || downstream)
+          && (!mixed ? upDetached.length === 0
+            : upstream && upDetached.length === 0 || downstream && downDetached?.length === 0)) {
+          entrySides.push({ index: entryIndex, upstream, downstream });
         }
+        continue;
       }
       if (edges.length === 0 && entry.upstream_columns.length > 0) continue;
       const attachedUpstream = edges.length === 0 ? anchors.has(endpointKey(focusId, entry.out_col)) : upDetached.length === 0;
@@ -458,12 +430,9 @@ export class ColumnTracer {
       const upstream = attachedUpstream && activeNorm.includes(this.columnKey(entry.out_col));
       if (mixed ? upstream || attachedDownstream : attachedUpstream) {
         entrySides.push({ index: entryIndex, upstream, downstream: attachedDownstream });
-        continue;
       }
-      rejectEntry(entryIndex, edges, upDetached, downDetached);
     }
-    return { invalidRoutes, stagedEdges: stagedEdges.filter(edge => !rejectedEdges.has(edge)),
-      ...(mixed ? { entrySides } : {}) };
+    return { invalidRoutes, stagedEdges, ...(mixed ? { entrySides } : {}) };
   }
 }
 
@@ -673,8 +642,7 @@ export function resolveColumnFlowTarget(
  *
  * @remarks
  * Such a write is an internal step of the procedure's own data flow, so an upstream hop may declare
- * it as `out_col` alongside the tracked columns; {@link columnAttachment} still requires the
- * written column to feed a tracked endpoint.
+ * it as `out_col` alongside other valid neighbor-and-column pairs.
  *
  * @param focusId - Canonical id of the focus node; a non-procedure focus has none.
  * @returns Canonical ids of the read-back write targets, empty when the focus is not a procedure.

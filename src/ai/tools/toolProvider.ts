@@ -89,7 +89,6 @@ export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer
  * `correction` rather than borrowing one of the named groups.
  */
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
-  [REJECTION_CODES.outColNotTracked]: 'column_mapping',
   [REJECTION_CODES.outColNotOnNode]: 'column_mapping',
   [REJECTION_CODES.contributorColNotOnSource]: 'column_mapping',
   [REJECTION_CODES.columnSelfLoop]: 'column_mapping',

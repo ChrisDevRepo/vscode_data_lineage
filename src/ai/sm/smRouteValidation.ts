@@ -28,8 +28,6 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Name only loaded objects connected to this focus: a writes_to target this hop writes, and upstream_columns contributors that are its neighbors or, for a caller-context investigation, read suppliers of the function or its declared callers. Remove the inadmissible reference while keeping required output mappings. Preserve known SQL facts in sections; state uncertainty only where evidence is unresolved.',
   bad_out_col:
     'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
-  untracked_out_col:
-    'Set column_flow[].out_col to an output connected to the qualified column tasks supplied for this hop, or submit column_flow: [] if this node carries no tracked column.',
   bad_contributor_col:
     'Correct the object and column together against the SQL, using a confirmed in-scope supplier. If the SQL supplier is outside the requested trace, remove that upstream_columns entry and retain the dependency in sections. Keep required output mappings and other valid suppliers; do not guess a replacement.',
   self_loop_column:
@@ -64,10 +62,6 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Remove questions[] entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
 };
 
-/** Repair order for an `untracked_out_col` whose reason names detached links (path `.upstream_columns`). */
-const DETACHED_LINK_DIRECTIVE =
-  'Keep required output mappings and SQL-confirmed mappings connected to the assigned qualified columns; omit other mappings and retain their SQL facts in sections. If no mappings remain, submit column_flow: []; do not invent a write.';
-
 /**
  * Machine error code per validation kind. Used when one kind dominates the rejection so the
  * model gets a specific, structured classification; mixed kinds fall back to the generic code.
@@ -77,7 +71,6 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   invalid_task_decision: REJECTION_CODES.routeValidationFailed,
   absent_contributor: REJECTION_CODES.routeValidationFailed,
   bad_out_col: REJECTION_CODES.outColNotOnNode,
-  untracked_out_col: REJECTION_CODES.outColNotTracked,
   bad_contributor_col: REJECTION_CODES.contributorColNotOnSource,
   self_loop_column: REJECTION_CODES.columnSelfLoop,
   bad_return_target: REJECTION_CODES.routeValidationFailed,
@@ -129,13 +122,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[], repairOrde
  * that also reports other faults of the same submission.
  */
 export function routeRejectionDirectives(errors: readonly InvalidRoute[]): string {
-  const distinctKinds = [...new Set(errors.map(e => e.kind))];
-  return [
-    ...distinctKinds.filter(kind => kind !== 'untracked_out_col'
-      || errors.some(error => error.kind === kind && error.path?.endsWith('.out_col')))
-      .map(kind => ROUTE_REJECTION_DIRECTIVE[kind]),
-    errors.some(error => error.kind === 'untracked_out_col' && error.path?.endsWith('.upstream_columns')) ? DETACHED_LINK_DIRECTIVE : '',
-  ].filter(Boolean).join(' ');
+  return [...new Set(errors.map(e => e.kind))].map(kind => ROUTE_REJECTION_DIRECTIVE[kind]).join(' ');
 }
 
 /** One reason line per route/column failure: its path and what was wrong. */

@@ -23,7 +23,7 @@ import { resolveModelNodeId } from '../support/modelReferences';
 import { evaluateCurrentHopActionPolicy, type CurrentHopActionTarget } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
-import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, readBackWriteTargets, resolveColumnFlowTarget } from "./columnTracer";
+import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
@@ -1049,20 +1049,7 @@ export class NavigationEngine implements IHopStateMachine {
     return { resolved, unmatched };
   }
 
-  /**
-   * Bounds CT active columns to the focus node's declared columns when the node has a column
-   * surface. Used for mid-trace narrowing (a downstream node may carry only some tracked columns);
-   * never for validating a fresh CT origin's requested columns — that needs {@link matchColumnsToNode}'s
-   * `unmatched` list, since silently dropping a foreign column here would be the same defect this
-   * method exists to avoid at the boundary.
-   */
-  private resolveActiveColumnsForNode(nodeId: string, columns?: string[]): string[] | undefined {
-    if (!columns) return undefined;
-    if (columns.length === 0) return [];
-    return this.matchColumnsToNode(nodeId, columns).resolved;
-  }
-
-  /** The requested output columns on the origin, resolved to its declared names: the roots every committed column edge must attach to. */
+  /** The requested output columns on the origin, resolved to its declared names: the roots CT carry attaches to. */
   private columnRoots(): Array<{ node: string; col: string }> {
     const origin = this.originNodeId;
     return origin && this.tracer ? this.matchColumnsToNode(origin, this.tracer.targetColumns).resolved.map(col => ({ node: origin, col })) : [];
@@ -1366,22 +1353,20 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Neighbor action choices and column facts that narrow this hop's served schema: tracked columns, plus the
-   * columns of tables a procedure focus writes and reads back, when an upstream trace accepts only
-   * those as `out_col`, and whether the focus is a procedure (the one
+   * Neighbor action choices and column facts that narrow this hop's served schema: every declared
+   * focus column as `out_col` when metadata exists, and whether the focus is a procedure (the one
    * node that may name a `writes_to` target). Eligible function neighbors narrow caller-context questions;
    * stored column metadata narrows the admissible `upstream_columns` sources.
    */
   public get hopSubmitColumns(): SubmitFindingsHopColumns {
     const focus = this.currentFocusNodeId ? this.nodeMap.get(this.currentFocusNodeId) : undefined;
-    const active = this.tracer?.activeColumns.filter(Boolean) ?? [];
     const neighbors = focus ? this.neighborChoices(focus.id) : [];
+    const declaredOutCols = focus
+      ? [...new Set((getNodeColumns(focus.id, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name).filter(Boolean))]
+      : [];
     return {
       neighbors,
-      outCols: this.columnTraceDirection() === 'upstream' && !this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.traversalSide === 'downstream') && active.length > 0
-        ? [...new Set([...this.resolveActiveColumnsForNode(focus?.id ?? '', active) ?? active,
-          ...(focus ? [...readBackWriteTargets(focus.id, this.nodeMap, this.model)] : [])
-            .flatMap(id => (getNodeColumns(id, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name))])] : null,
+      outCols: declaredOutCols.length > 0 ? declaredOutCols : null,
       writesTo: focus?.type === 'procedure',
       callerContextNodeIds: focus && this.graph.hasNode(focus.id) && getNodeDdl(focus.id, this.nodeMap, this.store ?? undefined)
         ? neighbors.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id).filter(id =>
@@ -2930,7 +2915,7 @@ export class NavigationEngine implements IHopStateMachine {
           const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
           if (!outside) continue;
           invalidRoutes.push({ kind: 'column_out_of_scope', id: nid, path: ref.path,
-            reason: `\`${nid}\` is out of scope (${outside}); the column trace cannot continue there.` });
+            reason: `\`${nid}\` is out of scope (${outside}) and will not appear in the AI preview. Record the dependency in sections or as a questions follow-up.` });
         }
       }
       invalidRoutes.push(...actionPolicy.invalidRoutes);
@@ -2945,7 +2930,6 @@ export class NavigationEngine implements IHopStateMachine {
       for (const nid of pruneIds) prunedNeighborNids.add(nid);
 
       const stagedSections: ValidatedHop['stagedSections'] = finding.sections ?? [];
-      const stagedDetailChars = stagedSections.reduce((sum, s) => sum + (s.text?.length ?? 0), 0);
       const stagedSummaryChars = finding.summary?.length ?? 0;
 
       if (this.tracer) {
@@ -2977,6 +2961,7 @@ export class NavigationEngine implements IHopStateMachine {
           path: focusId === this.originNodeId ? `column_flow.${submittedFlow.length}` : `terminated_inputs.${finding.terminated_inputs?.length ?? 0}`,
           reason: `Assigned column targets [${missing.map(ref => `${ref.node}.${ref.col}`).join(', ')}] have no mapping or explicit endpoint. Supply the missing mapping, or name an incoming column that stops in terminated_inputs.` });
       }
+      const stagedDetailChars = stagedSections.reduce((sum, section) => sum + (section.text?.length ?? 0), 0);
 
       if (classViolation || lengthViolations.length > 0 || invalidRoutes.length > 0) {
         return this.rejectFinding(focusId, finding, classViolation, lengthViolations, invalidRoutes, pruneTargets, acceptedNids, stagedColumnEdges);

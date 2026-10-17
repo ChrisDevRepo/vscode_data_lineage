@@ -827,9 +827,10 @@ function capturedSectionSchemaForClassification(
  * Backend-owned neighbor and column choices that narrow the served hop schema.
  *
  * @remarks
- * `outCols` is the hop's active tracked columns when the validator accepts nothing else as
- * `out_col` (an upstream trace), `[]` when no tracked local output is eligible, and `null` when it accepts any focus column. `writesTo` is true only
- * for a procedure focus, the one node that writes a column elsewhere.
+ * `outCols` is every declared column on the focus when metadata exists, so UNION, computed
+ * outputs and extra siblings can be mapped many-to-many; `null` when the focus has no column
+ * metadata and any name is checked only for neighbor identity. `[]` refuses `column_flow`.
+ * `writesTo` is true only for a procedure focus, the one node that writes a column elsewhere.
  */
 export interface SubmitFindingsHopColumns {
   /** Backend-owned current-hop neighbors, including closed evidence-only neighbors. */

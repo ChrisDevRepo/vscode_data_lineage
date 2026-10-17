@@ -420,8 +420,28 @@ cases:
     upstream:
       - { node: src, col: Amount }
     expect:
-      edges: []
-      invalid_kind: untracked_out_col
+      edges: [Amount]
+      invalid: []
+
+  - id: ct-extra-sibling-many-to-many
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total, Sibling] }
+      - { id: src, type: view, columns: [Amount, Other] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount }
+    extra:
+      - out: Sibling
+        upstream:
+          - { node: src, col: Other, note: "Sibling stays in the narrative." }
+    expect:
+      edges: [Amount, Other]
+      invalid: []
 
   - id: playwright-open-demo
     runners: [playwright]

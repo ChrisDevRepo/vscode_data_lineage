@@ -59,8 +59,6 @@ export const REJECTION_CODES = {
   routeValidationFailed: 'route_validation_failed',
   /** `column_flow[].out_col` names a column this focus node does not carry (`bad_out_col` kind, `smRouteValidation.ts`). */
   outColNotOnNode: 'out_col_not_on_node',
-  /** `column_flow[].out_col` names a real node column outside the CT active-column set being traced (`untracked_out_col` kind, `smRouteValidation.ts`). */
-  outColNotTracked: 'out_col_not_tracked',
   /** `upstream_columns[].col` names a column the contributor node does not itself read (`bad_contributor_col` kind, `smRouteValidation.ts`). */
   contributorColNotOnSource: 'contributor_col_not_on_source',
   /** An `upstream_columns` entry names the same node.col as this submission's own `writes_to` target (`self_loop_column` kind, `smRouteValidation.ts`). */

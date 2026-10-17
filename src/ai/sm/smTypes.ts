@@ -196,8 +196,9 @@ export interface HopNeighbor {
    * prune and route validators apply.
    *
    * @remarks
-   * In SM sessions the approved scope is locked at `confirm_sm_start`; routes to out-of-scope
-   * neighbors are deferred (not rejected) and surfaced at synthesis.
+   * `false` means the neighbor is outside the approved scope and will not appear in the AI preview.
+   * A column mapping to it is rejected. Record the dependency in `sections`, or name the neighbor
+   * in `questions` so the answer can recommend further analysis. A question does not widen scope.
    */
   in_approved_scope?: boolean;
 }
@@ -1034,7 +1035,6 @@ export interface HopLogEntry {
  */
 export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_out_col'
-      | 'untracked_out_col'
       | 'bad_contributor_col'
       | 'self_loop_column'
       | 'bad_return_target'
