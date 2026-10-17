@@ -1,7 +1,7 @@
-/** Optional service runners; no question registry, scoring, campaign scheduling, or default service calls. */
+/** Optional service runners. An AI run captures its trace and, when baseline directories are set, scores that capture without another model call. */
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import { z } from 'zod';
@@ -12,7 +12,7 @@ import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
 import { loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/connectionManager';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
-import { exportRunToLangfuse, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
+import { exportBudgetMs, exportRunToLangfuse, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
 import { OpenAiCompatiblePort } from './openAiCompatiblePort';
 import { runHarnessTurn, nativeHarnessPrompt } from './runTurn';
 import { createHarnessSession, repoPath } from './sessionFactory';
@@ -52,8 +52,8 @@ const AI_PROVIDERS = ['azure', 'fireworks', 'openrouter', 'openai-compatible'] a
 const HELP = `Optional testing toolset; it records checks and does not grade answers:
   npm run test:ai:headless -- [--dacpac FILE] [--prompt TEXT] [--followup TEXT ...]
                             [--effort LEVEL]
-                            [--timeout-ms N] [--request-timeout-ms N] [--langfuse] [--trace-verbose]
-                            [--label ID] [--session ID] [--tag TEXT ...] [--attach]
+                            [--timeout-ms N] [--request-timeout-ms N]
+                            [--label ID] [--session ID] [--tag TEXT ...]
   npm run test:db:smoke -- [--timeout-ms N]
 With no --prompt, the AI runner loops the headless rows in
 tests/cases/lineage-cases.yaml. Every turn is checked against the row's expect.terminal and
@@ -67,12 +67,20 @@ AI defaults to two hours with requests bounded by the same budget.
 AI requires a hosted provider: AI_TEST_PROVIDER (azure, fireworks, openrouter or
 openai-compatible) with its AI_TEST_ENDPOINT, AI_TEST_API_KEY and AI_TEST_MODEL. There is no
 default provider.
+An AI run always writes a verbose NDJSON trace, host.log, and sm-state.json when an
+exploration opens, then exports those files to Langfuse. Set LANGFUSE_BASE_URL,
+LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY before the first model call. --langfuse,
+--trace-verbose and --attach remain accepted and do not turn that capture off.
+A missing artifact or an export other than ok fails the run. One export retry stays
+inside the free-plan export budget and does not call the model again.
+Set AI_TEST_PREVIOUS_RUN and AI_TEST_MAIN_RUN to existing run directories to write
+baseline-score.json beside the new run. Unset directories record that no comparison ran.
+A database smoke does not call a model and does not export. The installed extension does not upload traces.
 DB uses DB_TEST_SERVER, DB_TEST_DATABASE, DB_TEST_USER, DB_TEST_PASSWORD,
 optional DB_TEST_AUTH_TYPE (sqlLogin, or entraId with a DB_TEST_TOKEN access token), DB_TEST_TENANT_ID,
 DB_TEST_PORT, DB_TEST_ENCRYPT and DB_TEST_TRUST_SERVER_CERTIFICATE.
 For noninteractive Entra test login, set DB_TEST_CLIENT_ID, DB_TEST_TENANT_ID,
 DB_TEST_USER and DB_TEST_PASSWORD; the launcher acquires a token only in memory.
-Langfuse uses LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.
 All services require explicit setup. Artifacts are written only under ignored
 test-results/headless. AI gates are simulated approvals; this runner does not
 test interactive VS Code consent.`;
@@ -103,6 +111,95 @@ function collectAttachments(runDir: string, tracePath: string, turnCount: number
   };
 }
 
+/** True when this turn published an exploration. A discovery search writes hop-log entries and still has no state dump. */
+function turnOpenedExploration(turnDir: string): boolean {
+  if (existsSync(join(turnDir, 'present-result.json'))) return true;
+  const snapshotPath = join(turnDir, 'final-snapshot.json');
+  if (!existsSync(snapshotPath)) return false;
+  try {
+    const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8')) as { nodes?: unknown };
+    return Array.isArray(snapshot.nodes);
+  } catch {
+    return true;
+  }
+}
+
+/** Names missing AI-run evidence. `explorations` records turns that never opened an engine so the run does not invent an empty state dump. */
+export function assessCapture(
+  runDir: string,
+  tracePath: string | undefined,
+  exportStatus: string,
+  turnCount: number,
+): { gaps: string[]; explorations: Array<{ turn: number; opened: boolean }> } {
+  const gaps: string[] = [];
+  const explorations: Array<{ turn: number; opened: boolean }> = [];
+  if (!tracePath || !existsSync(tracePath) || statSync(tracePath).size === 0) gaps.push('NDJSON trace is missing.');
+  else {
+    const first = readFileSync(tracePath, 'utf8').split('\n').find(line => line.trim());
+    let verbose = false;
+    try {
+      const record = JSON.parse(first ?? '') as { type?: string; verbose?: boolean };
+      verbose = record.type === 'trace-open' && record.verbose === true;
+    } catch {
+      verbose = false;
+    }
+    if (!verbose) gaps.push('Opening trace record is not verbose.');
+  }
+  const hostLog = join(runDir, 'host.log');
+  if (!existsSync(hostLog) || statSync(hostLog).size === 0) gaps.push('Debug log is missing.');
+  if (exportStatus !== 'ok') gaps.push(`Trace export is ${exportStatus}.`);
+  const listed = existsSync(runDir)
+    ? readdirSync(runDir, { withFileTypes: true }).filter(entry => entry.isDirectory() && /^turn-\d+$/.test(entry.name)).length
+    : 0;
+  for (let turn = 1; turn <= Math.max(turnCount, listed); turn++) {
+    const turnDir = join(runDir, `turn-${turn}`);
+    const opened = turnOpenedExploration(turnDir);
+    explorations.push({ turn, opened });
+    if (opened && !existsSync(join(turnDir, 'sm-state.json'))) gaps.push(`Turn ${turn} opened an exploration without sm-state.json.`);
+  }
+  return { gaps, explorations };
+}
+
+/** Writes the baseline comparison for directories the operator already captured. Unset directories record that no comparison ran. */
+function recordBaselineScore(runDir: string, result: Record<string, unknown>, logger: { error(message: string): void }): void {
+  const previous = process.env.AI_TEST_PREVIOUS_RUN?.trim();
+  const mainBaseline = process.env.AI_TEST_MAIN_RUN?.trim();
+  const summaryPath = join(runDir, 'baseline-score.json');
+  if (!previous && !mainBaseline) {
+    writeFileSync(summaryPath, `${JSON.stringify({ compared: false, reason: 'AI_TEST_PREVIOUS_RUN and AI_TEST_MAIN_RUN are unset' }, null, 2)}\n`);
+    return;
+  }
+  const outDir = join(runDir, 'baseline-score');
+  const args = [repoPath('tests', 'tools', 'lineage-score.mjs'), runDir, '--out', outDir];
+  if (previous) args.push('--previous', previous);
+  if (mainBaseline) args.push('--main', mainBaseline);
+  const score = spawnSync(process.execPath, args, {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    encoding: 'utf8',
+    shell: false,
+  });
+  const operational = score.status === 1;
+  if (score.status !== 0 && result.runtime === 'ok') result.runtime = 'error';
+  if (score.status !== 0) logger.error(operational ? 'Operational trace defect against a stored baseline.' : 'Baseline score did not complete.');
+  const reportPath = join(outDir, 'score.json');
+  let regressionCount: number | null = null;
+  if (existsSync(reportPath)) {
+    try {
+      const report = JSON.parse(readFileSync(reportPath, 'utf8')) as { regressions?: unknown[] };
+      regressionCount = report.regressions?.length ?? null;
+    } catch {
+      regressionCount = null;
+    }
+  }
+  writeFileSync(summaryPath, `${JSON.stringify({
+    compared: existsSync(reportPath),
+    report: 'baseline-score/score.json',
+    operationalDefects: operational,
+    regressionCount,
+    exitCode: score.status,
+  }, null, 2)}\n`);
+}
+
 /** Parses bounded runner options; rejects unknown flags before any service call. */
 export function parseOptions(kind: string, args: readonly string[]) {
   let dacpac = repoPath('assets', 'demo.dacpac');
@@ -111,9 +208,9 @@ export function parseOptions(kind: string, args: readonly string[]) {
   let dacpacFromCli = false;
   let timeoutMs: number | string = kind === 'ai' ? process.env.AI_TEST_TIMEOUT_MS?.trim() || DEFAULT_AI_TIMEOUT_MS : DEFAULT_DB_TIMEOUT_MS;
   let requestTimeoutMs: string | undefined = kind === 'ai' ? process.env.AI_TEST_REQUEST_TIMEOUT_MS?.trim() || undefined : undefined;
-  let langfuse = false;
-  let verbose = false;
-  let attach = false;
+  let langfuse = kind === 'ai';
+  let verbose = kind === 'ai';
+  let attach = kind === 'ai';
   let effort: ThinkingLevel | undefined;
   const followups: string[] = [];
   const tags: string[] = [];
@@ -294,8 +391,8 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       }
     }
 
-    langfuse = options.langfuse ? resolveLangfuseConfig(process.env) : null;
-    if (options.langfuse && !langfuse) throw new Error('Set all LANGFUSE_* connection variables for --langfuse.');
+    langfuse = kind === 'ai' ? resolveLangfuseConfig(process.env) : null;
+    if (kind === 'ai' && !langfuse) throw new Error('Set all LANGFUSE_* connection variables before an AI run.');
     if (langfuse) {
       const url = new URL(langfuse.baseUrl);
       if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('LANGFUSE_BASE_URL must use HTTP(S) without embedded credentials.');
@@ -440,22 +537,30 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
       result.runtime = aiRunStatus(turns);
       result.failedChecks = turns.reduce((total, turn) => total + turn.failedChecks.length, 0);
       await traceWriter.close();
-      if (langfuse) {
+      if (langfuse && tracePath) {
         const exportController = new AbortController();
-        const exportTimeout = setTimeout(() => exportController.abort(), 30_000);
+        const redact = process.env.AI_TEST_API_KEY ? [process.env.AI_TEST_API_KEY] : [];
+        const attachments = collectAttachments(runDir, tracePath, turns.length, redact);
+        const attachmentCount = (attachments.run?.length ?? 0) + (attachments.turns ?? []).reduce((total, turn) => total + turn.length, 0);
+        const exportTimeout = setTimeout(() => exportController.abort(), exportBudgetMs(attachmentCount));
         try {
-          const exported = await exportRunToLangfuse(parseTrace(readFileSync(tracePath, 'utf8')), {
-            ...langfuse,
-            runMetadata: { lane: provider!.provider, promptId: options.label, sessionId: options.session, tags: options.tags },
-            attachments: options.attach ? collectAttachments(runDir, tracePath, turns.length, [process.env.AI_TEST_API_KEY!]) : undefined,
-            fetchImpl: (url, init) => fetch(url, { ...init, signal: exportController.signal }),
-          });
-          result.export = exported.errors.length ? 'error' : 'ok';
-          writeFileSync(join(runDir, 'langfuse.json'), JSON.stringify(exported, null, 2) + '\n');
-          result.exportedSpans = exported.exported;
-          result.traceIds = exported.traceIds;
-        } catch { result.export = 'error'; } finally { clearTimeout(exportTimeout); }
-      }
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const exported = await exportRunToLangfuse(parseTrace(readFileSync(tracePath, 'utf8')), {
+                ...langfuse,
+                runMetadata: { lane: provider!.provider, promptId: options.label, sessionId: options.session, tags: options.tags },
+                attachments,
+                fetchImpl: (url, init) => fetch(url, { ...init, signal: exportController.signal }),
+              });
+              result.export = exported.errors.length ? 'error' : 'ok';
+              writeFileSync(join(runDir, 'langfuse.json'), JSON.stringify(exported, null, 2) + '\n');
+              result.exportedSpans = exported.exported;
+              result.traceIds = exported.traceIds;
+              if (!exported.errors.length) break;
+            } catch { result.export = 'error'; }
+          }
+        } finally { clearTimeout(exportTimeout); }
+      } else result.export = 'error';
     }
   } catch (error) {
     const diagnostic = sanitizeProviderErrorDiagnostic(error, kind);
@@ -482,6 +587,17 @@ export async function main(kind: 'ai' | 'db', args: readonly string[]): Promise<
         result.runtime = 'error';
         logger.error('Deterministic case metrics could not be persisted.');
       }
+    }
+    if (kind === 'ai' && result.runtime !== 'cancelled') {
+      const recordedTurns = Array.isArray(result.turns) ? result.turns.length : 0;
+      const assessment = assessCapture(runDir, tracePath, String(result.export ?? 'disabled'), recordedTurns);
+      result.explorations = assessment.explorations;
+      if (assessment.gaps.length) {
+        result.captureGaps = assessment.gaps;
+        if (result.runtime === 'ok') result.runtime = 'error';
+        for (const gap of assessment.gaps) logger.error(gap);
+      }
+      recordBaselineScore(runDir, result, logger);
     }
     setShimLogSink(() => {});
     result.durationMs = Date.now() - started;

@@ -38,6 +38,14 @@ Package with `npm run package` and inspect the VSIX before install. Data boundar
 - When you change behavior that a markdown file describes, update that file so it stays true.
 - Leave credentials, customer database content, raw conversations, and generated run output out of tracked files.
 
+## Run evidence
+
+The headless test runner can export a run. The installed extension does not upload. `tests/harness/langfuseExport.ts` holds the Langfuse Cloud free-plan limits and spaces export calls.
+
+`tests/tools/lineage-score.mjs` compares hard facts of runs that already exist: token totals, duration, rejection counts, rejection escalation, preview character count, SQL-fence and formula counts, chat-window character count, visit order, column-edge pairs, and counts of `lineage_prune_current` and supplemented `lineage_start_exploration` calls. A difference is an alarm to check the run in detail. It does not by itself mean the candidate regressed, and a match does not mean the text is right. The new text can still be thin or wrong, an older run can be the side that disagrees with the SQL, and an instruction change can make the new numbers expected. Fence and formula counts do not decide whether a formula or a SQL fragment is right. The fact-checked golden answer and the per-question journal stay out of tracked files.
+
+Every AI run used for verification must have the verbose NDJSON, `host.log`, `sm-state.json` when an exploration opened, and a Langfuse export.
+
 ## Which file to read
 
 - TypeScript or layering: [`.agents/rules/typescript.md`](.agents/rules/typescript.md)

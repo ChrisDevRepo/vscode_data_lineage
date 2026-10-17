@@ -524,6 +524,30 @@ export function compareRuns(runs) {
   return rows.sort((a, b) => a.focus.localeCompare(b.focus));
 }
 
+/** Character length of the canonical preview, falling back to streamed answer text when that preview is absent. */
+export function previewCharCount(runDir) {
+  if (!existsSync(runDir)) return null;
+  let chars = null;
+  for (const entry of readdirSync(runDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('turn-')) continue;
+    const turnDir = join(runDir, entry.name);
+    const reportPath = join(turnDir, 'present-result.json');
+    let length = null;
+    if (existsSync(reportPath)) {
+      try {
+        const description = JSON.parse(readFileSync(reportPath, 'utf8'))?.aiMetadata?.description;
+        if (typeof description === 'string') length = description.length;
+      } catch { length = null; }
+    }
+    if (length === null) {
+      const answerPath = join(turnDir, 'answer.md');
+      if (existsSync(answerPath)) length = readFileSync(answerPath, 'utf8').length;
+    }
+    if (length !== null) chars = (chars ?? 0) + length;
+  }
+  return chars;
+}
+
 /** Finds the most recent NDJSON traces in the test-results/headless directory. */
 export function findLatestTraces(dir = 'test-results/headless', count = 2) {
   const traces = [];
@@ -673,12 +697,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
         const runJson = JSON.parse(readFileSync(runJsonPath, 'utf8'));
         durationMs = runJson.durationMs;
       }
-      for (const entry of readdirSync(runDir, { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name.startsWith('turn-')) {
-          const ansPath = join(runDir, entry.name, 'answer.md');
-          if (existsSync(ansPath)) chars = (chars ?? 0) + readFileSync(ansPath, 'utf8').length;
-        }
-      }
+      chars = previewCharCount(runDir);
     } catch {}
 
     return {

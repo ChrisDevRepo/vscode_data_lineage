@@ -165,7 +165,7 @@ For AI changes, also check answers against the loaded SQL and graph.
 
 **Data Lineage: Enable AI Trace Logging for This Session** writes NDJSON under the workspace `tmp/lm-trace/` until the extension host restarts; it needs an open workspace folder. Trace files contain schema, table and column names, prompts, responses, tool payloads and SQL: never commit them and review them before sharing. To analyse one, see [`.agents/skills/trace-debug/SKILL.md`](../.agents/skills/trace-debug/SKILL.md).
 
-For span-level debugging, the headless test runner can export a run to Langfuse: set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (see [`.env.example`](../.env.example)) and run `npm run test:ai:headless -- --langfuse`. The extension in VS Code does not export to Langfuse.
+The headless test runner exports every AI run to Langfuse. Set `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (see [`.env.example`](../.env.example)) before `npm run test:ai:headless`. The export includes the verbose NDJSON trace, the runner debug log, and `sm-state.json` when an exploration opened. The extension in VS Code does not export to Langfuse. Interactive commands stay separate: Enable AI Trace Logging writes local NDJSON, and Dump AI State Machine writes `tmp/sm-dumps/`.
 
 **Data Lineage: Dump AI State Machine** writes the current exploration state to `tmp/sm-dumps/`. It needs an open workspace and an active hop-by-hop exploration.
 

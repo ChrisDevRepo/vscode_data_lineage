@@ -2,15 +2,17 @@
 import { z } from 'zod';
 import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { aiRuns, aiRunStatus, nextAiRunStep, databaseConfig, parseOptions, main, turnChecks } from '../../harness/cli';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { aiRuns, aiRunStatus, assessCapture, nextAiRunStep, databaseConfig, parseOptions, main, turnChecks } from '../../harness/cli';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
 import { loadParseRules, rootPath } from '../helpers/testUtils';
 
 const { loadCases } = createRequire(import.meta.url)('../../cases/loadCases.cjs') as {
   loadCases: (runner?: string) => Array<{ id: string; prompt?: string; dacpac?: string; expect?: { terminal?: string; must_contain?: string[] } }>;
 };
-import { exportRunToLangfuse } from '../../harness/langfuseExport';
+import { createLimitPacer, exportBudgetMs, exportRunToLangfuse, limitIntervalMs, LANGFUSE_FREE_PLAN } from '../../harness/langfuseExport';
 import { parseTrace } from '../../harness/traceModel';
 import { redactSecret, verboseContent } from '../../harness/exportShared';
 import { OpenAiCompatiblePort } from '../../harness/openAiCompatiblePort';
@@ -58,12 +60,14 @@ describe('operator runner configuration', () => {
 
   it('accepts a prompt and ordered follow-ups', () => {
     expect(parseOptions('ai', ['--prompt', 'Inspect dependencies', '--followup', 'First', '--followup', 'Second', '--timeout-ms', '1000']))
-      .toMatchObject({ prompt: 'Inspect dependencies', followups: ['First', 'Second'], timeoutMs: 1000, langfuse: false, verbose: false });
+      .toMatchObject({ prompt: 'Inspect dependencies', followups: ['First', 'Second'], timeoutMs: 1000, langfuse: true, verbose: true, attach: true });
   });
 
   it('defaults the AI deadline to two hours and the database deadline to five', () => {
     expect(parseOptions('ai', []).timeoutMs).toBe(7_200_000);
-    expect(parseOptions('db', []).timeoutMs).toBe(300_000);
+    expect(parseOptions('ai', [])).toMatchObject({ langfuse: true, verbose: true, attach: true });
+    expect(parseOptions('ai', ['--langfuse', '--trace-verbose', '--attach'])).toMatchObject({ langfuse: true, verbose: true, attach: true });
+    expect(parseOptions('db', [])).toMatchObject({ langfuse: false, verbose: false, attach: false, timeoutMs: 300_000 });
   });
 
   it('defaults request deadlines to the run deadline and accepts an independent AI request bound', () => {
@@ -203,6 +207,55 @@ describe('operator runner configuration', () => {
     expect(() => parseOptions('db', ['--langfuse'])).toThrow();
   });
 
+  it('stops an AI run before the model when Langfuse settings are missing', async () => {
+    vi.stubEnv('AI_TEST_PROVIDER', 'openai-compatible');
+    vi.stubEnv('AI_TEST_MODEL', 'synthetic-model');
+    vi.stubEnv('AI_TEST_API_KEY', 'synthetic-key');
+    vi.stubEnv('AI_TEST_ENDPOINT', 'https://provider.example/v1');
+    vi.stubEnv('LANGFUSE_BASE_URL', '');
+    vi.stubEnv('LANGFUSE_PUBLIC_KEY', '');
+    vi.stubEnv('LANGFUSE_SECRET_KEY', '');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await main('ai', ['--prompt', 'test'])).toBe(4);
+      expect(error.mock.calls[0]?.[0]).toContain('Set all LANGFUSE_* connection variables before an AI run.');
+    } finally {
+      error.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('requires the verbose trace, debug log, and state dump only after an exploration opens', () => {
+    const runDir = mkdtempSync(join(tmpdir(), 'dlv-capture-'));
+    try {
+      writeFileSync(join(runDir, 'host.log'), '2026-10-17 info [headless] ready\n');
+      writeFileSync(join(runDir, 'trace.ndjson'), '{"type":"trace-open","origin":"headless-harness","verbose":true}\n');
+      const discovery = join(runDir, 'turn-1');
+      const explored = join(runDir, 'turn-2');
+      mkdirSync(discovery);
+      mkdirSync(explored);
+      writeFileSync(join(discovery, 'hop-log.json'), '[{"tool":"lineage_search_objects"}]\n');
+      writeFileSync(join(explored, 'present-result.json'), '{}\n');
+      writeFileSync(join(explored, 'sm-state.json'), '{"visited":[]}\n');
+      expect(assessCapture(runDir, join(runDir, 'trace.ndjson'), 'ok', 2).gaps).toEqual([]);
+      writeFileSync(join(runDir, 'trace.ndjson'), '{"type":"trace-open","verbose":false}\n');
+      rmSync(join(explored, 'sm-state.json'));
+      writeFileSync(join(runDir, 'host.log'), '');
+      expect(assessCapture(runDir, join(runDir, 'trace.ndjson'), 'disabled', 2).gaps).toEqual([
+        'Opening trace record is not verbose.',
+        'Debug log is missing.',
+        'Trace export is disabled.',
+        'Turn 2 opened an exploration without sm-state.json.',
+      ]);
+      expect(assessCapture(runDir, join(runDir, 'trace.ndjson'), 'ok', 2).explorations).toEqual([
+        { turn: 1, opened: false },
+        { turn: 2, opened: true },
+      ]);
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+
   it('requires database settings and does not put the password on the connection object', () => {
     expect(() => databaseConfig({})).toThrow('DB_TEST_SERVER');
     const env = {
@@ -329,6 +382,29 @@ describe('operator secret boundary', () => {
   });
 });
 
+
+describe('Langfuse free plan limits', () => {
+  it('spaces requests at the published free-plan rates', async () => {
+    expect(LANGFUSE_FREE_PLAN.unitsPerMonth).toBe(50_000);
+    expect(LANGFUSE_FREE_PLAN.overage).toBe(false);
+    expect(LANGFUSE_FREE_PLAN.dataAccessDays).toBe(30);
+    expect(LANGFUSE_FREE_PLAN.users).toBe(2);
+    expect(LANGFUSE_FREE_PLAN.ingestionRequestsPerMinute).toBe(1_000);
+    expect(LANGFUSE_FREE_PLAN.generalApiRequestsPerMinute).toBe(30);
+    expect(LANGFUSE_FREE_PLAN.traceDeletionRequestsPerDay).toBe(50);
+    expect(LANGFUSE_FREE_PLAN.projectRetention).toBe(false);
+    expect(LANGFUSE_FREE_PLAN.retainDays).toBe(7);
+    expect(limitIntervalMs(30)).toBe(2_000);
+    expect(exportBudgetMs(1)).toBe(2 * limitIntervalMs(30) + limitIntervalMs(1_000) + 15_000);
+    expect(LANGFUSE_FREE_PLAN.retiredReadPaths).toContain('GET /api/public/traces/{traceId}');
+    let now = 0;
+    const waits: number[] = [];
+    const pace = createLimitPacer(() => now, async (ms) => { waits.push(ms); now += ms; });
+    await pace('general');
+    await pace('general');
+    expect(waits).toEqual([2_000]);
+  });
+});
 
 describe('explicit attachment export boundary', () => {
   const run = parseTrace([

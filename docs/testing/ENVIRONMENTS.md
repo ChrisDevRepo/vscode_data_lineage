@@ -8,7 +8,7 @@ What a machine needs for each test tier, and how to report one it cannot run. Co
 | VS Code Electron | `npm run test:edh`, `npm run test:gui:host` with `npm run test:gui:smoke`, chat-UI fixture lane | A graphical display, or `xvfb-run -a` on headless Linux. |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live` / `badge` / `column` | `AI_TEST_*` settings and access to the configured hosted or local model endpoint. |
 | Database smoke | `npm run test:db:smoke` | `DB_TEST_*` credentials against disposable SQL Server/Azure SQL (`sqlLogin`, or Microsoft Entra ID `entraId` with an access token or explicitly configured noninteractive test login). |
-| Trace export | `npm run test:ai:headless -- --langfuse` | `LANGFUSE_*` settings and access to that endpoint; exported data can contain SQL and model/tool content. |
+| AI trace capture | `npm run test:ai:headless` | `LANGFUSE_*` settings and access to that endpoint. Every AI run exports its verbose NDJSON, debug log, and state dump. Exported data can contain SQL and model/tool content. |
 
 Settings come from the process environment or an untracked local environment file copied from [`.env.example`](../../.env.example). A non-empty process value wins. Use that file rather than putting credentials in command arguments. Keep the external test profile's provider, model, and reasoning effort. That profile is separate from the coding agent reviewing the repository.
 

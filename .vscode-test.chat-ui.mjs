@@ -34,7 +34,7 @@ export default defineConfig({
   extensionDevelopmentPath: [root, `${root}/tests/fixtures/lm-provider-extension`],
   launchArgs: [root, `--user-data-dir=${profile}`, '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust',
     '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${cdpPort}`],
-  env: { DLV_CHAT_UI_FIXTURE: real ? undefined : '1', DLV_CHAT_UI_REAL: real ? '1' : undefined,
+  env: { DLV_CHAT_UI_PROFILE: profile, DLV_CHAT_UI_FIXTURE: real ? undefined : '1', DLV_CHAT_UI_REAL: real ? '1' : undefined,
     AI_TEST_PROVIDER: process.env.AI_TEST_PROVIDER,
     AI_TEST_MODEL: process.env.AI_TEST_MODEL,
     AI_TEST_REAL_PROVIDER: real ? '1' : undefined, AI_TEST_REASONING_EFFORT: real ? 'low' : undefined,

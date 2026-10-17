@@ -67,6 +67,73 @@ const mediaResponseSchema = z.object({
 });
 /** Larger evidence files are skipped, not truncated: a partial trace would mislead. */
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+/** Extra time for transfer after the free-plan spacing. The signed upload itself is not a Langfuse API call. */
+const EXPORT_NETWORK_SLACK_MS = 15_000;
+const RETRY_CAP_MS = 60_000;
+
+/** Langfuse Cloud free-plan limits, checked against the public pricing, API-limit, and data-retention pages on 2026-10-17.
+ *  Each bucket is organization-wide and shared by every project and key. A 429 means the bucket is already spent.
+ *  Data access of 30 days hides older data. It does not delete it. Project retention, which deletes on a schedule, is not on this plan.
+ *  Observations API v2 shares the general API bucket and is the trace read. A signed media upload URL is object storage, not one of these calls.
+ *  retiredReadPaths are the old GET routes. This exporter does not call them.
+ */
+export const LANGFUSE_FREE_PLAN = {
+  plan: 'free',
+  unitsPerMonth: 50_000,
+  overage: false,
+  dataAccessDays: 30,
+  users: 2,
+  ingestionRequestsPerMinute: 1_000,
+  traceDeletionRequestsPerDay: 50,
+  traceDeletionBatchSize: 1_000,
+  generalApiRequestsPerMinute: 30,
+  metricsV2RequestsPerDay: 100,
+  datasetsRequestsPerMinute: 100,
+  retainDays: 7,
+  observationsReadWindowDays: 30,
+  projectRetention: false,
+  retiredReadPaths: [
+    'GET /api/public/traces',
+    'GET /api/public/traces/{traceId}',
+    'GET /api/public/observations',
+    'GET /api/public/observations/{observationId}',
+    'GET /api/public/sessions',
+    'GET /api/public/sessions/{sessionId}',
+  ],
+} as const;
+
+export type LimitBucket = 'ingestion' | 'general';
+
+/** Serial spacing that stays inside a per-minute free-plan bucket when this process is the only caller. */
+export function limitIntervalMs(requestsPerMinute: number): number {
+  return Math.ceil(60_000 / requestsPerMinute);
+}
+
+const limitRate = (bucket: LimitBucket): number => LANGFUSE_FREE_PLAN[
+  bucket === 'ingestion' ? 'ingestionRequestsPerMinute' : 'generalApiRequestsPerMinute'
+];
+
+/** Waits until the next call in `bucket` is inside the free-plan rate. The first call in a bucket does not wait. */
+export function createLimitPacer(
+  now: () => number = Date.now,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise(resolve => { setTimeout(resolve, ms); }),
+): (bucket: LimitBucket) => Promise<void> {
+  const nextAt: Partial<Record<LimitBucket, number>> = {};
+  return async (bucket) => {
+    const gap = limitIntervalMs(limitRate(bucket));
+    const ready = nextAt[bucket] ?? 0;
+    if (now() < ready) await wait(ready - now());
+    nextAt[bucket] = Math.max(now(), ready) + gap;
+  };
+}
+
+/** Deadline for one export: two general-API calls per attachment, one ingestion call, then transfer slack. */
+export function exportBudgetMs(attachmentCount: number): number {
+  const generalCalls = Math.max(0, attachmentCount) * 2;
+  return generalCalls * limitIntervalMs(LANGFUSE_FREE_PLAN.generalApiRequestsPerMinute)
+    + limitIntervalMs(LANGFUSE_FREE_PLAN.ingestionRequestsPerMinute)
+    + EXPORT_NETWORK_SLACK_MS;
+}
 const INGESTION_VERSION = '4';
 const INSTRUMENTATION_SCOPE = 'data-lineage-viz-harness';
 const UUID_HEX = /^[0-9a-f]{32}$/;
@@ -129,13 +196,14 @@ export async function exportRunToLangfuse(
   config: LangfuseConfig,
 ): Promise<LangfuseExportResult> {
   const fetchImpl = config.fetchImpl ?? fetch;
+  const pace = createLimitPacer();
   const attachmentErrors: string[] = [];
   const attachmentTokens = new Map<string, Record<string, string>>();
   if (config.attachments) {
     const turnTraceIds = joinTurns(run).map(turnTraceId);
     for (const [index, traceId] of turnTraceIds.entries()) {
       const files = [...(config.attachments.run ?? []), ...(config.attachments.turns?.[index] ?? [])];
-      const { tokens, errors } = await uploadAttachments(config, fetchImpl, traceId, files);
+      const { tokens, errors } = await uploadAttachments(config, fetchImpl, pace, traceId, files);
       if (Object.keys(tokens).length) attachmentTokens.set(traceId, tokens);
       attachmentErrors.push(...errors);
     }
@@ -155,7 +223,7 @@ export async function exportRunToLangfuse(
 
   let response: Response;
   try {
-    response = await fetchImpl(url, {
+    response = await pacedFetch(pace, 'ingestion', fetchImpl, url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -419,9 +487,26 @@ function turnTraceId(turn: JoinedTurn): string {
 }
 
 /** Uploads evidence files through the media API and returns the reference token for each. */
+async function pacedFetch(
+  pace: (bucket: LimitBucket) => Promise<void>,
+  bucket: LimitBucket,
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  await pace(bucket);
+  const response = await fetchImpl(url, init);
+  if (response.status !== 429) return response;
+  const header = Number(response.headers.get('retry-after'));
+  const waitMs = Number.isFinite(header) && header >= 0 ? Math.min(header * 1000, RETRY_CAP_MS) : limitIntervalMs(limitRate(bucket));
+  await new Promise(resolve => { setTimeout(resolve, waitMs); });
+  return fetchImpl(url, init);
+}
+
 async function uploadAttachments(
   config: LangfuseConfig,
   fetchImpl: typeof fetch,
+  pace: (bucket: LimitBucket) => Promise<void>,
   traceId: string,
   files: readonly LangfuseAttachment[],
 ): Promise<{ tokens: Record<string, string>; errors: string[] }> {
@@ -441,7 +526,7 @@ async function uploadAttachments(
         continue;
       }
       const sha256 = createHash('sha256').update(bytes).digest('base64');
-      const created = await fetchImpl(`${base}${MEDIA_PATH}`, {
+      const created = await pacedFetch(pace, 'general', fetchImpl, `${base}${MEDIA_PATH}`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ traceId, field: 'metadata', contentType: file.contentType, contentLength: bytes.length, sha256Hash: sha256 }),
@@ -463,7 +548,7 @@ async function uploadAttachments(
           headers: { 'content-type': file.contentType, 'x-amz-checksum-sha256': sha256 },
           body: bytes,
         });
-        const confirmed = await fetchImpl(`${base}${MEDIA_PATH}/${mediaId}`, {
+        const confirmed = await pacedFetch(pace, 'general', fetchImpl, `${base}${MEDIA_PATH}/${mediaId}`, {
           method: 'PATCH',
           headers,
           body: JSON.stringify({ uploadedAt: new Date().toISOString(), uploadHttpStatus: uploaded.status, uploadTimeMs: Date.now() - started }),

@@ -2,7 +2,7 @@
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -52,6 +52,29 @@ suite('Native chat confirmations — actual UI', () => {
   const planPhase = fixtureTrace.expect.phase;
   const originalQuestion = 'Trace all dependencies upstream from  [ai].[spImportOrders]  all level up and one level down';
   const artifactDir = `tmp/chat-ui/${real ? 'live' : 'fixture'}`;
+  const copyHostLog = () => {
+    const profile = process.env.DLV_CHAT_UI_PROFILE;
+    if (!profile) return;
+    const logs = join(profile, 'logs');
+    if (!existsSync(logs)) return;
+    const matches: { path: string; mtime: number }[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.isFile() && entry.name.includes('Data Lineage Viz')) matches.push({ path: full, mtime: statSync(full).mtimeMs });
+      }
+    };
+    try {
+      walk(logs);
+      const newest = matches.sort((left, right) => right.mtime - left.mtime)[0];
+      if (!newest) return;
+      mkdirSync(artifactDir, { recursive: true });
+      copyFileSync(newest.path, join(artifactDir, 'host.log'));
+    } catch {
+      // A fixture run still passes when the host names its channel log differently.
+    }
+  };
   let metricsRoot: string;
   let tracePath: string | undefined;
   let traceOffset = 0;
@@ -125,6 +148,7 @@ suite('Native chat confirmations — actual UI', () => {
     mkdirSync(artifactDir,{recursive:true});
     writeFileSync(`${artifactDir}/${name}.txt`,await page.locator('.interactive-session').last().innerText());
     await page.screenshot({path:`${artifactDir}/${name}.png`});
+    copyHostLog();
   };
   const captureCompletedResult = (name:string) => {
     const machine = exports.getSession().stateMachine;
@@ -132,6 +156,7 @@ suite('Native chat confirmations — actual UI', () => {
     mkdirSync(artifactDir,{recursive:true});
     writeFileSync(`${artifactDir}/${name}-sm-state.json`,JSON.stringify(machine.toJSON(),null,2));
     writeFileSync(`${artifactDir}/${name}-result.json`,JSON.stringify(machine.getResult(),null,2));
+    copyHostLog();
   };
   const newChat = async () => {
     firstErrorIndex=fixture.uiErrors.length;
@@ -342,6 +367,7 @@ suite('Native chat confirmations — actual UI', () => {
       await page.screenshot({path:`${artifactDir}/workbench.png`});
     }
     writeFileSync(`${artifactDir}/requests.json`,JSON.stringify(fixture?.uiRequests ?? [],null,2));
+    copyHostLog();
     await browser?.close();
   });
 
