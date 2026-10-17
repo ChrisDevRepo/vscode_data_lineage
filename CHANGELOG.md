@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Repeated tool-call IDs fail before execution through a shared native/headless transport guard.
 
 ### Changed
+- Column-trace hops record every valid neighbor-and-column mapping. Extra mappings on the same hop stay; attachment to the requested columns selects what the next hop continues.
 - Indexed report repairs share field detection, schemas and merging, with shorter correction instructions.
 
 ## [1.2.6] - 2026-10-08
