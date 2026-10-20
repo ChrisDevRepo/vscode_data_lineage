@@ -1,23 +1,8 @@
-/**
- * Helpers for the REST OTLP trace exporter (`langfuseExport.ts`).
- *
- * @remarks
- * Single home for the verbose-content gating rule and error redaction. Plain data shaping only —
- * no vendor SDK, no network I/O, per the sanctioned plain-HTTP exporter policy in CLAUDE.md.
- */
+/** Helpers for the REST OTLP trace exporter (`langfuseExport.ts`). */
 
 import type { GenerationEntry, ParsedRun } from './traceModel';
 
-/**
- * Message content for one generation, present only while the trace ran verbose.
- *
- * @remarks
- * `system` on the matching `wire-request` is the verbose signal (see `wireLog.ts` — it is
- * captured only when `AiTraceWriter.isVerbose()`); the non-verbose default carries `systemHash`
- * alone, which is not prompt content and must never be reported to an observability backend as
- * input. Token usage is not gated by this — a token count is a measurement, not reused prompt
- * content, so callers may attach usage metadata unconditionally.
- */
+/** Message content for one generation, present only while the trace ran verbose. */
 export function verboseContent(run: ParsedRun, generation: GenerationEntry): { input?: unknown; output?: unknown } {
   const request = run.wire.find(
     (entry) => entry.type === 'wire-request'

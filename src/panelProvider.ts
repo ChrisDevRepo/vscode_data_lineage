@@ -2,12 +2,11 @@ import * as vscode from 'vscode';
 import { type AiSession } from './ai/session/session';
 import { Logger, safeStringifyForLog } from './utils/log';
 import { notifyError } from './utils/notifications';
-import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
-import { createBridgeHost, type BridgeHost } from './bridge/host';
-import { summarizeZodError } from './bridge/host';
+import { createBridgeHost, summarizeZodError, type BridgeHost } from './bridge/host';
+import { buildWebviewCsp } from './utils/cspBuilder';
+import { type ProjectStore } from './engine/projectStore';
 import { createMessageHandlers, PROJECT_STORE_KEY, type ReportDocumentRef } from './bridge/messageHandlers';
-import { getConnectionAvailability } from './engine/connectionManager';
 import {
   BRIDGE_PROTOCOL_VERSION,
   MainPanelToExtensionMsgSchema,
@@ -17,6 +16,7 @@ import {
 
 let activePanel: vscode.WebviewPanel | undefined;
 let activeTriggerDemo: (() => Promise<void>) | undefined;
+let activeBeginExternalLoad: (() => vscode.CancellationToken) | undefined;
 /** Outlives every panel: handlers are re-created per panel, the AI report document is one per session. */
 const reportDocumentRef: ReportDocumentRef = {};
 
@@ -25,24 +25,17 @@ export { PROJECT_STORE_KEY };
 /** Retrieves the currently active lineage webview panel, if one exists. */
 export function getActivePanel() { return activePanel; }
 
-/**
- * Orchestrates the creation, restoration, and lifecycle of the primary Data Lineage Webview.
- *
- * This function handles:
- * - Preventing multiple instances of the same panel (revealing the existing one instead).
- * - Initializing the IPC bridge (BridgeHost) for Extension <-> Webview communication.
- * - Injecting the necessary HTML, scripts, and styles into the webview.
- * - Managing panel-scoped state and ensuring cleanup on disposal.
- *
- * @param loadDemo - If true, triggers the "AdventureWorks Demo" load sequence on initialization.
- */
+/** Starts a host-initiated import on the active panel, superseding any load in flight. */
+export function beginActivePanelLoad(): vscode.CancellationToken | undefined { return activeBeginExternalLoad?.(); }
+
+/** Orchestrates the creation, restoration, and lifecycle of the primary Data Lineage Webview. */
 export function openPanel(
   context: vscode.ExtensionContext,
   title: string,
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
-  loadProjectStore: (context: vscode.ExtensionContext) => any,
-  saveProjectStore: (context: vscode.ExtensionContext, store: any) => Promise<void>,
+  loadProjectStore: (context: vscode.ExtensionContext) => ProjectStore,
+  saveProjectStore: (context: vscode.ExtensionContext, store: ProjectStore) => Promise<void>,
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
   loadDemo = false
 ) {
@@ -94,6 +87,7 @@ export function openPanel(
     bridgeLogger.info('Panel disposed');
     activePanel = undefined;
     activeTriggerDemo = undefined;
+    activeBeginExternalLoad = undefined;
     detailPanel?.dispose();
     while (panelDisposables.length > 0) panelDisposables.pop()?.dispose();
 
@@ -108,7 +102,7 @@ export function openPanel(
     void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', false);
   });
 
-  const { handlers, cleanup, triggerDemoLoad } = createMessageHandlers(
+  const { handlers, cleanup, triggerDemoLoad, beginExternalLoad } = createMessageHandlers(
     host,
     context,
     getSession,
@@ -122,19 +116,7 @@ export function openPanel(
   );
 
   activeTriggerDemo = triggerDemoLoad;
-
-  let connectionStatus = getConnectionAvailability();
-  const repostConnectionStatus = (reason: string) => {
-    const status = getConnectionAvailability();
-    if (status.available === connectionStatus.available && status.provider === connectionStatus.provider) return;
-    connectionStatus = status;
-    bridgeLogger.info(`Database connection status changed (${reason}): provider=${status.provider} available=${status.available} — re-posting mssql-status.`);
-    void host.postMessage({ type: 'mssql-status', ...status });
-  };
-  vscode.extensions.onDidChange(() => repostConnectionStatus('extensions changed'), undefined, panelDisposables);
-  vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration('dataLineageViz.database.connectionProvider')) repostConnectionStatus('setting changed');
-  }, undefined, panelDisposables);
+  activeBeginExternalLoad = beginExternalLoad;
 
   panel.onDidDispose(() => {
     cleanup().catch(err => bridgeLogger.warn(`Cleanup failed — next session may reuse stale state: ${err}`));
@@ -172,12 +154,7 @@ export function openPanel(
   }, undefined, panelDisposables);
 }
 
-/**
- * Asks whether the open lineage view, which holds a loaded graph, may be closed so the wizard can
- * start. Only one lineage panel exists at a time, so starting the wizard means replacing it.
- *
- * @returns `true` when the user confirms the replacement.
- */
+/** Asks whether the open lineage view, which holds a loaded graph, may be closed so the wizard can start. Only one lineage panel exists at a time, so starting the wizard means replacing it. */
 async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
   const closeAndOpen = 'Close and Open Wizard';
   const choice = await vscode.window.showWarningMessage(
@@ -194,15 +171,11 @@ async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
   return true;
 }
 
-import { buildWebviewCsp } from './utils/cspBuilder';
-
-/**
- * Generates the root HTML for the lineage webview.
- */
+/** Generates the root HTML for the lineage webview. */
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo: boolean): string {
-  const stylesUri = getUri(webview, extensionUri, ["dist", "assets", "index.css"]);
-  const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);
-  const logoUri = getUri(webview, extensionUri, ["images", "logo.png"]);
+  const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
+  const logoUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "images", "logo.png"));
   const nonce = getNonce();
   const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
 

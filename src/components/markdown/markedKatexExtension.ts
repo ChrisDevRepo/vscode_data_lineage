@@ -20,15 +20,7 @@ import type {
   TokenizerAndRendererExtension,
 } from 'marked';
 
-/**
- * Matches inline math delimited by one or two dollars.
- *
- * @remarks
- * Non-standard, but ensures the opening `$` is not preceded and the closing `$` is not followed
- * by a word/number character, and the opening `$` is not followed by `.`, `("`, or `('`. That is
- * what keeps prose amounts such as `$20,000 and $30,000` from parsing as math while a genuine
- * `$\rightarrow$` still does.
- */
+/** Matches inline math delimited by one or two dollars. */
 const mathInlineRegExp =
   /(?<![a-zA-Z0-9])(?<dollars>\${1,2})(?!\.|\(["'])((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\k<dollars>(?![a-zA-Z0-9])/;
 
@@ -138,13 +130,7 @@ function blockKatex(renderer: RendererExtensionFunction): TokenizerAndRendererEx
   };
 }
 
-/**
- * Builds the `marked` extension that renders `$…$` and `$$…$$` math through KaTeX.
- *
- * @param katexInstance - The KaTeX module used to render each expression.
- * @param options - KaTeX options applied to every expression.
- * @returns The extension to pass to `marked.use()`.
- */
+/** Builds the `marked` extension that renders `$…$` and `$$…$$` math through KaTeX. */
 export function markedKatexExtension(
   katexInstance: typeof katex,
   options: MarkedKatexOptions = {},

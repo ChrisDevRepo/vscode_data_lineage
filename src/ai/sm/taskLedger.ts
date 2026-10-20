@@ -1,22 +1,18 @@
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import type { InvestigationTask, PendingLead, ScalarReturnTarget } from './smTypes';
 
-/**
- * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state.
- *
- * @remarks
- * The `kind` arm decides whether traced columns ride along: a column-lineage task always names at
- * least one, a root or analytical task never does.
- */
+/** What a caller supplies to open a ledger task; the ledger assigns the id and the closed state. */
 export type InvestigationTaskInput = {
   /** Who raised the task — the user's question, the engine, or the model. */
   source: InvestigationTask['source'];
-  /** The question this task exists to answer, compared by normalized identity. */
+  /** The question this task exists to answer, compared verbatim so SQL literals stay distinct. */
   question: string;
   /** Object the task is pinned to, when it concerns one node rather than the walk. */
   nodeId?: string;
   /** Task this one was split from, so a resolved child rolls up to its parent. */
   parentTaskId?: string;
+  /** Engine-owned storage object traversed before this task; retained in task identity. */
+  passthroughFromNodeId?: string;
   traversalSide?: InvestigationTask['traversalSide'];
   /** Initial status; defaults to pending. */
   status?: InvestigationTask['status'];
@@ -32,11 +28,6 @@ export type InvestigationTaskInput = {
   | { kind: 'column_lineage'; activeColumns: [string, ...string[]]; returnTargets?: ScalarReturnTarget[]; sourceRefs?: ScalarReturnTarget[] }
 );
 
-/** Normalizes authored questions for exact identity comparison without substring matching. */
-function normalizeText(value: string): string {
-  return value.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
 function leadIdentity(input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId' | 'reason'>, caseSensitive = false): string {
   return JSON.stringify([input.taskId, schemaKey(input.nodeId, caseSensitive), schemaKey(input.fromNodeId, caseSensitive), input.reason]);
 }
@@ -50,13 +41,7 @@ function stableId(prefix: 'task' | 'lead', identity: string): string {
   return `${prefix}_${(hash >>> 0).toString(36)}`;
 }
 
-/**
- * Engine-owned registry for investigation questions and post-run leads.
- *
- * @remarks
- * Task identity is the exact normalized tuple, not a node-only or substring match. This keeps
- * two different questions about the same node distinct while making retries idempotent.
- */
+/** Engine-owned registry for investigation questions and post-run leads. */
 export class TaskLedger {
   /** Follows the proven source identifier policy; existing callers default to case-insensitive. */
   constructor(private readonly identifierCaseSensitive = false) {}
@@ -89,11 +74,7 @@ export class TaskLedger {
     this.leadIdsByIdentity.clear();
   }
 
-  /**
-   * Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: the id
-   * lookup, `stableId` derivation and collision guard are identical; only the identity-hit and
-   * fresh-insert behavior (`onHit` / `buildRecord`) differs per caller.
-   */
+  /** Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: the id lookup, `stableId` derivation and collision guard are identical; only the identity-hit and fresh-insert behavior (`onHit` / `buildRecord`) differs per caller. */
   private upsertByIdentity<T extends { id: string }>(
     store: Map<string, T>,
     idsByIdentity: Map<string, string>,
@@ -115,10 +96,7 @@ export class TaskLedger {
     return record;
   }
 
-  /**
-   * Creates or returns the task with the same normalized identity tuple.
-   * @param input - Typed task content without its derived ID.
-  */
+  /** Creates or returns the task with the same question and qualified identity tuple. */
   public ensureTask(input: InvestigationTaskInput): InvestigationTask {
     const rawInput = input as { kind: string; activeColumns?: unknown };
     if (rawInput.activeColumns !== undefined && !Array.isArray(rawInput.activeColumns)) {
@@ -135,11 +113,12 @@ export class TaskLedger {
     const identity = JSON.stringify([
       input.kind,
       input.source,
-      normalizeText(input.question),
+      input.question,
       input.nodeId === undefined ? '' : this.identifierKey(input.nodeId),
       input.parentTaskId ?? '',
       identityColumns ?? [],
       ...(input.traversalSide ? [{ traversalSide: input.traversalSide }] : []),
+      ...(input.passthroughFromNodeId ? [{ passthroughFromNodeId: this.identifierKey(input.passthroughFromNodeId) }] : []),
       ...(input.kind === 'column_lineage' && input.sourceRefs
         ? [{ sourceRefs: input.sourceRefs.map(ref => [this.identifierKey(ref.node), normalizeColName(ref.col, this.identifierCaseSensitive)]).sort() }]
         : []),
@@ -167,22 +146,12 @@ export class TaskLedger {
     );
   }
 
-  /**
-   * Returns a task by stable id.
-   * @param taskId - Engine-owned task identity.
-   * @returns Stored task, or `undefined` when absent.
-   */
+  /** Returns a task by stable id. */
   public getTask(taskId: string): InvestigationTask | undefined {
     return this.tasks.get(taskId);
   }
 
-  /**
-   * Applies a valid task lifecycle transition.
-   * @param taskId - Task selected by the host.
-   * @param status - New engine-owned lifecycle state.
-   * @param hop - Resolution hop when applicable.
-   * @returns Whether the task existed.
-   */
+  /** Applies a valid task lifecycle transition. */
   public setTaskStatus(taskId: string, status: InvestigationTask['status'], hop?: number): boolean {
     const task = this.tasks.get(taskId);
     if (!task) return false;
@@ -192,10 +161,7 @@ export class TaskLedger {
     return true;
   }
 
-  /**
-   * Creates or updates the lead for a deferred task and boundary.
-   * @param input - Lead content without its derived ID.
-   */
+  /** Creates or updates the lead for a deferred task and boundary. */
   public ensureLead(input: Omit<PendingLead, 'id' | 'status'> & { status?: PendingLead['status'] }): PendingLead {
     const identity = leadIdentity(input, this.identifierCaseSensitive);
     return this.upsertByIdentity(
@@ -206,17 +172,14 @@ export class TaskLedger {
       'Pending lead',
       existing => {
         existing.valueToUser = input.valueToUser;
+        if (input.status) existing.status = input.status;
         return existing;
       },
       id => ({ ...input, id, status: input.status ?? 'pending' }),
     );
   }
 
-  /**
-   * Marks an unresolved lead scheduled and reactivates its task.
-   * @param leadId - Pending lead selected by the host.
-   * @returns Scheduled lead, or `undefined` when it cannot be scheduled.
-   */
+  /** Marks an unresolved lead scheduled and reactivates its task. */
   public scheduleLead(leadId: string): PendingLead | undefined {
     const lead = this.leads.get(leadId);
     if (!lead || lead.status === 'resolved' || lead.status === 'dismissed') return undefined;
@@ -225,25 +188,22 @@ export class TaskLedger {
     return lead;
   }
 
-  /**
-   * Resolves every scheduled lead backed by the completed task.
-   * @param taskId - Task that completed successfully.
-   */
+  /** Resolves every scheduled lead backed by the completed task. */
   public resolveTaskLeads(taskId: string): void {
     for (const lead of this.leads.values()) {
       if (lead.taskId === taskId && lead.status === 'scheduled') lead.status = 'resolved';
     }
   }
 
-  /**
-   * Resolves every scheduled lead on a node whose hop completed, with its task.
-   *
-   * @remarks
-   * A follow-up add names an object, not a lead, so the leads it schedules on that object are owned
-   * by other tasks; the analysed object answers them all.
-   * @param nodeId - Node whose hop completed.
-   * @param hop - Resolution hop.
-   */
+  /** Dismisses every pending lead of one reason on a node. */
+  public dismissNodeLeads(nodeId: string, reason: PendingLead['reason']): void {
+    const key = this.identifierKey(nodeId);
+    for (const lead of this.leads.values()) {
+      if (lead.status === 'pending' && lead.reason === reason && this.identifierKey(lead.nodeId) === key) lead.status = 'dismissed';
+    }
+  }
+
+  /** Resolves every scheduled lead on a node whose hop completed, with its task. */
   public resolveNodeLeads(nodeId: string, hop: number): void {
     const key = this.identifierKey(nodeId);
     for (const lead of this.leads.values()) {

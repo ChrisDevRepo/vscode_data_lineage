@@ -1,8 +1,6 @@
 import type { TraceState } from './types';
 
-/**
- * UI mode policy inputs derived by the app shell.
- */
+/** UI mode policy inputs derived by the app shell. */
 export interface ModeCapabilityInput {
   /** Current trace state mode from the graph session. */
   traceMode: TraceState['mode'];
@@ -14,12 +12,7 @@ export interface ModeCapabilityInput {
   hasAdvancedView: boolean;
 }
 
-/**
- * Centralized UI permissions for graph interaction modes. The app shell computes this once via
- * {@link deriveModeCapabilities} and threads the booleans to toolbar/context-menu/canvas controls
- * so each consumer enables or disables affordances from a single, consistent policy instead of
- * re-deriving ad-hoc conditions.
- */
+/** Centralized UI permissions for graph interaction modes. The app shell computes this once via {@link deriveModeCapabilities} and threads the booleans to toolbar/context-menu/canvas controls so each consumer enables or disables affordances from a single, consistent policy instead of re-deriving ad-hoc conditions. */
 export interface ModeCapabilities {
   /** Whether any scoped mode is active and should lock conflicting controls. */
   isModeLocked: boolean;
@@ -37,17 +30,7 @@ export interface ModeCapabilities {
   canSwitchGraphMode: boolean;
 }
 
-/**
- * Derives graph UI capabilities from the currently active scoped mode.
- *
- * Keep this as the single source of truth for mode-specific control gating.
- *
- * @remarks
- * A trace, an analysis run or a saved advanced view locks the filter and view controls. A shown
- * AI preview leaves the schema/type filter editable (the run read the selection at its start; an
- * edit reaches the host once the preview is discarded), but a new trace, analysis or Schema View
- * would replace the preview it owns, so those stay locked while it is shown.
- */
+/** Derives graph UI capabilities from the currently active scoped mode. */
 export function deriveModeCapabilities(input: ModeCapabilityInput): ModeCapabilities {
   const isTraceView = input.traceMode === 'applied' || input.traceMode === 'filtered';
   const isPathView = input.traceMode === 'path-applied';
@@ -75,16 +58,7 @@ export type RemoveAction =
   | { kind: 'curated-remove' }
   | { kind: 'refuse'; reason: string };
 
-/**
- * Decides what "remove from what is on screen" does for the highlighted node, from the same
- * {@link ModeCapabilities} every other control reads — one dispatcher, one source of truth,
- * instead of each caller (keyboard shortcut, context menu item, node button) re-deriving its own
- * notion of what Delete means in the current mode.
- *
- * @param capabilities - The active mode's capability set.
- * @param context - Per-node facts {@link ModeCapabilities} does not carry.
- * @returns The action to perform, or a refusal with a user-facing reason.
- */
+/** Decides what "remove from what is on screen" does for the highlighted node, from the same {@link ModeCapabilities} every other control reads — one dispatcher, one source of truth, instead of each caller (keyboard shortcut, context menu item, node button) re-deriving its own notion of what Delete means in the current mode. */
 export function resolveRemoveAction(
   capabilities: Pick<ModeCapabilities, 'isModeLocked' | 'canEditTraceScope' | 'canRemoveNodeFromScopedView'>,
   context: { hasAnalysisMode: boolean; isTraceOrigin: boolean },

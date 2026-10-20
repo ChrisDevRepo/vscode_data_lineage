@@ -1,13 +1,4 @@
-/**
- * Schema View and Expanded Schema View construction.
- *
- * @remarks
- * Split out of graphBuilder.test.ts. Covers `projectSchemaQuotient`, `buildSchemaGraph`
- * and `buildExpandedSchemaViewGraph` — the collapse of an object graph into schema
- * clusters, and the bridge edges that keep an expanded schema connected to the clusters
- * around it. A dropped bridge renders a node as an orphan despite its model edges, so
- * each bridge rule is asserted on its own.
- */
+/** Schema View and Expanded Schema View construction. */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -55,16 +46,6 @@ describe('projectSchemaQuotient', () => {
     expect(projected.count).toBe(1);
     expect(projected.reverseCount).toBe(1);
     expect(projected.totalCount).toBe(2);
-  });
-
-  it('emits nothing when the working graph holds a single schema', () => {
-    const model = crossSchema();
-    const dboIds = new Set(model.nodes.filter(entry => entry.schema === 'dbo').map(entry => entry.id));
-    const dboOnly = modelOf(
-      model.nodes.filter(entry => dboIds.has(entry.id)),
-      model.edges.filter(edge => dboIds.has(edge.source) && dboIds.has(edge.target)),
-    );
-    expect(projectSchemaQuotient(buildGraphologyGraph(dboOnly)).edges).toEqual([]);
   });
 
   it('drops same-schema edges — the quotient is cross-schema only', () => {

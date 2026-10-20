@@ -21,14 +21,7 @@ function sameOptionIds(a: readonly TraceNeighborOption[], b: readonly TraceNeigh
   return a.length === b.length && a.every((option, i) => option.id === b[i].id);
 }
 
-/**
- * Tracks the active add/prune neighbor picker for one trace-controlled node and applies its actions.
- *
- * @remarks
- * The picker shows only while the node's current controls still offer the candidates it opened
- * with: a trace edit that changes them, or the loss of the controls, closes it rather than leaving
- * stale candidates on screen. Controls rebuilt with the same candidates keep it open.
- */
+/** Tracks the active add/prune neighbor picker for one trace-controlled node and applies its actions. */
 export function useTraceNeighborPicker(traceControls: TraceNodeControls | undefined) {
   const [opened, setOpened] = useState<TraceNeighborPicker | null>(null);
   const picker = opened && sameOptionIds(opened.options, currentOptions(traceControls, opened.action, opened.side)) ? opened : null;

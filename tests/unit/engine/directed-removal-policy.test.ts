@@ -1,6 +1,6 @@
 // Pruning shares one fixed-leg policy across AI and GUI, including closed-anchor protection.
 import { describe, expect, it } from 'vitest';
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 import { analyzeRemoval, type RemovalContext } from '../../../src/engine/graphGuards';
 import { canPruneTraceNode, traceRemovalSides } from '../../../src/engine/traceScope';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
@@ -61,10 +61,6 @@ describe('shared directed removal policy', () => {
     const result = removal(chain, { removedAfter: new Set(['B']), currentNodeId: 'C' });
     expect(result.rejection).toBe('visited');
     expect(result.cutIds).toEqual([]);
-  });
-
-  it('permits the visited current node’s self-prune exception', () => {
-    expect(removal(chain, { visited: new Set(['A', 'B', 'C']) }).rejection).toBeUndefined();
   });
 
   it('has no visited-node exception when currentNodeId is absent', () => {

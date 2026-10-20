@@ -1,15 +1,7 @@
-/**
- * Exclusion-filter equivalence guard.
- *
- * `applyExclusionFilter` (graph-time, modelFilters) and `applyExclusionPatterns`
- * (load-time, dacpacExtractor) must exclude exactly the same nodes and edges for
- * the same patterns; the load-time function adds parse-stat bookkeeping on top and
- * nothing else. These tests pin that contract so the two paths cannot drift.
- */
+/** Exclusion-filter equivalence guard. */
 
 import { describe, it, expect } from 'vitest';
-import { applyExclusionFilter } from '../../../src/engine/modelFilters';
-import { applyExclusionPatterns } from '../../../src/engine/dacpacExtractor';
+import { applyExclusionFilter, applyExclusionPatterns, scopeModelForVisualize } from '../../../src/engine/modelFilters';
 import type { DatabaseModel, LineageNode, LineageEdge, ParseStats } from '../../../src/engine/types';
 
 const node = (schema: string, name: string): LineageNode =>
@@ -104,6 +96,15 @@ describe('exclusion filters', () => {
 
     expect(filtered.parseStats?.spDetails[0].excluded).toEqual(['staging.Raw_TEST']);
     expect(stats.spDetails[0].excluded).toBeUndefined();
+  });
+
+  it('recounts Visualize schemas with the model case rule', () => {
+    const scoped = scopeModelForVisualize(
+      { ...model([node('Sales', 'A'), node('sales', 'B'), node('Sales', 'C_TEST')], []), identifierCaseSensitive: true },
+      new Set(['Sales', 'sales']),
+      ['_TEST$'],
+    );
+    expect(scoped.schemas.map(s => [s.name, s.nodeCount]).sort()).toEqual([['Sales', 1], ['sales', 1]]);
   });
 
   it('leaves parse stats untouched when no node is excluded', () => {

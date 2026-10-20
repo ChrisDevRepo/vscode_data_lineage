@@ -1,10 +1,4 @@
-/**
- * Covers the four defensive guards in `buildGraphologyGraph` (src/engine/graphBuilder.ts):
- * an empty-id node is skipped and warned, a duplicate node id is skipped and warned, an edge
- * whose source or target is not a graph node is dropped without a warning, and a duplicate
- * source→target edge is added only once. The two warn branches are read through the module's log
- * sink, which is the engine's only diagnostic route.
- */
+/** Covers the four defensive guards in `buildGraphologyGraph` (src/engine/graphBuilder.ts): an empty-id node is skipped and warned, a duplicate node id is skipped and warned, an edge whose source or target is not a graph node is dropped without a warning, and a duplicate source→target edge is added only once. The two warn branches are read through the module's log sink, which is the engine's only diagnostic route. */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildGraphologyGraph, setGraphLogSink } from '../../../src/engine/graphBuilder';

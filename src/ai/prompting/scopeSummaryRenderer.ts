@@ -1,11 +1,4 @@
-/**
- * Pure markdown renderers for the `confirm_sm_start` gate: the full plan with its scope tree, and
- * the compact card the approval shows first.
- *
- * @remarks
- * Lives in its own file (no `vscode` import) so unit tests can exercise it without
- * the VS Code module surface. Single source of truth for the native gate markdown.
- */
+/** Pure markdown renderers for the `confirm_sm_start` gate: the full plan with its scope tree, and the compact card the approval shows first. */
 
 import type { ScopeExclusionGroup, ScopeSummary } from '../sm/smTypes';
 import type { PendingExplorationProposal } from '../session/session';
@@ -35,15 +28,7 @@ function typeLabel(type: string, count: number): string {
   return count === 1 ? capitalized : `${capitalized}s`;
 }
 
-/**
- * Renders the depth line for one side of the ask.
- *
- * @remarks
- * Placement already says who bound the value (`From the question` vs `Plan`). An
- * `'approximate'` side is marked `≈`; an `'exact'` one is plain. Each side is placed on its own
- * exactness, so an approximate side sits under `Plan` beside an exact one. No parenthetical
- * about engine behaviour — that copy is not hop context and is not served after approval.
- */
+/** Renders the depth line for one side of the ask. */
 function depthLine(levels: number | 'all', side: string, exact: boolean): string {
   return `- Depth: ${depthValue(levels, exact)} ${side}`;
 }
@@ -54,11 +39,7 @@ function depthValue(levels: number | 'all', exact: boolean): string {
   return exact ? plural(levels, 'level') : `≈${plural(levels, 'level')}`;
 }
 
-/**
- * Wraps a raw name as an inline code span. Code spans render their content literally, so the
- * name must not be Markdown-escaped first; a fence one backtick longer than the name's longest
- * backtick run keeps a backtick inside the name from closing the span.
- */
+/** Wraps a raw name as an inline code span. Code spans render their content literally, so the name must not be Markdown-escaped first; a fence one backtick longer than the name's longest backtick run keeps a backtick inside the name from closing the span. */
 function code(value: string): string {
   const longestRun = Math.max(0, ...(value.match(/`+/g) ?? []).map(run => run.length));
   const fence = '`'.repeat(longestRun + 1);
@@ -66,21 +47,14 @@ function code(value: string): string {
   return `${fence}${pad}${value}${pad}${fence}`;
 }
 
-/**
- * Lists the first `cap` names as code spans and folds the rest into `+N more`.
- *
- * @param alreadyOmitted - Names the producer dropped before this list was built.
- */
+/** Lists the first `cap` names as code spans and folds the rest into `+N more`. */
 function cappedNames(names: readonly string[], cap: number, alreadyOmitted = 0): string {
   const more = Math.max(0, names.length - cap) + alreadyOmitted;
   const shown = names.slice(0, cap).map(code).join(', ');
   return more > 0 ? `${shown} _+${more} more_` : shown;
 }
 
-/**
- * An object's name as the card shows it: schema-qualified when the loaded model holds more than
- * one object of that type by that name ({@link ScopeSummary.ambiguousObjectNames}), bare otherwise.
- */
+/** An object's name as the card shows it: schema-qualified when the loaded model holds more than one object of that type by that name ({@link ScopeSummary.ambiguousObjectNames}), bare otherwise. */
 function objectDisplayName(summary: ScopeSummary, type: string, schema: string, name: string): string {
   return summary.ambiguousObjectNames?.[type]?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? `${schema}.${name}` : name;
 }
@@ -100,33 +74,6 @@ function oneParagraph(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Requested schema exclusions the named origin removed from the contract: the origin's own schema
- * is never excluded, so it drops out of the active filter.
- *
- * @param requested - The proposal's requested `excludeSchemas`.
- * @param active - The schemas the proposal's active filter still excludes.
- * @param identifierCaseSensitive - Checked catalog policy. Absent or false keeps case-insensitive comparison.
- */
-export function schemaFiltersRemovedByOrigin(requested: readonly string[], active: readonly string[], identifierCaseSensitive: boolean | undefined): string[] {
-  return requested.filter(schema => !active.some(kept => schemaKey(kept, identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive)));
-}
-
-/**
- * Requested object exclusions the named origin removed from the contract: the origin's own id is
- * never excluded, so it drops out of the active filter.
- *
- * @param requested - The proposal's requested `excludeNodeIds`.
- * @param origin - The proposal's origin id.
- * @param active - The object ids the proposal's active filter still excludes.
- * @param identifierCaseSensitive - Checked catalog policy. Absent or false keeps case-insensitive comparison.
- */
-export function nodeFiltersRemovedByOrigin(requested: readonly string[], origin: string, active: readonly string[], identifierCaseSensitive: boolean | undefined): string[] {
-  const originOnly = new Map([[origin, true]]);
-  if (active.some(kept => resolveModelNodeId(kept, originOnly, identifierCaseSensitive) !== null)) return [];
-  return requested.filter(id => resolveModelNodeId(id, originOnly, identifierCaseSensitive) !== null);
-}
-
 /** Schemas in plan order: most hops first, then most nodes, then name. */
 function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary['bySchema'][string]]> {
   return Object.entries(summary.bySchema).sort((a, b) => {
@@ -137,13 +84,7 @@ function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary[
   });
 }
 
-/**
- * States the schema selection from its shorter side: `All` when nothing is excluded,
- * `All except x, y` when fewer schemas are excluded than selected, otherwise the selected list.
- * The two sides are {@link ScopeSummary.selectedSchemas} and `activeFilters.schemas`.
- *
- * @param nameCap - Names listed before the line states `N of M selected` instead.
- */
+/** States the schema selection from its shorter side: `All` when nothing is excluded, `All except x, y` when fewer schemas are excluded than selected, otherwise the selected list. The two sides are {@link ScopeSummary.selectedSchemas} and `activeFilters.schemas`. */
 function schemasLine(summary: ScopeSummary, nameCap = Number.POSITIVE_INFINITY): string {
   const selected = summary.selectedSchemas ?? schemasInPlanOrder(summary).map(([schema]) => schema);
   const excluded = summary.activeFilters.schemas;
@@ -162,12 +103,7 @@ interface CardObjectGroup {
   readonly omitted: number;
 }
 
-/**
- * Rolls up `bySchema` into one entry per object type, schema grouping dropped from the layout —
- * except that a name recurring in more than one schema of the loaded model
- * ({@link ScopeSummary.ambiguousObjectNames}) is schema-qualified so it stays traceable to one
- * object once the grouping is gone.
- */
+/** Rolls up `bySchema` into one entry per object type, schema grouping dropped from the layout — except that a name recurring in more than one schema of the loaded model ({@link ScopeSummary.ambiguousObjectNames}) is schema-qualified so it stays traceable to one object once the grouping is gone. */
 function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
   const groups = new Map<string, CardObjectGroup>();
   for (const [schema, schemaEntry] of Object.entries(summary.bySchema)) {
@@ -190,23 +126,11 @@ function planHeading(revision?: number): string {
   return revision && revision > 1 ? `### Exploration plan · revision ${revision}` : '### Exploration plan';
 }
 
-/**
- * Renders a self-contained main-equivalent approval summary for native chat.
- *
- * @param summary - The proposed scope to render.
- * @param revision - Proposal revision; stamped in the heading from the second round on so a
- * re-approval is distinguishable from the first.
- * @param classification - The proposal's answer angle. It is part of the approved contract, so it
- * is stated in the plan beside the tracing mode — on the card the user approves and in the summary
- * a gate refine replays to the model.
- * @returns The assembled scope-summary markdown.
- */
+/** Renders a self-contained main-equivalent approval summary for native chat. */
 export function renderScopeSummaryMd(
   summary: ScopeSummary,
   revision?: number,
   classification?: ClassificationValue,
-  _removedSchemaFilters: readonly string[] = [],
-  _removedNodeFilters: readonly string[] = [],
 ): string {
   const readAs: string[] = [];
   const filters = summary.activeFilters;
@@ -225,12 +149,7 @@ export function renderScopeSummaryMd(
   return renderPlanMd(summary, readAs, revision, classification);
 }
 
-/**
- * The `Read as` lines of the user-facing full plan: the same active filters as
- * {@link renderScopeSummaryMd}, with excluded objects grouped by the rule that excluded them and
- * each type capped at {@link PLAN_NAMES_PER_TYPE} names, and the schema filter stated from its shorter
- * side with every name ({@link schemasLine}).
- */
+/** The `Read as` lines of the user-facing full plan: the same active filters as {@link renderScopeSummaryMd}, with excluded objects grouped by the rule that excluded them and each type capped at {@link PLAN_NAMES_PER_TYPE} names, and the schema filter stated from its shorter side with every name ({@link schemasLine}). */
 function fullPlanReadAs(summary: ScopeSummary): string[] {
   const readAs: string[] = [`- Schemas: ${schemasLine(summary)}`];
   const filters = summary.activeFilters;
@@ -256,11 +175,7 @@ function fullPlanReadAs(summary: ScopeSummary): string[] {
   return readAs;
 }
 
-/**
- * Assembles the plan around caller-built `Read as` lines: goal, depth, counts and the in-scope tree.
- *
- * @param namesPerType - Names listed per type line of the tree; the rest fold into `+N more`.
- */
+/** Assembles the plan around caller-built `Read as` lines: goal, depth, counts and the in-scope tree. */
 function renderPlanMd(
   summary: ScopeSummary,
   readAs: readonly string[],
@@ -342,29 +257,7 @@ function renderPlanMd(
   return lines.join('\n');
 }
 
-/**
- * Renders the compact approval card: fact lines only, with a **Show full plan** follow-up
- * carrying the model-authored prose (goal, discovery summary, noted constraints) and every
- * in-scope object.
- *
- * @remarks
- * No AI-authored text reaches the card — `mission_brief`, the discovery summary and
- * `scopeNotes` are full-plan-only. There is no separate direction line: the depth line names the
- * side(s) it covers directly (`N upstream`, `N upstream · N downstream`, or `N each way` for equal
- * bidirectional sides). The scope line carries only the estimated counts (`≈N hops · ≈N nodes`),
- * direction dropped. Schemas are stated from the shorter side (`schemasLine`), as a count past
- * {@link CARD_SCHEMA_NAMES} names, so the `Excluded` line never repeats them. In-scope objects are
- * grouped by type across every schema, one line per type with its total, names capped at
- * {@link NAMES_PER_TYPE}. The `Excluded` line carries the GUI exclusion rule count, the excluded
- * object types and the count of objects excluded by name; the full plan names the excluded
- * objects. Keep-but-skip renders in full. A name that
- * recurs in more than one schema of the loaded model is schema-qualified (`objectsByType`) so
- * dropping the schema grouping never leaves two distinct objects reading as one bare name; a
- * unique name stays bare.
- *
- * @param proposal - The stored proposal the card shows.
- * @returns The card markdown.
- */
+/** Renders the compact approval card: fact lines only, with a **Show full plan** follow-up carrying the model-authored prose (goal, discovery summary, noted constraints) and every in-scope object. */
 export function renderScopeCardMd(
   proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary'>,
 ): string {
@@ -408,20 +301,7 @@ export function renderScopeCardMd(
   return lines.join('\n');
 }
 
-/**
- * Renders the **Show full plan** reply: the discovery summary (when the proposal has one) ahead
- * of the plan, every in-scope object the stored proposal carries, and the excluded objects grouped
- * by cause ({@link fullPlanReadAs}).
- *
- * @remarks
- * Built directly from the held proposal rather than reused from the gate's stored `detail` —
- * that string is the model-facing tool-response copy (discovery summary trailing, not leading)
- * and stays exactly as the backend built it. This is a separate, user-facing rendering of the
- * same underlying scope data.
- *
- * @param proposal - Stored proposal containing the effective approved scope.
- * @returns The user-facing plan markdown.
- */
+/** Renders the **Show full plan** reply: the discovery summary (when the proposal has one) ahead of the plan, every in-scope object the stored proposal carries, and the excluded objects grouped by cause ({@link fullPlanReadAs}). */
 export function renderFullPlanMd(
   proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary' | 'discoverySummary'>,
 ): string {
@@ -429,27 +309,10 @@ export function renderFullPlanMd(
   return proposal.discoverySummary ? `${proposal.discoverySummary}\n\n${plan}` : plan;
 }
 
-/**
- * Interactive frame the native chat host renders around {@link renderScopeCardMd}'s output.
- *
- * @remarks
- * Single source of truth for this wrapper: `lineageParticipant.ts` writes it straight to the chat
- * stream (never through a model call), and `chatHistoryAdapter.ts` matches the same constant to
- * recognize and neutralize it before replaying history — a UI-only frame is not a message either
- * side of the model ever produced.
- */
+/** Interactive frame the native chat host renders around {@link renderScopeCardMd}'s output. */
 export const GATE_CARD_HEADER = '\n\n---\n**Confirm exploration**\n\n';
 
-/**
- * Closing line of a pending approval card, written ahead of the card's buttons.
- *
- * @remarks
- * The turn has to close for VS Code to release the chat input, so this line states that the
- * card's buttons and a chat reply both still act on the proposal. It is part of the card rather
- * than a trailer: VS Code folds every part before a completed response's last markdown into a
- * collapsed disclosure, so any text after the buttons would hide the card. Matched by name in
- * `chatHistoryAdapter.ts` for the same reason as {@link GATE_CARD_HEADER}.
- */
+/** Closing line of a pending approval card, written ahead of the card's buttons. */
 export const HOLD_GATE_NOTICE =
   '\n\nApprove, change or cancel with the buttons below, or reply here.';
 

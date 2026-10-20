@@ -1,15 +1,7 @@
-/**
- * Model-level schema connectivity guard.
- *
- * Verifies the debug-dump connectivity summary reflects the true topology:
- * a self-contained schema is reported ISOLATED, cross-schema links concentrated
- * in a hub schema make the hub bridge the others, and dropping the hub (as a GUI
- * schema filter would) fragments the remainder into separate components. This is
- * the exact situation behind the "orphan clusters until dbo is added" report.
- */
+/** Model-level schema connectivity guard. */
 
 import { describe, it, expect } from 'vitest';
-import { summarizeModelConnectivity } from '../../../src/engine/schemaAdjacency';
+import { formatModelConnectivity, summarizeModelConnectivity, type ModelConnectivity } from '../../../src/engine/schemaAdjacency';
 import type { DatabaseModel, LineageNode, LineageEdge } from '../../../src/engine/types';
 
 const node = (id: string, schema: string): LineageNode =>
@@ -49,17 +41,6 @@ describe('Model Schema Connectivity', () => {
       'dbo component also contains Production and Sales',
     ).toBe(true);
 
-    const hasProdDbo = conn.interSchemaEdges.some((e) =>
-      (e.source === 'Production' && e.target === 'dbo') || (e.source === 'dbo' && e.target === 'Production'));
-    const hasSalesDbo = conn.interSchemaEdges.some((e) =>
-      (e.source === 'Sales' && e.target === 'dbo') || (e.source === 'dbo' && e.target === 'Sales'));
-    expect(hasProdDbo, 'inter-schema edge Production–dbo recorded').toBe(true);
-    expect(hasSalesDbo, 'inter-schema edge Sales–dbo recorded').toBe(true);
-
-    expect(
-      conn.interSchemaEdges.some((e) => e.source === e.target),
-      'no intra-schema self relation',
-    ).toBe(false);
   });
 
   it('filtered model (dbo dropped): the bridge is gone → three orphans', () => {
@@ -73,6 +54,22 @@ describe('Model Schema Connectivity', () => {
 
     expect(conn.components.length, 'three components once the dbo bridge is filtered out').toBe(3);
     expect(conn.isolatedSchemas.length, 'ai, Production and Sales all isolated').toBe(3);
-    expect(conn.interSchemaEdges.length, 'no inter-schema edges remain').toBe(0);
+    expect(conn.components.every((c) => c.schemas.length === 1), 'no component spans two schemas').toBe(true);
+  });
+
+  it('debug text counts components and caps isolated schema names', () => {
+    const isolated = Array.from({ length: 10 }, (_, i) => `s${i}`);
+    const conn: ModelConnectivity = {
+      components: isolated.map(schema => ({ schemas: [schema] })),
+      isolatedSchemas: isolated,
+    };
+    const text = formatModelConnectivity(conn);
+    expect(text).toContain('Components: 10');
+    expect(text).toContain('Isolated schemas: 10');
+    expect(text).toContain('s0');
+    expect(text).toContain('s7');
+    expect(text).not.toContain('s8');
+    expect(text).toContain('… +2 more');
+    expect(text).not.toContain('→');
   });
 });

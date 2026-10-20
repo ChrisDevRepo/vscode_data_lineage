@@ -1,10 +1,4 @@
-/**
- * Utility for constructing Content-Security-Policy (CSP) strings for VS Code webviews.
- *
- * This ensures all necessary directives (such as 'unsafe-inline' for React styles
- * and webview URIs for chunk loading) are safely and consistently applied without
- * relying on brittle raw string concatenation.
- */
+/** Utility for constructing Content-Security-Policy (CSP) strings for VS Code webviews. */
 
 export interface CspOptions {
   /** The unique nonce generated for script execution. */
@@ -13,11 +7,7 @@ export interface CspOptions {
   cspSource: string;
 }
 
-/**
- * Builds a webview Content Security Policy from its nonce and allowed source URI.
- *
- * @returns A formatted CSP string ready for the `<meta>` tag.
- */
+/** Builds a webview Content Security Policy from its nonce and allowed source URI. */
 export function buildWebviewCsp({ nonce, cspSource }: CspOptions): string {
   return [
     "default-src 'none'",

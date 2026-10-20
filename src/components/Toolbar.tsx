@@ -57,10 +57,7 @@ interface ToolbarProps {
   onExecuteSearch?: (name: string, schema?: string) => void;
   /** Callback to initiate a column-level or table-level lineage trace. */
   onStartTrace?: (nodeId: string) => void;
-  /**
-   * IDs of nodes that are in the working set but collapsed inside a schema cluster.
-   * Passed through to {@link SearchWithAutocomplete} for three-state search partitioning.
-   */
+  /** IDs of nodes that are in the working set but collapsed inside a schema cluster. Passed through to {@link SearchWithAutocomplete} for three-state search partitioning. */
   collapsedSchemaNodeIds?: Set<string>;
   /** Callback to toggle the full-text SQL search sidebar. */
   onToggleDetailSearch?: () => void;
@@ -110,9 +107,7 @@ interface ToolbarProps {
   canStartNewScopedMode?: boolean;
   /** Whether Object View / Schema View can be toggled from the current view. */
   canSwitchGraphMode?: boolean;
-  /** Whether the graph is showing schema clusters only. */
-  isOverview?: boolean;
-  /** Explicit Object View / Schema View state. */
+  /** Object View / Schema View state; defaults to Object View. */
   graphMode?: GraphMode;
   /** Callback to switch between Object View and Schema View. */
   onGraphModeChange?: (mode: GraphMode) => void;
@@ -139,16 +134,13 @@ interface ToolbarProps {
     rootNodes: number;
     leafNodes: number;
   } | null;
-  /** Number of nodes React Flow is actually rendering (the perf-relevant count). */
+  /** Number of nodes rendered by React Flow (performance metric). */
   renderedNodeCount: number;
   /** Object count above which newly loaded graphs start in Schema View (`dataLineageViz.overview.threshold`). */
   overviewThreshold: number;
   /** Rendered-node ceiling above which the graph is replaced by a limit warning (`dataLineageViz.renderLimit`). */
   renderLimit: number;
-  /**
-   * Set once on initial load/reset: `true` when the loaded model is below the overview threshold.
-   * Disables the Schema View button until the user opts in via settings; never re-derived from filter changes.
-   */
+  /** Set once on initial load/reset: `true` when the loaded model is below the overview threshold. Disables the Schema View button until the user opts in via settings; never re-derived from filter changes. */
   schemaViewSoftDisabled?: boolean;
 }
 
@@ -189,9 +181,7 @@ function expandedSchemaStatusText(expandedSchemaCount: number): string {
 }
 
 
-/**
- * Provides graph search, filtering, analysis, navigation, and keyboard controls.
- */
+/** Provides graph search, filtering, analysis, navigation, and keyboard controls. */
 export const Toolbar = memo(function Toolbar({
   types,
   onToggleType,
@@ -238,8 +228,7 @@ export const Toolbar = memo(function Toolbar({
   isModeLocked = false,
   canStartNewScopedMode = !isModeLocked,
   canSwitchGraphMode = !isModeLocked,
-  isOverview = false,
-  graphMode,
+  graphMode = 'full',
   onGraphModeChange,
   isExpandedSchemaViewActive = false,
   onResetExpandedSchemaView,
@@ -256,6 +245,7 @@ export const Toolbar = memo(function Toolbar({
   schemaViewSoftDisabled = false,
 }: ToolbarProps) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const isOverview = graphMode === 'overview';
   const [confirmingBack, setConfirmingBack] = useState(false);
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const analysis = useDropdown();
@@ -273,7 +263,7 @@ export const Toolbar = memo(function Toolbar({
   useKeyboardShortcut(SHORTCUT_KEYS.openHelp, () => setIsHelpOpen(true));
   useKeyboardShortcut(SHORTCUT_KEYS.toggleSchemaView, () => {
     if (!onGraphModeChange || !canSwitchGraphMode || schemaViewSoftDisabled) return;
-    onGraphModeChange(currentGraphMode === 'overview' ? 'full' : 'overview');
+    onGraphModeChange(isOverview ? 'full' : 'overview');
   });
   useKeyboardShortcut(SHORTCUT_KEYS.hideExpandedSchemaClusters, () => {
     if (isExpandedSchemaViewActive && onToggleExpandedSchemaClusters) onToggleExpandedSchemaClusters();
@@ -281,7 +271,6 @@ export const Toolbar = memo(function Toolbar({
 
   const schemas = availableSchemas || [];
   const selectedSchemas = propSelectedSchemas || new Set(schemas);
-  const currentGraphMode = graphMode ?? (isOverview ? 'overview' : 'full');
   const graphModeDisabledReason = schemaViewSoftDisabled
     ? `Schema View is optimised for larger databases (threshold: ${overviewThreshold} objects)`
     : !onGraphModeChange
@@ -295,7 +284,7 @@ export const Toolbar = memo(function Toolbar({
         expandedSchemaStatusText(expandedSchemaCount),
         showExpandedSchemaClusters ? 'Schema clusters visible' : 'Schema clusters hidden',
       ]
-    : currentGraphMode === 'overview'
+    : isOverview
       ? ['View: Schema View', 'Graph is shown as schema clusters. Double-click a schema cluster to expand it.']
       : ['View: Object View', 'Graph is shown as individual object nodes.'];
 
@@ -360,12 +349,12 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
         <Tooltip content={graphModeDisabledReason ?? 'Schema View (S)'}>
           <Button
-            onClick={() => onGraphModeChange?.(currentGraphMode === 'overview' ? 'full' : 'overview')}
+            onClick={() => onGraphModeChange?.(isOverview ? 'full' : 'overview')}
             variant="icon"
-            className={currentGraphMode === 'overview' ? 'ln-btn-icon-active' : ''}
+            className={isOverview ? 'ln-btn-icon-active' : ''}
             disabled={!onGraphModeChange || !canSwitchGraphMode || schemaViewSoftDisabled}
             aria-label="Schema View"
-            aria-pressed={currentGraphMode === 'overview'}
+            aria-pressed={isOverview}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 7.5h15v5.25h-15V7.5ZM7.5 15.75h3.75M12.75 15.75h3.75M9.375 12.75v3M14.625 12.75v3" />
@@ -509,7 +498,7 @@ export const Toolbar = memo(function Toolbar({
         </Tooltip>
 
         {/* Compact Expanded Schema View controls — persistent in Schema View so the expand/collapse action is always reachable. */}
-        {currentGraphMode === 'overview' && (onExpandAllSchemas || onResetExpandedSchemaView) && (
+        {isOverview && (onExpandAllSchemas || onResetExpandedSchemaView) && (
           <>
             <div className="w-px h-6 ln-divider" />
             {isExpandedSchemaViewActive && onToggleExpandedSchemaClusters && (

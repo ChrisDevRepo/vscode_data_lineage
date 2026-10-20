@@ -8,17 +8,14 @@ import { TRACE_ICON } from './TracedFilterBanner';
 import { Tooltip } from './ui/Tooltip';
 
 /** Display metadata for one tree row, resolved from the canvas node lists. */
-export interface TraceTreeNodeMeta {
+interface TraceTreeNodeMeta {
   /** Human-readable object name. */
   name: string;
   /** Secondary line (schema); omitted when unknown. */
   detail?: string;
   /** Canvas object type; drives the type symbol. */
   type?: ObjectType;
-  /**
-   * The node's colour on the canvas — its resolved schema colour, or the external colour — which
-   * tints the type symbol. The caller resolves it so a row matches its canvas node and the legend.
-   */
+  /** The node's colour on the canvas — its resolved schema colour, or the external colour — which tints the type symbol. The caller resolves it so a row matches its canvas node and the legend. */
   color?: string;
 }
 
@@ -27,7 +24,8 @@ function typeIcon(type?: ObjectType): string {
   return (type && TYPE_COLORS[type]?.icon) || '▪';
 }
 
-export interface TraceTreePanelProps {
+/** Props for the {@link TraceTreePanel} component. */
+interface TraceTreePanelProps {
   /** L0-anchored trace projection from the adapter, over the pre-route scope. */
   tree: TraceTree;
   /** Display name of the trace origin. */
@@ -173,10 +171,7 @@ function SideRow({ row }: { row: PanelRow }) {
   );
 }
 
-/**
- * Leaf: route checkbox plus the object label, the type symbol tinted in the schema color; muted
- * while routes hide it from the canvas. Cmd/Ctrl+click toggles the route like the checkbox.
- */
+/** Leaf: route checkbox plus the object label, the type symbol tinted in the schema color; muted while routes hide it from the canvas. Cmd/Ctrl+click toggles the route like the checkbox. */
 function LeafRow({ row }: { row: PanelRow }) {
   const { checkedIds, onToggleCheck } = useContext(PanelRowContext);
   const nodeId = row.nodeId!;
@@ -212,10 +207,7 @@ function LeafRow({ row }: { row: PanelRow }) {
   );
 }
 
-/**
- * Row body inside the widget's own `treeitem`, which owns role, selection, expansion and
- * activation; this renderer adds the section label, route checkbox and +1 level action.
- */
+/** Row body inside the widget's own `treeitem`, which owns role, selection, expansion and activation; this renderer adds the section label, route checkbox and +1 level action. */
 const TraceTreeRow = memo(function TraceTreeRow({ node, style }: NodeRendererProps<PanelRow>) {
   const { onStageIds } = useContext(PanelRowContext);
   const row = node.data;
@@ -304,12 +296,7 @@ function leafRows(rows: PanelRow[]): PanelRow[] {
   return rows.flatMap((row) => (row.children ? leafRows(row.children) : [row]));
 }
 
-/**
- * Trace navigator on the shared {@link SidePanel} shell: the L0 starting point as the title, find
- * on demand, fixed upstream/downstream sections, widget-owned tree, and a footer only while a route
- * or edit status exists. The card is as tall as its visible rows, up to the canvas height. The
- * canvas selection drives the widget's controlled `selection`; trace state stays owned by the canvas.
- */
+/** Trace navigator on the shared {@link SidePanel} shell: the L0 starting point as the title, find on demand, fixed upstream/downstream sections, widget-owned tree, and a footer only while a route or edit status exists. The card is as tall as its visible rows, up to the canvas height. The canvas selection drives the widget's controlled `selection`; trace state stays owned by the canvas. */
 export const TraceTreePanel = memo(function TraceTreePanel({
   tree,
   originName,
@@ -371,11 +358,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     if (api) setVisibleRowCount(countVisibleRows(data, (id) => api.isOpen(id)));
   }, [data]);
 
-  /**
-   * A level at depth 1–2 that appears after mount starts open, once. A collapse the user made stays
-   * closed. Hiding the panel unmounts the tree, which reopens from {@link initialOpenState}, so the
-   * decisions are dropped then and the visible rows are recounted when it shows again.
-   */
+  /** A level at depth 1–2 that appears after mount starts open, once. A collapse the user made stays closed. Hiding the panel unmounts the tree, which reopens from {@link initialOpenState}, so the decisions are dropped then and the visible rows are recounted when it shows again. */
   useEffect(() => {
     if (collapsed) {
       openDecisions.current.clear();
@@ -436,11 +419,7 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     if (currentMatch) void treeRef.current?.scrollTo(currentMatch.id);
   }, [currentMatch]);
 
-  /**
-   * Mirrors the canvas selection into the widget. `setSelection` selects by id even inside a
-   * collapsed level (`select` skips hidden rows) and `scrollTo` opens the parents; a row already
-   * selected for the same node (the other side of a cycle) is kept.
-   */
+  /** Mirrors the canvas selection into the widget. `setSelection` selects by id even inside a collapsed level (`select` skips hidden rows) and `scrollTo` opens the parents; a row already selected for the same node (the other side of a cycle) is kept. */
   useEffect(() => {
     const api = treeRef.current;
     if (!api || api.selectedNodes[0]?.data.nodeId === (selectedNodeId ?? undefined)) return;

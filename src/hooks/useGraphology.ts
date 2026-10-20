@@ -4,11 +4,11 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
 import { buildGraph, buildGraphNoLayout, getGraphMetrics, hasCachedLayout, layoutCacheKey, objectLayoutInputForGraph, seedLayoutCache } from '../engine/graphBuilder';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { filterBySchemas } from '../engine/dacpacExtractor';
-import { applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
+import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
 import LayoutWorker from '../utils/layout.worker?worker&inline';
+import { errorMessage } from '../utils/errorMessage';
 
 const logPrewarmSkipped = (reason: string): void => {
   window.vscode?.postMessage({ type: 'log', text: `[Filter] Layout prewarm skipped (${reason})`, level: 'debug' });
@@ -16,11 +16,7 @@ const logPrewarmSkipped = (reason: string): void => {
 
 const layoutWorker = createLayoutWorkerClient(() => new LayoutWorker(), logPrewarmSkipped);
 
-/**
- * Lays out the Object View graph in a worker and seeds the layout cache, so the later
- * Schema View → Object View switch finds its positions without running Dagre on the UI thread.
- * Without a usable worker the switch simply lays out on the main thread as before.
- */
+/** Lays out the Object View graph in a worker and seeds the layout cache, so the later Schema View → Object View switch finds its positions without running Dagre on the UI thread. Without a usable worker the switch falls back to layout on the main thread. */
 function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
   if (typeof Worker === 'undefined') return;
   const input = objectLayoutInputForGraph(graph, config);
@@ -30,13 +26,11 @@ function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
     (positions) => {
       if (!seedLayoutCache(input, positions, key)) logPrewarmSkipped('incomplete layout');
     },
-    (e: unknown) => logPrewarmSkipped(e instanceof Error ? e.message : String(e)),
+    (e: unknown) => logPrewarmSkipped(errorMessage(e)),
   );
 }
 
-/**
- * Return type for the useGraphology hook, encapsulating graph data and builders.
- */
+/** Return type for the useGraphology hook, encapsulating graph data and builders. */
 interface UseGraphologyReturn {
   /** The list of nodes formatted for React Flow rendering. */
   flowNodes: FlowNode<CustomNodeData>[];
@@ -52,33 +46,13 @@ interface UseGraphologyReturn {
   filteredCount: number;
   /** Unique schema names found in the filtered node set, used for the legend. */
   renderedSchemas: string[];
-  /**
-   * Rebuilds the graph from the database model based on the current filter and configuration.
-   *
-   * @param skipLayout - Whether to skip full Dagre layout because the caller is rendering Schema View.
-   * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so Dagre reserves the
-   *   vertical band those overlays need; see `AI_BADGE_BAND`/`AI_NOTE_BAND` in `graphBuilder.ts`.
-   * @returns The total number of nodes in the resulting graph, or `-1` when the schema selection's
-   *   object count exceeds `dataLineageViz.maxNodes` — nothing is built and the prior render state
-   *   is left untouched.
-   */
+  /** Rebuilds the graph from the database model based on the current filter and configuration. */
   buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean, annotatedNodeIds?: readonly string[]) => number;
-  /**
-   * Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns
-   * `true` and posts the refusal warning when the build would be refused, so a caller that defers the
-   * build into a transition, or vets a candidate schema selection, learns about the refusal
-   * synchronously. Only the filter's schema selection decides admission.
-   */
+  /** Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns `true` and posts the refusal warning when the build would be refused, so a caller that defers the build into a transition, or vets a candidate schema selection, learns about the refusal synchronously. Only the filter's schema selection decides admission. */
   refusesBuild: (model: DatabaseModel, filter: Pick<FilterState, 'schemas'>, config?: ExtensionConfig) => boolean;
 }
 
-/**
- * Manages graph filtering, render limits, layout, and React Flow projection.
- *
- * @remarks
- * Filters run in schema, type, exclusion, isolation, then allowlist order. Object layout is
- * skipped for Schema View and entirely withheld when the render limit is exceeded.
- */
+/** Manages graph filtering, render limits, layout, and React Flow projection. */
 export function useGraphology(): UseGraphologyReturn {
   const [flowNodes, setFlowNodes] = useState<FlowNode<CustomNodeData>[]>([]);
   const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([]);
@@ -112,7 +86,7 @@ export function useGraphology(): UseGraphologyReturn {
     const exclusionFiltered = applyExclusionFilter(
       { ...filtered, nodes: fusedNodes, edges: fusedEdges },
       filter.exclusionPatterns,
-      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`, 'debug'),
+      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${errorMessage(err)}`, 'debug'),
     );
     const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
@@ -126,8 +100,9 @@ export function useGraphology(): UseGraphologyReturn {
     const schemaColorMap = createSchemaColorMap(schemas, undefined, model.identifierCaseSensitive);
     setRenderedSchemas(schemas);
 
-    const withSchemaColors = (nodes: FlowNode<CustomNodeData>[]): FlowNode<CustomNodeData>[] =>
-      nodes.map((node) => {
+    /** Publishes a built graph, its schema-coloured React Flow projection and its metrics. */
+    const publish = (result: ReturnType<typeof buildGraph>): void => {
+      setFlowNodes((result.flowNodes as FlowNode<CustomNodeData>[]).map((node) => {
         if (node.data.objectType === 'external') return node;
         return {
           ...node,
@@ -136,15 +111,15 @@ export function useGraphology(): UseGraphologyReturn {
             schemaColor: getSchemaColorFromMap(node.data.schema, schemaColorMap, model.identifierCaseSensitive),
           },
         };
-      });
-
-    if (count > config.renderLimit) {
-      log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
-      const result = buildGraphNoLayout(allowlistFiltered, config);
-      setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
+      }));
       setFlowEdges(result.flowEdges);
       setGraph(result.graph);
       setMetrics(getGraphMetrics(result.graph));
+    };
+
+    if (count > config.renderLimit) {
+      log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
+      publish(buildGraphNoLayout(allowlistFiltered, config));
       setRenderLimitHit(count);
       return count;
     }
@@ -153,10 +128,7 @@ export function useGraphology(): UseGraphologyReturn {
 
     if (skipLayout) {
       const result = buildGraphNoLayout(allowlistFiltered, config);
-      setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
-      setFlowEdges(result.flowEdges);
-      setGraph(result.graph);
-      setMetrics(getGraphMetrics(result.graph));
+      publish(result);
       log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
       prewarmObjectLayout(result.graph, config);
       return count;
@@ -169,11 +141,11 @@ export function useGraphology(): UseGraphologyReturn {
       result = buildGraph(allowlistFiltered, config, annotatedNodeIds);
     } catch (e) {
       layoutFailed = true;
-      log(`[Filter] Layout failed (${e instanceof Error ? e.message : String(e)}) — rendering without positions`, 'info');
+      log(`[Filter] Layout failed (${errorMessage(e)}) — rendering without positions`, 'info');
       try {
         result = buildGraphNoLayout(allowlistFiltered, config);
       } catch (e2) {
-        log(`[Filter] Graph build completely failed — ${e2 instanceof Error ? e2.message : String(e2)}`, 'info');
+        log(`[Filter] Graph build completely failed — ${errorMessage(e2)}`, 'info');
         setFlowNodes([]);
         setFlowEdges([]);
         setGraph(null);
@@ -181,10 +153,7 @@ export function useGraphology(): UseGraphologyReturn {
         return count;
       }
     }
-    setFlowNodes(withSchemaColors(result.flowNodes as FlowNode<CustomNodeData>[]));
-    setFlowEdges(result.flowEdges);
-    setGraph(result.graph);
-    setMetrics(getGraphMetrics(result.graph));
+    publish(result);
     if (!layoutFailed) {
       log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
     }

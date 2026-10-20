@@ -1,13 +1,4 @@
-/**
- * Projection of the user's current screen into the `lineage_get_screen_state` payload.
- *
- * @remarks
- * Pure and VS Code-free. The bridge validates `uiState` and `render-state` against their
- * `bridgeContract` schemas, but the session buffers can also be seeded by non-bridge writers, so
- * every read here stays defensive: a missing, malformed, or foreign-shaped field omits its section
- * instead of throwing. The payload answers "what is on screen", never "what is in the
- * model" — the catalog, statistics, and filters stay with `lineage_get_context`.
- */
+/** Projection of the user's current screen into the `lineage_get_screen_state` payload. */
 import {
   SCREEN_STATE_MAX_IDS,
   TRACE_ALL_LEVELS,
@@ -18,11 +9,11 @@ import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } fro
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
-import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { schemaKey } from '../../utils/sql';
+import { resolveModelNodeId } from '../support/modelReferences';
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
-export interface ScreenStateInput {
+interface ScreenStateInput {
   /** Latest `filter-changed` ui-state buffer. */
   readonly uiState: unknown;
   /** Latest `render-state` buffer. */
@@ -36,13 +27,13 @@ export interface ScreenStateInput {
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
   readonly getStoredRun?: StoredRunReader;
   /** Resolver for an object's current DDL text; drives the staleness comparison. */
-  readonly getDdl?: (id: string) => string | undefined;
+  readonly getDdl?: (id: string, nodeIdEncodingVersion?: 2) => string | undefined;
   /** Zero-based offset of the id-list page to serve; `0` (default) is the first page. */
   readonly offset?: number;
 }
 
 /** Inputs of one stored-run recall query. */
-export interface RunRecallInput {
+interface RunRecallInput {
   /** Latest `filter-changed` ui-state buffer, read for the applied bookmark. */
   readonly uiState: unknown;
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
@@ -56,11 +47,9 @@ export interface RunRecallInput {
   /** One class of the stored run to list; mutually exclusive with {@link RunRecallInput.ids}. */
   readonly filter?: 'pruned' | 'open_leads' | 'stale';
   /** Resolver for an object's current DDL text. */
-  readonly getDdl?: (id: string) => string | undefined;
+  readonly getDdl?: (id: string, nodeIdEncodingVersion?: 2) => string | undefined;
   /** Predicate telling whether an id still exists in the loaded model. */
-  readonly isInModel?: (id: string) => boolean;
-  /** Debug sink for identifier normalization under the selected historical run's policy. */
-  readonly onIdNormalized?: (raw: string, canonical: string) => void;
+  readonly isInModel?: (id: string, nodeIdEncodingVersion?: 2) => boolean;
   /** Whether the session holds an exploration proposal awaiting approval or refinement. */
   readonly hasPendingProposal?: boolean;
 }
@@ -102,14 +91,7 @@ function pageOf<T>(page: ListPage, items: readonly T[]): T[] {
   return items.slice(page.offset, end);
 }
 
-/**
- * Emits one page of an id list as `<key>`.
- *
- * @param page - The shared page; marked as continuing when this list has more ids.
- * @param key - The payload field name carrying the ids.
- * @param ids - The full id list.
- * @returns A spreadable fragment holding the page's ids.
- */
+/** Emits one page of an id list as `<key>`. */
 function spreadPaged(page: ListPage, key: string, ids: readonly string[]): Record<string, unknown> {
   return { [key]: pageOf(page, ids) };
 }
@@ -119,27 +101,13 @@ function asLevel(value: unknown): number | 'all' | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-/**
- * Renders a rendered-trace depth, decoding the unbounded sentinel the trace controls encode.
- *
- * @remarks
- * `TRACE_ALL_LEVELS` is finite, so `asCount` would pass it through as a literal depth and report
- * nine quadrillion levels where the banner shows "All".
- */
+/** Renders a rendered-trace depth, decoding the unbounded sentinel the trace controls encode. */
 function asTraceLevel(value: unknown): number | 'all' {
   const level = asCount(value);
   return level === TRACE_ALL_LEVELS ? 'all' : level;
 }
 
-/**
- * Reports a stored run's depth per side as the run bound it.
- *
- * @remarks
- * `depthIntent` is the per-side `{levels, exactness}` record (`explorationDepthContract.ts`). A
- * finite `levels` is reported only when the persisted `depthLimits` ceiling for that side actually
- * bound the run; a `null` ceiling means the count never became a border (an approximate side, or a
- * legacy checkpoint's seeded default read back as exact), so it reads back as the unstated `null`.
- */
+/** Reports a stored run's depth per side as the run bound it. */
 function presentDepth(
   init: Record<string, unknown> | null,
   internals: Record<string, unknown> | null,
@@ -165,12 +133,12 @@ function storedHashes(run: StoredAiRun): Record<string, string> {
   return hashes ? (hashes as Record<string, string>) : {};
 }
 
-function staleIds(run: StoredAiRun, getDdl: ((id: string) => string | undefined) | undefined): string[] {
+function staleIds(run: StoredAiRun, getDdl: ScreenStateInput['getDdl']): string[] {
   const hashes = storedHashes(run);
   return Object.keys(hashes).filter(id => {
     const stored = hashes[id];
     if (typeof stored !== 'string' || stored === UNKNOWN_DDL_HASH) return false;
-    return hashDdl(getDdl?.(id)) !== stored;
+    return hashDdl(getDdl?.(id, run.nodeIdEncodingVersion)) !== stored;
   });
 }
 
@@ -257,13 +225,7 @@ function presentBookmark(
   };
 }
 
-/**
- * Renders what the user currently sees: the active trace, graph analysis, applied bookmark, and
- * view level.
- *
- * @param input - Session-owned screen buffers and counts.
- * @returns The model-facing screen payload with its token estimate; absent sections render `null`.
- */
+/** Renders what the user currently sees: the active trace, graph analysis, applied bookmark, and view level. */
 export function presentScreenState(input: ScreenStateInput): {
   screen: Record<string, unknown>;
   _token_estimate: { chars: number; estimated_tokens: number };
@@ -336,13 +298,7 @@ function nodeStatesOf(run: StoredAiRun): Record<string, unknown>[] {
   });
 }
 
-/**
- * The objects the stored run analysed, as a count plus the id list — one page on the screen card, whole on a scoped recall.
- *
- * @remarks
- * Carried by the screen card and by every scoped recall alike, so a read narrowed to one class or
- * to a few ids still states the run's full analysed set instead of reading as the whole run.
- */
+/** The objects the stored run analysed, as a count plus the id list — one page on the screen card, whole on a scoped recall. */
 function presentAnalyzedSet(run: StoredAiRun, page?: ListPage): Record<string, unknown> {
   const analyzed = nodeStatesOf(run)
     .filter(state => state.action === 'analyze')
@@ -355,11 +311,10 @@ function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unkn
   const snapshot = asRecord(run.snapshot);
   const slots = asRecord(asRecord(snapshot?.memory)?.detailSlots) ?? {};
   const hashes = storedHashes(run);
-  const historicalIds = new Map([...states.keys(), ...Object.keys(slots), ...Object.keys(hashes)].map(id => [id, undefined]));
   const stale = new Set(staleIds(run, input.getDdl));
+  const known = new Map([...states.keys(), ...Object.keys(slots), ...Object.keys(hashes)].map(id => [id, true]));
   return (input.ids ?? []).map(raw => {
-    const id = resolveModelNodeId(raw, historicalIds, snapshot?.identifierCaseSensitive === true) ?? raw;
-    if (id !== raw) input.onIdNormalized?.(raw, id);
+    const id = resolveModelNodeId(raw, known, snapshot?.identifierCaseSensitive === true) ?? raw;
     const state = states.get(id);
     const slot = asRecord(slots[id]);
     if (!state && !slot && hashes[id] === undefined) return { id, decision: 'not_in_run' };
@@ -378,7 +333,7 @@ function recallIds(run: StoredAiRun, input: RunRecallInput): Record<string, unkn
       summary: optionalString(slot?.summary),
       section: sections.length > 0 ? sections : undefined,
       stale: stale.has(id),
-      in_current_model: input.isInModel ? input.isInModel(id) : undefined,
+      in_current_model: input.isInModel ? input.isInModel(id, run.nodeIdEncodingVersion) : undefined,
     });
   });
 }
@@ -394,22 +349,17 @@ function recallPruned(run: StoredAiRun): Record<string, unknown>[] {
     }));
 }
 
-/**
- * Unresolved leads of the run, each marked with whether its object is already on the graph.
- *
- * @remarks
- * A lead on an object the graph already shows is a deeper look, not an addition; `on_graph` lets
- * the answer tell the two apart. Resolved, scheduled and dismissed leads are history, not open.
- */
+/** Unresolved leads of the run, each marked with whether its object is already on the graph. */
 function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
   const snapshot = asRecord(run.snapshot);
   const internals = asRecord(snapshot?.engineInternals);
   const leads = Array.isArray(internals?.pendingLeads) ? internals.pendingLeads : [];
   const identifierKey = (id: string): string => schemaKey(id, snapshot?.identifierCaseSensitive === true);
-  const idSet = (value: unknown): Set<string> =>
-    new Set((Array.isArray(value) ? value : []).flatMap(item => typeof item === 'string' ? [identifierKey(item)] : []));
-  const scope = idSet(snapshot?.scopeNodeIds);
-  const offGraph = new Set([...idSet(snapshot?.removedSet), ...idSet(snapshot?.renderDroppedNodeIds)]);
+  const onGraph = new Set((Array.isArray(snapshot?.nodeStates) ? snapshot.nodeStates : []).flatMap(raw => {
+    const state = asRecord(raw);
+    const id = asString(state?.nodeId);
+    return id !== null && state?.action !== 'prune' ? [identifierKey(id)] : [];
+  }));
   return leads.flatMap(raw => {
     const lead = asRecord(raw);
     const id = asString(lead?.nodeId);
@@ -418,7 +368,7 @@ function recallOpenLeads(run: StoredAiRun): Record<string, unknown>[] {
     const key = identifierKey(id);
     return [definedOnly({
       id,
-      on_graph: scope.has(key) && !offGraph.has(key),
+      on_graph: onGraph.has(key),
       from: optionalString(lead?.fromNodeId),
       reason: optionalString(lead?.reason),
       value: optionalString(lead?.valueToUser),
@@ -439,17 +389,7 @@ function overBudgetHint(input: RunRecallInput, chars: number, tokenBudget: numbe
   return `Narrow ids to at most ${fits} or use a filter instead.`;
 }
 
-/**
- * Answers one recall query against the run stored with the applied bookmark.
- *
- * @remarks
- * Over-budget responses hard-reject with the discovery over-budget envelope and a narrowing hint;
- * nothing is truncated. An applied AI bookmark's run wins; without one the session's completed run
- * answers, and only when neither exists does the call answer `no_run_memory`.
- *
- * @param input - The resolved query and the session's read-only resolvers.
- * @returns The recall payload, or a rejection envelope, with its token estimate.
- */
+/** Answers one recall query against the run stored with the applied bookmark. */
 export function presentRunRecall(input: RunRecallInput): Record<string, unknown> | ToolRejection {
   const run = resolveAppliedRun(input);
   if (!run) {
@@ -474,18 +414,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
   return withEstimate(payload);
 }
 
-/**
- * Summarises what is on screen in one prompt-context phrase.
- *
- * @remarks
- * Grounds the stage prompts so a bare "explain this" can reach `lineage_get_screen_state`. The
- * phrase names each surface present with its identity — the trace origin and levels, the analysis
- * type and selected group label, the applied bookmark's name — never its contents (objects,
- * findings), which stay behind the tool call.
- *
- * @param uiState - Latest `filter-changed` ui-state buffer, read defensively.
- * @returns The raw phrase — the prompt slot builder escapes it — or `null` when no trace, analysis, or bookmark is applied.
- */
+/** Summarises what is on screen in one prompt-context phrase. */
 export function describeScreen(uiState: unknown): string | null {
   const { ui, extras } = screenStateParts(uiState);
   const parts: string[] = [];

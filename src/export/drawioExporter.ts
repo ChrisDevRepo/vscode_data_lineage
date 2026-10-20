@@ -4,9 +4,7 @@ import type { CustomNodeData, SchemaNodeData } from '../engine/types';
 import { TYPE_COLORS, createSchemaColorMap, getSchemaColorFromMap, getExternalNodeColor, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
 import { escHtml } from '../utils/sql';
 
-/**
- * Geometry data for an mxGraph cell.
- */
+/** Geometry data for an mxGraph cell. */
 interface MxGeometry {
   '@_x'?: string;
   '@_y'?: string;
@@ -16,9 +14,7 @@ interface MxGeometry {
   '@_relative'?: string;
 }
 
-/**
- * Represents a standard cell in an mxGraph XML structure.
- */
+/** Represents a standard cell in an mxGraph XML structure. */
 interface MxCell {
   '@_id': string;
   '@_value'?: string;
@@ -31,10 +27,7 @@ interface MxCell {
   mxGeometry?: MxGeometry;
 }
 
-/**
- * Represents an object cell (vertex with metadata) in an mxGraph XML structure.
- * Used for storing additional attributes like tooltips and full names.
- */
+/** Represents an object cell (vertex with metadata) in an mxGraph XML structure. Used for storing additional attributes like tooltips and full names. */
 interface MxObject {
   '@_id': string;
   '@_label': string;
@@ -69,11 +62,7 @@ function buildLabel(d: CustomNodeData, identifierCaseSensitive: boolean): string
   );
 }
 
-/**
- * Generates the legend section of the Draw.io diagram, mapping schema names to their assigned colors.
- *
- * @param externalSchemas - Schema names rendered with the external-node color.
- */
+/** Generates the legend section of the Draw.io diagram, mapping schema names to their assigned colors. */
 function buildLegend(schemas: string[], colorMap: SchemaColorMap, startId: number, externalSchemas: ReadonlySet<string>, identifierCaseSensitive: boolean): { cells: MxCell[]; nextId: number } {
   const cells: MxCell[] = [];
   let id = startId;
@@ -159,16 +148,7 @@ function buildEdge(edge: FlowEdge, cellId: string, sourceId: string, targetId: s
   };
 }
 
-/**
- * Converts a set of React Flow nodes and edges into a Draw.io compatible XML (mxfile) format.
- *
- * The output includes:
- * - A persistent schema legend.
- * - Styled vertices with custom HTML labels and color bands.
- * - Orthogonal edges with bidirectional support.
- * - Embedded metadata (tooltips, full names) using `<object>` containers.
- * Schema colors use the checked source identifier policy; absent/false retains CI keys.
- */
+/** Converts a set of React Flow nodes and edges into a Draw.io compatible XML (mxfile) format. */
 export function exportToDrawio(
   nodes: FlowNode<CustomNodeData>[],
   edges: FlowEdge[],
@@ -179,10 +159,12 @@ export function exportToDrawio(
   if (nodes.length === 0 && (!clusterNodes || clusterNodes.length === 0)) return '';
 
   const idMap = new Map<string, string>();
-  let nextId = 2; // 0 and 1 are reserved base cells
+  /** Next cell identifier; 0 and 1 are reserved root and default parent cells in mxGraph. */
+  let nextId = 2;
 
-  const minX = Math.min(...nodes.map(n => n.position.x));
-  const minY = Math.min(...nodes.map(n => n.position.y));
+  const positions = [...nodes, ...clusterNodes ?? []].map(n => n.position);
+  const minX = Math.min(...positions.map(p => p.x));
+  const minY = Math.min(...positions.map(p => p.y));
   const offsetX = GRAPH_OFFSET_X - Math.min(0, minX);
   const offsetY = 20 - Math.min(0, minY);
 
@@ -262,7 +244,7 @@ export function exportToDrawio(
     const nodeId = String(nextId++);
     const bandId = String(nextId++);
     idMap.set(node.id, nodeId);
-    const { obj, band } = buildSchemaClusterObject(node, nodeId, bandId, node.data.color);
+    const { obj, band } = buildSchemaClusterObject(node, nodeId, bandId, node.data.color, offsetX, offsetY);
     clusterObjects.push(obj);
     clusterBandCells.push(band);
   }
@@ -324,6 +306,8 @@ function buildSchemaClusterObject(
   nodeId: string,
   bandId: string,
   color: string,
+  offsetX = GRAPH_OFFSET_X,
+  offsetY = 20,
 ): { obj: MxObject; band: MxCell } {
   const d = node.data;
   const label =
@@ -346,8 +330,8 @@ function buildSchemaClusterObject(
       '@_vertex': '1',
       '@_parent': '1',
       mxGeometry: {
-        '@_x': String(Math.round(node.position.x + GRAPH_OFFSET_X)),
-        '@_y': String(Math.round(node.position.y + 20)),
+        '@_x': String(Math.round(node.position.x + offsetX)),
+        '@_y': String(Math.round(node.position.y + offsetY)),
         '@_width': '160',
         '@_height': '56',
         '@_as': 'geometry',
@@ -367,12 +351,7 @@ function buildSchemaClusterObject(
   return { obj, band };
 }
 
-/**
- * Converts schema-overview cluster nodes into a Draw.io diagram showing schema-level dependencies.
- * Schema colors use the checked source identifier policy; absent/false retains CI keys.
- *
- * @returns Draw.io XML document, or an empty string when no schema nodes exist.
- */
+/** Converts schema-overview cluster nodes into a Draw.io diagram showing schema-level dependencies. Schema colors use the checked source identifier policy; absent/false retains CI keys. */
 export function exportSchemaOverviewToDrawio(
   nodes: FlowNode<SchemaNodeData>[],
   edges: FlowEdge[],

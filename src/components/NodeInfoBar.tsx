@@ -32,12 +32,7 @@ interface NodeInfoBarProps {
 }
 
 
-/**
- * Hoverable badge showing In or Out count.
- * On hover: schema-grouped, alphabetically sorted list.
- * ⊘ suffix = object is known but not rendered in the current graph
- *   (filtered out by type-filter, focus-schema, or search).
- */
+/** Hoverable badge showing In or Out count. On hover: schema-grouped, alphabetically sorted list. ⊘ suffix = object is known but not rendered in the current graph (filtered out by type-filter, focus-schema, or search). */
 function NeighborHoverList({
   label, count, ids, catalog, visibleNodeIds,
 }: {
@@ -179,9 +174,7 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
 }
 
 
-/**
- * Displays identity, connectivity, and parse diagnostics for the selected node.
- */
+/** Displays identity, connectivity, and parse diagnostics for the selected node. */
 export const NodeInfoBar = memo(function NodeInfoBar({
   nodeId, identifierCaseSensitive, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,
 }: NodeInfoBarProps) {

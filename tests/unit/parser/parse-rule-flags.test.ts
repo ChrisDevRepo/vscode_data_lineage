@@ -1,11 +1,4 @@
-/**
- * Termination contract for user-supplied parse-rule regexes.
- *
- * Every consumer of `rule.pattern` scans or rewrites the whole SQL body, so the global flag is a
- * termination condition rather than a style preference: `extractExternalRefs` scans with `exec` and
- * would never advance `lastIndex`, and a preprocessing `replace` would rewrite only the first
- * occurrence. `validateRule` is the single place that can reject the rule before either happens.
- */
+/** Termination contract for user-supplied parse-rule regexes. */
 
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';
@@ -18,7 +11,7 @@ afterAll(() => {
   loadParseRules();
 });
 
-function externalRefRule(flags: string): RawParseRulesConfig {
+function externalRefRule(flags: string, pattern = "\\bOPENROWSET\\s*\\(\\s*BULK\\s+'([^']+)'"): RawParseRulesConfig {
   return {
     rules: [{
       name: 'scan_openrowset',
@@ -26,7 +19,7 @@ function externalRefRule(flags: string): RawParseRulesConfig {
       priority: 50,
       category: 'external_ref',
       kind: 'openrowset',
-      pattern: "\\bOPENROWSET\\s*\\(\\s*BULK\\s+'([^']+)'",
+      pattern,
       flags,
       description: 'test rule',
     }],
@@ -41,7 +34,7 @@ describe('parse rule regex flags', () => {
     expect(result.skipped).toEqual(['scan_openrowset']);
     expect(result.errors[0]).toContain('scan_openrowset');
     expect(result.errors[0]).toContain("must include 'g'");
-    expect(result.usedDefaults).toBe(true);
+    expect(result.usedFallback).toBe(false);
   });
 
   it('rejects empty flags for the same reason', () => {
@@ -94,11 +87,31 @@ describe('parse rule regex flags', () => {
     expect(result.errors[0]).toContain(error);
   });
 
-  it('falls back to defaults when the rules array is missing', () => {
+  it('leaves no rule active when the rules array is missing and no fallback is given', () => {
     const result = loadRules({} as RawParseRulesConfig);
 
     expect(result.errors).toEqual(['YAML missing "rules" array']);
-    expect(result.usedDefaults).toBe(true);
+    expect(result.loaded).toBe(0);
+    expect(result.usedFallback).toBe(false);
+    expect(parseSqlBody('SELECT * FROM dbo.T').sources).toEqual([]);
+  });
+
+  it('activates the fallback rules when the configuration holds no valid rule', () => {
+    const fallback = externalRefRule('gi');
+    const result = loadRules(externalRefRule('i'), fallback);
+
+    expect(result.usedFallback).toBe(true);
+    expect(result.loaded).toBe(1);
+    expect(result.skipped).toEqual(['scan_openrowset']);
+    expect(result.errors).toEqual([expect.stringContaining("must include 'g'"), 'No valid rules found']);
+    expect(extractExternalRefs("SELECT * FROM OPENROWSET(BULK 'https://a.example/f.parquet') AS r")).toHaveLength(1);
+  });
+
+  it('keeps the configuration rules and ignores the fallback when any rule is valid', () => {
+    const result = loadRules(externalRefRule('gi'), { rules: [] });
+
+    expect(result.usedFallback).toBe(false);
+    expect(result.loaded).toBe(1);
   });
 
   it('leaves every shipped rule loadable', () => {
@@ -106,13 +119,20 @@ describe('parse rule regex flags', () => {
 
     expect(result.skipped).toEqual([]);
     expect(result.errors).toEqual([]);
-    expect(result.usedDefaults).toBe(false);
+    expect(result.usedFallback).toBe(false);
     expect(result.loaded).toBeGreaterThan(0);
   });
 });
 
 describe('extractExternalRefs', () => {
-  it('terminates and deduplicates over a body with many matches', () => {
+  it('keeps custom rules matching quoted paths while ignoring quoted identifiers', () => {
+    const config = externalRefRule('g', "'(https://[^']+)'");
+    expect(loadRules(config).errors).toEqual([]);
+    expect(extractExternalRefs("SELECT [ref 'https://phantom.example'], 'https://real.example/data.csv';"))
+      .toEqual([{ url: 'https://real.example/data.csv', kind: 'openrowset' }]);
+  });
+
+  it('terminates and keeps every distinct reference over a body with many matches', () => {
     loadRules(externalRefRule('gi'));
     const body = Array.from(
       { length: 5000 },

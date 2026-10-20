@@ -1,14 +1,15 @@
 /** Validates compiler-declared scalar return destinations without interpreting SQL expressions. */
 import { createHash } from 'node:crypto';
+import { sqlIdentifierComparisonKey } from '../../engine/shared/sqlIdentifier';
 import { edgeApiType } from '../support/aiPresenter';
-import { normalizeColName, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
+import { normalizeColName, schemaKey } from '../../utils/sql';
 import { getNodeColumns } from '../support/graphUtils';
-import { resolveModelNodeId } from '../support/inputNormalization';
+import { resolveModelNodeId } from '../support/modelReferences';
 import type { ScalarReturnTarget } from './smTypes';
 
 /** Keeps every qualified part, so a remote reference cannot collapse onto a local scalar identity. */
 function referenceKey(name: string, identifierCaseSensitive: boolean): string {
-  return JSON.stringify(splitSqlName(name).map(part => schemaKey(stripBrackets(part), identifierCaseSensitive)));
+  return sqlIdentifierComparisonKey(name, identifierCaseSensitive) ?? JSON.stringify(name);
 }
 
 /** Resolves a real caller endpoint only when its column declares this loaded local scalar function. */

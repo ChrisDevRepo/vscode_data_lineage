@@ -13,8 +13,7 @@ const builtInTemplates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
 for (const key of REQUIRED_AI_TEMPLATE_KEYS) builtInTemplates[key] = (parsed[key]?.instruction ?? '').trim();
 const builtInSections = readAiOutputSections(parsed).sections;
 
-const BUILT_IN_SENTENCE = 'use only these bold labels, in this order when applicable: **Purpose**, **Rules and branches**, **Grain**, '
-  + '**Column mapping**, **Steps**, **Loading**, **Error handling**, **Gaps**. Embed';
+const BUILT_IN_SENTENCE = 'use only these bold labels, in this order when applicable: **Purpose**, **Transformations**, **Grain**, **Operations**. Embed';
 
 /** Section-structure sentence a synthesis render serves, cut at the label list. */
 function labelList(prompt: string): string {
@@ -28,19 +27,19 @@ const synthesis = (sections: AiOutputSections, classification?: 'business' | 'te
 
 const withTechnicalOnlyLabel: AiOutputSections = {
   business: builtInSections.business,
-  technical: ['Purpose', 'Rules and branches', 'Grain', 'Steps', 'Loading', 'Error handling', 'Operational checks', 'Gaps'],
+  technical: ['Purpose', 'Transformations', 'Grain', 'Operations', 'Operational checks'],
 };
 
 describe('section labels: one home per recipe', () => {
   it('built-in file declares the labels on both capture recipes and the placeholder once in general', () => {
-    expect(builtInSections.business).toHaveLength(8);
+    expect(builtInSections.business).toHaveLength(4);
     expect(builtInSections.technical).toEqual(builtInSections.business);
     expect(builtInTemplates.general.split(SECTIONS_PLACEHOLDER)).toHaveLength(2);
     expect(builtInTemplates.general).not.toContain('**Purpose**');
   });
 
   it.each(['business', 'technical', 'both', undefined] as const)(
-    'serves the built-in label sentence unchanged for classification %s', classification => {
+    'serves the built-in label sentence for classification %s', classification => {
       expect(synthesis(builtInSections, classification)).toContain(BUILT_IN_SENTENCE);
       expect(synthesis(builtInSections, classification)).not.toContain(SECTIONS_PLACEHOLDER);
     });
@@ -51,9 +50,9 @@ describe('section labels: one home per recipe', () => {
     expect(labelList(synthesis(withTechnicalOnlyLabel, 'business'))).not.toContain('Operational checks');
   });
 
-  it('serves the ordered union for both, first occurrence winning', () => {
+  it('serves the ordered union for both, first occurrence winning and each recipe order kept', () => {
     const sections: AiOutputSections = { business: ['Purpose', 'Steps', 'Gaps'], technical: ['Purpose', 'Mechanics', 'Steps'] };
-    expect(labelList(synthesis(sections, 'both'))).toBe('**Purpose**, **Steps**, **Gaps**, **Mechanics**');
+    expect(labelList(synthesis(sections, 'both'))).toBe('**Purpose**, **Mechanics**, **Steps**, **Gaps**');
     expect(labelList(synthesis(sections, 'business'))).toBe('**Purpose**, **Steps**, **Gaps**');
     expect(labelList(synthesis(sections, 'technical'))).toBe('**Purpose**, **Mechanics**, **Steps**');
   });
@@ -122,10 +121,6 @@ describe('readAiOutputSections', () => {
   });
 });
 
-describe('the section labels are a required argument', () => {
-  it('a render without `sections` does not type-check, so the placeholder is never served an empty list by omission', () => {
-    // @ts-expect-error -- `sections` is required; typecheck:tests fails this line if the argument becomes optional again
-    const render = () => resolveStagePrompt(builtInTemplates, 'synthesis', 'both', 5, false, { scope: 'stable' });
-    expect(render).toBeTypeOf('function');
-  });
-});
+// Static contract check: keep the call unexecuted; the tests typecheck fails if sections becomes optional.
+// @ts-expect-error -- sections is required
+void (() => resolveStagePrompt(builtInTemplates, 'synthesis', 'both', 5, false, { scope: 'stable' }));

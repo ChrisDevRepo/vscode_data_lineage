@@ -5,6 +5,8 @@ import { dirname } from 'node:path';
 /** The subset of `vscode.LogOutputChannel` the production logger actually calls. */
 export interface HeadlessLogChannel {
   readonly name: string;
+  /** Redirects subsequent diagnostics without changing a frozen evidence log. */
+  redirect(path: string): void;
   append(value: string): void;
   appendLine(value: string): void;
   replace(value: string): void;
@@ -30,13 +32,7 @@ function formatArgument(value: unknown): string {
   }
 }
 
-/**
- * Creates a channel that appends every level to `logFilePath`.
- *
- * @param name - Channel name, recorded on each line so several channels can share one file.
- * @param logFilePath - Absolute path of the run's `host.log`; parent directories are created.
- * @returns A channel assignable to `vscode.LogOutputChannel` after one cast at the call site.
- */
+/** Creates a channel that appends every level to `logFilePath`. */
 export function createHeadlessLogger(name: string, logFilePath: string): HeadlessLogChannel {
   mkdirSync(dirname(logFilePath), { recursive: true });
   const write = (level: string, message: unknown, args: readonly unknown[]): void => {
@@ -49,6 +45,7 @@ export function createHeadlessLogger(name: string, logFilePath: string): Headles
   };
   return {
     name,
+    redirect: path => { mkdirSync(dirname(path), { recursive: true }); logFilePath = path; },
     // `append` is line-oriented here: the production logger only ever appends whole lines, and
     // reconstructing partial writes would reorder them against the timestamps that make the file useful.
     append: (value) => { write('info', value, []); },

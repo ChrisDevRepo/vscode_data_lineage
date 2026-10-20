@@ -1,4 +1,4 @@
-/** Rejects unclosed SQL references at the real handler boundary; indexed repair retains valid report content and controls. */
+/** Rejects malformed or unknown SQL references at their owning field; indexed repair retains valid report content and controls. */
 import { describe, expect, it } from 'vitest';
 import { expandEvidenceRefs } from '../../../src/ai/tools/presentResult';
 import { PresentResultModelSchema, presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
@@ -34,6 +34,7 @@ function seedSession(): AiSession {
   const session = new AiSession();
   const resultGraph: ResultGraph = {
     nodeIds: [ORIGIN],
+    evidenceNodeIds: [ORIGIN],
     edges: [],
     source: 'graph',
     originNodeId: ORIGIN,
@@ -89,8 +90,9 @@ describe('presentation SQL-reference fence boundary', () => {
     const result = JSON.parse(await executePresentResult(input, services(session, epoch)));
     expect(result.code).toBe('validation');
     expect(String(result.reason)).toContain('Unclosed SQL fence');
+    expect(String(result.reason)).toContain('a bare triple-backtick line right after it');
     expect(session.presentationArtifact).toBeFalsy();
-    expect(session.presentResultRepairDraft.get()?.sections?.[0]?.text).toBe(malformed.trim());
+    expect(session.presentResultRepairDraft.get()?.sections?.[0]?.text).toBe(malformed);
   });
 
   it('repairs only the malformed section text in the same turn and preserves all held report controls', async () => {
@@ -105,8 +107,8 @@ describe('presentation SQL-reference fence boundary', () => {
     const failed = JSON.parse(await executePresentResult(input, services(session, epoch)));
     expect(failed.code).toBe('validation');
     const auth = session.presentResultRepairDraft.getAuthorization()!;
-    expect(auth.sectionTextLeaves).toEqual([{ index: 0, fields: ['text'] }]);
-    const servedSchema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionTextLeaves);
+    expect(auth.sectionLeaves).toEqual([{ index: 0, fields: ['text'] }]);
+    const servedSchema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionLeaves);
     expect(servedSchema.safeParse({ sections: [{ index: 0, node_ids: [], text: 'Replacement' }] }).success).toBe(false);
     const repaired = JSON.parse(await executePresentResult({ sections: [{ index: 0, text: 'Source rule.\n```sql S1\n```\nLater business meaning.' }] }, services(session, epoch)));
     expect(repaired.success).toBe(true);
@@ -120,23 +122,32 @@ describe('presentation SQL-reference fence boundary', () => {
     expect(session.presentResultRepairDraft.get()).toBeNull();
   });
 
-  it.each(['title', 'intro', 'closing'])('rejects and repairs malformed SQL in %s while keeping the complete section list', async field => {
+  it.each(['title', 'intro', 'closing', 'sections.0.text'].flatMap(field =>
+    ['unclosed', 'unknown'].map(fault => ({ field, fault }))))('repairs $fault SQL reference only in $field', async ({ field, fault }) => {
     const session = seedSession();
     const epoch = session.beginTurn();
-    const malformed = 'Before.\n```sql S1\nAfter.';
-    const input = basePayload({ [field]: malformed });
+    const malformed = fault === 'unknown' ? 'Before.\n```sql S9\n```\nAfter.' : 'Before.\n```sql S1\nAfter.';
+    const keptText = 'A second valid section stays byte-equivalent.';
+    const input = basePayload({ title: 'Held title', intro: 'Held intro', closing: 'Held closing',
+      sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.' },
+        { label: 'Meaning', node_ids: [ORIGIN], text: keptText }] });
+    if (field.startsWith('sections.')) (input.sections as Array<{ text: string }>)[0].text = malformed;
+    else input[field] = malformed;
     const failed = JSON.parse(await executePresentResult(input, services(session, epoch)));
     expect(failed.code).toBe('validation');
-    expect(failed.issuePaths).toContain(field);
+    expect(failed.issuePaths).toEqual([field]);
     expect(session.presentationArtifact).toBeFalsy();
+    const authorization = session.presentResultRepairDraft.getAuthorization()!;
+    expect(authorization.fields).toEqual([field.startsWith('sections.') ? 'sections' : field]);
     expect(session.presentResultRepairDraft.get()?.sections).toEqual(input.sections);
-    expect(session.presentResultRepairDraft.getAuthorization()?.fields).toEqual([field]);
-    const repaired = JSON.parse(await executePresentResult({ [field]: 'Before.\n```sql S1\n```\nAfter.' }, services(session, epoch)));
+    const corrected = 'Before.\n```sql S1\n```\nAfter.';
+    const patch = field.startsWith('sections.') ? { sections: [{ index: 0, text: corrected }] } : { [field]: corrected };
+    if (field.startsWith('sections.')) expect(authorization.sectionLeaves).toEqual([{ index: 0, fields: ['text'] }]);
+    const repaired = JSON.parse(await executePresentResult(patch, services(session, epoch)));
     expect(repaired.success).toBe(true);
-    expect(description(session)).toContain('Before.');
-    expect(description(session)).toContain('After.');
-    expect(description(session)).toContain(CAPTURED_SQL);
+    for (const retained of ['Before.', 'After.', keptText, CAPTURED_SQL]) expect(description(session)).toContain(retained);
     expect(session.presentationArtifact?.nodeIds).toEqual([ORIGIN]);
+    expect(session.presentationArtifact?.aiMetadata.highlightGroups).toEqual([{ label: 'Flow', color: 'source', nodeIds: [ORIGIN] }]);
   });
 
   it('does not use another language opener to close SQL or consume its intervening prose', () => {
@@ -180,6 +191,18 @@ describe('presentation SQL-reference fence boundary', () => {
     }
   });
 
+  it('resolves a reference by the completion numbering after a later edit removed an earlier slot node', async () => {
+    const session = new AiSession();
+    const PRUNED = '[dbo].[Staging]';
+    // Completion served two slots, S1 on PRUNED and S2 on ORIGIN; a follow-up then pruned PRUNED from the view.
+    session.memory.storeDetail(node(PRUNED, 'Staging', 'table'), [{ angle: 'technical', text: 'Stages.\n```sql\nSELECT 1 AS staged\n```' }], 'Stages.');
+    session.memory.storeDetail(node(ORIGIN, 'Orders', 'table'), [{ angle: 'technical', text: `Loads orders.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` }], 'Loads orders.');
+    session.resultGraph = { nodeIds: [ORIGIN], evidenceNodeIds: [PRUNED, ORIGIN], edges: [], source: 'graph', originNodeId: ORIGIN };
+    expect((await run(session, basePayload({ intro: '```sql S2\n```' }))).success).toBe(true);
+    expect(description(session)).toContain(CAPTURED_SQL);
+    expect(description(session)).not.toContain('SELECT 1 AS staged');
+  });
+
   it('rejects a closed unknown reference and leaves non-SQL markdown prose untouched', async () => {
     const session = seedSession();
     expect((await run(session, basePayload({intro:'```sql S9\n```'}))).code).toBe('validation');
@@ -193,6 +216,28 @@ describe('evidence reference placement on its own line', () => {
   const SQL = 'SELECT SUM(Amount) FROM Demo.Sales';
   const blocks = new Map([['S1', { id: 'S1', nodeId: ORIGIN, raw: `\`\`\`sql\n${SQL}\n\`\`\`` }]]);
   const fence = (indent: string): string => `${indent}\`\`\`sql\n${indent}${SQL}\n${indent}\`\`\``;
+
+  it.each([
+    ["SELECT 'a b' AS Label;", "SELECT 'a  b' AS Label;"],
+    ["SELECT 1 -- keep the next expression\n+ 2;", "SELECT 1 -- keep the next expression + 2;"],
+  ])('preserves semantically distinct captured SQL when whitespace differs', (writtenSql, capturedSql) => {
+    const captured = new Map([['S1', { id: 'S1', nodeId: ORIGIN, raw: `\`\`\`sql\n${capturedSql}\n\`\`\`` }]]);
+    const result = expandEvidenceRefs(`\`\`\`sql\n${writtenSql}\n\`\`\`\n\nDifferent behavior:\n\`\`\`sql S1\n\`\`\``, captured);
+    expect(result.text).toContain(writtenSql);
+    expect(result.text).toContain(`Different behavior:\n\`\`\`sql\n${capturedSql}\n\`\`\``);
+    expect(result.normalized).toEqual([]);
+  });
+
+  it('keeps a column-0 witness citation between numbered steps inside one ordered list', () => {
+    const second = new Map(blocks);
+    second.set('S2', { id: 'S2', nodeId: ORIGIN, raw: '```sql\nSELECT 2;\n```' });
+    const written = '1. First step.\n\n```sql S1\n```\n\n2. Second step.\n\n```sql S2\n```\n\n3. Third step.';
+    const { text } = expandEvidenceRefs(written, second);
+    expect(text).toBe(`1. First step.\n\n${fence('   ')}\n\n2. Second step.\n\n${fence('   ').replace(SQL, 'SELECT 2;')}\n\n3. Third step.`);
+    const lists = marked.lexer(text).filter(token => token.type === 'list') as Array<{ items: unknown[] }>;
+    expect(lists).toHaveLength(1);
+    expect(lists[0].items).toHaveLength(3);
+  });
 
   it('keeps a mid-line reference in an ordered list item inside the item and the later steps numbered', () => {
     const written = '1. Country denominator: $$S=\\sum x$$ (```sql S1\n```)\n2. Second step.\n3. Third step.';
@@ -282,16 +327,16 @@ describe('merged report section repair diagnosis', () => {
     const epoch = session.beginTurn();
     const labels = ['Terminal Sources', 'Price Computation Pipeline', 'Order Import and Cleaning', 'Staging and Consolidation', 'Revenue Computation and Load', 'Dimension and Lookup Tables'];
     const held = PresentResultModelSchema.parse(basePayload({ sections: labels.map(label => ({ label, node_ids: [ORIGIN], text: `Evidence for ${label}.` })) }));
-    session.presentResultRepairDraft.hold(held, { fields: ['sections'], sectionTextLeaves: [{ index: 3, fields: ['label'] }, { index: 5, fields: ['label'] }] });
+    session.presentResultRepairDraft.hold(held, { fields: ['sections'], sectionLeaves: [{ index: 3, fields: ['label'] }, { index: 5, fields: ['label'] }] });
     const result = JSON.parse(await executePresentResult({ sections: [{ index: 3, label: 'Staging' }, { index: 5, label: labels[4] }] }, services(session, epoch)));
     expect(result.reason).toContain('Duplicate section label');
     expect(result.issuePaths).toEqual(['sections.5.label']);
     expect(result.hint).not.toContain('no section');
-    expect(result.hint).toContain('zero-based 5 (label)');
+    expect(result.hint).toContain('5 (label)');
     expect(session.presentResultRepairDraft.get()?.sections).toHaveLength(6);
-    expect(session.presentResultRepairDraft.getAuthorization()).toEqual({ fields: ['sections'], sectionTextLeaves: [{ index: 5, fields: ['label'] }] });
+    expect(session.presentResultRepairDraft.getAuthorization()).toEqual({ fields: ['sections'], sectionLeaves: [{ index: 5, fields: ['label'] }] });
     const auth = session.presentResultRepairDraft.getAuthorization()!;
-    const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionTextLeaves);
+    const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionLeaves);
     expect(schema.safeParse({ sections: [{ index: 5, label: 'Dimensions', text: 'Rewrite' }] }).success).toBe(false);
     expect(schema.safeParse({ sections: [{ index: 5, label: 'Dimensions' }] }).success).toBe(true);
   });

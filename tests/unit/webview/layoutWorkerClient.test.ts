@@ -1,8 +1,4 @@
-/**
- * Pins that the layout worker client never leaves a caller hanging: a factory that throws, or a
- * worker that raises `error`, reports once, rejects the call in flight, and is retried on the
- * next call instead of being reused broken.
- */
+/** Pins that the layout worker client never leaves a caller hanging: a factory that throws, or a worker that raises `error`, reports once, rejects the call in flight, and is retried on the next call instead of being reused broken. */
 import { describe, expect, it, vi } from 'vitest';
 import { createLayoutWorkerClient } from '../../../src/utils/layoutWorkerClient';
 import type { LayoutInput } from '../../../src/engine/graphBuilder';

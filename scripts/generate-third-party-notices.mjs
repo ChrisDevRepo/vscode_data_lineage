@@ -2,9 +2,11 @@
  * Regenerates the "Bundled npm packages" section of THIRD_PARTY_NOTICES.md.
  *
  * Usage: `npm run build && node scripts/generate-third-party-notices.mjs`
+ * With `--check`, writes nothing and exits 1 when the committed file differs from the generated
+ * one (the gate runs this after its build step).
  *
- * The package set is read from what the bundlers actually emit: the sourcemaps of the two
- * esbuild extension bundles (`out/*.js.map`) and the module list of a Vite webview build
+ * The package set is read from what the bundlers actually emit: the sourcemaps of the esbuild
+ * extension bundles (`out/*.js.map`) and the module list of a Vite webview build
  * (in memory, `write: false`). Dev tooling that never reaches a shipped bundle is not listed.
  * Everything above the `BEGIN GENERATED` marker (the vendored-code section) is kept.
  */
@@ -28,7 +30,10 @@ function addModulePath(rawPath) {
   if (idx < 0) return;
   const parts = absPath.slice(idx + marker.length).split(path.sep);
   const name = parts[0].startsWith('@') ? `${parts[0]}/${parts[1]}` : parts[0];
-  packageDirs.add(path.join(absPath.slice(0, idx + marker.length), name));
+  const dir = path.join(absPath.slice(0, idx + marker.length), name);
+  // A sourcemap may name a path inside a package's own source tree (`@scope/src/...`); only a
+  // directory with a package.json is a package.
+  if (fs.existsSync(path.join(dir, 'package.json'))) packageDirs.add(dir);
 }
 
 for (const mapFile of ['out/extension.js.map', 'out/extensionRuntime.js.map']) {
@@ -52,8 +57,17 @@ for (const output of [webview].flat()) {
 
 function licenseText(dir) {
   const file = fs.readdirSync(dir).find(f => /^(licen[sc]e|copying)(\..*)?$/i.test(f));
-  return file ? fs.readFileSync(path.join(dir, file), 'utf8').trim() : null;
+  // Normalise CRLF and trailing blanks so the output is stable across checkouts and `--check` holds.
+  return file ? fs.readFileSync(path.join(dir, file), 'utf8').replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim() : null;
 }
+
+/** Packages the root package.json overrides to a repo-owned `file:` stub; these are not third-party. */
+const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const repoOwned = new Set(
+  Object.entries(rootPkg.overrides ?? {})
+    .filter(([, spec]) => typeof spec === 'string' && spec.startsWith('file:'))
+    .map(([name]) => name),
+);
 
 function licenseId(pkg) {
   if (typeof pkg.license === 'string') return pkg.license;
@@ -68,13 +82,14 @@ function authorName(pkg) {
   return typeof a === 'string' ? a.replace(/\s*[<(].*$/, '') : a.name;
 }
 
-const entries = [...packageDirs].map(dir => {
+const entries = [...packageDirs].flatMap(dir => {
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  if (repoOwned.has(pkg.name)) return [];
   const text = licenseText(dir);
   const copyright =
     text?.split('\n').map(l => l.trim()).find(l => /^copyright\b|^\(c\)|^©/i.test(l)) ??
     (authorName(pkg) ? `Copyright (c) ${authorName(pkg)}` : 'Copyright held by the package authors');
-  return { name: pkg.name, version: pkg.version, license: licenseId(pkg), copyright, text };
+  return [{ name: pkg.name, version: pkg.version, license: licenseId(pkg), copyright, text }];
 }).sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
 
 const missing = entries.filter(e => !e.text);
@@ -109,5 +124,14 @@ const section = [
 const current = fs.readFileSync(noticesPath, 'utf8');
 const start = current.indexOf(BEGIN);
 const head = start >= 0 ? current.slice(0, start) : `${current.trimEnd()}\n\n---\n\n`;
-fs.writeFileSync(noticesPath, head + section);
+const next = head + section;
+if (process.argv.includes('--check')) {
+  if (next !== current) {
+    console.error('THIRD_PARTY_NOTICES.md is stale: run `npm run build && node scripts/generate-third-party-notices.mjs`.');
+    process.exit(1);
+  }
+  console.log(`THIRD_PARTY_NOTICES.md is current (${entries.length} packages).`);
+  process.exit(0);
+}
+fs.writeFileSync(noticesPath, next);
 console.log(`${entries.length} packages written; ${missing.length} without a license file: ${missing.map(m => m.name).join(', ')}`);

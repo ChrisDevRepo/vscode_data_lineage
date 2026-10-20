@@ -15,11 +15,7 @@ import type { RemoveAction } from '../engine/modeCapabilities';
 import { disabledControl } from './ui/disabledControl';
 import { escapeRegexLiteral, quoteIdentifier } from '../utils/sql';
 
-/**
- * Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas: the menu takes
- * focus when it opens, Up/Down/Home/End move between its enabled `menuitem`s, Escape or an outside
- * press closes it.
- */
+/** Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas: the menu takes focus when it opens, Up/Down/Home/End move between its enabled `menuitem`s, Escape or an outside press closes it. */
 function useContextMenuFloating(x: number, y: number, onClose: () => void) {
   const virtualRef = useRef({
     getBoundingClientRect() {
@@ -91,11 +87,7 @@ interface NodeContextMenuProps {
   onViewDdl: (nodeId: string) => void;
   /** Callback to show the detailed info bar for this node. */
   onShowDetails: (nodeId: string) => void;
-  /**
-   * What "remove from what is on screen" does for this node, from
-   * {@link import('../engine/modeCapabilities').resolveRemoveAction} — the single Remove item
-   * this menu renders always shown, disabled with its reason when refused, never omitted.
-   */
+  /** What "remove from what is on screen" does for this node, from {@link import('../engine/modeCapabilities').resolveRemoveAction} — the single Remove item this menu renders always shown, disabled with its reason when refused, never omitted. */
   removeAction: RemoveAction;
   /** Callback to add a new exclusion rule based on this node's name (`removeAction.kind === 'exclude'`). */
   onExcludeNode?: (pattern: string) => void;
@@ -137,18 +129,7 @@ function removeActionLabel(action: RemoveAction): string {
   }
 }
 
-/**
- * A context menu for graph nodes, providing quick access to lineage and inspection tools.
- *
- * It uses Floating UI to position itself at the cursor coordinates and handles:
- * - Initiating Trace and Pathfinding modes.
- * - Opening DDL and Table Detail views.
- * - Copying qualified names to the clipboard.
- * - Removing the node from whatever scope currently owns it.
- *
- * @param props - The component props.
- * @returns A portal-rendered React component.
- */
+/** A context menu for graph nodes, providing quick access to lineage and inspection tools. */
 export const NodeContextMenu = memo(function NodeContextMenu({
   x,
   y,

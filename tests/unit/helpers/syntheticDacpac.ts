@@ -1,22 +1,4 @@
-/**
- * Synthetic DACPAC writer for tests that need a real `model.xml` at an arbitrary object count — the
- * tracked fixtures top out around 150 objects, far below `dataLineageViz.maxNodes` (2000).
- *
- * @remarks
- * The graph shape itself comes from {@link generateDwhModel} (`dwhGraphGenerator.ts`) — the one
- * seeded DWH generator every large-graph test consumer shares. This module's only job is writing
- * that model out as a real `.dacpac` zip so the scale-boundary tests exercise the actual DACPAC
- * extraction path (`extractDacpac`), plus the ground truth the caller asserts against.
- *
- * Every non-external node's dependencies are declared through the structured `BodyDependencies`
- * relationship, placed on the *dependent* node and referencing its upstream node — the same shape
- * `dacpacExtractor.ts` reads directly. No node other than an external-ref carrier is given a
- * `BodyScript`, so `dacpacExtractor.ts` always takes the unconditional read-direction path
- * (`processNonSpEdges`) for every declared dependency: one XML reference always yields exactly one
- * edge, source and target exactly as generated. An external-ref carrier procedure instead gets an
- * `OPENROWSET` body and no `BodyDependencies`, so `modelBuilder.ts`'s independent external-reference
- * scan discovers it and creates the matching virtual node.
- */
+/** Synthetic DACPAC writer for tests that need a real `model.xml` at an arbitrary object count — the tracked fixtures top out around 150 objects, far below `dataLineageViz.maxNodes` (2000). */
 
 import JSZip from 'jszip';
 import type { DatabaseModel, ObjectType } from '../../../src/engine/types';
@@ -28,11 +10,7 @@ export interface SyntheticDacpacParams {
   objectCount: number;
   /** Exact number of schemas to distribute the objects across. */
   schemaCount: number;
-  /**
-   * Number of `objectCount` objects (taken from the end of the sequence) that are procedures
-   * referencing a distinct external file via `OPENROWSET`, each producing one virtual external
-   * node in the built model. Defaults to `0`.
-   */
+  /** Number of `objectCount` objects (taken from the end of the sequence) that are procedures referencing a distinct external file via `OPENROWSET`, each producing one virtual external node in the built model. Defaults to `0`. */
   externalRefCount?: number;
   /** Seed forwarded to {@link generateDwhModel}; defaults to a fixed constant for reproducibility. */
   seed?: number;
@@ -71,12 +49,7 @@ function xmlEscape(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/**
- * Serializes a {@link DatabaseModel} produced by {@link generateDwhModel} into a `model.xml` body.
- *
- * @param model - The generated model to serialize.
- * @returns The `model.xml` document text and the real (non-external) declared-dependency edge count.
- */
+/** Serializes a {@link DatabaseModel} produced by {@link generateDwhModel} into a `model.xml` body. */
 export function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
   const byId = new Map(model.nodes.map(n => [n.id, n]));
 
@@ -124,11 +97,7 @@ export function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edg
   return { xml, edgeCount };
 }
 
-/**
- * Builds a real `model.xml` at the requested size — via the shared {@link generateDwhModel} —
- * zipped into a `.dacpac` buffer, so the scale-boundary tests around `dataLineageViz.maxNodes`
- * exercise the actual DACPAC extraction path rather than a hand-built `DatabaseModel`.
- */
+/** Builds a real `model.xml` at the requested size — via the shared {@link generateDwhModel} — zipped into a `.dacpac` buffer, so the scale-boundary tests around `dataLineageViz.maxNodes` exercise the actual DACPAC extraction path rather than a hand-built `DatabaseModel`. */
 export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promise<SyntheticDacpacResult> {
   const { objectCount, schemaCount, externalRefCount = 0, seed = DEFAULT_SEED, profile } = params;
   if (schemaCount < 1) throw new Error('schemaCount must be at least 1');
@@ -162,3 +131,29 @@ export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promi
     edgeCount,
   };
 }
+
+/** Builds a dacpac shaped like an SDK-style build: a procedure that reads and writes the local and a same-named other-database table. */
+export async function buildThreePartDacpac(
+  dacMetadata: string | undefined,
+  body = 'INSERT INTO SelfDb.dbo.X (a) SELECT a FROM OtherDb.dbo.X; INSERT INTO OtherDb.dbo.T (a) SELECT a FROM dbo.T;',
+): Promise<Uint8Array> {
+  const zip = new JSZip();
+  zip.file('model.xml', `<?xml version="1.0"?>
+    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
+      <Model>
+        <Element Type="SqlTable" Name="[dbo].[T]" />
+        <Element Type="SqlTable" Name="[dbo].[X]" />
+        <Element Type="SqlProcedure" Name="[dbo].[usp_Sync]">
+          <Property Name="BodyScript" Value="${body}" />
+          <Relationship Name="BodyDependencies">
+            <Entry><References Name="[dbo].[T]" /></Entry>
+            <Entry><References ExternalSource="OtherDb.dacpac" Name="[$(OtherDb)]|[dbo].[X]" /></Entry>
+          </Relationship>
+        </Element>
+      </Model>
+    </DataSchemaModel>`);
+  if (dacMetadata !== undefined) zip.file('DacMetadata.xml', dacMetadata);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+export const SELF_DB_METADATA = '<?xml version="1.0" encoding="utf-8"?><DacType xmlns="http://schemas.microsoft.com/sqlserver/dac/Serialization/2012/02"><Name>SelfDb</Name><Version>1.0.0.0</Version></DacType>';

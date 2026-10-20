@@ -1,47 +1,30 @@
-# Security Policy
+# Security
 
-## Supported Versions
+A free helper extension under the MIT license, shared as-is. This page lists what it reads, runs and sends.
 
-Security fixes are provided for the latest version published to the Visual
-Studio Marketplace. Earlier versions are unsupported; upgrade to the latest
-release before reporting a vulnerability.
+## What is read and sent
 
-## Reporting a Vulnerability
+- **DACPAC:** read locally, with no database connection. The SQL in it is parsed, never run.
+- **Database import:** runs the read-only catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md), and only when you start an import.
+  - Custom DMV SQL is your own configuration and runs as written, with your permissions. Use a read-only login.
+- **Table statistics:** runs row-count and aggregate `SELECT` queries only when you request them, on a separate connection ([`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md); `dataLineageViz.tableStatistics.enabled`).
+- **`@lineage` (optional):** sends your question, recent `@lineage` chat, and the SQL or metadata it reads from the loaded model to the chat model you selected in VS Code.
+  - It cannot connect to a database, run SQL, or start an import or profiling.
+  - `dataLineageViz.ai.enabled: false` turns it off.
+- **No telemetry:** the extension sends nothing to the author and has no external tracing.
 
-**Do not** open a public GitHub issue for security vulnerabilities.
+## Connections
 
-Report via [GitHub Security Advisories](https://github.com/ChrisDevRepo/vscode_data_lineage/security/advisories/new) or contact the maintainer via [LinkedIn](https://www.linkedin.com/in/christian-wagner-11aa8614b).
+- SQL login or Microsoft Entra ID, with read-only application intent, encrypted by default.
+- **Trust Server Certificate** turns off certificate checks.
+- Passwords are kept in VS Code secret storage, never in saved connections.
 
-Include:
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
+## Local files
 
-## Security Notes
-
-- The extension parses SQL object definitions but does not execute object DDL
-- `.dacpac` parsing is fully offline
-- Live database import runs configured catalog / DMV queries through the MSSQL
-  extension connection API only when the user starts an import. Built-in
-  queries are read-only; custom DMV SQL is trusted local configuration and is
-  executed as configured (with `{{SCHEMAS}}` expansion for Phase 2)
-- Table profiling runs row-count and aggregate `SELECT` queries only after an explicit profiling click
-- YAML scaffolding commands write fixed filenames in the first workspace root
-  and preserve existing files. Draw.io export uses a save dialog. Import does
-  not modify database objects or user source code
-- Strict Content Security Policy on the webview
-- Custom YAML DMV queries, AI templates, and parse-rule regexes are trusted local configuration; avoid loading untrusted YAML files
-- In an untrusted workspace (Restricted Mode), workspace values for `dataLineageViz.parseRulesFile`, `dmvQueriesFile`, `excludePatterns` and `ai.outputTemplateFile` are ignored until the workspace is trusted; user-level values still apply.
-- `@lineage` uses the model selected in VS Code. When invoked, the selected
-  model receives the user's prompt, native `@lineage` chat history, and lineage
-  metadata or DDL returned by local snapshot tools. The AI runtime cannot
-  connect to a database, execute SQL, start an import, or start profiling
-- AI trace logging is disabled by default. Enabling it for a session requires an
-  open workspace folder and writes full model and tool diagnostics to
-  `tmp/lm-trace/` inside the first workspace folder; the writer is disabled again
-  when the extension host restarts. These files can contain database identifiers,
-  SQL, prompts, responses, and tool payloads; keep them out of version control and
-  review them before sharing
-- **Copy Debug Info** can include project/source/schema names, filter state, GUI
-  state, database-model metadata, and AI session metadata. Review and redact
-  identifiers before sharing it
+- Logs stay local, and secrets are redacted.
+- These files are written to the first workspace folder, only when you run their command:
+  - AI traces (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`);
+  - **Copy Debug Info** output.
+- They can contain database names, SQL and prompts. Review them before sharing, and keep them out of version control.
+- Custom YAML files (parse rules, DMV queries, AI templates) are trusted configuration. In Restricted Mode, workspace values for them are ignored.
+- The webview runs under a strict Content Security Policy.

@@ -1,7 +1,7 @@
 /** DMV metadata keeps dotted schema/table identities separate without changing canonical IDs. */
 import { expect, it } from 'vitest';
 import { buildModelFromDmv } from '../../../src/engine/dmvExtractor';
-import type { SimpleExecuteResult } from '../../../src/types/mssql';
+import type { SimpleExecuteResult } from '../../../src/types/database';
 import { loadParseRules } from '../helpers/testUtils';
 
 loadParseRules();

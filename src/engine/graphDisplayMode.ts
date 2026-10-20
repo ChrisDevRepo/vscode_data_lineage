@@ -2,15 +2,7 @@ import type Graph from 'graphology';
 import { OBJECT_TYPES, type ExtensionConfig, type FilterState, type GraphMode } from './types';
 import { traceNodeIdsWithLevels } from './graphBuilder';
 
-/**
- * Which graph surface the canvas renders.
- *
- * @remarks
- * `full` = individual objects with layout; `schemaOverview` = schema-cluster nodes only;
- * `schemaExpanded` = one or more schemas expanded to objects beside collapsed clusters (expanded schema view);
- * `scoped` = trace/path/analysis scope, which takes precedence over base graph size;
- * `renderLimit` = too many nodes to render, show the limit message instead.
- */
+/** Which graph surface the canvas renders. */
 export type GraphDisplayMode = 'full' | 'schemaOverview' | 'schemaExpanded' | 'scoped' | 'renderLimit';
 
 interface GraphModeInput {
@@ -18,16 +10,11 @@ interface GraphModeInput {
   config: ExtensionConfig;
 }
 
-/**
- * Display surface decision plus the projected node count that produced it.
- */
+/** Display surface decision plus the projected node count that produced it. */
 export interface GraphDisplayState {
   /** The display surface the canvas should render. */
   mode: GraphDisplayMode;
-  /**
-   * Projected React Flow node count of the surface that will render — the number the
-   * render-limit screen reports. For a scope on stage it is the scope's own node count.
-   */
+  /** Projected React Flow node count of the surface that will render — the number the render-limit screen reports. For a scope on stage it is the scope's own node count. */
   renderedCount: number;
 }
 
@@ -43,40 +30,17 @@ interface GraphDisplayModeInput {
   scopedRenderedCount?: number;
 }
 
-/**
- * Seeds the user-owned graph view mode when a model is first loaded or Refresh View runs.
- *
- * @remarks
- * Compares against the lesser of the configured threshold and the render limit, so Object View
- * never seeds a shape it cannot render — the render limit always wins.
- *
- * @returns `'overview'` when Schema View is enabled and the count exceeds the effective initial threshold, else `'full'`.
- */
+/** Seeds the user-owned graph view mode when a model is first loaded or Refresh View runs. */
 export function deriveInitialGraphMode({ filteredCount, config }: GraphModeInput): GraphMode {
   return config.overview.enabled && filteredCount > effectiveOverviewThreshold(config) ? 'overview' : 'full';
 }
 
-/**
- * The object count above which Schema View applies: the configured `overview.threshold` capped at
- * `renderLimit`, as the setting's description promises — one value for the initial mode, the
- * toggle's soft-disabled state and the toolbar tooltip.
- */
+/** The object count above which Schema View applies: the configured `overview.threshold` capped at `renderLimit`, as the setting's description promises — one value for the initial mode, the toggle's soft-disabled state and the toolbar tooltip. */
 export function effectiveOverviewThreshold(config: Pick<ExtensionConfig, 'overview' | 'renderLimit'>): number {
   return Math.min(config.overview.threshold, config.renderLimit);
 }
 
-/**
- * Derives the full graph display surface, including scoped, render-limit, and expanded-schema-view states.
- *
- * @remarks
- * The render limit is a React Flow node ceiling for the selected surface, not a hidden cap on the
- * underlying model or AI context. Every surface is measured by what it will actually put on the
- * canvas: Expanded Schema View and Schema View by their projected node counts, and a trace, path, or
- * analysis scope by its own. A scope is not self-limiting — an all-levels trace over a connected
- * model reaches the whole model — so it is held to the same ceiling rather than exempted from it.
- *
- * @returns The display mode the canvas should render and the rendered-node count behind the decision.
- */
+/** Derives the full graph display surface, including scoped, render-limit, and expanded-schema-view states. */
 export function deriveGraphDisplayMode({
   graphMode,
   filteredCount,
@@ -108,10 +72,7 @@ export function deriveGraphDisplayMode({
   return { mode: 'full', renderedCount };
 }
 
-/**
- * One restorable view — the filter, graph shape, and camera — captured on entry to a locked
- * (trace/analysis/bookmark/AI/path-finder) mode and restored exactly on exit.
- */
+/** One restorable view — the filter, graph shape, and camera — captured on entry to a locked (trace/analysis/bookmark/AI/path-finder) mode and restored exactly on exit. */
 export interface ViewSnapshot {
   /** The filter in force before the locked mode was entered. */
   filter: FilterState;
@@ -127,27 +88,13 @@ export interface ViewSnapshot {
 
 /** Whether a view snapshot should be captured or restored on this render. */
 export interface ViewSnapshotTransition {
-  /** Capture a fresh snapshot: a locked mode was just entered and none is already saved. */
+  /** Capture a fresh snapshot: a locked mode was entered and none is already saved. */
   shouldSnapshot: boolean;
-  /** Restore and clear the saved snapshot: the last locked mode was just exited. */
+  /** Restore and clear the saved snapshot: the last locked mode was exited. */
   shouldRestore: boolean;
 }
 
-/**
- * Decides whether to capture or restore the {@link ViewSnapshot} for this render, from the
- * locked-mode transition alone.
- *
- * @remarks
- * Takes a snapshot only on the entering edge, and only when none is already saved — a second
- * locked mode entered while one is already active (e.g. Refresh mid-trace, or analysis started
- * from within a trace) must never overwrite the one snapshot that restores the pre-mode view.
- * Restoring is likewise edge-triggered, so the saved snapshot is consumed exactly once.
- *
- * @param isModeLocked - Whether a locked mode is active this render.
- * @param wasModeLocked - Whether a locked mode was active last render.
- * @param hasSnapshot - Whether a snapshot is currently saved.
- * @returns The capture/restore decision for this render.
- */
+/** Decides whether to capture or restore the {@link ViewSnapshot} for this render, from the locked-mode transition alone. */
 export function deriveViewSnapshotTransition(
   isModeLocked: boolean,
   wasModeLocked: boolean,
@@ -161,27 +108,13 @@ export function deriveViewSnapshotTransition(
   };
 }
 
-/**
- * The filter the canvas is built from while an AI preview is shown.
- *
- * @remarks
- * The preview's allowlist names exactly the nodes to render, so schemas, types, external
- * references, exclusion patterns and isolation are widened for display only: every allowlisted
- * node renders whatever the toolbar selection is. The selection passed in stays the user's and is
- * what the toolbar shows.
- *
- * @param filter - The user's selection, carrying the preview allowlist.
- * @param aiPreviewActive - Whether the AI preview is shown.
- * @param modelSchemas - Every schema of the loaded model.
- * @returns The widened display filter, or `filter` itself when no preview is shown or it carries
- *   no allowlist.
- */
+/** The filter the canvas is built from while an AI preview is shown. */
 export function aiPreviewDisplayFilter(
   filter: FilterState,
   aiPreviewActive: boolean,
   modelSchemas: Iterable<string>,
 ): FilterState {
-  if (!aiPreviewActive || !filter.allowlistNodeIds || filter.allowlistNodeIds.size === 0) return filter;
+  if (!aiPreviewActive || !filter.allowlistNodeIds) return filter;
   return {
     ...filter,
     schemas: new Set(modelSchemas),
@@ -193,53 +126,25 @@ export function aiPreviewDisplayFilter(
   };
 }
 
-/**
- * The user's selection once the AI preview is discarded: the preview allowlist is dropped and
- * every other choice, including an edit made while the preview was shown, is kept.
- */
+/** The user's selection once the AI preview is discarded: the preview allowlist is dropped and every other choice, including an edit made while the preview was shown, is kept. */
 export function filterAfterAiPreviewDiscard(filter: FilterState): FilterState {
   const { allowlistNodeIds: _allowlist, ...selection } = filter;
   return selection;
 }
 
-/**
- * The filter the extension host treats as the user's selection.
- *
- * @remarks
- * While the AI preview is shown, the selection saved in the view snapshot at run start is the one
- * reported, so prompt context and the preview's follow-ups keep the schemas and types the run
- * started with; an edit made while the preview is shown reaches the host once the preview is
- * discarded.
- *
- * @param filter - The filter currently applied to the canvas.
- * @param aiPreviewActive - Whether the AI preview is shown.
- * @param snapshot - The view saved on entry to the locked mode, if any.
- */
+/** The filter the extension host treats as the user's selection. */
 export function userFilterForHost(filter: FilterState, aiPreviewActive: boolean, snapshot: ViewSnapshot | null): FilterState {
   return aiPreviewActive && snapshot ? snapshot.filter : filter;
 }
 
-/**
- * Drops the most recently expanded schema, one Esc press at a time.
- *
- * @remarks
- * A JS `Set` preserves insertion order, so the last element already *is* the expansion order —
- * no separate order-tracking state is kept for this.
- *
- * @returns The remaining expanded schemas, or `null` once none remain.
- */
+/** Drops the most recently expanded schema, one Esc press at a time. */
 export function collapseLastExpandedSchema(expandedSchemas: ReadonlySet<string>): Set<string> | null {
   const ordered = Array.from(expandedSchemas);
   ordered.pop();
   return ordered.length > 0 ? new Set(ordered) : null;
 }
 
-/**
- * Drops expanded schemas no longer present in the model, keeping the rest, so a settings change
- * or Refresh collapses only the schemas that actually disappeared.
- *
- * @returns The schemas that still exist, or `null` when none do.
- */
+/** Drops expanded schemas no longer present in the model, keeping the rest, so a settings change or Refresh collapses only the schemas that disappeared. */
 export function retainExistingSchemas(
   expandedSchemas: ReadonlySet<string>,
   existingSchemas: ReadonlySet<string>,
@@ -260,23 +165,14 @@ export interface RenderLimitFallback {
 }
 
 /** Instruction on every render-limit screen. The notice offers no button. */
-export const RENDER_LIMIT_NOTICE = 'Reduce filter scope or adjust VS Code settings.';
+const RENDER_LIMIT_NOTICE = 'Reduce filter scope or adjust VS Code settings.';
 
-/**
- * The render-limit notice. The current view stays selected and nothing is drawn.
- *
- * @remarks
- * The same sentence covers the base graph and a trace, path, analysis, or AI scope. The user
- * changes filters or `dataLineageViz.renderLimit`. The notice does not switch views or shrink a trace.
- */
+/** The render-limit notice. The current view stays selected and nothing is drawn. */
 export function deriveRenderLimitFallback(): RenderLimitFallback {
   return { message: RENDER_LIMIT_NOTICE };
 }
 
-/**
- * Node count a trace from `nodeId` at the given depths would render — BFS only, never layout, so
- * it is cheap enough to probe a candidate depth (a depth-choice count label) before committing to one.
- */
+/** Node count a trace from `nodeId` at the given depths would render — BFS only, never layout, so it is cheap enough to probe a candidate depth (a depth-choice count label) before committing to one. */
 export function traceSizeByDepth(
   graph: Graph,
   nodeId: string,

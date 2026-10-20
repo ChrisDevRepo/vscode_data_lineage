@@ -15,15 +15,15 @@
 #               questions answered with the discovery read tools
 #               → discovery_chat
 #
-#   active      per-hop analysis. Each fired *_capture writes ONE section:
-#               business → 1, technical → 1, both → 2. Blocks are independent.
-#               → business_capture, technical_capture, structural_callouts,
-#                 structural_summary, column_trace_capture (column-trace mode only)
+#   active      per-hop analysis. Each fired audience recipe writes ONE section:
+#               business → 1, technical → 1, both → 2 complementary strings.
+#               → shared_capture once, business_capture, technical_capture, structural_callouts,
+#                 structural_summary, column_trace_capture (column-trace hops only)
 #
 #   synthesis   final document. The AI writes these parts; the engine assembles,
 #               numbers, and decorates them — do not template what the engine builds.
 #               → summary, title, intro, closing, highlights, notes, general,
-#                 loading_pattern (technical only)
+#                 loading_pattern (technical and both)
 #
 # Your own copy: set `dataLineageViz.ai.outputTemplateFile`. It merges over this
 # file and your keys win — but only while its `schemaVersion` matches the one
@@ -41,14 +41,13 @@ discovery_chat:
   stages: [discovery]
   instruction: >
     Markdown; SQL in ```sql fences; levels as a table or nested list. Lead
-    with the direct answer. When the answer is a set — every
-    source, every consumer, every match — give the whole set, its count and
-    how much was searched, from the tool totals. Then explain the flow: what
-    each object contributes, with the transformations, column mappings,
-    predicates, read/write roles, validation rules and risks the loaded SQL
-    shows. Use canonical names; say what is unavailable rather than infer it.
-    Keep tool names and payload fields out of the answer, and list raw nodes
-    or edges only when asked.
+    with the direct answer. For sets (all sources, consumers, matches),
+    provide the complete set, overall count, and search scope from tool totals;
+    for grouped results, count group members separately from the overall total.
+    Explain the flow: object contributions, transformations, column mappings,
+    predicates, read/write roles, validation rules, and risks in the loaded SQL.
+    Use canonical names; explicitly state unavailable evidence rather than inferring it.
+    Omit tool names and payload fields. List raw nodes or edges only when requested.
 
 # ── Card + top of the document ───────────────────────────────────────────────
 
@@ -56,34 +55,34 @@ summary:
   stages: [synthesis]
   instruction: >
     One line for the info card, ~120 chars: the subject of the analysis and
-    where its data lands.
+    where its data originates or lands.
   example: ""
 
 title:
   stages: [synthesis]
   instruction: >
     Optional, ≤80 chars: "[Subject] — [key computation, pattern or finding]",
-    ending on the final output object where it fits.
+    ending on the final target object when applicable.
   example: ""
 
 intro:
   stages: [synthesis]
   instruction: >
-    2–4 sentences before the sections: the direct answer to the question
-    first — the origin, the key relationship or the finding asked for — then
-    the architectural context.
+    2–4 sentences before the sections: lead with the direct answer
+    (origin, key relationship, or requested finding), followed by
+    architectural context.
   example: ""
 
-# Section assembly (lift + group + label) is governed by buildSynthesisPrompt()
+# Section assembly (grouping, order and labels) is governed by buildSynthesisPrompt()
 # in src/ai/prompting/prompts.ts — kept there to avoid duplication with the synthesis cue.
 # This file documents only the parts the AI writes from scratch.
 
 closing:
   stages: [synthesis]
   instruction: >
-    One paragraph after the sections with the overall answer in the lens the
-    user asked for; a business mission states impact and scope and leaves
-    the mechanism to the sections.
+    One paragraph after the sections synthesizing the overall answer in the
+    requested lens. For a business mission, state impact and scope, leaving
+    mechanisms to the sections.
   example: ""
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools/presentResult.ts
@@ -95,67 +94,61 @@ closing:
 highlights:
   stages: [synthesis]
   instruction: >
-    Color the landmarks of the answer, relative to the question — not the
-    full node list: the sources whose data feeds it (filter-only lookups stay
-    bare), its target, and the transformations that create or change its
-    values. Carry-through stays uncolored. Each legend label (~40 chars)
-    names the role its nodes share.
+    Color landmark nodes relative to the question (not the full graph):
+    data sources (filter-only lookups stay bare), targets, and value-altering
+    transformations. Carry-through nodes stay uncolored. Legend labels (~40 chars)
+    name the shared role.
 
 notes:
   stages: [synthesis]
   instruction: >
-    One caption per linked node, one line (~120 chars): what it does in this
-    flow; SQL and formulas stay in the section body. In a column trace, name
-    the traced column there and any rename.
+    One caption per linked node, one line (~120 chars): its role in this flow;
+    keep SQL and formulas in the section body. In a column trace, name the
+    traced column and any rename.
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
-# Each fired *_capture template produces ONE `sections` key for its angle.
+# Each fired audience recipe produces ONE `sections` key for its angle.
 # Under classification `both` both recipes fire (two keys); a single-angle
-# lock fires one recipe (one key). Shape: { business?: string, technical?: string }. Independent specs —
-# no cross-references between templates. Each key is self-contained;
-# synthesis groups across nodes at the next phase.
+# lock fires one recipe (one key). Shape: { business?: string, technical?: string }. Shared coverage is composed
+# once with the selected audience recipe(s); both uses business as the primary explanation
+# and technical for additional implementation details.
+# Synthesis groups across nodes at the next phase.
 
 # `sections` lists the bold labels this recipe writes, in order. Synthesis serves the labels of the active
 # angle(s) in `general` (Section structure), so a label is declared here once and nowhere else.
-business_capture:
+shared_capture:
   stages: [active]
-  sections: [Purpose, Rules and branches, Grain, Column mapping, Steps, Loading, Error handling, Gaps]
   instruction: |
-    What the node does to the meaning of the data.
-    1. Purpose: the domain role and the decision it serves.
-    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active. Explain calculations within the rule they implement, with their formula, business meaning, terms and consequences.
-    3. Grain: distinguish input rows from surviving rows at each cardinality-changing step. For conditional eligibility, evaluate the complete predicate with the declared defaults and with each override separately, and qualify survival claims by that condition. A warning-only check does not override a later row-eligibility filter. For grouping or ranked-row removal, derive the survivors per grouping or partition key from the retained count or rank; ordering selects a survivor, not a new partition grain. Equality keys used to delete existing matches are deletion criteria, not automatically the output grain. Quote the deciding SQL with the explanation.
+    Shared capture coverage. Put all analysis in `sections`; text outside the tool call is discarded. Put every applicable item:
+    1. Purpose: the node's role in the data flow.
+    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active.
+    3. Grain: distinguish input rows from surviving rows at each cardinality-changing step. For grouping or ranked-row removal, derive survivors per grouping or partition key from retained count or rank. Quote the deciding SQL.
     4. Column mapping: `| From | To | Business meaning |`.
-    5. Steps: explain the logical data transformations and status transitions in order. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This business section stands alone even when a technical section is also requested.
+    5. Steps: a numbered walk of statements, calculations and status transitions in order; naming a computation without explaining it leaves the section incomplete.
     6. Loading: whether target rows are replaced, extended or removed.
     7. Error handling: what a failure leaves in the rows.
-    8. Gaps.
+    8. Gaps: material unresolved evidence.
+  example: ""
+
+business_capture:
+  stages: [active]
+  sections: [Purpose, Transformations, Grain, Operations]
+  instruction: |
+    Domain impact on data meaning.
+    Explain the domain role, supported decisions, and business definitions and consequences of calculations. For conditional eligibility, evaluate complete predicates with defaults and overrides separately.
 
     <scope_relevance>
-    A sink that records the run itself — which procedure ran, when, with
-    what outcome — is a sidecar in this business section: one line inside
-    the section it hangs off, never a section or highlight of its own. A
-    sink holding the traced column's own values, before/after or as-of, is
-    a business audit trail: a consumer with a one-line caption.
+    An execution-logging sink (recording procedure runs, timestamps, or status) is a sidecar: mention in one line within the parent section, never as an independent section or highlight. A sink storing historical or as-of values of the traced column is an audit consumer with a one-line caption.
     </scope_relevance>
   example: ""
 
-# `sections` lists the bold labels this recipe writes, in order. Synthesis serves the labels of the active
-# angle(s) in `general` (Section structure), so a label is declared here once and nowhere else. The built-in list
-# is the one synthesis has always served a technical answer.
 technical_capture:
   stages: [active]
-  sections: [Purpose, Rules and branches, Grain, Column mapping, Steps, Loading, Error handling, Gaps]
+  sections: [Purpose, Transformations, Grain, Operations]
   instruction: |
-    The mechanics, and which rows survive them.
-    1. Purpose: the execution role.
-    2. Rules and branches: each switch value and the statement it runs. Explain calculations within the rule they implement, with their formula, deciding SQL, branch behavior and consequences.
-    3. Join shape and grain: JOIN and WHERE predicates and join hints; distinguish input rows from surviving rows at each cardinality-changing step. For grouping or ranked-row removal, derive the survivors per grouping or partition key from the retained count or rank; ordering selects a survivor, not a new partition grain. Equality keys used to delete existing matches are deletion criteria, not automatically the output grain. Quote the deciding SQL with the explanation.
-    4. Steps as a numbered walk of SQL statements and logical data changes. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This technical section stands alone even when a business section is also requested. Do not invent physical access or execution steps from SQL syntax: describe a join hint as a requested strategy, not an observed operator; without a plan, do not label a step scan, seek, hash build or probe.
-    5. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
-    6. Error handling: TRY/CATCH, retry, locking.
-    7. Evidence boundary, not an output item: do not add an evidence-review section or ⚠️ line merely because this recipe lists this rule. Put filters, literals, defaults, time functions, predicate shapes and assignments under Rules or Steps as factual behavior. Describe explicit SQL join hints, grouping and row grain as SQL facts. A literal or default is not a defect without supplied schema or business evidence for a requirement it violates. Use ⚠️ only when the supplied SQL alone proves a specific row or value consequence, or supplied evidence proves a violated requirement; quote the deciding expression and that evidence. Claims about index presence or use, actual seeks or scans, statistics, estimated or observed row counts, execution plans, chosen physical join strategies or runtime costs require matching catalog, plan or runtime evidence; SQL hints alone do not establish what the engine executed or its performance. If the user requested an unavailable dimension, state once in factual prose that its evidence was not supplied.
+    Execution mechanics and surviving rows.
+    Explain execution roles, JOIN/WHERE predicates, join hints, loading mechanics (`reload`, `append`, `upsert`, `purge`), TRY/CATCH, and locking. Do not invent physical access or execution steps from SQL syntax: describe a join hint as a requested strategy, not an observed operator; without an execution plan, do not label a step scan, seek, hash build, or probe.
   example: ""
 
 # ── Structural callouts (active phase, bodied focus) ─────────────────────────
@@ -166,33 +159,32 @@ technical_capture:
 structural_callouts:
   stages: [active]
   instruction: |
-    A ⚠️ is optional: use it only when the supplied SQL proves specific row or value loss, duplication or overwrite, or supplied schema or business evidence proves a violated requirement. Quote the deciding expression and any evidence of the requirement. For a no-transaction failure window, require at least two ordered writes to persistent data: the first changes persistent state and a later persistent write is needed to complete the same operation. Temporary objects, variables, reads, calculations, and steps before a single persistent write do not create that failure window. State filters, literals, defaults, join hints, grouping and row grain as SQL facts unless supplied evidence proves an adverse effect. Claims about index presence or use, actual seeks or scans, statistics, estimated or observed row counts, execution plans, chosen physical join strategies or runtime costs require matching catalog, plan or runtime evidence; SQL hints alone do not establish what the engine executed or its performance. Do not create a callout merely because evidence for a requested dimension is unavailable; state its absence once in factual prose.
+    A ⚠️ is optional: use it only when the supplied SQL proves specific row or value loss, duplication or overwrite, or supplied schema or business evidence proves a violated requirement. Quote the deciding expression and any evidence of the requirement. For a no-transaction failure window, require at least two ordered writes to persistent data: the first changes persistent state and a later persistent write is needed to complete the same operation. Temporary objects, variables, reads, calculations, and steps before a single persistent write do not create that failure window. State filters, literals, defaults, join hints, grouping and row grain as SQL facts unless supplied evidence proves an adverse effect. Comments and messages state intent, not behavior. Claims about index presence or use, actual seeks or scans, statistics, estimated or observed row counts, execution plans, chosen physical join strategies or runtime costs require matching catalog, plan or runtime evidence; SQL hints alone do not establish what the engine executed or its performance. Do not create a callout merely because evidence for a requested dimension is unavailable; state its absence once in factual prose.
   example: >
     ⚠️ Rows silently dropped — `WHERE o.BranchId = b.BranchId` on nullable
     `BranchId` in `vwLoans`: a loan with no branch never reaches `FactCircA`.
 
-# ── Reduced capture for non-bodied starting points ───────────────────────────
+# ── Reduced capture for a non-bodied focus (table or external object) ────────
 
 structural_summary:
   stages: [active]
   instruction: >
-    This focus has no SQL body, so each `sections` value follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
+    Non-bodied focus; each `sections` value follows this structure: **Purpose**,
+    the node's role from its id and type; **Upstream sources**, one line per `in[]`
+    writer and its role; **Downstream consumers**, one line per `out[]` reader
+    and its role. State "none in the graph" for empty lists.
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
-# Fires additively alongside business_capture / technical_capture when the
-# session has targetColumns set. Instructs the AI to fill out the column_flow
-# JSON per hop. CT-mode-gated in templateRenderer.ts → CT_MODE_GATED.
+# Fires additively alongside business_capture / technical_capture on a hop that
+# carries column tasks; a hop without them, even in a column trace, gets none.
+# Instructs the AI to fill out the column_flow JSON per hop. CT-mode-gated in
+# templateRenderer.ts → CT_MODE_GATED.
 # The shared captures handle SQL semantics; this adds column-flow evidence.
 
 column_trace_capture:
   stages: [active]
   instruction: |
-    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. An empty upstream list states that the value originates here; unresolved mappings remain questions.
-
-# Per-angle section assembly (business / technical / both) is governed by
-# buildSynthesisPrompt() in src/ai/prompting/prompts.ts. No separate per-angle templates
-# here — the lift+group+label rule is identical for both angles and lives in
-# the synthesis cue to avoid duplication.
+    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Value lineage only; interpret the complete statement. Keep unresolved source evidence explicit in eligible questions. When writing `sections`, explain the full transformation sequence (intermediate CTE renames, calculations, predicates, grain), dataset effects, and unresolved source evidence.
 
 # ── Cross-section rendering at synthesis ─────────────────────────────────────
 # Always-on at synthesis. Describes HOW captured content renders consistently
@@ -205,14 +197,14 @@ column_trace_capture:
 general:
   stages: [synthesis]
   instruction: |
-    Render what the captured bodies contain, business meaning first; nothing is invented to fill a bullet:
-    - **Section structure**: use only these bold labels, in this order when applicable: {{sections}}. Embed formulas in the relevant rule or step, on their own lines with explanation or in a table with short descriptions. Never make a Formulas subsection or isolated inventory. Put lifecycle transitions under Steps and normal defaults under Rules and branches. Business explains meaning and consequences, technical explains execution, and both states shared facts once. Omit empty or inapplicable labels, including None/not applicable boilerplate and lists of absent mechanisms. Gaps contains only material unresolved questions. Preserve substantive facts without repeated wording.
-    - **Steps**: a real markdown numbered list, one step per line. Put tables and SQL fences on separate lines with blank lines around them; keep SQL to the deciding expression, using captured witness references when available.
-    - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation only when the backend does not supply that inventory; backend-ownership instructions take precedence over Column mapping labels and tables.
-    - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.
-    - **Status lifecycles**: numbered transitions.
-    - **Callouts**: each captured ⚠️ sits once, in its section, as its own markdown list item (`- ⚠️ …`), never merged onto the same line as another callout; impact before mechanism in a business mission.
-    - **Scope**: a side branch the question did not ask about is one line in the section it hangs off — never a section, a highlight, or a deletion. A column trace follows the traced column's value chain to its terminal sources.
+    Render captured content without inventing ungrounded details, prioritizing business meaning:
+    - **Section structure**: use only these bold labels, in this order when applicable: {{sections}}. Embed formulas directly within relevant transformations (on separate lines with explanations or in a concise table). Do not create a separate Formulas subsection. Place lifecycle transitions and defaults under Transformations. Business covers domain impact; technical covers execution mechanics; both unifies shared facts once. Omit empty/inapplicable labels and boilerplate lists of absent mechanisms. Note material unresolved gaps factually.
+    - **Numbered walks** (under Transformations): markdown numbered list, one step per line. Place tables and SQL fences on separate lines with surrounding blank lines; restrict SQL to deciding expressions, referencing captured witnesses when available.
+    - **Column renames**: table `| From | To | Business meaning |` for renames or derivations only when not already provided by the backend inventory (backend ownership takes precedence).
+    - **Source guards**: concise WHERE / JOIN / MERGE predicates, not complete statements.
+    - **Status lifecycles**: numbered state transitions.
+    - **Callouts**: each captured ⚠️ appears once within its section as an independent bullet (`- ⚠️ …`), never merged; lead with impact before mechanism in business missions.
+    - **Scope**: unrequested side branches appear as a single line within their parent section (never independent sections, highlights, or deletions). Column traces trace the value chain within approved scope, distinguishing terminal sources from scope boundaries.
   example: ""
 
 # ── Big-picture ETL closing — TECHNICAL angle only ───────────────────────────
@@ -223,10 +215,9 @@ general:
 loading_pattern:
   stages: [synthesis]
   instruction: >
-    When every bodied procedure carried the same captured load shape, name it
-    once — in `closing` if requested, else in the section covering the load —
-    with what it means for consumers. Nothing when the shapes differ or none
-    was captured.
+    When all bodied procedures share an identical captured load shape, state it
+    once (in `closing` if requested, otherwise within the section covering the load)
+    along with consumer impact. Omit when shapes differ or none was captured.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
     INSERT — each run rebuilds `FactCircA` from scratch with no

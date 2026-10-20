@@ -1,7 +1,4 @@
-/**
- * `deriveModeCapabilities` table plus the `resolveRemoveAction` Delete dispatcher it feeds —
- * the single source of truth for what a locked mode allows and what Delete does in it.
- */
+/** `deriveModeCapabilities` table plus the `resolveRemoveAction` Delete dispatcher it feeds — the single source of truth for what a locked mode allows and what Delete does in it. */
 
 import { describe, expect, it } from 'vitest';
 import { deriveModeCapabilities, resolveRemoveAction, type ModeCapabilityInput } from '../../../src/engine/modeCapabilities';

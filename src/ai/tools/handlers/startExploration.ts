@@ -1,19 +1,13 @@
-/**
- * Executes the approval-gated `lineage_start_exploration` lifecycle.
- *
- * @remarks
- * Proposal validation and preview construction stay local to this handler.
- * Turn-lease validation and effect serialization remain in the registry wrapper.
- */
+/** Executes the approval-gated `lineage_start_exploration` lifecycle. */
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
-import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent } from '../../sm/smTypes';
+import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent, type NavigationInitParams } from '../../sm/smTypes';
 import { depthSidesDiffer, directionFromDepth } from '../../../engine/shared/explorationDepthContract';
 import { sanitizeForLog, trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
 import { StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
-import { nodeFiltersRemovedByOrigin, renderScopeSummaryMd, schemaFiltersRemovedByOrigin } from '../../prompting/scopeSummaryRenderer';
+import { renderScopeSummaryMd } from '../../prompting/scopeSummaryRenderer';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
 import { isCancellationOutcome } from '../../support/cancellation';
@@ -105,8 +99,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         if (res.skippedDetails.length > 0) {
           s.logger.debug(`[${sess.id}] supplement skippedIds=[${sanitizeForLog(res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(','))}]`);
         }
-        if (res.agendaed === 0 && res.contracted === 0) {
-          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 contracted=0 skipped=${res.skipped}`);
+        if (res.agendaed === 0) {
+          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 skipped=${res.skipped}`);
           const unresolvedIds = res.skippedDetails.filter(skip => skip.reason === 'unresolved').map(skip => skip.nodeId);
           const borderSkips = res.skippedDetails.filter(skip => skip.reason !== 'unresolved');
           const hint = [
@@ -129,13 +123,10 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         );
         applyFollowUpContext();
         sess.enterExploring(s.turnEpoch(sess));
-        s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} contracted=${res.contracted} skipped=${res.skipped}`);
+        s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} skipped=${res.skipped}`);
         const hopCtx = priorEngine.getHopContext();
         return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }
-
-      const prior = sess.stateMachine as NavigationEngine | null;
-      const priorLive = !!prior && prior.status !== 'complete';
 
       if (data.proposalRevision !== undefined && !isRefining) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
@@ -154,19 +145,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (parallelViolation && !isRefining) {
         return s.logAndReturn('lineage_start_exploration', parallelViolation, loggedInput);
       }
-      if (sess.phase.kind === 'completed' && prior && prior.status === 'complete') {
+      if (sess.phase.kind === 'completed' && preCheckPrior && preCheckPrior.status === 'complete') {
         s.logger.debug(`[AI] [Proposal] completed result preserved during replacement review origin=${sanitizeForLog(data.origin ?? '')}`);
-      }
-      if (priorLive && prior.sessionId && prior.sessionId !== sess.id) {
-        sess.pendingUserNotice.add('A previous exploration was still running when you started this one. Its in-memory findings were discarded.');
-        sess.resetExploration();
-      } else if (priorLive) {
-        const alreadyStarted = evaluateAlreadyStartedRule(
-          priorLive,
-          prior.sessionId === sess.id,
-          isRefining,
-        );
-        if (alreadyStarted) return s.logAndReturn('lineage_start_exploration', alreadyStarted, loggedInput);
       }
 
       const activeFilter = isRefining
@@ -254,7 +234,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         passNodeIds,
         scopeNotes,
         mission_brief: refineMissionBrief,
-      } satisfies import('../../sm/smTypes').NavigationInitParams;
+      } satisfies NavigationInitParams;
       const initResult = engine.init(proposalInit);
 
       if ('code' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
@@ -297,61 +277,52 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const proposalRevision = sess.pendingExploration!.revision;
       s.logger.debug(`[AI] [Proposal] revision=${proposalRevision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
 
-      if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed' || isRefining) {
-        const classes = ['sliding_memory'];
-        const removedSchemaFilters = schemaFiltersRemovedByOrigin(excludeSchemas, summary.activeFilters.schemas, m.identifierCaseSensitive);
-
-        const removedNodeFilters = nodeFiltersRemovedByOrigin(excludeNodeIds, summary.origin, summary.activeFilters.nodeIds, m.identifierCaseSensitive);
-
-        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification, removedSchemaFilters, removedNodeFilters);
-        let discoverySummary: string | undefined;
-        if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
-          discoverySummary = await composeDiscoverySummaryText(
-            s.textModel,
-            s.signal,
-            s.logger,
-            sess.lastDiscoveryQuestion,
-            sess.lastDiscoveryAnswer,
-            classification,
-            engine,
-          );
-          if (discoverySummary) {
-            const attached = sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess));
-            if (attached.kind !== 'accepted') discoverySummary = undefined;
-          }
-        }
-        const detail = discoverySummary ? `${baseDetail}\n\n${discoverySummary}` : baseDetail;
-        s.logger.debug(
-          `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
-          `scope_nodes=${summary.scopeCount} ` +
-          `estimated_ddl_tokens=${summary.estimatedDdlTokens} ` +
-          `estimated_ddl_chars=${summary.estimatedDdlChars}`
+      const classes = ['sliding_memory'];
+      const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification);
+      let discoverySummary: string | undefined;
+      if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
+        discoverySummary = await composeDiscoverySummaryText(
+          s.textModel,
+          s.signal,
+          s.logger,
+          sess.lastDiscoveryQuestion,
+          sess.lastDiscoveryAnswer,
+          classification,
+          engine,
         );
-
-        const gate = PendingGateSchema.parse({
-          gate: 'confirm_sm_start',
-          classes,
-          nodeIds: [],
-          detail,
-          proposalRevision,
-        });
-        const missionBriefClearedNote = missionBriefClearedOnScopeChange
-          ? ' mission_brief from the previous revision was not kept because the scope changed; send mission_brief to restate it.'
-          : '';
-        const hint = (isRefining
-          ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
-          : 'Tool paused — awaiting user confirmation before first hop. Hop context delivered for use after approval.')
-          + missionBriefClearedNote;
-        return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: REJECTION_CODES.actionRequired,
-          reason: gate.detail || undefined,
-          hint,
-          detail: gate,
-        }), loggedInput);
+        if (discoverySummary) {
+          const attached = sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess));
+          if (attached.kind !== 'accepted') discoverySummary = undefined;
+        }
       }
+      const detail = discoverySummary ? `${baseDetail}\n\n${discoverySummary}` : baseDetail;
+      s.logger.debug(
+        `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
+        `scope_nodes=${summary.scopeCount} ` +
+        `estimated_ddl_tokens=${summary.estimatedDdlTokens} ` +
+        `estimated_ddl_chars=${summary.estimatedDdlChars}`
+      );
 
-      const hopResult = engine.getHopContext();
-      return s.logAndReturn('lineage_start_exploration', { ...initResult, ...hopResult }, loggedInput);
+      const gate = PendingGateSchema.parse({
+        gate: 'confirm_sm_start',
+        classes,
+        nodeIds: [],
+        detail,
+        proposalRevision,
+      });
+      const missionBriefClearedNote = missionBriefClearedOnScopeChange
+        ? ' mission_brief from the previous revision was not kept because the scope changed; send mission_brief to restate it.'
+        : '';
+      const hint = (isRefining
+        ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
+        : 'Tool paused — awaiting user confirmation before the first hop.')
+        + missionBriefClearedNote;
+      return s.logAndReturn('lineage_start_exploration', makeRejection({
+        code: REJECTION_CODES.actionRequired,
+        reason: gate.detail || undefined,
+        hint,
+        detail: gate,
+      }), loggedInput);
     } catch (err) {
       if (isCancellationOutcome(err, s.signal)) throw err;
       return s.toolError('start_exploration', err);

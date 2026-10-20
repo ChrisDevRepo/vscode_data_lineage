@@ -17,13 +17,7 @@ import { bidirectional } from 'graphology-shortest-path';
 import { bfsFromNode } from 'graphology-traversal';
 import { DEFAULT_CONFIG, type AnalysisType, type AnalysisResult, type AnalysisGroup, type AnalysisConfig } from './types';
 
-/**
- * Detects isolated subgraphs (islands) that are disconnected from the rest of the graph.
- *
- * @param graph - The graph instance.
- * @param maxSize - Maximum node count for a component to be considered an "island".
- * @returns Result object containing the discovered island groups.
- */
+/** Detects isolated subgraphs (islands) that are disconnected from the rest of the graph. */
 export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'islands', groups: [], summary: 'No nodes in graph' };
@@ -56,13 +50,7 @@ export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {
   };
 }
 
-/**
- * Identifies high-degree "hub" nodes that serve as central points in the graph.
- *
- * @param graph - The graph instance.
- * @param minDegree - Minimum degree threshold for a node to be classified as a hub.
- * @returns Result object detailing the detected hubs.
- */
+/** Identifies high-degree "hub" nodes that serve as central points in the graph. */
 export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'hubs', groups: [], summary: 'No nodes in graph' };
@@ -107,12 +95,7 @@ export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   };
 }
 
-/**
- * Finds orphan nodes that have no inbound or outbound connections.
- *
- * @param graph - The graph instance.
- * @returns Result object grouping orphans by schema and object type.
- */
+/** Finds orphan nodes that have no inbound or outbound connections. */
 export function analyzeOrphans(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'orphans', groups: [], summary: 'No nodes in graph' };
@@ -160,39 +143,18 @@ export function analyzeOrphans(graph: Graph): AnalysisResult {
   };
 }
 
-/**
- * Default number of dependency chains {@link analyzeLongestPath} reports.
- *
- * @remarks
- * A chain count, not a node count. Chains are emitted deepest first, so the cap drops the shallow
- * tail of the ranking and never displaces the deepest chain. `DEFAULT_CONFIG.maxNodes` is a
- * node-count safety limit — three orders of magnitude too loose for a per-chain group list, and a
- * payload risk on a warehouse with many staging roots.
- */
+/** Default number of dependency chains {@link analyzeLongestPath} reports. */
 const DEFAULT_MAX_CHAINS = 25;
 
-/**
- * Condensed view of the graph: one vertex per strongly connected component.
- *
- * @remarks
- * A condensation is acyclic by construction, which is what makes the depth DP in
- * {@link analyzeLongestPath} exact.
- */
+/** Condensed view of the graph: one vertex per strongly connected component. */
 interface Condensation {
   /** Member node ids per component, indexed by component number. */
   components: string[][];
-  /**
-   * Component successors. Each destination keeps every realised `[tail, head]` pair, not only the
-   * first edge the walk saw — two bridges between the same components can have different lengths.
-   */
+  /** Component successors. Each destination keeps every realised `[tail, head]` pair, not only the first edge the walk saw — two bridges between the same components can have different lengths. */
   successors: Map<number, Map<number, Array<[string, string]>>>;
   /** Component in-degree in the condensation (one per successor component, not per parallel edge). */
   inDegree: number[];
-  /**
-   * Nodes at which a chain can arrive in each component: the head of every realised incoming edge,
-   * or every member when the component is a root. A root that starts only at `members[0]` is
-   * order-dependent and can miss the longer chain.
-   */
+  /** Nodes at which a chain can arrive in each component: the head of every realised incoming edge, or every member when the component is a root. A root that starts only at `members[0]` is order-dependent and can miss the longer chain. */
   entriesOf: string[][];
 }
 
@@ -232,35 +194,13 @@ function condense(graph: Graph): Condensation {
   return { components, successors, inDegree, entriesOf };
 }
 
-/**
- * Walks one component from `entry` to `exit`.
- *
- * @remarks
- * A path between two members of a strongly connected component cannot leave it — a node reachable
- * from `entry` that also reaches `exit` reaches `entry` too, so it belongs to the same component.
- * The graph-wide search is therefore already confined to the component.
- */
+/** Walks one component from `entry` to `exit`. */
 function walkComponent(graph: Graph, members: readonly string[], entry: string, exit: string): string[] {
   if (members.length === 1 || entry === exit) return [entry];
   return bidirectional(graph, entry, exit) ?? [entry];
 }
 
-/**
- * Walks one component from `entry`: how far every member sits from it, and the walk to the farthest.
- *
- * @remarks
- * One outbound BFS from `entry` measures every member's shortest-path length, then one bidirectional
- * search reconstructs the winning walk — linear in the component instead of one search per member.
- * The BFS stays among the members without losing a distance: a shortest path from `entry` to a
- * member cannot leave the component (see {@link walkComponent}). Tail selection is the first member,
- * in `members` order, whose distance strictly exceeds the best so far. An `entry` with no path to
- * any other member stays the whole tail.
- *
- * @param graph - The graph instance.
- * @param members - Node ids of the component.
- * @param entry - Member the walk starts at.
- * @returns `dist` — hop count from `entry` to each member; `tail` — the walk to the farthest member.
- */
+/** Walks one component from `entry`: how far every member sits from it, and the walk to the farthest. */
 function walkFromEntry(graph: Graph, members: readonly string[], entry: string): { dist: Map<string, number>; tail: string[] } {
   if (members.length === 1) return { dist: new Map([[entry, 0]]), tail: [entry] };
   const memberIds = new Set(members);
@@ -300,23 +240,7 @@ interface ChainValue {
   next: ChainState | null;
 }
 
-/**
- * Solves the longest chain from every `(component, entry)` state, in real node counts.
- *
- * @remarks
- * Scoring a successor as one hop per component undercounts a branch that runs through a multi-node
- * strongly connected component by every member it crosses, so a shorter chain of singletons can win.
- * This DP values a state as `max(|tail|, max over successors (hops(entry→exit) + 1 + value(next)))`
- * — real objects on both arms — and is exact because the condensation is acyclic and every state's
- * successors are resolved before it, in reverse Kahn order. Intra-component travel is the shortest
- * path on both arms (`walkFromEntry`'s BFS and {@link walkComponent}), so the value a state is
- * ranked by and the segment it expands to always agree.
- *
- * @param graph - The graph instance.
- * @param condensation - Condensed view of `graph`.
- * @param order - Kahn ordering of the condensation.
- * @returns Solved chain per component, keyed by entry node.
- */
+/** Solves the longest chain from every `(component, entry)` state, in real node counts. */
 function solveChains(graph: Graph, condensation: Condensation, order: readonly number[]): Map<number, Map<string, ChainValue>> {
   const { components, successors, entriesOf } = condensation;
   const best = new Map<number, Map<string, ChainValue>>();
@@ -370,18 +294,7 @@ function expandChain(best: Map<number, Map<string, ChainValue>>, root: ChainStat
   return chain;
 }
 
-/**
- * Calculates the longest dependency chains in the graph, walking through circular dependencies.
- *
- * @remarks
- * Strongly connected components condense to single vertices, so a chain crosses a cycle as one
- * entry-to-exit segment ({@link walkComponent}, {@link walkFromEntry}) instead of stopping at it.
- *
- * @param graph - The graph instance.
- * @param minNodes - Minimum nodes required in a chain to be reported.
- * @param maxChains - Maximum number of chains to return.
- * @returns Result object containing the discovered dependency chains.
- */
+/** Calculates the longest dependency chains in the graph, walking through circular dependencies. */
 export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number = DEFAULT_MAX_CHAINS): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'longest-path', groups: [], summary: 'No nodes in graph' };
@@ -453,12 +366,7 @@ export function analyzeLongestPath(graph: Graph, minNodes = 5, maxChains: number
   };
 }
 
-/**
- * Detects circular dependencies (Strongly Connected Components of size 2+).
- *
- * @param graph - The graph instance.
- * @returns Result object detailing the detected cycles.
- */
+/** Detects circular dependencies (Strongly Connected Components of size 2+). */
 export function analyzeCycles(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'cycles', groups: [], summary: 'No nodes in graph' };
@@ -493,12 +401,7 @@ export function analyzeCycles(graph: Graph): AnalysisResult {
   };
 }
 
-/**
- * Identifies external references (files or cross-database links) within the graph.
- *
- * @param graph - The graph instance.
- * @returns Result object grouping external references by kind.
- */
+/** Identifies external references (files or cross-database links) within the graph. */
 export function analyzeExternalRefs(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'external-refs', groups: [], summary: 'No nodes in graph' };
@@ -553,17 +456,7 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
   return { type: 'external-refs', groups, summary };
 }
 
-/**
- * Unified entry point to run a specific analysis type on the graph.
- *
- * @param graph - The graphology instance.
- * @param type - Type of analysis to perform.
- * @param analysisConfig - Analysis-specific thresholds.
- * @param maxNodes - Upper bound on island size, applied as the tighter of it and `islandMaxSize`.
- *   It is a node count and bounds no other analysis; longest-path chain count is capped by
- *   {@link DEFAULT_MAX_CHAINS}.
- * @returns The resulting analysis report.
- */
+/** Unified entry point to run a specific analysis type on the graph. */
 export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   switch (type) {
     case 'islands': return analyzeIslands(graph, Math.min(analysisConfig.islandMaxSize, maxNodes));

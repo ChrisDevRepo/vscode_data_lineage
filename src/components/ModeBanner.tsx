@@ -1,11 +1,8 @@
 import { memo, useState, useRef, useEffect, type ReactNode, type ReactElement } from 'react';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Supported visual variants for the {@link ModeBanner}.
- * Each variant applies specific styling and icon colors.
- */
-export type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
+/** Supported visual variants for the {@link ModeBanner}. Each variant applies specific styling and icon colors. */
+type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
 
 interface ModeBannerProps {
   /** The visual style of the banner. */
@@ -19,14 +16,12 @@ interface ModeBannerProps {
   /** Callback fired when the user closes the banner. */
   onClose: () => void;
   /** Optional callback to save the current mode's result as a permanent bookmark. */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAsBookmark?: (name: string) => void;
   /** Extra controls rendered in the action area (before Save as Bookmark). */
   extraControls?: ReactElement | null;
 }
 
-/**
- * Maps banner variants to their corresponding CSS class names.
- */
+/** Maps banner variants to their corresponding CSS class names. */
 const VARIANT_CLASS: Record<BannerVariant, string> = {
   trace: 'ln-mode-banner--trace',
   analysis: 'ln-mode-banner--analysis',
@@ -34,17 +29,7 @@ const VARIANT_CLASS: Record<BannerVariant, string> = {
   bookmark: 'ln-mode-banner--bookmark',
 };
 
-/**
- * A shared UI component for displaying the active graph mode (Trace, Analysis, AI).
- *
- * It appears at the top of the canvas and provides:
- * - A summary of the active operation.
- * - Mode-specific actions (via `extraControls`).
- * - A standardized workflow for saving the current view as a named bookmark.
- *
- * @param props - The component props.
- * @returns A memoized React component.
- */
+/** A shared UI component for displaying the active graph mode (Trace, Analysis, AI). */
 export const ModeBanner = memo(function ModeBanner({
   variant,
   icon,
@@ -56,7 +41,6 @@ export const ModeBanner = memo(function ModeBanner({
 }: ModeBannerProps) {
   const [saving, setSaving] = useState(false);
   const [saveName, setSaveName] = useState('');
-  const [withPositions, setWithPositions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,10 +50,9 @@ export const ModeBanner = memo(function ModeBanner({
   function handleConfirmSave() {
     const name = saveName.trim();
     if (!name) return;
-    onSaveAsBookmark?.(name, withPositions);
+    onSaveAsBookmark?.(name);
     setSaving(false);
     setSaveName('');
-    setWithPositions(false);
   }
 
   return (
@@ -121,15 +104,6 @@ export const ModeBanner = memo(function ModeBanner({
               placeholder="Bookmark name..."
               className="h-7 px-2 text-xs rounded-sm ln-input w-[140px]"
             />
-            <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={withPositions}
-                onChange={e => setWithPositions(e.target.checked)}
-                className="ln-checkbox"
-              />
-              Positions
-            </label>
             <button
               onClick={handleConfirmSave}
               disabled={!saveName.trim()}

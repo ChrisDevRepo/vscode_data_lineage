@@ -1,10 +1,4 @@
-/**
- * Pure helpers for interactive trace scope edits.
- *
- * These functions keep the webview trace UX aligned with SM graph-integrity
- * rules: the origin is an anchor, a prune takes the subtree reachable only
- * through the pruned node with it, and traversal is cycle-safe.
- */
+/** Pure helpers for interactive trace scope edits. */
 
 import type Graph from 'graphology';
 import type { DatabaseModel, LineageEdge, TraceState } from './types';
@@ -12,16 +6,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import { buildGraphologyGraph } from './graphBuilder';
 import { analyzeRemoval, bfsReachable, type RemovalSide } from './graphGuards';
 
-/**
- * Whether a trace mode permits manual add/prune edits.
- *
- * Only an applied or filter-narrowed trace is editable; config, pathfinding,
- * and analysis-subset modes expose no neighbor controls.
- *
- * @param mode - Trace mode to evaluate.
- *
- * @returns Whether editable trace mode.
- */
+/** Whether a trace mode permits manual add/prune edits. */
 export function isEditableTraceMode(mode: TraceState['mode']): boolean {
   return mode === 'applied' || mode === 'filtered';
 }
@@ -34,18 +19,7 @@ function sameIdSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return true;
 }
 
-/**
- * Detects (does not apply) an in-place trace-scope edit on top of the same original BFS scope.
- *
- * The graph canvas calls this and, when it returns `true`, preserves the user's viewport while
- * they add or prune trace neighbours. Fresh traces, depth changes, full-model toggles, path
- * changes, and analysis scopes return `false` and so use the normal fit/zoom behavior.
- *
- * @param previous - Existing preview state.
- * @param next - Next trace state to compare.
- *
- * @returns `true` when `next` is the same BFS scope as `previous` with only manual add/prune edits.
- */
+/** Detects (does not apply) an in-place trace-scope edit on top of the same original BFS scope. */
 export function isManualTraceScopeEdit(previous: TraceState, next: TraceState): boolean {
   if (!isEditableTraceMode(previous.mode) || !isEditableTraceMode(next.mode)) return false;
   if (previous.selectedNodeId !== next.selectedNodeId) return false;
@@ -60,13 +34,7 @@ export function isManualTraceScopeEdit(previous: TraceState, next: TraceState): 
     || !sameIdSet(previous.manualPrunedNodeIds, next.manualPrunedNodeIds);
 }
 
-/**
- * Result of validating whether a visible trace node can be pruned.
- *
- * @remarks
- * A prune takes its subtree with it, so only the origin and a node outside the visible scope
- * are refused.
- */
+/** Result of validating whether a visible trace node can be pruned. */
 export interface TracePruneCheck {
   /** True when the candidate is prunable — the origin and every out-of-scope node are the only refusals. */
   safe: boolean;
@@ -80,14 +48,7 @@ function edgeId(source: string, target: string): string {
   return `${source}→${target}`;
 }
 
-/**
- * Returns all model edge IDs whose endpoints are both present in the node scope.
- *
- * @param edges - Edges available for traversal.
- * @param nodeIds - Node IDs to inspect.
- *
- * @returns Edge IDs whose source and target are both inside the node scope.
- */
+/** Returns all model edge IDs whose endpoints are both present in the node scope. */
 export function collectScopeEdgeIds(
   edges: ReadonlyArray<LineageEdge>,
   nodeIds: ReadonlySet<string>,
@@ -101,16 +62,7 @@ export function collectScopeEdgeIds(
   return edgeIds;
 }
 
-/**
- * Applies manual add/prune sets on top of an original BFS trace scope.
- *
- * @param baseNodeIds - Original trace node IDs.
- * @param manualAddedNodeIds - Nodes manually added to the trace.
- * @param manualPrunedNodeIds - Nodes manually removed from the trace.
- * @param edges - Edges available for traversal.
- *
- * @returns Visible node IDs plus the edge IDs connecting those visible nodes.
- */
+/** Applies manual add/prune sets on top of an original BFS trace scope. */
 export function buildVisibleTraceScope(
   baseNodeIds: ReadonlySet<string>,
   manualAddedNodeIds: ReadonlySet<string>,
@@ -123,17 +75,7 @@ export function buildVisibleTraceScope(
   return { nodeIds, edgeIds: collectScopeEdgeIds(edges, nodeIds) };
 }
 
-/**
- * Builds the traversal graph for a trace scope from the full model.
- *
- * Mirrors the scope graph `applyTraceToFlow` builds when synthesis runs, so
- * focus and path operations see the same node/edge membership on every trace,
- * not only on synthesized ones.
- *
- * @param model - The full database model.
- * @param nodeIds - Trace scope membership; edges leaving the scope are dropped.
- * @returns Graphology graph over the scope.
- */
+/** Builds the traversal graph for a trace scope from the full model. */
 export function buildTraceScopeGraph(model: DatabaseModel, nodeIds: ReadonlySet<string>): Graph {
   return buildGraphologyGraph({
     ...model,
@@ -142,23 +84,7 @@ export function buildTraceScopeGraph(model: DatabaseModel, nodeIds: ReadonlySet<
   });
 }
 
-/**
- * Unions every origin↔target connecting path for a route set.
- *
- * @remarks
- * A route is every node lying on some directed path between the origin and the target — the
- * descendants of the source intersected with the ancestors of the sink, both from
- * `bfsFromNode`, neither walk passing through the other endpoint — plus the edges inside that
- * set, so both branches of a diamond are kept and a cycle through an endpoint is not. Each
- * target is tried downstream (`origin → target`) first and upstream (`target → origin`) when no
- * downstream path exists. Returns null when the origin is unknown to the graph or any target is
- * unreachable: a route set is all-or-nothing, never a partial union.
- *
- * @param graph - Graph spanning the trace scope.
- * @param originId - Route anchor (the trace origin).
- * @param targetIds - Route end node ids; the origin itself is skipped.
- * @returns Unioned route node and edge ids, or null when any route fails.
- */
+/** Unions every origin↔target connecting path for a route set. */
 export function unionConnectingPaths(
   graph: Graph,
   originId: string,
@@ -203,10 +129,7 @@ function reachable(graph: Graph, startId: string, mode: 'inbound' | 'outbound', 
   return seen;
 }
 
-/**
- * Gets the fixed pruning legs from the trace's effective open levels.
- * @returns Enabled upstream and downstream legs; zero-depth sides remain closed.
- */
+/** Gets the fixed pruning legs from the trace's effective open levels. */
 export function traceRemovalSides(upstreamLevels: number, downstreamLevels: number): RemovalSide[] {
   const sides: RemovalSide[] = [];
   if (upstreamLevels > 0) sides.push('upstream');
@@ -214,23 +137,7 @@ export function traceRemovalSides(upstreamLevels: number, downstreamLevels: numb
   return sides;
 }
 
-/**
- * Previews the shared directed self-prune policy for one visible trace node.
- *
- * The clicked node is the current self-prune candidate. Other visible nodes have no committed
- * AI analysis, so the trace supplies no visited anchors. Surviving directed joins stop the open
- * cut. Both preview and application must supply the same effective trace levels through
- * {@link traceRemovalSides}; the origin is always protected. A visible node outside the directed
- * legs (a manually added neighbour) that this removal leaves with no visible link to the origin
- * leaves too, so the trace stays connected; a node already unlinked before the removal is kept.
- *
- * @param graph - Full directed model graph; traversal is restricted to the visible scope.
- * @param originNodeId - Protected trace origin.
- * @param visibleNodeIds - Current scope, including manually added nodes.
- * @param candidateNodeId - Clicked node to remove.
- * @param sides - Explicit open direction legs from the trace levels.
- * @returns Prune verdict and exclusive open nodes that leave with the clicked node.
- */
+/** Previews the shared directed self-prune policy for one visible trace node. */
 export function canPruneTraceNode(
   graph: Graph,
   originNodeId: string | null,

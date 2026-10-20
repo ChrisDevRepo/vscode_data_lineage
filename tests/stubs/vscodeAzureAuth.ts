@@ -1,8 +1,4 @@
-/**
- * Stand-in for `@microsoft/vscode-azext-azureauth` under unit tests: its CommonJS build requires
- * `vscode`, which only exists in the extension host. Sessions go through the (mockable)
- * `vscode.authentication.getSession` with the scopes the library builds; no directory is listed.
- */
+/** Stand-in for `@microsoft/vscode-azext-azureauth` under unit tests: its CommonJS build requires `vscode`, which only exists in the extension host. Sessions go through the (mockable) `vscode.authentication.getSession` with the scopes the library builds; no directory is listed. */
 
 import * as vscode from 'vscode';
 

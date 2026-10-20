@@ -1,7 +1,4 @@
-/**
- * Pins the search worker deadline for backtracking-prone DDL patterns and verifies that a normal
- * pattern still locates a match on a very long line.
- */
+/** Pins the search worker deadline for backtracking-prone DDL patterns and verifies that a normal pattern still locates a match on a very long line. */
 import { executeIsolatedRegexSearch } from '../../../src/ai/support/isolatedRegexSearch';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { describe, expect, it } from 'vitest';

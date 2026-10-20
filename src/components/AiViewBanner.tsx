@@ -10,14 +10,8 @@ interface AiViewBannerProps {
   /** Callback triggered when the user chooses to discard the AI preview. */
   onDiscard: () => void;
   /** Callback triggered when the user chooses to save the current AI view as a permanent bookmark. */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
-  /**
-   * Whether the run recorded column-level findings, which is what the column view renders.
-   *
-   * @remarks
-   * The switch is offered only when it has something to show; a run without column findings
-   * keeps the object view as its only view.
-   */
+  onSaveAsBookmark?: (name: string) => void;
+  /** Whether the run recorded column-level findings, which is what the column view renders. */
   columnViewAvailable?: boolean;
   /** Whether the column view is the one currently rendered. */
   columnView?: boolean;
@@ -28,9 +22,7 @@ interface AiViewBannerProps {
 /** SVG path for the AI/Sparkle icon. */
 const AI_ICON = 'M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z';
 
-/**
- * Configures {@link ModeBanner} for an AI-curated graph preview.
- */
+/** Configures {@link ModeBanner} for an AI-curated graph preview. */
 export const AiViewBanner = memo(function AiViewBanner({
   name,
   nodeCount,

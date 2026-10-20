@@ -2,17 +2,7 @@ import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
-/**
- * Proves the `dataLineageViz.ai.enabled` kill switch: with the setting off, activation completes,
- * the core product registers in full, and the AI surface — participant commands and language-model
- * tools — is genuinely not registered rather than merely hidden.
- *
- * @remarks
- * The lane launches with a seeded `--user-data-dir` whose user settings carry
- * `"dataLineageViz.ai.enabled": false`, so the branch under test is the one a real user reaches
- * from the Settings UI. What the chat picker *shows* for a contributed-but-unregistered
- * participant is host UI, unreachable from this API surface, and stays with the manual matrix.
- */
+/** Proves the `dataLineageViz.ai.enabled` kill switch: with the setting off, activation completes, the core product registers in full, and the AI surface — participant commands and language-model tools — is genuinely not registered rather than merely hidden. */
 suite('AI disabled by setting — kill switch honours the manifest', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 

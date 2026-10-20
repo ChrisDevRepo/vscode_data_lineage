@@ -1,4 +1,4 @@
-// Extension Development Host smoke lanes and their limits are documented in docs/EDH_TESTING.md.
+// Extension Development Host smoke lanes and their limits are documented in docs/testing/README.md.
 //
 // Test files are the tsconfig.integration.json output under `out/test/`, not the TypeScript sources.
 import { defineConfig } from '@vscode/test-cli';

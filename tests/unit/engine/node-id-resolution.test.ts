@@ -1,36 +1,10 @@
-/**
- * Canonical node resolution preserves full CI normalization and exact CS catalog identity,
- * including quoted identifiers and model-supplied Unicode padding.
- */
-import { describe, expect, it } from 'vitest';
-import { resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution';
+/** Canonical node resolution preserves full CI normalization and exact CS catalog identity, including quoted identifiers and model-supplied Unicode padding. */
+import { beforeAll, describe, expect, it } from 'vitest';
+import { buildModel } from '../../../src/engine/modelBuilder';
+import { createSavedReferenceResolver, resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution';
+import { loadParseRules } from '../helpers/testUtils';
 
-const nodeMap = new Map<string, unknown>([
-  ['[ai].[saporders]', {}],
-  ['[ai].[factsalesreport]', {}],
-]);
-
-describe('resolveModelNodeId', () => {
-  it('resolves an id padded with a zero-width space', () => {
-    expect(resolveModelNodeId('[ai].[saporders]\u200b', nodeMap)).toBe('[ai].[saporders]');
-  });
-
-  it('resolves ids carrying other Unicode format characters', () => {
-    expect(resolveModelNodeId('\ufeff[ai].[saporders]\u200e', nodeMap)).toBe('[ai].[saporders]');
-  });
-
-  it('still resolves ordinary padding and case differences', () => {
-    expect(resolveModelNodeId('  [AI].[SAPOrders]  ', nodeMap)).toBe('[ai].[saporders]');
-  });
-
-  it('returns null for an id that is only invisible characters', () => {
-    expect(resolveModelNodeId('\u200b\u200b', nodeMap)).toBeNull();
-  });
-
-  it('returns null for a genuinely unknown id', () => {
-    expect(resolveModelNodeId('[ai].[missing]', nodeMap)).toBeNull();
-  });
-});
+beforeAll(loadParseRules);
 
 describe.each([false, true])('resolveModelNodeId with identifierCaseSensitive=%s', (caseSensitive) => {
   const canonical = caseSensitive ? '[Sales].[Order.Detail]' : '[sales].[order.detail]';
@@ -55,6 +29,7 @@ describe.each([false, true])('resolveModelNodeId with identifierCaseSensitive=%s
     const simpleCatalog = new Map<string, unknown>([[id, {}]]);
     expect(resolveModelNodeId('Sales.OrderDetails', simpleCatalog, caseSensitive)).toBe(id);
     expect(resolveModelNodeId('sALES.oRDERdETAILS', simpleCatalog, caseSensitive)).toBe(caseSensitive ? null : id);
+    expect(resolveModelNodeId('  [sALES].[oRDERdETAILS]  ', simpleCatalog, caseSensitive)).toBe(caseSensitive ? null : id);
   });
 
   it.each(['', ' \t\r\n', '\u200b\ufeff', '.', '[]', '[Sales.Order.Detail', '[Sales].[Missing]', 'Order.Detail'])
@@ -98,4 +73,29 @@ it.each(['[', '"unterminated', '[dbo].[Missing', '[dbo].[Missing]]'])('keeps an 
  const nodes = new Map([['[dbo].[Known]', {}], ['[dbo].[known]', {}]]);
  expect(resolveModelNodeId(raw, nodes)).toBeNull();
  expect(resolveModelNodeId(raw, nodes, true)).toBeNull();
+});
+
+describe.each([false, true])('legacy saved references for remote objects (CS=%s)', cs => {
+  const remote = (bodyScript: string) => buildModel(
+    [{ fullName: '[dbo].[reader]', type: 'procedure', bodyScript }],
+    [], undefined, 'Local', true, undefined, cs,
+  );
+
+  it('keeps the local procedure and does not map a collapsed old remote id onto either current twin', () => {
+    const model = remote('SELECT * FROM "Remote"."dbo"."a]]b"; SELECT * FROM "Remote"."dbo"."a]b";');
+    const legacy = createSavedReferenceResolver(model);
+    const reader = model.nodes.find(node => node.type === 'procedure')!;
+    expect(model.nodes.filter(node => node.externalType === 'db')).toHaveLength(2);
+    expect(legacy.nodeId(reader.id)).toBe(reader.id);
+    expect(legacy.nodeId(cs ? '[Remote].[dbo].[a]]b]' : '[remote].[dbo].[a]b]')).toBeNull();
+    expect(legacy.schema(reader.schema)).toBe(reader.schema);
+    expect(legacy.schema('missing-schema')).toBeNull();
+  });
+
+  it('does not map repeated-quote legacy remote bytes onto the current twin', () => {
+    const model = remote('SELECT ID FROM [Remote].[dbo].[a""""b]; SELECT ID FROM [Remote].[dbo].[a"b];');
+    const legacy = createSavedReferenceResolver(model);
+    expect(model.nodes.filter(node => node.externalType === 'db')).toHaveLength(2);
+    expect(legacy.nodeId(cs ? '[Remote].[dbo].[a"b]' : '[remote].[dbo].[a"b]')).toBeNull();
+  });
 });

@@ -1,0 +1,300 @@
+#!/usr/bin/env node
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { listFiles, PackageManager } from '@vscode/vsce';
+import { classifyUnitTests, laneScriptProblems, unitTestFiles } from './unit-lanes.mjs';
+import { breakingStructureChanges, structureDiff, templateStructure } from './templateStructure.mjs';
+
+const execAsync = promisify(execFile);
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const git = async (args) => (await execAsync('git', args, { cwd: repoRoot, encoding: 'utf8', shell: false })).stdout;
+
+// ── 1. Output Truncation Invariants ──────────────────────────────────────────
+
+const SRC_ROOT = 'src';
+const DEFAULT_BASELINE = path.join(repoRoot, 'tests/tools/output-truncation-baseline.json');
+const EXPRESSION_LOOKAHEAD = 2;
+const CUT_CALL = /\.(?:slice|substring)\(\s*0\s*,|\.substr\(\s*0\s*,/;
+const ELLIPSIS = /…|\\u2026|\.\.\.['"`]/;
+const CUT_MARKERS = /truncated to|\[truncated|…\[\+|\\u2026 ?\[\+|\bcapRejectionText\b|\bcapUtf8Text\b|\bcapPreviewProse\b/;
+const TRUNC_CALL = /\btrunc(?:AtWordBoundary)?\(/;
+const TRUNC_DEFINITION = /\bfunction\s+trunc(?:AtWordBoundary)?\(/;
+const LOG_CALL = /\.(?:debug|info|warn|error|trace|log)\(|\b(?:log|debugLog|onDebugLog|debugLogger)\??\(/;
+
+export const ALLOWLIST = [
+  { file: 'src/ai/prompting/scopeSummaryRenderer.ts', symbol: 'CARD_OBJECT_TYPE_LIMIT', reason: 'card-summary-view: visible "…" line, full list in the full view' },
+  { file: 'src/ai/agent/graph.ts', symbol: "const display = truncAtWordBoundary(committedFinding.value.summary.replace(/\\s+/g, ' ').trim(), 135);", reason: 'chat-preview-display-exception' },
+  { file: 'src/ai/support/text.ts', symbol: 'PROVIDER_ERROR_MAX', reason: 'provider error shown with visible "…"' },
+  { file: 'src/ai/support/text.ts', symbol: 'slice(0, max - 1)', reason: 'trunc definition' },
+  { file: 'src/ai/support/text.ts', symbol: 'slice(0, max - 3)', reason: 'hop-thinking-trim' },
+  { file: 'src/ai/agent/graph.ts', symbol: 'rejectReason=${trunc(', reason: 'log-only' },
+  { file: 'src/ai/model/vscodeModelPort.ts', symbol: 'tool-input-keys-dropped', reason: 'log-only' },
+  { file: 'src/ai/model/vscodeModelPort.ts', symbol: 'tool-input-decoded', reason: 'log-only' },
+  { file: 'src/ai/session/session.ts', symbol: 'const toolName = observation.toolName ? trunc(', reason: 'log-only' },
+  { file: 'src/ai/session/session.ts', symbol: 'oldest evidence observation evicted', reason: 'log-only' },
+  { file: 'src/ai/sm/smBase.ts', symbol: 'const excludeNodeIdsLine', reason: 'log-only' },
+  { file: 'src/ai/tools/handlers/presentResult.ts', symbol: 'const expanded = expand(sec.text', reason: 'log-only' },
+  { file: 'src/ai/tools/handlers/presentResult.ts', symbol: '[Presentation] Output assembled', reason: 'log-only' },
+  { file: 'src/ai/tools/toolProvider.ts', symbol: 'const preview = trunc(', reason: 'log-only' },
+  { file: 'src/ai/tools/toolProvider.ts', symbol: 'const inputJson = trunc(', reason: 'log-only' },
+  { file: 'src/ai/tools/toolProvider.ts', symbol: 'const hintPart = rejection.hint', reason: 'log-only' },
+  { file: 'src/bridge/debugDumpScreenState.ts', symbol: 'return trunc([...ids], cap);', reason: 'log-only' },
+  { file: 'src/bridge/messageHandlers.ts', symbol: 'trunc(sanitizeForLog(msg.componentStack)', reason: 'log-only' },
+  { file: 'src/bridge/messageHandlers.ts', symbol: 'trunc(redactSecrets(sanitizeForLog(msg.stack))', reason: 'log-only' },
+  { file: 'src/bridge/messageHandlers.ts', symbol: 'trunc(redactSecrets(JSON.stringify(e.context))', reason: 'log-only' },
+  { file: 'src/bridge/messageHandlers.ts', symbol: 'trunc(redactSecrets(text), SETTING_VALUE_CAP)', reason: 'log-only' },
+  { file: 'src/engine/modelBuilder.ts', symbol: 'const sqlPreview = trunc(', reason: 'log-only' },
+  { file: 'src/utils/notifications.ts', symbol: 'return trunc(value.map(', reason: 'log-only' },
+  { file: 'src/utils/notifications.ts', symbol: 'value instanceof Error) return trunc(', reason: 'log-only' },
+  { file: 'src/utils/notifications.ts', symbol: 'return trunc(sanitizeForLog(String(value))', reason: 'log-only' },
+  { file: 'src/utils/notifications.ts', symbol: '${trunc(parts.join(', reason: 'log-only' },
+  { file: 'src/utils/log.ts', symbol: '', reason: 'log helper' },
+];
+
+function listTsFiles(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) out.push(...listTsFiles(full));
+    else if (/\.tsx?$/.test(entry) && !entry.endsWith('.d.ts')) out.push(full.split(path.sep).join('/'));
+  }
+  return out;
+}
+
+export function findSites(file, text) {
+  if (file.startsWith('src/components/')) return [];
+  const lines = text.split('\n');
+  const sites = [];
+  lines.forEach((raw, i) => {
+    const line = raw.trim();
+    if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) return;
+    let hit = CUT_MARKERS.test(line) && !/^(?:async\s+)?function\s/.test(line);
+    if (!hit && CUT_CALL.test(line)) {
+      hit = ELLIPSIS.test(lines.slice(i, i + 1 + EXPRESSION_LOOKAHEAD).join('\n').split(';')[0]);
+    }
+    if (!hit && TRUNC_CALL.test(line) && !TRUNC_DEFINITION.test(line) && !/^import\s/.test(line) && !LOG_CALL.test(line)) {
+      hit = true;
+    }
+    if (!hit || ALLOWLIST.some((a) => a.file === file && raw.includes(a.symbol))) return;
+    sites.push({ file, line: i + 1, text: line });
+  });
+  return sites;
+}
+
+export function compare(sites, baseline) {
+  const key = (e) => `${e.file}\u0000${e.text}`;
+  const known = new Set(baseline.map(key));
+  const seen = new Set(sites.map(key));
+  return { fresh: sites.filter((s) => !known.has(key(s))), stale: baseline.filter((b) => !seen.has(key(b))) };
+}
+
+export function scanTree() {
+  return listTsFiles(path.join(repoRoot, SRC_ROOT)).flatMap((f) => findSites(path.relative(repoRoot, f).split(path.sep).join('/'), readFileSync(f, 'utf8')));
+}
+
+function checkNoOutputTruncation() {
+  const sites = scanTree();
+  const { fresh, stale } = compare(sites, JSON.parse(readFileSync(DEFAULT_BASELINE, 'utf8')));
+  for (const s of fresh) console.error(`FAIL  ${s.file}:${s.line}  new output truncation: ${s.text}`);
+  for (const s of stale) console.error(`FAIL  ${s.file}  stale baseline entry: ${s.text}`);
+  if (fresh.length > 0 || stale.length > 0) throw new Error('Output truncation invariant failed.');
+  console.log(`PASS  no new output truncation (${sites.length} baseline sites).`);
+}
+
+// ── 2. Layer Direction Invariant ─────────────────────────────────────────────
+
+function checkLayerDirection() {
+  const engineDir = path.join(repoRoot, 'src', 'engine');
+  const importRe = /(?:import|export)(?:[^'";]*?\bfrom\s*)?\s*['"]([^'"]+)['"]/g;
+  const offenders = [];
+  for (const file of listTsFiles(engineDir)) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, idx) => {
+      importRe.lastIndex = 0;
+      let m;
+      while ((m = importRe.exec(line))) {
+        if (!m[1].startsWith('.')) continue;
+        const resolved = path.normalize(path.join(path.dirname(file), m[1])).split(path.sep).join('/');
+        if (resolved.includes('src/components')) offenders.push(`${file}:${idx + 1}  import '${m[1]}'`);
+      }
+    });
+  }
+  if (offenders.length > 0) {
+    for (const off of offenders) console.error(`FAIL  ${off}`);
+    throw new Error('src/engine/** must never import from src/components/**.');
+  }
+  console.log('PASS  src/engine/** never imports from src/components/**.');
+}
+
+// ── 3. No Tracked Scratch Files ──────────────────────────────────────────────
+
+async function checkNoTrackedScratch() {
+  const stdout = await git(['ls-files', '-ci', '--exclude-standard', '-z']);
+  const tracked = stdout.split('\0').filter(Boolean);
+  if (tracked.length > 0) {
+    for (const f of tracked) console.error(`FAIL  tracked scratch file: ${f}`);
+    throw new Error('Local-only scratch files must not be tracked in Git.');
+  }
+  console.log('PASS  no tracked local scratch or generated review reports.');
+}
+
+// ── 4. Unit Project Partition Coverage ───────────────────────────────────────
+
+function checkUnitProjectsCoverAll() {
+  const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const problems = laneScriptProblems(pkg.scripts);
+  const allFiles = unitTestFiles().sort();
+  if (allFiles.length === 0) throw new Error('No unit test files found.');
+  const classified = classifyUnitTests(allFiles);
+  problems.push(...classified.problems);
+  if (classified.support.length === 0) problems.push('support lane is empty.');
+  if (problems.length > 0) {
+    for (const p of problems) console.error(`FAIL  ${p}`);
+    throw new Error('Unit lanes do not partition the test suite.');
+  }
+  console.log(`PASS  ${allFiles.length} unit test files partitioned (${classified.core.length} core, ${classified.runtime.length} runtime, ${classified.support.length} support).`);
+}
+
+// ── 5. Template Schema Version ───────────────────────────────────────────────
+
+async function checkTemplateSchemaVersion() {
+  const assetPath = path.join(repoRoot, 'assets/aiOutputTemplates.yaml');
+  const typesPath = path.join(repoRoot, 'src/ai/session/types.ts');
+  const currentAsset = readFileSync(assetPath, 'utf8').replace(/\r\n/g, '\n');
+  const currentTypes = readFileSync(typesPath, 'utf8').replace(/\r\n/g, '\n');
+
+  const constMatch = currentTypes.match(/AI_TEMPLATE_SCHEMA_VERSION\s*=\s*(\d+)/);
+  const assetMatch = currentAsset.match(/^schemaVersion:\s*(\d+)\s*$/m);
+  if (!constMatch || !assetMatch) throw new Error('Missing schema version constant or YAML field.');
+  const constVer = Number(constMatch[1]);
+  const assetVer = Number(assetMatch[1]);
+  if (constVer !== assetVer) {
+    throw new Error(`AI_TEMPLATE_SCHEMA_VERSION (${constVer}) !== schemaVersion (${assetVer})`);
+  }
+
+  let baseline = '';
+  try {
+    const tag = (await git(['tag', '--list', 'v*', '--sort=-v:refname'])).split('\n')[0].trim();
+    baseline = tag || 'origin/main';
+    await git(['rev-parse', '--verify', '--quiet', baseline]);
+  } catch {
+    console.log('SKIP  no git baseline tag or origin/main for template diff.');
+    return;
+  }
+
+  let baselineAsset;
+  try {
+    baselineAsset = (await git(['show', `${baseline}:assets/aiOutputTemplates.yaml`])).replace(/\r\n/g, '\n');
+  } catch {
+    console.log(`SKIP  ${baseline} lacks templates asset.`);
+    return;
+  }
+
+  if (baselineAsset === currentAsset) {
+    console.log(`PASS  aiOutputTemplates.yaml matches ${baseline} (schemaVersion ${assetVer}).`);
+    return;
+  }
+
+  const changes = structureDiff(templateStructure(baselineAsset), templateStructure(currentAsset));
+  const breaking = breakingStructureChanges(changes);
+  let baselineTypes;
+  try {
+    baselineTypes = (await git(['show', `${baseline}:src/ai/session/types.ts`])).replace(/\r\n/g, '\n');
+  } catch {
+    console.log(`SKIP  ${baseline} lacks types.ts.`);
+    return;
+  }
+  const baseVerMatch = baselineTypes.match(/AI_TEMPLATE_SCHEMA_VERSION\s*=\s*(\d+)/);
+  const baseVer = baseVerMatch ? Number(baseVerMatch[1]) : assetVer;
+
+  if (breaking.length === 0 && baseVer !== constVer) {
+    throw new Error(`Template change is non-breaking but version was bumped (${baseVer} -> ${constVer}).`);
+  }
+  if (breaking.length > 0 && baseVer === constVer) {
+    throw new Error(`Template change broke structure but version is still ${constVer}. Bump required.`);
+  }
+  console.log(`PASS  template structure changes verified against ${baseline}.`);
+}
+
+// ── 6. No LangSmith In Bundle ────────────────────────────────────────────────
+
+function checkNoLangsmith() {
+  const bundles = ['out/extension.js', 'out/extensionRuntime.js'].map((p) => path.join(repoRoot, p));
+  let bundle;
+  try {
+    bundle = bundles.map((b) => readFileSync(b, 'utf8')).join('\n');
+  } catch {
+    throw new Error('Extension bundles not found — run npm run build first.');
+  }
+  if (!bundle.includes('LangSmith is excluded from this build')) {
+    throw new Error('Stub marker missing — exclude-langsmith esbuild plugin failed.');
+  }
+  for (const sig of ['smith.langchain.com', 'langsmith-js', 'LangSmithFormBoundary']) {
+    if (bundle.includes(sig)) throw new Error(`Forbidden LangSmith signature present: "${sig}"`);
+  }
+  console.log('PASS  extension bundles carry LangSmith exclusion stub and no signatures.');
+}
+
+// ── 7. Package Contents ──────────────────────────────────────────────────────
+
+async function checkPackageContents() {
+  let files;
+  try {
+    files = (await listFiles({ cwd: repoRoot, packageManager: PackageManager.None })).map((f) => f.replaceAll('\\', '/'));
+  } catch (err) {
+    throw new Error(`Could not list VSIX files: ${err.message}`);
+  }
+  const required = [
+    'package.json', 'out/extension.js', 'out/extensionRuntime.js', 'out/regexSearch.worker.js',
+    'dist/index.html', 'dist/assets/index.js', 'assets/defaultParseRules.yaml',
+    'assets/dmvQueries.yaml', 'assets/aiOutputTemplates.yaml', 'THIRD_PARTY_NOTICES.md',
+  ];
+  const forbidden = [
+    { pattern: /(?:^|\/)(?:\.audit|\.reviews|reviews?|audits?)\//iu, label: 'local review/audit directory' },
+    { pattern: /(?:^|\/)(?:[^/]*[-_.])?(?:review|audit)[^/]*\.md$/iu, label: 'local review/audit report' },
+    { pattern: /^(?:src|test|tests|test-results|tmp|tooling|scripts|ai)\//u, label: 'source/test/tmp/tooling directory' },
+    { pattern: /^out\/test(?:\/|-)/u, label: 'compiled test/harness output' },
+    { pattern: /\.vsix$/iu, label: 'packaged .vsix artifact' },
+    { pattern: /\.log$/iu, label: 'log file' },
+  ];
+  const missing = required.filter((r) => !files.includes(r));
+  const leaked = files.map((f) => {
+    const hit = forbidden.find((p) => p.pattern.test(f));
+    return hit ? `${f} [${hit.label}]` : null;
+  }).filter(Boolean);
+
+  if (missing.length > 0 || leaked.length > 0) {
+    if (missing.length > 0) console.error(`Missing required VSIX files: ${missing.join(', ')}`);
+    if (leaked.length > 0) console.error(`Forbidden VSIX files: ${leaked.join(', ')}`);
+    throw new Error('Package contents check failed.');
+  }
+  console.log(`PASS  VSIX contents valid (${files.length} packaged files).`);
+}
+
+// ── CLI Dispatcher ───────────────────────────────────────────────────────────
+
+const stage = process.argv[2] || 'all';
+
+async function main() {
+  if (stage === 'source' || stage === 'all') {
+    checkLayerDirection();
+    await checkNoTrackedScratch();
+    checkUnitProjectsCoverAll();
+    await checkTemplateSchemaVersion();
+    checkNoOutputTruncation();
+  }
+  if (stage === 'build' || stage === 'all') {
+    checkNoLangsmith();
+    await checkPackageContents();
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(`FAIL  ${err.message}`);
+    process.exit(1);
+  });
+}

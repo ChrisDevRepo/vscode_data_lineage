@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { type AiSession } from './ai/session/session';
-import { getActivePanel } from './panelProvider';
+import { beginActivePanelLoad, getActivePanel } from './panelProvider';
 import { postToWebview } from './bridge/host';
 import { Logger } from './utils/log';
 import { notifyError, notifyWarning, notifyInfo } from './utils/notifications';
@@ -11,12 +11,9 @@ import { applyModelToSession, buildExtensionConfig, isModelOverLimit } from './b
 import type { AiTraceWriter } from './ai/observability/aiTraceWriter';
 import { registerConnectionCommands } from './engine/db/connectionCommands';
 import { loadDmvQueries } from './engine/connectionManager';
+import { errorMessage } from './utils/errorMessage';
 
-/**
- * Registers all user-facing and internal commands for the Data Lineage Viz extension.
- *
- * @returns An array of disposables representing the registered commands.
- */
+/** Registers all user-facing and internal commands for the Data Lineage Viz extension. */
 export function registerCommands(
   context: vscode.ExtensionContext,
   getSession: () => AiSession,
@@ -33,16 +30,7 @@ export function registerCommands(
     vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 
-    /**
-     * Pushes fresh extension settings to the active panel, bringing the view into
-     * sync without reloading data.
-     *
-     * @remarks
-     * Equivalent to clicking the toolbar Refresh button, but without the full filter reset —
-     * suitable for programmatic callers and keyboard shortcuts; does not exit active trace,
-     * analysis, or AI preview modes. The column store is left intact since a settings push
-     * does not touch the session model it projects.
-     */
+    /** Pushes fresh extension settings to the active panel, bringing the view into sync without reloading data. */
     vscode.commands.registerCommand('dataLineageViz.refresh', () => {
       const panel = getActivePanel();
       if (!panel) {
@@ -68,7 +56,8 @@ export function registerCommands(
       }
     }),
 
-    vscode.commands.registerCommand('dataLineageViz.enableAiTraceLogging', async () => {
+    vscode.commands.registerCommand('dataLineageViz.enableAiTraceLogging', async (verbose: unknown = false) => {
+      if (typeof verbose !== 'boolean') throw new TypeError('AI trace verbosity must be a boolean.');
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       if (!workspaceFolder) {
         notifyWarning(
@@ -82,7 +71,7 @@ export function registerCommands(
 
       const traceRoot = vscode.Uri.joinPath(workspaceFolder.uri, 'tmp').fsPath;
       try {
-        const tracePath = await traceWriter.enable(traceRoot);
+        const tracePath = await traceWriter.enable(traceRoot, { verbose });
         notifyInfo(
           configLogger,
           'Enable AI trace logging',
@@ -102,13 +91,7 @@ export function registerCommands(
       }
     }),
 
-    /**
-     * Dumps the current AI State Machine (SM) state to a JSON file under the workspace's
-     * `tmp/sm-dumps` directory, for debugging deep-trace and non-deterministic AI failures.
-     *
-     * @returns The SM state, also when no workspace folder is open to write it to;
-     *   `undefined` only when there is no state machine or the write failed.
-     */
+    /** Dumps the current AI State Machine (SM) state to a JSON file under the workspace's `tmp/sm-dumps` directory, for debugging deep-trace and non-deterministic AI failures. */
     vscode.commands.registerCommand('dataLineageViz.dumpSmState', async () => {
       const sess = getSession();
       const sm = sess.stateMachine;
@@ -177,9 +160,7 @@ export function registerCommands(
       });
     }),
 
-    /**
-     * Launches a Quick Pick search interface for all SQL objects in the current model.
-     */
+    /** Launches a Quick Pick search interface for all SQL objects in the current model. */
     vscode.commands.registerCommand('dataLineageViz.searchObjects', async () => {
       const sess = getSession();
       if (!sess.model) {
@@ -220,16 +201,11 @@ export function registerCommands(
       qp.show();
     }),
 
-    /**
-     * Command intended for testing/integration that forces a .dacpac file load into the active session.
-     *
-     * @remarks
-     * Installs the model through the same path the webview bridge uses, so the session it leaves
-     * behind is indistinguishable from a wizard load — including the `dataLineageViz.modelLoaded`
-     * context key. Renders into an already-open panel; it does not open one.
-     */
+    /** Command intended for testing/integration that forces a .dacpac file load into the active session. */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
       configLogger.info(`Forcing project load from: ${uri.fsPath}`);
+      // Supersedes a panel load in flight and tells the webview this import is current.
+      const loadToken = beginActivePanelLoad();
       try {
         const { extractDacpac } = await import('./engine/dacpacExtractor');
 
@@ -243,6 +219,10 @@ export function registerCommands(
             externalRefsEnabled: config.externalRefs.enabled,
           },
         );
+        if (loadToken?.isCancellationRequested) {
+          configLogger.info('Forced project load superseded by a newer load — not applied.');
+          return;
+        }
         if (isModelOverLimit(model, config.maxNodes, configLogger)) return;
         const sess = getSession();
 
@@ -256,7 +236,7 @@ export function registerCommands(
 
         configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorMessage(err);
         notifyError(configLogger, 'Open external project', `Data Lineage: Failed to read file — ${msg}`, err, {
           command: 'dataLineageViz.openExternalProject',
           path: uri.fsPath,
@@ -266,9 +246,7 @@ export function registerCommands(
   ];
 }
 
-/**
- * Creates a YAML configuration file in the workspace root by copying a template from the extension assets.
- */
+/** Creates a YAML configuration file in the workspace root by copying a template from the extension assets. */
 async function createYamlScaffold(
   context: vscode.ExtensionContext, logger: Logger, fileName: string, sourceAsset: string, settingName: string
 ): Promise<void> {

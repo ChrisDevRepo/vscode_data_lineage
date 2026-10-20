@@ -1,13 +1,7 @@
-/**
- * Thin native-chat host adapter for the shared lineage runtime.
- *
- * LangGraph owns phase/hop routing and tool attempts. This module owns only
- * VS Code request/response projection, cancellation, and native gate buttons.
- */
+/** Thin native-chat host adapter for the shared lineage runtime. */
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import type { Logger } from '../../utils/log';
-import { Logger as OutputLogger } from '../../utils/log';
+import { Logger } from '../../utils/log';
 import { expandNextQuestionSuggestions } from '../prompting/followupSuggestions';
 import { notifyWarning } from '../../utils/notifications';
 import { VscodeModelPort } from '../model/vscodeModelPort';
@@ -28,15 +22,7 @@ import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
 import { renderFullPlanMd, renderScopeCardMd, GATE_CARD_HEADER, HOLD_GATE_NOTICE } from '../prompting/scopeSummaryRenderer';
 import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
-import {
-  createTurnTokenBudget,
-  DEFAULT_DISCOVERY_NODE_CAP,
-  DEFAULT_DISCOVERY_TOKEN_BUDGET,
-  DEFAULT_MAX_TRACE_COLUMNS,
-  DISCOVERY_WINDOW_SHARE,
-} from '../support/tokenBudget';
-import { readDeclaredNumericSetting } from '../../configCore';
-import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
+import { turnTokenBudgetFromSettings } from '../support/tokenBudget';
 import {
   applyNativeChatBoundary,
   chatHistoryToModelMessages,
@@ -47,13 +33,7 @@ import {
 interface PendingNativeGate {
   readonly gateId: string;
   readonly gate: string;
-  /**
-   * Chat request that raised this gate.
-   *
-   * @remarks
-   * Carried so a resolution recorded from the command handler — which runs outside the turn — can
-   * be grouped with that turn's other lifecycle records, whose sole grouping key is `requestId`.
-   */
+  /** Chat request that raised this gate. */
   readonly requestId: string;
   /** Proposal revision the card shows; its Approve and Cancel act on this revision only. */
   readonly revision: number;
@@ -73,11 +53,7 @@ interface GateButtonRequest {
   readonly label: string;
 }
 
-/**
- * Participant mention every chat turn the approval card opens starts with: Change scope prefills
- * it unsent (`isPartialQuery`) for the user to type the change; Approve and Cancel submit only
- * their visible action label. The mention is required for the turn to reach `@lineage`.
- */
+/** Participant mention every chat turn the approval card opens starts with: Change scope prefills it unsent (`isPartialQuery`) for the user to type the change; Approve and Cancel submit only their visible action label. The mention is required for the turn to reach `@lineage`. */
 const PARTICIPANT_MENTION = '@lineage ';
 
 /** Natural user request submitted by the combined follow-up badge. */
@@ -98,7 +74,7 @@ export class LineageParticipant {
     /** Session-scoped trace sink; it remains a no-op until enabled from the Command Palette. */
     private readonly traceWriter?: AiTraceWriter,
   ) {
-    this.logger = OutputLogger.create(outputChannel, 'AI');
+    this.logger = Logger.create(outputChannel, 'AI');
   }
 
   /** Registers the participant, feedback listener, follow-ups, and native gate commands. */
@@ -147,16 +123,7 @@ export class LineageParticipant {
     );
   }
 
-  /**
-   * Returns the current gate while the session still holds its proposal, or logs why a
-   * stale/replaced native button was ignored.
-   *
-   * @remarks
-   * The card stays live across button clicks and typed replies until the session no longer holds
-   * the proposal it shows (approved, cancelled, replaced by a revised card, or a new chat), so
-   * Change scope followed by Approve works. Log-only by design: a superseded card stays visible in
-   * the transcript forever, and a notification for each click would be noise.
-   */
+  /** Returns the current gate while the session still holds its proposal, or logs why a stale/replaced native button was ignored. */
   private requirePendingGate(
     gateId: string,
     action: NativeGateAction,
@@ -180,14 +147,7 @@ export class LineageParticipant {
     return session.phase.kind === 'awaiting_gate' && session.pendingExploration != null;
   }
 
-  /**
-   * Resolves the raising turn's gate with one validated action.
-   *
-   * @remarks
-   * The raising turn holds its gate the moment the card renders, so this normally finds no owning
-   * turn (`'no_turn'`); the caller then acts on the session-held proposal through a fresh
-   * chat turn. The card stays live either way.
-   */
+  /** Resolves the raising turn's gate with one validated action. */
   private async submitGateDecision(
     pending: PendingNativeGate,
     gateId: string,
@@ -216,22 +176,7 @@ export class LineageParticipant {
     }
   }
 
-  /**
-   * Records the outcome of one native gate action in the diagnostic trace.
-   *
-   * @param pending - Gate the participant currently holds, or `null` when none is pending.
-   * @param gateId - Gate id the clicked card carried.
-   * @param action - Action the card requested.
-   * @param outcome - How the participant answered the action.
-   * @param refusedBy - Enumerated deciding condition, supplied only for a refusal.
-   * @param decidedAt - ISO time the action arrived, before any turn it released was awaited.
-   *
-   * @remarks
-   * Gate resolution happens in a VS Code command handler, outside the turn that raised the gate and
-   * therefore outside its event sink — so this is the one place the trace can learn what answered a
-   * gate. No-op unless the diagnostic trace is enabled: {@link AiTraceWriter.write} discards every
-   * record while disabled, so the check is the writer's, not a second one here.
-   */
+  /** Records the outcome of one native gate action in the diagnostic trace. */
   private traceGateResolution(
     pending: PendingNativeGate | null,
     gateId: string,
@@ -335,20 +280,10 @@ export class LineageParticipant {
       return {};
     }
 
-    const config = vscode.workspace.getConfiguration('dataLineageViz');
-    const modelWindow = request.model.maxInputTokens > 0
-      ? request.model.maxInputTokens
-      : Number.POSITIVE_INFINITY;
-    const turnBudget = createTurnTokenBudget({
-      modelWindowTokens: request.model.maxInputTokens,
-      discoveryNodeCap: readDeclaredNumericSetting(config, 'ai.discoveryNodeCap', DEFAULT_DISCOVERY_NODE_CAP),
-      discoveryTokenBudget: Math.min(
-        readDeclaredNumericSetting(config, 'ai.discoveryTokenBudget', DEFAULT_DISCOVERY_TOKEN_BUDGET),
-        Math.floor(modelWindow * DISCOVERY_WINDOW_SHARE),
-      ),
-      maxRounds: readDeclaredNumericSetting(config, 'ai.maxRounds', DEFAULT_MAX_ROUNDS),
-      maxTraceColumns: readDeclaredNumericSetting(config, 'ai.maxTraceColumns', DEFAULT_MAX_TRACE_COLUMNS),
-    });
+    const turnBudget = turnTokenBudgetFromSettings(
+      vscode.workspace.getConfiguration('dataLineageViz'),
+      request.model.maxInputTokens,
+    );
 
     const requestId = randomUUID();
     const turnStartedAt = Date.now();
@@ -377,7 +312,7 @@ export class LineageParticipant {
       },
     );
     this.logger.info(
-      `[${session.id}] native turn start model=${request.model.id} command=${command ?? 'none'} history=${chatContext.history.length}`,
+      `[${session.id}] native turn start request=${requestId} model=${request.model.id} command=${command ?? 'none'} history=${chatContext.history.length}`,
     );
     const priorMessages = suggestionFollowup ? [] : chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) => this.logger.debug(msg));
 
@@ -398,7 +333,7 @@ export class LineageParticipant {
       };
       if (result.outcome !== 'error') {
         this.logger.info(
-          `[${session.id}] native turn terminal status=${result.outcome} modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
+          `[${session.id}] native turn terminal request=${requestId} status=${result.outcome} modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
         );
         return { metadata };
       }
@@ -407,7 +342,7 @@ export class LineageParticipant {
         || 'Data Lineage could not complete this request.';
       // Provider text can echo prompt content, so error level carries enumerated fields only.
       this.logger.error(
-        `[${session.id}] native turn terminal status=error stop=${result.failure?.stop ?? 'none'}`
+        `[${session.id}] native turn terminal request=${requestId} status=error stop=${result.failure?.stop ?? 'none'}`
         + ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
         `code=${result.failure?.code ?? 'none'}`,
       );
@@ -444,15 +379,7 @@ export class LineageParticipant {
     if (this.activeTurns === 0) this.statusBarItem?.hide();
   }
 
-  /**
-   * Performs one chat-stream write, degrading to a no-op when the stream can no longer take it.
-   *
-   * @remarks
-   * VS Code tears the `ChatResponseStream` down when the turn ends or the user presses Stop, and a
-   * write that loses that race throws. These writes run inside the sink consumer, whose throw the
-   * runtime re-raises out of the turn, so an unguarded one escapes `handleChatRequest`. A closed
-   * stream and a cancelled token are normal end states; every other error still propagates.
-   */
+  /** Performs one chat-stream write, degrading to a no-op when the stream can no longer take it. */
   private write(
     stream: vscode.ChatResponseStream,
     token: vscode.CancellationToken,

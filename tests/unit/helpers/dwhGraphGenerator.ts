@@ -1,14 +1,4 @@
-/**
- * Seeded, deterministic generator of an asymmetric lineage graph — the single generator every
- * large-graph test consumer builds on, tracked and gitignored alike.
- *
- * @remarks
- * Not a faithful data-warehouse simulation — just asymmetric enough to be a useful stand-in for one:
- * uneven schema sizes, a handful of hub objects with disproportionately many edges, a slice of fully
- * isolated objects, and a configurable cross-schema edge share, averaging 2.5-3.5 edges per node.
- * `generateDwhModel` reproduces that shape from `(objectCount, seed)` alone — same seed, same model;
- * different seed, a different one.
- */
+/** Seeded, deterministic generator of an asymmetric lineage graph — the single generator every large-graph test consumer builds on, tracked and gitignored alike. */
 
 import type {
   CatalogEntry,
@@ -22,12 +12,7 @@ import type {
 
 type Rng = () => number;
 
-/**
- * mulberry32 — a small, fast, seeded PRNG returning a deterministic `[0, 1)` stream.
- *
- * @param seed - Any 32-bit integer seed.
- * @returns A generator function; repeated calls advance the stream deterministically.
- */
+/** mulberry32 — a small, fast, seeded PRNG returning a deterministic `[0, 1)` stream. */
 function mulberry32(seed: number): Rng {
   let a = seed >>> 0;
   return function next(): number {
@@ -205,14 +190,7 @@ function buildObjects(rng: Rng, schemaNames: string[], sizes: number[], external
   return objs;
 }
 
-/**
- * Directed edge set: roughly `round(objectCount * edgesPerNodeTarget)` edges from uniform random
- * pairs, rejection-sampled (never filtering the full eligible pool — cheap at any N) toward a
- * schema-crossing pair per `crossSchemaShare`, and — strictly, `source.layer <= target.layer` —
- * toward the loose 0-4 layer order. Layer-monotonic edges keep the graph a near-DAG instead of
- * densely cyclic: `dagre`'s default ranker (network-simplex) is cheap on a near-DAG and pathologically
- * slow once feedback edges are common, so this is a performance property, not just a realism one.
- */
+/** Directed edge set: roughly `round(objectCount * edgesPerNodeTarget)` edges from uniform random pairs, rejection-sampled (never filtering the full eligible pool — cheap at any N) toward a schema-crossing pair per `crossSchemaShare`, and — strictly, `source.layer <= target.layer` — toward the loose 0-4 layer order. Layer-monotonic edges keep the graph a near-DAG instead of densely cyclic: `dagre`'s default ranker (network-simplex) is cheap on a near-DAG and pathologically slow once feedback edges are common, so this is a performance property, not just a realism one. */
 function generateEdges(
   rng: Rng,
   eligible: GenObj[],
@@ -246,9 +224,7 @@ function generateEdges(
   return edges;
 }
 
-/** Bounded, N-independent extra in/out-degree for each designated hub, so a handful of objects
- * read as clearly busier than average without their degree scaling with the graph size. Direction
- * follows the same layer-monotonic rule as {@link generateEdges}, to stay a near-DAG. */
+/** Bounded, N-independent extra in/out-degree for each designated hub, so a handful of objects read as clearly busier than average without their degree scaling with the graph size. Direction follows the same layer-monotonic rule as {@link generateEdges}, to stay a near-DAG. */
 function addHubEdges(rng: Rng, eligible: GenObj[], hubs: GenObj[], hubBoost: number): LineageEdge[] {
   const extra: LineageEdge[] = [];
   const perHub = clamp(Math.round(25 * hubBoost), 10, 60);
@@ -266,18 +242,7 @@ function emptyTypeCounts(): Record<ObjectType, number> {
   return { table: 0, view: 0, procedure: 0, function: 0, external: 0 };
 }
 
-/**
- * Generates a seeded, deterministic, asymmetric lineage model.
- *
- * @remarks
- * `objectCount` counts real tracked objects only; when `profile.externalRefCount` is set, that many
- * additional `external` nodes are appended (one per designated procedure, each a unique file
- * reference), matching the `objectCount + externalRefCount` convention used across the DACPAC
- * boundary tests. The same `(objectCount, seed, profile)` triple always yields an identical model.
- *
- * @param params - Object count, seed, and optional asymmetry tuning.
- * @returns The generated model plus the structural statistics computed over it.
- */
+/** Generates a seeded, deterministic, asymmetric lineage model. */
 export function generateDwhModel(params: GenerateDwhModelParams): GenerateDwhModelResult {
   const { objectCount, seed, profile = {} } = params;
   if (objectCount < 1) throw new Error('objectCount must be at least 1');
@@ -407,25 +372,4 @@ function computeStats(model: DatabaseModel, objs: GenObj[]): DwhStats {
     isolatedCount,
     hubs,
   };
-}
-
-/**
- * Renders {@link DwhStats} as a markdown table for a test report or a manual capture note.
- *
- * @param stats - Statistics computed by {@link generateDwhModel}.
- * @returns A markdown summary table plus a hub table.
- */
-export function formatDwhStats(stats: DwhStats): string {
-  const lines: string[] = [];
-  lines.push('| metric | value |', '|---|---|');
-  lines.push(`| nodes | ${stats.nodeCount} |`);
-  lines.push(`| edges | ${stats.edgeCount} |`);
-  lines.push(`| edges per node | ${stats.edgesPerNode.toFixed(2)} |`);
-  lines.push(`| tables / views / procedures / functions / external | ${stats.byType.table} / ${stats.byType.view} / ${stats.byType.procedure} / ${stats.byType.function} / ${stats.byType.external} |`);
-  lines.push(`| schemas | ${stats.schemaDistribution.length} |`);
-  lines.push(`| cross-schema edge share | ${(stats.crossSchemaEdgeShare * 100).toFixed(1)}% |`);
-  lines.push(`| isolated objects | ${stats.isolatedCount} |`);
-  lines.push('', '| hub | total degree |', '|---|---|');
-  for (const h of stats.hubs) lines.push(`| ${h.id} | ${h.total} |`);
-  return lines.join('\n');
 }

@@ -1,132 +1,196 @@
 # Testing
 
-## Default Checks
+The single reference for test tiers, lanes and commands. Machine needs are in [Test environments](ENVIRONMENTS.md).
 
-```sh
-npm ci
-npm test                    # deterministic unit tests
-npm run test:core           # parser, engine and webview
-npm run test:runtime        # AI runtime contracts, without inference
-npm run gate                # configured deterministic checks
-```
+## Default checks
 
-Focused parser and graph checks are `npm run test:parser` and `npm run test:bfs`. TypeScript checks are `npm run typecheck` and `npm run typecheck:tests`. The repository has no lint script.
+These need no database, model provider or display. Parser and lineage scenarios are zero-regression. Run tests and `npm run gate` only when code changes need verification and before a push; do not redundantly re-test already verified changes before commit, and when no code changes are done, no test run must be performed.
 
-The gate summary marks a step `SKIP` when it could not run its comparison; a skipped step is not verified. The output template schema version step compares against the newest `v*` tag, or `origin/main` when no tag exists, and skips locally when neither is present. With `CI` set it fails instead, so a CI checkout must fetch tags or `origin/main` (for example `actions/checkout` with `fetch-depth: 0`).
+| Command | What it runs |
+|---|---|
+| `npm test` | Parser, lineage and the deterministic AI/trust contracts in `tests/tools/unit-lanes.mjs` |
+| `npm run test:core` | Parser and lineage |
+| `npm run test:parser` | Parser only |
+| `npm run test:lineage` | Lineage only (`test:bfs` is the same lane) |
+| `npm run test:runtime` | Backend graph contracts, tool registration/dispatch, identifier boundaries, schema, redaction, cancellation, templates and `scripted` catalog rows |
+| `npm run test:support` | Webview, database connection, AI routing and operator tools (not in `npm test` or the gate) |
+| `npm run typecheck`, `npm run typecheck:tests` | TypeScript checks; there is no lint script |
+| `npm run gate` | Everything above except `test:support`, plus coverage floors, build and repository checks; CI runs this |
 
-Function caller-context and findings-schema regressions can be checked together:
+A path argument to `test:core`, `test:lineage`, `test:runtime` or `test:support` runs that file only: `npm run test:core -- tests/unit/parser/identifier-case.test.ts`.
 
-```sh
-npm test -- tests/unit/sm/function-question-schema.test.ts tests/unit/sm/fresh-kept-schema-parity.test.ts
-```
+The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAIL`. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs stay in untracked local output.
 
-These tests cover qualified scalar destinations, TVF argument context, directed
-contributors, stale SQL and saved-run provenance, input identity, fresh kept
-requirements, legal cuts and held repairs. They create no model calls. Check
-model-authored argument bindings and omitted SQL contributors separately; a
-structurally valid delivered graph does not establish complete SQL lineage.
+## Ownership and evidence
 
-Identifier-policy regressions include synthetic CI/CS metadata, messy delimited SQL,
-case-only schema/object/function/column twins, CT route rejection and completeness,
-saved-run policy, metadata display names, and graph/export consumers:
+Each contract has one owning suite. **Unit contracts** invoke a schema, rule or graph API directly. **Functional contracts** run real handlers, registries or the navigation engine with supplied messages and assert rejection, state and delivered results. Both run in ordinary Vitest lanes. **Host/end-to-end checks** exercise VS Code or rendered UI; live model answers need separate SQL review. Fixed responses prove wiring and lifecycle.
 
-```sh
-npm test -- tests/unit/parser/identifier-case.test.ts tests/unit/sm/identifier-policy-saved-run.test.ts tests/unit/ai-core/identifier-runtime-flow.test.ts tests/unit/engine/columnTraceView.test.ts
-```
-
-These cases exercise backend contracts without a live database or model inference.
-The complete deterministic gate also checks coverage floors, layering, build and packaging.
-Large-input regressions require complete extraction beyond the former 10,000-match
-cutoff and termination for zero-width custom rules, including Unicode text.
-The runtime fixture uses the real tool registry and approval, BB/CT hop, retry,
-synthesis and checkpoint paths with a fixed-response model port. It verifies the
-metadata-derived CS hint reaches the authoring stages; it does not measure whether
-an inference model follows that hint. Legacy CI escaped-bracket ID ambiguity and
-complex SQL without statement delimiters remain outside this case-policy guarantee.
-
-## Build And Install A VSIX
-
-Build the extension package from the repository root:
-
-```sh
-npm ci
-npm run package
-```
-
-This runs the VS Code packaging tool and creates `data-lineage-viz-<version>.vsix` in the repository root. In VS Code, open **Extensions**, select the **…** menu, choose **Install from VSIX…**, and select that file. The `code` command line is also available:
-
-```sh
-code --install-extension ./data-lineage-viz-<version>.vsix
-```
-
-Test the VSIX in a separate VS Code profile before sharing it. Packaging does not publish the extension.
-
-## Optional Integration Checks
-
-Machine prerequisites for each tier: [Test Environments](ENVIRONMENTS.md).
-
-`npm test` and `npm run gate` require no database, model provider, tracing account, or graphical session.
-
-| Check | Setup | Purpose and limit |
+| Production contract | Owning executable tests | Level / lane |
 |---|---|---|
-| Database metadata smoke | Configure `DB_TEST_SERVER`, `DB_TEST_DATABASE`, `DB_TEST_USER`, `DB_TEST_PASSWORD`, optional TLS/port settings; run `npm run test:db:smoke`. | SQL-login connection, schema discovery and metadata import through the built-in provider. Read-only queries against your disposable/demo database; no provisioning. For Microsoft Entra ID or the mssql extension provider, use the extension connection flow manually. |
-| Electron host | `npm run test:edh` | Exercises extension behavior in the VS Code Electron host. The fixture-backed participant lane is deterministic API wiring, with no model inference. |
-| Playwright UI smoke | Run `npm run build`, then `npm run test:gui:host`; in another terminal, run `npm run test:gui:smoke`. | Uses an isolated downloaded VS Code test host, opens the demo through the command palette and confirms a React Flow graph renders in the workbench. |
-| UI performance | Use the same EDH/CDP setup with a fixed public demo dataset and a named device/runtime. | Manual measurement: record warm/cold state, dataset size, repetitions, median and p95. Results describe that setup only; do not use one-machine timings as general thresholds. |
-| Real-model Electron smoke | Configure `AI_TEST_PROVIDER`, `AI_TEST_ENDPOINT`, `AI_TEST_API_KEY`, `AI_TEST_MODEL`, and optionally `AI_TEST_REASONING_EFFORT`; run `npm run test:ai:smoke`. Provider profiles cover Azure OpenAI, Fireworks, OpenRouter and OpenAI-compatible APIs. | Calls a real model through a `vscode.LanguageModelChatProvider` adapter and the `@lineage` participant against the public demo DACPAC. It checks that the turn completes and returns text; review answer correctness and completeness against SQL/graph yourself. This smoke is opt-in and may incur provider cost. |
+| [SQL parsing](../../src/engine/sqlBodyParser.ts) and extractors | [parser catalog runner](../../tests/unit/parser/tsql-coverage-matrix.test.ts), focused `parser` suites | Unit / core |
+| [Traversal](../../src/engine/graphBuilder.ts) and [removal policy](../../src/engine/graphGuards.ts) | [traversal cases](../../tests/unit/engine/traversal-edge-cases.test.ts), [removal cases](../../tests/unit/engine/directed-removal-policy.test.ts); `graphBuilder` suites own construction/layout/extraction integration | Unit + functional / core |
+| [Tool catalog](../../src/ai/tools/toolDefs.ts), [policy](../../src/ai/tools/toolPolicy.ts) and registry | [registration](../../tests/unit/ai-core/ai-tool-registration.test.ts) | Unit + registry / runtime |
+| [Zod/tool schemas](../../src/ai/tools/toolSchemas.ts), provider projection and [error envelopes](../../src/ai/support/toolErrorEnvelope.ts) | [findings schemas](../../tests/unit/ai-core/submit-findings-schema.test.ts), [issue matrix](../../tests/unit/ai-core/zod-issue-matrix.test.ts), [envelopes](../../tests/unit/ai-core/tool-error-envelope.test.ts), [malformed objects](../../tests/unit/ai-core/tool-boundary-malformed-input.test.ts) | Unit / runtime |
+| [Start rules](../../src/ai/interaction/rules/startExplorationRules.ts), [submit rules](../../src/ai/interaction/rules/submitFindingsRules.ts) and raw handler admission | [tool boundaries](../../tests/unit/ai-core/tool-boundary-precedence.test.ts) | Functional / runtime |
+| [Instruction delivery](../../src/ai/agent/instructionPlan.ts), [model port](../../src/ai/model/vscodeModelPort.ts) and [dispatcher](../../src/ai/agent/toolAttempt.ts) | [dispatcher matrix](../../tests/unit/ai-core/dispatcher-matrix.test.ts); malformed transport, unavailable calls, conditional tools, pairing, siblings and budgets | Unit + functional / runtime |
+| [BB/CT engine](../../src/ai/sm/smBase.ts), [routing](../../src/ai/sm/smRouteValidation.ts), [task ledger](../../src/ai/sm/taskLedger.ts) and [column tracing](../../src/ai/sm/columnTracer.ts) | [lineage runbooks](../../tests/unit/backend/lineage-cases.test.ts), [BB shapes](../../tests/unit/backend/bb-lineage-shapes.test.ts), [function columns](../../tests/unit/backend/function-column-contracts.test.ts) | Functional / runtime |
+| [Presentation schemas](../../src/ai/tools/toolSchemas.ts) and [draft/merge rules](../../src/ai/tools/presentResult.ts) | [schemas](../../tests/unit/ai-core/present-result-schema.test.ts), [repairs](../../tests/unit/ai-core/present-result-repair.test.ts), [coverage](../../tests/unit/ai-core/present-result-coverage.test.ts) | Unit / runtime |
+| [Presentation handler](../../src/ai/tools/handlers/presentResult.ts) and [presentation rules](../../src/ai/interaction/rules/presentResultRules.ts) | [functional presentation](../../tests/unit/ai-core/present-result-functional.test.ts), [SQL/evidence boundary](../../tests/unit/ai-core/present-result-sql-fence-boundary.test.ts) | Functional; SQL expansion also unit / runtime |
+| Storage, database adapters and webview | Owning `engine`, `engine/db` and `webview` suites | Unit + functional / support |
+| VS Code API, native controls and live answers | [host tests](../../tests/integration), Electron/Playwright/headless commands below | Optional host/end-to-end or live review |
 
-## Optional Headless AI And Langfuse
+`tests/tools` owns execution and partition checks; `tests/unit/helpers` owns shared input builders; domain helpers stay beside their suites. `tests/cases` and typed rows own independently authored inputs and expectations. `tests/harness` adapts the real runtime for optional service checks. There is no universal runbook interpreter. Add a regression or hypothesis as a row in its owner; do not repeat the same rule's matrix in every layer or enumerate arbitrary combinations without expected outcomes.
 
-```sh
-npm run test:ai:headless -- --prompt "Summarize the loaded database"
-npm run test:ai:headless -- --dacpac /path/to/test.dacpac --prompt "Trace dependencies" --followup "Explain the upstream objects"
-npm run test:ai:headless -- --prompt "Summarize the loaded database" --langfuse
-npm run test:ai:headless -- --help
-npm run test:db:smoke -- --help
-npm run test:scale
-```
+Presentation repair owners cover large held bodies, indexed node-link corrections, preview start repairs, malformed retries and merged-report revalidation. A small repair payload proves transport savings and retention; it does not measure inference tokens or answer quality.
 
-Headless AI loads `assets/demo.dacpac` by default and invokes the production runtime in Node with an OpenAI-compatible transport. It uses the same `AI_TEST_*` profiles as the Electron smoke. Supply your own prompts; the public runner has no question bank, scorer, provider campaign, or benchmark history. Consent gates receive simulated approvals, so this checks runtime execution rather than interactive consent or VS Code provider behavior. Electron and Playwright remain separate optional tools.
+The tool-boundary suite covers malformed findings repairs without losing held content. Description-render parity tests also assert raw HTML escaping, unsafe URL removal, section-id restrictions and sanitizer isolation.
 
-Headless AI and database smoke have a five-minute whole-run deadline; override it with `--timeout-ms` (1–7,200,000). Results and diagnostic files go under ignored `test-results/headless/`. `run.json` reports runtime outcome, duration, turn/model-call counts where applicable, and an independent export outcome. Exit codes are 0 for completion, 2 for runtime/export failure, 3 for cancellation, and 4 for configuration failure. Completion alone is not answer correctness evidence.
+The gate runs core once and runtime once, with disjoint file membership; duplicate declarations fail partition validation. `npm test` is their aggregate, parser/lineage commands select subsets, and `test:bfs` aliases lineage. These selectable commands are not extra gate executions. Path arguments override the lane selection.
 
-Langfuse export has a separate 30-second timeout. It receives traces only with `--langfuse` and all three `LANGFUSE_*` settings. The exporter uses [Langfuse's OTLP/HTTP JSON endpoint](https://langfuse.com/integrations/native/opentelemetry); no telemetry SDK is added. Prompt/system bodies are omitted by default; `--trace-verbose` explicitly enables their capture and export. Local diagnostic answers and tool artifacts can contain your supplied database metadata: use public/synthetic data and keep artifacts ignored.
+The partition check requires the complete aggregate npm recipes and enabled core coverage. It rejects filters, shell suffixes, embedded command newlines and coverage-disabling flags in those recipes. Pass options or file filters to an individual run after `--` instead.
 
-`test:scale` exercises layout correctness at the 1,500-node render ceiling. It is deliberately outside `npm test` and `gate`; printed timings describe this run and are not performance thresholds. Fast size-limit and traversal assertions remain in the default suite.
+Retirement is applied: nine fragmented presentation files are replaced by the four presentation owners above; synthetic traversal/depth assertions have moved out of the two graph-builder suites into the traversal table. The historical schema comparator derived from the current schema is removed; explicit acceptance/rejection expectations remain. A shared shape or SQL input across different entry boundaries is retained only for a distinct contract.
 
-## Environment Template
+## Case catalogs
 
-Copy `.env.example` to `.env`; `.env` is ignored by Git. Fill only the section for the optional check being run. Do not paste secrets into shell history or test logs.
+Add a supporting check as one row in an existing file or case catalog; a new file needs a contract no lane already owns. Coverage floors stay at their current numbers.
 
-For provider configuration, choose one active profile per run. The adapter uses the Chat Completions API. For Azure, provide either the resource URL (the adapter adds the deployment route and `api-version=2024-10-21`) or an Azure `/openai/v1` endpoint. `AI_TEST_MODEL` is the Azure deployment name. For an OpenAI-compatible service, provide its API base URL and model id. Alternatively, set `AI_TEST_PROVIDER` to `azure`, `fireworks`, or `openrouter` to read a matching provider profile from `.env` or the process environment; `openai-compatible` reads generic `AI_TEST_*` values. Keep credentials in ignored `.env`, never in the template.
+- SQL/parser case: one row in `tests/cases/parser/exact-edges.yaml`, run by `tsql-coverage-matrix.test.ts`, with `id`, `description`, `sql` and exact `sources`, `targets`, `exec`, `cross_db_sources` and `cross_db_targets` lists (omitted lists mean empty). Optional `case_modes: [ci, cs]` preserves case-sensitive scenarios; the default is `[ci]`. Add exact `mutations` or `external` lists when those contracts matter. For model behavior, add `graph` with independent `tables`, catalog `metadata`, optional `current_database` and the complete expected `edges`, including type and `deleteOnly`; the subject procedure is `gen.Subject`. Do not derive expected graph edges from parser output. Keep custom-rule setup, extractor/API contracts and generated performance cases in their existing tests.
+- AI column-trace state contracts (not deterministic SQL-to-column inference): a `runners: [scripted]` row in [`tests/cases/lineage-cases.yaml`](../../tests/cases/lineage-cases.yaml), run by `tests/unit/backend/lineage-cases.test.ts` on `npm run test:runtime` and the gate.
+- Playwright, Electron and headless rows use the matching `runners` tag and stay outside the gate. Keep the prompt and expected result on the row, not in the runner.
 
-`AI_TEST_REASONING_EFFORT` describes the provider's supported reasoning level. Accepted values vary by provider/model; leave it empty when unsupported. Do not assume that the same label produces equivalent reasoning across providers.
+The backend catalog's `contract: stored-arrival` rows share one producer → table → receiver fixture. Each row declares receiver type, SQL and column metadata, supplied `column_flow`, and independent expected mapped inputs, receiver rows, sink mode and sink columns. An unmapped candidate ends at the receiver without a rejection. Adding another consumption variant needs a row, not another runner. Keep unique contracts such as separate write destinations, final endpoints and sibling independence as focused tests, using shared graph/render setup. Do not derive expected results from the submitted mappings or from production output.
 
-For Playwright, start the host:
+The same catalog's `contract: self-prune` rows declare a `story`, BB/CT `mode`, route fixture, optional `sender_verdict`, `graph.edges` and independent `expect` values. Use `mode: [bb, ct]` when both modes share the fixture and expectations; each still runs separately with its mode-prefixed case ID. They check the single eligibility rule (routing through passthrough), immediate hard cuts, shared descendants and removal of cut column evidence. Tool-boundary and dispatcher tests check conditional delivery, strict input and shared completion. These are backend enforcement tests, not evidence that the model judged SQL relevance correctly.
 
-```sh
-npm run build
-npm run test:gui:host
-```
+The runner creates synthetic objects from edge endpoints and qualifies short names in schema `d`. [`makeIndexedModel`](../../tests/unit/helpers/modelFixtures.ts) builds complete neighbor metadata; existing [`makeGraph`](../../tests/unit/helpers/modelFixtures.ts) builds the directed graph. Other fixtures can reuse these builders with explicit object types, columns and SQL. `makeModel` retains its empty-index default for missing-metadata tests. [`generateDwhModel`](../../tests/unit/helpers/dwhGraphGenerator.ts) remains the larger dataset/scale generator; its extractor round-trip and backend graph checks through 5,000 objects run in core. Layout remains in `test:scale`.
 
-Then run the smoke from another terminal:
+For an inherited case, `Origin` directly reaches `Current`; arbitrary continuation edges after it need only a catalog row. See the diamond rows in [`lineage-cases.yaml`](../../tests/cases/lineage-cases.yaml) for complete examples. The helper generates structure, never expected cuts: `expect.unvisited`, `pruned`, `inspected`, `kept` and `edges` are authored independently. Tests check the exact cut immediately, then the remaining visits and complete surviving graph. Mode lists and YAML anchors reuse fixtures and expectations.
 
-```sh
-npm run test:gui:smoke
-```
+The BB graph suite runs named graph regressions in `npm test`, `npm run test:runtime` and `npm run gate`. Expected nodes are declared independently; expected edges use those expected nodes, never the returned graph. Connectivity checks on returned data are additional invariants, not completeness oracles. Mixed prune/question/mapping submissions and rejected-submission atomicity use focused regressions with explicit expected graphs and column endpoints. Add a hypothesis as a typed row in its owning suite; retain a discovered failure as a regression.
 
-`test:gui:host` uses the VS Code build managed by `@vscode/test-electron`, fresh temporary workspace, user-data and extensions directories, and a loopback-only CDP endpoint. It writes an ignored active-session marker that the smoke validates before attaching, so the smoke does not connect to a normal VS Code instance. Stop the host with Ctrl-C after the smoke finishes.
+## Backend contract inventory
 
-## Reading AI Evidence
+The source catalog is `src/ai/tools/toolDefs.ts`; availability is owned by `toolPolicy.ts`, narrowed in `agent/instructionPlan.ts` and checked again by `ToolHandler.authorizeTool`. The table lists every tool (omit the common `lineage_` prefix). Stages: D discovery, E entry, B active BB, T active CT, P preview, S synthesis, C completed, X other VS Code agents. X is a caller surface, not an external graph object.
 
-Compare AI answers with the public fixture's SQL and graph before comparing token usage or latency. For debugging, inspect the model context, tool calls and results in the session trace and extension log. See [AI architecture](../ARCHITECTURE.md) for the runtime and diagnostics.
+| Tool | Input boundary in `src/ai/tools/toolSchemas.ts` | Allowed stages |
+|---|---|---|
+| `get_context` | `GetContextInputSchema` | D, C, X |
+| `get_screen_state` | `GetScreenStateInputSchema` | D, E, C, X |
+| `search_objects` | `SearchObjectsInputSchema` | D, E, C, X |
+| `get_scope_bundle` | `GetScopeBundleModelSchema`, runtime `GetScopeBundleInputSchema` | D, C |
+| `get_object_detail` | `GetObjectDetailInputSchema` | D, E, C, X |
+| `detect_graph_patterns` | `DetectGraphPatternsInputSchema` | D, C, X |
+| `search_ddl` | `SearchDdlInputSchema` | D, C, X |
+| `get_neighbor_columns` | `GetNeighborColumnsInputSchema`, engine scope/adjacency | T, X; needs an active engine |
+| `start_exploration` | Fresh/refine/completed provider schemas; strict `StartExplorationInputSchema` | E, C |
+| `submit_findings` | Broad provider schema; live `submitFindingsSchemaForMode` | B, T |
+| `prune_current` | `PruneCurrentInputSchema`; engine passthrough eligibility | B, T when eligible |
+| `present_result` | Broad provider schema; live `presentResultSchemaForPhase` and authorized repair schema | P, S, C |
 
-## Keeping The Suite Lean
+Zod shape checks and engine admission are separate contracts. Submit schemas depend on BB/CT, classification, fresh/held content, assigned columns, writer/return destinations and caller context; CS/CI identity resolution also uses model metadata. Nested contracts include column identifiers/transforms, `upstream_columns`, exclusive `writes_to`/`returns_to`, `questions[].caller_context` and scope depth/exclusions. Presentation schemas depend on stage, retained sections/highlights and authorized repair fields. Provider JSON Schema projection cannot establish every Zod refinement or graph rule. Test schema-invalid payloads at raw handler/registry boundaries, and malformed transport arguments at the model-port/dispatcher boundary; a typed direct-engine call does not test either boundary. Valid held repair content may change after rejection, while committed graph, columns and tasks must not.
 
-Public checks protect deterministic product contracts; local checks retain editorial prompt expectations, answer scoring, trace-replay corpora, exhaustive matrices, and benchmark campaigns. A deterministic runtime check is useful publicly even when it uses a synthetic question. Select representative missing contracts rather than publishing every local regression file.
+`model/vscodeModelPort.ts` detects non-object arguments and unavailable tools; `agent/toolAttempt.ts` consumes those classifications and owns ordered rejection/dispatch, call/result pairing, duplicate reads, repeated rejected calls, progress limits, cancellation and phase closure. Submit and self-prune compete for one hop evaluation per reply even if the first rejects; presentation also has a single-evaluation rule. `toolProvider.ts` serializes mutating effects and the registry tracks in-flight calls. Internal `getHopContext`, `getResult` and `supplementAgenda` are engine APIs; supplements enter through `start_exploration`, not another tool.
 
-Before deleting or merging a test, identify the retained assertion protecting its behavior, including relevant failure cases. Prefer a shared fixture or parameterized cases over repeated setup. Preserve parser cases, input identity, cancellation, trust boundaries, persistence, accessibility, packaging, and LangSmith containment. Coverage floors apply to the existing core modules; they are supporting evidence, not an answer-quality score.
+Coverage limits remain explicit: the current suites do not establish a complete stage-by-tool truth table or concurrent-effect ordering, nor complete scalar-return, external-endpoint and completed-supplement runbooks. Architecture checks in `rule-gates` do not substitute for executing interaction rules.
 
-The warm default-suite review budget is 30 seconds on the documented reference machine, not a timing assertion or universal promise. No file-count, line-count, or repository-wide coverage target is imposed. Optional services and large layouts stay outside the default gate. No test CI or scheduler is introduced.
+## What these checks establish
 
-For approval controls, pending chat input and next-question badges, run the opt-in [native chat Playwright acceptance lanes](../EDH_TESTING.md#native-chat-and-generated-report-acceptance-playwright). Run the fixture lane for request lifecycle and the live lane for the actual follow-up badge and generated reply. The fast `npx vscode-test --config .vscode-test.chat-ui.mjs --label badge` lane replays a successful public analysis for setup and makes one live call after clicking the actual badge; it does not prove fresh synthesis. Verify contextual formulas separately with headless production AI and direct inspection of the generated Markdown and fresh NDJSON, using the same public DACPAC, model and original question; this does not prove rendered webview layout. A synthetic answer or a direct call to `handleChatRequest` cannot establish end-to-end UI or model correctness. Repeat these CLI commands using the same saved approval prefix instead of constructing a new shell command for each attempt.
+Deterministic tests verify parser, graph and runtime contracts. A structurally valid AI result does not establish complete SQL lineage, correct model-authored argument bindings or inclusion of every contributor. Fixed-response host tests establish API wiring and lifecycle, not inference quality. Current escaped-bracket identifiers are covered in both case modes. Ambiguous identifiers in older saved views or checkpoints cannot always be recovered: legacy references resolve only when they have a unique owner in the current model. Statement scanning uses semicolons or recognised top-level statement keywords; identifier tests do not establish complete parsing of arbitrary SQL without delimiters. See [parser limits](../PARSE_RULES.md).
+
+Headless AI uses simulated consent decisions and its own transport. It does not test interactive approval controls or the VS Code account's model integration. Badge replay checks the rendered follow-up control and live suggestion call, but does not prove fresh synthesis. Inspecting headless Markdown does not establish rendered layout; native UI checks remain separate. A live check spends provider tokens. Run one only under [When a live run is worth its cost](#when-a-live-run-is-worth-its-cost).
+
+Layout timings describe the tested dataset, hardware and runtime, not a general performance threshold. For manual performance review, record warm/cold state, repetitions, median and p95. Preserve each distinct contract and failure assertion when consolidating tests; coverage totals alone do not prove scenario preservation.
+
+## Complete inventory
+
+[The test inventory](INVENTORY.md) enumerates every deterministic, host, Playwright, database and provider-backed surface, including the extended frozen questions and unavailable historical fixture cohort. “All” means that inventory; the five original headless smoke rows alone are not complete coverage.
+
+## Optional checks
+
+| Check | Command | What it verifies |
+|---|---|---|
+| Database metadata smoke | `npm run test:db:smoke` | SQL-login or Entra ID discovery and import, read-only against a disposable or demo database |
+| Electron host lanes | `npm run test:edh` | Activation, tool invocation and participant turn through the VS Code API |
+| Playwright GUI smoke | `npm run test:gui:host`, then `npm run test:gui:smoke` | Opens the demo in an isolated VS Code host and checks the graph renders |
+| Playwright chat UI | `npx vscode-test --config .vscode-test.chat-ui.mjs` | Native chat confirmations, approval/cancellation, scope revisions and suggestion badges |
+| Real-model smoke | `npm run test:ai:smoke` | One live `@lineage` turn against the demo DACPAC |
+| Headless review | `npm run test:ai:headless` | `--all` (also the default) runs every headless catalog row. `--case ID` selects one row; `--list` prints IDs/descriptions/hashes without provider calls. An explicit question uses `--prompt` (flags: `-- --help`). Full execution is baseline work. |
+| Large layout scale | `npm run test:scale` | Layout check for a 1,500-node model |
+
+## VS Code host checks
+
+These run the extension in an isolated VS Code host (Extension Development Host) and stay outside `npm test` and the gate. On Linux without a display, prefix the commands with `xvfb-run -a`. Run labels one at a time; never attach to your normal VS Code session.
+
+`npm run test:edh` builds and runs every lane in `.vscode-test.mjs`. To run one lane, run `npm run pretest:integration` first, then `npm run test:bare-environment`, `npm run test:tools`, `npm run test:participant-turn` or `npx vscode-test --label kill-switch`.
+
+| Lane | What it verifies |
+|---|---|
+| `bare-environment` | Activation without optional host integrations |
+| `tools` | Read-only LM tools respond through `vscode.lm.invokeTool` |
+| `participant-turn` | `@lineage` completes a turn through the chat API (fixed response) |
+| `kill-switch` | Disabling AI leaves the non-AI features working |
+
+Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs`, adding `--label live`, `badge` or `column` as needed, after `npm run pretest:integration`. The default label takes its prompt from the `electron-fixture-trace` row of `tests/cases/lineage-cases.yaml`; the `live`, `badge` and `column` prompts are in `tests/integration/chat-ui.test.ts`.
+
+| Label | What it verifies |
+|---|---|
+| default | Chat input, plan approval and cancellation with scripted responses |
+| `live` | The same controls against `AI_TEST_PROVIDER` and `assets/demo.dacpac` |
+| `badge` | The follow-up suggestion badge, replaying a qualifying recorded `live` analysis and making one live model call for suggestions |
+| `column` | A column-trace query and the rendered report |
+
+Check `live` answers against the fixture's SQL and graph. Keep reports, screenshots and traces out of git.
+
+To run `badge` without a recorded trace, use `DLV_CHAT_UI_BADGE_LIVE=1 npx vscode-test --config .vscode-test.chat-ui.mjs --label badge`. This executes fresh real-model analysis and the same native consent, graph and suggestion assertions. The default badge mode still requires a qualifying recorded trace.
+
+## Live-model and database settings
+
+Copy [`.env.example`](../../.env.example) into the local environment file the harness reads, and fill only the section you need. Leave that file, traces, and answers untracked. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter` or `openai-compatible`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. These settings configure test harnesses only; the extension itself uses the VS Code chat model. Keep the configured provider, model, and reasoning effort.
+
+`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless catalog run or each native test. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models; headless `--timeout-ms` and `--request-timeout-ms` override their respective settings. Native live UI waits use the AI budget, with an additional minute for test teardown. Captured provider failures end UI waits immediately with the request number and error. Database smoke retains its five-minute default. Native chat runs pin the host version in `.vscode-test.chat-ui.mjs`; baseline comparisons must verify the same resolved host version in both launcher logs. For Entra ID database checks, set `DB_TEST_AUTH_TYPE=entraId`. The runner reuses a supplied `DB_TEST_TOKEN`, uses an explicitly configured noninteractive client login, or obtains an Azure SQL token from the already signed-in Azure CLI. It never starts interactive login or saves a token. Native Windows and WSL CLI launchers are supported; see [Test environments](ENVIRONMENTS.md) for precedence and a nonstandard CLI launcher. The default is SQL login.
+
+Headless follow-ups receive prior visible questions and answers through the same runtime history input as native chat. Each catalog case starts with a separate session and empty history.
+The harness removes a leading `@lineage` participant mention before dispatch, preserving slash commands and the remaining SQL text. A catalog row's configured consent steps must execute in order on its first turn; an answer that bypasses them fails the case.
+
+PASS/FAIL describe deterministic assertions only. Report AI runtime as completed/error, hard-fact differences as “Unresolved differences — review required”, and content separately as unreviewed, SQL-supported or issue. Runtime completion does not establish content correctness.
+
+Generated answers, metrics, and traces stay untracked. Headless turns persist `metrics.json` beside their answer. Native Playwright cases persist metrics and a trace slice for each run, including failures. Metrics identify the case by its recorded question and fixture hashes and preserve provider, model, effort, settings, and source hashes. Unknown usage or final graph values remain unknown. Rendered native text has character counts and no Markdown delimiter counts. Completion is runtime evidence, not answer-quality evidence. Review uses the sources applicable to the run: verbose NDJSON, VS Code debug log, Langfuse evidence and exploration state. Recorded no-exploration means a state-machine dump is not applicable; an opened exploration without its dump is missing evidence, and uncertain applicability stays unknown. New runners may still write `explorationOpened: false` markers. All runs capture local evidence and export Langfuse traces/spans; ordinary-run NDJSON, debug logs, SM dumps and other files remain local only. Baseline mode alone (`--baseline` for headless, `AI_TEST_BASELINE=1` for native; default false) uploads the complete allowlisted baseline evidence. Generated comparisons, scorecards, triage and draft reviews always stay local only; never upload a whole temporary directory. Baseline comparisons may hydrate uploaded evidence; local cleanup alone never justifies another paid run. A successful upload receipt is required but is not the underlying span data. Capture and Langfuse storage are required defaults: preflight before provider use, validate evidence after capture, and stop further paid cases when required trace, debug log or export evidence is missing. All three `LANGFUSE_*` settings must resolve before the first model call. `tests/harness/langfuseExport.ts` holds the free-plan limits and spaces those calls. The export deadline follows that spacing for the run's attachment count, and includes one retry without another model call. `--langfuse`, `--trace-verbose`, and `--attach` stay accepted and do not turn capture off. Ordinary answers and tool artifacts can already contain database metadata. The installed extension does not upload traces. Use the AdventureWorks demo or other synthetic input, review captured content, and leave artifacts untracked.
+
+Before export, runners freeze allowlisted, redacted source bytes in a write-once local `evidence-snapshot.json`, with byte lengths, SHA-256 hashes and baseline mode. Retries and saved-capture reexports use `readFrozenRunEvidence` from `tests/harness/langfuseExport.ts`; hash failures or conflicting historical attachments remain errors. Headless logging and later native log copies use `runner-diagnostics.log` after freezing. The snapshot stays local; only baseline mode uploads its source attachments. An existing export receipt does not establish recovery of historical conflicting evidence.
+
+`AI_TEST_REASONING_EFFORT` stays at the configured value (`low` in [`.env.example`](../../.env.example)). Keep it. Identically named effort levels do not establish equivalent reasoning across providers. Harness settings do not configure the installed extension.
+
+## Packaging
+
+`npm run package` creates `data-lineage-viz-<version>.vsix` without publishing it; install it in a separate VS Code profile to inspect it.
+
+## When a live run is worth its cost
+
+A live model run spends the external API provider's tokens. Deterministic `npm test` and `npm run gate` come first and do not call a provider. Keep that external test profile's provider, model, and reasoning effort. The coding agent reviewing the repository is a separate model.
+
+- Debugging one issue: run the one live case that shows that issue. A headless question is `npm run test:ai:headless -- --prompt "QUESTION"`. A native check uses the one label that renders the defect.
+- A new baseline: one full comparable run, after the previous baseline no longer matches because the question set, fixture, or settings changed, or because a broad behavior change invalidated the stored answers. Later work reuses that baseline.
+- A prompt comparison: the frozen question once before the change, when no matching baseline exists, and once after it. Add one held-out question only to check that unchanged behavior still holds.
+- Run a case again only when the code, question, fixture, or settings changed. A full catalog run is a new baseline, not a way to obtain a passing prompt. Leave another full run unstarted while known failures from the last baseline remain.
+
+Generated run output stays untracked.
+
+## Before-deployment baseline review
+
+Follow [When a live run is worth its cost](#when-a-live-run-is-worth-its-cost). For a prompt or model-visible behavior change, compare one frozen question on the public demo (`assets/demo.dacpac` unless `--dacpac FILE` is given):
+
+`npm run test:ai:headless -- --prompt "QUESTION"`
+
+Reuse a baseline whose question, fixture, and settings still match when measuring equivalent work. Run the candidate once after the change. The run captures the applicable evidence sources above. Set `AI_TEST_PREVIOUS_RUN` and `AI_TEST_MAIN_RUN` to those existing run directories so the harness writes the comparison beside the new run. Baseline question history, fixture, provider, model, actual reasoning settings and approved workload are informational comparison facts: differences do not deny approval or fail the candidate run. Reports retain raw measurements and label the workload aligned, different, or unknown; incomplete evidence stays unknown. Depth workload equality uses the engine’s resolved execution border; different declarations with the same border remain visible as informational differences. The case’s YAML `gate` policy controls simulated consent. An approve row may declare `expect: classification~business` and `onMismatch` using the existing refinement payload. An aligned proposal approves immediately; a mismatch requests Change once, rechecks the revised proposal, then approves while recording any remaining mismatch. Original and revised proposals, the correction and its provider cost remain captured; baseline differences never trigger Change. Production consent remains bound to the proposal the user reviews. Historical headless evidence without manifest gate decisions can establish approval through one turn and gate, a uniquely timestamp-matched host approval, and subsequent active work; ambiguous evidence remains unknown. Intentional prompt or source changes remain recorded comparison context.
+
+Review both answers against the SQL and graph: requested facts, formulas, filters, joins, grain, row rules, scope, output instructions, and unsupported claims. Record the SQL evidence for any accepted difference.
+
+Two review helpers read existing captures; they do not justify another model run and remain outside the deterministic gate.
+
+- **Countable facts (tracked):** `node tests/tools/lineage-score.mjs CANDIDATE_RUN_DIR --previous PREVIOUS_RUN_DIR --main MAIN_RUN_DIR --out DIR`; use its `--trace` mode for trace analysis (`--latest`, `--case-manifest`, `--output` remain available). It compares tokens, durations, raw feedback/clarification/retry counts, preview/chat characters, SQL fences/formulas, visit sets/order, column pairs and prune/supplement counts; communication comparisons include backend request and AI reply sizes, measured timing and deduplicated generation usage, with scope and unknowns retained. Differences use `differs`: **Unresolved differences — review required**; a match means **No measured difference; content unverified**. Different question/fixture identities are not comparable. Diagnostic arrays are not SQL correctness verdicts.
+- **Content quality (out of scope):** answer prose is not graded in this repository; review it against the source SQL. Comparison here uses the countable facts above only.
+
+The score helper must correlate applicable NDJSON, Langfuse trace/span data, VS Code debug log and state-machine evidence; missing sources stay explicit, and a receipt alone does not establish span coverage. Helpers can hydrate durable evidence and report unverified correlation explicitly; permanent local payloads are not required. A recorded no-hop turn has no applicable state-machine dump; opened-but-missing state is missing, uncertain state remains unknown. SQL-fence/formula counts do not establish the truth of SQL or formulas.
+
+
