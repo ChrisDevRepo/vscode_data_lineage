@@ -1202,7 +1202,7 @@ export class NavigationEngine implements IHopStateMachine {
       ...this.currentReturnTargets(),
       ...this.getCurrentTasks().flatMap(task => task.callerContext ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []),
     ], this.model.identifierCaseSensitive).map(target => target.node);
-    const candidates = new Set(this.neighborChoices(focusId).map(neighbor => neighbor.id));
+    const candidates = new Set(this.graph.hasNode(focusId) ? this.graph.neighbors(focusId) : []);
     for (const caller of callers) {
       if (this.graph.hasNode(caller)) for (const supplier of this.graph.inNeighbors(caller)) candidates.add(supplier);
     }
@@ -3311,15 +3311,17 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /** One neighbor projection for context, schemas, routing and repair choices. Questions may propose deferred work. */
+  /** One neighbor projection for context, schemas, routing and repair choices. Questions may propose deferred work. A column flow held for this focus protects its endpoints, as it does at submit time, so a retry is never offered a prune the engine refuses. */
   private neighborChoices(focusId: string): Array<Pick<HopNeighborDisclosure, 'id' | 'can_question' | 'can_prune'>> {
     const ids = this.graph.hasNode(focusId) ? this.graph.neighbors(focusId) : [];
     const prunable = new Set(this.pruneActionPolicy(focusId, ids.map((id, index) => ({ raw: id, resolved: id, path: `prune_neighbors.${index}.id` }))).acceptedPruneIds);
+    const held = focusId === this.currentFocusNodeId ? this.heldDraftOfCurrentFocus() : null;
+    const heldEdges = held?.column_flow ? this.validateCurrentColumnFlow(focusId, held, false).stagedEdges : [];
     return ids.map(id => {
       const node = this.nodeMap.get(id);
       const open = !!node && !this.visited.has(id) && !this.removedSet.has(id);
       return { id, can_question: open,
-        can_prune: !!node && prunable.has(id) && this.scopeNodeIds.has(id) && this.admitsRoute(id, node, focusId).admitted && !this.pruneRefusal([id]),
+        can_prune: !!node && prunable.has(id) && this.scopeNodeIds.has(id) && this.admitsRoute(id, node, focusId).admitted && !this.pruneRefusal([id], new Set(), heldEdges),
       };
     });
   }

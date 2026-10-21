@@ -1847,8 +1847,12 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
       const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: raw, schema });
       engine.holdRejectedSubmission(raw, rejection.issuePaths ?? []);
       expect(engine.heldColumnFlow).toBe(true);
-      submission = toHopFinding(submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, true)
-        .parse({ focus_node_id: origin, prune_neighbors: prunes }));
+      // The held mapping protects Source, so the served retry schema no longer offers it as a prune.
+      const served = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, true).safeParse({ focus_node_id: origin, prune_neighbors: prunes });
+      expect(served.success).toBe(false);
+      expect(served.error?.issues).toEqual([expect.objectContaining({ path: ['prune_neighbors', 0, 'id'], params: { allowed_values: [stranger] } })]);
+      // The engine still refuses the same prune when it arrives unserved.
+      submission = { ...toHopFinding(submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, true).parse({ focus_node_id: origin })), prune_neighbors: prunes };
     }
     const before = engine.toJSON();
     const rejection = engine.submitFindings(submission);

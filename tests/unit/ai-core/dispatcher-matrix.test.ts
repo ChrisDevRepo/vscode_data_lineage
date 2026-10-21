@@ -341,11 +341,8 @@ describe('model-facing rejection text', () => {
     const secondState = recordToolAttempt(state, next, 'lineage_submit_findings');
     await executeToolAttempt(lastModel.port, plan, { priorState: secondState });
     const last = consumedRejection(lastModel, 'facts-retry').feedback;
-    expect(last.errors).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: 'questions.0.nodeId', issue: expect.stringContaining(`For neighbor \`${protectedId}\`, keep its question and remove its prune_neighbors entry`) }),
-      expect.objectContaining({ path: 'questions.1.nodeId', issue: expect.stringContaining(`For neighbor \`${independentId}\`, keep its questions entry or its prune_neighbors entry, not both`) }),
-      expect.objectContaining({ path: 'prune_neighbors.0.id', allowed: [independentId] }),
-    ]));
+    // The held mapping protects Protected, so the served retry schema refuses its prune with the same allowed list the engine gives.
+    expect(last.errors).toEqual([expect.objectContaining({ path: 'prune_neighbors.0.id', got: protectedId, allowed: [independentId] })]);
     expect(toolMessage(next.messages)).toMatchObject({ status: 'error', tool_call_id: 'facts-retry' });
     expect(toolMessage(first.messages).artifact).toMatchObject({ detail: expect.arrayContaining([
       expect.objectContaining({ kind: 'prune_unsupported', id: protectedId, allowed_values: [independentId] }),

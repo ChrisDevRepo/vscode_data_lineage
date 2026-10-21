@@ -23,6 +23,7 @@ The newest version heading collects changes until that version ships.
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
+- A retry after a rejected findings call no longer offers a neighbor for pruning when the kept column mapping still uses it; the offered prune choices match the ones the check accepts.
 - A procedure mapping whose `writes_to` names an unknown object or a table the procedure does not write to is rejected with its own fix text: name a table the procedure writes to, or send `writes_to: null` and describe the write in sections. It was rejected as an unknown source with advice to drop the reference.
 - A table reached by several paths forwards the same question and carried columns to each next object once, so chains of shared tables no longer double the queued work at every fork and merge.
 - An object passed through without analysis forwards the same question, carried columns and caller output to each next object once, as tables do, so chains of such objects no longer double the queued work at every fork and merge.
