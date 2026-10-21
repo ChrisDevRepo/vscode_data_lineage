@@ -929,7 +929,7 @@
     "react": "19.3.0",
     "react-arborist": "3.16.0",
     "react-dom": "19.3.0",
-    "tedious": "20.0.0",
+    "tedious": "20.3.8",
     "zod": "4.6.5"
   },
   "devDependencies": {
@@ -943,14 +943,15 @@
     "@vitest/coverage-v8": "^4.1.11",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "3.9.2",
+    "@vscode/vsce": "4.0.0",
+    "ajv": "^8.20.0",
     "esbuild": "^0.28.2",
     "jsdom": "^30.1.1",
     "mocha": "^11.8.0",
     "playwright-core": "^1.63.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.0",
-    "vite": "^6.4.2",
+    "vite": "^6.4.5",
     "vitest": "^4.1.11"
   },
   "overrides": {
