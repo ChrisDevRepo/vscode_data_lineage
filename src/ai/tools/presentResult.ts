@@ -44,7 +44,7 @@ const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> =
 export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
 
 /** What `add_node_ids` reveals; the follow-up instruction and the unknown-id route state it identically. */
-export const ADD_NODE_IDS_REVEALS = 'reveals objects this exploration already analysed';
+export const ADD_NODE_IDS_REVEALS = 'reveals any object in the approved exploration scope';
 
 /** The route back for a real id the render does not carry, per stage — only what the tool accepts. */
 const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
