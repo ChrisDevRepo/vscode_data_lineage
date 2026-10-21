@@ -984,7 +984,7 @@ describe('current task completeness before advancement', () => {
     const engine = world(independentConflict);
     const before = engine.toJSON();
     const ids = [neighbor, ...(independentConflict ? [other] : [])];
-    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', transforms: ['filter' as const] }] }, terminal('Other')];
+    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', transforms: ['compute' as const, 'filter' as const] }] }, terminal('Other')];
     const questions = ids.map(nodeId => ({ nodeId, question: 'Explain the source contribution.' }));
     const rejected = engine.submitFindings({ ...finding, column_flow, questions,
       prune_neighbors: ids.map(id => ({ id, reason: 'Outside the investigation.' })),
@@ -1037,7 +1037,7 @@ describe('current task completeness before advancement', () => {
     }, ['column_flow']);
     expect(held?.resend).toEqual(['column_flow']);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
-    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', transforms: ['filter' as const] }] }, terminal('Other')];
+    const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', transforms: ['compute' as const, 'filter' as const] }] }, terminal('Other')];
     const rejected = engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: root, column_flow })));
     expect(rejected).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining(neighbor),
       issuePaths: expect.arrayContaining(['prune_neighbors.0.id', 'column_flow.0.upstream_columns.0']) });

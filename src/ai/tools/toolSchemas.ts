@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { markIdFormSearch, markObjectIdField } from './normalizeModelInput';
 import { normalizeColName } from '../../utils/sql';
-import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
+import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema, DIRECT_TRANSFORM_CLASSES } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
   ExplorationDepthSelectionSchema,
@@ -373,10 +373,14 @@ const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
 /** Single source for the `badge_label` describe text, shared by the strict per-mode `submit_findings` schemas and the permissive participant union so the two never restate the same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere else: `badge_label` is a per-hop tool field, not template-governed content. */
 const BADGE_LABEL_DESCRIPTION = '2-4 word label for this node.';
 
+/** Fixed fault text for a classified ref without a DIRECT role: such a ref is not a source. */
+const DIRECT_ROLE_MESSAGE = 'transforms needs pass_through, compute or aggregate; a column that only filters or joins is not a source: remove it and describe it in sections.';
+
 const ColumnRefSchema = z.object({
   node: z.string().describe('Node id of the source column.'),
   col: z.string().describe('Source column name on that node.'),
-  transforms: z.array(ColumnTransformClassSchema).optional().describe(
+  transforms: z.array(ColumnTransformClassSchema).min(1, { message: DIRECT_ROLE_MESSAGE, abort: true })
+    .refine(roles => roles.some(role => DIRECT_TRANSFORM_CLASSES.includes(role)), DIRECT_ROLE_MESSAGE).optional().describe(
     'Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument). ' +
     'combine or filter only as an extra role beside one of these, never alone. Omit when the SQL does not show the role.',
   ),

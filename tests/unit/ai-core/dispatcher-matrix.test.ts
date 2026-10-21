@@ -307,7 +307,7 @@ describe('model-facing rejection text', () => {
     session.enterExploring(session.turnEpoch);
     const { services } = stubToolServices({ session, model: indexed, graph, turnEpoch: () => session.turnEpoch });
     const input = { focus_node_id: root, summary: 'Root reads Value.', sections: { technical: 'Value is supplied by Protected.' },
-      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: protectedId, col: 'Value', transforms: ['filter'] }] }],
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: protectedId, col: 'Value', transforms: ['compute', 'filter'] }] }],
       questions: [protectedId, independentId].map(nodeId => ({ nodeId, question: 'Explain the contribution.' })),
       prune_neighbors: [protectedId, independentId].map(id => ({ id, reason: 'Outside the investigation.' })) };
     const invoke = vi.fn((sent: unknown) => executeSubmitFindings(sent, services));

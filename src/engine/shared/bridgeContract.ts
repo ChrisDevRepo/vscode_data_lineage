@@ -258,6 +258,9 @@ export const COLUMN_TRANSFORM_DIRECTION: Readonly<Record<ColumnTransformClass, '
   filter:       'INDIRECT',
 };
 
+/** The DIRECT classes of {@link COLUMN_TRANSFORM_DIRECTION}: a classified column ref carries a value only when it lists one of these. */
+export const DIRECT_TRANSFORM_CLASSES: readonly ColumnTransformClass[] = COLUMN_TRANSFORM_CLASSES.filter(c => COLUMN_TRANSFORM_DIRECTION[c] === 'DIRECT');
+
 /** Whether a classified column only shaped which rows appear — every class is INDIRECT. */
 export function isIndirectOnly(transforms: readonly ColumnTransformClass[] | undefined): boolean {
   return !!transforms?.length && transforms.every(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT');
