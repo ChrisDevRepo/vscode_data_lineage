@@ -93,6 +93,8 @@ const REMOVAL_REFUSAL: Record<NonNullable<RemovalAnalysis['rejection']>, string>
 /** Fields of a held finding draft besides its section angles. Each is one part: a retry that sends it replaces the held value whole (`[]` clears a held list), and a retry that omits it keeps the held value. An empty `summary` counts as omitted. */
 const HELD_FIELDS = ['summary', 'badge_label', 'prune_neighbors', 'questions', 'column_flow'] as const;
 type HeldField = typeof HELD_FIELDS[number];
+/** Held fields a submission may omit; every other held part is required. */
+const OPTIONAL_HELD_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
 
 /** Splits dotted issue paths into the parts a rejection fails: `sections.<angle>` fails that angle, and any other path fails its whole top-level field (`questions.1.nodeId` fails `questions`). */
 function splitFailedParts(paths: readonly string[]): { readonly fields: Set<string>; readonly angles: Set<string> } {
@@ -663,7 +665,9 @@ export class NavigationEngine implements IHopStateMachine {
     const stated = (rejection.errors ?? []).map(error => error.path);
     const missing = resend.filter(part => !stated.some(path => path === part || path.startsWith(`${part}.`) || part.startsWith(`${path}.`)));
     return { ...rejection, resend: [...resend],
-      errors: [...(rejection.errors ?? []), ...missing.map(path => ({ path, issue: 'Missing or still faulty, with no valid copy held: send it corrected; a list may be sent as [], and an omitted optional field is withdrawn.' }))] };
+      errors: [...(rejection.errors ?? []), ...missing.map(path => ({ path, issue: OPTIONAL_HELD_FIELDS.some(field => path === field || path.startsWith(`${field}.`))
+        ? 'Missing or still faulty, with no valid copy held: send it corrected, or omit it to withdraw it; a list may be sent as [].'
+        : 'Missing or still faulty, with no valid copy held: send it corrected.' }))] };
   }
 
   /** The parts of a held draft, as a rejection names them to the model. */
