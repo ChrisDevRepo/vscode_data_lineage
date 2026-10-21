@@ -344,7 +344,7 @@ type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 /** Single source for the `prune_neighbors` field describe text, shared by the strict per-mode schemas and the permissive participant union so the two cannot drift. */
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Optional. A neighbor is either mapped or questioned (kept) or pruned, never both. '
-  + 'Name each `can_prune: true` neighbor that is off the value path (it only filters, joins or enriches columns no arriving column takes its value from).';
+  + 'Name each `can_prune: true` neighbor that is off the value path (it gives only indirect lineage: filter, join, group by, sort, window or conditional). A neighbor whose value lands in an output column (identity, transformation or aggregation) is mapped.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
