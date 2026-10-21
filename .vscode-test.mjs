@@ -2,14 +2,30 @@
 //
 // Test files are the tsconfig.integration.json output under `out/test/`, not the TypeScript sources.
 import { defineConfig } from '@vscode/test-cli';
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const installedVersions = (() => {
+  try {
+    const base = fileURLToPath(new URL('./.vscode-test', import.meta.url));
+    return readdirSync(base)
+      .filter((entry) => {
+        try { return statSync(join(base, entry, 'is-complete')).isFile(); } catch { return false; }
+      })
+      .map((entry) => entry.match(/vscode-[^-]+-[^-]+-(\d+\.\d+\.\d+)/)?.[1])
+      .filter(Boolean)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  } catch { return []; }
+})();
+const preferredVersion = process.env.VSCODE_VERSION || installedVersions[0] || '1.142.0';
 
 const fixtureExtension = fileURLToPath(
   new URL('./tests/fixtures/lm-provider-extension', import.meta.url),
 );
 
 const shared = {
-  version: 'stable',
+  version: preferredVersion,
   launchArgs: ['--disable-extensions'],
   mocha: {
     ui: 'tdd',
