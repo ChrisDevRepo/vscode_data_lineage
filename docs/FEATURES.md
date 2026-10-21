@@ -47,7 +47,7 @@ A load with more objects than `dataLineageViz.overview.threshold` opens in **Sch
 - **Hide isolated**: hide objects with no dependencies in the current view.
 - **Focus schema**: star a schema to show it with the schemas it connects to.
 
-A **bookmark** saves the current filters and exclusions, or a trace, analysis, path or AI view, under a name, per project. Node positions are not saved.
+A **bookmark** saves the current filters and exclusions, or a trace, analysis or AI view, under a name, per project. Node positions are not saved.
 
 A bookmark saved from an AI view also keeps that run's findings, so `@lineage` can recall them instead of redoing the work. Findings on objects whose DDL has changed since are flagged as stale, so the assistant can identify which evidence needs rechecking. Older bookmarks may have no saved run; incompatible or invalid run records are ignored instead of recalled. Deleting a bookmark or its project deletes its run record.
 
