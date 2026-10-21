@@ -23,6 +23,10 @@ The newest version heading collects changes until that version ships.
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
+- A procedure mapping whose `writes_to` names an unknown object or a table the procedure does not write to is rejected with its own fix text: name a table the procedure writes to, or send `writes_to: null` and describe the write in sections. It was rejected as an unknown source with advice to drop the reference.
+- A table reached by several paths forwards the same question and carried columns to each next object once, so chains of shared tables no longer double the queued work at every fork and merge.
+- An object passed through without analysis forwards the same question, carried columns and caller output to each next object once, as tables do, so chains of such objects no longer double the queued work at every fork and merge.
+- Investigation and follow-up ids are sequence numbers instead of a short hash, so two distinct investigations can no longer collide and stop the exploration with an error; caller-context columns are matched with the source's identifier case rule.
 - A function without declared columns now gets column-trace edges: its column names are accepted unverified like those of a procedure or external object, as a source and as the output of its own hop, but it is never offered as its own source. Tables and views without column metadata are still refused.
 - Exploration depth is strict only for a level count or complete chain the user stated; a vague request starts at an approximate 3 levels instead of a strict single level or the whole graph.
 - The served `out_col` is limited to the columns arriving at an upstream hop.
