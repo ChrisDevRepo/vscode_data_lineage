@@ -3072,6 +3072,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.log('debug', `[Storage] not forwarded from=${entry.nodeId} next=${nid} — outside the approved border`);
         continue;
       }
+      const forwarded = new Set<string>();
       for (const taskId of entry.taskIds) {
         const task = this.taskLedger.getTask(taskId)!;
         const refs = this.qualifiedTaskRefs(task) ?? [];
@@ -3079,6 +3080,14 @@ export class NavigationEngine implements IHopStateMachine {
           : this.effectiveDirection() === 'bidirectional' ? ['upstream', 'downstream'] : [this.effectiveDirection() as 'upstream' | 'downstream'];
         const side = sides.find(direction => this.directionalNeighbors(entry.nodeId, direction).includes(nid));
         const carried = side ? refs : [];
+        // Arrivals by different paths that carry the same context go on once, so a chain of shared carriers grows linearly (spec 04).
+        const context = JSON.stringify([task.question, carried.length ? side : '',
+          carried.map(ref => [this.identifierKey(ref.node), this.columnKey(ref.col)]).sort()]);
+        if (forwarded.has(context)) {
+          this.log('debug', `[Storage] same context already forwarded from=${entry.nodeId} next=${nid} task=${task.id}`);
+          continue;
+        }
+        forwarded.add(context);
         if (!admission.admitted && !this.scopeNodeIds.has(nid) && !this.supplementNodeIds.has(entry.nodeId)) {
           this.deferQuestion({ nodeId: nid, schema: next.schema, fromFocusNodeId: entry.nodeId,
             question: task.question, reason: 'depth', depth: admission.depthBreach ?? undefined, atHop: this.hopCount },
