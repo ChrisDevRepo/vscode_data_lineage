@@ -40,7 +40,7 @@ The newest version heading collects changes until that version ships.
 - Malformed findings repairs preserve held questions, column mappings and sections until a valid correction is submitted.
 - Report and preview rejections retain valid content and request only defective section fields; malformed retries preserve the draft, and correction choices remain available during escalation.
 - Distinct investigation questions retain SQL literal case and whitespace when tasks merge.
-- Repeated tool-call IDs fail before execution through a shared native/headless transport guard.
+- Repeated tool-call IDs fail before execution through a shared native/headless transport guard. Live provider verification honors inherited HTTP(S) proxy and NO_PROXY settings while retaining deadlines and redirect credential protection.
 - Hop neighbor choices now share one backend projection across context, schemas and routing. Neighbor, column and enum rejections share first-fault, second-choices feedback without exposing unrelated catalog columns.
 - Prune choices and submissions share the action-state policy. Queued column demands merge quoted and padded equivalents under the source case policy, preserving task identities and authored questions.
 - AI rejection, retry and cancellation handling, including a cancel while a graph preview is drawn.

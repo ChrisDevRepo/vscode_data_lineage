@@ -77,10 +77,15 @@ function createProviderFetch(timeoutMs) {
     throw new Error('AI provider request timeout must be a positive supported millisecond budget.');
   }
   // Use request rather than global fetch so its hidden header deadline cannot cap slow models.
-  const { Agent, request, interceptors } = require('undici');
+  const { EnvHttpProxyAgent, request, interceptors } = require('undici');
   return async (url, init) => {
     const allowedOrigin = new URL(url).origin;
-    const dispatcher = new Agent({ connect: { timeout: Math.min(timeoutMs, 30_000) } }).compose(
+    const connectTimeout = Math.min(timeoutMs, 30_000);
+    const dispatcher = new EnvHttpProxyAgent({
+      connect: { timeout: connectTimeout },
+      requestTls: { timeout: connectTimeout },
+      proxyTls: { timeout: connectTimeout },
+    }).compose(
       dispatch => (options, handler) => {
         if (new URL(options.origin).origin !== allowedOrigin) {
           throw new Error('Cross-origin provider redirects are not allowed. Configure the final provider endpoint.');
