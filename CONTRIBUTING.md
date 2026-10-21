@@ -6,7 +6,7 @@ Bugs go to [issues](https://github.com/ChrisDevRepo/vscode_data_lineage/issues).
 
 ## Setup
 
-You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 20+ with npm 10+, and [VS Code](https://code.visualstudio.com/) 1.101+. A chat model provider such as GitHub Copilot is optional, to try `@lineage`.
+You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 22+ with npm 10+, and [VS Code](https://code.visualstudio.com/) 1.101+. A chat model provider such as GitHub Copilot is optional, to try `@lineage`.
 
 1. Clone the repository and run `npm ci`.
 2. Open the folder in VS Code and press `F5` to launch the Extension Development Host.

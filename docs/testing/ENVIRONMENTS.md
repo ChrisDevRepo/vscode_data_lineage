@@ -4,7 +4,7 @@ What a machine needs for each test tier, and how to report one it cannot run. Co
 
 | Tier | Commands | Needs |
 |---|---|---|
-| Deterministic | `npm ci`, `npm test`, `npm run gate`, `npm run package` | Node.js `>=20`, npm `>=10`, Git. |
+| Deterministic | `npm ci`, `npm test`, `npm run gate`, `npm run package` | Node.js `>=22`, npm `>=10`, Git. |
 | VS Code Electron | `npm run test:edh`, `npm run test:gui:host` with `npm run test:gui:smoke`, chat-UI fixture lane | A graphical display, or `xvfb-run -a` on headless Linux. |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live` / `badge` / `column` | `AI_TEST_*` settings and access to the configured hosted or local model endpoint. |
 | Database smoke | `npm run test:db:smoke` | `DB_TEST_*` credentials against disposable SQL Server/Azure SQL (`sqlLogin`, or Microsoft Entra ID `entraId` through an already signed-in Azure CLI, a supplied access token or explicitly configured noninteractive test login). |
@@ -26,7 +26,7 @@ Inspect installed VS Code and `.vscode-test` caches first and reuse a complete c
 
 Network: npm needs `registry.npmjs.org`; the VS Code test build needs `update.code.visualstudio.com` and its redirect `vscode.download.prss.microsoft.com` (an exact-host allowlist must name both). On Ubuntu 24.04: `apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 libsecret-1-0 libxkbfile1 libatk-bridge2.0-0t64`. Keep the clone path short: VS Code fails with `listen EINVAL` when its profile socket path exceeds 107 characters.
 
-A new machine is ready when `npm ci`, `npm run gate` and `xvfb-run -a npm run test:edh` exit 0. CI (`.github/workflows/gate.yml`) runs `npm ci` and `npm run gate` on Ubuntu with Node.js 20.
+A new machine is ready when `npm ci`, `npm run gate` and `xvfb-run -a npm run test:edh` exit 0. CI (`.github/workflows/gate.yml`) runs `npm ci` and `npm run gate` on Ubuntu with Node.js 22.
 
 ## Reporting
 
