@@ -46,7 +46,7 @@ function decodeExact(text: string, expected: string): unknown {
 }
 
 /**
- * The one shared format-normalization step at the model boundary (D-043, D-044), run before the strict
+ * The one shared format-normalization step at the model boundary, run before the strict
  * checks. Text where the schema expects an object, list, number or true/false is decoded once when it
  * yields exactly that type; an object-id spelling becomes the one admitted id it names; a search written
  * as an id becomes name plus schema filter. Anything else stays as sent so the schema rejects it.

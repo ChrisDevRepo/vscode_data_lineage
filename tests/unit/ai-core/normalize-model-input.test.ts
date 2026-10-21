@@ -1,4 +1,4 @@
-/** Format-only normalization at the model boundary (D-043, D-044): decode once, log, then the normal checks. */
+/** Format-only normalization at the model boundary: decode once, log, then the normal checks. */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { markObjectIdField, normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';

@@ -3079,7 +3079,7 @@ export class NavigationEngine implements IHopStateMachine {
           : this.effectiveDirection() === 'bidirectional' ? ['upstream', 'downstream'] : [this.effectiveDirection() as 'upstream' | 'downstream'];
         const side = sides.find(direction => this.directionalNeighbors(entry.nodeId, direction).includes(nid));
         const carried = side ? refs : [];
-        // Arrivals by different paths that carry the same context go on once, so a chain of shared carriers grows linearly (spec 04).
+        // Arrivals by different paths that carry the same context go on once, so a chain of shared carriers grows linearly.
         const context = JSON.stringify([task.question, carried.length ? side : '',
           carried.map(ref => [this.identifierKey(ref.node), this.columnKey(ref.col)]).sort()]);
         if (forwarded.has(context)) {
@@ -3125,7 +3125,7 @@ export class NavigationEngine implements IHopStateMachine {
         const unresolved = continues && task.kind === 'column_lineage' && !targets?.length
           ? this.passNodeUnresolvedQuestion(entry.nodeId, this.qualifiedTaskRefs(task) ?? [])
           : '';
-        // Arrivals by different paths that carry the same context go on once, as at a table (spec 04).
+        // Arrivals by different paths that carry the same context go on once, as at a table.
         const refKeys = (refs: ReadonlyArray<{ node: string; col: string }> | undefined) =>
           (refs ?? []).map(ref => [this.identifierKey(ref.node), this.columnKey(ref.col)]).sort();
         const context = JSON.stringify([task.question, unresolved, continues ? task.traversalSide ?? '' : '', refKeys(targets),

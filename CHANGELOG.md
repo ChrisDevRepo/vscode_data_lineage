@@ -17,11 +17,13 @@ The newest version heading collects changes until that version ships.
 - Column-trace hops record every valid neighbor-and-column mapping. Extra mappings on the same hop stay; attachment to the requested columns selects what the next hop continues.
 - Indexed report repairs share field detection, schemas and merging, with shorter correction instructions.
 - At a procedure hop, each column-trace mapping must name the neighbor table column it writes (`writes_to`), or `null` when the procedure writes no neighbor table. Edges no longer attach to the procedure itself because the field was left out.
+- A column-trace source that lists roles must include a value role (`pass_through`, `compute` or `aggregate`); `combine` and `filter` are only extra roles beside one. A column that only filters or joins rows is rejected with one fixed message and is described in sections instead of drawn as an edge. Leaving the roles out is still accepted.
 
 ### Removed
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
+- A function without declared columns now gets column-trace edges: its column names are accepted unverified like those of a procedure or external object, as a source and as the output of its own hop, but it is never offered as its own source. Tables and views without column metadata are still refused.
 - Exploration depth is strict only for a level count or complete chain the user stated; a vague request starts at an approximate 3 levels instead of a strict single level or the whole graph.
 - The served `out_col` is limited to the columns arriving at an upstream hop.
 - Column-trace hops describe column_flow as one entry per arriving column, restore the recipe depth items (rules and branches, mapping, loading, error handling, gaps), and ask kept neighbors for their rules and thresholds.
