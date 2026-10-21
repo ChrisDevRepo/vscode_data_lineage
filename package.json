@@ -951,6 +951,7 @@
     "playwright-core": "^1.63.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.0",
+    "undici": "^7.30.1",
     "vite": "^6.4.5",
     "vitest": "^4.1.11"
   },
