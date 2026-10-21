@@ -1,7 +1,8 @@
 /** Format-only normalization at the model boundary (D-043, D-044): decode once, log, then the normal checks. */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
+import { markObjectIdField, normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
+import { SearchObjectsInputSchema } from '../../../src/ai/tools/toolSchemas';
 
 const schema = z.object({
   rows: z.array(z.object({ id: z.string(), n: z.number(), on: z.boolean() })),
@@ -32,5 +33,51 @@ describe('normalizeModelInput', () => {
   it('returns the same object when nothing needs a fix', () => {
     const input = { rows: [], name: 'n' };
     expect(normalizeModelInput(schema, input).input).toBe(input);
+  });
+});
+
+describe('normalizeModelInput object ids', () => {
+  const idField = (ids: string[]) => {
+    const field = z.string().refine(value => ids.includes(value));
+    markObjectIdField(field, new Map(ids.map(id => [id, true])), false);
+    return field;
+  };
+  const idsSchema = (ids: string[]) => z.object({
+    prune: z.array(z.object({ id: idField(ids) })).optional(),
+    nodeId: idField(ids).describe('kept through a clone').optional(),
+  }).strict();
+
+  it('rewrites an id spelling to the one admitted id, at any depth, and logs it', () => {
+    const schema = idsSchema(['[dbo].[FactSales]', '[dbo].[DimDate]']);
+    const result = normalizeModelInput(schema, { prune: [{ id: 'dbo.factsales' }], nodeId: '\u200b[DBO].[DimDate]' });
+    expect(result.input).toEqual({ prune: [{ id: '[dbo].[FactSales]' }], nodeId: '[dbo].[DimDate]' });
+    expect(result.fixes.map(fix => fix.path)).toEqual(['prune.0.id', 'nodeId']);
+    expect(schema.safeParse(result.input).success).toBe(true);
+  });
+
+  it('leaves an unknown, fuzzy or ambiguous id as sent', () => {
+    const schema = idsSchema(['[dbo].[A]', '[DBO].[a]', '[dbo].[FactSales]']);
+    for (const nodeId of ['dbo.a', 'dbo.FactSale', 'sales.FactSales']) {
+      const result = normalizeModelInput(schema, { nodeId });
+      expect(result.fixes).toEqual([]);
+      expect(result.input).toEqual({ nodeId });
+    }
+  });
+});
+
+describe('normalizeModelInput id-form search', () => {
+  it('splits an id-form query into name plus schema filter', () => {
+    const result = normalizeModelInput(SearchObjectsInputSchema, { query: '[dbo].[FactSales]' });
+    expect(result.input).toEqual({ query: 'FactSales', schemas: ['dbo'] });
+    expect(result.fixes.map(fix => fix.path)).toEqual(['query', 'schemas']);
+  });
+
+  it('keeps regex queries, plain names and conflicting schema filters as sent', () => {
+    for (const input of [
+      { query: 'dbo.Fact.*', mode: 'regex' },
+      { query: 'FactSales' },
+      { query: 'dbo.FactSales', schemas: ['sales'] },
+      { query: 'srv.db.dbo.FactSales' },
+    ]) expect(normalizeModelInput(SearchObjectsInputSchema, input)).toEqual({ input, fixes: [] });
   });
 });

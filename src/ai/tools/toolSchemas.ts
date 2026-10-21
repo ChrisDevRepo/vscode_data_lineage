@@ -1,6 +1,7 @@
 /** Zod input schemas and lightweight runtime validation for the AI tools. Zero VS Code imports — pure schema definitions. */
 import { z } from 'zod';
 import { resolveModelNodeId } from '../support/modelReferences';
+import { markIdFormSearch, markObjectIdField } from './normalizeModelInput';
 import { normalizeColName } from '../../utils/sql';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
@@ -675,8 +676,10 @@ function suppliedValueSchema(values: readonly string[], key: (value: string) => 
 function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false) {
   if (ids.length === 0) return z.never();
   const known = new Map(ids.map(id => [id, true]));
-  return z.string().refine(value => resolveModelNodeId(value, known, identifierCaseSensitive) !== null,
+  const field = z.string().refine(value => resolveModelNodeId(value, known, identifierCaseSensitive) !== null,
     { message: 'Name a supplied object identity.', params: { allowed_values: [...ids] } }).meta({ enum: [...ids] });
+  markObjectIdField(field, known, identifierCaseSensitive);
+  return field;
 }
 
 /** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. */
@@ -868,6 +871,7 @@ export const SearchObjectsInputSchema = z.object({
   mode: z.enum(['substring', 'regex']).optional().describe('Name matching strategy: "substring" (default) or "regex" (case-insensitive, matched against name and schema.name).'),
   cursor: CursorSchema.optional(),
 }).strict();
+markIdFormSearch(SearchObjectsInputSchema);
 
 /** `lineage_get_object_detail` input. */
 export const GetObjectDetailInputSchema = z.object({
