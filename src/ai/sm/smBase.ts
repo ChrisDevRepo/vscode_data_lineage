@@ -23,7 +23,7 @@ import { resolveModelNodeId } from '../support/modelReferences';
 import { evaluateCurrentHopActionPolicy, type CurrentHopActionTarget } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult, SupplementChain, SupplementSkip } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
-import { ColumnTracer, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
+import { ColumnTracer, allowsMissingColumnMetadata, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
@@ -1209,13 +1209,12 @@ export class NavigationEngine implements IHopStateMachine {
     return candidates;
   }
 
-  /** Metadata-derived `upstream_columns` source ids for one hop: {@link columnContributorIds} kept when stored columns exist or the procedure/external missing-metadata fallback applies and not already pruned — mirroring the engine's contributor admission, so a columnless scalar function is never offered as a column source. */
+  /** Metadata-derived `upstream_columns` source ids for one hop: {@link columnContributorIds} kept when stored columns exist or the node is trusted without column metadata, and not already pruned — mirroring the engine's contributor admission. A node without column metadata is never offered as its own column source. */
   private columnSourceNodeIds(focusId: string): string[] {
     return [...this.columnContributorIds(focusId)].filter(id => {
       const node = this.nodeMap.get(id);
       if (!node || this.removedSet.has(id) || !this.admitsColumnReference(id, node, focusId)) return false;
-      return node.type === 'procedure' || node.type === 'external'
-        || (getNodeColumns(id, this.nodeMap, this.store ?? undefined)?.length ?? 0) > 0;
+      return (getNodeColumns(id, this.nodeMap, this.store ?? undefined)?.length ?? 0) > 0 || (id !== focusId && allowsMissingColumnMetadata(node));
     }).sort();
   }
 

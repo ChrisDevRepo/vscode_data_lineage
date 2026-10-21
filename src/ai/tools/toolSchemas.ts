@@ -659,7 +659,7 @@ export interface SubmitFindingsHopColumns {
   readonly identifierCaseSensitive?: boolean;
   /** Neighboring functions eligible for an explicit current-caller output investigation. */
   readonly callerContextNodeIds?: readonly string[];
-  /** Sorted ids the loaded store metadata admits as `upstream_columns` sources: focus neighbors (and read suppliers of its declared scalar callers) that carry stored columns or hold the procedure/external missing-metadata fallback. Columnless scalar functions are absent; they stay eligible in `questions` via {@link SubmitFindingsHopColumns.callerContextNodeIds}. */
+  /** Sorted ids the loaded store metadata admits as `upstream_columns` sources: focus neighbors (and read suppliers of its declared scalar callers) that carry stored columns or are trusted without column metadata (procedure, external, function). A columnless function also stays eligible in `questions` via {@link SubmitFindingsHopColumns.callerContextNodeIds}. */
   readonly columnSourceNodeIds?: readonly string[];
   /** Sorted ids the focus has a recorded dependency into; the only admissible `writes_to.node` values. */
   readonly writeTargetNodeIds?: readonly string[];

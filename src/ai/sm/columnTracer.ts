@@ -132,9 +132,8 @@ export class ColumnTracer {
         reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, allowed_values: columns, when: { node: neighbor.id } } };
     }
     if (!columns.length && !allowsMissingColumnMetadata(neighbor)) return { invalidRoute: {
-      kind: 'bad_contributor_col', id: cont.node, path: `${path}.col`, reason: neighbor.type === 'function'
-        ? 'This function declares no real columns; formal parameters and return_value are not upstream model columns. Its supplied scalar-return task records contributors at the real caller output.'
-        : `Column metadata is unavailable for ${neighbor.type} "${neighbor.id}"; upstream column "${cont.col}" cannot be verified.`,
+      kind: 'bad_contributor_col', id: cont.node, path: `${path}.col`,
+      reason: `Column metadata is unavailable for ${neighbor.type} "${neighbor.id}"; upstream column "${cont.col}" cannot be verified.`,
     } };
     if (!columns.length) log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — ${neighbor.type} metadata fallback`);
     // A missing declared column is refused regardless of the supplier's adjacency.
@@ -192,10 +191,6 @@ export class ColumnTracer {
         return checked.neighbor;
       });
       const outNorm = this.columnKey(entry.out_col);
-      if (focusNode.type === 'function' && validFocusCols.size === 0 && !entry.returns_to) {
-        invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: 'This function declares no real output columns. Only a supplied scalar caller destination can receive its authored contribution.' });
-        continue;
-      }
       if (returnTargets.length || entry.returns_to) {
         const target = entry.returns_to;
         const declared = target && callerTargets.some(expected => expected.node === target.node && this.columnKey(expected.col) === this.columnKey(target.col));
@@ -473,6 +468,7 @@ export function resolveColumnFlowTarget(
   return { attributionTo: focusId, attributionCol: entry.out_col, writerEdge: null };
 }
 
-function allowsMissingColumnMetadata(node: LineageNode): boolean {
-  return node.type === 'procedure' || node.type === 'external';
+/** A node whose column names are trusted unverified when it has no column metadata: a procedure, an external object or a function without declared columns. Tables and views always own columns. */
+export function allowsMissingColumnMetadata(node: LineageNode): boolean {
+  return node.type === 'procedure' || node.type === 'external' || node.type === 'function';
 }
