@@ -11,6 +11,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<Exclude<InvalidRouteKind, 'prune_
   bad_contributor_col: 'Use a declared column, or drop this supplier and keep the fact in sections.',
   self_loop_column: 'Remove the supplier identical to its output destination.',
   bad_return_target: 'Use one supplied caller output and omit writes_to.',
+  bad_write_target: 'Use a table this object writes to, or send writes_to: null and keep the write in sections.',
   bad_caller_context: 'Use an active declared caller output, or omit caller_context.',
   pruned_contributor: 'This supplier was pruned: drop it and keep the fact in sections.',
   prune_absent: 'Remove this unknown id from prune_neighbors.',
