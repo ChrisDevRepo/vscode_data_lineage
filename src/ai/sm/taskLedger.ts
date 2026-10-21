@@ -32,15 +32,6 @@ function leadIdentity(input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId
   return JSON.stringify([input.taskId, schemaKey(input.nodeId, caseSensitive), schemaKey(input.fromNodeId, caseSensitive), input.reason]);
 }
 
-function stableId(prefix: 'task' | 'lead', identity: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < identity.length; i++) {
-    hash ^= identity.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `${prefix}_${(hash >>> 0).toString(36)}`;
-}
-
 /** Engine-owned registry for investigation questions and post-run leads. */
 export class TaskLedger {
   /** Follows the proven source identifier policy; existing callers default to case-insensitive. */
@@ -74,22 +65,19 @@ export class TaskLedger {
     this.leadIdsByIdentity.clear();
   }
 
-  /** Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: the id lookup, `stableId` derivation and collision guard are identical; only the identity-hit and fresh-insert behavior (`onHit` / `buildRecord`) differs per caller. */
+  /** Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}. A new identity gets the next sequence number in its store (`task_1`, `lead_1`, …): records are never removed except by {@link clear}, so ids are unique by construction and repeat in insertion order. Only the identity-hit and fresh-insert behavior (`onHit` / `buildRecord`) differs per caller. */
   private upsertByIdentity<T extends { id: string }>(
     store: Map<string, T>,
     idsByIdentity: Map<string, string>,
     identity: string,
     prefix: 'task' | 'lead',
-    collisionLabel: string,
     onHit: (existing: T) => T,
     buildRecord: (id: string) => T,
   ): T {
     const existingId = idsByIdentity.get(identity);
     if (existingId) return onHit(store.get(existingId)!);
 
-    const id = stableId(prefix, identity);
-    const collision = store.get(id);
-    if (collision) throw new Error(`${collisionLabel} id collision: ${id}`);
+    const id = `${prefix}_${store.size + 1}`;
     const record = buildRecord(id);
     store.set(id, record);
     idsByIdentity.set(identity, id);
@@ -125,14 +113,13 @@ export class TaskLedger {
       ...(input.kind === 'column_lineage' && input.returnTargets
         ? [input.returnTargets.map(target => [this.identifierKey(target.node), normalizeColName(target.col, this.identifierCaseSensitive)]).sort()]
         : []),
-      ...(input.callerContext ? [[input.callerContext.node, input.callerContext.col, input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
+      ...(input.callerContext ? [[this.identifierKey(input.callerContext.node), normalizeColName(input.callerContext.col, this.identifierCaseSensitive), input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
     ]);
     return this.upsertByIdentity(
       this.tasks,
       this.taskIdsByIdentity,
       identity,
       'task',
-      'Investigation task',
       existing => existing,
       id => ({
         ...input,
@@ -169,7 +156,6 @@ export class TaskLedger {
       this.leadIdsByIdentity,
       identity,
       'lead',
-      'Pending lead',
       existing => {
         existing.valueToUser = input.valueToUser;
         if (input.status) existing.status = input.status;
