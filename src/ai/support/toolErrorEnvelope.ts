@@ -125,6 +125,9 @@ function rejectionReasonLines(rejection: ToolRejection): string[] {
   return rejection.reason === rejection.code && rejection.hint !== undefined ? [] : [rejection.reason];
 }
 
+/** Fixed meaning shown beside an empty allowed list. */
+const EMPTY_ALLOWED_MEANING = 'nothing is allowed here: withdraw the field';
+
 /** Values of one `allowed` list shown before the last repair opportunity. */
 const ALLOWED_PREVIEW_VALUES = 8;
 
@@ -134,7 +137,8 @@ export function rejectionModelContent(rejection: ToolRejection, final = true): s
     const preview = (values: readonly string[]) => values.length > ALLOWED_PREVIEW_VALUES
       ? [...values.slice(0, ALLOWED_PREVIEW_VALUES), `+${values.length - ALLOWED_PREVIEW_VALUES} more`] : values;
     return JSON.stringify({ code: rejection.code,
-      errors: rejection.errors.map(({ allowed, ...error }) => ({ ...error, ...(allowed ? { allowed: final ? allowed : preview(allowed) } : {}) })),
+      errors: rejection.errors.map(({ allowed, ...error }) => ({ ...error, ...(allowed ? { allowed: final ? allowed : preview(allowed) } : {}),
+        ...(allowed?.length === 0 ? { allowed_meaning: EMPTY_ALLOWED_MEANING } : {}) })),
       resend: rejection.resend ?? [],
       ...(final && rejection.example !== undefined ? { example: rejection.example } : {}),
       ...(final && rejection.wayOut ? { way_out: rejection.wayOut } : {}) });
@@ -154,6 +158,7 @@ export function rejectionModelContent(rejection: ToolRejection, final = true): s
     ].includes(key)));
     if (typeof facts.path === 'string' && typeof facts.reason === 'string'
       && rejection.reason.includes(`${facts.path}: ${facts.reason}`)) delete facts.reason;
+    if (Array.isArray(facts.allowed_values) ? facts.allowed_values.length === 0 : Array.isArray(facts.allowed) && facts.allowed.length === 0) facts.allowed_meaning = EMPTY_ALLOWED_MEANING;
     const held = (value as { held_draft?: { sections?: Array<{ label: string; start?: string }> } }).held_draft;
     if (held?.sections) facts.held_draft = { sections: held.sections.map(({ label, start }) => ({ label, ...(start ? { start } : {}) })) };
     return Object.keys(facts).length ? [facts] : [];
