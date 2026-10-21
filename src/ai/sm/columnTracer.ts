@@ -1,7 +1,6 @@
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
-import { resolveModelNodeId } from '../support/modelReferences';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
@@ -122,8 +121,7 @@ export class ColumnTracer {
   ): { neighbor: LineageNode } | { invalidRoute: InvalidRoute } {
     if (cont.col.trim().length === 0) return { invalidRoute: { kind: 'bad_contributor_col', id: cont.node, path: `${path}.col`,
       reason: 'An upstream column reference must name a non-empty column; procedure metadata fallback does not supply a column identity.' } };
-    const neighborId = resolveModelNodeId(cont.node, nodeMap, this.identifierCaseSensitive);
-    const neighbor = neighborId ? nodeMap.get(neighborId) : undefined;
+    const neighbor = nodeMap.get(cont.node);
     if (!neighbor) return { invalidRoute: { kind: 'absent_contributor', id: cont.node, path: `${path}.node`,
       reason: `Upstream node "${cont.node}" is absent from the loaded model.` } };
     if (removedSet?.has(neighbor.id)) return { invalidRoute: { kind: 'pruned_contributor', id: cont.node, path: `${path}.node`,
@@ -171,7 +169,7 @@ export class ColumnTracer {
     const columnFlow = finding.column_flow ?? [];
     if (returnTargets.length) {
       for (const target of returnTargets) {
-        const entries = columnFlow.filter(entry => entry.returns_to && resolveModelNodeId(entry.returns_to.node, nodeMap, this.identifierCaseSensitive) === target.node && this.columnKey(entry.returns_to.col) === this.columnKey(target.col));
+        const entries = columnFlow.filter(entry => entry.returns_to && entry.returns_to.node === target.node && this.columnKey(entry.returns_to.col) === this.columnKey(target.col));
         if (entries.length !== 1) invalidRoutes.push({ kind: 'bad_return_target', id: focusId, path: 'column_flow', reason: `Scalar caller destination ${target.node}.${target.col} requires exactly one authored returns_to entry.` });
       }
     }
@@ -319,7 +317,7 @@ export class ColumnTracer {
       { node: edge.to_node, col: edge.to_col },
     ]);
     const anchors = new Map((incomingRefs ?? committedRefs)
-      .map(ref => [endpointKey(ref.node, ref.col), `${resolveModelNodeId(ref.node, nodeMap, this.identifierCaseSensitive) ?? ref.node}.${ref.col}`]));
+      .map(ref => [endpointKey(ref.node, ref.col), `${ref.node}.${ref.col}`]));
     if (incomingRefs === undefined && this.aspect.edges.length === 0) {
       for (const col of this.aspect.active_columns) anchors.set(endpointKey(focusId, col), `${focusId}.${col}`);
     }
@@ -363,7 +361,7 @@ interface ColumnEndpointLink {
 
 /** Builds the canonical identity key of one `(node, column)` endpoint for column-chain reachability. */
 export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, identifierCaseSensitive = false): (node: string, col: string) => string {
-  return (node, col) => JSON.stringify([resolveModelNodeId(node, nodeMap, identifierCaseSensitive) ?? schemaKey(node, identifierCaseSensitive), normalizeColName(col, identifierCaseSensitive)]);
+  return (node, col) => JSON.stringify([nodeMap.get(node)?.id ?? schemaKey(node, identifierCaseSensitive), normalizeColName(col, identifierCaseSensitive)]);
 }
 
 function reachableColumnEndpoints(
@@ -456,15 +454,15 @@ export function resolveColumnFlowTarget(
   entry: ColumnFlowEntry,
   focusId: string,
   nodeMap: Map<string, LineageNode>,
-  identifierCaseSensitive = false,
+  _identifierCaseSensitive = false,
 ): ColumnFlowTargetResolution | null {
   if (entry.returns_to) {
-    const toNode = resolveModelNodeId(entry.returns_to.node, nodeMap, identifierCaseSensitive);
+    const toNode = nodeMap.get(entry.returns_to.node)?.id;
     if (!toNode) return null;
     return { attributionTo: toNode, attributionCol: entry.returns_to.col, writerEdge: null };
   }
   if (entry.writes_to?.node) {
-    const toNode = resolveModelNodeId(entry.writes_to.node, nodeMap, identifierCaseSensitive);
+    const toNode = nodeMap.get(entry.writes_to.node)?.id;
     if (!toNode) return null;
     return {
       attributionTo: toNode,

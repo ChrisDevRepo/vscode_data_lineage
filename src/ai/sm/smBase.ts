@@ -501,7 +501,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Overlays a retry on the draft held for the same focus by the one held-draft rule: each part the retry sends — a section angle or a {@link HELD_FIELDS} field — replaces the held part whole, and each part it omits keeps the held part. Nothing else is restored, dropped or combined. */
   public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
-    const inFocus = incoming.focus_node_id === undefined ? this.currentFocusNodeId : resolveModelNodeId(incoming.focus_node_id, this.nodeMap, this.identifierCaseSensitive);
+    const inFocus = incoming.focus_node_id ?? this.currentFocusNodeId;
     const held = inFocus === this.currentFocusNodeId ? this.heldDraftOfCurrentFocus() : null;
     if (!held) {
       if (incoming.sections.length === 0 && !incoming.summary.trim()) {
@@ -547,8 +547,7 @@ export class NavigationEngine implements IHopStateMachine {
     const raw = input as Record<string, unknown> & { focus_node_id?: unknown };
     if (raw.focus_node_id === undefined) return this.heldPartsOfCurrentFocus();
     if (typeof raw.focus_node_id !== 'string') return null;
-    const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.identifierCaseSensitive);
-    if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
+    if (raw.focus_node_id !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
     const sent: HopFindingKept = {
       focus_node_id: raw.focus_node_id,
       sections: internalSections ?? extractRawSectionAngles(raw.sections),
@@ -569,7 +568,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.asForm(rejection, failedParts(rejection.issuePaths ?? []));
     const raw = input as Record<string, unknown>;
     const focusId = this._status !== 'awaiting_findings' ? null : raw.focus_node_id === undefined ? this.currentFocusNodeId
-      : typeof raw.focus_node_id === 'string' ? resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.identifierCaseSensitive) : null;
+      : typeof raw.focus_node_id === 'string' ? raw.focus_node_id : null;
     if (!focusId || focusId !== this.currentFocusNodeId) return this.asForm(rejection, failedParts(rejection.issuePaths ?? []));
     const callerFault = this.validateCallerContext();
     if (callerFault) return callerFault;
@@ -812,7 +811,7 @@ export class NavigationEngine implements IHopStateMachine {
     reason: SmNodeStateReason,
     meta: { columns?: string[]; columnRole?: SmNodeColumnRole; viaNodeId?: string; atHop?: number } = {},
   ): void {
-    const id = resolveModelNodeId(nodeId, this.nodeMap, this.identifierCaseSensitive) ?? this.identifierKey(nodeId);
+    const id = nodeId;
     if (!this.nodeMap.has(id)) return;
 
     const rank = (a: SmNodeAction): number => {
@@ -1155,6 +1154,7 @@ export class NavigationEngine implements IHopStateMachine {
       ? [...new Set((getNodeColumns(focus.id, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name).filter(Boolean))]
       : [];
     return {
+      focusNodeId: focus?.id,
       neighbors,
       outCols: declaredOutCols.length > 0 ? this.arrivingOutCols(declaredOutCols) : null,
       writesTo: focus?.type === 'procedure',
@@ -1324,9 +1324,8 @@ export class NavigationEngine implements IHopStateMachine {
     const originNode = this.originNodeId ? this.nodeMap.get(this.originNodeId) : undefined;
     const originLabel = originNode ? `${originNode.schema}.${originNode.name}` : (this.originNodeId ?? '');
     const canonicalNodeId = (id: string): string => {
-      const key = resolveModelNodeId(id, this.nodeMap, this.identifierCaseSensitive) ?? id;
-      const node = this.nodeMap.get(key);
-      return node ? `${quoteIdentifier(node.schema)}.${quoteIdentifier(node.name)}` : key;
+      const node = this.nodeMap.get(id);
+      return node ? `${quoteIdentifier(node.schema)}.${quoteIdentifier(node.name)}` : id;
     };
     const schemaNames = new Map<string, string>();
     const selectedSchemas = new Map<string, string>();
@@ -1372,7 +1371,7 @@ export class NavigationEngine implements IHopStateMachine {
     const rules = this.guiExclusionRules.map(rule => ({ pattern: rule.pattern, ...group() }));
     const named = group();
     for (const id of this.excludedNodeIds) {
-      const node = this.nodeMap.get(resolveModelNodeId(id, this.nodeMap, this.identifierCaseSensitive) ?? id);
+      const node = this.nodeMap.get(id);
       if (!node) continue;
       if (this.excludedSchemas.has(this.identifierKey(node.schema))) continue;
       if (node.type && this.excludedTypes.has(node.type.toLowerCase())) continue;
@@ -2151,7 +2150,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
     const expected = this.currentFocusNodeId ?? '';
     if (rawFocusId === undefined) return expected;
-    const focusId = typeof rawFocusId === 'string' ? resolveModelNodeId(rawFocusId, this.nodeMap, this.identifierCaseSensitive) : undefined;
+    const focusId = typeof rawFocusId === 'string' ? rawFocusId : undefined;
     if (focusId !== expected) return makeRejection({
       code: REJECTION_CODES.focusNodeIdMismatch,
       reason: `focus_node_id names \`${String(rawFocusId)}\`; the current object is \`${expected}\`.`,
@@ -2400,7 +2399,7 @@ export class NavigationEngine implements IHopStateMachine {
         for (const [index, entry] of finding.column_flow.entries()) {
           if (entrySides && !entrySides.some(side => side.index === index && side.upstream)) continue;
           for (const ref of entry.upstream_columns) {
-            const nid = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive) ?? this.identifierKey(ref.node);
+            const nid = ref.node;
             if (!attachedUpstream.has(endpointKey(nid, ref.col))) continue;
             addCarry(nid, { node: nid, col: ref.col }, 'upstream');
             if (!flowQuestionByNode.has(nid)) {
@@ -2457,7 +2456,7 @@ export class NavigationEngine implements IHopStateMachine {
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
     for (const nid of actions.unfollowedNids) routeOutcomes.push({ nodeId: nid, accepted: false, reason: 'not_followed' });
     invalidRoutes.push(...actions.invalidRoutes);
-    for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => resolveModelNodeId(node, this.nodeMap, this.identifierCaseSensitive) === id));
+    for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => node === id));
 
     for (const req of routeRequests) {
       const nid = req.nodeId;
@@ -2489,7 +2488,7 @@ export class NavigationEngine implements IHopStateMachine {
         ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node` })),
       ];
       for (const ref of refs) {
-        const nid = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
+        const nid = this.nodeMap.has(ref.node) ? ref.node : resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
         const node = nid ? this.nodeMap.get(nid) : undefined;
         if (!nid || !node || this.admitsColumnReference(nid, node, focusId)) continue;
         const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
@@ -2544,7 +2543,7 @@ export class NavigationEngine implements IHopStateMachine {
     const mutablePruneConflicts: string[] = [];
     const pruneTargets = (prunes ?? []).map((prune, index) => ({
       raw: prune.id,
-      resolved: resolveModelNodeId(prune.id, this.nodeMap, this.identifierCaseSensitive),
+      resolved: this.nodeMap.has(prune.id) ? prune.id : resolveModelNodeId(prune.id, this.nodeMap, this.identifierCaseSensitive),
       path: `prune_neighbors.${index}.id`,
     }));
     const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? this.identifierKey(t.raw)));
@@ -2553,7 +2552,7 @@ export class NavigationEngine implements IHopStateMachine {
     const requested = new Set<string>();
     const neighbors = new Map(this.neighborChoices(focusId).map(neighbor => [neighbor.id, neighbor]));
     (questions ?? []).forEach((q, index) => {
-      const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.identifierCaseSensitive);
+      const nid = this.nodeMap.has(q.nodeId) ? q.nodeId : resolveModelNodeId(q.nodeId, this.nodeMap, this.identifierCaseSensitive);
       if (!nid) {
         invalidRoutes.push({ kind: 'question_not_neighbor', id: q.nodeId, path: `questions.${index}.nodeId`, reason: `Object \`${q.nodeId}\` is not in the loaded model.` });
         return;
@@ -2647,7 +2646,7 @@ export class NavigationEngine implements IHopStateMachine {
     for (const nid of pruneIds) if (!aloneRefusals.get(nid) && !jointRefusal) prunedNeighborNids.add(nid);
     // The engine continues an unnamed open neighbor itself: always in BB, and in CT when a mapping carries a column to it.
     // An unnamed, unmapped CT neighbor is reported as not followed.
-    const pendingPrunes = prunes === null && pruneIdentities ? new Set(pruneIdentities.map(id => resolveModelNodeId(id, this.nodeMap, this.identifierCaseSensitive))) : new Set();
+    const pendingPrunes = prunes === null && pruneIdentities ? new Set(pruneIdentities) : new Set();
     const unfollowedNids: string[] = [];
     if (questions !== null && (prunes !== null || pruneIdentities !== undefined)) for (const nid of this.requiredNeighborIds(focusId)) {
       if (requested.has(nid) || prunedNeighborNids.has(nid) || pendingPrunes.has(nid)) continue;
@@ -2749,7 +2748,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const pruneReasons = new Map((finding.prune_neighbors ?? []).flatMap(prune => {
-      const id = resolveModelNodeId(prune.id, this.nodeMap, this.identifierCaseSensitive);
+      const id = prune.id;
       return id && prune.reason.trim() ? [[id, prune.reason] as const] : [];
     }));
     for (const nid of prunedNeighborNids) {

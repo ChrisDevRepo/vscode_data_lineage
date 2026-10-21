@@ -79,7 +79,30 @@ function unwrap(schema: ZodType): ZodType[] {
 /** Rewrites object-id spellings and id-form searches in place; each rewrite has exactly one result. */
 function respell(schema: ZodType, value: unknown, path: PropertyKey[], fixes: ModelInputFix[]): void {
   const chain = unwrap(schema);
-  const core = chain[chain.length - 1]._zod.def as { type: string; shape?: Record<string, ZodType>; element?: ZodType };
+  const core = chain[chain.length - 1]._zod.def as { type: string; shape?: Record<string, ZodType>; element?: ZodType; options?: readonly ZodType[] };
+  if (core.type === 'union' && Array.isArray(core.options)) {
+    for (const option of core.options) {
+      const branchFixes: ModelInputFix[] = [];
+      const clone = structuredClone(value);
+      respell(option, clone, path, branchFixes);
+      if (branchFixes.length > 0 && option.safeParse(clone).success) {
+        Object.assign(value as object, clone);
+        fixes.push(...branchFixes);
+        return;
+      }
+    }
+    for (const option of core.options) {
+      const branchFixes: ModelInputFix[] = [];
+      const clone = structuredClone(value);
+      respell(option, clone, path, branchFixes);
+      if (branchFixes.length > 0) {
+        Object.assign(value as object, clone);
+        fixes.push(...branchFixes);
+        return;
+      }
+    }
+    return;
+  }
   if (core.type === 'array' && Array.isArray(value) && core.element) {
     value.forEach((entry, index) => {
       const field = objectIdEntry(core.element as ZodType);

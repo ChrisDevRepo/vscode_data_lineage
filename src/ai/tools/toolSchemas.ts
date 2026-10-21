@@ -649,6 +649,8 @@ function capturedSectionSchemaForClassification(
 
 /** Backend-owned neighbor and column choices that narrow the served hop schema. */
 export interface SubmitFindingsHopColumns {
+  /** Focus node id of the current hop, admitting only equivalent metadata spellings when sent. */
+  readonly focusNodeId?: string;
   /** Backend-owned current-hop neighbors, including closed evidence-only neighbors. */
   readonly neighbors?: readonly { readonly id: string; readonly can_question: boolean; readonly can_prune: boolean }[];
   readonly outCols: readonly string[] | null;
@@ -745,6 +747,11 @@ export function submitFindingsSchemaForMode(
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
+  if (hop?.focusNodeId) {
+    const focusField = z.string().optional().describe(FOCUS_NODE_ID_DESCRIPTION);
+    markObjectIdField(focusField, new Map([[hop.focusNodeId, true]]), hop.identifierCaseSensitive ?? false);
+    narrowed = narrowed.extend({ focus_node_id: focusField }).strict() as typeof HopFindingCtBaseSchema;
+  }
   const baseQuestion = hop?.neighbors
     ? NeighborQuestionSchema.extend({ nodeId: objectIdSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id), hop.identifierCaseSensitive) })
     : NeighborQuestionSchema;

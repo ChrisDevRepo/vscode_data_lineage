@@ -245,7 +245,7 @@ describe('large findings repairs', () => {
     expect(engine.columnAspect!.edges).toHaveLength(3);
     expect(engine.columnAspect!.edges[2].note).toBe('This valid sibling is resent with the list.');
   });
-  it('advances the held draft with the valid fields of a retry whose sections are stringified', () => {
+  it('advances the held draft with the valid fields of a retry whose sections are malformed', () => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
     const original = { focus_node_id: ORIGIN, summary: 'Branch supplies Value.',
@@ -256,7 +256,7 @@ describe('large findings repairs', () => {
     const correction = { focus_node_id: ORIGIN, summary: 'Amended summary.',
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] };
     const before = engine.toJSON();
-    const malformed = JSON.parse(executeSubmitFindings({ ...correction, sections: JSON.stringify(original.sections) }, services));
+    const malformed = JSON.parse(executeSubmitFindings({ ...correction, sections: 42 }, services));
     expect(malformed).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['sections']), resend: ['sections'] });
     const after = engine.toJSON();
     for (const key of ['agenda', 'visited', 'removedSet', 'columnAspect', 'scopeNodeIds'] as const) expect(after[key]).toEqual(before[key]);
@@ -680,7 +680,7 @@ describe('lineage_submit_findings boundary', () => {
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }], questions: [],
       prune_neighbors: [{ id: BRANCH, reason: 'Do not investigate this supplier.' }] };
     const before = engine.toJSON();
-    const result = JSON.parse(executeSubmitFindings({ ...input, [unavailable]: '[]' }, services));
+    const result = JSON.parse(executeSubmitFindings({ ...input, [unavailable]: 42 }, services));
     expect(result).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining([unavailable]) });
     const protection = result.detail?.filter((fault: { kind?: string; id?: string; path?: string }) =>
       fault.kind === 'prune_unsupported' && fault.id === BRANCH && fault.path === 'prune_neighbors.0.id') ?? [];
@@ -724,9 +724,9 @@ describe('lineage_submit_findings boundary', () => {
 
   it.each([
     { name: 'unrelated sections', patch: { sections: { technical: 42 } }, schemaPath: 'sections.technical' },
-    { name: 'unrelated flow', patch: { column_flow: '[]' }, schemaPath: 'column_flow' },
-    { name: 'unknown questions', patch: { questions: '[]' }, schemaPath: 'questions' },
-    { name: 'unknown prune decisions', patch: { sections: { technical: 42 }, prune_neighbors: '[]' }, schemaPath: 'prune_neighbors' },
+    { name: 'unrelated flow', patch: { column_flow: 42 }, schemaPath: 'column_flow' },
+    { name: 'unknown questions', patch: { questions: 42 }, schemaPath: 'questions' },
+    { name: 'unknown prune decisions', patch: { sections: { technical: 42 }, prune_neighbors: 42 }, schemaPath: 'prune_neighbors' },
   ].flatMap(row => (['bb', 'ct'] as const).filter(mode => mode === 'ct' || row.schemaPath !== 'column_flow')
     .map(mode => ({ ...row, mode }))))('reports each fault without inventing unavailable decisions ($mode): $name', ({ patch, schemaPath, mode }) => {
     const { session, model, graph, engine } = ctWorld({ mode });
