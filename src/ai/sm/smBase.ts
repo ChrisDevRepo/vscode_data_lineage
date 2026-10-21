@@ -3117,6 +3117,7 @@ export class NavigationEngine implements IHopStateMachine {
   /** Forwards a pass-tagged node's intent to its in-direction bodied neighbours. */
   private contractThroughPassNode(entry: AgendaEntry): void {
     for (const nid of this.directionalNeighbors(entry.nodeId, this._direction)) {
+      const forwarded = new Set<string>();
       for (const taskId of entry.taskIds) {
         const task = this.taskLedger.getTask(taskId)!;
         const continues = !task.traversalSide || this.directionalNeighbors(entry.nodeId, task.traversalSide).includes(nid);
@@ -3125,6 +3126,17 @@ export class NavigationEngine implements IHopStateMachine {
         const unresolved = continues && task.kind === 'column_lineage' && !targets?.length
           ? this.passNodeUnresolvedQuestion(entry.nodeId, this.qualifiedTaskRefs(task) ?? [])
           : '';
+        // Arrivals by different paths that carry the same context go on once, as at a table (spec 04).
+        const refKeys = (refs: ReadonlyArray<{ node: string; col: string }> | undefined) =>
+          (refs ?? []).map(ref => [this.identifierKey(ref.node), this.columnKey(ref.col)]).sort();
+        const context = JSON.stringify([task.question, unresolved, continues ? task.traversalSide ?? '' : '', refKeys(targets),
+          targets?.length && task.kind === 'column_lineage' ? refKeys(task.sourceRefs ?? task.returnTargets) : [],
+          validCaller ? [this.identifierKey(validCaller.node), this.columnKey(validCaller.col), validCaller.callerTaskId, validCaller.ddlHash] : []]);
+        if (forwarded.has(context)) {
+          this.log('debug', `[Agenda] same context already forwarded through pass node=${entry.nodeId} next=${nid} task=${task.id}`);
+          continue;
+        }
+        forwarded.add(context);
         this.enqueueHop(nid, unresolved ? `${task.question}${task.question ? '\n' : ''}${unresolved}` : task.question, entry.depth + 1, entry.priority, {
           carry: targets?.length ? { kind: 'scalar_return', outputs: targets } : { kind: 'row_role_only' },
           parentTaskId: validCaller?.callerTaskId ?? task.id,
