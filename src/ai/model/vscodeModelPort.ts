@@ -33,6 +33,7 @@ import {
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
 import { toolCallNotationFault } from '../support/toolCallNotation';
+import { normalizeModelInput } from '../tools/normalizeModelInput';
 import {
   STRUCTURED_OUTPUT_TOOL,
   StructuredOutputError,
@@ -159,7 +160,11 @@ export class VscodeModelPort implements ModelPort {
             reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON,
           };
         } else {
-          call = { valid: true, callId, toolName, input: args };
+          const normalized = normalizeModelInput(definition.inputSchema, args);
+          for (const fix of normalized.fixes) {
+            this.options.debugLog?.(`[Normalize] tool=${toolName} path=${fix.path} before=${JSON.stringify(fix.before)}`);
+          }
+          call = { valid: true, callId, toolName, input: normalized.input };
         }
         replayed.push({ callId, toolName, input: 'malformedArgs' in emittedCall ? {} : args });
         toolCalls.push(call);
