@@ -204,7 +204,7 @@ it('gives one repair per id: a highlighted id an external violation already plac
 describe('present_result id rejection route', () => {
   const call = (state: 'pruned' | 'out_of_scope') => validatePresentResult({
     name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
-    sections: [{ label: 'Report', node_ids: ['[dbo].[x]'], text: 'Report output.' }],
+    sections: [{ label: 'Report', node_ids: ['[dbo].[a]', '[dbo].[x]'], text: 'Report output.' }],
   }, ['[dbo].[a]'], undefined, undefined, [], 'completed', () => state);
 
   it('does not offer add_node_ids for an id outside the approved scope, and keeps the remove/state-in-text action', () => {

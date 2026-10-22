@@ -6,7 +6,7 @@ The newest version heading collects changes until that version ships.
 ## [1.2.6] - 2026-10-08
 
 ### Added
-- Expanded parser regression coverage for batch boundaries, external-table creation, DMV dependency direction and metadata, and elapsed-time scaling.
+- Expanded parser regression coverage for batch boundaries, external-table creation, DMV dependency direction and metadata, and elapsed-time scaling; Vitest and its coverage tool use compatible security patches.
 - The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, with the module count (the debug log names the modules); the references the parser captures still load.
 
 ### Changed
@@ -43,8 +43,8 @@ The newest version heading collects changes until that version ships.
 - Prohibited neighbor entries receive removal guidance instead of invalid-JSON instructions, and object-valued repair fields retain their diagnostics without incompatible scalar choices.
 - Offered column sources follow the same scope admission rules as submitted mappings.
 - Malformed findings repairs preserve held questions, column mappings and sections until a valid correction is submitted.
-- Reports reject omitted captured SQL and preserve its exact fenced content; focused repairs retain valid report fields, and malformed retries preserve the draft.
-- Distinct investigation questions retain SQL literal case and whitespace when tasks merge.
+- Reports reject omitted captured SQL or result objects without a section or note; focused repairs preserve exact SQL and valid report fields, and malformed retries preserve the draft.
+- Distinct investigation questions retain SQL literal case and whitespace when tasks merge; authored deferred questions reach the final report request with their target and originating object.
 - Repeated tool-call IDs fail before execution through a shared native/headless transport guard. Live provider verification honors inherited HTTP(S) proxy and NO_PROXY settings while retaining deadlines and redirect credential protection. Stored baseline reads preserve API request spacing after delayed timers and across concurrent sources.
 - Hop neighbor choices now share one backend projection across context, schemas and routing. Neighbor, column and enum rejections share first-fault, second-choices feedback without exposing unrelated catalog columns.
 - Prune choices and submissions share the action-state policy. Queued column demands merge quoted and padded equivalents under the source case policy, preserving task identities and authored questions.

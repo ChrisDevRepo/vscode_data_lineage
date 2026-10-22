@@ -8,7 +8,6 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   holdRejectedPresentResult,
-  requiredCtChainNodeIds,
   findTextlessNewSectionLabels,
   findStartOrderIssues,
   presentResultRepairInstruction,
@@ -54,26 +53,6 @@ function bindPresentationReferences<T extends PresentResultInput | PresentResult
     ...(Array.isArray(input.add_node_ids) ? { add_node_ids: input.add_node_ids.map(bind) } : {}),
     ...(Array.isArray(input.prune_node_ids) ? { prune_node_ids: input.prune_node_ids.map(bind) } : {}),
   } as T;
-}
-
-function findUncoveredCtChainNodes(
-  resultGraph: AiSession['resultGraph'],
-  input: PresentResultInput,
-  resolvedNodeIds: string[],
-  slottedNodeIds: readonly string[],
-  identifierCaseSensitive = false,
-): string[] {
-  const lc = (id: string): string => schemaKey(id, identifierCaseSensitive);
-  const pruned = (resultGraph?.node_states ?? []).filter(state => state.action === 'prune').map(state => state.nodeId);
-  const required = requiredCtChainNodeIds(resultGraph?.columnAspect?.edges ?? [], resolvedNodeIds, [...slottedNodeIds, ...pruned], lc);
-  if (required.length === 0) return [];
-
-  const linked = new Set<string>();
-  for (const sec of input.sections ?? []) {
-    for (const id of sec.node_ids ?? []) linked.add(lc(id));
-  }
-  for (const note of input.notes ?? []) linked.add(lc(note.node_id));
-  return required.filter(id => !linked.has(lc(id)));
 }
 
 /** Fills a render that amends a committed report back out to a complete section array. */
@@ -373,6 +352,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         presentInput.sections = retained.sections;
       }
 
+      if (isAmendment) {
+        presentInput.notes = mergeAmendedNotes(resultGraph.notes, presentInput.notes ?? [], resolvedNodeIds)
+          .map(note => ({ node_id: note.nodeId, caption: note.text }));
+      }
+
       const evidenceViolations: PresentResultViolation[] = [];
       let renderInput: PresentResultInput = isVisualPreview && presentInput.sections
         ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
@@ -486,20 +470,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       s.logger.debug(`[Presentation] Output assembled title="${trunc(presentInput.title ?? '(none)', 60)}"`);
 
       const externalViolations: PresentResultViolation[] = [...evidenceViolations];
-      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
-      if (uncoveredCtNodes.length > 0) {
-        externalViolations.push({
-          field: 'sections',
-          missingContent: true,
-          messages: [
-            `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes)}.`,
-            'For each one: add its id to a sections[].node_ids, or give it one grounded notes[] entry. Tables carry the traced column even when they have no detail slot.',
-          ],
-          repairFields: ['sections', 'notes'],
-          paths: ['sections', 'notes'],
-          entryIds: uncoveredCtNodes,
-        });
-      }
       if (unrenderedSlotIds.length > 0) {
         externalViolations.push({
           field: 'sections',
@@ -537,9 +507,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       // A rendered result belongs to its run.
       const runId = sess.explorationRunId ?? sess.id;
-      const renderedNotes = isAmendment
-        ? mergeAmendedNotes(resultGraph.notes, validation.notes, validation.node_ids)
-        : validation.notes.map(n => ({ nodeId: n.node_id, text: n.caption }));
+      const renderedNotes = validation.notes.map(n => ({ nodeId: n.node_id, text: n.caption }));
       const aiMetadata: PresentationArtifact['aiMetadata'] = {
         summary: validation.summary,
         description: validation.description,

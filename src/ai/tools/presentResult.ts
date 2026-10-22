@@ -879,7 +879,6 @@ export function validatePresentResult(
     }
   }
 
-  const highlightedNodeIds = new Set<string>();
   // A repair patch can leave a held draft without the field: the schema that requires it never saw the merged draft.
   if (!input.highlight_groups) {
     addError('highlight_groups', 'highlight_groups[] is required — provide at least 1 group using the Lineage palette (source / transform / target)', ['highlight_groups'], ['highlight_groups']);
@@ -889,19 +888,19 @@ export function validatePresentResult(
     if (unknownIds.length > 0) {
       addError('highlight_groups', `highlight_groups "${g.label}" node_ids ${nodeIdNoun}: ${renderNodeIdStates(unknownIds)}.${nodeIdRejectionTail(unknownIds)}`, ['highlight_groups'], [`highlight_groups.${groupIndex}`], unknownIds);
     }
-    for (const nodeId of g.node_ids ?? []) {
-      if (resolvedSet.has(nodeId)) highlightedNodeIds.add(nodeId);
-    }
   }
 
   // An id an external violation already asks to place in a section (or note) is not repeated with a second repair.
   const alreadyRepairedIds = new Set(externalViolations.flatMap(v => v.entryIds ?? []));
-  const unexplainedHighlightNodeIds = [...highlightedNodeIds].filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id) && !alreadyRepairedIds.has(id));
-  if (unexplainedHighlightNodeIds.length > 0) {
+  const unexplainedNodeIds = resolvedNodeIds.filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id) && !alreadyRepairedIds.has(id));
+  if (unexplainedNodeIds.length > 0) {
     addError(
-      'highlight_groups',
-      `highlight_groups node_ids must be explained by sections[].node_ids or a notes caption: ${unexplainedHighlightNodeIds.join(', ')}. For each listed node, add it to a section's node_ids[] or add a notes entry for it — or drop it from highlight_groups[] if it is uncolored plumbing.`,
-      ['sections', 'notes', 'highlight_groups'],
+      'sections',
+      `Result node(s) missing a section or note: ${quoteIds(unexplainedNodeIds)}. Add each id to sections[].node_ids or a notes entry.`,
+      ['sections', 'notes'],
+      ['sections', 'notes'],
+      [],
+      unexplainedNodeIds,
     );
   }
 
@@ -922,8 +921,8 @@ export function validatePresentResult(
       success: false,
       rejection: makeRejection({
         code: REJECTION_CODES.validation,
-        ...(allRepairable && externalViolations.length > 0 && externalViolations.every(violation => violation.missingContent)
-          && errors.length === externalViolations.reduce((count, violation) => count + violation.messages.length, 0)
+        ...(allRepairable && (externalViolations.length > 0 || unexplainedNodeIds.length > 0) && externalViolations.every(violation => violation.missingContent)
+          && errors.length === externalViolations.reduce((count, violation) => count + violation.messages.length, 0) + (unexplainedNodeIds.length > 0 ? 1 : 0)
           ? { missingParts: resendList } : {}),
         reason: errors.join('\n'),
         hint,

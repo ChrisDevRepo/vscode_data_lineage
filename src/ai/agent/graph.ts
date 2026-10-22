@@ -1124,6 +1124,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       result,
       sess.memory.getUserQuestion(),
       engine.identifierCaseSensitive,
+      engine.deferredQuestions,
     );
     const envelopeJson = JSON.stringify(envelope);
     deps.logger?.info(

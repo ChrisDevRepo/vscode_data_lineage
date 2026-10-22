@@ -37,6 +37,6 @@ export function acknowledgeCommittedHop(
   if (!sess.classification) throw new Error('classification missing at synthesis handoff — start_exploration contract violated');
   return {
     ...ack,
-    ...buildSmCompletionEnvelope(finalResult, sess.memory.getUserQuestion(), s.requireModel().identifierCaseSensitive),
+    ...buildSmCompletionEnvelope(finalResult, sess.memory.getUserQuestion(), s.requireModel().identifierCaseSensitive, engine.deferredQuestions),
   };
 }

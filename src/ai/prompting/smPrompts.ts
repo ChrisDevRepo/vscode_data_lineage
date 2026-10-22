@@ -3,7 +3,7 @@
 import { buildColumnAspectPrompt } from './prompts';
 import { escapePromptText } from '../support/text';
 import { assignEvidenceIds, requiredCtChainNodeIds } from '../tools/presentResult';
-import type { ColumnEdge, SmResult } from '../sm/smTypes';
+import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
 /** Builds the static active-phase SM protocol block: the column aspect of the hop, rendered only when the hop carries tracked columns. */
@@ -323,6 +323,7 @@ interface SmCompletionEnvelope {
     readonly suggested_sections: ReadonlyArray<{ label: string; node_ids: string[] }>;
     readonly node_states: SmResult['node_states'];
     readonly detail_slots: SmResult['detail_slots'];
+    readonly deferred_questions?: readonly DeferredQuestion[];
   };
   readonly synthesis_reminder: string;
 }
@@ -359,6 +360,7 @@ export function buildSmCompletionEnvelope(
   result: SmResult,
   userQuestion: string,
   identifierCaseSensitive = false,
+  deferredQuestions: readonly DeferredQuestion[] = [],
 ): SmCompletionEnvelope {
   const presentedNodeIds = result.fullNodes.map(node => node.id);
   const presented = new Set(presentedNodeIds);
@@ -388,6 +390,7 @@ export function buildSmCompletionEnvelope(
       suggested_sections: buildSuggestedSections(result, presentedNodeIds),
       node_states: result.node_states.filter(state => presented.has(state.nodeId)),
       detail_slots: assignEvidenceIds(result.detail_slots).slots,
+      ...(deferredQuestions.length ? { deferred_questions: deferredQuestions } : {}),
     },
     synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + analyzedBlock + passthroughBlock + formulaBlock + mustCoverBlock,
   };
